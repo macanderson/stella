@@ -85,7 +85,7 @@ the CLI does — so the dashboard and the terminal cannot disagree.
   order and returns [`WATCH`] once the ladder is exhausted (or the current
   lens is unrecognized) — "no more defects" is always a statement about the
   open lens, never a statement that the code is done.
-- **`Calibration::extra` and `CycleRecord::extra` are load-bearing.** Both
+- **`Calibration::extra` and `CycleRecord::extra` must not be dropped.** Both
   types `#[serde(flatten)]` unknown keys into an `extra` map rather than
   dropping them. A prior version rebuilt `calibration.json` from only the keys
   it owned and silently discarded `last_clean_head`, which left watch mode

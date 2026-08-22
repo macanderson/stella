@@ -40,7 +40,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
                     dead-code-allows diagnostic-codes bench-suites tokens \
-                    hue-separation transcript-surfaces
+                    hue-separation transcript-surfaces prose
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -335,6 +335,22 @@ typed-errors-update: ## Retighten the invariant-#5 ratchet (run after typing sig
 .PHONY: typed-errors-test
 typed-errors-test: ## Test the invariant-#5 ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-typed-errors.sh
+
+.PHONY: prose
+prose: ## Assert no content-free prose was added (down-only ratchet)
+	@python3 ./scripts/check-prose.py
+
+.PHONY: prose-report
+prose-report: ## Name every remaining content-free construction, with its remedy
+	@python3 ./scripts/check-prose.py --report
+
+.PHONY: prose-update
+prose-update: ## Retighten the prose ratchet (run after deleting some)
+	@python3 ./scripts/check-prose.py --update
+
+.PHONY: prose-test
+prose-test: ## Test the prose ratchet's direction (hermetic; not part of `gate`)
+	./scripts/test-prose-guard.sh
 
 .PHONY: dead-code-allows
 dead-code-allows: ## Assert every #[allow(dead_code)] says why, and that the count only shrinks (#3949)

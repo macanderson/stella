@@ -55,8 +55,9 @@ scrub) are what a third-party tool inherits by going through the same door.
 `ask_question` (#4212) is the exception, and it is recorded here rather than
 quietly absorbed, because "the surface is closed" is only worth anything if
 crossing it costs an argument. The test the rule sets is whether the
-capability is one an agent *fundamentally cannot work without*. Three things
-make this one structurally un-outsourceable rather than merely desirable:
+capability is one an agent *fundamentally cannot work without*. Three
+properties make this one structurally un-outsourceable rather than merely
+desirable:
 
 - **It needs the host's driver, which no plugin has.** Answering means
   rendering a card on the Command Deck's own render loop, or on the plain
@@ -206,7 +207,7 @@ generated per-tool reference under `docs/tools/`. It exists because those
 used to be hand-maintained integers in six places: parallel PRs each bumped
 the same number off the same base and squash-merged to a
 plausible-but-wrong count with no conflict. The `read_only` flag is
-load-bearing, not documentation — `stella-core`'s dispatch grouping and
+behavior, not documentation — `stella-core`'s dispatch grouping and
 `ReadOnlyTools` both key on it.
 
 **Custom tools are gated, not just discovered.** A directory scan returns an

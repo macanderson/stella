@@ -47,7 +47,7 @@ are plugins (`doc:turn-loop-wrappers`, #3246): a plugin's decision to hold a tur
 or a host's decision to deny one, is a diagnostic, and the content-free field
 vocabulary is what makes it safe to hand to somebody else's log pipeline.
 
-The routing rule above is the load-bearing part. A wrapper's verdict is *domain* —
+The routing rule above decides placement. A wrapper's verdict is *domain* —
 it replays, so it is an `AgentEvent` in [`stella-protocol`](../stella-protocol),
 declared in the consumer ledger. Only the reasoning behind it comes here.
 
@@ -62,7 +62,7 @@ do not: a crate that wants to log takes a `&Dx` and implements `Facet` on its
 own enum, so a new diagnostic in `stella-store` is a `stella-store` change and
 this crate does not recompile.
 
-Two things can never land here. A workspace dependency — the leaf property
+Two additions can never land here. A workspace dependency — the leaf property
 stated above is the entire point, and one `stella-*` line in the manifest
 forecloses it for the crate it names. And any widening of `Loggable`: an impl
 for `String`, `Path`, `serde_json::Value`, or a `Display`/`Debug` blanket is

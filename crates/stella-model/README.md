@@ -20,7 +20,7 @@ request/response shape, never by a new vendor name.
 ## Direction — BYOK belongs to the host, and no plugin ever sees a key
 
 Stella is becoming an engine embedded in other applications, reached through the
-Rust ports or over HTTP (`doc:engine-embedding`). Two things that puts on this
+Rust ports or over HTTP (`doc:engine-embedding`). That puts two duties on this
 crate. Keys and endpoints are the **host's**: a wrapper or plugin around the loop
 names a *role intent* (`triage`, `planner`, `witness_author`) and the host resolves
 it against the user's providers, so nothing in an extension plane ever holds a

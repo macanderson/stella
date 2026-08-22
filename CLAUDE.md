@@ -91,8 +91,8 @@
     truth; the UI and `result.json` are projections of it. Census
     `(role, model)` from `step_usage` before believing a claim about which
     model ran; join `tool_start` → `tool_result` for real tool wall clock;
-    read the **full** `proof` reason strings, because they are truncated
-    everywhere else and the truncated half is usually the part that matters.
+    read the **full** `proof` reason strings; they are truncated everywhere
+    else, and the truncated half usually carries the reason.
   - **Run the cheap control before any bisect.** Re-run the failing task alone
     on the *old* SUT. One trial either establishes the regression or ends the
     investigation — and it is how the 11-commit bisect above got cancelled.
@@ -100,6 +100,33 @@
     catastrophe.** Treat it as a guardrail; the mechanism metrics are the
     measurement. Comparisons need repeats per task, and any two runs differing
     by more than one commit are confounded and must be reported as such.
+- **Write the thing; do not announce that you are writing it.** Content-free
+  prose is a defect in this repository, in exactly the way an unexplained
+  `#[allow]` is, and it is fixed the moment you see it — not filed, not
+  deferred, not left because the file you opened was about something else.
+  **If you touch a file, you own its prose and its comments.** A doc comment,
+  a module header, a shell script's banner and a `.md` page are all text a
+  human reads, and they are held to one bar.
+  - **The test is deletion.** Cut the clause. If the reader lost nothing, it
+    was carrying nothing, and it goes. `Two things stated rather than
+    hidden:` is the specimen this rule is named for — strip it and every
+    sentence after it still says what it said.
+  - **What goes:** announcing a list instead of writing it (`Two things
+    follow`, `Both halves matter`, `Three reasons to know`); telling the
+    reader which item to care about instead of putting it first (`the part
+    that matters`, `and the second is the hard one`); prose about the prose
+    (`stated rather than hidden`, `worth naming`); the `X, not Y` tail where
+    `Y` is a foil nobody proposed (`, not decoration`); and tired metaphor
+    standing in for the plain word (`load-bearing` → *required*, `belt and
+    braces` → *checked twice*).
+  - **Enforced by `make prose`** (`scripts/check-prose.py`), a down-only
+    ratchet over `scripts/prose-baseline.txt`. `make prose-report` names
+    every remaining line and what to write instead. `make prose-update`
+    refuses to raise a count or add a file, so a red gate is cleared by
+    deleting the prose. The baseline records debt older than the guard, it
+    is meant to reach empty, and adding a line to it is the expedient this
+    file forbids. A backticked span or a fenced block is exempt: naming a
+    banned construction in order to ban it is a citation.
 - **AGENTS.md is the orientation document.** Commands, architectural
   invariants, workspace routing, testing approach, and gotchas all live there
   (imported above). When this file and AGENTS.md disagree, AGENTS.md wins —
