@@ -16,8 +16,9 @@
 //! # Configuration
 //!
 //! Resolution is a **pure function** of [`EmbedderEnv`] ([`resolve`]), so it is
-//! tested without touching process environment. [`from_env`] is the thin
-//! wrapper that reads the real one.
+//! tested without touching process environment. [`from_env`] resolves
+//! [`process_env`], which reads the real one unless a host called
+//! [`install_process_env`] first.
 //!
 //! | variable | meaning |
 //! |---|---|
@@ -304,9 +305,46 @@ pub fn resolve(env: &EmbedderEnv) -> Resolution {
     Resolution::Unconfigured
 }
 
-/// Resolve an embedder from the real process environment.
+/// The configuration a host installed for this process, if it did.
+static PROCESS_ENV: std::sync::OnceLock<EmbedderEnv> = std::sync::OnceLock::new();
+
+/// Fix this process's embedder configuration, so [`process_env`] and
+/// [`from_env`] stop consulting `std::env`.
+///
+/// # Why a crate that reads the environment also lets a host replace it
+///
+/// A host can receive an embedding credential out of band — Stella's launcher
+/// hands one down an inherited pipe so it never enters the environment a
+/// model-authored `bash` call inherits (#3093). Before this, the only way to
+/// give that credential to `stella-embed` was to `setenv` it, which put it
+/// back in exactly the place the pipe existed to keep it out of. This crate is
+/// a leaf and cannot ask a host for a credential, so the host tells it once
+/// instead.
+///
+/// Write-once: `true` when `env` was installed, `false` when this process
+/// already had one and nothing changed. Callers install at single-threaded
+/// startup, before anything resolves an embedder — a second install is a
+/// caller bug and is reported rather than silently winning or losing.
+pub fn install_process_env(env: EmbedderEnv) -> bool {
+    PROCESS_ENV.set(env).is_ok()
+}
+
+/// This process's embedder configuration: whatever a host
+/// [installed](install_process_env), else the real process environment.
+///
+/// The one way to ask, so a host that installs reaches every caller below it —
+/// including the crates that cannot see the host at all.
+#[must_use]
+pub fn process_env() -> EmbedderEnv {
+    PROCESS_ENV
+        .get()
+        .cloned()
+        .unwrap_or_else(EmbedderEnv::from_process)
+}
+
+/// Resolve an embedder from this process's configuration ([`process_env`]).
 pub fn from_env() -> Resolution {
-    resolve(&EmbedderEnv::from_process())
+    resolve(&process_env())
 }
 
 fn dims_for(model: &str, override_dims: Option<&str>) -> Result<usize, String> {
