@@ -9,10 +9,15 @@
 //!
 //! - a `Deterministic` row with no [`Probe`] fails, so a tool cannot be
 //!   declared stable and then quietly left undriven;
-//! - a `VolatileWithNormalizer` row must produce outputs that **differ raw**,
-//!   which is what proves its fixture reaches the volatile bytes;
-//! - `the_sentinel_can_fail` runs the comparison against an output that
-//!   carries a counter and requires it to be rejected.
+//! - the two postures are checked by *different* comparisons —
+//!   `Deterministic` on the raw bytes, `VolatileWithNormalizer` on
+//!   raw-differ-then-normalized-match — so neither declaration can stand in
+//!   for the other. Comparing normalized output on both arms was the first
+//!   version, and it let `read_file` pass as `Deterministic`;
+//! - the raw-*difference* requirement on the volatile arm is what proves its
+//!   fixture reaches the volatile bytes at all;
+//! - `the_sentinel_can_fail` runs both comparisons against an output that
+//!   carries a counter and requires both to reject it.
 
 use std::path::Path;
 
