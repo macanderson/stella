@@ -106,6 +106,10 @@ pub(crate) fn session_persistence() -> stella_runtime::Persistence {
 /// wrapper runs over the turn (`Raw` by default, #3381). `test_command`, when given, arms a
 /// bound wrapper plugin's own oracle.
 ///
+/// `require_verdict` makes a bound wrapper's non-`Met` outcome a non-zero exit
+/// (#3554); it is refused before this point on a `Raw` choice, where nothing
+/// declares a verdict for it to read.
+///
 /// `--keep-witness`/`--require-verified` used to reach this function too, back when a
 /// `Classic` arm selected the built-in staged pipeline. That pipeline is gone
 /// (#3865) and its variant with it (#3867), and `wrapper_plugin::reject_verification_flags_without_pipeline` now refuses both
@@ -118,13 +122,23 @@ pub async fn run_one_shot(
     format: OutputFormat,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
     test_command: Option<&str>,
+    require_verdict: bool,
 ) -> Result<(), CliFailure> {
     // A benchmark's durable sink is part of the accounting boundary. Prove the exact mounted file
     // is writable before provider construction or any code path that can make a paid call.
     preflight_durable_stream(format)?;
     // #3381 made Raw the default, so this now admits the common no-flag `stella run` case too.
     crate::enterprise_telemetry::authorize_one_shot(!pipeline.is_raw())?;
-    run_raw_one_shot(cfg, prompt, budget_limit, format, pipeline, test_command).await
+    run_raw_one_shot(
+        cfg,
+        prompt,
+        budget_limit,
+        format,
+        pipeline,
+        test_command,
+        require_verdict,
+    )
+    .await
 }
 
 /// The `--output-format json` summary of a raw (`--no-pipeline`) step-loop run.

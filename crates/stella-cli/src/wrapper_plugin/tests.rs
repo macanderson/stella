@@ -25,6 +25,7 @@ mod composition;
 mod report;
 mod round_driver;
 mod stage_program;
+mod verdict_gate;
 
 const WRAPPER_MANIFEST: &str = r#"
 name = "budget-keeper"

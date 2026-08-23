@@ -591,6 +591,13 @@ pub(crate) enum Command {
         #[arg(long)]
         require_verified: bool,
 
+        /// Exit non-zero unless the `--pipeline` wrapper declared its
+        /// requirements met (#3554). Refused without `--pipeline`, where
+        /// nothing declares a verdict; see `wrapper_plugin::verdict_gate` for
+        /// why it is opt-in.
+        #[arg(long)]
+        require_verdict: bool,
+
         /// Output shape: text, json, or stream-json
         ///
         /// Declared here rather than globally because this is a promise about

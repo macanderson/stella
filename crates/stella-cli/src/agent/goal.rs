@@ -116,6 +116,7 @@ pub(crate) async fn run_raw_one_shot(
     format: OutputFormat,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
     test_command: Option<&str>,
+    require_verdict: bool,
 ) -> Result<(), crate::failure::CliFailure> {
     let bare = bare_loop_config(full_cfg);
     let cfg = &bare;
@@ -306,6 +307,7 @@ pub(crate) async fn run_raw_one_shot(
                     budget_limit.is_some(),
                 ),
                 Some(candidate.grant.clone()),
+                require_verdict,
                 crate::wrapper_plugin::RawTurnDriver {
                     provider: &*provider,
                     base_tools,
