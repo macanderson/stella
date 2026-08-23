@@ -17,23 +17,19 @@
 //! [`crate::DriverCallRequest`]/[`crate::DriverCallResponse`]. Every root
 //! here is published along with everything reachable from it.
 //!
-//! # Why a corpus and not a JSON Schema
+//! # Why a corpus, beside the schema rather than instead of it
 //!
-//! This is the honest part, and it is a **declared gap, not a silence**.
+//! This module was written as a **declared gap**: `stella-protocol` and
+//! `stella-serve` publish JSON Schema derived by `schemars`, this published a
+//! corpus, and the reason was mechanical — a `JsonSchema` impl only exists
+//! where the type is defined, and `crate::wire` was held by another session.
+//! The derives are on those types now and
+//! [`crate::wire_schema`] publishes `wrapper.schema.json` from them (#3532).
 //!
-//! `stella-protocol` and `stella-serve` publish JSON Schema, derived by
-//! `schemars` from `#[cfg_attr(feature = "schema", derive(JsonSchema))]` on the
-//! types themselves. That is the better artifact and it is where this should
-//! end up (#3532). It cannot be built from outside `crate::wire`: `schemars`
-//! generates a schema from a `JsonSchema` impl, and a `JsonSchema` impl only
-//! exists where the type is defined. Writing one by hand here would be a second
-//! copy of the contract — the hand-maintained wire documentation
-//! `scripts/check-wire-schema.sh`'s own header calls "the single most dangerous
-//! drift in this document".
-//!
-//! So this publishes the next-best thing that is still **derived**: every wire
-//! message, serialized by the same `Serialize` impls the socket uses, in both
-//! its fullest and its emptiest legal form. What that catches:
+//! The corpus stays, because the two artifacts answer different questions. This
+//! one publishes every wire message serialized by the same `Serialize` impls
+//! the socket uses, in both its fullest and its emptiest legal form. What that
+//! catches:
 //!
 //! - a renamed field — the key changes in every case that carries it;
 //! - a re-tagged variant or a changed `rename_all` — the tag changes;
@@ -43,9 +39,17 @@
 //!   optional member appears twice. A message with none appears once: a second
 //!   identical case would assert an optionality that does not exist.
 //!
-//! What it does **not** catch, and what the schemars upgrade would: a widened
-//! or narrowed scalar type (`u32` → `u64`), and a string field that gains a
-//! format or pattern constraint. Neither changes any byte of the corpus.
+//! What it does **not** catch, and what the schema does: a widened or narrowed
+//! scalar type (`u32` → `u64`), and a string field that gains a format or
+//! pattern constraint. Neither changes any byte of the corpus.
+//!
+//! What the schema does not catch, and this does: the **bytes**. A schema is
+//! not runnable backwards into a rendering — a field that starts serializing as
+//! `null` rather than being omitted, a `skip_serializing_if` that stops firing,
+//! a tag whose spelling and whose schema move together — all leave a legal
+//! document behind. The corpus shows the two exact strings a plugin's parser
+//! will meet. It also covers the host-call and driver channels, which the
+//! schema deliberately does not.
 //!
 //! # Totality is the compiler's job, not a reviewer's
 //!
@@ -97,9 +101,11 @@ const NOTE: &str = "GENERATED FILE — DO NOT EDIT. Every message the wrapper \
      src/driver.rs. A message \
      with an optional member appears twice — `full` populates every optional \
      field, `minimal` omits every one that may be omitted — so a field \
-     changing between required and optional is a diff here. This is a corpus, not a JSON Schema: see \
-     crates/stella-plugin/src/wire_corpus.rs for what that does and does not \
-     catch (#3532).";
+     changing between required and optional is a diff here. This is a corpus, \
+     not a JSON Schema; wrapper.schema.json is the derived schema beside it, \
+     and neither subsumes the other — see \
+     crates/stella-plugin/src/wire_corpus.rs and src/wire_schema.rs for what \
+     each does and does not catch (#3532).";
 
 /// Every committed artifact, as `(filename, contents)`.
 ///

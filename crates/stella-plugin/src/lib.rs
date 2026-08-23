@@ -114,6 +114,13 @@ mod wire;
 /// nothing, so a default build never compiles it.
 #[cfg(feature = "schema")]
 pub mod wire_corpus;
+/// The derived JSON Schema for the socket's two point messages, published
+/// beside the corpus and gate-checked with it (#3532).
+///
+/// Behind the same feature, for the same reason, and now that reason has teeth:
+/// this is the module that pulls in `schemars`.
+#[cfg(feature = "schema")]
+pub mod wire_schema;
 mod wrapper;
 
 // The host-side data and logic behind a candidate grant — moved here from

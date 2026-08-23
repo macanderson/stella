@@ -10,28 +10,30 @@
 //! cargo run -p stella-plugin --features schema --bin export-wrapper-wire -- <out-dir>
 //! ```
 //!
-//! One file lands in `<out-dir>` (`docs/wire/` in the repo):
+//! Two files land in `<out-dir>` (`docs/wire/` in the repo):
 //!
 //! - `wrapper.wire.json` — every message the socket carries, in both its
 //!   fullest and its emptiest legal form, serialized by the same `Serialize`
-//!   impls the transport uses.
+//!   impls the transport uses;
+//! - `wrapper.schema.json` — JSON Schema 2020-12 for the request and the
+//!   response, derived by `schemars` from the types (#3532).
 //!
-//! It is a corpus rather than a JSON Schema, for the reason
-//! [`stella_plugin::wire_corpus`] states at length: a `schemars` schema needs a
-//! `JsonSchema` impl on the types themselves, and a hand-written one here would
-//! be a second copy of the contract. What it catches and what it does not is
-//! spelled out there (#3532).
+//! Neither subsumes the other and both are committed: a schema states shapes a
+//! corpus cannot show (a widened scalar, a string format), and a corpus pins
+//! the bytes a schema cannot recover.
+//! [`stella_plugin::wire_schema`] argues the split where a reader meets it.
 //!
 //! Byte-deterministic: run it twice and the second run produces no diff.
 //! `scripts/check-wire-schema.sh` depends on exactly that.
 //!
 //! Only exists when the `schema` feature is on (`required-features` in
-//! Cargo.toml), so a default build of the workspace never compiles it.
+//! Cargo.toml), so a default build of the workspace never compiles it — nor
+//! `schemars`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use stella_plugin::wire_corpus;
+use stella_plugin::{wire_corpus, wire_schema};
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
@@ -49,7 +51,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let artifacts = match wire_corpus::artifacts() {
+    let mut artifacts = match wire_corpus::artifacts() {
         Ok(artifacts) => artifacts,
         Err(err) => {
             eprintln!("export-wrapper-wire: {err}");
@@ -61,6 +63,9 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    // Cannot fail: everything it writes is a `serde_json::Value`, which is the
+    // whole of `wire_schema::artifacts`'s signature.
+    artifacts.extend(wire_schema::artifacts());
 
     for (name, body) in artifacts {
         let path = out_dir.join(name);

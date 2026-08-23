@@ -92,6 +92,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// messages (module docs). A third point is a design change, not a new value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum WrapperPoint {
     /// Before the loop is asked for a turn.
     BeforeTurn,
@@ -127,6 +128,12 @@ impl std::fmt::Display for WrapperPoint {
 /// them silently (#3500 — see this module's `Envelope`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "point", content = "body", rename_all = "snake_case")]
+// The reader denies unknown envelope keys by hand (`Envelope`, below) rather
+// than by attribute, so the derived schema would otherwise claim the socket
+// accepts keys it refuses. Spelled here so the published contract describes
+// the reader that actually runs (#3532).
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(deny_unknown_fields))]
 pub enum WrapperRequest {
     /// Ask the wrapper to contribute to a turn that has not run yet.
     BeforeTurn(BeforeTurnRequest),
@@ -189,6 +196,10 @@ impl WrapperRequest {
 /// refused the same way when it carries a key this host does not know.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "point", content = "body", rename_all = "snake_case")]
+// [`WrapperRequest`]'s reason, unchanged: a hand-written reader that refuses
+// unknown envelope keys needs the attribute for the schema to say so.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(deny_unknown_fields))]
 pub enum WrapperResponse {
     /// What the wrapper contributes to the turn about to run.
     BeforeTurn(BeforeTurnResponse),
@@ -290,6 +301,7 @@ impl WrapperResponse {
 /// grant cross to a process in any language.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CandidateGrant {
     /// The name the host minted for this workspace, and the only thing that
     /// re-addresses it. Opaque: see [`CandidateHandle`].
@@ -336,6 +348,7 @@ impl CandidateGrant {
 /// one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TestPlan {
     /// The test runner executable, from the host's closed runner vocabulary.
     pub program: String,
@@ -378,6 +391,7 @@ impl TestPlan {
 /// a flip's precondition and the next clean run would be credited as a fix.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum TestBaseline {
     /// The host did not run the invocation before the turn, so nothing is
     /// claimed about it.
@@ -400,6 +414,7 @@ pub enum TestBaseline {
 /// (`doc:wrapper-socket` §6).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BeforeTurnRequest {
     /// The version this message is written at.
     pub protocol_version: u32,
@@ -408,6 +423,13 @@ pub struct BeforeTurnRequest {
     pub wrapper: String,
     /// Which declared stage this call is for. `before_turn` runs once per
     /// stage the resolved [`StageProgram`](crate::StageProgram) says runs.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "Which declared stage this call is for. before_turn runs once per \
+                           stage the host resolved this wrapper's declared order down to."
+        )
+    )]
     pub stage: StageName,
     /// Which round of the wrapper's loop this is; `0` for the first turn.
     pub round: u32,
@@ -429,6 +451,7 @@ pub struct BeforeTurnRequest {
 /// loop itself, and nothing in this type is a channel into it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BeforeTurnResponse {
     /// The version this message is written at.
     pub protocol_version: u32,
@@ -449,13 +472,25 @@ pub struct BeforeTurnResponse {
     pub scope: Vec<String>,
     /// Signals this stage publishes for later stages of the same turn to read.
     ///
-    /// **A declared gap, not a silence** (invariant 10's discipline): the host
-    /// validates these values ([`PublishedSignal::is_well_typed`]) but has
-    /// nowhere to feed them yet — [`Wrapper::resolve`](crate::Wrapper::resolve)
-    /// takes one up-front [`SignalValues`](crate::SignalValues) snapshot, so a
-    /// value a stage publishes mid-turn cannot reach the condition that reads
-    /// it. That is #3491, and the host sequence that would consume these is
-    /// #3494.
+    /// The host validates each value ([`PublishedSignal::is_well_typed`]) and
+    /// carries it forward into the next stage's
+    /// [`BeforeTurnRequest::published`], so a later stage's *plugin* reads it.
+    ///
+    /// **A declared gap, not a silence** (invariant 10's discipline), and it is
+    /// narrower than it was: a published value still cannot reach a
+    /// *condition*, because [`Wrapper::resolve`](crate::Wrapper::resolve) takes
+    /// one up-front [`SignalValues`](crate::SignalValues) snapshot and decides
+    /// which stages run before any of them has published anything. Resolving
+    /// progressively is #3491.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "Signals this stage publishes for later stages of the same turn to \
+                           read. The host validates each value's type and carries it forward \
+                           into the next stage's request. It does not change which stages run: \
+                           that is resolved once, before the first stage."
+        )
+    )]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub publish: Vec<PublishedSignal>,
 }
@@ -522,6 +557,7 @@ impl BeforeTurnResponse {
 /// cheap path — the one a contributor takes without noticing they took it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct VolatileContext {
     /// A short human-readable name for where this came from, for the journal
     /// and the deck. Not shown to the model as a header — the host decides
@@ -576,6 +612,7 @@ impl VolatileContext {
 /// stated for the socket that actually dispatches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PublishedSignal {
     /// Which signal.
     pub signal: Signal,
@@ -603,6 +640,7 @@ impl PublishedSignal {
 /// A published signal's value — the two shapes [`SignalKind`] enumerates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum SignalValue {
     /// A truth value.
     Boolean(bool),
@@ -617,6 +655,7 @@ pub enum SignalValue {
 /// pipeline no longer edits the engine's stream, and no plugin ever gets to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AfterTurnRequest {
     /// The version this message is written at.
     pub protocol_version: u32,
@@ -639,6 +678,14 @@ pub struct AfterTurnRequest {
     /// Additive (`PROTOCOL_VERSION` unchanged): a plugin written before this
     /// field existed sends and reads messages without it, and a host that
     /// omits it produces the identical bytes it always did.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "Which declared stage this evidence is about, mirroring the stage the \
+                           same round's before_turn named. Absent means this host runs no stage \
+                           program at all — never a default stage."
+        )
+    )]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage: Option<StageName>,
     /// Which round of the wrapper's loop just ran.
@@ -677,6 +724,7 @@ pub struct AfterTurnRequest {
 /// that a reader who *cares* can now ask.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TurnOutcome {
     /// Whether the engine reported the turn complete, as opposed to aborted.
     pub completed: bool,
@@ -697,6 +745,7 @@ pub struct TurnOutcome {
 /// The evidence a wrapper gathered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct AfterTurnResponse {
     /// The version this message is written at.
     pub protocol_version: u32,
@@ -771,6 +820,14 @@ impl EvidenceSet {
 /// must be a refusal rather than a silently weaker contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(
+    feature = "schema",
+    schemars(
+        description = "What a wrapper saw of the fail→pass flip. Closed: a host refuses a value \
+                       it does not know rather than reading it as a weaker one."
+    )
+)]
 pub enum FlipObservation {
     /// No flip was attempted — this wrapper's evidence is not a transition
     /// (`flip = "not-applicable"`), or no witness was authored this turn.

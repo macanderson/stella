@@ -9,18 +9,12 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-# OFF by default, mirroring stella-protocol's feature of the same name: it
-# gates `export-wrapper-wire`, which writes docs/wire/wrapper.wire.json, so a
-# default `cargo build -p stella-plugin` — i.e. every build of the shipping
-# binary — never compiles the exporter or the corpus it prints.
-#
-# It carries no dependency today, and that is the one difference from
-# stella-protocol worth knowing: the corpus is printed through the crate's own
-# `Serialize` impls rather than through `schemars`. When the JsonSchema derives
-# land on `wire.rs` (#3532) this becomes `schema = ["dep:schemars"]` and the
-# gate-checked artifact list grows a `.schema.json` beside the corpus; nothing
-# else about the wiring changes.
-schema = []
+# OFF by default, exactly as stella-protocol's feature of the same name: it
+# gates `export-wrapper-wire`, which writes docs/wire/wrapper.{wire.json,
+# schema.json}, so a default `cargo build -p stella-plugin` — i.e. every build
+# of the shipping binary — never compiles the exporter, the corpus it prints,
+# or schemars.
+schema = ["dep:schemars", "stella-protocol/schema"]
 
 # Near-leaf, deliberately: the engine never learns plugins exist (#3245 — the
 # host binds the grants to the engine's gates), so this crate must not depend
@@ -47,6 +41,23 @@ serde.workspace = true
 # here (invariant #4's round-trip tests), so the lockfile and the license
 # allow-list are unchanged by the move.
 serde_json.workspace = true
+# The second workspace edge this manifest's own comment asked to be argued
+# again rather than to cite the first one (#3532). Three things make it a
+# different kind of edge from stella-protocol's:
+#
+#   * it is **optional and off by default**, so no build of the shipping binary
+#     compiles it — `[[bin]] required-features` keeps the only consumer behind
+#     the same switch. A default `cargo tree -p stella-plugin` is unchanged;
+#   * it is already a workspace dependency (`stella-protocol` and `stella-serve`
+#     both take it under a `schema` feature of their own), so it adds nothing to
+#     the license allow-list and no new vendor to audit;
+#   * it removes a copy rather than adding one, which is the test the
+#     stella-protocol edge was admitted on. `wrapper.wire.json` is a corpus
+#     because a `JsonSchema` impl can only be written where the type is defined
+#     and `wire.rs` was held elsewhere at the time; the alternative to this
+#     dependency is a hand-written schema beside the types, which is the second
+#     copy of the contract docs/wire/ exists to prevent.
+schemars = { workspace = true, optional = true }
 stella-protocol = { path = "../stella-protocol" }
 thiserror.workspace = true
 toml.workspace = true
