@@ -15,6 +15,12 @@
 
 use stella_protocol::{BudgetMode, ModelCallRole, StageKind, StageName};
 
+// Doc-link target only: named in `TurnOpening::queued_steer`'s docs, gated by
+// the fold in `super`. `cfg(doc)` keeps the intra-doc link resolving without
+// an import a normal build would flag as unused.
+#[cfg(doc)]
+use stella_protocol::SteerCause;
+
 /// Whether one model call is the one **answering the turn**, and so may supply
 /// the model name on SPEC 6.1's opening rule.
 ///
@@ -109,6 +115,30 @@ pub struct TurnOpening {
     /// same reason: a rule printing `budget $0.00` over an uncapped run would
     /// state a cap nobody set.
     pub budget_usd: Option<f64>,
+    /// The steer **a person** made mid-turn that this turn consumed (SPEC
+    /// 6.1's `queued:` label).
+    ///
+    /// The composer promises `⏎ queue (never blocks)`, and a queue that never
+    /// blocks needs a visible payoff — the moment what you typed mid-turn
+    /// actually got picked up. That is what this names (#4185).
+    ///
+    /// Back-filled by the turn's own first
+    /// [`stella_protocol::AgentEvent::Steered`] whose
+    /// [`SteerCause::is_from_a_person`] holds, exactly as [`Self::model`] is
+    /// back-filled by the turn's first worker call (#4183) — a steer is
+    /// consumed *after* the rule is drawn, so the field opens as `None` and
+    /// the deck's settled-prefix fold re-renders the rule when it arrives.
+    /// First write wins, for the same reason: a second steer does not rewrite
+    /// what the turn opened by consuming.
+    ///
+    /// The [`SteerCause`] gate is the whole point of the field's existence.
+    /// The engine's loop and stall rungs emit the same event, and a rule that
+    /// labelled a stall-rung auto-steer as something the user queued would be
+    /// worse than the blank it replaces — which is why this label sat unfed
+    /// until the cause was on the wire (#3622). A legacy event decoding as
+    /// [`SteerCause::Unknown`] keeps the blank, which is honest rather than a
+    /// guess.
+    pub queued_steer: Option<String>,
 }
 
 /// What SPEC 6.1's receipt says, stamped onto the entry that closes a turn.

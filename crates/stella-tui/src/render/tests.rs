@@ -21,7 +21,7 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, MediaJobState, MediaKind, PrStatus,
-    StageKind, SubAgentStatus,
+    StageKind, SteerCause, SubAgentStatus,
 };
 
 mod block_rail;
@@ -600,6 +600,7 @@ fn a_turn_opens_on_a_labelled_rule() {
             turn: 4,
             model: Some("kimi-k3".into()),
             budget_usd: Some(0.60),
+            queued_steer: None,
         }),
     };
     let text = recall_text(&entry, false, 100);
@@ -634,6 +635,7 @@ fn an_opening_rule_names_no_model_or_budget_it_was_never_told() {
                 turn: 1,
                 model: None,
                 budget_usd: None,
+                queued_steer: None,
             }),
         },
         false,
@@ -1257,4 +1259,99 @@ fn an_unmeasured_recall_latency_is_omitted_not_printed_as_zero() {
     *latency_ms = 0;
     let text = recall_text(&entry, false, 100);
     assert!(!text.contains("0ms"), "{text}");
+}
+
+/// Fold a turn that opens and is then steered, and hand back what the opening
+/// rule renders on the live path — `SessionModel::apply` → `entry_lines`, not
+/// a hand-built [`crate::model::TurnOpening`].
+///
+/// The renderer half has been covered since #4123
+/// (`v2::transcript::tests::a_consumed_steer_is_named_on_the_turn_rule`); what
+/// was missing, and what the two tests below are, is the producer.
+fn opening_rule_of_a_steered_turn(cause: SteerCause) -> String {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::Stage {
+        name: StageKind::Execute.into(),
+        scope: stella_protocol::StageScope::Run,
+    });
+    model.apply(&AgentEvent::Steered {
+        text: "also fix the flake".into(),
+        cause,
+    });
+    let entry = model
+        .transcript
+        .iter()
+        .find(|e| matches!(e, TranscriptEntry::Stage { opens: Some(_), .. }))
+        .expect("the turn opened on a rule");
+    recall_text(entry, false, 120)
+}
+
+/// SPEC 6.1: the steer a turn consumed is named on that turn's opening rule.
+///
+/// This is the payoff the composer's `⏎ queue (never blocks)` promises, and it
+/// is the witness for #4185. Before it, `turn_begin_rows` passed
+/// `queued_steer: None` unconditionally — the renderer worked and nothing on
+/// the live path could ever reach it, so the label was a field with no
+/// producer.
+///
+/// Back-filled after the rule is drawn, exactly as `TurnOpening::model` is
+/// (#4183): a steer lands mid-turn, so there is nothing to stamp at the
+/// boundary.
+#[test]
+fn a_user_steer_is_named_on_the_rule_of_the_turn_that_consumed_it() {
+    let text = opening_rule_of_a_steered_turn(SteerCause::User);
+    assert!(
+        text.contains("queued: \"also fix the flake\""),
+        "the rule did not name the steer this turn consumed:\n{text}"
+    );
+}
+
+/// …and **only** a person's steer.
+///
+/// The engine's two automatic rungs emit the same `AgentEvent::Steered`, and a
+/// rule labelling a stall-rung auto-steer as something the user queued would be
+/// worse than the blank it replaces — which is exactly why #4185 sat blocked on
+/// #3622 rather than guessing.
+///
+/// `Unknown` is in the sweep for the same reason: a session recorded before the
+/// cause existed must keep its blank rather than be attributed to a person.
+///
+/// This is the half that would pass trivially against a fix that never fed the
+/// label at all, so it is evidence only when read beside its twin above.
+#[test]
+fn an_engine_authored_steer_leaves_the_turn_rule_blank() {
+    for cause in [SteerCause::Loop, SteerCause::Stall, SteerCause::Unknown] {
+        let text = opening_rule_of_a_steered_turn(cause);
+        assert!(
+            !text.contains("queued:"),
+            "{cause:?} is not the user speaking, and the rule said it was:\n{text}"
+        );
+    }
+}
+
+/// The steer keeps its own `(steered mid-turn)` transcript row either way.
+///
+/// The rule says what the turn opened by consuming; the row says when it
+/// landed. Dropping the row in favour of the label would lose the position,
+/// and the two rungs that get no label would lose their record entirely.
+#[test]
+fn a_steer_keeps_its_own_row_whatever_its_cause() {
+    for cause in [SteerCause::User, SteerCause::Loop] {
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::Stage {
+            name: StageKind::Execute.into(),
+            scope: stella_protocol::StageScope::Run,
+        });
+        model.apply(&AgentEvent::Steered {
+            text: "also fix the flake".into(),
+            cause,
+        });
+        assert!(
+            model.transcript.iter().any(|e| matches!(
+                e,
+                TranscriptEntry::User(t) if t.starts_with("(steered mid-turn)")
+            )),
+            "{cause:?} lost its transcript row"
+        );
+    }
 }

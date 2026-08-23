@@ -214,6 +214,7 @@ mod tests {
         });
         fold.observe(&AgentEvent::Steered {
             text: "secret".to_string(),
+            cause: stella_protocol::SteerCause::User,
         });
         assert_eq!(fold.finish(), TurnTally::default());
     }

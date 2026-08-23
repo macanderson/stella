@@ -1,5 +1,5 @@
 use super::*;
-use stella_protocol::{StageKind, ToolCall, ToolOutput};
+use stella_protocol::{StageKind, SteerCause, ToolCall, ToolOutput};
 
 fn reg(id: &str) -> Inbound {
     Inbound::Register(AgentMeta::new(id, format!("goal for {id}"), 0))
@@ -696,6 +696,7 @@ fn a_steered_ack_claims_the_prompt_that_carried_it() {
         "lead",
         AgentEvent::Steered {
             text: "fix the tests".into(),
+            cause: SteerCause::User,
         },
     ));
     assert_eq!(w.queue.pending(), 2, "the steer's own row is gone");
@@ -721,9 +722,37 @@ fn an_engine_authored_steer_never_claims_someone_elses_prompt() {
         "lead",
         AgentEvent::Steered {
             text: "you have repeated the same tool call three times".into(),
+            cause: SteerCause::Loop,
         },
     ));
     assert_eq!(w.queue.pending(), 1);
+}
+
+/// …and it is the **cause** that says so, not a lucky text mismatch.
+///
+/// `an_engine_authored_steer_never_claims_someone_elses_prompt` above passes
+/// on either code, because the nudge's prose happens not to match the queued
+/// row. This is the same shape with the coincidence removed: an engine steer
+/// whose text is byte-identical to a waiting prompt. Before the cause was on
+/// the wire (#3622) the deck had nothing else to read, so it dropped the
+/// user's still-waiting row and told them it had been delivered.
+#[test]
+fn a_loop_steer_never_claims_a_prompt_whose_text_it_matches() {
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    w.queue.enqueue("> retry the build".into(), 1);
+    w.apply_inbound(&ev(
+        "lead",
+        AgentEvent::Steered {
+            text: "retry the build".into(),
+            cause: SteerCause::Loop,
+        },
+    ));
+    assert_eq!(
+        w.queue.pending(),
+        1,
+        "the engine's own nudge consumed a prompt the user is still waiting on"
+    );
 }
 
 /// Two identical steers are two prompts the user typed twice, so the first
@@ -739,6 +768,7 @@ fn identical_steers_claim_one_row_each() {
         "lead",
         AgentEvent::Steered {
             text: "again".into(),
+            cause: SteerCause::User,
         },
     );
     w.apply_inbound(&ack);

@@ -638,7 +638,7 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         AgentEvent::Unknown { event_type, .. } => Some(unknown_event(event_type)),
         AgentEvent::SubAgent { phase } => Some(sub_agent(phase)),
         AgentEvent::Retry { attempt, reason } => Some(retry(*attempt, reason)),
-        AgentEvent::Steered { text } => Some(steered(text)),
+        AgentEvent::Steered { text, .. } => Some(steered(text)),
         AgentEvent::TurnParked {
             description,
             poll_interval_secs,

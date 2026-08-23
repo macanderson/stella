@@ -1237,4 +1237,67 @@ fn unknown_block_kind_degrades_to_other_not_a_parse_error() {
     assert_eq!(zone, CacheZone::Other);
 }
 
+/// #3622: the three rungs that emit `Steered` are now separable on the wire,
+/// and the field round-trips (invariant #4).
+///
+/// The failing half before this field existed is not subtle — there was
+/// nothing to read but `text`, and `stall_steer_text`'s prefix *extends*
+/// `steer_text`'s, so even a prefix test was a substring test on English.
+#[test]
+fn a_steer_names_its_cause_on_the_wire() {
+    for cause in [
+        SteerCause::User,
+        SteerCause::Loop,
+        SteerCause::Stall,
+        SteerCause::Unknown,
+    ] {
+        let event = AgentEvent::Steered {
+            text: "do the other thing".into(),
+            cause,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"type\":\"steered\""), "{json}");
+        match serde_json::from_str::<AgentEvent>(&json).unwrap() {
+            AgentEvent::Steered { cause: back, .. } => assert_eq!(back, cause),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+    // The two automatic rungs are distinguishable without reading the prose,
+    // which is the whole point of the field.
+    let loop_json = serde_json::to_string(&AgentEvent::Steered {
+        text: "same words".into(),
+        cause: SteerCause::Loop,
+    })
+    .unwrap();
+    let stall_json = serde_json::to_string(&AgentEvent::Steered {
+        text: "same words".into(),
+        cause: SteerCause::Stall,
+    })
+    .unwrap();
+    assert_ne!(loop_json, stall_json);
+}
+
+/// An event recorded before `cause` existed decodes as `Unknown` — **never**
+/// as `User`.
+///
+/// The direction is the assertion. Every `Steered` in the recorded history
+/// came from one of the two automatic rungs (the user path did not emit
+/// through here at all until this change), so a `User` default would relabel
+/// the whole of it as human input and every tally reading it would be wrong in
+/// the one direction that matters (#3622).
+#[test]
+fn a_steer_recorded_before_the_cause_existed_is_not_called_the_user() {
+    let old = r#"{"type":"steered","text":"you have repeated the same tool call"}"#;
+    match serde_json::from_str::<AgentEvent>(old).unwrap() {
+        AgentEvent::Steered { cause, .. } => {
+            assert_eq!(cause, SteerCause::Unknown, "missing cause must not guess");
+            assert!(
+                !cause.is_from_a_person(),
+                "a legacy steer must not be attributed to the user"
+            );
+        }
+        other => panic!("old stream must parse: {other:?}"),
+    }
+}
+
 mod tag_table;

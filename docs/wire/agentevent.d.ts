@@ -1047,6 +1047,23 @@ export type StageName = string;
 export type StageScope = "turn" | "run";
 
 /**
+ * What put the message into the turn, for [`AgentEvent::Steered`].
+ *
+ * Three different things emit that event and they are different pathologies
+ * with different remedies: a person interrupting, the stuck-loop rung, and
+ * the stalled-turn rung (#2022). Before this field the only way to tell them
+ * apart was to match the English prose — and `STALL_STEER_PREFIX` *extends*
+ * `LOOP_STEER_PREFIX`, so even the prefix test was a substring test on a
+ * sentence (#3622). That is precisely the practice
+ * [`AgentEvent::LoopDetected`] was introduced to end for the loop rung.
+ *
+ * The consequence was that "the turn was steered" was one bucket, so no
+ * consumer could answer *how often does the stall rung actually fire* — the
+ * question that decides whether the rung earns its keep.
+ */
+export type SteerCause = "unknown" | "user" | "loop" | "stall";
+
+/**
  * One point in a sub-agent's lifecycle. Exactly one `Started` and exactly
  * one `Finished` are emitted per spawn, in that order, even when the child
  * is refused before its first model call (a refusal still brackets, so a
@@ -1384,6 +1401,13 @@ export type AgentEvent = {
   ts?: number;
   type: "retry";
 } | {
+  /**
+   * Who or what steered. `serde(default)` so streams recorded before
+   * this field parse — as [`SteerCause::Unknown`], never as
+   * [`SteerCause::User`], which would relabel the whole recorded
+   * history as human input.
+   */
+  cause?: SteerCause;
   text: string;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
