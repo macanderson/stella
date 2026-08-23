@@ -1058,6 +1058,7 @@ mod tests {
             participation: Participation::Observer,
             hooks: vec![HookEvent::PreToolUse],
             points: vec![WrapperPoint::BeforeTurn],
+            before_turn_stages: Vec::new(),
             calls: vec![HostCall::Recall],
             max_calls: None,
             max_fanout_width: None,
@@ -1066,6 +1067,11 @@ mod tests {
         assert!(!smuggled.permits_hook(HookEvent::PreToolUse));
         assert!(!smuggled.permits_point(WrapperPoint::BeforeTurn));
         assert!(!smuggled.permits_call(HostCall::Recall));
+        // The stage filter is a strengthening of the point filter, so it
+        // inherits the grade check rather than reopening it: an empty stage
+        // list is "every stage", and a grade below steering still reaches
+        // nothing (#3543).
+        assert!(!smuggled.permits_stage(WrapperPoint::BeforeTurn, &StageName::new("execute")));
     }
 
     /// **Witness for #3501 item 2.** A manifest declares the socket points it
