@@ -419,6 +419,8 @@ pub(crate) async fn run_goal_wrapped_turn(
         bound.report(None, OutputFormat::Text, report);
     }
 
+    // The rounds measured themselves as they closed (#4159, above); this is the
+    // run's single terminator.
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
     drop(tx);
