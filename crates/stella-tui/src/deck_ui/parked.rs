@@ -71,8 +71,10 @@ mod tests {
 
     fn approval() -> ApprovalRequest {
         ApprovalRequest {
-            tool: "bash".into(),
-            read_only: false,
+            parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+                name: "bash".into(),
+                read_only: false,
+            },
             reason: "matched rule no-destructive-shell".into(),
             gate: "command.started".into(),
             subject: Some("rm -rf build/".into()),
