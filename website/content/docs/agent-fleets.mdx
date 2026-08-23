@@ -133,6 +133,17 @@ Every task field, in the shape the plan parser accepts:
     duration. Matched as exact strings, so spell each path one way throughout
     the plan.
   </OptionCard>
+  <OptionCard name="test_command" defaultValue="none">
+    The command that decides this task — the oracle a wrapper plugin runs under
+    `--pipeline <variant>` to observe red-before/green-after on the attempt's
+    own tree. Per task, because two tasks touching different subsystems are
+    decided by different commands. It must be one the host's closed runner
+    vocabulary accepts (`cargo`, `pytest`, `sh`, …); anything else fails that
+    task's dispatch by name and leaves the rest of the fan-out running. A task
+    that declares none — every positional `stella fleet "…"` prompt included —
+    gives a witness-flavoured plugin no flip to observe, so it reports
+    `Undecided` for that task rather than crediting one.
+  </OptionCard>
 </CardGrid>
 
 A plan exercising all of it — three waves, one isolated task, and claims that

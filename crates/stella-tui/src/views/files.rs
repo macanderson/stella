@@ -4,7 +4,7 @@
 //! path) touched this session — as a table of File · Agent · Op · + · - · ×,
 //! plus a summary footer. `Enter` (handled in
 //! `deck_ui::handle_files_key`) toggles a diff pane below the list; the diff
-//! TEXT is looked up via the owning agent's `SessionModel::files[].latest_diff`
+//! TEXT is looked up via the owning agent's `SessionModel::files[].latest_diff()`
 //! — the single event-borne diff data path (`deck.rs` L-T5) — never
 //! re-derived here. All colors come from [`crate::theme`].
 
@@ -349,7 +349,7 @@ fn render_diff_pane(
 }
 
 /// The diff TEXT for a ledger record: found via the owning agent's
-/// `SessionModel::files[].latest_diff` (`deck.rs` L-T5) — never re-derived.
+/// `SessionModel::files[].latest_diff()` (`deck.rs` L-T5) — never re-derived.
 /// Borrowed, not cloned: this runs on every ~30 fps frame the diff pane is
 /// open, and a single mutation's diff can be hundreds of KiB.
 fn find_diff<'a>(model: &'a WorkspaceModel, rec: &FileRecord) -> Option<(&'a str, bool)> {
@@ -461,11 +461,12 @@ mod tests {
     /// diff an earlier one delivered (#1741).
     ///
     /// This is the second, independent route to `(no diff captured)` for a
-    /// file that has a diff. `touch_file`'s mutation arm assigned
-    /// `latest_diff = diff.clone()` unconditionally, so a mutating
-    /// `FileChange` carrying `diff: None` erased it — while `remember_diff`
-    /// early-returns on `None`, leaving the good text in `recent_diffs` one
-    /// field away, which `find_diff` never read.
+    /// file that has a diff. `touch_file`'s mutation arm used to assign an
+    /// owned `latest_diff` field unconditionally, so a mutating `FileChange`
+    /// carrying `diff: None` erased it — while `remember_diff` early-returned
+    /// on `None`, leaving the good text in `recent_diffs` one field away,
+    /// which `find_diff` never read. There is no second field to disagree
+    /// with the history now (#4365): `FileState::latest_diff` reads it.
     ///
     /// That event shape is reachable, not theoretical: the pipeline's adoption
     /// re-emit builds each change from `git diff --name-status` and then
@@ -597,7 +598,7 @@ mod tests {
             "what the session did to the tree is not conversation"
         );
         assert_eq!(
-            session.files[0].latest_diff.as_deref(),
+            session.files[0].latest_diff(),
             Some("@@ -1,0 +1,1 @@\n+kept\n")
         );
     }

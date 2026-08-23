@@ -112,7 +112,7 @@ pub use event::{
     KNOWN_TYPE_TAGS, MODEL_CALL_FAILED_PREFIX, ManifestEntry, MediaArtifactRef, MediaJobState,
     MediaKind, ModelCallRole, PolicyKind, PrStatus, ProofStep, ProposedHunk, ProviderShare,
     ScopeProposal, StageKind, StageScope, SteerCause, TaskItem, TaskStatus, UNKNOWN_MODEL,
-    UsageIncompleteReason, VerdictEvidence,
+    UsageIncompleteReason, VerdictEvidence, Withholder,
 };
 // The *open* stage vocabulary (`doc:roleless-core`). `StageKind` above stays
 // the closed set of boundaries this host emits; `StageName` is what the wire

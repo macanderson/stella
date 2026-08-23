@@ -22,17 +22,17 @@
  │ ⊙ apps/app/automations/page.tsx
  │ ⎿ 312 lines                                                                                                                               42ms
 
-☰  plan  5/7  ·  Workflows canvas
-                                                    ┌ plan  pending approval · 3 steps  x skip · esc close ┐
-⏸ plan  Refactor the automations store into a shared│Refactor the automations store into a shared worksp…  │
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                                ┌ plan  pending approval · 3 steps  x skip · esc close ┐                         +4 −1 · 18ms
+ │     10 -  const items = []                       │Refactor the automations store into a shared worksp…  │
+ │     10 +  const items = useAutomations()         │                                                      │
+ │     11 +  const [q, setQ] = useState("")         │▸ ○ 1. extract types                                  │
+ │     12 +  const filtered = filter(items, q)      │  ○ 2. move hooks                                     │
+ │     13 +  const onNew = () => open()             │  ○ 3. update 9 imports                               │
                                                     │                                                      │
-                                                    │▸ ○ 1. extract types                                  │
-                                                    │  ○ 2. move hooks                                     │
-                                                    │  ○ 3. update 9 imports                               │
-                                                    │                                                      │
-                                                    │repo      macanderson/web-app ⎇ feat/automations-store│
+☰  plan  5/7  ·  Workflows canvas                   │repo      macanderson/web-app ⎇ feat/automations-store│
                                                     │write     packages/automations/** · apps/app/automatio│
-                                                    │read      apps/** · packages/**  (2 globs)            │
+⏸ plan  Refactor the automations store into a shared│read      apps/** · packages/**  (2 globs)            │
                                                     │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │
                                                     │models    think — · work glm-5.2-air · verify —       │
                                                     │shell     allowlisted                                 │

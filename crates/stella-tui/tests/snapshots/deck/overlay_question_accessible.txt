@@ -22,12 +22,12 @@
  │ ⊙ apps/app/automations/page.tsx
  │ ⎿ 312 lines                                                                                                                               42ms
 
-☰  plan  5/7  ·  Workflows canvas
-
-⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
-
-
-
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations()
+ │     11 +  const [q, setQ] = useState("")
+ │     12 +  const filtered = filter(items, q)
 ┌ question ──────────────────────────────────────────────────────────────────────────────────────── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐
 │from the `research-child` sub-agent                                                                                                                           │
 │                                                                                                                                                              │
