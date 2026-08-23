@@ -1528,13 +1528,18 @@ pub mod cards;
 /// 2. help overlay open — Esc/`q`/`?` close it; other keys scroll it
 /// 3. queue editor open — Esc closes the editor
 /// 4. slash popup active — Esc dismisses the popup (clears the composer)
-/// 5. plan-review dialog pending — Esc aborts the plan (from its refine
-///    input, the first Esc only backs out to the options)
+/// 5. the parked approval / question cards — Esc answers them (deny /
+///    cancel), claimed first of all by `parked`
 /// 6. Files tab with the diff open — Esc closes the diff
 /// 7. Session tab with a message highlighted — Esc clears the highlight
 /// 8. Session tab with the ctrl+o expand-ALL overlay on — Esc collapses it
 ///    (each Esc peels one layer: highlight first, then the overlay, so
 ///    every way into an expanded view has a graceful way back out)
+/// 8a. an opened sub-agent lane, empty composer — Esc returns to the agent
+///     that dispatched it ([`focus::back_to_dispatcher`]). Leaving a lane is
+///     the most common thing Esc means there, and it used to be rule 10:
+///     one press at a worker was an immediate hard cancel. With a draft in
+///     the composer Esc still steers the lane (rule 10's steer form).
 /// 9. armed by a turn-stopping Esc within [`ESC_DOUBLE_WINDOW`], no other
 ///    key in between — Esc escalates to [`WorkspaceInput::StopAndHold`]
 ///    (cancel, requeue the interrupted prompt at the front, hold dispatch
@@ -1544,13 +1549,20 @@ pub mod cards;
 ///     auto-dispatches the next queued prompt)
 /// 11. otherwise Esc is ignored
 ///
+/// Rules 6–8a are the peel half; `⌫` from an empty composer runs exactly
+/// those and never reaches 9–10 ([`focus::back`]).
+///
 /// The composer's content never gates rules 9–10: the cursor always lives in
 /// the global composer, so a stop must leave a typed draft untouched. A
 /// pending ask-user gate never reaches them either — it folds the agent to
 /// [`AgentStatus::WaitingInput`], which fails rule 10's `Running` check.
 mod create;
 pub mod dispatch;
+/// The focus tree — `←`/`→` siblings, `⏎` open, `⌫` back.
+pub mod focus;
 mod gates;
+/// `↑`/`↓`/`j`/`k`/`⇞`/`⇟`/`Home`/`End` — one vocabulary for every list and body.
+pub mod list_nav;
 mod local;
 mod parked;
 pub mod sessions;
@@ -1749,8 +1761,16 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // that is byte-identical to Tab on terminals without the kitty keyboard
     // protocol (which `term.rs` pushes only best-effort), and Tab is bound to
     // tab-switching — the collision would be silent and terminal-dependent.
-    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('g')) {
-        return open_inspect_overlay(ui);
+    // Ctrl-E (every session) and Ctrl-K (context) open the SESSIONS and
+    // CONTEXT overlays the same way; they lived on `←`/`→`, which the focus
+    // tree now spends on the tab strip (`focus`).
+    if ctrl {
+        match key.code {
+            KeyCode::Char('g') => return open_inspect_overlay(ui),
+            KeyCode::Char('e') => return open_sessions_overlay(ui),
+            KeyCode::Char('k') => return open_context_overlay(ui),
+            _ => {}
+        }
     }
 
     // Ctrl-T toggles the queue editor from anywhere.
@@ -1910,22 +1930,6 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         return action;
     }
 
-    // `←` from an empty composer on the Session tab opens the SESSIONS
-    // overlay — every running stella session on this machine, grouped by
-    // status. `→` opens the CONTEXT overlay (this session's active skills +
-    // MCP servers) without leaving the transcript. Both are gated to the
-    // Session tab + full composer emptiness, so ←/→ on other tabs (Agents
-    // pane nav, Graph cursor, skills pickers) are untouched, and typing a
-    // prompt never trips them (handle_edit_key claims ←/→ once text exists).
-    if ui.tab == DeckTab::Session && ui.composer.is_empty() {
-        if matches!(key.code, KeyCode::Left) {
-            return open_sessions_overlay(ui);
-        }
-        if matches!(key.code, KeyCode::Right) {
-            return open_context_overlay(ui);
-        }
-    }
-
     // Focused-agent gates take precedence over normal composer editing, exactly
     // like the single-session shell — but they route to the focused agent.
     if let Some(agent) = focused_id(model, ui)
@@ -1971,6 +1975,28 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         return action;
     }
 
+    // …then the focus tree (`focus`): every key the active tab declined rises
+    // here. `←`/`→` step to the sibling tab, `⌫` backs up a level, `⏎` opens
+    // the highlighted message — all from an empty composer only, where none
+    // of them is editing.
+    if composer_empty && key.modifiers.is_empty() {
+        if let Some(dir) = focus::Dir::of(key.code) {
+            return focus::step_tab(dir, ui);
+        }
+        let action = match key.code {
+            KeyCode::Backspace => focus::back(model, ui),
+            KeyCode::Enter => focus::open_selected(model, ui),
+            // Esc's peel half (rule 8a): an opened lane goes back to its
+            // dispatcher. Claimed ahead of the interrupt so leaving a lane
+            // can never cancel it.
+            KeyCode::Esc => focus::back_to_dispatcher(model, ui),
+            _ => None,
+        };
+        if let Some(action) = action {
+            return action;
+        }
+    }
+
     // …then the turn-interrupt Esc (rules 9–10 of the precedence list): it
     // fires only once every other Esc context has declined the key. The
     // composer never claims Esc, so a typed draft survives both forms.
@@ -2004,43 +2030,16 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
 /// terminal, so a plain "any key closes" dismiss would make it unreadable.
 fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let (total, height) = (ui.metrics.help_total, ui.metrics.help_height);
-    match key.code {
-        // Close the overlay.
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
-            ui.help_open = false;
-            DeckAction::Handled
-        }
-        // Scrolling — the same vocabulary every scrollable tab uses.
-        KeyCode::Up | KeyCode::Char('k') => {
-            ui.help_scroll.scroll_up(1, total, height);
-            DeckAction::Handled
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            ui.help_scroll.scroll_down(1, total, height);
-            DeckAction::Handled
-        }
-        KeyCode::PageUp => {
-            ui.help_scroll.page_up(total, height);
-            DeckAction::Handled
-        }
-        KeyCode::PageDown | KeyCode::Char(' ') => {
-            ui.help_scroll.page_down(total, height);
-            DeckAction::Handled
-        }
-        KeyCode::Home => {
-            ui.help_scroll.to_top();
-            DeckAction::Handled
-        }
-        KeyCode::End => {
-            ui.help_scroll.to_bottom();
-            DeckAction::Handled
-        }
-        // Ctrl-C is handled by the caller (quit precedes every modal context).
-        // Any other key — modified or not — is swallowed so the overlay stays
-        // open and stable; typing into the composer behind it would be
-        // invisible and confusing.
-        _ => DeckAction::Handled,
+    if list_nav::closes(key) || matches!(key.code, KeyCode::Char('?')) {
+        ui.help_open = false;
+    } else {
+        list_nav::scroll(key, &mut ui.help_scroll, total, height, true);
     }
+    // Ctrl-C is handled by the caller (quit precedes every modal context).
+    // Any other key — modified or not — is swallowed so the overlay stays
+    // open and stable; typing into the composer behind it would be
+    // invisible and confusing.
+    DeckAction::Handled
 }
 
 /// Route one submitted prompt. The first submission after a double-Esc hold
@@ -2155,21 +2154,14 @@ pub(crate) fn open_inbox_overlay(ui: &mut DeckUi) -> DeckAction {
 fn handle_inbox_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let count = ui.notifications.len();
     ui.inbox_sel = ui.inbox_sel.min(count.saturating_sub(1));
+    if list_nav::closes(key) {
+        ui.inbox_open = false;
+        return DeckAction::Handled;
+    }
+    if list_nav::select(key, &mut ui.inbox_sel, count, true) {
+        return DeckAction::Handled;
+    }
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            ui.inbox_open = false;
-            DeckAction::Handled
-        }
-        KeyCode::Up => {
-            ui.inbox_sel = ui.inbox_sel.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.inbox_sel = (ui.inbox_sel + 1).min(count - 1);
-            }
-            DeckAction::Handled
-        }
         KeyCode::Enter => match ui.notifications.get(ui.inbox_sel).cloned() {
             Some(n) => match n.session_id {
                 // A session-linked notification: ⏎ marks it read (the
@@ -2207,91 +2199,53 @@ fn handle_inbox_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     }
 }
 
-/// The CONTEXT overlay key map: ↑/↓/PageUp/PageDown scroll, Esc/`→`/`q`
-/// close. Read-only — management lives on the SKILLS/MCP tabs. Modal.
+/// The CONTEXT overlay key map: the body scrolls ([`list_nav::scroll`]'s
+/// keys, the render clamps the offset), Esc/`q` close. Read-only —
+/// management lives on the SKILLS/MCP tabs. Modal.
 fn handle_context_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    match key.code {
-        KeyCode::Esc | KeyCode::Right | KeyCode::Char('q') => {
-            ui.context_open = false;
-            DeckAction::Handled
-        }
-        KeyCode::Up => {
-            ui.context_scroll = ui.context_scroll.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            // Render clamps to the content height it measures.
-            ui.context_scroll = ui.context_scroll.saturating_add(1);
-            DeckAction::Handled
-        }
-        KeyCode::PageUp => {
-            ui.context_scroll = ui.context_scroll.saturating_sub(10);
-            DeckAction::Handled
-        }
-        KeyCode::PageDown => {
-            ui.context_scroll = ui.context_scroll.saturating_add(10);
-            DeckAction::Handled
-        }
-        _ => DeckAction::Handled,
+    if list_nav::closes(key) {
+        ui.context_open = false;
+    } else {
+        list_nav::offset(key, &mut ui.context_scroll, true);
     }
+    DeckAction::Handled
 }
 
-/// The INSPECT overlay key map. Two modes: on the LIST, ↑/↓ move and Enter
-/// reconstructs the selected call; on the DETAIL, ↑/↓/PageUp/PageDown scroll
-/// and Esc/`←` returns to the list (rather than closing outright — stepping
-/// between calls is the common motion). Esc on the list closes. Modal.
+/// The INSPECT overlay key map. Two modes: on the LIST, the selection moves
+/// and `⏎`/`→` reconstructs the selected call; on the DETAIL, the body
+/// scrolls and `⌫`/`←`/Esc return to the list (rather than closing outright
+/// — stepping between calls is the common motion). `q` closes from either;
+/// Esc on the list closes. Modal.
 fn handle_inspect_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     if ui.inspect_view.is_some() || ui.inspect_pending {
-        return match key.code {
-            KeyCode::Esc | KeyCode::Left => {
+        match key.code {
+            KeyCode::Esc | KeyCode::Left | KeyCode::Backspace => {
                 // Back to the list, not out of the overlay.
                 ui.inspect_view = None;
                 ui.inspect_pending = false;
                 ui.inspect_scroll = 0;
-                DeckAction::Handled
             }
             KeyCode::Char('q') => {
                 ui.inspect_open = false;
                 ui.inspect_view = None;
                 ui.inspect_pending = false;
-                DeckAction::Handled
             }
-            KeyCode::Up => {
-                ui.inspect_scroll = ui.inspect_scroll.saturating_sub(1);
-                DeckAction::Handled
+            _ => {
+                list_nav::offset(key, &mut ui.inspect_scroll, true);
             }
-            KeyCode::Down => {
-                // Render clamps to the content height it measures.
-                ui.inspect_scroll = ui.inspect_scroll.saturating_add(1);
-                DeckAction::Handled
-            }
-            KeyCode::PageUp => {
-                ui.inspect_scroll = ui.inspect_scroll.saturating_sub(10);
-                DeckAction::Handled
-            }
-            KeyCode::PageDown => {
-                ui.inspect_scroll = ui.inspect_scroll.saturating_add(10);
-                DeckAction::Handled
-            }
-            _ => DeckAction::Handled,
-        };
+        }
+        return DeckAction::Handled;
+    }
+    if list_nav::closes(key) {
+        ui.inspect_open = false;
+        return DeckAction::Handled;
+    }
+    // The selection is clamped (unlike the scroll offsets): it indexes a
+    // vec the render must be able to trust.
+    if list_nav::select(key, &mut ui.inspect_sel, ui.inspect_calls.len(), true) {
+        return DeckAction::Handled;
     }
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            ui.inspect_open = false;
-            DeckAction::Handled
-        }
-        KeyCode::Up => {
-            ui.inspect_sel = ui.inspect_sel.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            // Clamp here (unlike the scroll offsets): the selection indexes a
-            // vec the render must be able to trust.
-            let last = ui.inspect_calls.len().saturating_sub(1);
-            ui.inspect_sel = ui.inspect_sel.saturating_add(1).min(last);
-            DeckAction::Handled
-        }
         KeyCode::Enter | KeyCode::Right => match ui.inspect_calls.get(ui.inspect_sel) {
             Some(call) => {
                 let (turn_instance, step, call_seq) = call.coordinate();
@@ -2824,34 +2778,13 @@ fn handle_skills_preview_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let Some(preview) = ui.skills.preview.as_mut() else {
         return DeckAction::Handled;
     };
-    match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            ui.skills.preview = None;
-        }
-        KeyCode::Char('o') if ctrl => {
-            ui.skills.preview = None;
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            preview.scroll = preview.scroll.saturating_sub(1);
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            // Upper bound is clamped to real content height at render time.
-            preview.scroll = preview.scroll.saturating_add(1);
-        }
-        KeyCode::PageUp => {
-            preview.scroll = preview.scroll.saturating_sub(10);
-        }
-        KeyCode::PageDown | KeyCode::Char(' ') => {
-            preview.scroll = preview.scroll.saturating_add(10);
-        }
-        KeyCode::Home => {
-            preview.scroll = 0;
-        }
-        KeyCode::End => {
-            // A large value; render clamps it down to the last page.
-            preview.scroll = u16::MAX;
-        }
-        _ => {}
+    // The render clamps the offset to the content it measures; `u16` is the
+    // widget's own scroll type.
+    let mut top = usize::from(preview.scroll);
+    if list_nav::closes(key) || (ctrl && matches!(key.code, KeyCode::Char('o'))) {
+        ui.skills.preview = None;
+    } else if list_nav::offset(key, &mut top, true) {
+        preview.scroll = u16::try_from(top).unwrap_or(u16::MAX);
     }
     DeckAction::Handled
 }
@@ -2871,20 +2804,13 @@ fn handle_skills_installed_key(
     if !is_ctrl_x {
         ui.skills.uninstall_armed = false;
     }
+    if list_nav::select(key, &mut ui.skills.sel, count, composer_empty) {
+        return Some(DeckAction::Handled);
+    }
     match key.code {
         KeyCode::Right => {
             ui.skills.focus = SkillsFocus::Search;
             ui.skills.status = None;
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Up => {
-            ui.skills.sel = ui.skills.sel.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.skills.sel = (ui.skills.sel + 1).min(count - 1);
-            }
             Some(DeckAction::Handled)
         }
         // space toggles enabled — but only from an empty composer, so a space
@@ -2992,15 +2918,13 @@ fn handle_skills_search_key(key: KeyEvent, ui: &mut DeckUi) -> Option<DeckAction
             ui.skills.status = None;
             Some(DeckAction::Handled)
         }
-        KeyCode::Up => {
-            ui.skills.search_sel = ui.skills.search_sel.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            let n = ui.skills.hits.len();
-            if n > 0 {
-                ui.skills.search_sel = (ui.skills.search_sel + 1).min(n - 1);
-            }
+        // A query in progress is a text input, and a text input with content
+        // claims `→` like the composer does — it must not leave the tab
+        // under a half-typed search. Empty, the key rises to the tab strip.
+        KeyCode::Right if !ui.skills.query.is_empty() => Some(DeckAction::Handled),
+        // The query is typed here, so only the arrow forms move the hits.
+        KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown => {
+            list_nav::select(key, &mut ui.skills.search_sel, ui.skills.hits.len(), false);
             Some(DeckAction::Handled)
         }
         // Preview the highlighted hit's rendered SKILL.md — fetched by the
@@ -3257,6 +3181,9 @@ fn handle_installed_browse_key(
     let count = ui.installed.entries.len();
     // A delete is two presses of `x` on the same row; anything else disarms.
     let armed = ui.installed.delete_armed.take();
+    if list_nav::select(key, &mut ui.installed.sel, count, composer_empty) {
+        return Some(DeckAction::Handled);
+    }
     match key.code {
         KeyCode::Char('x') if composer_empty => {
             let Some(entry) = ui.installed.selected().cloned() else {
@@ -3286,16 +3213,6 @@ fn handle_installed_browse_key(
                 name: entry.name,
                 scope: entry.scope,
             }))
-        }
-        KeyCode::Up => {
-            ui.installed.sel = ui.installed.sel.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.installed.sel = (ui.installed.sel + 1).min(count - 1);
-            }
-            Some(DeckAction::Handled)
         }
         // ⏎ opens the editor on the selected agent — the queue editor's
         // "pull it out to edit" idiom, over the pinned version's content.
@@ -3348,23 +3265,10 @@ fn handle_traces_key(
     composer_empty: bool,
 ) -> Option<DeckAction> {
     let (total, height) = (ui.metrics.trace_total, ui.metrics.trace_height);
+    if list_nav::scroll(key, &mut ui.trace_scroll, total, height, composer_empty) {
+        return Some(DeckAction::Handled);
+    }
     match key.code {
-        KeyCode::Up => {
-            ui.trace_scroll.scroll_up(1, total, height);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            ui.trace_scroll.scroll_down(1, total, height);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::PageUp => {
-            ui.trace_scroll.page_up(total, height);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::PageDown => {
-            ui.trace_scroll.page_down(total, height);
-            Some(DeckAction::Handled)
-        }
         // `f` cycles the per-agent filter (only when nothing is typed).
         KeyCode::Char('f') if composer_empty => {
             ui.trace_filter = cycle_filter(model, ui.trace_filter.as_deref());
@@ -3376,17 +3280,12 @@ fn handle_traces_key(
 
 fn handle_graph_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
     let node_count = ui.graph.as_ref().map(|g| g.nodes.len()).unwrap_or(0);
+    // The neighborhood is one list; `←`/`→` are the focus tree's sibling
+    // step (the tabs either side of GRAPH), not a second way to walk it.
+    if list_nav::select(key, &mut ui.graph_cursor, node_count, composer_empty) {
+        return Some(DeckAction::Handled);
+    }
     match key.code {
-        KeyCode::Left | KeyCode::Up => {
-            ui.graph_cursor = ui.graph_cursor.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Right | KeyCode::Down => {
-            if node_count > 0 {
-                ui.graph_cursor = (ui.graph_cursor + 1).min(node_count - 1);
-            }
-            Some(DeckAction::Handled)
-        }
         // `/` (filter-as-you-type) or Enter opens the file picker so a user can
         // re-root the neighborhood on any indexed file, not just the busiest
         // one the tab seeds. Gated on an empty composer so both keys stay
@@ -3434,19 +3333,14 @@ fn handle_graph_picker_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
         .map(|g| g.matching_files(&ui.graph_picker_query).len())
         .unwrap_or(0);
 
+    // A type-to-filter input: letters are the query, so only the arrow
+    // forms move the selection and only Esc closes.
+    if list_nav::select(key, &mut ui.graph_picker_sel, match_count, false) {
+        return DeckAction::Handled;
+    }
     match key.code {
         KeyCode::Esc => {
             ui.graph_picker_open = false;
-            DeckAction::Handled
-        }
-        KeyCode::Up => {
-            ui.graph_picker_sel = ui.graph_picker_sel.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            if match_count > 0 {
-                ui.graph_picker_sel = (ui.graph_picker_sel + 1).min(match_count - 1);
-            }
             DeckAction::Handled
         }
         KeyCode::Enter => {
@@ -3491,42 +3385,23 @@ fn handle_files_key(
     let count = model.ledger.records.len();
     if ui.files_diff_open {
         let (total, height) = (ui.metrics.files_diff_total, ui.metrics.files_diff_height);
-        match key.code {
-            KeyCode::Esc => {
-                ui.files_diff_open = false;
-                return Some(DeckAction::Handled);
-            }
-            KeyCode::Up => {
-                ui.files_diff_scroll.scroll_up(1, total, height);
-                return Some(DeckAction::Handled);
-            }
-            KeyCode::Down => {
-                ui.files_diff_scroll.scroll_down(1, total, height);
-                return Some(DeckAction::Handled);
-            }
-            KeyCode::PageUp => {
-                ui.files_diff_scroll.scroll_up(height.max(1), total, height);
-                return Some(DeckAction::Handled);
-            }
-            KeyCode::PageDown => {
-                ui.files_diff_scroll
-                    .scroll_down(height.max(1), total, height);
-                return Some(DeckAction::Handled);
-            }
-            _ => {}
+        if matches!(key.code, KeyCode::Esc) {
+            ui.files_diff_open = false;
+            return Some(DeckAction::Handled);
         }
+        if list_nav::scroll(
+            key,
+            &mut ui.files_diff_scroll,
+            total,
+            height,
+            composer_empty,
+        ) {
+            return Some(DeckAction::Handled);
+        }
+    } else if list_nav::select(key, &mut ui.files_sel, count, composer_empty) {
+        return Some(DeckAction::Handled);
     }
     match key.code {
-        KeyCode::Up => {
-            ui.files_sel = ui.files_sel.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.files_sel = (ui.files_sel + 1).min(count - 1);
-            }
-            Some(DeckAction::Handled)
-        }
         // Only an unmodified Enter with nothing typed toggles the diff — a
         // failed submit chord or a prompt in progress must never claim it.
         KeyCode::Enter if count > 0 && composer_empty && key.modifiers.is_empty() => {
