@@ -343,6 +343,17 @@ fn read_project_tier(workspace_root: &Path, notices: &mut Vec<String>) -> Vec<In
 /// routed an `argv` with `${plugin_dir}` interpolated to the link path —
 /// while `super::remove_plugin_dir` refused to delete it, leaving a package
 /// that ran and could not be uninstalled.
+///
+/// # Every way an entry drops out is spoken
+///
+/// An unreadable directory, an unclassifiable entry, a symlink, and a manifest
+/// that will not load each push a `  ! ` line. The last silent one was the
+/// entry whose `DirEntry::file_type()` errors (#4472): a package the reader
+/// cannot classify vanished from the roster, and `read_project_tier`'s own
+/// argument — a plugin that disappears with no message is indistinguishable
+/// from a broken one — applies to it exactly as it does to the others. A stray
+/// *file* and a dot-prefixed staging directory stay silent by design: neither
+/// is anything a user meant as a package.
 pub(crate) fn read_tier(
     dir: &Path,
     scope: PluginScope,
@@ -362,6 +373,10 @@ pub(crate) fn read_tier(
     // the notices are read by a human too.
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut links: Vec<PathBuf> = Vec::new();
+    // Formatted rather than collected as paths, because the reason belongs to
+    // the entry: sorting the rendered lines sorts them by path, since the path
+    // leads each one.
+    let mut unclassified: Vec<String> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         // A leading dot is never a plugin: `super::checked_name` refuses such
@@ -378,10 +393,26 @@ pub(crate) fn read_tier(
         }
         // `DirEntry::file_type` describes the entry; `Path::is_dir` describes
         // whatever it resolves to, which is how a link to a directory was read
-        // as an installed package. An entry whose type cannot be read is
-        // skipped like any other non-directory.
-        let Ok(file_type) = entry.file_type() else {
-            continue;
+        // as an installed package.
+        //
+        // An entry whose type cannot be read is skipped like any other
+        // non-directory, and — since #4472 — said out loud, on the symlink
+        // arm's reasoning below: after #3530 this was the last way a tier
+        // entry could drop out of the roster in silence, and a directory that
+        // holds a package the reader cannot classify is exactly the case where
+        // the user believes they installed something. Unlike the unreadable
+        // *directory* above, this loses one entry rather than the tier, so it
+        // reports and carries on.
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                unclassified.push(format!(
+                    "  ! {} could not be classified ({error}) — it is not loaded or routed; \
+                     a plugin package is a directory `stella plugin install` copied here",
+                    path.display()
+                ));
+                continue;
+            }
         };
         if file_type.is_symlink() {
             links.push(path);
@@ -391,6 +422,8 @@ pub(crate) fn read_tier(
     }
     dirs.sort();
     links.sort();
+    unclassified.sort();
+    notices.append(&mut unclassified);
     // Spoken, not silent, for the reason [`read_project_tier`] argues: a
     // plugin that vanishes with no message is indistinguishable from a broken
     // one, and a hand-linked entry is exactly the case where the user believes
