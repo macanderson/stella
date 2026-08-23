@@ -728,6 +728,22 @@ pub fn restore_messages(
 }
 
 /// A stored registry record re-owned by THIS process at resume time.
+/// The state a brand-new session adopts: a fresh record for `workspace`, no
+/// journal, no history, no backlog — what the SESSIONS overlay's `n` hands
+/// the same hand-over a resume performs, so one code path owns re-keying the
+/// driver to a record.
+pub fn fresh_state(workspace: &str, title: &str) -> ResumeState {
+    ResumeState {
+        record: SessionRecord::new(workspace, title),
+        records: Vec::new(),
+        history: None,
+        queue: Vec::new(),
+        interrupted: Vec::new(),
+        pipeline: None,
+        spent_usd: None,
+    }
+}
+
 pub fn adopt_record(mut record: SessionRecord, status: SessionStatus) -> SessionRecord {
     record.pid = std::process::id();
     record.status = status;

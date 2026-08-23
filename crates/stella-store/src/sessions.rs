@@ -105,6 +105,11 @@ pub struct SessionRecord {
     pub title: String,
     /// What work is involved right now — the latest prompt/goal, truncated.
     pub summary: String,
+    /// One sentence on what the session did, written by a model from its
+    /// prompts once it has any (`stella-cli`'s `sessions_view`). Absent
+    /// until then, and for every record written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     pub status: SessionStatus,
     pub started_at_ms: u64,
     pub updated_at_ms: u64,
@@ -228,6 +233,7 @@ impl SessionRecord {
             workspace: workspace.into(),
             title: title.into(),
             summary: String::new(),
+            description: None,
             status: SessionStatus::InProgress,
             started_at_ms: now,
             updated_at_ms: now,
@@ -452,6 +458,18 @@ impl SessionRegistry {
             return Ok(false);
         };
         record.status = status;
+        self.upsert(&record)?;
+        Ok(true)
+    }
+
+    /// Write the one-sentence description of `id`; returns whether the
+    /// record existed. `updated_at_ms` is left alone — a description is not
+    /// activity.
+    pub fn set_description(&self, id: &str, description: &str) -> Result<bool> {
+        let Some(mut record) = self.get(id) else {
+            return Ok(false);
+        };
+        record.description = Some(description.to_string());
         self.upsert(&record)?;
         Ok(true)
     }

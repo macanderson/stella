@@ -747,8 +747,11 @@ pub struct DeckUi {
     /// The machine-wide session registry snapshot ([`Inbound::Sessions`]),
     /// pre-sorted by the driver; the overlay groups it by phase.
     pub sessions: Vec<crate::envelope::SessionInfo>,
-    /// Selected row in the overlay's flattened (grouped) row list.
+    /// Selected row in the overlay's row list.
     pub sessions_sel: usize,
+    /// `h` in the overlay: list every session on the machine rather than
+    /// this workspace's recent ones and the live ones (see `sessions`).
+    pub sessions_show_all: bool,
     /// Whether the CONTEXT overlay is open (empty-prompt `→` on the Session
     /// tab, or `/context`): active skills + MCP servers for THIS session,
     /// rendered from the already-live `skills`/`mcp` snapshots.
@@ -876,6 +879,7 @@ impl Default for DeckUi {
             accessible: false,
             scrollback: crate::accessible::Scrollback::default(),
             sessions_open: false,
+            sessions_show_all: false,
             sessions: Vec::new(),
             sessions_sel: 0,
             context_open: false,
@@ -1547,6 +1551,7 @@ pub mod dispatch;
 mod gates;
 mod local;
 mod parked;
+pub mod sessions;
 /// Esc-with-something-to-say — see [`steer`].
 mod steer;
 pub use gates::HunkMarks;
@@ -1787,7 +1792,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // The SESSIONS / INBOX / CONTEXT overlays are modal exactly like the
     // queue editor while open: they own the keyboard until dismissed.
     if ui.sessions_open {
-        return handle_sessions_key(key, ui);
+        return sessions::handle_sessions_key(key, model.now_ms, ui);
     }
     if ui.inbox_open {
         return handle_inbox_key(key, ui);
@@ -2125,85 +2130,6 @@ pub(crate) fn open_inbox_overlay(ui: &mut DeckUi) -> DeckAction {
     ui.inbox_open = true;
     ui.inbox_sel = 0;
     DeckAction::Handled
-}
-
-/// The SESSIONS overlay's rows in display order: grouped by phase (the
-/// [`crate::envelope::SessionPhase::ALL`] order), newest-started first within
-/// a group — the flat list `sessions_sel` indexes and render walks.
-pub fn grouped_session_rows(ui: &DeckUi) -> Vec<&crate::envelope::SessionInfo> {
-    let mut rows = Vec::with_capacity(ui.sessions.len());
-    for phase in crate::envelope::SessionPhase::ALL {
-        // `Inbound::Sessions` arrives newest-started first from the driver,
-        // so a stable filter keeps that order within each group.
-        rows.extend(ui.sessions.iter().filter(|s| s.phase == phase));
-    }
-    rows
-}
-
-/// The SESSIONS overlay key map: ↑/↓ select, `⏎` resume the selected session
-/// when its row is resumable (the durable-state sessions of THIS workspace
-/// with no live owner) or open it read-only (replay) otherwise, `a` archive,
-/// `x` delete (another session's record only — never this session's own),
-/// `r` refresh, Esc/`←`/`q` close. Modal: everything else is swallowed.
-fn handle_sessions_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    let count = grouped_session_rows(ui).len();
-    ui.sessions_sel = ui.sessions_sel.min(count.saturating_sub(1));
-    match key.code {
-        KeyCode::Esc | KeyCode::Left | KeyCode::Char('q') => {
-            ui.sessions_open = false;
-            DeckAction::Handled
-        }
-        KeyCode::Up => {
-            ui.sessions_sel = ui.sessions_sel.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.sessions_sel = (ui.sessions_sel + 1).min(count - 1);
-            }
-            DeckAction::Handled
-        }
-        KeyCode::Enter => {
-            match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
-                // Navigate INTO the chosen session live: close the overlay
-                // and hand over to the driver, which adopts the durable
-                // state and continues the session in this deck (see
-                // [`WorkspaceInput::SessionResume`]).
-                Some(row) if row.resumable && !row.mine => {
-                    let id = row.id.clone();
-                    ui.sessions_open = false;
-                    DeckAction::Send(WorkspaceInput::SessionResume { id })
-                }
-                // Every other row opens read-only: the driver registers a
-                // `replay:<id>` lane and streams the persisted events (see
-                // [`WorkspaceInput::SessionOpen`] — replay IS the fold). The
-                // overlay closes so the replayed lane is immediately visible.
-                Some(row) => {
-                    let id = row.id.clone();
-                    ui.sessions_open = false;
-                    DeckAction::Send(WorkspaceInput::SessionOpen { id })
-                }
-                None => DeckAction::Handled,
-            }
-        }
-        KeyCode::Char('r') => DeckAction::Send(WorkspaceInput::SessionsRefresh),
-        KeyCode::Char('a') => match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
-            Some(row) => DeckAction::Send(WorkspaceInput::SessionArchive { id: row.id.clone() }),
-            None => DeckAction::Handled,
-        },
-        KeyCode::Char('x') => {
-            match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
-                // This deck's own record is written by this process — deleting
-                // it out from under the writer would just resurrect on the
-                // next transition, so the key refuses.
-                Some(row) if !row.mine => {
-                    DeckAction::Send(WorkspaceInput::SessionDelete { id: row.id.clone() })
-                }
-                _ => DeckAction::Handled,
-            }
-        }
-        _ => DeckAction::Handled,
-    }
 }
 
 /// The INBOX overlay key map: ↑/↓ select, `⏎` on a session-linked

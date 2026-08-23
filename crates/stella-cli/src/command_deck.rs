@@ -1057,7 +1057,13 @@ pub async fn run_deck_session(
                     // lanes and settle against its records). The current
                     // session's durable state is already on disk, so switching
                     // away loses nothing.
-                    Some(WorkspaceInput::SessionResume { id }) => {
+                    Some(
+                        nav @ (WorkspaceInput::SessionResume { .. } | WorkspaceInput::SessionNew),
+                    ) => {
+                        let id = match &nav {
+                            WorkspaceInput::SessionResume { id } => id.clone(),
+                            _ => "new".to_string(),
+                        };
                         let loaded = if id == session_record.id {
                             Err("that is this session — you are already in it".to_string())
                         } else if subs.live() > 0 {
@@ -1066,6 +1072,11 @@ pub async fn run_deck_session(
                                  or wait for them to finish, then press ⏎ on the session \
                                  again",
                                 subs.live()
+                            ))
+                        } else if matches!(nav, WorkspaceInput::SessionNew) {
+                            Ok(crate::session_persist::fresh_state(
+                                &workspace_path,
+                                &workspace_name,
                             ))
                         } else {
                             crate::session_persist::load_resume(
@@ -1248,6 +1259,7 @@ pub async fn run_deck_session(
                                 }
                                 let _ = in_tx.send(sessions_inbound(
                                     &session_registry,
+                                    store.as_deref(),
                                     &session_record.id,
                                     &workspace_path,
                                 ));
@@ -1308,6 +1320,9 @@ pub async fn run_deck_session(
                             && !service_registry_action(
                                 &other,
                                 &session_registry,
+                                &store,
+                                cfg,
+                                budget_limit,
                                 &session_record.id,
                                 &workspace_path,
                                 &in_tx,
@@ -1884,6 +1899,9 @@ pub async fn run_deck_session(
                             service_registry_action(
                                 &input,
                                 &session_registry,
+                                &store,
+                                cfg,
+                                budget_limit,
                                 &session_record.id,
                                 &workspace_path,
                                 &in_tx,
@@ -1901,7 +1919,7 @@ pub async fn run_deck_session(
                         // Navigation waits for the road to clear: switching
                         // sessions mid-turn would tear down live work, so the
                         // deck is told how to proceed instead.
-                        Some(WorkspaceInput::SessionResume { .. }) => {
+                        Some(WorkspaceInput::SessionResume { .. } | WorkspaceInput::SessionNew) => {
                             let _ = deck_tx.send(chrome_note(
                                 "a turn is running — esc stops it (esc esc holds the queue \
                                  too), then press ⏎ on the session again."
@@ -2414,20 +2432,34 @@ pub(crate) fn prompt_line(prompt: &str, max_chars: usize) -> String {
 fn service_registry_action(
     input: &WorkspaceInput,
     registry: &stella_store::SessionRegistry,
+    store: &Option<Arc<Store>>,
+    cfg: &Config,
+    budget_limit: Option<f64>,
     my_session_id: &str,
     workspace: &str,
     in_tx: &mpsc::UnboundedSender<Inbound>,
 ) -> bool {
+    let snapshot = || sessions_inbound(registry, store.as_deref(), my_session_id, workspace);
     match input {
         WorkspaceInput::SessionsRefresh => {
-            let _ = in_tx.send(sessions_inbound(registry, my_session_id, workspace));
+            let _ = in_tx.send(snapshot());
+            // The rows without a description get one, off the pump.
+            sessions_view::describe_sessions(
+                registry.clone(),
+                store.clone(),
+                cfg.clone(),
+                budget_limit,
+                my_session_id.to_string(),
+                workspace.to_string(),
+                in_tx.clone(),
+            );
         }
         WorkspaceInput::SessionOpen { id } => {
             spawn_session_replay(id.clone(), registry.list(), in_tx.clone());
         }
         WorkspaceInput::SessionArchive { id } => {
             let _ = registry.set_status(id, stella_store::SessionStatus::Archived);
-            let _ = in_tx.send(sessions_inbound(registry, my_session_id, workspace));
+            let _ = in_tx.send(snapshot());
         }
         WorkspaceInput::SessionDelete { id } => {
             // The deck refuses to delete its own record UI-side too; this is
@@ -2435,7 +2467,7 @@ fn service_registry_action(
             if id != my_session_id {
                 let _ = registry.remove(id);
             }
-            let _ = in_tx.send(sessions_inbound(registry, my_session_id, workspace));
+            let _ = in_tx.send(snapshot());
         }
         WorkspaceInput::NotificationRead { id } => {
             let store = stella_store::NotificationStore::open_default();

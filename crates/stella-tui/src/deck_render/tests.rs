@@ -512,51 +512,6 @@ fn inspect_overlay_scroll_saturates_past_u16_instead_of_wrapping() {
     );
 }
 
-#[test]
-fn sessions_overlay_repeats_the_heading_when_scrolled_into_a_group_midway() {
-    // Selection deep inside a long group: the group's first rows are above
-    // the window, but the heading must still render above the visible rows —
-    // without it the phase of what's on screen is unreadable.
-    fn session(i: usize, phase: crate::envelope::SessionPhase) -> crate::envelope::SessionInfo {
-        crate::envelope::SessionInfo {
-            id: format!("ses-{i}"),
-            title: format!("session {i:02}"),
-            summary: String::new(),
-            workspace: "/tmp/w".into(),
-            phase,
-            started_ms: 0,
-            updated_ms: 0,
-            mine: false,
-            resumable: false,
-        }
-    }
-    let model = WorkspaceModel::new();
-    let mut ui = DeckUi::default();
-    ui.sessions_open = true;
-    ui.sessions = (0..5)
-        .map(|i| session(i, crate::envelope::SessionPhase::InProgress))
-        .chain((5..30).map(|i| session(i, crate::envelope::SessionPhase::Complete)))
-        .collect();
-    ui.sessions_sel = 20; // mid-Complete: the group starts at flat index 5
-
-    let area = Rect::new(0, 0, 100, 30);
-    let mut buf = Buffer::empty(area);
-    render_sessions_overlay(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(
-        text.contains("COMPLETE (25)"),
-        "the heading repeats for a group entered mid-way:\n{text}"
-    );
-    assert!(
-        !text.contains("IN PROGRESS"),
-        "a group scrolled fully out keeps no stray heading:\n{text}"
-    );
-    assert!(
-        text.contains("session 20"),
-        "the selected row is in the window:\n{text}"
-    );
-}
-
 /// L-T7 for the deck (#933): a panic inside one band renders an error card in
 /// that band, every other band still draws, and the next frame is the real
 /// view again — the `DeckUi` came through the caught panic intact.
