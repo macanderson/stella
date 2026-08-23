@@ -120,10 +120,12 @@ _SAFE_REF = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,200}\Z")
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
 #: Files that identify a tree as *this* repository rather than whatever git
-#: checkout the arena happens to be installed inside. Both are sources
+#: checkout the arena happens to be installed inside. Both sit beside what
 #: :mod:`arenabench.catalog` reads at runtime, so matching them means the
 #: discovery is self-validating: a tree that has them is one the arena can
-#: actually do its job against.
+#: actually do its job against. (`catalog.rs` is the marker; the seed rows the
+#: catalog module parses moved to `catalog/seed/` in #3862, and a marker wants
+#: to be the most stable file of the pair rather than the most specific.)
 _STELLA_MARKERS = (
     Path("crates") / "stella-model" / "src" / "catalog.rs",
     Path("bench") / "harbor_adapter" / "stella_harbor" / "posture.py",

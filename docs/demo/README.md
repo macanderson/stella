@@ -11,8 +11,8 @@ exists to prevent.
 
 | Artifact | What it is | How it is made |
 | --- | --- | --- |
-| `stella-deck.mp4` | The **hero film**: 1080p60, silent, loopable, 49.7s — the command deck touring every tab, with a camera that pushes in and pulls back. | `make record-demo-video` |
-| `stella-demo.mp4` | An old **recorder stress-test**: a timelapse of this repository compiling. Not demo content, and never was. | `make record-demo` |
+| `stella-deck.mp4` | The **hero film**: 1080p60, silent, loopable, 68.7s — one scripted run told in four acts across the tui-v2 deck, with a camera that opens each tab wide and makes one push. `stella-deck-script.md` is its narration, cut to the same timestamps. | `make record-demo-video` |
+| `stella-demo.mp4` | A **live-run timelapse** (#796): `stella run` building a small word-frequency CLI end to end against a real provider, recorded with `scripts/record-demo.sh`. Real, and dated — it predates the deck. | `scripts/record-demo.sh -- <command>` |
 
 `AGENTS.md`'s companion rule in `CLAUDE.md` states the standard: *footage of
 this repo compiling is never demo content.* `scripts/demo-scenario.sh` is a
@@ -27,7 +27,7 @@ That distinction is load-bearing and is stated here rather than left for a
 viewer to infer. Every glyph in the film comes from `render_deck`: the real
 layouts, the real palette, the real panel geometry, the real diff rendering,
 the real `agent_engine_config` editor. The session driving them is
-`stella_tui::scenario::demo_inbound` — the same 38-event fixture the
+`stella_tui::scenario::demo_inbound` — the same 37-event fixture the
 golden-frame suite asserts against (`crates/stella-tui/tests/deck_render_snapshots.rs`),
 folded a prefix at a time so the transcript streams rather than cuts.
 
@@ -52,11 +52,17 @@ cargo run -q --release -p stella-tui --example deck_film > film.jsonl
 
 # 2. The pixels: 1920x1080, 60 fps, H.264 High / yuv420p, faststart, no audio.
 scripts/render-deck-film.py film.jsonl -o docs/demo/stella-deck.mp4 \
-    --poster docs/demo/stella-deck-poster.png --poster-frame 1100
+    --poster docs/demo/stella-deck-poster.png --poster-frame 807
 ```
 
+A larger master takes `--size`: `--size 6144x3456 --supersample 1.6 --crf 14`
+is the 6K cut the delivery ladder (4K, 1080p, 720p, 480p, 360p) is scaled
+down from, and at that size the raster behind each grid is ~9800 px wide, so
+`--supersample` is read against the output frame and set just above the
+film's peak zoom rather than left at 2.5.
+
 `--release` is not a suggestion: the driver rebuilds the session model from
-scratch for every one of the 2,982 frames — which is what makes frame *n*
+scratch for every one of the 4,122 frames — which is what makes frame *n*
 depend on nothing but *n* — and a debug build spends about twenty minutes on
 it.
 
@@ -108,10 +114,16 @@ measures both metrics and refuses either failure by name, rather than rendering
 something that reads as a corrupt terminal.
 
 Fonts fall back per glyph the way a terminal does: JetBrains Mono (the brand
-face, `docs/brand/fonts/`, OFL-1.1) → DejaVu Sans Mono → FreeMono. The deck's
-frames reach for 134 distinct characters and no single monospace face carries
-all of them. A glyph that survives the whole chain is a hard error naming the
-codepoint — a tofu box in a hero video is worse than a failed build.
+face, `docs/brand/fonts/`, OFL-1.1) → DejaVu Sans Mono → DejaVu Sans → Noto
+Sans Symbols 2 → Noto Sans Symbols → FreeMono (Arial Unicode on macOS). The
+deck's frames reach for 131 distinct characters and no single monospace face
+carries all of them; the v2 deck's `☰`, `⏸`, `⎿`, `⌕` and the fullwidth `＋`
+each needed a face the first cut's chain did not have. Each entry is looked
+for at its Debian path and its Homebrew path, so the pipeline runs on a Mac
+after `brew install --cask font-dejavu font-noto-sans-symbols
+font-noto-sans-symbols-2`. A glyph that survives the whole chain is a hard
+error naming the codepoint — a tofu box in a hero video is worse than a
+failed build.
 
 ## Publishing it
 
@@ -145,9 +157,19 @@ Nothing in the pipeline can check composition for you.
 ## Changing what it shows
 
 The shot list is data, in `shots()`. A shot is a scene, a duration, a camera
-track, a cursor range, and how much of the scripted session has streamed in by
-its end. To change the film, change that table — nothing else in either stage
-knows what the film is about.
+track, a cursor range, and how many of the scripted session's events have
+streamed in by its end — a count, named in `EVENTS`, because the story beats
+are specific events: the shot that ends on the edit's inline diff ends on the
+`ToolResult` that claims it. `film()` pins `EVENTS.all` against the fixture's
+length, so a fixture edit that moves a beat fails the run by name. To change
+the film, change that table — nothing else in either stage knows what the
+film is about. The narration (`stella-deck-script.md`) is cut to the same
+starts; re-time a shot and move its cue.
+
+The camera has one rule, and the previous cut is the reason it has it: a tab
+opens wide, holds, and makes one push onto the thing the narration names,
+and every cut lands on wide. A cut that happens at 1.45x into a different
+tab reads as a zoom at random, however deliberate the track was.
 
 Two constraints the table cannot break on its own:
 

@@ -305,6 +305,32 @@ pub const RETIRED_TOOL_NAMES: &[&str] = &[
 /// as a group; it is simply not greppable.
 pub const RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN: &[&str] = &["glob", "grep", "task"];
 
+/// The names a live tool dispatched under before its current one — a ledger
+/// for reading a **dated measurement** that recorded a tool under its
+/// then-name.
+///
+/// Each pair is `(the live dispatch name, the name the wire carried then)`,
+/// and a tool may hold several rows: #3120 folded `grep` and `glob` into one
+/// `search`, and #3192 moved the delegation tool from `task` to `delegate`.
+///
+/// **Not a compatibility alias.** A former name here must not dispatch — it
+/// stays retired ([`is_retired`]) and reserved ([`is_reserved`]), and
+/// `former_names_point_from_a_live_tool_to_a_dead_name` pins both halves. The
+/// ledger's readers are the surfaces that join a dated record to today's tool
+/// table, and today that is one: `stella-cli`'s `tool_docs` generator, whose
+/// pages carry a census captured 2026-08-11. Without the ledger a renamed
+/// tool's page took the no-row branch and printed *"the census enumerates the
+/// schemas those runs advertised, and this tool was not among them"* — a
+/// statement the census itself contradicts, since `delegate` was advertised
+/// and called twice under `task` (#3846).
+///
+/// A number read through this ledger keeps its provenance. The reader is told
+/// which name it was recorded under, because a rename can move a schema too —
+/// `search` does more than `grep` did — and how far the old figure carries is
+/// the reader's judgement to make, not the generator's to hide.
+pub const FORMER_TOOL_NAMES: &[(&str, &str)] =
+    &[("delegate", "task"), ("search", "grep"), ("search", "glob")];
+
 /// Whether `name` was a dispatch name Stella has since deleted — the union of
 /// [`RETIRED_TOOL_NAMES`] and [`RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN`].
 ///
@@ -586,6 +612,40 @@ mod tests {
                     entry.group
                 );
             }
+        }
+    }
+
+    /// [`FORMER_TOOL_NAMES`] reads dated measurements under a tool's
+    /// then-name, so both ends of every pair are asserted: the live end must
+    /// be a real row, or it names a page that does not exist; the former end
+    /// must be dead and retired, or the ledger has quietly given a live tool
+    /// a second dispatch name. A duplicated pair is rejected too — its only
+    /// effect would be to report one measured row twice.
+    #[test]
+    fn former_names_point_from_a_live_tool_to_a_dead_name() {
+        let mut seen = HashSet::new();
+        for (current, former) in FORMER_TOOL_NAMES {
+            assert!(
+                seen.insert((current, former)),
+                "`{current}` lists `{former}` twice; one census row would be \
+                 reported as two measurements"
+            );
+            assert!(
+                get(current).is_some(),
+                "`{current}` has a former name but is not a live catalog row — \
+                 delete the ledger line with the tool"
+            );
+            assert!(
+                !ALL_NAMES.contains(former),
+                "`{former}` is recorded as `{current}`'s former name but is itself \
+                 live; a ledger entry reads a dated measurement and must never \
+                 make a name dispatch"
+            );
+            assert!(
+                is_retired(former),
+                "`{former}` is a former dispatch name and must be retired, so \
+                 nothing may register it again"
+            );
         }
     }
 

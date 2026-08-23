@@ -56,13 +56,47 @@ Staleness is only ever reported, never failed. An uncited document is a
 question for a human -- retire it, adopt it, or leave it -- and a red gate is
 the wrong way to ask. `--report` prints that list.
 
+TWO CITATION SHAPES, NOT ONE
+---------------------------
+A document is cited two ways and both can rot, so both are checked:
+
+    docs/spec/wrapper-socket.md        rooted, the legacy form above
+    [the socket](../spec/wrapper-socket.md)   relative, the prevailing style
+                                              INSIDE docs/
+
+The second was invisible until #3886. `CITE_PATH_RE` is anchored on a
+repo-rooted `docs/` prefix, and inside `docs/` almost every link is relative --
+so a citation whose text is a `doc:` id and whose target is a relative path was
+validated on the id, which is path-independent and cannot break, and ignored on
+the path, which can. Landing #3885 moved one document and left 13 dangling
+hrefs in a single file while `doc-links-fix` printed "nothing to heal" and
+`doc-links` printed "OK -- 608 citations resolve".
+
+A relative href is resolved against the citing file's own directory and must
+name a file that exists. It does NOT have to be a document with an `id:`: a
+link to a bare README is a link, not a citation, and demanding frontmatter of
+everything a page points at would be a different rule than the one this guard
+enforces.
+
+Vendored documents are exempt. `status: vendored` means "copied from upstream,
+do not edit here", so a link to a sibling that was not vendored with it cannot
+be repaired in this repository -- failing on it would demand an edit the
+document's own status forbids.
+
 KNOWN LIMITS
 ------------
-Only tracked `*.rs` (comment lines) and `*.md` are scanned. A path written in a
-`.mdx` page, a shell script or a TOML file is neither checked nor healed -- and
-that is usually right, because those are commands and fixtures rather than
-claims: `website/content/docs/commands/ingest.mdx` shows
+Tracked `*.rs` and `*.toml` are scanned comment-only, and `*.md` in full. A
+path written in a `.mdx` page or a shell script is neither checked nor healed,
+and that is right, because those are commands rather than claims:
+`website/content/docs/commands/ingest.mdx` shows
 `stella ingest docs/spec/storage-map.md` as example *input*, not a citation.
+
+TOML is scanned only under `docs/` and only in comments, which is the narrow
+case #3886 found: a document's companion files are part of the document, and
+`docs/spec/agent-native-delivery/`'s three `.toml` companions each carry a
+rooted path citation in a header comment that went stale on the same move and
+was repaired by hand. A TOML file outside `docs/` is configuration, and a path
+inside it is a value.
 
 In a `.rs` file a line starting with `#` counts as a comment, which is true of
 attributes and also of string literals whose content is a comment in some other
@@ -112,6 +146,14 @@ CITE_ID_RE = re.compile(r"\bdoc:([a-z0-9][a-z0-9/-]*[a-z0-9])(?:\s*§\s*(\d+))?"
 # -- the website's MDX pages are a separate tree, and clipping the `x` turns a
 # perfectly good site citation into a phantom repo path.
 CITE_PATH_RE = re.compile(r"(docs/[A-Za-z0-9._/-]+\.md)(?![A-Za-z0-9])(?:\s*§\s*(\d+))?")
+
+# A markdown link whose target is a repo-relative `.md` path. This is what the
+# rooted pattern above cannot see, and inside `docs/` it is the prevailing
+# style. An absolute URL, a site-absolute `/path` and a bare `#anchor` are all
+# somebody else's addresses; only a relative one resolves against the tree.
+# The trailing `#fragment` is captured and discarded -- it addresses a heading,
+# which this guard checks through `§N` instead.
+REL_HREF_RE = re.compile(r"\]\((?!https?:)(?![/#])([^)\s]+\.md)(?:#[^)\s]*)?\)")
 
 # Markdown cited by line number. `file.md §7` survives an edit; `file.md:96`
 # does not, and every one of the five that existed when this rule was written
@@ -283,13 +325,17 @@ def write_manifest(manifest):
 
 
 def citation_sources():
-    """Files that may cite a document: Rust comments and tracked markdown.
+    """Files that may cite a document: comments, plus tracked markdown.
 
-    Rust is scanned comment-only. A `docs/…md` string inside code is test data
-    or a constant -- `crates/stella-tools/src/tasks.rs` builds a fixture task whose
-    description is "see docs/parser.md" -- not a claim about the repository.
+    Rust and TOML are scanned comment-only. A `docs/…md` string inside code is
+    test data or a constant -- `crates/stella-tools/src/tasks.rs` builds a
+    fixture task whose description is "see docs/parser.md" -- not a claim about
+    the repository, and the same holds for a path inside a TOML *value*.
+
+    TOML only under `docs/`, where a `.toml` is a document's companion rather
+    than configuration. See the module docstring.
     """
-    return tracked("*.rs"), tracked("*.md")
+    return tracked("*.rs"), tracked("*.md"), tracked("docs/*.toml", "docs/**/*.toml")
 
 
 def strip_urls(line):
@@ -303,9 +349,9 @@ def strip_urls(line):
     return re.sub(r"https?://[^\s\"`)\]]*", "", line)
 
 
-def scan_citations(rust_files, md_files):
+def scan_citations(rust_files, md_files, toml_files=()):
     """Yield (file, lineno, kind, target, section, raw_line) for every citation."""
-    for path in rust_files:
+    for path in list(rust_files) + list(toml_files):
         for i, line in enumerate(read(path).splitlines(), 1):
             if not COMMENT_RE.match(line) or IGNORE_RE.search(line):
                 continue
@@ -325,6 +371,12 @@ def scan_citations(rust_files, md_files):
                 yield path, i, "id", m.group(1), m.group(2), line
             for m in CITE_PATH_RE.finditer(clean):
                 yield path, i, "path", m.group(1), m.group(2), line
+            # Relative hrefs are markdown's own link syntax, so they are looked
+            # for in markdown alone. `strip_urls` has already removed the
+            # absolute ones; the negative lookaheads in REL_HREF_RE cover what
+            # it leaves.
+            for m in REL_HREF_RE.finditer(clean):
+                yield path, i, "relhref", m.group(1), None, line
 
 
 def days_since_touched(path):
@@ -351,7 +403,7 @@ def detect_moves(old_manifest, docs):
     return moves
 
 
-def heal_by_basename(docs, rust_files, md_files):
+def heal_by_basename(docs, rust_files, md_files, toml_files=()):
     """Second healing strategy, for paths the manifest cannot explain.
 
     The manifest only knows about moves it witnessed -- it cannot help with a
@@ -371,11 +423,11 @@ def heal_by_basename(docs, rust_files, md_files):
             by_base[os.path.basename(doc.path)].append(doc.path)
 
     broken = set()
-    for path in list(rust_files) + list(md_files):
+    for path in list(rust_files) + list(md_files) + list(toml_files):
         if path == MANIFEST_PATH:
             continue
         for i, line in enumerate(read(path).splitlines(), 1):
-            if path.endswith(".rs") and not COMMENT_RE.match(line):
+            if comment_only(path) and not COMMENT_RE.match(line):
                 continue
             if IGNORE_RE.search(line):
                 continue
@@ -396,7 +448,17 @@ def heal_by_basename(docs, rust_files, md_files):
     return remap, ambiguous, unresolved
 
 
-def heal(moves, rust_files, md_files, extra_remap=None):
+def comment_only(path):
+    """True for a source whose citations count only inside comments.
+
+    Markdown is prose end to end, so every line of it is a claim. Rust and TOML
+    are not: a `docs/…md` in a string literal is a fixture or a value, and
+    healing one has already cost a red fmt gate once (see `heal`).
+    """
+    return path.endswith(".rs") or path.endswith(".toml")
+
+
+def heal(moves, rust_files, md_files, extra_remap=None, toml_files=()):
     """Rewrite stale paths in place. Returns [(file, count)].
 
     Scoped to exactly the lines `scan_citations` would read, and for a reason
@@ -420,16 +482,16 @@ def heal(moves, rust_files, md_files, extra_remap=None):
     ]
 
     changed = []
-    for path in list(rust_files) + list(md_files):
+    for path in list(rust_files) + list(md_files) + list(toml_files):
         if path == MANIFEST_PATH:
             continue
         text = read(path)
         if not text:
             continue
-        is_rust = path.endswith(".rs")
+        commented = comment_only(path)
         out, count = [], 0
         for line in text.splitlines(keepends=True):
-            if IGNORE_RE.search(line) or (is_rust and not COMMENT_RE.match(line)):
+            if IGNORE_RE.search(line) or (commented and not COMMENT_RE.match(line)):
                 out.append(line)
                 continue
             for pat, new in patterns:
@@ -441,6 +503,82 @@ def heal(moves, rust_files, md_files, extra_remap=None):
                 fh.write("".join(out))
             changed.append((path, count))
     return changed
+
+
+def heal_relative_hrefs(docs, md_files, moves, by_name=False):
+    """Repoint dangling relative hrefs. Returns (changed, ambiguous, unresolved).
+
+    The rooted healer above can substitute one string across every file at
+    once, because `docs/a/b.md` reads the same wherever it is written. A
+    relative href cannot: `../design/x.md` and `x.md` may name the same
+    document from two directories, so the replacement has to be computed per
+    citing file. That is the whole reason this is a second pass and not a
+    wider `remap`.
+
+    Two sources for the answer, in the order the rooted healer uses them and
+    for the same reason. A move recorded in the manifest is provable -- the id
+    travelled with the file and says where it went. A basename match is a
+    guess, so it is applied only under `--by-name`, and only when exactly one
+    document carries that filename.
+
+    Vendored documents are never rewritten: `do not edit here` is the whole
+    content of that status.
+    """
+    by_path = {d.path: d for d in docs}
+    by_base = defaultdict(list)
+    for path in md_files:
+        if path.startswith("docs/"):
+            by_base[os.path.basename(path)].append(path)
+    moved = {old: new for old, new in moves.values()}
+
+    changed, ambiguous, unresolved = [], [], []
+    for path in md_files:
+        if path == MANIFEST_PATH or not path.startswith("docs/"):
+            continue
+        doc = by_path.get(path)
+        if doc is not None and doc.status == "vendored":
+            continue
+        text = read(path)
+        if not text:
+            continue
+        here = os.path.dirname(path)
+        out, count = [], 0
+        for line in text.splitlines(keepends=True):
+            if IGNORE_RE.search(line):
+                out.append(line)
+                continue
+            repoint = {}
+            for m in REL_HREF_RE.finditer(strip_urls(line)):
+                target = m.group(1)
+                resolved = os.path.normpath(os.path.join(here, target))
+                if os.path.isfile(resolved):
+                    continue
+                new_path = moved.get(resolved)
+                if new_path is None:
+                    candidates = by_base.get(os.path.basename(target), [])
+                    if len(candidates) != 1 or not by_name:
+                        if candidates:
+                            ambiguous.append((path, target, candidates))
+                        else:
+                            unresolved.append((path, target))
+                        continue
+                    new_path = candidates[0]
+                repoint[target] = os.path.relpath(new_path, here or ".")
+            # Anchored on the `](` so a substitution cannot escape the link it
+            # was matched in: the same path appears in prose on the same line
+            # often enough to matter, and the rooted healer paid for exactly
+            # that mistake once already (see `heal`).
+            for old_href, new_href in repoint.items():
+                n = line.count(f"]({old_href}")
+                if n:
+                    line = line.replace(f"]({old_href}", f"]({new_href}")
+                    count += n
+            out.append(line)
+        if count:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("".join(out))
+            changed.append((path, count))
+    return changed, ambiguous, unresolved
 
 
 def check(docs, manifest_on_disk, fix=False):
@@ -473,12 +611,32 @@ def check(docs, manifest_on_disk, fix=False):
                     f"{doc.path}: superseded_by {doc.superseded_by!r} is not a known id."
                 )
 
-    rust_files, md_files = citation_sources()
+    rust_files, md_files, toml_files = citation_sources()
     cited_ids = defaultdict(list)
     n_checked = 0
 
-    for path, line, kind, target, section, raw in scan_citations(rust_files, md_files):
+    for path, line, kind, target, section, raw in scan_citations(
+        rust_files, md_files, toml_files
+    ):
         n_checked += 1
+        if kind == "relhref":
+            # Resolved against the citing file, which is what makes it
+            # relative. A vendored document is exempt: `do not edit here` means
+            # a broken link inside it cannot be repaired in this repository,
+            # and a guard that demands an edit the status forbids is a guard
+            # people learn to route around.
+            citing = by_path.get(path)
+            if citing is not None and citing.status == "vendored":
+                continue
+            resolved = os.path.normpath(os.path.join(os.path.dirname(path), target))
+            if not os.path.isfile(resolved):
+                errors.append(
+                    f"{path}:{line} links to '{target}', which resolves to\n"
+                    f"     '{resolved}' and does not exist. Correct the link, or cite\n"
+                    f"     `doc:<id>` so it cannot break again. `make doc-links-fix`\n"
+                    f"     repoints one across a move it can prove."
+                )
+            continue
         if kind == "id":
             doc = by_id.get(target)
             if doc is None:
@@ -611,7 +769,7 @@ def cmd_fix(args):
     docs = load_docs()
     old = load_manifest()
     moves = detect_moves(old, docs)
-    rust_files, md_files = citation_sources()
+    rust_files, md_files, toml_files = citation_sources()
 
     if moves:
         print(f"check-doc-links: {len(moves)} document(s) moved since the manifest:")
@@ -620,7 +778,9 @@ def cmd_fix(args):
     else:
         print("check-doc-links: no document moved since the manifest.")
 
-    by_base, ambiguous, unresolved = heal_by_basename(docs, rust_files, md_files)
+    by_base, ambiguous, unresolved = heal_by_basename(
+        docs, rust_files, md_files, toml_files
+    )
     if by_base:
         verb = "match" if args.by_name else "would match"
         print(f"check-doc-links: {len(by_base)} broken path(s) {verb} one document by name:")
@@ -634,8 +794,20 @@ def cmd_fix(args):
             print("    list above, then re-run with --by-name to apply it.")
 
     changed = heal(
-        moves, rust_files, md_files, extra_remap=by_base if args.by_name else None
+        moves,
+        rust_files,
+        md_files,
+        extra_remap=by_base if args.by_name else None,
+        toml_files=toml_files,
     )
+
+    # The second shape, and the one that used to print "nothing to heal" while
+    # thirteen links dangled in one file (#3886).
+    rel_changed, rel_ambiguous, rel_unresolved = heal_relative_hrefs(
+        docs, md_files, moves, by_name=args.by_name
+    )
+    changed = changed + rel_changed
+
     if changed:
         total = sum(c for _, c in changed)
         print(f"check-doc-links: healed {total} citation(s) in {len(changed)} file(s).")
@@ -643,6 +815,20 @@ def cmd_fix(args):
             print(f"    {path}  ({count})")
     else:
         print("check-doc-links: nothing to heal.")
+
+    if rel_ambiguous:
+        print("")
+        verb = "NOT healed" if args.by_name else "NOT healed without --by-name"
+        print(f"{verb} -- relative link(s) whose target must be chosen by a human:")
+        for citing, target, candidates in sorted(rel_ambiguous):
+            print(f"    {citing}: ]({target})")
+            for c in candidates:
+                print(f"        could be {c}")
+    if rel_unresolved:
+        print("")
+        print("NOT healed -- relative link(s) whose target no document matches:")
+        for citing, target in sorted(rel_unresolved):
+            print(f"    {citing}: ]({target})")
 
     if ambiguous:
         print("")
@@ -792,8 +978,10 @@ def cmd_selftest(args):
     misread as broken during this script's own development.
     """
     failures = []
+    asserted = []
 
     def check(label, got, want):
+        asserted.append(label)
         if got != want:
             failures.append(f"{label}: got {got!r}, want {want!r}")
 
@@ -876,12 +1064,59 @@ def cmd_selftest(args):
     check("heal skips rust code", healed[1], '    let s = "docs/a.md";\n')
     check("heal honours ignore marker", healed[2], '// docs/a.md doc-links:ignore\n')
 
+    # ── The relative href, which was invisible until #3886 ───────────────────
+    #
+    # `CITE_PATH_RE` is anchored on a repo-rooted `docs/` prefix; inside `docs/`
+    # the prevailing link style is relative, so a whole shape of citation went
+    # unchecked while the guard reported "608 citations resolve". Every way the
+    # new pattern could go wrong is a way that silence comes back.
+
+    def hrefs(text):
+        return [m.group(1) for m in REL_HREF_RE.finditer(text)]
+
+    check("relative href matched", hrefs("see [x](../design/x.md) here"), ["../design/x.md"])
+    check("bare sibling matched", hrefs("[x](wrapper-socket.md)"), ["wrapper-socket.md"])
+    check("fragment dropped from target", hrefs("[x](a.md#heading)"), ["a.md"])
+    check("absolute url is not a repo path", hrefs("[x](https://h/a.md)"), [])
+    check("site-absolute path is not a repo path", hrefs("[x](/docs/a.md)"), [])
+    check("bare anchor is not a path", hrefs("[x](#a.md)"), [])
+    check("mdx is not md, here too", hrefs("[x](a.mdx)"), [])
+    check("an image is not skipped by accident", hrefs("![x](a.md)"), ["a.md"])
+
+    # Resolution is against the CITING file's directory. Get this wrong in
+    # either direction and the guard either passes everything or fails
+    # everything, and both read as "the check runs".
+    check(
+        "resolved against the citer",
+        os.path.normpath(os.path.join("docs/spec", "../design/x.md")),
+        os.path.join("docs", "design", "x.md"),
+    )
+    check(
+        "a bare sibling stays in the directory",
+        os.path.normpath(os.path.join("docs/spec", "sibling.md")),
+        os.path.join("docs", "spec", "sibling.md"),
+    )
+
+    # The rewrite is anchored on `](` so it cannot escape the link. The rooted
+    # healer paid for the unanchored version once, in a red fmt gate.
+    line = "the file ../design/x.md, linked as [x](../design/x.md)\n"
+    line = line.replace("](../design/x.md", "](../spec/x.md")
+    check(
+        "rewrite touches the link, not the prose",
+        line,
+        "the file ../design/x.md, linked as [x](../spec/x.md)\n",
+    )
+
+    check("rust is comment-only", comment_only("crates/a/src/b.rs"), True)
+    check("toml is comment-only", comment_only("docs/spec/a.toml"), True)
+    check("markdown is prose end to end", comment_only("docs/a.md"), False)
+
     if failures:
         print("check-doc-links selftest: FAILED", file=sys.stderr)
         for f in failures:
             print(f"  {f}", file=sys.stderr)
         return 1
-    print("check-doc-links selftest: OK -- 23 assertions.")
+    print(f"check-doc-links selftest: OK -- {len(asserted)} assertions.")
     return 0
 
 

@@ -264,6 +264,11 @@
       "status": "living",
       "title": "Demo recordings \u2014 the deck film pipeline"
     },
+    "deck-film-script": {
+      "path": "docs/demo/stella-deck-script.md",
+      "status": "living",
+      "title": "The deck film \u2014 narration script"
+    },
     "deterministic-engine": {
       "path": "docs/papers/deterministic-engine.md",
       "sections": [

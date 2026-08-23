@@ -145,9 +145,12 @@ pub struct ReflectionLesson {
     /// Phase 3 (#714): the task this lesson belongs to, for the distinct-task
     /// counting spec §7 requires. `#[serde(default)]` so every log line written
     /// before this field existed still parses; when empty, extraction falls
-    /// back to the turn (see `memory::observations`). Nothing populates it yet
-    /// — it exists so a caller with a real task boundary can supply one without
-    /// a log-format change.
+    /// back to the turn (see `memory::observations`).
+    ///
+    /// Stamped by [`SessionMemory::reflect_and_record`] from the session's own
+    /// boundary, which is session-scoped unless a caller that knows better set
+    /// one — a fleet attempt writes `fleet:<task id>` here (#3989). See
+    /// [`SessionMemory::set_task_id`] for what collides with what.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub task_id: String,
     /// When this lesson applies — the condition a future task has to satisfy
@@ -309,8 +312,9 @@ pub struct SessionMemory {
     /// three tasks, and three lessons emitted by one reflection call — sharing
     /// one timestamp — read as one. A session is not a perfect task boundary
     /// either, but turns within a session are at least plausibly one task,
-    /// which is strictly closer than per-turn. `set_task_id` lets a caller
-    /// that genuinely knows the boundary supply it.
+    /// which is strictly closer than per-turn.
+    /// [`SessionMemory::set_task_id`] lets a caller that genuinely knows the
+    /// boundary supply it, which the fleet door does (#3989).
     task_id: String,
     /// The execution this turn is writing under, when the caller knows it —
     /// what lets a mined lesson and a self-review be traced back to the turn
@@ -398,13 +402,24 @@ impl SessionMemory {
     /// a benchmark harness, an issue-driven runner — should say so here, which
     /// is what makes governance's distinct-task threshold mean anything.
     ///
-    /// **Test-gated until such a caller exists in this tree.** `stella-cli` is
-    /// a bin-only crate, so there is no external consumer that could call this
-    /// even in principle; leaving it on the production build would be an
-    /// `#[allow(dead_code)]` describing an API nothing can reach. The session
-    /// default is what every shipped path uses today. Drop the gate in the same
-    /// commit that adds the first real caller.
-    #[cfg(test)]
+    /// A fleet attempt is the first such caller (#3989): it stamps
+    /// `fleet:<task id>` from the plan's own task, composed by
+    /// `fleet_cmd::attempt_task_boundary`. **Retry semantics:** the task is the
+    /// whole boundary. Every attempt at one task inside one run shares it, and
+    /// so does the same task id in a later run or in a different plan.
+    ///
+    /// Both merges are deliberate.
+    /// This field exists to stop a lesson clearing a promotion threshold it has
+    /// not earned, so between a boundary whose failure is under-counting
+    /// distinct tasks (a promotion arrives later than it might have) and one
+    /// whose failure is over-counting (a promotion arrives on evidence that
+    /// does not support it), take the first. The claim-holder identity
+    /// `{run_id}/{task id}` fails the other way: it is unique per run, so one
+    /// task worked in three nightly runs would promote on a single task's worth
+    /// of evidence — the same over-counting the session default already has,
+    /// and the reason a fleet attempt cannot just keep the default. `task.id`
+    /// is plan-local, so two unrelated plans that both name a task `t1` merge
+    /// into one boundary; that merges evidence and delays a promotion.
     pub(crate) fn set_task_id(&mut self, task_id: impl Into<String>) {
         self.task_id = task_id.into();
     }
@@ -422,14 +437,9 @@ impl SessionMemory {
     /// Tell memory which execution this turn's reflection belongs to, so the
     /// model's self-review can be stored against it.
     ///
-    /// Called by every path that begins an execution and later reflects. Not
-    /// test-gated, unlike `set_task_id` above: the whole point is the shipped
-    /// paths calling it, and a path that forgets to silently loses that turn's
-    /// self-rating rather than failing loudly, so the callers are the feature.
-    ///
-    /// (`set_task_id` is deliberately named in prose rather than linked. It is
-    /// `#[cfg(test)]`, so it does not exist in a doc build at all, and an
-    /// intra-doc link to it fails `-D warnings` rather than resolving.)
+    /// Called by every path that begins an execution and later reflects. A path
+    /// that forgets to silently loses that turn's self-rating rather than
+    /// failing loudly, so the callers are the feature.
     pub fn set_execution_id(&mut self, execution_id: i64) {
         self.execution_id = Some(execution_id);
     }
@@ -510,8 +520,10 @@ impl SessionMemory {
     /// `doc:trace-replay-learning-harness` §4). `stella-cli` is a bin-only
     /// crate, so no external consumer could call this even in principle, and
     /// leaving it on the production build would be dead code. The harness is
-    /// itself `#[cfg(test)]` for exactly that reason, so the gate stays —
-    /// the same discipline [`SessionMemory::set_task_id`] is held to.
+    /// itself `#[cfg(test)]` for exactly that reason, so the gate stays.
+    /// [`SessionMemory::set_task_id`] carried the same gate under the same rule
+    /// and dropped it when the fleet door became its first shipped caller
+    /// (#3989); this one drops when the replayer lands.
     #[cfg(test)]
     pub(crate) fn open_with_clock(
         workspace_root: &Path,

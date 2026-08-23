@@ -119,6 +119,14 @@ fn the_prompt_says_the_loop_is_a_principal_of_its_own() {
 /// It never runs inside a turn — that is §10's whole granularity argument,
 /// and it is the sentence that tells a reader why a `none` grade sits above
 /// a DESTRUCTIVE capability list without contradiction.
+///
+/// **And it does not call this package a content bundle** (#3537). That clause
+/// used to be part of the `none` grade itself, so the prompt said "It is a
+/// content bundle (skills, commands, agents, tools)" about a package that
+/// ships none of those four and asks for `bash`, `write_file`, an EC2 rig
+/// billed by the day, and a rewrite of a line in `~/.zshrc`. Since #3637 added
+/// `driver_say` it also contradicted the "DRIVES Stella" sentence two lines
+/// below it.
 #[test]
 fn the_prompt_shows_a_host_that_takes_no_say_in_the_turn() {
     let text = consent_text();
@@ -127,6 +135,16 @@ fn the_prompt_shows_a_host_that_takes_no_say_in_the_turn() {
         "{text}"
     );
     assert!(text.contains("runs at no hook point"), "{text}");
+    assert!(
+        !text.contains("content bundle"),
+        "this package ships no skills, tools or records and drives Stella from outside — \
+         calling it a content bundle steers a reader away from the grant they are \
+         accepting:\n{text}"
+    );
+    assert!(
+        text.contains("DRIVES Stella"),
+        "the vocabulary that does describe it must still be there:\n{text}"
+    );
 }
 
 /// Every power `doc:pipeline-as-plugins` §10 names, on both sides: the words

@@ -211,6 +211,35 @@ pub struct AgentEntry {
     /// Derived from `Inbound` + [`WorkspaceModel::now_ms`], so replay
     /// reconstructs it.
     pub active_task: Option<ActiveTaskStamp>,
+    /// The deck clock's reading at each `delegate` child's bracket, keyed by
+    /// its `agent_id` (#4369).
+    ///
+    /// Stamped like [`Self::turn_started_ms`] and for the same reason: a child
+    /// is known to the deck only as the `TranscriptEntry::SubAgent` bracket,
+    /// and a transcript entry carries no timestamp — the wire has none to
+    /// carry, since `stella-core` does no I/O and reads no clock (AGENTS.md
+    /// invariant 2). Without this the one row that most needs an elapsed
+    /// number, the mechanism with no control plane (#4347), was the only row
+    /// in the overlay that had none.
+    ///
+    /// Keyed rather than a single stamp because a parent may dispatch several
+    /// children in one turn, and never cleared: a finished child's head still
+    /// states how long it ran.
+    pub delegate_clocks: BTreeMap<String, DelegateClock>,
+}
+
+/// When a `delegate` child started, and when it stopped — see
+/// [`AgentEntry::delegate_clocks`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DelegateClock {
+    /// Deck clock at the child's `Started` bracket.
+    pub started_ms: u64,
+    /// Deck clock at its `Finished` bracket; `None` while it runs.
+    ///
+    /// The elapsed a finished child states is frozen here rather than counted
+    /// to `now_ms`, or a completed row's clock would keep climbing for the
+    /// rest of the session.
+    pub finished_ms: Option<u64>,
 }
 
 /// The stamp behind the task card's live `elapsed · $cost` readout — see
@@ -254,6 +283,7 @@ impl AgentEntry {
             parked_since_ms: None,
             turn_start_tokens_out: 0,
             active_task: None,
+            delegate_clocks: BTreeMap::new(),
         }
     }
 
@@ -912,12 +942,38 @@ impl WorkspaceModel {
                 // span is still open stays with the pure fold, so nothing
                 // clears this — see `AgentEntry::live_park`.
                 AgentEvent::TurnParked { .. } => entry.parked_since_ms = Some(now),
+                // Stamp a `delegate` child's bracket. The bracket on the
+                // transcript is all the deck knows about the child and it
+                // carries no time (#4369); this is the only place one exists.
+                // Deliberately not an insert-if-absent on `Started`: a
+                // re-dispatched `agent_id` is a new child, and its head must
+                // count from now.
+                AgentEvent::SubAgent { phase } => match phase {
+                    stella_protocol::SubAgentPhase::Started { agent_id, .. } => {
+                        entry.delegate_clocks.insert(
+                            agent_id.clone(),
+                            DelegateClock {
+                                started_ms: now,
+                                finished_ms: None,
+                            },
+                        );
+                    }
+                    stella_protocol::SubAgentPhase::Finished { agent_id, .. } => {
+                        // A finish with no start seen (a replayed session, a
+                        // deck attached mid-turn) stamps nothing: an elapsed
+                        // needs both ends, and one end is not most of one.
+                        if let Some(clock) = entry.delegate_clocks.get_mut(agent_id) {
+                            clock.finished_ms = Some(now);
+                        }
+                    }
+                },
                 AgentEvent::StepUsage {
                     input_tokens,
                     output_tokens,
                     cached_input_tokens,
                     cache_write_tokens,
                     model,
+                    role,
                     cost_usd,
                     ..
                 } => {
@@ -945,7 +1001,14 @@ impl WorkspaceModel {
                     entry.last_provider_call_ms = Some(now);
                     // Occupancy is the LATEST call's prompt size, not the sum.
                     entry.context_tokens = *input_tokens;
-                    entry.meta.model = Some(model.clone());
+                    // The row's model comes from the call answering the turn
+                    // and from no other (#4307). The tokens and the cost above
+                    // deliberately still come from every call — spend is spend,
+                    // whoever spent it — but a label is a claim about what the
+                    // agent is running, and an overflow summarizer is not it.
+                    if crate::model::role_supplies_the_turns_model(*role) {
+                        entry.meta.model = Some(model.clone());
+                    }
                     // Fallback accounting: a stream that never emits
                     // `BudgetTick` (scenario feeds, minimal drivers) still
                     // shows real spend. Once a tick has been seen it owns
@@ -1052,7 +1115,16 @@ impl WorkspaceModel {
             ..
         } = event
         {
-            self.routes.record(now, agent.clone(), model.clone());
+            // Only the call answering the turn names the agent's model. An
+            // overflow summarizer or a reflection rides the same agent and
+            // would otherwise relabel its row with a model the agent is not
+            // running (#4307) — the same defect #4183 fixed on the opening
+            // rule, and the predicate is that one rather than a second copy.
+            // `StepUsage` carries no `call_seq`, so the role condition is the
+            // whole of what this fold can ask.
+            if crate::model::role_supplies_the_turns_model(*role) {
+                self.routes.record(now, agent.clone(), model.clone());
+            }
             // `StepUsage` already carries the provider that actually served
             // the call and the role it served — the route log kept only the
             // model, which is why the statline could name one model and never

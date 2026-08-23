@@ -149,6 +149,68 @@ fn the_consent_text_says_the_plugin_is_a_caller_of_its_own() {
     );
 }
 
+/// **The witness for #3537.** "Content bundle" is a claim about what a
+/// package *ships*, and the `none` grade is a claim about its say in a turn.
+/// They used to be one sentence, so every `none`-grade package was called a
+/// content bundle — including a host that ships nothing and drives Stella from
+/// outside, printed directly above the widest capability list in the tree.
+///
+/// Three cases, because there are three kinds of `none`-grade package and the
+/// grade cannot tell them apart: one that really is a bundle, one that is a
+/// host, and one that is neither and whose whole substance is its capability
+/// list.
+#[test]
+fn a_none_grade_is_only_called_a_content_bundle_when_it_ships_content() {
+    let bundle = PluginManifest::from_toml_str(
+        "name = \"prettier-skills\"\ndescription = \"formatting skills\"\n\n\
+         [[skills]]\nslug = \"format\"\ndescription = \"how this repo formats\"",
+    )
+    .expect("a content bundle loads");
+    let text = consent_text(&bundle);
+    assert!(
+        text.contains("none — it never runs inside a turn"),
+        "{text}"
+    );
+    assert!(
+        text.contains("It is a content bundle"),
+        "a package that really does ship content is still told as one:\n{text}"
+    );
+
+    // A host: `none` for the same reason, and not a bundle at all. `driver_say`
+    // is what describes it, two lines below.
+    let host = PluginManifest::from_toml_str(
+        "name = \"stella-selfdriving\"\ndescription = \"the delivery loop\"\n\n\
+         [driver]\ncalls = [\"deliver_open\"]",
+    )
+    .expect("a host loads");
+    let text = consent_text(&host);
+    assert!(
+        text.contains("none — it never runs inside a turn"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("content bundle"),
+        "a host ships no content, and saying it does contradicts the DRIVES sentence \
+         below it:\n{text}"
+    );
+    assert!(text.contains("DRIVES Stella"), "{text}");
+
+    // Neither: no content, no `[driver]`. Saying nothing extra is the honest
+    // answer — the capability list under it is the whole story.
+    let bare = PluginManifest::from_toml_str(
+        "name = \"bare\"\ndescription = \"a capability list and nothing else\"\n\n\
+         [[capabilities]]\ntool = \"bash\"\nrisk = \"destructive\"\n\
+         purpose = \"run the release script\"",
+    )
+    .expect("a bare none-grade manifest loads");
+    let text = consent_text(&bare);
+    assert!(
+        text.contains("none — it never runs inside a turn"),
+        "{text}"
+    );
+    assert!(!text.contains("content bundle"), "{text}");
+}
+
 /// A capability with no stated reason is not consentable, so it does not
 /// load — the rule that keeps a consent prompt from listing a bare tool name.
 #[test]

@@ -355,6 +355,22 @@ fn both_automatic_steer_rungs_file_as_one_receipt_kind() {
     assert_eq!(user_block_kind(&stall_steer), BlockKind::Steered);
 }
 
+/// **Witness (#2837).** An invoked skill's body and a parked wait's wake
+/// report both ride as user-role text the engine wrote, and both redirect the
+/// model, so both file as [`BlockKind::Steered`]. Each read as the person's
+/// own goal until this arm existed.
+#[test]
+fn an_invoked_skill_body_and_a_wake_report_are_steering_not_the_users_goal() {
+    let invocation = crate::skills::invoke::render_invocation_message("triage", "read the log");
+    assert_eq!(user_block_kind(&invocation), BlockKind::Steered);
+
+    let wake = format!(
+        "{} timed out] the CI run — still unchanged after ~600s",
+        crate::waiting::WAKE_MARKER
+    );
+    assert_eq!(user_block_kind(&wake), BlockKind::Steered);
+}
+
 /// The classifier half of the `engine_markers::ENGINE_MARKERS` tie (#2722):
 /// every entry of the exported table classifies as engine text, never
 /// [`BlockKind::UserGoal`]. The four seed entries reference the same constants

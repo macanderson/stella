@@ -36,7 +36,7 @@
 //!   over. The operator decides nothing here; the dispatcher is the one with
 //!   the context to decide, and this hands it the facts.
 
-use crate::deck::{AgentEntry, WorkspaceModel};
+use crate::deck::{AgentEntry, DelegateClock, WorkspaceModel};
 use crate::envelope::{AgentStatus, WorkspaceInput};
 use crate::model::{SubAgentSummary, TranscriptEntry};
 use crate::v2::pulse::STALL_AFTER_MS;
@@ -62,6 +62,14 @@ pub struct Delegate {
     pub write_access: bool,
     /// `None` while the child is still inside its parent's turn.
     pub finished: Option<SubAgentSummary>,
+    /// The child's bracket on the deck clock, from
+    /// [`AgentEntry::delegate_clocks`].
+    ///
+    /// `None` for a bracket that was already on the transcript before the deck
+    /// saw its `Started` event — a replayed session, or a child dispatched
+    /// before this build. An unstamped child states no elapsed rather than one
+    /// counted from a moment nothing recorded (#4150, #4156).
+    pub clock: Option<DelegateClock>,
 }
 
 impl Row {
@@ -115,6 +123,7 @@ pub fn delegates_of(parent: usize, agent: &AgentEntry) -> Vec<Delegate> {
                 instruction_preview: instruction_preview.clone(),
                 write_access: *write_access,
                 finished: None,
+                clock: agent.delegate_clocks.get(agent_id).copied(),
             }),
             Some(summary) => {
                 if let Some(d) = out
@@ -133,6 +142,43 @@ pub fn delegates_of(parent: usize, agent: &AgentEntry) -> Vec<Delegate> {
 /// Milliseconds since the lane's last event.
 pub fn quiet_ms(model: &WorkspaceModel, lane: &AgentEntry) -> u64 {
     model.now_ms.saturating_sub(lane.last_activity_ms)
+}
+
+impl Delegate {
+    /// How long the child has run: to now while it runs, frozen at its finish
+    /// bracket once it has stopped. `None` when no bracket was stamped.
+    #[must_use]
+    pub fn elapsed_ms(&self, now_ms: u64) -> Option<u64> {
+        let clock = self.clock?;
+        Some(
+            clock
+                .finished_ms
+                .unwrap_or(now_ms)
+                .saturating_sub(clock.started_ms),
+        )
+    }
+}
+
+/// How long the child's **parent** has been quiet, while the child runs.
+///
+/// The parent's number, and the row says so. The wire does not attribute a
+/// child's own events to the child (#4347's attribution gap), so the deck
+/// cannot say when the child last did anything — and a number labelled
+/// `quiet` that is really its parent's would claim more than the deck knows.
+/// `None` once the child has finished: quiet time is a question about
+/// something still running.
+pub fn delegate_parent_quiet_ms(model: &WorkspaceModel, d: &Delegate) -> Option<u64> {
+    if d.finished.is_some() {
+        return None;
+    }
+    let parent = model.agents.get(d.parent)?;
+    Some(quiet_ms(model, parent))
+}
+
+/// Whether the parent of a still-running child has been quiet long enough to
+/// call the pair stalled — the same threshold a lane row uses.
+pub fn delegate_stalled(model: &WorkspaceModel, d: &Delegate) -> bool {
+    delegate_parent_quiet_ms(model, d).is_some_and(|ms| ms >= STALL_AFTER_MS)
 }
 
 /// Whether a running lane has been quiet long enough to call it stalled.

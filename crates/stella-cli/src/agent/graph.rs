@@ -726,8 +726,19 @@ pub(crate) fn spawn_session_graph(
         //    unindexed for all of it. The two overlap safely: they are separate
         //    SQLite connections writing different tables, and the embed lease
         //    is what keeps two embedding passes apart.
-        let db_path = crate::search_cmd::codegraph::graph_db_path(&root);
-        match stella_graph::CodeGraph::mount(&root, &db_path).await {
+        //    Resolved through the same rule the index pass above used, so a
+        //    session whose private state is redirected cannot build in one
+        //    database and watch another (#4394).
+        let mounted = match crate::search_cmd::codegraph::graph_db_path(&root) {
+            Ok(Some(db_path)) => stella_graph::CodeGraph::mount(&root, &db_path)
+                .await
+                .map_err(|e| e.to_string()),
+            // The build in step 1 creates the index, so reaching here means it
+            // failed and has already said so — there is nothing to watch.
+            Ok(None) => Err("no index was built this session".to_owned()),
+            Err(error) => Err(error.to_string()),
+        };
+        match mounted {
             Ok(graph) => {
                 *slot_task.lock().unwrap_or_else(|p| p.into_inner()) = Some(graph);
             }

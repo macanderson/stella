@@ -56,8 +56,8 @@ use crate::loop_detect::{CallRecord, LoopIdentity, LoopVerdict, detect_loop};
 use crate::ports::ToolExecutor;
 use crate::step::AbortKind;
 
-use super::loop_evidence::{ResultIdentities, recent_call_records, turn_start_index};
-use super::{EngineConfig, LOOP_STEER_PREFIX, TurnOutcome};
+use super::loop_evidence::{recent_call_records, turn_start_index};
+use super::{EngineConfig, LOOP_STEER_PREFIX, TurnMemos, TurnOutcome};
 
 /// How many stuck-loop steering warnings one turn may spend.
 ///
@@ -245,11 +245,13 @@ impl LoopSteerBudget {
 /// stuck. Progress-aware: each call is paired with the output it produced
 /// ([`recent_call_records`]), so only repeats and cycles with byte-identical
 /// outputs count — legitimate polling (identical input, changing output)
-/// never trips it (`crate::loop_detect`). `result_identities` is the turn's
-/// pre-compaction snapshot ([`super::loop_evidence::snapshot_result_identities`])
-/// — compaction runs immediately before this check and rewrites older
-/// results in place, so without it a repeat streak reads as
-/// `[stub, stub, real]` and never counts.
+/// never trips it (`crate::loop_detect`). `memos` carries both halves this
+/// pass needs: [`TurnMemos::identities`] is the turn's pre-compaction snapshot
+/// ([`super::loop_evidence::snapshot_result_identities`]) — compaction runs
+/// immediately before this check and rewrites older results in place, so
+/// without it a repeat streak reads as `[stub, stub, real]` and never counts —
+/// and [`TurnMemos::receipts`] is where the stall seconds this pass computes
+/// are recorded (#3621), on the step they were computed for.
 ///
 /// Steer first, abort second: a granted warning goes in through the same seam
 /// as user steering — a user-role message the model answers this very step,
@@ -264,13 +266,24 @@ pub(super) fn check_loop_detection(
     config: &EngineConfig,
     tools: &dyn ToolExecutor,
     messages: &mut Vec<CompletionMessage>,
-    result_identities: &ResultIdentities,
+    memos: &mut TurnMemos,
     loop_steer: &mut LoopSteerBudget,
     total_cost_usd: f64,
     events: &EventSender,
 ) -> Option<TurnOutcome> {
     let turn_instance = config.turn_instance;
-    let records = recent_call_records(messages, result_identities);
+    let records = recent_call_records(messages, &memos.identities);
+    // Classified on every step, not only on the arm that steers on it, and
+    // recorded before any of them can return: the number is the turn's, and a
+    // step that also detected a loop is exactly the one a post-hoc reader most
+    // wants it for. Written here rather than at the ledger because this is
+    // where the window already is — a second `recent_call_records` walk is a
+    // second chance for the recorded number to disagree with the steered-on
+    // one (#3621).
+    let stall_seconds_requested = turn_stall_seconds(&records);
+    memos
+        .receipts
+        .set_stall_seconds_requested(stall_seconds_requested);
     let verdict = detect_loop(&records, config.loop_detection);
     // Read from the same window the verdict is, and before the transcript is
     // touched, so both rungs answer about the same turn.

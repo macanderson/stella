@@ -1057,6 +1057,38 @@ pub(crate) fn imports_from(conn: &Connection, rel: &str) -> Result<Vec<ImportRow
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// A digest over every indexed file's `(path, content_sha256)` pair, ordered
+/// by path.
+///
+/// Two equal digests prove no file was added, removed, or re-indexed, and
+/// therefore that every graph-derived fact — symbols, import edges, resolved
+/// targets, importers — is byte-identical to what it was when the earlier
+/// digest was taken. That is what a per-file cache cannot establish on its
+/// own: `importers_of` and the resolution half of [`imports_from`] are
+/// functions of the *rest* of the tree, so a file whose own bytes never
+/// changed can still have a stale answer (#3196).
+///
+/// One indexed scan of a covering index over a table with one row per source
+/// file, so a caller may take it per search call. The pairs are hashed
+/// NUL-separated, which keeps a rename that shuffles bytes between the two
+/// columns from digesting to the same value.
+pub(crate) fn index_generation(conn: &Connection) -> Result<[u8; 32], GraphError> {
+    let mut stmt =
+        conn.prepare("SELECT path, content_sha256 FROM code_graph_files ORDER BY path")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut hasher = Sha256::new();
+    for row in rows {
+        let (path, sha) = row?;
+        hasher.update(path.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(sha.as_bytes());
+        hasher.update(b"\0");
+    }
+    Ok(hasher.finalize().into())
+}
+
 /// The files that import (resolve to) a given file.
 pub(crate) fn importers_of(conn: &Connection, rel: &str) -> Result<Vec<String>, GraphError> {
     let mut stmt = conn.prepare(

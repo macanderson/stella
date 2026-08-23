@@ -9,7 +9,7 @@
 //! the renderer draws a capped, styled diff. Neither proves the pair works
 //! *together*, because each supplies by hand what the other would have had to
 //! produce — `producer_seq` reads the ref and stops, and `inline_diff` builds
-//! its [`FileState`] literally, including a `latest_diff` that starts at `@@`.
+//! its [`FileState`] literally, including a remembered diff starting at `@@`.
 //!
 //! That gap is not academic. The diff a real turn folds does **not** start at
 //! `@@`: `WorkJournal::split_patch_per_file` cuts git's multi-file patch on the

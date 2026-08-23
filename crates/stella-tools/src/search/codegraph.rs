@@ -10,9 +10,30 @@ use std::path::{Path, PathBuf};
 
 use stella_protocol::tool::ToolOutput;
 
-/// The index location `stella init` writes and every graph reader resolves.
-pub fn graph_db_path(root: &Path) -> PathBuf {
-    root.join(".stella").join("private").join("codegraph.db")
+/// Where an existing index lives, for every reader that queries one.
+/// `None` when this workspace has no code graph.
+///
+/// Delegates to the store rather than joining the path itself, because
+/// `.stella/private/` is not always literally under the workspace root and a
+/// join cannot know that. `STELLA_WORKSPACE_STATE_ROOT`
+/// (`stella_home::WORKSPACE_STATE_ROOT_ENV`) redirects it so a throwaway
+/// worktree keeps its private state outside the tree that is about to be
+/// deleted, and the same resolver migrates a legacy `.stella/codegraph.db`
+/// into `.stella/private/` on the way past.
+///
+/// A bare join here saw neither. Under a redirect the session built its index
+/// through the store and mounted its watcher, its CGP host and its deck on an
+/// empty database at the literal path, so a `stella self-driving` turn's own
+/// edits were indexed nowhere the queries looked (#4394).
+///
+/// The **read-only** resolver, not the writable one [`open_or_build`] takes:
+/// every caller here is answering a query, and a lookup in a workspace with
+/// no `.stella/` must create none — a Command Deck entity search in a
+/// directory nobody has run `stella init` in leaves the tree exactly as it
+/// found it.
+pub fn graph_db_path(root: &Path) -> Result<Option<PathBuf>, IndexError> {
+    stella_store::existing_workspace_private_sqlite_path(root, "codegraph.db")
+        .map_err(|error| IndexError::PrivateState(error.to_string()))
 }
 
 /// Why a code-graph door did not open (invariant #5).
@@ -110,7 +131,12 @@ pub fn with_index_warning(output: ToolOutput, warning: Option<String>) -> ToolOu
 pub fn open_or_build(root: &Path) -> Result<OpenedGraph, IndexError> {
     // The WRITABLE path (creates `.stella/private/`), not the read-only
     // `existing_...` probe — this is the one place a query is allowed to
-    // create the index it needs.
+    // create the index it needs. `graph_db_path` is the read-only half of the
+    // same rule and answers `None` here instead, which is why a writer cannot
+    // route through it (#4394). Reported as `Prepare` rather than
+    // `PrivateState` because a search degrades past this to a lexical rung
+    // (`super::engine::dispatch`) instead of failing, which is the distinction
+    // those variants carry.
     let db_path = stella_store::workspace_private_sqlite_path(root, "codegraph.db")
         .map_err(|error| IndexError::Prepare(error.to_string()))?;
     let graph = stella_graph::CodeGraph::open(root, &db_path)

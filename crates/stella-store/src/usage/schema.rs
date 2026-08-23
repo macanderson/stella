@@ -28,6 +28,26 @@
 //! name**. Two branches that each append "the next hub migration" merge
 //! cleanly and produce a ladder where one step runs at the other's version,
 //! and nothing in CI catches it -- so append, and never reorder.
+//!
+//! # Lazy on open is the whole delivery mechanism, and that is settled
+//!
+//! [`apply`] runs from `UsageStore::open_*`, so a migration reaches a hub the
+//! next time any command touches it -- and never reaches a hub belonging to a
+//! machine that has stopped running Stella. #3411 asked whether that wants a
+//! `stella usage doctor` reporting `user_version`, or the version surfaced in
+//! `stella usage report`. It does not, and the reason is what the hub is: a
+//! local aggregate read only by the process that opens it. A hub nothing opens
+//! is a hub nothing reads, so an uncorrected one is unobservable in exactly
+//! the same circumstances that leave it uncorrected -- and the first read
+//! after that machine comes back is the read that runs the ladder. A reporting
+//! command would be a surface for a state no user can be in while looking at
+//! it.
+//!
+//! The question reopens if a hub is ever read by something other than the
+//! process that opened it (a shared or remote aggregate), or if a migration
+//! arrives whose *absence* corrupts rather than merely delays -- one that must
+//! be known to have run before any write, not merely before any read. Neither
+//! is true today.
 
 use rusqlite::Connection;
 
@@ -74,6 +94,17 @@ CREATE TABLE IF NOT EXISTS tool_usage_rollup (
     calls      INTEGER NOT NULL DEFAULT 0,
     errors     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (project_id, tool, surface, day)
+);
+-- Which executions have already been folded into `tool_usage_rollup` (#3411).
+-- That fold is additive, so it must happen once per execution; asking
+-- `execution_rollup` instead was wrong because `prune` deletes from it on
+-- predicates the rollup does not share. `day` is the bucket's own key, copied
+-- so a claim and its bucket age out together. See `super::tool_fold`.
+CREATE TABLE IF NOT EXISTS tool_fold_ledger (
+    project_id   TEXT NOT NULL,
+    execution_id INTEGER NOT NULL,
+    day          TEXT NOT NULL,
+    PRIMARY KEY (project_id, execution_id)
 );
 CREATE TABLE IF NOT EXISTS telemetry (
     project_id     TEXT NOT NULL,
@@ -145,10 +176,12 @@ type HubMigration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// `user_version` i to i + 1.
 ///
 /// Append only. See the module doc for why position is the contract.
-const HUB_MIGRATIONS: [HubMigration; 1] = [
+const HUB_MIGRATIONS: [HubMigration; 2] = [
     // v0 -> v1: back-propagate #3388's door-only `kind` vocabulary, and give
     // the hub the `role` column #3395 gave the project store.
     migrate_hub_v0_to_v1,
+    // v1 -> v2: seat the tool-fold ledger from what is already rolled up.
+    migrate_hub_v1_to_v2,
 ];
 
 /// The hub schema version this build writes.
@@ -232,6 +265,34 @@ fn migrate_hub_v0_to_v1(tx: &rusqlite::Transaction<'_>) -> Result<()> {
             rusqlite::params![crate::migrations::SYSTEM_NON_DOOR, role],
         )?;
     }
+    Ok(())
+}
+
+/// v1 -> v2: seat `tool_fold_ledger` from the executions already rolled up
+/// (#3411).
+///
+/// Convergence creates the table; this decides what it starts holding. An
+/// existing hub has already folded every execution in `execution_rollup`, so
+/// without this seat the first re-sync of one would claim the fold as new and
+/// add its histogram a second time — the ledger would arrive and immediately
+/// certify a double count.
+///
+/// `substr(started_at, 1, 10)` rather than `date(started_at)`: the day is a
+/// raw prefix of the timestamp at the write site (`Store::execution_rollup_row`),
+/// and `date()` would normalize a value it can parse and return NULL for one
+/// it cannot. Copying the same bytes is what keeps a claim and its bucket on
+/// one key.
+///
+/// Executions whose rollup row `prune` has already deleted are not seated —
+/// nothing records that they were folded, and nothing can. Their buckets are
+/// the pre-existing exposure this ledger stops accruing; it does not
+/// retroactively repair a hub that has already double-counted.
+fn migrate_hub_v1_to_v2(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    tx.execute(
+        "INSERT OR IGNORE INTO tool_fold_ledger (project_id, execution_id, day) \
+         SELECT project_id, execution_id, substr(started_at, 1, 10) FROM execution_rollup",
+        [],
+    )?;
     Ok(())
 }
 

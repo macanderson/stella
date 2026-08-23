@@ -598,10 +598,17 @@ impl WrapperDispatch {
                 // what plugins contribute, never what they are permitted: a
                 // member that did not declare `before_turn` is not asked it
                 // because a sibling did (#3501's filter, per member).
+                //
+                // `permits_stage` is `permits_point` plus the stage list
+                // `[loop] before_turn_stages` declares (#3543), so a plugin
+                // that contributes at one stage of an eight-stage order is
+                // spawned once per round rather than eight times. Empty is
+                // "every stage this program runs", which is what a manifest
+                // written before the field existed means.
                 if !member
                     .manifest
                     .loop_grant
-                    .permits_point(WrapperPoint::BeforeTurn)
+                    .permits_stage(WrapperPoint::BeforeTurn, stage)
                 {
                     continue;
                 }

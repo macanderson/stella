@@ -102,10 +102,29 @@ class TestLiveSources:
     """
 
     def test_the_real_catalog_parses_to_entries(self, stella_checkout: Path) -> None:
-        source = (stella_checkout / cat._CATALOG_REL).read_text(encoding="utf-8")
-        entries = cat.parse_catalog(source)
+        sources = cat._read_seed_modules(stella_checkout)
+        assert sources, "no seed module was read"
+        entries = [entry for source in sources for entry in cat.parse_catalog(source)]
         assert entries, "the shipping catalog parsed to zero entries"
         assert all(e["slug"] and e["provider"] for e in entries)
+
+    def test_every_seed_module_carries_at_least_one_row(
+        self, stella_checkout: Path
+    ) -> None:
+        """The seed is a directory since #3862, so "the path resolves" and
+        "every module still parses" became two different questions.
+
+        Reading them as one list hides a module that stopped matching: the
+        others carry the total past any "not empty" assertion, and the provider
+        whose rows vanished is exactly the one a reader would not think to
+        check.
+        """
+        for module in sorted((stella_checkout / cat._CATALOG_REL).glob("*.rs")):
+            source = module.read_text(encoding="utf-8")
+            assert cat.parse_catalog(source), (
+                f"{module.name} parsed to zero entries — the parser in "
+                "arenabench/catalog.py no longer matches its shape"
+            )
 
     def test_the_real_posture_yields_benchmarked_slugs(
         self, stella_checkout: Path

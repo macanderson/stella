@@ -249,6 +249,26 @@ pub enum PolicyKind {
     SecretDetected,
 }
 
+/// Which authority held a workspace's steering back
+/// ([`AgentEvent::SteeringWithheld`], #2302/#3616).
+///
+/// Two causes resolve one refusal, and they are not interchangeable: they have
+/// different remedies, and one of them the user cannot lift at all. A harness
+/// that folded them together would tell an operator to set a flag they have
+/// already set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum Withholder {
+    /// This process was not told to trust the repository. The remedy is the
+    /// operator's own — trusting the checkout lifts it.
+    ProjectUntrusted,
+    /// The org-managed scope pins project prompts off. A **ceiling**: it holds
+    /// whether or not the checkout is trusted, and no environment variable
+    /// lifts it.
+    ManagedCeiling,
+}
+
 mod call_role;
 pub mod consumers;
 mod payload;
@@ -1052,6 +1072,25 @@ pub enum AgentEvent {
         calibration_factor: f64,
         /// Sum of block token costs, pre-call (the engine's raw estimate).
         estimated_input_tokens: u64,
+        /// The pure-`sleep` seconds this turn has **asked for** across the
+        /// detector's window, as of this step — the number the stall rung
+        /// (`stella_core::driver::loop_escalation`) decides on, recorded
+        /// rather than thrown away once it has decided (#3621).
+        ///
+        /// Requested, never executed: it is read off the calls' own text so
+        /// the same transcript classifies the same way every step, which is
+        /// what keeps the rung deterministic (invariant #2). A call killed by
+        /// the shell's own timeout still contributes its full request, so
+        /// this is an upper bound on wall clock. Executed seconds are already
+        /// derivable from `ToolResult.duration_ms`, and the gap between the
+        /// two is the signal — see #3624.
+        ///
+        /// `None` is "this emitter did not classify", not "zero seconds": the
+        /// replay/reconstruction path rebuilds a receipt from stored messages
+        /// with no detector window around it, and a reader must not count that
+        /// as a turn that slept for nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stall_seconds_requested: Option<u64>,
         /// This manifest's identity as a **compiled context frame** — ADR 0006
         /// as amended: the compiled frame is this manifest extended, not a
         /// parallel aggregate, so its id and hash are fields here rather than a
@@ -1181,6 +1220,18 @@ pub enum AgentEvent {
     /// was ever created. It is a per-run temporary directory, so it is a
     /// run-to-run artifact and no golden comparison may key on its value.
     ///
+    /// **Nothing in this workspace emits it.** Its sole producer was
+    /// `Pipeline::deliver_winner` in `crates/stella-pipeline`, deleted in
+    /// #3865, and the raw step-loop that remains has no candidates to choose
+    /// between. #3881's decision is to keep it, for two reasons that are
+    /// independent of each other: recorded journals and `stella-events.jsonl`
+    /// files already carry the tag and stay readable, and best-of-N delivery is
+    /// exactly the decision a wrapper plugin reports back over the socket
+    /// (`doc:wrapper-socket`), so the wire shape a re-homed producer would need
+    /// is this one. Its consumers are unaffected either way — see
+    /// `event::tags`'s row, which declares `Surfaced` because the Observatory's
+    /// journal query still selects it.
+    ///
     /// See [`crate::delivery_event`] for why the outcome is a sum type and what
     /// the counts are measured from.
     #[cfg_attr(
@@ -1253,6 +1304,29 @@ absence of a sibling key."
     /// terminal events and emitted its own in their place — which is a
     /// two-way connection between the engine and one of its callers.
     RunComplete { model: String, cost_usd: f64 },
+    /// The workspace's own steering — memories, rules and published context
+    /// records, skills, commands, agents — was on disk and was **not** loaded,
+    /// because the authority in `withheld_by` refused it (#2302, #3616).
+    ///
+    /// Emitted once per run, before the turn opens, and only when something
+    /// was actually held back: a notice every repository sees is one nobody
+    /// reads. It is the machine-readable twin of the stderr line, so a harness
+    /// running `--output-format stream-json` learns that this session was not
+    /// steered by the repository it is sitting in without scraping the human
+    /// channel.
+    ///
+    /// **Counts only** — never a filename, never a body, never the workspace
+    /// path. The withheld text is repository-controlled, and a refusal that
+    /// echoed it would be the exfiltration channel the refusal exists to
+    /// prevent.
+    SteeringWithheld {
+        withheld_by: Withholder,
+        memories: usize,
+        records: usize,
+        skills: usize,
+        commands: usize,
+        agents: usize,
+    },
     /// An event whose `"type"` this binary does not recognize — almost always
     /// one emitted by a NEWER stella than the one reading. The whole original
     /// JSON object is preserved in `payload` (tag included), so a proxy,

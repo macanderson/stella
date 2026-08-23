@@ -33,6 +33,7 @@ pub(crate) mod probes;
 mod report;
 pub(crate) mod state;
 mod stats;
+mod stop;
 mod surface;
 mod triage;
 pub(crate) mod turn_flags;

@@ -21,9 +21,11 @@
 //! on disk the trust gate is holding back, and how much of it?** Counts only.
 //! The notice must never carry a memory body, a record's text, or even a
 //! filename: those are repository-controlled strings, and a refusal that echoed
-//! them would become the exfiltration channel it exists to prevent. Nothing
-//! here opens a file — [`survey`] is `read_dir` plus a name test — so there is
-//! no body to leak by accident.
+//! them would become the exfiltration channel it exists to prevent. [`survey`]
+//! reads no rule text: five of its counts are `read_dir` plus a name test, and
+//! the sixth is a `count(*)` over an immutable connection
+//! (`stella_store::rules_peek`), so no body reaches this module to leak by
+//! accident.
 //!
 //! It answers a second question the first one cannot: **which authority
 //! withheld it**, because that decides the only remedy the line may honestly
@@ -41,11 +43,14 @@
 //! is proved by a process test
 //! (`crates/stella-cli/tests/settings_warnings_cli.rs`), not by this module.
 //!
-//! **stderr is the only carrier today.** #2302 also asks for the counts in the
-//! `--output-format stream-json`/`json` output so a harness sees them without
-//! scraping the human channel; that half is unimplemented and tracked in #3616.
-//! It needs a wire carrier, not a new answer — [`survey`] and [`withholder`]
-//! already return everything it would emit.
+//! **Two carriers, one answer.** #2302 asks for the counts on stderr *and* in
+//! `--output-format stream-json`, so a harness sees them without scraping the
+//! human channel. [`WithheldNotice::line`] is the first and
+//! [`WithheldNotice::event`] the second (#3616), and both read one
+//! [`withheld`] survey rather than deriving anything of their own — a second
+//! derivation is how two carriers of one fact start disagreeing. The `json`
+//! **summary** object is still missing, and needs a `SUMMARY_SCHEMA_VERSION`
+//! bump of its own.
 
 use std::path::Path;
 
@@ -60,16 +65,12 @@ use super::authority::ManagedAuthoritySettings;
 /// `false` has two possible causes with two different remedies. The managed arm
 /// is a **ceiling**: it is not lifted by trusting the repository, so a notice
 /// that named `STELLA_TRUST_PROJECT=1` there would be advice that cannot work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Withholder {
-    /// This process was not told to trust the repository. The user holds the
-    /// remedy themselves.
-    ProjectUntrusted,
-    /// The org-managed scope pins `authority.project_prompts = "off"`, which
-    /// takes precedence: it withholds the steering whether or not the user
-    /// trusts this checkout, and no environment variable lifts it.
-    ManagedCeiling,
-}
+///
+/// The protocol's type rather than a local twin, because the same
+/// discriminant now rides the wire on [`stella_protocol::AgentEvent`] — two
+/// enums for one distinction is how the stderr line and the event start
+/// disagreeing about which authority refused (#3616).
+pub(crate) use stella_protocol::Withholder;
 
 /// Attribute an already-resolved withholding to the authority that caused it,
 /// or `None` when the steering was in fact loaded.
@@ -98,22 +99,25 @@ pub(crate) fn withholder(
 
 /// How much project steering the trust gate is holding back, by category.
 ///
-/// Each count is a question about the **workspace's steering directories**, not
-/// a prediction of what the matching loader would have produced. A definition
+/// Each count is a question about the **steering the workspace holds**, not a
+/// prediction of what the matching loader would have produced. A definition
 /// that would have failed to parse was withheld just the same, and re-deriving
 /// each loader's discovery rules here would be a second copy of them, free to
 /// drift from the first.
 ///
-/// **One withheld source is deliberately not counted**: the extension-authored
-/// rules `rules::store_rule_files` reads out of `.stella/private/store.db`, which
-/// the same gate suppresses (`rules::load_workspace_rules`'s `include_project`
-/// arm). Counting them means `stella_store::Store::open`, and that is not a
-/// read — it creates and hardens the state directory, runs migrations, and
-/// writes through `reconcile_interrupted_executions`. None of that may happen as
-/// a side effect of loading settings, which every `stella` invocation does. A
-/// workspace whose *only* steering is store rules therefore stays silent; it
-/// needs a read-only count exposed by the store, tracked in #3617.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// The one source that is not a directory is the extension-authored rules the
+/// same gate suppresses out of `.stella/private/store.db`
+/// (`rules::load_workspace_rules`'s `include_project` arm). Counting those used
+/// to mean `stella_store::Store::open`, which is not a read — it creates and
+/// hardens the state directory, runs migrations, and writes through
+/// `reconcile_interrupted_executions` — so a workspace whose *only* steering
+/// was store rules stayed silent, the exact defect #2302 was filed for in a
+/// narrower case. `stella_store::rules_peek` answers it read-only instead
+/// (#3617), and the count folds into [`records`](Self::records) because the
+/// notice names what a reader would look for, and a published rule reads as a
+/// context record wherever it was stored. It is a separate field so the two
+/// sources stay separately assertable.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct WithheldSteering {
     /// `<root>/.stella/memories/*.md`.
     pub(crate) memories: usize,
@@ -121,6 +125,9 @@ pub(crate) struct WithheldSteering {
     /// — markdown rules and published TOML context records alike, since one
     /// gate withholds both.
     pub(crate) records: usize,
+    /// Extension-authored rules published into `.stella/private/store.db`,
+    /// counted read-only. Rendered as part of the `records` total.
+    pub(crate) store_records: usize,
     /// `<root>/.stella/skills` — a `<slug>.md` file or a `<slug>/SKILL.md`
     /// directory, the two layouts the skill source reads.
     pub(crate) skills: usize,
@@ -148,7 +155,11 @@ impl WithheldSteering {
     fn parts(&self) -> String {
         [
             part(self.memories, "memory", "memories"),
-            part(self.records, "context record", "context records"),
+            part(
+                self.records + self.store_records,
+                "context record",
+                "context records",
+            ),
             part(self.skills, "skill", "skills"),
             part(self.commands, "command", "commands"),
             part(self.agents, "agent", "agents"),
@@ -164,37 +175,78 @@ fn part(count: usize, one: &str, many: &str) -> Option<String> {
     (count > 0).then(|| format!("{count} {}", if count == 1 { one } else { many }))
 }
 
-/// The one line a checkout whose steering was withheld is owed, or `None`.
+/// What a checkout whose steering was withheld is owed, or `None`.
 ///
 /// `None` on two arms, and both are load-bearing: a workspace whose steering
 /// **was loaded** (`withheld_by` is `None`) has nothing to be told, and one with
 /// **nothing to withhold** must not warn about a suppression that cost it
 /// nothing — a notice printed in every repository is one nobody reads.
-pub(crate) fn notice(workspace_root: &Path, withheld_by: Option<Withholder>) -> Option<String> {
-    let withheld_by = withheld_by?;
-    let withheld = survey(workspace_root);
-    if withheld.is_empty() {
-        return None;
-    }
-    let remedy = match withheld_by {
-        Withholder::ProjectUntrusted => {
-            "set STELLA_TRUST_PROJECT=1 to let this repo's memories, rules, skills, commands \
-             and agents steer this session"
-        }
-        Withholder::ManagedCeiling => {
-            "your org's managed settings set authority.project_prompts = \"off\", so no \
-             repository may steer a session on this machine — STELLA_TRUST_PROJECT does not \
-             lift it"
-        }
-    };
-    Some(format!(
-        "  ! project steering in {} was NOT loaded ({}) — {remedy}",
-        workspace_root.display(),
-        withheld.parts(),
-    ))
+pub(crate) fn withheld(
+    workspace_root: &Path,
+    withheld_by: Option<Withholder>,
+) -> Option<WithheldNotice> {
+    let by = withheld_by?;
+    let counts = survey(workspace_root);
+    (!counts.is_empty()).then_some(WithheldNotice { by, counts })
 }
 
-/// Count the project steering present on disk, opening nothing.
+/// One workspace's refusal: which authority held its steering back, and how
+/// much. Surveyed once, because #2302 asks for two carriers of it and a second
+/// derivation is how two carriers of one fact start disagreeing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct WithheldNotice {
+    by: Withholder,
+    counts: WithheldSteering,
+}
+
+impl WithheldNotice {
+    /// The human channel's line: the workspace, the inventory, and the one
+    /// remedy that works on the arm it is actually on.
+    pub(crate) fn line(&self, workspace_root: &Path) -> String {
+        let remedy = match self.by {
+            Withholder::ProjectUntrusted => {
+                "set STELLA_TRUST_PROJECT=1 to let this repo's memories, rules, skills, commands \
+                 and agents steer this session"
+            }
+            Withholder::ManagedCeiling => {
+                "your org's managed settings set authority.project_prompts = \"off\", so no \
+                 repository may steer a session on this machine — STELLA_TRUST_PROJECT does not \
+                 lift it"
+            }
+        };
+        format!(
+            "  ! project steering in {} was NOT loaded ({}) — {remedy}",
+            workspace_root.display(),
+            self.counts.parts(),
+        )
+    }
+
+    /// The machine channel's event — what `--output-format stream-json`
+    /// carries, so a harness sees the refusal without scraping the human
+    /// channel (#3616).
+    ///
+    /// Counts and the authority, and deliberately **not** the workspace path:
+    /// a harness knows its own cwd, and the path is the one field of
+    /// [`Self::line`] that is not a count.
+    pub(crate) fn event(&self) -> stella_protocol::AgentEvent {
+        stella_protocol::AgentEvent::SteeringWithheld {
+            withheld_by: self.by,
+            memories: self.counts.memories,
+            // Folded exactly as `parts` folds it for the human line: a
+            // published rule reads as a context record wherever it was
+            // stored, and the two carriers must not disagree about the
+            // number (#3617).
+            records: self.counts.records + self.counts.store_records,
+            skills: self.counts.skills,
+            commands: self.counts.commands,
+            agents: self.counts.agents,
+        }
+    }
+}
+
+/// Count the project steering present on disk, creating nothing and writing
+/// nothing — this runs on the `Settings::load` path every `stella` invocation
+/// takes, `stella --version` included.
 pub(crate) fn survey(workspace_root: &Path) -> WithheldSteering {
     let stella = workspace_root.join(".stella");
     WithheldSteering {
@@ -204,6 +256,11 @@ pub(crate) fn survey(workspace_root: &Path) -> WithheldSteering {
         // them.
         records: count_in(&workspace_root.join(".claude").join("rules"), is_rule_file)
             + count_in(&stella.join("rules"), is_rule_file),
+        // The one source that is not a directory. Asked of the rules loader's
+        // own module rather than re-derived here, and read-only by
+        // construction — `survey` runs on the `Settings::load` path every
+        // `stella` invocation takes.
+        store_records: crate::rules::store_rule_count(workspace_root),
         skills: count_in(&stella.join("skills"), |path| {
             is_markdown(path) || path.join("SKILL.md").is_file()
         }),
