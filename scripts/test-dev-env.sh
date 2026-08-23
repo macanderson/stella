@@ -106,6 +106,35 @@ SETTINGS="$REPO/agent-settings.json"
 CACHE="$FIX/cache"
 export STELLA_ENV_CACHE="$CACHE"
 
+# setup-dev-env.sh's tool_table() names two `ci`-tier entries, cargo-deny and
+# the shell linter, whose absence makes it exit non-zero even on a PLAIN (non
+# `--check`) run: the final `missing_required` check at the end of the script
+# is unconditional on MODE. Both are genuinely installed on a working dev
+# machine, but neither is guaranteed present on whatever happens to be
+# running this suite: cargo-deny is `cargo install`ed only inside ci.yml's
+# separate `supply-chain` job, never in guard-self-tests.yml's, and the shell
+# linter being preinstalled on ubuntu-latest is an assumption about the
+# runner image, not a guarantee this suite controls. S6 ("full run is
+# idempotent") is the one case that checks BOTH setup invocations exit 0, so
+# it is the one case an absent `ci`-tier tool actually fails — S5c/S7/S8/S9/
+# P1-P4 only check file/JSON content, not the exit code, so they stayed green
+# even while every setup call was quietly failing underneath them. Confirmed
+# on a bare Ubuntu 24.04 container with git+jq only: cargo-deny absent ->
+# missing_required=1 -> both S6 runs exit 1 -> "$rc1$rc2" = "11", not "00".
+#
+# Stub both onto PATH the same way S4 builds its own controlled PATH below,
+# just adding rather than removing: setup-dev-env.sh only ever calls
+# `command -v` on these, never invokes them, so a no-op executable is enough
+# to make tool detection deterministic regardless of the host.
+STUB_BIN="$FIX/stub-bin"
+mkdir -p "$STUB_BIN"
+for stub in cargo-deny shellcheck; do
+  printf '#!/bin/sh\nexit 0\n' >"$STUB_BIN/$stub"
+  chmod +x "$STUB_BIN/$stub"
+done
+PATH="$STUB_BIN:$PATH"
+export PATH
+
 payload() { printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$1"; }
 pad() { # pad <count> ; emits <count> newline-terminated comment lines
   awk -v n="$1" 'BEGIN { for (i = 0; i < n; i++) print "// pad " i }'
