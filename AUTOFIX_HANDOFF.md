@@ -21,7 +21,7 @@ State: uncommitted changes in the working tree. Task board: #4 in progress, #5/#
 1. Add `autofix: None` to the two `SessionInfo` constructors in `crates/stella-tui/src/deck_ui/tests/sessions.rs` (lines ~8 and ~149) — then `cargo check --workspace`.
 2. **Watcher**: new `crates/stella-cli/src/command_deck/autofix.rs` — tokio task spawned beside `spawn_pr_monitor` (command_deck.rs ~line 858), gated on `settings.autofix_prs()`. On CI failure/conflict → `subsession::spawn` a fix worker (lane `autofix:<pr>`); on green+mergeable → `gh pr merge`. Extend `observe_pr` in `pr_observe.rs` to return checks done/total. Must not block the driver — same spawn pattern as the PR monitor.
 3. **Sessions overlay** (`crates/stella-tui/src/v2/sessions.rs`): render autofix rows (PR #, `done/total` checks, phase), `o` open-in-browser (copy `open_in_browser` from `deck_ui/issues_keys.rs`), footer update. Left-arrow-in-empty-prompt already opens this overlay (deck_ui.rs ~1921) — no key work needed.
-4. **Witness tests**: setting default-on + merge; watcher decision fold (pure, no `gh`); overlay autofix row rendering; `o` key.
+4. **Tests** (each a fail→pass witness, per AGENTS.md): setting default-on + merge; watcher decision fold (pure, no `gh`); overlay autofix row rendering; `o` key.
 5. Commit + PR. Note: push may need `--no-verify` (repo hooks run full tests and time out).
 
 ## Key landmarks

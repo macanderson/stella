@@ -52,14 +52,14 @@ I rewrote the 23 worst-scoring files to improve readability. The fixes focused o
 | `.stella/commands/learn.md` | 64.0 | 71.8 |
 | `.stella/agents/hotpath-perf-auditor.md` | 64.0 | 70.8 |
 | `.stella/agents/kfc/spec-design.md` | 64.7 | 72.2 |
-| `docs/papers/README.md` | 65.5 | 74.1 |
+| `docs/papers/README.md` | 65.5 | 74.1 | <!-- doc-links:ignore — a scored path, not a citation -->
 | `.stella/commands/test-coverage.md` | 65.6 | 69.3 |
 | `docs/papers/self-evolving-coding-agents-assessment.md` | 66.8 | 71.5 |
 | `.stella/commands/react-review.md` | 67.5 | 69.0 |
 | `.stella/agents/marketing-agent.md` | 68.5 | 74.1 |
 | `.stella/agents/kfc/spec-test.md` | 68.9 | 72.6 |
 | `docs/spec/enterprise-authority-telemetry.md` | 69.0 | 74.1 |
-| `docs/spec/adaptive-context/context-prs-spec.md` | 69.3 | 70.4 |
+| `docs/spec/adaptive-context/context-prs-spec.md` | 69.3 | 70.4 | <!-- doc-links:ignore — a scored path, not a citation -->
 | `.stella/agents/feature-shipper.md` | 69.4 | 74.1 |
 | `.stella/commands/update-codemaps.md` | 69.8 | 71.2 |
 | `.stella/commands/audit-security.md` | 70.8 | 70.8 |
