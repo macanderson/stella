@@ -19,6 +19,7 @@ fn session_info(id: &str) -> crate::envelope::SessionInfo {
         turns: 0,
         spend_micros: 0,
         model: None,
+        autofix: None,
     }
 }
 
@@ -160,6 +161,7 @@ fn session_row(
         turns: 0,
         spend_micros: 0,
         model: None,
+        autofix: None,
     }
 }
 
