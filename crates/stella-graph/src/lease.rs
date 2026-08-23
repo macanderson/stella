@@ -162,6 +162,33 @@ fn try_acquire(conn: &Connection, purpose: Purpose) -> Result<Acquired, GraphErr
     Ok(Acquired::Held(Lease { purpose, holder }))
 }
 
+/// Push a held lease's deadline out by another [`LEASE_TTL_SECONDS`].
+///
+/// The TTL is chosen against a *bounded* pass, and one pass here is not: the
+/// session-start embedding pass runs until nothing is pending (#4043), so on a
+/// large tree with a slow backend it outlives ten minutes and its own lease
+/// expires underneath it. A second session then steals the row and embeds the
+/// same pending set — the duplicate API bill this module exists to prevent
+/// (#4047).
+///
+/// Scoped to the holder for the same reason [`release`] is, and it is the half
+/// that matters more: a pass whose lease *was* legitimately stolen must not be
+/// able to take it back mid-flight and start racing the new holder. The `WHERE`
+/// clause makes that a no-op rather than a fight.
+///
+/// Renewal is driven by progress, never by a clock — the caller renews after
+/// each committed batch — which is what keeps the expiry honest. A pass that
+/// has genuinely died stops committing batches, stops renewing, and loses the
+/// lease within the TTL exactly as before.
+pub fn renew(conn: &Connection, lease: &Lease) {
+    let now = store::now_unix();
+    let _ = conn.execute(
+        "UPDATE code_graph_leases SET expires_at = ?1 \
+         WHERE purpose = ?2 AND holder = ?3",
+        params![now + LEASE_TTL_SECONDS, lease.purpose.key(), lease.holder],
+    );
+}
+
 /// Give up a lease this caller holds.
 ///
 /// Scoped to the holder: a pass whose lease already expired and was stolen by
@@ -253,6 +280,77 @@ mod tests {
         assert!(
             matches!(acquire(&conn, Purpose::Embed), Acquired::Held(_)),
             "an embedding pass and a tree walk are useful concurrently"
+        );
+    }
+
+    /// The witness for #4047, first direction: the embedding pass is unbounded,
+    /// so it can still be working when its own lease falls due. Before renewal
+    /// a second session stole the row and embedded the same pending set, on the
+    /// user's bill.
+    #[test]
+    fn a_renewed_lease_survives_its_original_deadline() {
+        let (_dir, conn) = store_conn();
+        let Acquired::Held(lease) = acquire(&conn, Purpose::Embed) else {
+            panic!("first acquire must win");
+        };
+        // Stand in for a pass that has been running longer than the TTL.
+        conn.execute(
+            "UPDATE code_graph_leases SET expires_at = ?1",
+            params![store::now_unix() - 1],
+        )
+        .expect("backdate");
+        renew(&conn, &lease);
+        assert_eq!(
+            acquire(&conn, Purpose::Embed),
+            Acquired::Busy,
+            "a pass still making progress keeps the lease it is working under"
+        );
+    }
+
+    /// The second direction, and the one that keeps the expiry honest: renewal
+    /// is scoped to the holder, so a pass whose lease was legitimately stolen
+    /// cannot take it back mid-flight and start racing the new holder.
+    #[test]
+    fn renewing_a_stolen_lease_does_not_take_it_back() {
+        let (_dir, conn) = store_conn();
+        let Acquired::Held(first) = acquire(&conn, Purpose::Embed) else {
+            panic!("first acquire must win");
+        };
+        conn.execute(
+            "UPDATE code_graph_leases SET expires_at = ?1",
+            params![store::now_unix() - 1],
+        )
+        .expect("backdate");
+        let Acquired::Held(second) = acquire(&conn, Purpose::Embed) else {
+            panic!("the stale lease must be stealable");
+        };
+
+        renew(&conn, &first);
+        assert_eq!(
+            current_holder(&conn, Purpose::Embed),
+            Some(second.holder),
+            "the slow first pass must not reclaim a lease it no longer owns"
+        );
+    }
+
+    /// A holder that has genuinely died stops renewing, so the expiry still
+    /// does its job — a crashed pass cannot wedge embedding forever.
+    #[test]
+    fn a_holder_that_stops_renewing_loses_the_lease_on_schedule() {
+        let (_dir, conn) = store_conn();
+        let Acquired::Held(lease) = acquire(&conn, Purpose::Embed) else {
+            panic!("first acquire must win");
+        };
+        renew(&conn, &lease);
+        // The holder dies here: no further renewal, and the deadline arrives.
+        conn.execute(
+            "UPDATE code_graph_leases SET expires_at = ?1",
+            params![store::now_unix() - 1],
+        )
+        .expect("backdate");
+        assert!(
+            matches!(acquire(&conn, Purpose::Embed), Acquired::Held(_)),
+            "renewal must not turn a lease into one nothing can reclaim"
         );
     }
 

@@ -193,8 +193,26 @@ agent_event_tags! {
     UsageIncomplete => "usage_incomplete",
         ConsumerPosture::Unclassified { issue: "#2703" },
         &[];
+    // Audited out of the #2703 backlog by #3977. `Behavioral`: the reflection
+    // digest splits a goal arc's journal at each verdict and labels every
+    // segment from this event's own `round`, so deleting the consumer would
+    // make the ledger reflection mines into memory attribute round 1's failed
+    // tool to the last round — a change in what the engine does with its
+    // evidence, not in what a human sees. The engine's own halt is decided by
+    // the typed `GoalVerifierVerdict` (`stella-core/src/goal.rs`), never by
+    // this event, so `site` names the reflection consumer rather than the loop.
+    // `surfaces` stays empty and that is not a weaker claim: the TUI renders
+    // every variant by construction (see `Surface`'s doc), the offline HTML
+    // export in `stella-cli/src/export/transcript.rs` reads the recorded
+    // stream rather than selecting variants, and no `Surface` chooses this tag
+    // — the Observatory's journal query (`journal.rs`) and its
+    // `TENDENCY_EVENT_TYPES` (`sessions.rs`) both name explicit `event_type`
+    // lists that omit `goal_verdict`. `stella-cli/src/diag_bridge.rs` emits a
+    // diagnostic record, which is recording, not deciding.
     GoalVerdict => "goal_verdict",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/memory/reflection/digest.rs::TurnFriction::per_goal_round",
+        },
         &[];
     // Audited out of the #2703 backlog by #3916. `Surfaced` rather than
     // `Behavioral`: the swap has already happened in

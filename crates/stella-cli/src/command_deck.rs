@@ -2429,12 +2429,8 @@ fn spawn_mcp_connect(
                             Some(auth),
                         )
                         .await;
-                        let _ = chrome_tx.send(system_notice(crate::mcp_cmd::mcp_outcome_report(
-                            &set.connected_names(),
-                            set.failed_servers(),
-                            &set.over_advertising_servers(),
-                            set.wire_name_collisions(),
-                        )));
+                        let _ =
+                            chrome_tx.send(system_notice(crate::mcp_cmd::mcp_connect_report(&set)));
                         // `set` is infallible here (the cell is set exactly once,
                         // by this task); an in-flight turn keeps its resolved
                         // executor and the NEXT turn picks the servers up. Arc'd so
