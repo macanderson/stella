@@ -277,6 +277,7 @@ fn armed_key_skips_cleanly_when_the_gate_is_on_but_no_key_resolves() {
         std::env::remove_var("STELLA_LIVE_SMOKE");
     }
 }
+
 /// Every live call carries `#[ignore]`, and this is what keeps it that way.
 ///
 /// libtest reports an ignored test as `ignored, <reason>` and counts it in
