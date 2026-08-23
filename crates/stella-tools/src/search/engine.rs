@@ -1248,6 +1248,16 @@ pub fn render(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
+    // The cross-file half of a cached neighborhood — `importers`, and the
+    // resolution of an import specifier to a path — is a function of the rest
+    // of the tree, so a file's own content identity cannot invalidate it. The
+    // index generation can, and it is read here, once, before the first hit
+    // renders: a pass that straddled two generations would emit one block from
+    // each (#3196). No graph means nothing was cached from one.
+    if let Some(graph) = graph {
+        guard.observe_generation(graph.index_generation().ok());
+    }
+
     // The head is built twice: once with the granted count to price the
     // blocks against, and again with the count that survived the measurement.
     // Pricing against the larger count is the safe direction — the only field
