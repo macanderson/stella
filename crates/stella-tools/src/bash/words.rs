@@ -25,12 +25,16 @@
 //! for operator attachment, with the same cost per occurrence.
 //!
 //! [`cd_escape_target`] therefore strips those regions and requires the `cd`
-//! to sit in **command position** before it will name a target. The audit in
-//! [`super::shell_write_audit`] deliberately does neither: it is a fence
-//! around what the shell may be about to overwrite, so a path appearing
-//! anywhere in the text is exactly what it wants to see. That is the right
-//! call for the write half and an open question for the read half, where the
-//! same data text can refuse a read the shell never performs (#3618).
+//! to sit in **command position** before it will name a target.
+//!
+//! The audit in [`super::shell_write_audit`] is split on it. Its **write**
+//! half runs on the raw text and must: it fences what the shell may be about
+//! to overwrite, and every degradation [`strip_data_regions`] documents loses
+//! text, so scrubbing there could drop the redirect target it exists to catch.
+//! Its **read** half strips (#3618) — that half already fails open by
+//! construction, and a heredoc body naming a sibling worktree refused a
+//! command that reads nothing, which the agent could not diagnose because the
+//! path it was refused for was one it never asked for.
 //!
 //! Command position is read from the word *before* the `cd`, so it is only as
 //! good as the splitter's word boundaries: `(` and `)` are ordinary word
@@ -70,7 +74,14 @@ struct Heredoc {
 /// (`<<$END`) is taken literally (#3620), and an unterminated heredoc
 /// swallows the rest of the command rather than guessing where it ended. Both
 /// directions lose a warning; neither invents one.
-fn strip_data_regions(command: &str) -> String {
+///
+/// **Every degradation loses text**, which is why only the callers that fail
+/// *open* on missing text may use it: [`cd_escape_target`] below, and the read
+/// half of [`super::shell_write_audit`] (#3618). The audit's write half runs
+/// on the raw command text and must keep doing so — a scrubber that can drop a
+/// redirect target is the unsafe direction for a fence around what the shell
+/// is about to overwrite.
+pub(super) fn strip_data_regions(command: &str) -> String {
     let chars: Vec<char> = command.chars().collect();
     let mut out = String::with_capacity(command.len());
     let mut pending: Vec<Heredoc> = Vec::new();

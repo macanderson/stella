@@ -163,7 +163,16 @@ fn shell_write_audit(command: &str, ctx: &crate::ctx::ToolCtx) -> Option<String>
     // Unlike the write half this cannot be complete: a shell can compute the
     // path, or `cd` and use a relative one. It closes the accidental case,
     // which is the one that actually happens.
-    for word in &words {
+    //
+    // Which is why this half — and only this half — scans the command with its
+    // non-executed regions removed (#3618). A heredoc body or a `#` comment
+    // naming a hidden path reads nothing, and refusing for it hands the agent
+    // a scope error about a path it never asked for. Every way
+    // `strip_data_regions` degrades loses text, so the worst it can do here is
+    // miss a refusal this half was never able to guarantee anyway. The write
+    // loop below keeps the raw words, where losing text is the unsafe
+    // direction.
+    for word in &shell_words(&words::strip_data_regions(command)) {
         if word.starts_with('-') || word.contains('$') || word.contains('*') {
             continue;
         }
