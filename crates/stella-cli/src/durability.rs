@@ -89,6 +89,87 @@ pub struct SessionDurability {
     bound: Arc<RwLock<Option<Bound>>>,
 }
 
+/// What one work-tree measurement produced.
+///
+/// Three outcomes, kept apart because two of them used to be one value:
+/// [`SessionDurability::snapshot_worktree`] returned a bare `Vec` and
+/// discarded a `git add`/`write-tree` failure into the same empty vector a
+/// clean tree produces. That is not a shade of meaning. In session
+/// `ses-1787342320630-36613` a turn made nineteen successful `edit_file` calls
+/// against two files git confirms were left modified, `files_touched` had zero
+/// rows, and from the export alone it was impossible to say which case fired —
+/// which is the defect (#4170).
+///
+/// "I could not measure" is not "nothing changed", so a caller has to say
+/// which one it is acting on. Both benign cases stay benign: `NotBound` and an
+/// empty `Measured` mean "no file change to report", and a turn stays
+/// best-effort over all three.
+#[derive(Debug)]
+pub enum WorktreeSnapshot {
+    /// The tree was measured. Legitimately empty on the session's first
+    /// snapshot (which establishes the baseline) and for a turn that changed
+    /// nothing.
+    Measured(Vec<stella_store::work_journal::JournalChange>),
+    /// No journal is bound, so there was nothing to measure and no failure to
+    /// report — the ordinary state of a workspace whose durable record could
+    /// not be opened.
+    NotBound,
+    /// A measurement was attempted and failed: a `git add -A` or
+    /// `git write-tree` that errored, an unreadable dedicated index, a torn
+    /// journal. The turn's file ledger is empty for this reading and that
+    /// emptiness is evidence of nothing.
+    Unmeasurable(stella_store::StoreError),
+}
+
+stella_diag::log_enum! {
+    /// Why a work-tree measurement failed, as a closed code.
+    ///
+    /// A classification of [`stella_store::StoreError`] rather than its
+    /// `Display`: that string carries the operation's path, the SQLite
+    /// message, or git's stderr, none of which is ours to record
+    /// (`docs/spec/diagnostics.md` §5.3). The code is what an operator alerts
+    /// on, and it survives every rewording of the sentence a human sees.
+    ///
+    /// `StoreError` is `#[non_exhaustive]`, so [`Self::Unknown`] is the arm a
+    /// variant added by a newer `stella-store` lands in — a declared fallback
+    /// rather than a build that stops compiling on a field it never reads.
+    pub enum UnmeasurableReason {
+        /// The dedicated git index or a journal path could not be read or
+        /// written — the common case here, since the measurement is git.
+        Io => "io",
+        /// SQLite refused the operation.
+        Sqlite => "sqlite",
+        /// The store file is not readable as a database.
+        Corrupt => "corrupt",
+        /// The store's schema version does not match this build.
+        Schema => "schema",
+        /// A JSON payload could not be encoded or decoded.
+        Serde => "serde",
+        /// An invariant check with no branch of its own — including a
+        /// `git write-tree` that named no tree.
+        Other => "other",
+        /// A variant this build's `stella-store` did not have.
+        Unknown => "unknown",
+    }
+}
+
+impl UnmeasurableReason {
+    /// Classify the failure a measurement returned.
+    #[must_use]
+    pub fn classify(error: &stella_store::StoreError) -> Self {
+        use stella_store::StoreError as E;
+        match error {
+            E::Io { .. } => Self::Io,
+            E::Sqlite(_) => Self::Sqlite,
+            E::Corrupt { .. } => Self::Corrupt,
+            E::SchemaTooNew { .. } | E::NegativeSchemaVersion { .. } => Self::Schema,
+            E::Serde { .. } => Self::Serde,
+            E::Other(_) => Self::Other,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// What a bound session writes through: its durable record.
 #[derive(Clone, Debug)]
 struct Bound {
@@ -218,23 +299,27 @@ impl SessionDurability {
     /// [`stella_store::work_journal::snapshot`] for why that is a measurement
     /// of the *turn* and never an attribution to the agent.
     ///
-    /// Empty while unbound, on the session's first snapshot, and for a turn
-    /// that changed nothing — the caller cannot tell those apart and must not
-    /// need to: all three mean "no file change to report".
+    /// [`WorktreeSnapshot::Measured`] is empty on the session's first snapshot
+    /// and for a turn that changed nothing — the caller cannot tell those two
+    /// apart and must not need to: both mean "no file change to report".
     ///
-    /// **A failed snapshot is a fourth case wearing those three's clothes**,
-    /// and it does *not* mean the same thing: `.ok()` below discards a
-    /// `git add`/`write-tree` failure into the same empty vector, so
-    /// "measured, nothing changed" and "could not measure" are one value here
-    /// (#4149). Nothing downstream may treat this emptiness as evidence a turn
-    /// wrote nothing — `Store::finalize_execution_reflection` deliberately
-    /// corroborates `wrote_files` against the tool-call ledger for exactly
-    /// this reason, having once reported a turn with nineteen successful
-    /// `edit_file` calls as having written none.
-    pub fn snapshot_worktree(&self) -> Vec<stella_store::work_journal::JournalChange> {
-        self.journal()
-            .and_then(|journal| journal.snapshot_worktree().ok())
-            .unwrap_or_default()
+    /// A failure is not a third member of that set, and used to be returned as
+    /// one: `.ok().unwrap_or_default()` discarded a `git add`/`write-tree`
+    /// failure into the same empty vector, so "measured, nothing changed" and
+    /// "could not measure" were one value (#4170). They are separate variants
+    /// now, and a caller has to say which it is acting on. Nothing downstream
+    /// may treat an empty `Measured` as evidence a turn wrote nothing either —
+    /// `Store::finalize_execution_reflection` corroborates `wrote_files`
+    /// against the tool-call ledger, having once reported a turn with nineteen
+    /// successful `edit_file` calls as having written none.
+    pub fn snapshot_worktree(&self) -> WorktreeSnapshot {
+        let Some(journal) = self.journal() else {
+            return WorktreeSnapshot::NotBound;
+        };
+        match journal.snapshot_worktree() {
+            Ok(changes) => WorktreeSnapshot::Measured(changes),
+            Err(error) => WorktreeSnapshot::Unmeasurable(error),
+        }
     }
 
     /// The resume point an interrupted turn left behind, or `None` when this
@@ -391,6 +476,17 @@ mod tests {
         WorkJournal::open_in(store, workspace, session).unwrap()
     }
 
+    /// The changes of a snapshot that measured, failing the test by name on
+    /// either of the other two arms — so a test asserting on paths cannot be
+    /// satisfied by a measurement that never happened.
+    fn measured(snapshot: WorktreeSnapshot) -> Vec<stella_store::work_journal::JournalChange> {
+        match snapshot {
+            WorktreeSnapshot::Measured(changes) => changes,
+            WorktreeSnapshot::NotBound => panic!("the handle must be bound"),
+            WorktreeSnapshot::Unmeasurable(error) => panic!("the tree must measure: {error}"),
+        }
+    }
+
     #[test]
     fn an_unbound_handle_offers_no_sink() {
         assert!(SessionDurability::default().sink().is_none());
@@ -428,7 +524,7 @@ mod tests {
         std::fs::write(ws.path().join("predates.txt"), "before\nafter\n").unwrap();
         std::fs::write(ws.path().join("born.rs"), "new\n").unwrap();
 
-        let mut changes = durability.snapshot_worktree();
+        let mut changes = measured(durability.snapshot_worktree());
         changes.sort_by(|a, b| a.path.cmp(&b.path));
         let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
 
@@ -459,9 +555,46 @@ mod tests {
         durability.bind(journal(store.path(), ws.path(), "ses-absorbs"));
 
         assert!(
-            durability.snapshot_worktree().is_empty(),
+            measured(durability.snapshot_worktree()).is_empty(),
             "a turn that changed nothing reports nothing, even the first one"
         );
+    }
+
+    /// **Witness (#4170).** A measurement that failed is not the empty vector
+    /// a clean tree produces.
+    ///
+    /// The injection is the journal's own store directory going away under it,
+    /// which is what an unwritable dedicated index or a torn journal looks
+    /// like from here: `git add -A` cannot run at all. Before the three-state
+    /// return, `snapshot_worktree` answered `vec![]` — byte-identical to "the
+    /// turn changed nothing" — and no consumer downstream could tell, which is
+    /// how a turn with nineteen successful `edit_file` calls recorded zero
+    /// touched files and told the reflection loop it had written none.
+    #[test]
+    fn a_failed_measurement_is_not_a_clean_tree() {
+        let store = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        let durability = SessionDurability::default();
+        durability.bind(journal(store.path(), ws.path(), "ses-unmeasurable"));
+
+        // A change that WOULD be reported, so an empty answer below cannot be
+        // read as "there was nothing to see".
+        std::fs::write(ws.path().join("edited.rs"), "written\n").unwrap();
+        std::fs::remove_dir_all(store.path()).unwrap();
+
+        match durability.snapshot_worktree() {
+            WorktreeSnapshot::Unmeasurable(error) => assert_eq!(
+                UnmeasurableReason::classify(&error),
+                UnmeasurableReason::Other,
+                "git's own failure classifies, and no message reaches a record"
+            ),
+            WorktreeSnapshot::Measured(changes) => panic!(
+                "a failed measurement must not answer as a measurement — it did, with \
+                 {} change(s), which is the collapse #4170 is about",
+                changes.len()
+            ),
+            WorktreeSnapshot::NotBound => panic!("the handle is bound"),
+        }
     }
 
     /// `bind` takes the write lock and then reads through

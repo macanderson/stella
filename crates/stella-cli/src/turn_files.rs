@@ -61,13 +61,17 @@ use std::sync::Arc;
 
 use stella_core::EventSender;
 use stella_core::TurnOutcome;
+use stella_diag::{Cx, Fields, Level, Record};
 use stella_protocol::event::{AgentEvent, FileChangeKind};
 use stella_store::work_journal::{JournalChange, JournalChangeKind};
 use stella_store::{FileTouchRow, Store};
 use stella_tools::own_change::{OwnChange, OwnChangeKind};
 
 use crate::config::Config;
-use crate::durability::SessionDurability;
+use crate::durability::{SessionDurability, UnmeasurableReason, WorktreeSnapshot};
+
+/// This module's `module_path!()`, so its records filter under one target.
+const DIAG_TARGET: &str = "stella::turn_files";
 
 /// This turn's per-call work-tree measurement, handed to the registry so a
 /// mutating tool call that ran alone reports the change *it* made (#4175).
@@ -321,7 +325,32 @@ pub(crate) fn emit_measured_tree_changes(
     tx: &EventSender,
     execution: Option<&(Arc<Store>, i64)>,
 ) -> Vec<String> {
-    let measured = durability.snapshot_worktree();
+    let measured = match durability.snapshot_worktree() {
+        WorktreeSnapshot::Measured(changes) => changes,
+        // Nothing to measure and nothing to report: the ordinary state of a
+        // workspace whose durable record could not be opened, already
+        // reported once by `durability::bind_session`.
+        WorktreeSnapshot::NotBound => return Vec::new(),
+        WorktreeSnapshot::Unmeasurable(error) => {
+            // The turn stays best-effort — a turn that ended is not made less
+            // ended by an unmeasurable tree — but the emptiness downstream is
+            // now a recorded fact rather than a silence indistinguishable
+            // from a clean tree (#4170).
+            //
+            // Through the process handle rather than a threaded `&Dx`
+            // deliberately: the per-call measurer reaches this from inside the
+            // tool registry, which is exactly the "spawned beyond reach of
+            // `main`'s handle" case `diag_boot::dx` documents.
+            crate::diag_boot::dx().emit(Record::new(
+                Level::Warn,
+                "agent.files.unmeasurable",
+                DIAG_TARGET,
+                Cx::EMPTY,
+                Fields::new().with("reason", UnmeasurableReason::classify(&error)),
+            ));
+            return Vec::new();
+        }
+    };
     if measured.is_empty() {
         return Vec::new();
     }
