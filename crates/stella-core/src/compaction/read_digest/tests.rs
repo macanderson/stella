@@ -148,6 +148,122 @@ fn every_mutating_file_tool_invalidates_a_prior_read() {
     }
 }
 
+/// An assistant turn making one shell-shaped call.
+fn shell_call(call_id: &str, command: &str) -> CompletionMessage {
+    CompletionMessage {
+        role: MessageRole::Assistant,
+        content: String::new(),
+        tool_calls: vec![ToolCall {
+            call_id: call_id.to_string(),
+            name: "bash".to_string(),
+            input: json!({ "command": command }),
+        }],
+        tool_results: Vec::new(),
+        attachments: Vec::new(),
+    }
+}
+
+/// **Witness (#3827).** The gap the module docs used to name as residual: a
+/// path mutated through the shell rather than through a file tool stayed in
+/// the digest, so the model was told it had already read a file whose bytes
+/// had since moved. Every shape here is a write the command text can be seen
+/// to perform.
+#[test]
+fn a_shell_command_that_writes_a_path_invalidates_its_digest_entry() {
+    for command in [
+        "sed -i 's/a/b/' src/target.rs",
+        "cat > src/target.rs",
+        "echo 'x' >> src/target.rs",
+        "mv src/target.rs src/moved.rs",
+        "cp /tmp/new.rs src/target.rs",
+        "git checkout src/target.rs",
+        "rustfmt src/target.rs",
+        // The read is recorded under one spelling and the command uses
+        // another: the final component is what ties them together.
+        "sed -i 's/a/b/' /abs/elsewhere/target.rs",
+    ] {
+        let mut messages = transcript(&[("c1", "src/target.rs"), ("c2", "src/witness.rs")]);
+        messages.push(shell_call("c3", command));
+        messages.push(result("c3", "done"));
+
+        compact_and_digest(&mut messages, 1_000, None);
+
+        let digest = messages
+            .iter()
+            .find(|message| is_digest(message))
+            .unwrap_or_else(|| panic!("{command}: the untouched read must still produce a digest"));
+        assert!(
+            digest.content.contains("src/witness.rs"),
+            "{command}: anti-vacuity — the digest must actually be naming paths"
+        );
+        assert!(
+            !digest.content.contains("src/target.rs"),
+            "{command} must invalidate the digest entry for the path it wrote"
+        );
+    }
+}
+
+/// The counter-test, and the one that decides whether this rule is worth
+/// having: a read-only shell command must leave the digest whole. A rule that
+/// emptied the digest on every `cargo test` would give back most of #3806's
+/// win — which is exactly why option 1 ("any `bash` call invalidates
+/// everything") was not taken.
+#[test]
+fn a_read_only_shell_command_leaves_the_digest_whole() {
+    for command in [
+        "cargo test",
+        "cargo test 2>&1 | tail -20",
+        "git status",
+        "rg -n 'fn main' src/target.rs",
+        "sed -n '1,50p' src/target.rs",
+        "cat src/target.rs",
+    ] {
+        let mut messages = transcript(&[("c1", "src/target.rs"), ("c2", "src/witness.rs")]);
+        messages.push(shell_call("c3", command));
+        messages.push(result("c3", "done"));
+
+        compact_and_digest(&mut messages, 1_000, None);
+
+        let digest = messages
+            .iter()
+            .find(|message| is_digest(message))
+            .unwrap_or_else(|| panic!("{command}: a digest must still be produced"));
+        assert!(
+            digest.content.contains("src/target.rs"),
+            "{command} writes nothing and must not cost a digest entry"
+        );
+    }
+}
+
+/// Order matters the same way it does for the file tools: a write *before*
+/// the read that lost its output says nothing about the bytes that read
+/// returned.
+#[test]
+fn a_shell_write_before_the_read_does_not_invalidate_it() {
+    let mut messages = vec![
+        CompletionMessage::system("stable prefix"),
+        CompletionMessage::user("do the thing"),
+        shell_call("c0", "sed -i 's/a/b/' src/target.rs"),
+        result("c0", "done"),
+    ];
+    messages.extend(
+        transcript(&[("c1", "src/target.rs"), ("c2", "src/witness.rs")])
+            .into_iter()
+            .skip(2),
+    );
+
+    compact_and_digest(&mut messages, 1_000, None);
+
+    let digest = messages
+        .iter()
+        .find(|message| is_digest(message))
+        .expect("the read must produce a digest");
+    assert!(
+        digest.content.contains("src/target.rs"),
+        "a write the read already saw is not staleness"
+    );
+}
+
 /// A read whose result is still in context is not a loss, so restating it
 /// would spend the very bytes compaction just reclaimed.
 #[test]
@@ -386,7 +502,8 @@ fn a_malformed_call_input_is_skipped_not_unwrapped() {
 }
 
 /// The digest survives the retention pass path too — pass 0 ages results
-/// regardless of the budget, and an aged result is just as lost to the model.
+/// before the budget passes engage, and an aged result is just as lost to the
+/// model.
 #[test]
 fn a_result_aged_by_the_retention_pass_is_digested() {
     let mut messages = transcript(&[
@@ -394,10 +511,12 @@ fn a_result_aged_by_the_retention_pass_is_digested() {
         ("c2", "src/mid.rs"),
         ("c3", "src/new.rs"),
     ]);
-    // A budget nothing breaches, so only the age-based pass can fire.
+    // Past half the budget, so pass 0 fires (#4381), but under the budget
+    // itself, so only the age-based pass can.
+    let budget = crate::estimator::estimate_conversation_tokens(&messages) * 3 / 2;
     compact_and_digest(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 1,
         }),
