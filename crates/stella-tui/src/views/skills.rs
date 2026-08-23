@@ -72,7 +72,7 @@ fn rounded() -> Block<'static> {
 }
 
 /// Installed rows matching the live query — every row when it is empty.
-fn matching<'a>(ui: &'a DeckUi) -> Vec<(usize, &'a SkillRow)> {
+fn matching(ui: &DeckUi) -> Vec<(usize, &SkillRow)> {
     let needle = ui.skills.query.trim().to_lowercase();
     ui.skills
         .view

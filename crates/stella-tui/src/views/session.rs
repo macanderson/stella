@@ -303,7 +303,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         None
     };
     if let Some(hint) = hint
-        && let Some(last) = transcript_area.rows().last()
+        && let Some(last) = transcript_area.rows().next_back()
     {
         Paragraph::new(Line::from(Span::styled(
             format!(" {hint}"),
