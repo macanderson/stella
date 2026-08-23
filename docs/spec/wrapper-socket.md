@@ -373,6 +373,17 @@ configuration. Two things a caller must know rather than discover: the
 put a call on the receipt the pipeline did not make — #2584), and `run_test` is
 still `unsupported` from every host in the tree.
 
+**`child_turn` is bounded by its own manifest key, `[loop] max_child_turns`,
+clamped against `DEFAULT_HOST_MAX_CHILD_TURNS` (4).** Not `[loop] max_calls`,
+which bounds the *point conversation* and is fresh on every dispatch: what this
+one bounds is how much of the user's money a plugin may spend, and a bound that
+resets per point is no bound at all across N rounds. The two diverge for an
+arbiter that holds rounds open and asks once in each — `plugins/stella-goal` is
+that shape, and while the two shared a key its honest `max_calls = 1` capped its
+second round's verifier turn at `AllowanceSpent` (#3839). A manifest declaring
+only `max_calls` still gets that number: the host clamps an ask down and never
+widens one nobody made.
+
 ### The fourth and fifth: `candidate_fanout` and `adopt_candidate`
 
 `candidate_fanout` asks for **N isolated writable workspaces, each running one

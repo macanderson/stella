@@ -68,6 +68,42 @@ pub(crate) trait FromEnvelope: Sized {
     ) -> Result<Self, E>;
 }
 
+/// One body being read out of an envelope map, in whichever of the two states
+/// the sender's key order left it.
+///
+/// Shared with [`crate::host_call`]'s five-key envelope, which has the same two
+/// states for two different bodies (`body` behind `point`, `args` behind
+/// `call`) and the same reason to want the position.
+///
+/// [`Self::Seeded`] holds a `Result` rather than having the caller return the
+/// failure on the spot, because a reader with cross-key judgements to make has
+/// to make them first: a plugin message carrying both a `point` and a `call` is
+/// a contradiction about what the plugin is doing, and telling its author that
+/// is worth more than telling them their `args` are malformed. Holding the
+/// error keeps its position and lets classification go first.
+///
+/// **A failed seed ends the read** — see [`Self::stop`]. A seeded body is
+/// deserialized out of the input, so a failure partway through it leaves the
+/// underlying parser inside the half-read value, and the next `next_key` on the
+/// enclosing map reads garbage. Every caller that seeds therefore stops at the
+/// first failure and classifies whatever keys already arrived; the held error is
+/// what it falls back to.
+pub(crate) enum PendingBody<T, E> {
+    /// Deserialized straight from the input, so `serde_json`'s
+    /// `at line N column M` survived.
+    Seeded(Result<T, E>),
+    /// Buffered while the tag was still unknown. Decoding it afterwards costs
+    /// the position, which is the price of keeping the keys order-free.
+    Buffered(serde_json::Value),
+}
+
+impl<T, E> PendingBody<T, E> {
+    /// Whether the enclosing map can still be read after this body.
+    pub(crate) fn stop(&self) -> bool {
+        matches!(self, Self::Seeded(Err(_)))
+    }
+}
+
 /// Decode one envelope body into the type its point names.
 ///
 /// Reported through the calling deserializer's own error type, so a plugin
@@ -105,8 +141,7 @@ where
             use serde::de::Error as _;
 
             let mut point: Option<WrapperPoint> = None;
-            let mut seeded: Option<T> = None;
-            let mut buffered: Option<serde_json::Value> = None;
+            let mut body: Option<PendingBody<T, A::Error>> = None;
 
             while let Some(key) = map.next_key::<EnvelopeField>()? {
                 match key {
@@ -117,25 +152,30 @@ where
                         point = Some(map.next_value()?);
                     }
                     EnvelopeField::Body => {
-                        if seeded.is_some() || buffered.is_some() {
+                        if body.is_some() {
                             return Err(A::Error::duplicate_field("body"));
                         }
-                        match point {
+                        let pending = match point {
                             // The common path, and the whole point of the
                             // visitor: the body is deserialized from the input
                             // itself, so `serde_json` reports its own position.
-                            Some(point) => seeded = Some(T::seed_body(point, &mut map)?),
-                            None => buffered = Some(map.next_value()?),
+                            Some(point) => PendingBody::Seeded(T::seed_body(point, &mut map)),
+                            None => PendingBody::Buffered(map.next_value()?),
+                        };
+                        let stop = pending.stop();
+                        body = Some(pending);
+                        if stop {
+                            break;
                         }
                     }
                 }
             }
 
-            match (seeded, buffered, point) {
-                (Some(value), _, _) => Ok(value),
-                (None, Some(body), Some(point)) => T::from_value(point, body),
-                (None, Some(_), None) => Err(A::Error::missing_field("point")),
-                (None, None, _) => Err(A::Error::missing_field("body")),
+            match (body, point) {
+                (Some(PendingBody::Seeded(value)), _) => value,
+                (Some(PendingBody::Buffered(body)), Some(point)) => T::from_value(point, body),
+                (Some(PendingBody::Buffered(_)), None) => Err(A::Error::missing_field("point")),
+                (None, _) => Err(A::Error::missing_field("body")),
             }
         }
     }

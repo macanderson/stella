@@ -62,7 +62,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use stella_protocol::candidate::CandidateHandle;
 
-use crate::wire::{WrapperPoint, WrapperResponse, decode_body};
+use crate::wire::{FromEnvelope, PendingBody, WrapperPoint, WrapperResponse, decode_body};
 
 /// The capabilities a plugin may ask the host for.
 ///
@@ -174,7 +174,7 @@ impl<'de> Deserialize<'de> for PluginMessage {
     where
         D: Deserializer<'de>,
     {
-        PluginEnvelope::deserialize(deserializer)?.into_message()
+        deserialize_plugin_message(deserializer)
     }
 }
 
@@ -186,54 +186,196 @@ impl<'de> Deserialize<'de> for PluginMessage {
 /// than as the contradiction it is, and a reader of two separate envelopes has
 /// to remember to try them in the right order.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PluginEnvelope {
-    #[serde(default)]
-    point: Option<WrapperPoint>,
-    #[serde(default)]
-    body: Option<serde_json::Value>,
-    #[serde(default)]
-    call: Option<HostCall>,
-    #[serde(default)]
-    id: Option<u32>,
-    #[serde(default)]
-    args: Option<serde_json::Value>,
+#[serde(field_identifier, rename_all = "snake_case")]
+enum PluginField {
+    Point,
+    Body,
+    Call,
+    Id,
+    Args,
 }
 
-impl PluginEnvelope {
-    /// Classify one envelope, or say why it is neither shape.
-    fn into_message<E: serde::de::Error>(self) -> Result<PluginMessage, E> {
-        match (self.point, self.call) {
-            (Some(_), Some(_)) => Err(E::custom(
-                "a plugin message carries either `point` (the response that ends the point) or \
-                 `call` (a host call), never both",
-            )),
-            (Some(point), None) => {
-                if self.id.is_some() || self.args.is_some() {
-                    return Err(E::custom(
-                        "a point response carries `point` and `body` only; `id` and `args` belong \
-                         to a host call",
-                    ));
+/// The five keys, in the order serde reports a missing one.
+const PLUGIN_FIELDS: &[&str] = &["point", "body", "call", "id", "args"];
+
+/// Read one plugin message: two shapes over five keys, no unknown key, and the
+/// position of a malformed body kept.
+///
+/// # Why this is hand-written twice over
+///
+/// The first version buffered `body` and `args` as `serde_json::Value` and
+/// re-parsed them once the envelope had been classified. That cost the same
+/// thing [`crate::wire`]'s envelope used to cost (#3518, #4436): a body decode
+/// error reached the plugin author through `serde::de::Error::custom`, which
+/// drops the `at line N column M` a direct parse carries — and this channel is
+/// the one an author debugs *from the plugin's side*, with no host stack to read
+/// instead.
+///
+/// So both tagged bodies are seeded straight from the input when their tag
+/// arrived first — `body` behind `point`, `args` behind `call`, which is the
+/// order every message in §6b's own transcript is written in — and buffered
+/// otherwise, exactly as the two-key envelope does. The shared
+/// [`PendingBody`] is what makes that the same mechanism rather than a second
+/// one that looks like it.
+///
+/// # Why the seeded error is held rather than returned
+///
+/// A five-key envelope cannot classify early: whether this is a point response
+/// or a host call is not known until `point` and `call` have both been ruled on,
+/// and the *contradiction* — both present — is the more useful thing to tell an
+/// author than "your `args` are malformed". [`PendingBody::Seeded`] therefore
+/// carries a `Result`, [`classify`] runs first, and the held error is what it
+/// falls back to.
+///
+/// The read does stop at that failure, because a seeded body that failed partway
+/// through leaves the parser inside it ([`PendingBody::stop`]). So the
+/// contradiction wins only when *both* halves arrived before the malformed body;
+/// a `point` written after it is never read, and the author is told about the
+/// body instead. Either way the message is refused with a position.
+fn deserialize_plugin_message<'de, D>(deserializer: D) -> Result<PluginMessage, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct PluginMessageVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for PluginMessageVisitor {
+        type Value = PluginMessage;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(
+                "a plugin message: a point response (`point`, `body`) or a host call (`call`, \
+                 `id`, `args`)",
+            )
+        }
+
+        fn visit_map<A>(self, mut map: A) -> Result<PluginMessage, A::Error>
+        where
+            A: serde::de::MapAccess<'de>,
+        {
+            use serde::de::Error as _;
+
+            let mut point: Option<WrapperPoint> = None;
+            let mut call: Option<HostCall> = None;
+            let mut id: Option<u32> = None;
+            let mut body: Option<PendingBody<WrapperResponse, A::Error>> = None;
+            let mut args: Option<PendingBody<HostCallArgs, A::Error>> = None;
+
+            while let Some(key) = map.next_key::<PluginField>()? {
+                match key {
+                    PluginField::Point => {
+                        if point.is_some() {
+                            return Err(A::Error::duplicate_field("point"));
+                        }
+                        point = Some(map.next_value()?);
+                    }
+                    PluginField::Call => {
+                        if call.is_some() {
+                            return Err(A::Error::duplicate_field("call"));
+                        }
+                        call = Some(map.next_value()?);
+                    }
+                    PluginField::Id => {
+                        if id.is_some() {
+                            return Err(A::Error::duplicate_field("id"));
+                        }
+                        id = Some(map.next_value()?);
+                    }
+                    PluginField::Body => {
+                        if body.is_some() {
+                            return Err(A::Error::duplicate_field("body"));
+                        }
+                        let pending = match point {
+                            Some(point) => {
+                                PendingBody::Seeded(WrapperResponse::seed_body(point, &mut map))
+                            }
+                            None => PendingBody::Buffered(map.next_value()?),
+                        };
+                        let stop = pending.stop();
+                        body = Some(pending);
+                        if stop {
+                            break;
+                        }
+                    }
+                    PluginField::Args => {
+                        if args.is_some() {
+                            return Err(A::Error::duplicate_field("args"));
+                        }
+                        let pending = match call {
+                            Some(call) => PendingBody::Seeded(seed_args(call, &mut map)),
+                            None => PendingBody::Buffered(map.next_value()?),
+                        };
+                        let stop = pending.stop();
+                        args = Some(pending);
+                        if stop {
+                            break;
+                        }
+                    }
                 }
-                let body = self
-                    .body
-                    .ok_or_else(|| E::custom("a point response must carry `body`"))?;
-                WrapperResponse::from_parts(point, body).map(PluginMessage::Response)
             }
-            (None, Some(call)) => {
-                if self.body.is_some() {
-                    return Err(E::custom(
-                        "a host call carries `call`, `id` and `args`; `body` belongs to a point \
-                         response",
-                    ));
+
+            classify(point, body, call, id, args)
+        }
+    }
+
+    deserializer.deserialize_struct("PluginMessage", PLUGIN_FIELDS, PluginMessageVisitor)
+}
+
+/// Read a host call's `args` straight from the input, now that `call` is known.
+///
+/// The mirror of [`crate::wire::FromEnvelope::seed_body`], for the tag this
+/// envelope's second body hangs off.
+fn seed_args<'de, A>(call: HostCall, map: &mut A) -> Result<HostCallArgs, A::Error>
+where
+    A: serde::de::MapAccess<'de>,
+{
+    Ok(match call {
+        HostCall::Recall => HostCallArgs::Recall(map.next_value()?),
+        HostCall::ChildTurn => HostCallArgs::ChildTurn(map.next_value()?),
+        HostCall::RunTest => HostCallArgs::RunTest(map.next_value()?),
+        HostCall::CandidateFanout => HostCallArgs::CandidateFanout(map.next_value()?),
+        HostCall::AdoptCandidate => HostCallArgs::AdoptCandidate(map.next_value()?),
+    })
+}
+
+/// Decide which of the two shapes a read envelope is, or say why it is neither.
+fn classify<E: serde::de::Error>(
+    point: Option<WrapperPoint>,
+    body: Option<PendingBody<WrapperResponse, E>>,
+    call: Option<HostCall>,
+    id: Option<u32>,
+    args: Option<PendingBody<HostCallArgs, E>>,
+) -> Result<PluginMessage, E> {
+    match (point, call) {
+        (Some(_), Some(_)) => Err(E::custom(
+            "a plugin message carries either `point` (the response that ends the point) or `call` \
+             (a host call), never both",
+        )),
+        (Some(point), None) => {
+            if id.is_some() || args.is_some() {
+                return Err(E::custom(
+                    "a point response carries `point` and `body` only; `id` and `args` belong to \
+                     a host call",
+                ));
+            }
+            match body {
+                Some(PendingBody::Seeded(response)) => response.map(PluginMessage::Response),
+                Some(PendingBody::Buffered(body)) => {
+                    WrapperResponse::from_parts(point, body).map(PluginMessage::Response)
                 }
-                let id = self
-                    .id
-                    .ok_or_else(|| E::custom("a host call must carry `id`"))?;
-                let args = self
-                    .args
-                    .ok_or_else(|| E::custom("a host call must carry `args`"))?;
-                let args = match call {
+                None => Err(E::custom("a point response must carry `body`")),
+            }
+        }
+        (None, Some(call)) => {
+            if body.is_some() {
+                return Err(E::custom(
+                    "a host call carries `call`, `id` and `args`; `body` belongs to a point \
+                     response",
+                ));
+            }
+            let id = id.ok_or_else(|| E::custom("a host call must carry `id`"))?;
+            let args = match args {
+                Some(PendingBody::Seeded(args)) => args?,
+                Some(PendingBody::Buffered(args)) => match call {
                     HostCall::Recall => decode_body(args).map(HostCallArgs::Recall)?,
                     HostCall::ChildTurn => decode_body(args).map(HostCallArgs::ChildTurn)?,
                     HostCall::RunTest => decode_body(args).map(HostCallArgs::RunTest)?,
@@ -243,14 +385,14 @@ impl PluginEnvelope {
                     HostCall::AdoptCandidate => {
                         decode_body(args).map(HostCallArgs::AdoptCandidate)?
                     }
-                };
-                Ok(PluginMessage::Call(HostCallRequest { id, args }))
-            }
-            (None, None) => Err(E::custom(
-                "a plugin message must carry either `point` (a point response) or `call` (a host \
-                 call)",
-            )),
+                },
+                None => return Err(E::custom("a host call must carry `args`")),
+            };
+            Ok(PluginMessage::Call(HostCallRequest { id, args }))
         }
+        (None, None) => Err(E::custom(
+            "a plugin message must carry either `point` (a point response) or `call` (a host call)",
+        )),
     }
 }
 
@@ -277,7 +419,7 @@ impl<'de> Deserialize<'de> for HostCallRequest {
     where
         D: Deserializer<'de>,
     {
-        match PluginEnvelope::deserialize(deserializer)?.into_message()? {
+        match deserialize_plugin_message(deserializer)? {
             PluginMessage::Call(call) => Ok(call),
             PluginMessage::Response(_) => Err(serde::de::Error::custom(
                 "expected a host call, found a point response",
@@ -840,11 +982,107 @@ mod tests {
     /// A message claiming to be both is two claims about what the plugin is
     /// doing; believing either one silently is how a conversation ends in the
     /// wrong place.
+    ///
+    /// The `body` and the `args` are well-formed on purpose, so what is refused
+    /// is the framing and nothing else. A mixed message whose body is *also*
+    /// malformed is
+    /// `the_contradiction_outranks_a_malformed_body_underneath_it`.
     #[test]
     fn a_message_that_is_both_a_call_and_a_response_is_refused() {
-        let error = decode(r#"{"point":"before_turn","body":{},"call":"recall","id":1,"args":{}}"#)
-            .expect_err("a mixed message is refused");
+        let error = decode(
+            r#"{"point":"before_turn","body":{"protocol_version":1},"call":"recall","id":1,"args":{"goal":"x"}}"#,
+        )
+        .expect_err("a mixed message is refused");
         assert!(error.to_string().contains("never both"), "{error}");
+    }
+
+    /// **The #4436 witness.** A malformed `args` body reports *where* it is
+    /// malformed, the way #3518 made the two-key envelope report it.
+    ///
+    /// The two orders assert different halves. `call` first is the order §6b's
+    /// own transcript is written in and the one that keeps the position, because
+    /// the args are deserialized straight from the input. `args` first must
+    /// still decode and still name the field: a JSON library that writes its map
+    /// in the other order cannot be made wrong by this, and it has no position to
+    /// offer because it reached the buffer — the same deliberate trade
+    /// `a_malformed_body_reports_the_position_the_author_navigates_by` records
+    /// for the wrapper envelope.
+    #[test]
+    fn a_malformed_host_call_body_reports_the_position() {
+        // Pretty-printed, so a line number is a real answer and not always 1.
+        let call_first = "{\n  \"call\": \"recall\",\n  \"id\": 1,\n  \"args\": {\n    \
+                          \"goal\": \"the parser\",\n    \"limits\": 8\n  }\n}";
+        let error = decode(call_first).expect_err("an unknown key inside the args is refused");
+        let text = error.to_string();
+        assert!(
+            text.contains("limits"),
+            "the field is what decides it, got {text}"
+        );
+        assert!(
+            text.contains("at line 6 column"),
+            "the position is the half an author navigates by, got {text}"
+        );
+        assert_eq!(error.line(), 6, "got {text}");
+
+        let args_first = "{\n  \"args\": {\n    \"goal\": \"the parser\",\n    \
+                          \"limits\": 8\n  },\n  \"id\": 1,\n  \"call\": \"recall\"\n}";
+        let error = decode(args_first)
+            .expect_err("the args are held to the same shape whichever key came first");
+        assert!(error.to_string().contains("limits"), "{error}");
+
+        // And a well-formed call decodes in either order, which is what proves
+        // the two assertions above failed on the args rather than on the order.
+        for text in [
+            r#"{"call":"recall","id":1,"args":{"goal":"the parser"}}"#,
+            r#"{"args":{"goal":"the parser"},"id":1,"call":"recall"}"#,
+        ] {
+            let message = decode(text).expect("either order decodes");
+            let PluginMessage::Call(call) = message else {
+                panic!("a call, not a response");
+            };
+            assert_eq!(call.call(), HostCall::Recall);
+        }
+    }
+
+    /// A malformed body does not get to answer a question the envelope has not
+    /// asked yet: a message carrying both a `point` and a `call` is a
+    /// contradiction about what the plugin is doing, and that is more useful to
+    /// its author than which key inside the args is misspelled.
+    ///
+    /// True while both halves arrived before the malformed body, which is the
+    /// limit `deserialize_plugin_message` documents — the read stops there, so a
+    /// `point` written *after* the bad args is never seen and the author is told
+    /// about the args instead.
+    #[test]
+    fn the_contradiction_outranks_a_malformed_body_underneath_it() {
+        let error = decode(
+            r#"{"point":"before_turn","body":{"protocol_version":1},"call":"recall","args":{"limits":8}}"#,
+        )
+        .expect_err("a mixed message is refused");
+        assert!(error.to_string().contains("never both"), "{error}");
+    }
+
+    /// A repeated envelope key is a malformed message, not a preference — the
+    /// derived reader used to let the last one win.
+    #[test]
+    fn a_repeated_host_call_key_is_named_rather_than_resolved() {
+        for (text, key) in [
+            (
+                r#"{"call":"recall","call":"child_turn","id":1,"args":{"goal":"x"}}"#,
+                "call",
+            ),
+            (
+                r#"{"call":"recall","id":1,"id":2,"args":{"goal":"x"}}"#,
+                "id",
+            ),
+            (
+                r#"{"call":"recall","id":1,"args":{"goal":"x"},"args":{"goal":"y"}}"#,
+                "args",
+            ),
+        ] {
+            let error = decode(text).expect_err("a repeated key is refused");
+            assert!(error.to_string().contains(key), "{key}: {error}");
+        }
     }
 
     /// The #3500 rule, on the union: an unknown key is a typo, and a typo that

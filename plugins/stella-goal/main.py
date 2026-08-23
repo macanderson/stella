@@ -96,9 +96,9 @@ to empty evidence (no `"met"` measurement) and is reported on stderr, never
 guessed at. Two further degradations are this program's own, past a
 successful call: a completed child turn whose report does not parse as
 `{"met": ..., ...}` (this plugin, like `stella-plan`, asks once per round and
-cannot afford the built-in verifier's own JSON-repair retry within it — see
-`plugin.toml`'s header for why "once per round" is not the same number as
-`[loop] max_calls` on the wire), and a child turn the
+cannot afford the built-in verifier's own JSON-repair retry within it: that is
+`[loop] max_calls = 1`, the per-point gate, and it is a different number from
+`max_child_turns`, which bounds the whole run), and a child turn the
 host reports as **incomplete** — `crates/stella-core/src/goal.rs::Engine::assess`
 treats an incomplete verifier sub-agent as no verdict at all
 (`GoalAssessError::Incomplete`, never a fabricated answer), and this plugin
@@ -107,21 +107,21 @@ that **refuses** rather than degrades is an `ok` answer shaped differently
 than `ChildTurnResult` — the host disagreeing about the contract, not an
 ordinary outcome.
 
-# What this plugin never carries: the verifier's own words
+# How the verifier's own words reach the next round
 
-`ObservedEvidence` (`crates/stella-plugin/src/observed.rs`) has exactly two
-fields — `flip` and `measurements: BTreeMap<String, u64>` — and neither has
-room for `GoalVerifierVerdict`'s `reasoning`/`feedback` strings. So when the
-verifier says not-yet-met, this plugin cannot hand its specific reason
-forward: the correction a held-open round is told
-(`Continuation::Again { correction }`, rendered by `again` in
-`crates/stella-runtime/src/wrapper/verdict.rs::correction_text`) is built
-entirely from the `[requirements]` table's own static statement — "an
-independent verifier turn assessed the goal as accomplished" — not from
-whatever the verifier actually wrote. `stella goal`'s own loop does not have
-this problem: `verifier_feedback_text` carries the verdict's real `feedback`
-verbatim. This is real fidelity lost, not an oversight — see the README's
-"Known gaps" table and the issue filed for it.
+`ObservedEvidence` carries `flip`, `measurements: BTreeMap<String, u64>` and
+one advisory string, `detail` (#3840). This plugin sends
+`GoalVerifierVerdict`'s `feedback` there, falling back to `reasoning` — the
+byte-for-byte mirror of what `stella_core::goal::verifier_feedback_text` hands
+the worker in the built-in loop.
+
+`detail` is not evidence and cannot decide anything: it never reaches
+`EvidenceSet`, which is the closed vocabulary `judge` is total over. The host
+attaches it to the unmet clauses after the verdict is decided, and
+`correction_text` (`crates/stella-runtime/src/wrapper/verdict.rs`) prints it
+under the static `[requirements]` statement. So a held-open round is told what
+the verifier actually found, and the verdict is still decided from the `met`
+measurement alone.
 
 # Every capability arrives in the request
 
@@ -598,8 +598,24 @@ def evidence_nothing():
     return {"flip": "not-attempted", "measurements": {}}
 
 
-def evidence_met(met):
-    return {"flip": "not-attempted", "measurements": {"met": 1 if met else 0}}
+def evidence_met(verdict):
+    """The verdict as evidence: `met` as a 0/1 measurement, and the verifier's
+    own words as the advisory `detail` (#3840).
+
+    `detail` is never read by `judge` — the host attaches it to the unmet
+    clauses *after* deciding, and the only thing that reads it is the
+    correction a held-open round renders. That is what makes it safe to carry
+    free text at all, and it is the byte-for-byte mirror of what
+    `stella_core::goal::verifier_feedback_text` hands the worker: `feedback`
+    when the verifier wrote one, falling back to `reasoning`."""
+    evidence = {
+        "flip": "not-attempted",
+        "measurements": {"met": 1 if verdict["met"] else 0},
+    }
+    words = verdict["feedback"] or verdict["reasoning"]
+    if words:
+        evidence["detail"] = "Verifier feedback: {}".format(words)
+    return evidence
 
 
 def before_turn_response(body):
@@ -644,7 +660,7 @@ def after_turn_response(body, host_calls):
 
     return {
         "protocol_version": PROTOCOL_VERSION,
-        "evidence": evidence_met(verdict["met"]),
+        "evidence": evidence_met(verdict),
     }
 
 

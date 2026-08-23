@@ -499,7 +499,7 @@ fn shipped(name: &str) -> (PluginManifest, Arc<dyn TurnWrapper>) {
     let argv: Vec<String> = runtime
         .argv
         .iter()
-        .map(|arg| arg.replace("${plugin_dir}", &dir.display().to_string()))
+        .map(|arg| stella_plugin::expand_plugin_dir(arg, &dir))
         .collect();
     let env = runtime.child_env(|name| std::env::var(name).ok());
     let transport = SubprocessWrapper::declare(

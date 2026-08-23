@@ -591,6 +591,7 @@ mod tests {
             before_turn_stages: Vec::new(),
             calls,
             max_calls,
+            max_child_turns: None,
             max_fanout_width: None,
             max_holds: None,
         }
