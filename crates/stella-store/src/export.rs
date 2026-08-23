@@ -156,7 +156,7 @@ const CHILD_TABLES: [(&str, &str, &str); 8] = [
     ),
     (
         "agent_uses",
-        "SELECT execution_id, agent, version, reason, ts FROM agent_uses",
+        "SELECT execution_id, agent, version, reason, ts, kind FROM agent_uses",
         "ORDER BY execution_id ASC, ts ASC",
     ),
     (

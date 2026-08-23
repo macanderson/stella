@@ -317,11 +317,24 @@ fn real_store_workspace() -> tempfile::TempDir {
     store
         .record_agent_uses(
             completed,
-            &[AgentUseRow {
-                agent: "reviewer".into(),
-                version: 1,
-                reason: "second opinion".into(),
-            }],
+            // Both of the log's writers (#3822): an installed definition and
+            // a `task` delegation, so the AGENTS panel's discriminator is
+            // exercised against the real schema rather than a hand-written
+            // subset of it.
+            &[
+                AgentUseRow {
+                    agent: "reviewer".into(),
+                    version: 1,
+                    reason: "second opinion".into(),
+                    kind: stella_store::KIND_DEFINITION.into(),
+                },
+                AgentUseRow {
+                    agent: "find-retry-policy".into(),
+                    version: 1,
+                    reason: "find the retry policy".into(),
+                    kind: stella_store::KIND_DELEGATION.into(),
+                },
+            ],
         )
         .expect("agent uses");
     store
@@ -1128,6 +1141,27 @@ fn session_turn_diff_replays_the_recorded_hunks() {
     .expect("json");
     assert_eq!(absent["found"], false, "{absent}");
     assert_eq!(absent["files"], serde_json::json!([]), "{absent}");
+}
+
+/// The v30 `agent_uses.kind` column resolves against the real migrated schema,
+/// and the two writers arrive apart (#3822). The panel's grouping rule itself
+/// is witnessed in the crate's own tests; this is the schema-drift gate over
+/// it.
+#[test]
+fn the_agents_panel_separates_the_two_writers_against_the_real_schema() {
+    let workspace = real_store_workspace();
+    let session: serde_json::Value = serde_json::from_slice(
+        &respond(workspace.path(), "/api/session?id=ses-1700000000000-424242").body,
+    )
+    .expect("json");
+    let kinds: Vec<&str> = session["agents"]
+        .as_array()
+        .expect("agents panel")
+        .iter()
+        .filter_map(|a| a["kind"].as_str())
+        .collect();
+    assert!(kinds.contains(&"definition"), "{session}");
+    assert!(kinds.contains(&"delegation"), "{session}");
 }
 
 /// One ledger append through the real write API, with the record's own

@@ -321,11 +321,12 @@ impl Tool for SpawnSubAgent {
         // *before* the await for the same reason the dispatcher settles spend
         // from the child's own thread — a hard cancel means the line after it
         // never executes, and a delegation that vanished is exactly what this
-        // row exists to make visible. Version 1: a `task` child is minted here
-        // rather than loaded from a versioned definition on disk, so there is
-        // no pinned version to carry and the un-versioned agent's 1 is the
-        // ledger's own convention.
-        ctx.record_agent_use(&spec.agent_id, 1, description);
+        // row exists to make visible. Recorded as a DELEGATION (#3822):
+        // `agent_id` is minted here from the model's own description rather
+        // than loaded from a versioned definition on disk, so it is a
+        // different name space from the deck's `reviewer`/`planner` rows and
+        // must not be counted alongside them.
+        ctx.record_agent_delegation(&spec.agent_id, description);
 
         // Already settled by the time this resolves — the dispatcher charges
         // the ledger from the child's own thread, which is the only place
