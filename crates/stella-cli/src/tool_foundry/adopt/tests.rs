@@ -1,8 +1,6 @@
 //! End to end over the real commands: stage, adopt, enable — and confirm the
 //! tool is unreachable at every step until the last one.
 
-use stella_core::{ParamKind, ProposedTool, ToolParameter};
-
 use super::*;
 
 /// A workspace with a real on-disk store. Returns the root and the store.
@@ -12,44 +10,54 @@ fn workspace() -> (tempfile::TempDir, Store) {
     (ws, store)
 }
 
-/// The motivating capability, staged through the real authoring pass
-/// ([`stella_tools::foundry_author::author`]) into `PROPOSED_DIR`, exactly as
-/// a reviewed proposal lands there. Returns the tool's name.
+/// The motivating capability, hand-staged into [`PROPOSED_DIR`] exactly as the
+/// protocol asks for it since #3629 retired the authoring pass: a `<name>.toml`
+/// carrying a `[foundry]` table, beside an executable `<name>.sh`. Returns the
+/// tool's name.
 fn author_cat(root: &Path, _store: &Store) -> String {
     std::fs::write(root.join("a.txt"), "alpha-contents\n").unwrap();
     std::fs::write(root.join("b.txt"), "beta-contents\n").unwrap();
     std::fs::write(root.join("c.txt"), "gamma-contents\n").unwrap();
-    let proposal = ProposedTool {
-        name: "cat".into(),
-        description: "read one file's contents".into(),
-        signature: "cat <path>".into(),
-        command_template: "cat {p1}".into(),
-        parameters: vec![ToolParameter {
-            name: "p1".into(),
-            kind: ParamKind::Path,
-            examples: vec!["a.txt".into(), "b.txt".into(), "c.txt".into()],
-        }],
-        occurrences: 3,
-        distinct_arguments: 3,
-        examples: vec!["cat a.txt".into(), "cat b.txt".into(), "cat c.txt".into()],
-    };
-    let authored = stella_tools::foundry_author::author(&proposal).expect("authoring succeeds");
-    let staged = root.join(stella_tools::foundry_author::PROPOSED_DIR);
+    let staged = root.join(PROPOSED_DIR);
     std::fs::create_dir_all(&staged).expect("create proposed dir");
-    let script_path = staged.join(&authored.script_filename);
-    std::fs::write(&script_path, &authored.script).expect("write script");
+
+    let script_path = staged.join("cat.sh");
+    std::fs::write(
+        &script_path,
+        "#!/bin/sh\nset -eu\ncat \"$STELLA_INPUT_P1\"\n",
+    )
+    .expect("write script");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
             .expect("mark executable");
     }
+
     std::fs::write(
-        staged.join(&authored.manifest_filename),
-        &authored.manifest_toml,
+        staged.join("cat.toml"),
+        format!(
+            "name = \"cat\"\n\
+             description = \"Read one file's contents.\"\n\
+             command = [\"./{PROPOSED_DIR}/cat.sh\"]\n\
+             \n\
+             [foundry]\n\
+             authored_by = \"{}\"\n\
+             signature = \"cat <path>\"\n\
+             occurrences = 3\n\
+             witness_input = {{ p1 = \"a.txt\" }}\n\
+             \n\
+             [input_schema]\n\
+             type = \"object\"\n\
+             required = [\"p1\"]\n\
+             \n\
+             [input_schema.properties.p1]\n\
+             type = \"string\"\n",
+            stella_tools::foundry_gate::AUTHORED_BY,
+        ),
     )
     .expect("write manifest");
-    authored.name
+    "cat".to_string()
 }
 
 /// What a session would actually be offered, given what is on disk and what

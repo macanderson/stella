@@ -2,13 +2,19 @@
 //! cross before it can register, and the tamper baseline that keeps it there.
 //!
 //! This is the third slice of self-improvement issue #830. The first mined
-//! capability gaps and *proposed* tools; the second
-//! ([`crate::foundry_author`]) *authored* a staged manifest+script pair under
-//! `.stella/tools/proposed/`, inert because discovery's non-recursive scan
+//! capability gaps and *proposed* tools; a staged manifest+script pair then
+//! lands under [`PROPOSED_DIR`], inert because discovery's non-recursive scan
 //! cannot see that subdirectory. Inertness-by-obscurity is a fine guardrail
 //! for a staging area and a bad one for an adopted tool: the moment a manifest
 //! lands in `.stella/tools/` it registers, and "a human moved a file" is the
 //! only record that it was ever meant to.
+//!
+//! Staging is a **hand** step: a machine-authoring pass shipped and was
+//! retired in #3629 because nothing ever called it, so the pair under
+//! [`PROPOSED_DIR`] is written by whoever wants the tool. That changes who
+//! writes the bytes and nothing about what this gate does with them — the
+//! `[foundry]` table below is still what marks a manifest as governed, and
+//! `stella tools --adopt` still refuses a manifest without one.
 //!
 //! This module replaces that with a **standing gate**. A foundry-authored
 //! manifest sitting in `.stella/tools/` registers only when the workspace's
@@ -92,6 +98,11 @@ use crate::custom::{CustomTool, DiscoveryReport, ToolDiagnostic, UngatedDiscover
 /// wrote, and claiming otherwise is not something a stranger's manifest gets
 /// to opt into.
 pub const AUTHORED_BY: &str = "stella-tool-foundry";
+
+/// Workspace-relative directory staged tools land in. A subdirectory of the
+/// custom-tools dir on purpose: near where an adopted manifest will live, but
+/// invisible to discovery's non-recursive `*.toml` scan.
+pub const PROPOSED_DIR: &str = ".stella/tools/proposed";
 
 /// Machine-readable provenance stamped into every foundry-authored manifest.
 ///

@@ -255,22 +255,37 @@ pub fn render(overlay: &ApprovalOverlay, accessible: bool, area: Rect, buf: &mut
     // The headline: what would run, and whether running it changes anything.
     // `read_only` is rendered as a WORD rather than a colour — the golden
     // suite strips style, and this is the field a reviewer most needs pinned.
-    rows.push(Line::from(vec![
-        Span::styled(
-            request.tool.clone(),
-            Style::new()
-                .fg(theme::TEXT_PRIMARY)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            if request.read_only {
-                "  read-only"
-            } else {
-                "  mutating"
-            },
-            dim,
-        ),
-    ]));
+    //
+    // A turn boundary has no tool and no `read_only` bit (#3486), so it
+    // names itself and says what answering means — "mutating" against a
+    // completion would be a claim about a call nobody is making.
+    rows.push(match request.parked.tool() {
+        Some(tool) => Line::from(vec![
+            Span::styled(
+                tool.to_string(),
+                Style::new()
+                    .fg(theme::TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                if request.parked.read_only() {
+                    "  read-only"
+                } else {
+                    "  mutating"
+                },
+                dim,
+            ),
+        ]),
+        None => Line::from(vec![
+            Span::styled(
+                "this turn's completion",
+                Style::new()
+                    .fg(theme::TEXT_PRIMARY)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  held for approval", dim),
+        ]),
+    });
     if let Some(subject) = &request.subject {
         rows.push(Line::from(Span::styled(
             format!("  {}", cards::truncate_cols(subject, inner_w - 2)),
@@ -368,8 +383,10 @@ mod tests {
 
     fn request() -> ApprovalRequest {
         ApprovalRequest {
-            tool: "bash".into(),
-            read_only: false,
+            parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+                name: "bash".into(),
+                read_only: false,
+            },
             reason: "matched rule no-destructive-shell".into(),
             gate: "command.started".into(),
             subject: Some("rm -rf build/".into()),

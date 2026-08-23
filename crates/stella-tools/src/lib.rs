@@ -33,8 +33,8 @@
 //! Beside the tools, this crate owns the session tool *mechanisms*: the
 //! registry and its dispatch gates ([`registry`]), the custom-tool loader and
 //! its execution contract ([`custom`], [`exec`], [`subprocess_env`]), the
-//! tool-foundry authorship/adoption plane ([`foundry_author`],
-//! [`foundry_gate`], [`foundry_witness`]), skill tool grants
+//! tool-foundry adoption plane ([`foundry_gate`], [`foundry_witness`]),
+//! skill tool grants
 //! ([`skill_grant`]), operator tool policy ([`policy`]), and the extension
 //! hook runner/bridge ([`hook_runner`], [`hook_bridge`]).
 
@@ -52,7 +52,6 @@ pub mod durable_write;
 pub mod edit;
 pub mod environment;
 pub mod exec;
-pub mod foundry_author;
 pub mod foundry_gate;
 pub mod foundry_witness;
 pub mod gated;

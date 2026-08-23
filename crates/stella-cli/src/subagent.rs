@@ -234,6 +234,21 @@ impl TurnSteering for OrphanStop {
     }
 }
 
+/// The two session-wide answers every child this dispatcher runs is held to:
+/// may this tool be called at all, and may *this caller* call it.
+///
+/// One argument rather than two because they travel together and are read
+/// together — `crate::agent::tool_stack` composes them into one chain, and a
+/// caller that supplied the switches and forgot the gate would build the
+/// half-gated child #3930 closed once already.
+pub struct ChildToolPosture {
+    /// The operator's `tools.<name>` switches.
+    pub policy: stella_tools::policy::ToolPolicy,
+    /// The session authorization gate — an installed plugin's accepted grant,
+    /// or `NoAuthz` by name (#3482).
+    pub gate: Arc<dyn stella_core::ports::AuthzGate>,
+}
+
 /// Runs sub-agents for the `delegate` tool. One per session.
 pub struct SessionSubAgents {
     /// `Arc`, not `Box`: the provider is moved onto each child's thread.
@@ -263,6 +278,17 @@ pub struct SessionSubAgents {
     /// permissive; [`install_for_session`] is the production installer and is
     /// where the real one is read.
     policy: stella_tools::policy::ToolPolicy,
+    /// The session authorization gate, held for the same reason as `policy`
+    /// and carried onto every child's thread (#3482).
+    ///
+    /// A best-of-N candidate's turn runs as
+    /// [`Principal::Plugin`](stella_core::ports::Principal::Plugin), so this is
+    /// the dispatcher a plugin's grant has to reach — a gate that was built at
+    /// session assembly and stopped at the parent stack would be a rule that
+    /// never fires where the plugin actually acts. [`Self::new`] leaves it
+    /// [`NoAuthz`](stella_core::ports::NoAuthz); [`Self::install`] takes the
+    /// session's.
+    gate: Arc<dyn stella_core::ports::AuthzGate>,
     /// `Arc` so a clone rides onto the child's thread: the child settles its
     /// own spend the moment it stops, rather than after a `.await` the parent
     /// may never reach. See "Settling is the child's job".
@@ -285,6 +311,7 @@ impl SessionSubAgents {
             tools: Arc::downgrade(registry),
             config,
             policy: stella_tools::policy::ToolPolicy::allow_all(),
+            gate: Arc::new(stella_core::ports::NoAuthz),
             pool: Arc::new(Mutex::new(BudgetGuard::new(
                 mode,
                 None,
@@ -303,6 +330,18 @@ impl SessionSubAgents {
     #[must_use]
     pub fn with_tool_policy(mut self, policy: stella_tools::policy::ToolPolicy) -> Self {
         self.policy = policy;
+        self
+    }
+
+    /// Run this session's children behind `gate`.
+    ///
+    /// A separate builder for [`Self::with_tool_policy`]'s reason: building
+    /// the session gate reads the plugin roster off disk
+    /// ([`crate::agent::tool_stack::session_gate`]), which the test doubles
+    /// have no reason to do. `NoAuthz` is what [`Self::new`] already meant.
+    #[must_use]
+    pub fn with_authz_gate(mut self, gate: Arc<dyn stella_core::ports::AuthzGate>) -> Self {
+        self.gate = gate;
         self
     }
 
@@ -381,13 +420,14 @@ impl SessionSubAgents {
         mode: stella_protocol::BudgetMode,
         pool_limit_usd: Option<f64>,
         seats: crate::agent::seats::SeatProviders,
-        policy: stella_tools::policy::ToolPolicy,
+        posture: ChildToolPosture,
     ) -> Arc<Self> {
         let dispatcher = Arc::new(
             Self::new(provider, registry, config, mode)
                 .with_pool_limit(pool_limit_usd)
                 .with_seats(seats)
-                .with_tool_policy(policy),
+                .with_tool_policy(posture.policy)
+                .with_authz_gate(posture.gate),
         );
         registry.attach_sub_agent_dispatcher(dispatcher.clone() as Arc<dyn SubAgentDispatcher>);
         dispatcher
@@ -459,7 +499,10 @@ pub fn install_for_session(
         stella_protocol::BudgetMode::Observed,
         session_pool_limit_usd(),
         seats,
-        crate::agent::session_tool_policy(cfg),
+        ChildToolPosture {
+            policy: crate::agent::session_tool_policy(cfg),
+            gate: crate::agent::tool_stack::session_gate(&cfg.workspace_root),
+        },
     ))
 }
 
@@ -519,8 +562,12 @@ impl SubAgentDispatcher for SessionSubAgents {
         };
         // Read before `spec` moves onto the child's thread.
         let principal = stella_core::ports::Principal::SubAgent(spec.agent_id.clone());
-        self.run_child(spec, tools, Some((self.policy.clone(), principal)))
-            .await
+        self.run_child(
+            spec,
+            tools,
+            Some((self.policy.clone(), self.gate.clone(), principal)),
+        )
+        .await
     }
 }
 
@@ -560,23 +607,25 @@ impl SessionSubAgents {
         policy: stella_tools::policy::ToolPolicy,
         principal: stella_core::ports::Principal,
     ) -> SubAgentOutcome {
-        self.run_child(spec, tools, Some((policy, principal))).await
+        self.run_child(spec, tools, Some((policy, self.gate.clone(), principal)))
+            .await
     }
 
     /// The one child-running body both entry points share.
     ///
-    /// `stack` is the policy and principal the child's chain is assembled
-    /// from, inside the child's own thread — `None` only for a caller that has
-    /// none, which since #3930 is no production door. A private helper taking
-    /// the difference as data is the one shape that keeps the subtle half —
-    /// `ParentGone`, `OrphanStop`, `catch_unwind`, settle-before-report —
-    /// written exactly once.
+    /// `stack` is the policy, authorization gate and principal the child's
+    /// chain is assembled from, inside the child's own thread — `None` only
+    /// for a caller that has none, which since #3930 is no production door. A
+    /// private helper taking the difference as data is the one shape that
+    /// keeps the subtle half — `ParentGone`, `OrphanStop`, `catch_unwind`,
+    /// settle-before-report — written exactly once.
     async fn run_child(
         &self,
         spec: SubAgentSpec,
         tools: Arc<ToolRegistry>,
         stack: Option<(
             stella_tools::policy::ToolPolicy,
+            Arc<dyn stella_core::ports::AuthzGate>,
             stella_core::ports::Principal,
         )>,
     ) -> SubAgentOutcome {
@@ -641,8 +690,8 @@ impl SessionSubAgents {
                 // owns — a `GatedToolSet<'_>` cannot cross a thread boundary,
                 // only the owned pieces it is assembled from can.
                 let base: &dyn stella_core::ports::ToolExecutor = &*tools;
-                let stacked = stack.map(|(policy, principal)| {
-                    crate::agent::tool_stack::policy_stack_with(base, policy, principal)
+                let stacked = stack.map(|(policy, gate, principal)| {
+                    crate::agent::tool_stack::policy_stack_with(base, policy, gate, principal)
                 });
                 let child_tools: &dyn stella_core::ports::ToolExecutor = match &stacked {
                     Some(stack) => stack,

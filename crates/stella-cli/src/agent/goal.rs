@@ -156,14 +156,17 @@ pub(crate) async fn run_raw_one_shot(
     // plugin's `child_turn` needs this session's dispatcher, which needs the
     // provider built two lines up (#3576).
     let bound = match resolved {
-        Some(resolved) => {
-            let host = crate::wrapper_plugin::session_host(cfg, resolved.manifest(), sub_agents);
-            Some(
-                resolved
-                    .serving(host)
-                    .map_err(crate::failure::CliFailure::from)?,
-            )
-        }
+        Some(resolved) => Some(
+            resolved
+                // One host per member, built from that member's own manifest:
+                // the child-turn plane reads `[roles]` and `[loop] max_calls`,
+                // so a shared one would let a second plugin name the first's
+                // role intents (`ResolvedWrapper::serving`).
+                .serving(|manifest| {
+                    crate::wrapper_plugin::session_host(cfg, manifest, Arc::clone(&sub_agents))
+                })
+                .map_err(crate::failure::CliFailure::from)?,
+        ),
         None => None,
     };
     // The one derivation of "a human is here to answer" — the #2676 approval
@@ -268,12 +271,22 @@ pub(crate) async fn run_raw_one_shot(
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
     let mut presence = SessionPresence::announce(cfg, prompt);
-    // This turn's friction ledger (#3946), filled by the raw arm below from the
-    // journal its renderer drained and read by the reflection further down. The
-    // wrapped arm leaves it empty on purpose: that turn's events are the
-    // plugin's to observe through the wrapper socket, and a host-side fold
-    // would describe a turn this door did not drive.
-    let mut friction = TurnFriction::default();
+    // This prompt's friction (#3946), read by the reflection further down.
+    //
+    // A `Vec` because the wrapped arm is genuinely several turns: an
+    // arbiter-grade plugin holds the round open and this door drives one turn
+    // per hold, so it folds one ledger per driven turn exactly as a `/goal`
+    // arc does (#3976). The raw arm pushes the single ledger `run_turn` fills.
+    //
+    // **What it covers is the turns this door drove, and not the wrapper's own
+    // spend.** A plugin's `before_turn`/`after_turn` points buy their own child
+    // turns through the host-call channel; those are reported beside the run
+    // (`BoundWrapper::child_spends`) and are not in here. Naming that boundary
+    // is the whole decision #3976 asked for: the alternative — reflecting with
+    // nothing — left a wrapped run's reflection blind to cost, wall clock,
+    // retries and loop firings, which is the #3946 regression scoped to one
+    // path.
+    let mut friction: Vec<TurnFriction> = Vec::new();
     // The wrapper socket's first driver (#3494). With no `--pipeline` the arm
     // below is the one that has always run, unchanged: one turn, no dispatch,
     // and a NULL `pipeline_variant` because no wrapper ran over it.
@@ -319,31 +332,37 @@ pub(crate) async fn run_raw_one_shot(
                     // answer rather than a placeholder.
                     controls: stella_core::ports::TurnControls::none(),
                     results: Vec::new(),
+                    friction: &mut friction,
                 },
             )
             .await
         }
-        _ => run_turn(
-            &*provider,
-            base_tools,
-            &custom_tools,
-            &registry,
-            &mut messages,
-            &mut budget,
-            &calibration,
-            &router,
-            cfg,
-            format,
-            &store,
-            persistence::TurnDoor::new("run"),
-            prompt,
-            Some(presence.id()),
-            recall_event,
-            memory.as_mut(),
-            Some(&mut friction),
-        )
-        .await
-        .map(|_| ()),
+        _ => {
+            let mut turn = TurnFriction::default();
+            let result = run_turn(
+                &*provider,
+                base_tools,
+                &custom_tools,
+                &registry,
+                &mut messages,
+                &mut budget,
+                &calibration,
+                &router,
+                cfg,
+                format,
+                &store,
+                persistence::TurnDoor::new("run"),
+                prompt,
+                Some(presence.id()),
+                recall_event,
+                memory.as_mut(),
+                Some(&mut turn),
+            )
+            .await
+            .map(|_| ());
+            friction.push(turn);
+            result
+        }
     };
     // Episodic memory first (works even for a failed turn — failures are
     // exactly the episodes worth recalling)…
@@ -395,16 +414,18 @@ pub(crate) async fn run_raw_one_shot(
         memory.is_some(),
     ) && let Some(m) = &mut memory
     {
-        // The friction ledger this door folded above (#3946). It was empty here
-        // for as long as the raw loop had no producer — so reflection saw every
-        // tool call the transcript carried, but never what any of them cost, how
-        // long they took, or that the turn had retried or looped, none of which
-        // a `CompletionMessage` records.
+        // The friction this door folded above (#3946). It was empty here for
+        // as long as the raw loop had no producer — so reflection saw every
+        // tool call the transcript carried, but never what any of them cost,
+        // how long they took, or that the turn had retried or looped, none of
+        // which a `CompletionMessage` records. One entry on the raw arm; one
+        // per driven turn on the wrapped one, which is why the slice
+        // constructor is the one both arms share (#3976).
         let mut report = crate::memory::reflect_routed(
             m,
             cfg,
             &*provider,
-            crate::memory::TurnEvidence::with_friction(&messages, &friction, outcome.is_ok()),
+            crate::memory::TurnEvidence::with_rounds(&messages, &friction, outcome.is_ok()),
             format != OutputFormat::Text,
             crate::agent::remaining_budget(&budget),
         )
@@ -538,18 +559,23 @@ pub async fn run_goal_cmd(
     // lanes are what let a plane counting its own calls run beside a goal
     // round's own worker/verifier pair without overwriting either.
     let bound = match resolved {
-        Some(resolved) => {
-            let host = crate::wrapper_plugin::round_driver_host(
-                &cfg.workspace_root,
-                resolved.manifest(),
-                sub_agents,
-            );
-            Some(
-                resolved
-                    .serving(host)
-                    .map_err(crate::failure::CliFailure::from)?,
-            )
-        }
+        Some(resolved) => Some(
+            resolved
+                // One host per member of the selection, built from that
+                // member's own manifest: `round_driver_host`'s child-turn
+                // plane reads the manifest's `[roles]` and `[loop] max_calls`,
+                // so a shared one would let a second plugin name the first's
+                // role intents (`ResolvedWrapper::serving`, #4094).
+                .serving(|manifest| {
+                    crate::wrapper_plugin::round_driver_host(
+                        &cfg.workspace_root,
+                        manifest,
+                        std::sync::Arc::clone(&sub_agents)
+                            as std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+                    )
+                })
+                .map_err(crate::failure::CliFailure::from)?,
+        ),
         None => None,
     };
     // Goal mode always renders human-readable output, so its half of the
@@ -617,10 +643,10 @@ pub async fn run_goal_cmd(
     // Machine-wide presence: a goal run is exactly the long-lived headless
     // session the SESSIONS overlay + replay exist for.
     let mut presence = SessionPresence::announce(cfg, goal);
-    // This arc's friction, one ledger per round, filled by the raw arm below
-    // and read by the reflection further down (#3962). The wrapped arm leaves
-    // it empty for the same reason `run_raw_one_shot`'s does: those turns are
-    // the plugin's to observe through the wrapper socket.
+    // This arc's friction, one ledger per round, filled by whichever arm runs
+    // below and read by the reflection further down (#3962, #3976). Both arms
+    // fold it, from the same journal, at the same point: what differs is only
+    // who drove each round's working turn.
     let mut rounds: Vec<TurnFriction> = Vec::new();
     // Both are set together above, so the mismatched pairs are unreachable;
     // matching the tuple keeps that visible rather than unwrapping a grant on
@@ -643,6 +669,7 @@ pub async fn run_goal_cmd(
             memory.as_mut(),
             bound,
             candidate,
+            Some(&mut rounds),
         )
         .await
     } else {
@@ -722,6 +749,31 @@ pub async fn run_goal_cmd(
     outcome
 }
 
+/// Put this session's withheld-steering notice on a goal run's stream, if
+/// there is one and no other door has already spent it (#4500).
+///
+/// `stella goal` reaches neither of the two openers that carry this —
+/// `agent::output::open_raw_turn` (the raw door) and
+/// `command_deck::steering::announce_withheld` (the deck's boot) — because it
+/// drives `Engine::run_goal` itself rather than `agent::run_turn`. So an
+/// untrusted checkout running `stella goal` had the refusal on stderr and on
+/// no event stream: nothing in the journal, nothing in `stella export`,
+/// nothing a harness could read.
+///
+/// Both arms call it, so a goal run announces once whichever pipeline it took,
+/// and it is claimed through the session latch rather than a local flag: a
+/// goal run is one process today, but a latch that is the same latch cannot
+/// disagree with the other doors about whether the session has been told.
+pub(super) fn announce_withheld_steering(tx: &mpsc::UnboundedSender<AgentEvent>, cfg: &Config) {
+    let Some(withheld) = cfg.authority.withheld.as_ref() else {
+        return;
+    };
+    if !crate::agent::claim_withheld_announcement() {
+        return;
+    }
+    let _ = tx.send(withheld.event());
+}
+
 /// Run one goal loop through `stella_core::Engine::run_goal`: working turns
 /// interleaved with verifier assessments until the verifier passes it (or a
 /// backstop — rounds, budget, abort — ends it with a named reason). The
@@ -793,6 +845,14 @@ pub(crate) async fn run_goal_turn(
     };
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let events = stella_core::EventSender::new(tx.clone());
+    // The registry's own streams and this turn's per-call work-tree
+    // measurement, through the one seam (#4507). This door opened its channel
+    // and attached NOTHING to it: `stella goal` rendered no task board, no
+    // sub-agent lifecycle, and no diff under any mutating call for the whole
+    // of a run — the #4175 silence, on the one door where the loop can run
+    // dozens of rounds before a human sees the result.
+    persistence::attach_run_streams(registry, cfg, &events, execution.as_ref());
     let renderer = spawn_renderer(
         rx,
         OutputFormat::Text,
@@ -801,7 +861,12 @@ pub(crate) async fn run_goal_turn(
         false,
         Some(goal.to_string()),
     );
-    // First event of the turn: what recall put in front of the model.
+    // What this workspace's trust gate withheld, then what recall put in
+    // front of the model — the ordering `output::open_raw_turn` argues for on
+    // the raw door, and the door parity #4500 asks for: `stella goal` reached
+    // neither opener, so an untrusted checkout's refusal was on stderr and on
+    // no event stream at all.
+    announce_withheld_steering(&tx, cfg);
     if let Some(event) = recall_event {
         let _ = tx.send(event);
     }
@@ -814,7 +879,7 @@ pub(crate) async fn run_goal_turn(
             Principal::User,
             registry.hook_bus(),
         );
-        let hook_runner = ShellHookRunner;
+        let hook_runner = HostHookRunner;
         let mut engine =
             Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
                 .with_calibration(calibration);
@@ -851,8 +916,11 @@ pub(crate) async fn run_goal_turn(
     // execution record, not by withholding the terminator.
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
+    // The canonical teardown (#960): the registry now holds sender clones of
+    // this channel, so it is detached before the renderer is awaited or the
+    // run hangs on a channel that never closes.
     drop(tx);
-    let rendered = renderer.await.unwrap_or_default();
+    let rendered = persistence::close_event_stream(registry, events, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     // The arc's friction, folded from the journal the renderer just finished
     // draining — split at each round's own `GoalVerdict` so no round is

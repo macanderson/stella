@@ -165,8 +165,13 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
     let execution = begin_execution(&store, "resume", &record.title, cfg, Some(&record.id), None);
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let events = stella_core::EventSender::new(tx.clone());
-    tools_registry.bridge_policy_plane(events.clone());
-    tools_registry.attach_events(events.clone());
+    // Both registry-born streams and this turn's per-call work-tree
+    // measurement, through the one seam (#4507). Spelled out here as
+    // `bridge_policy_plane` + `attach_events`, it paid the two loud debts and
+    // silently skipped the third: a resumed turn's mutating calls rendered
+    // with no diff and no `+N −M`, which reads as calls that changed nothing
+    // (#4175).
+    persistence::attach_run_streams(&tools_registry, cfg, &events, execution.as_ref());
     let renderer = spawn_renderer(
         rx,
         OutputFormat::Text,
@@ -187,7 +192,7 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
             Principal::User,
             tools_registry.hook_bus(),
         );
-        let hook_runner = ShellHookRunner;
+        let hook_runner = HostHookRunner;
         let engine_config = engine_config_for(cfg);
         let state = stella_core::step::TurnState::from_checkpoint(checkpoint, &engine_config);
         let mut engine = Engine::with_sleeper(&*provider, &tools, engine_config, &TokioSleeper)

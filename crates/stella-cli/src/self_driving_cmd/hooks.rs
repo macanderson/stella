@@ -53,7 +53,7 @@ use std::path::Path;
 use stella_core::bus::HookDecision;
 use stella_core::hooks::{HookEvent, HookPayload, decision::run_decision_hooks};
 pub(super) use stella_core::hooks::{HookIssueInfo, HookIssueOutcome};
-use stella_tools::hook_runner::ShellHookRunner;
+use stella_tools::hook_runner::HostHookRunner;
 
 use crate::settings::Settings;
 
@@ -182,7 +182,7 @@ fn dispatch(
         .enable_all()
         .build()
         .map_err(|error| format!("could not start a runtime for the hook: {error}"))?;
-    Ok(runtime.block_on(run_decision_hooks(&ShellHookRunner, Some(hooks), payload)))
+    Ok(runtime.block_on(run_decision_hooks(&HostHookRunner, Some(hooks), payload)))
 }
 
 /// A hook's own words when it gave any, and a description of what happened

@@ -38,7 +38,11 @@ main and does everything — no manual steps:
    `Cargo.lock` does not resolve, and the workflow refuses to merge a sync
    branch that would leave main's lock unresolvable even though the branch's
    own checks were green (#3336). A refusal is the "left open" case above and
-   heals on the next release.
+   heals on the next release — but "the next release" is a commit landing on
+   `main`, not a guarantee, so a refusal on the last merge before a quiet
+   period opens (or updates) one issue labelled `version-writeback-deferred`
+   naming the branch, the version, and the lockfile reason, and closes it
+   automatically the run the write-back finally merges (#3842).
    On a **minor or major** release the same PR also **rolls
    [`CHANGELOG.md`](CHANGELOG.md)**: whatever sits under `## [Unreleased]`
    moves beneath a new version heading, and `[Unreleased]` is left empty for

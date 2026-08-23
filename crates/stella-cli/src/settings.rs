@@ -863,6 +863,24 @@ struct ProjectTrust {
     credentials: bool,
 }
 
+impl ProjectTrust {
+    /// Whether this process trusts the project to run code it configures —
+    /// the same verdict [`project_code_execution_trusted`] answers with, for
+    /// a caller that already computed the pair.
+    ///
+    /// The accessor exists so that **one grep enumerates the boundary**.
+    /// `project_code_execution_trusted`'s doc comment is the normative list
+    /// of gated surfaces, and two of the five used to reach the verdict by
+    /// reading `trust.hooks` — a field whose name says *hooks* and whose
+    /// meaning is *code execution* — so no search could confirm the list was
+    /// complete and the doc could drift unnoticed (#4426).
+    /// `every_code_execution_gate_is_reachable_by_one_grep`, in this module's
+    /// tests, holds it there.
+    fn code_execution_trusted(self) -> bool {
+        self.hooks
+    }
+}
+
 pub(crate) fn env_flag(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|v| truthy_flag(&v))
 }
@@ -929,7 +947,7 @@ fn project_trust() -> ProjectTrust {
 /// have their API key re-pointed. Reading this predicate as "the project trust
 /// flag" would grade those as trusted one flag too early.
 pub(crate) fn project_code_execution_trusted() -> bool {
-    project_trust().hooks
+    project_trust().code_execution_trusted()
 }
 
 // `cfg(doc)` keeps this module visible to `cargo doc`: merge.rs and

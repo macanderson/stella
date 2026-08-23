@@ -696,23 +696,55 @@ mod tests {
     /// survived until #4160. Folding the two into one function is the
     /// structural half; this is the half that stops the next driver unfolding
     /// them by calling `attach_events` directly.
+    /// The owner list the fence below walks: every file in `stella-cli` that
+    /// opens a turn's event stream, and the driver in it that does.
+    ///
+    /// **The list is the guard.** A door missing from it is a door the fence
+    /// cannot see, which is exactly how `stella goal` and `stella resume`
+    /// bypassed the seam for as long as it existed (#4507): the goal doors
+    /// attached *nothing* to the channel they opened, so a whole goal run
+    /// rendered no task board, no sub-agent lifecycle and no diff under any
+    /// mutating call, and the resume driver spelled the pair out by hand and
+    /// skipped the measurer beside them. Adding a driver here is part of
+    /// writing one.
+    ///
+    /// Two lanes are deliberately absent and are **not** an oversight:
+    /// `subsession.rs` and `fleet_cmd.rs` run on a `Config::clone` sharing one
+    /// `SessionDurability` cell, so a per-call measurement there would read a
+    /// journal another lane is also snapshotting. They join this list once
+    /// #3233 gives a lane its own durability, and `subsession.rs:882` is the
+    /// live `attach_events` call the widened `raw` check below would fail on
+    /// today.
+    const STREAM_OWNERS: &[(&str, &str)] = &[
+        // The raw engine turn, which reaches the seam through
+        // `persistence::attach_run_streams`.
+        ("agent/persistence.rs", "attach_run_streams"),
+        // The interactive deck's lead turn.
+        ("command_deck.rs", "run_lead_turn"),
+        // `stella goal`'s raw arm — the loop over `Engine::run_goal`.
+        ("agent/goal.rs", "run_goal_turn"),
+        // `stella goal --pipeline <variant>`: one observed sender per round,
+        // republished so the round's fold sees the registry's own events.
+        ("agent/goal/goal_wrapped.rs", "GoalRoundDriver::run_turn"),
+        // `stella resume`, driving one restored turn.
+        ("agent/resume.rs", "run_resume"),
+    ];
+
     #[test]
     fn every_turn_owner_opens_its_streams_through_the_one_seam() {
         // Built rather than written out, so this file is not its own match.
         let seam = format!("open_turn_{}", "streams");
+        // The seam's own wrapper: `attach_run_streams` is `bridge_policy_plane`
+        // plus the seam, and `agent/persistence.rs` — which is in the list
+        // itself — is where that composition is checked.
+        let via = format!("attach_run_{}", "streams");
         let raw = format!("attach_{}(", "events");
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        for (file, driver) in [
-            // The raw engine turn, which reaches the seam through
-            // `persistence::attach_run_streams`.
-            ("agent/persistence.rs", "attach_run_streams"),
-            // The interactive deck's lead turn.
-            ("command_deck.rs", "run_lead_turn"),
-        ] {
+        for (file, driver) in STREAM_OWNERS {
             let body = std::fs::read_to_string(src.join(file))
                 .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
             assert!(
-                body.contains(&seam),
+                body.contains(&seam) || body.contains(&via),
                 "{file} ({driver}) opens a turn's event stream and no longer \
                  does it through `turn_files::open_turn_streams`. A stream \
                  opened without the per-call measurement does not degrade \
@@ -724,6 +756,51 @@ mod tests {
                 "{file} ({driver}) calls `attach_events` directly again. That \
                  is the seam being unfolded: it pays the loud debt (registry \
                  events) without the silent one beside it."
+            );
+        }
+    }
+
+    /// Every stream owner that ends its run with the cost-shaped terminator
+    /// also measures what the run changed.
+    ///
+    /// A fence, not a witness: it passes on today's tree, and it is here
+    /// because #4507 asked for the `_on_raw` spelling to join
+    /// [`the_terminator_only_raw_helper_stays_deleted`]'s banned set and that
+    /// is the wrong instrument.
+    ///
+    /// `persistence::emit_run_complete_on_raw` is the goal loops' ending: a
+    /// goal run's cost is the whole arc's, not one `TurnOutcome`'s, so
+    /// [`close_turn_boundary_raw`] — which reads an outcome — cannot serve it
+    /// and the helper is not the deleted `emit_run_complete_raw` under another
+    /// name. What it *shares* with that helper is the hazard: on its own it
+    /// pays the loud debt and leaves the silent one, which is how both goal
+    /// doors terminated a run they had never measured. So the ban stays where
+    /// it is and this asks the question directly instead — a caller of the
+    /// cost terminator must also carry a tree reading.
+    ///
+    /// `fleet_cmd.rs` is the one caller that carries neither, and it is
+    /// deliberately not listed above: a fan-out's lanes share one
+    /// `SessionDurability`, so it is blocked on #3233 with `subsession.rs`.
+    #[test]
+    fn a_cost_terminator_never_ships_without_a_tree_reading() {
+        // A *call*, path-qualified — `agent/persistence.rs` is on the owner
+        // list and is where the helper is declared, so an unqualified needle
+        // would match its own definition.
+        let terminator = format!("::emit_run_complete_on_{}(", "raw");
+        let reading = format!("emit_shared_tree_{}", "changes");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for (file, driver) in STREAM_OWNERS {
+            let body = std::fs::read_to_string(src.join(file))
+                .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
+            if !body.contains(&terminator) {
+                continue;
+            }
+            assert!(
+                body.contains(&reading),
+                "{file} ({driver}) ends its run with the cost terminator and \
+                 measures nothing. A run that terminates without a tree \
+                 reading empties the Files tab, `stella export` and the audit \
+                 log for that whole door, and does it silently."
             );
         }
     }
