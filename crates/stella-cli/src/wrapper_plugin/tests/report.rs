@@ -58,6 +58,10 @@ fn a_scoped_report_names_its_task_on_every_line() {
         cost_usd: 0.1,
         completed: 2,
     }];
+    let test_runs = [stella_runtime::wrapper::TestRunRecord {
+        candidate: "host-tree".to_string(),
+        assertions: stella_plugin::TestBaseline::Passed,
+    }];
 
     let scoped = super::report_lines(
         Some("build-parser"),
@@ -66,6 +70,7 @@ fn a_scoped_report_names_its_task_on_every_line() {
         &wrapper.gates,
         &spends,
         &fanouts,
+        &test_runs,
     );
     assert!(
         scoped.len() >= 4,
@@ -95,6 +100,7 @@ fn a_scoped_report_names_its_task_on_every_line() {
         &wrapper.gates,
         &spends,
         &fanouts,
+        &test_runs,
     );
     assert_eq!(unscoped.len(), scoped.len());
     for (bare, tagged) in unscoped.iter().zip(&scoped) {
@@ -127,6 +133,7 @@ fn the_candidate_sweep_renders_through_the_shared_wrapper_line() {
         OutputFormat::Text,
         &faulted_report(),
         &wrapper.gates,
+        &[],
         &[],
         &[],
     );

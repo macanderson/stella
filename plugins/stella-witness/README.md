@@ -26,10 +26,10 @@ the one that snapshots each path before the turn and compares after it (#3499).
 It contributes no context, no role and no scope — a verifier that steered the
 turn it is about to judge would be grading its own work.
 
-Two sources, and the second is the reason the point exists at all. The files
-the invocation itself names (`pytest tests/test_x.py`) the host already derives.
-The files a *runner's convention* implies it does not: `cargo test --test flip`
-names `flip`, and the artifact is `tests/flip.rs` by cargo's convention and by
+The files a *runner's convention* implies are why the point exists at all. The
+host already derives the ones the invocation itself names (`pytest
+tests/test_x.py`); it does not derive these. `cargo test --test flip` names
+`flip`, and the artifact is `tests/flip.rs` by cargo's convention and by
 nothing in the invocation. The host is deliberately forbidden from guessing that
 (`crates/stella-cli/src/wrapper_candidate.rs`) — a host deriving a witness is a
 host guessing at one — so the plugin whose flip it is says it instead. A path
