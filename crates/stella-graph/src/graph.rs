@@ -678,6 +678,24 @@ impl CodeGraph {
         })
     }
 
+    /// A stamp identifying the index's current generation: a digest over every
+    /// indexed file's `(path, content sha)`.
+    ///
+    /// Read-only, and the whole of its contract is that **equal stamps mean
+    /// every graph-derived answer is unchanged**. A consumer caching anything
+    /// this graph returned compares the stamp it gathered under against the
+    /// stamp now; unequal means some file was added, removed or re-indexed, so
+    /// a cross-file answer — `importers`, a resolved import target — may have
+    /// moved underneath an entry whose own file never changed (#3196).
+    ///
+    /// A caller must not read anything else into it. It is not a version, not
+    /// ordered, and two stamps taken either side of a change that reverted
+    /// itself are equal, which is correct: the answers are equal too.
+    pub fn index_generation(&self) -> Result<[u8; 32], GraphError> {
+        let conn = self.inner.read_guard();
+        store::index_generation(&conn)
+    }
+
     /// All known table, type, and view names (lowercased) from the index.
     /// Used by the schema gate to populate the known-schema set at session
     /// start. Returns empty sets if the index is empty or unreadable.

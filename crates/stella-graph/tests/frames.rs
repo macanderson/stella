@@ -138,6 +138,31 @@ fn file_neighborhood_returns_the_files_symbols() {
     );
 }
 
+/// The generation stamp's whole contract (#3196): equal means every
+/// graph-derived answer is unchanged, and a file arriving, changing or leaving
+/// moves it. A consumer caching a cross-file answer — an `importers` list, a
+/// resolved import target — has no other way to learn the tree moved
+/// underneath a file whose own bytes did not.
+#[test]
+fn the_index_generation_moves_with_the_indexed_files_and_not_otherwise() {
+    let (ws, _db, graph) = fixture();
+    let first = graph.index_generation().unwrap();
+
+    // Re-indexing an unchanged tree re-stamps nothing.
+    graph.index_all().unwrap();
+    assert_eq!(graph.index_generation().unwrap(), first);
+
+    // A new file moves it, and so does an edit to an existing one.
+    fs::write(ws.path().join("added.rs"), "pub fn added() {}\n").unwrap();
+    graph.index_all().unwrap();
+    let after_add = graph.index_generation().unwrap();
+    assert_ne!(after_add, first);
+
+    fs::write(ws.path().join("added.rs"), "pub fn added_and_edited() {}\n").unwrap();
+    graph.index_all().unwrap();
+    assert_ne!(graph.index_generation().unwrap(), after_add);
+}
+
 #[test]
 fn busiest_file_names_the_most_connected_file() {
     let (_ws, _db, graph) = fixture();
