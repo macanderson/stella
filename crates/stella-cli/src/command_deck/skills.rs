@@ -58,11 +58,11 @@ pub(super) const DECK_BUILTINS: &[(&str, &str)] = &[
     ("/mcp", "open the MCP servers tab"),
     (
         "/sessions",
-        "every stella session on this machine, grouped by status (also: ← on an empty prompt)",
+        "every stella session on this machine, grouped by status (also: ctrl-e)",
     ),
     (
         "/context",
-        "this session's active skills + MCP servers (also: → on an empty prompt)",
+        "this session's active skills + MCP servers (also: ctrl-k)",
     ),
     (
         "/subagents",

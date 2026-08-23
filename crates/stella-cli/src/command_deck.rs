@@ -653,8 +653,8 @@ pub async fn run_deck_session(
         // A fresh session in a workspace that has something to go back to:
         // one pointer, so "navigate back in" is discoverable.
         let _ = deck_tx.send(system_notice(
-            "◂ a previous session is resumable — ← (on an empty prompt) opens SESSIONS, ⏎ \
-             reopens one; or run `stella resume`."
+            "◂ a previous session is resumable — ctrl-e opens SESSIONS, ⏎ reopens one; \
+             or run `stella resume`."
                 .to_string(),
         ));
     }

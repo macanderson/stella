@@ -423,7 +423,7 @@ fn run_resume_list() -> Result<(), String> {
     }
     println!(
         "\n↩ resumable here (`stella resume [ID]`) · resumable from its own workspace\n\
-         inside the deck: `←` on an empty prompt opens SESSIONS, `⏎` reopens a session"
+         inside the deck: `ctrl-e` opens SESSIONS, `⏎` reopens a session"
     );
     Ok(())
 }

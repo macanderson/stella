@@ -705,8 +705,8 @@ pub(crate) enum Command {
     ///
     /// Reopen a previous session exactly where it stood — transcript,
     /// conversation, pending prompts. Sessions are durable (quit, crash, and
-    /// power loss included); the deck's SESSIONS overlay (`←` on an empty
-    /// prompt, `⏎` on a row) is the same navigation from inside a session.
+    /// power loss included); the deck's SESSIONS overlay (`ctrl-e`, `⏎` on a
+    /// row) is the same navigation from inside a session.
     Resume {
         /// Registry id (`ses-…`) of the session to reopen. Omitted: the most
         /// recently active resumable session of this workspace.

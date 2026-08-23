@@ -262,8 +262,8 @@ mod tests {
     /// this module exists to break up.
     const GRAPH: &str = "✓ code graph: 14157 symbols, 5991 imports across 640 files \
                          (150 re-parsed, 490 unchanged this pass) — skipped 2 generated files";
-    const RESUMABLE: &str = "◂ a previous session is resumable — ← (on an empty prompt) opens \
-                             SESSIONS, ⏎ reopens one; or run `stella resume`.";
+    const RESUMABLE: &str = "◂ a previous session is resumable — ctrl-e opens SESSIONS, ⏎ \
+                             reopens one; or run `stella resume`.";
 
     fn buffer_rows(buf: &Buffer) -> Vec<String> {
         let area = *buf.area();
@@ -385,7 +385,7 @@ mod tests {
         let (head, details) = split_clauses(RESUMABLE);
         assert_eq!(head, "◂ a previous session is resumable");
         assert_eq!(details.len(), 1);
-        assert!(details[0].starts_with('←'));
+        assert!(details[0].starts_with("ctrl-e"), "{details:?}");
     }
 
     #[test]
