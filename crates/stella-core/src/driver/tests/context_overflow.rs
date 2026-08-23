@@ -12,6 +12,14 @@
 //! (the witness), and the ladder is latched so repeated rejection aborts
 //! after a bounded number of paid attempts instead of looping (the
 //! death-spiral guard).
+//!
+//! Two later rungs settle where that ladder used to end. A spent ladder now
+//! consults the mid-turn provider fallback before surfacing terminally, since
+//! a transcript compaction cannot shrink may still fit another provider's
+//! window (#2770). And a *summarizer* request that itself overflows drops the
+//! older head of its render and re-asks, instead of leaving the context
+//! intact and letting the turn abort two rungs later (#2751). Both carry a
+//! bound test beside the witness.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -356,6 +364,171 @@ async fn a_fallback_that_also_overflows_is_terminal_with_no_second_swap() {
             .count(),
         1,
         "{events:?}"
+    );
+}
+
+/// Rejects a summarizer request until its rendered span is under
+/// `accepts_under` bytes, then writes a summary — the shape of a span large
+/// enough that the call meant to fold it is itself too large.
+struct SummarizerNarrowerThanTheSpan {
+    accepts_under: usize,
+    calls: std::sync::atomic::AtomicU32,
+    smallest_seen: std::sync::Mutex<usize>,
+}
+
+impl SummarizerNarrowerThanTheSpan {
+    fn new(accepts_under: usize) -> Self {
+        Self {
+            accepts_under,
+            calls: AtomicU32::new(0),
+            smallest_seen: std::sync::Mutex::new(usize::MAX),
+        }
+    }
+
+    fn calls(&self) -> u32 {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for SummarizerNarrowerThanTheSpan {
+    fn id(&self) -> &str {
+        "narrow-summarizer"
+    }
+
+    async fn complete_ref(
+        &self,
+        req: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let bytes: usize = req.messages.iter().map(|m| m.content.len()).sum();
+        let mut smallest = self.smallest_seen.lock().unwrap();
+        *smallest = (*smallest).min(bytes);
+        if bytes >= self.accepts_under {
+            return Err(ProviderError::ContextOverflow {
+                message: format!("prompt is too long: {bytes} bytes"),
+            });
+        }
+        Ok(CompletionResult {
+            upstream_provider: None,
+            text: "SUMMARY".to_string(),
+            tool_calls: Vec::new(),
+            usage: stella_protocol::CompletionUsage::reported_zero(),
+            model: "narrow".to_string(),
+            cost_usd: 0.0001,
+            finish_reason: None,
+        })
+    }
+}
+
+/// The #2751 witness: a summarizer request that itself overflows used to be
+/// recorded as an ordinary summarizer failure — context left intact, latch
+/// incremented — which is the one branch reactive recovery could not repair.
+/// The older head of the render is dropped and the summarizer re-asked, so
+/// the span still folds and the turn can continue.
+#[tokio::test]
+async fn a_summarizer_request_that_overflows_drops_its_head_and_still_folds_the_span() {
+    // The full render is well over this; one head-drop halves it under.
+    let provider = SummarizerNarrowerThanTheSpan::new(3_000);
+    let tools = super::CountingTools {
+        calls: std::sync::Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoSleep;
+    let engine = Engine::with_sleeper(&provider, &tools, super::overflow_config(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("the task"),
+    ];
+    for i in 0..8 {
+        messages.push(super::big_assistant_text(&format!("t{i}")));
+    }
+    let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
+    let mut health = crate::step::SummarizerHealth::default();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let events = EventSender::new(tx);
+
+    let cost = engine
+        .summarize_overflow_span(
+            &mut messages,
+            &mut budget,
+            500,
+            1.0,
+            &mut health,
+            0,
+            None,
+            &events,
+        )
+        .await;
+
+    assert!(cost > 0.0, "the accepted retry is paid for: {cost}");
+    assert!(provider.calls() > 1, "the first request was rejected");
+    let marker = messages
+        .iter()
+        .find(|m| m.content.starts_with(SUMMARY_MARKER_PREFIX))
+        .expect("the span must still fold");
+    assert!(
+        marker.content.contains("is not covered by this summary"),
+        "the marker must say the dropped head was never summarized: {}",
+        marker.content
+    );
+    assert_eq!(health.consecutive_failures, 0, "a fold clears the latch");
+    let _ = std::iter::from_fn(|| rx.try_recv().ok()).count();
+}
+
+/// The bound: a summarizer whose window no amount of head-dropping satisfies
+/// stops after a fixed number of dispatches, records the failure toward the
+/// give-up latch, and leaves the context intact — never a retry loop.
+#[tokio::test]
+async fn head_dropping_is_bounded_when_no_span_size_is_accepted() {
+    let provider = SummarizerNarrowerThanTheSpan::new(0);
+    let tools = super::CountingTools {
+        calls: std::sync::Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoSleep;
+    let engine = Engine::with_sleeper(&provider, &tools, super::overflow_config(), &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("the task"),
+    ];
+    for i in 0..8 {
+        messages.push(super::big_assistant_text(&format!("t{i}")));
+    }
+    let before = messages.len();
+    let mut budget = BudgetGuard::new(stella_protocol::BudgetMode::Off, None, None);
+    let mut health = crate::step::SummarizerHealth::default();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let events = EventSender::new(tx);
+
+    engine
+        .summarize_overflow_span(
+            &mut messages,
+            &mut budget,
+            500,
+            1.0,
+            &mut health,
+            0,
+            None,
+            &events,
+        )
+        .await;
+
+    assert_eq!(
+        provider.calls(),
+        u32::from(restore::SUMMARIZER_OVERFLOW_ATTEMPTS),
+        "the attempt count is the bound"
+    );
+    assert_eq!(messages.len(), before, "the context is left intact");
+    assert_eq!(
+        health.consecutive_failures, 1,
+        "the unrepairable overflow still counts toward the give-up latch"
+    );
+    let events: Vec<AgentEvent> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. } if message.contains("overflow summarizer failed")
+        )),
+        "the failure is surfaced: {events:?}"
     );
 }
 
