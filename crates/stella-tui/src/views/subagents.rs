@@ -175,9 +175,9 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         let more = subs.len() - MAX_BLOCKS;
         rows.push(Line::from(Span::styled(
             if ui.accessible {
-                format!("· and {more} more subagents · AGENTS tab lists all")
+                format!("· and {more} more subagents · ctrl-a lists all")
             } else {
-                format!("└─ ◆ +{more} more · AGENTS tab lists all")
+                format!("└─ ◆ +{more} more · ctrl-a lists all")
             },
             Style::new().fg(theme::TEXT_TERTIARY),
         )));

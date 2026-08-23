@@ -242,6 +242,10 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
     ("/", "slash commands — ↑↓ pick · tab completes · ⏎ runs"),
     ("ctrl-v", "paste — a copied image is attached to the prompt"),
     ("ctrl-t", "open the queue editor"),
+    (
+        "ctrl-a",
+        "SUB-AGENTS — dispatched lanes: stop · pause · restart · focus",
+    ),
     ("ctrl-s", "PLAN — every step of the approved plan, in full"),
     (
         ">text",

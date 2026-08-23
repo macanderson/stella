@@ -1198,3 +1198,34 @@ fn deck_render_snapshots_state_a_failing_pr_on_the_issues_tab() {
         "a failing PR is not stated on the tab SPEC 5 sends it to:\n{frame}"
     );
 }
+
+/// Golden frame for the SUB-AGENTS overlay (`ctrl-a`, `/subagents`): one
+/// block per dispatched lane — status, clock, model, the effort its calls
+/// are pinned to, spend; then what the lane is for; then where it is in the
+/// task, read off its own fold. Every one of those is a word, so the
+/// style-stripped golden pins them; the bottom rule pins the verbs
+/// (stop · pause/resume · restart · focus) that #4334 lost with the AGENTS
+/// dashboard.
+#[test]
+fn deck_render_snapshots_pin_the_subagents_overlay() {
+    let mut model = fixture_model();
+    // The driver supplies a purpose and a pinned effort with the lane's
+    // registration; the demo scenario registers lanes bare, so give the first
+    // one both here and leave the second bare, pinning the fallback too.
+    let mut meta = stella_tui::AgentMeta::new("sub:auth", "wire automations triggers API", 0)
+        .with_role("subagent")
+        .with_purpose("Wire the automations triggers API to the new router.")
+        .with_effort("high");
+    meta.model = Some("glm-5.2".into());
+    model.apply_inbound(&Inbound::Register(meta));
+    let mut ui = ui_for(DeckTab::Session);
+    ui.subagents.open = true;
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_subagents",
+        "every dispatched lane: vitals with model and effort, its purpose, where it is; the control verbs on the rule",
+        W,
+        H,
+        &frame,
+    );
+}

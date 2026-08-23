@@ -696,7 +696,9 @@ mod tests {
             // away from being invisible to this sweep.
             include_str!("../../stella-cli/src/agent/tests/engine_wiring.rs"),
             include_str!("../../stella-cli/src/subagent/tests.rs"),
-            include_str!("../../stella-cli/src/subsession.rs"),
+            // `subsession.rs` crossed the ratchet with #4334 and its tests
+            // moved out the same way — the `turn.steer` witness lives here.
+            include_str!("../../stella-cli/src/subsession/tests.rs"),
             include_str!("../../stella-cli/src/command_deck/tests.rs"),
             include_str!("../../stella-cli/src/session_persist.rs"),
             include_str!("../../stella-cli/src/engine_config.rs"),
