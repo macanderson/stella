@@ -227,8 +227,13 @@ pub(super) fn tool_input_path(input: &serde_json::Value) -> Option<String> {
         return Some(path);
     }
     // A batch write carries its paths in an `edits` array, not at the top
-    // level; the first edit's path stands in so a single-file batch still
-    // renders an inline diff under its result row.
+    // level. The first edit's path is the batch's **lead**: it decides which
+    // of the call's changes the row shows inline, and every other path the
+    // call moved is claimed behind it rather than dropped (#4214,
+    // `super::inline_diff::ClaimWindow::claim`). It used to be a stand-in for
+    // the whole batch, which is an accurate description of a stand-in and not
+    // of an answer — a multi-file batch rendered one of its files and lost the
+    // rest.
     input
         .get("edits")
         .and_then(serde_json::Value::as_array)

@@ -321,10 +321,14 @@ pub fn digest(transcript: &[TranscriptEntry], turn: &Turn) -> TurnDigest {
                 duration_ms, diff, ..
             } => {
                 d.duration_ms += duration_ms;
-                if let Some(r) = diff
-                    && !paths.contains(&r.path.as_str())
-                {
-                    paths.push(&r.path);
+                // Every path the call claimed, not just the one its row
+                // shows inline: a turn whose one `apply_edits` rewrote
+                // twenty files is twenty files' worth of review, and the
+                // digest exists to answer exactly that (#4214).
+                for r in diff {
+                    if !paths.contains(&r.path.as_str()) {
+                        paths.push(&r.path);
+                    }
                 }
             }
             _ => {}
@@ -352,7 +356,7 @@ mod tests {
             full: "f".into(),
             duration_ms: 10,
             speculated: false,
-            diff: None,
+            diff: Vec::new(),
         }
     }
 
@@ -366,10 +370,10 @@ mod tests {
             full: "f".into(),
             duration_ms: 30,
             speculated: false,
-            diff: Some(InlineDiffRef {
+            diff: vec![InlineDiffRef {
                 path: path.into(),
                 seq,
-            }),
+            }],
         }
     }
 
@@ -439,7 +443,7 @@ mod tests {
                 full: "line one\nDEADLOCK detected\nline three".into(),
                 duration_ms: 5,
                 speculated: false,
-                diff: None,
+                diff: Vec::new(),
             },
         ];
         assert_eq!(search_hits(&t, "deadlock"), vec![1]);

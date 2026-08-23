@@ -40,9 +40,10 @@ use crate::render::row::*;
 use crate::{diff, syntax, theme};
 
 // Owned by `render`, two levels up: `resolve_inline_diff` and
-// `resolve_inline_delta` read the draw-side file list and `INLINE_DIFF_CAP`
-// bounds the collapsed rendering. Named here so the doc links below resolve.
-use crate::render::{INLINE_DIFF_CAP, resolve_inline_delta, resolve_inline_diff};
+// `resolve_inline_delta_total` read the draw-side file list and
+// `INLINE_DIFF_CAP` bounds the collapsed rendering. Named here so the doc links
+// below resolve.
+use crate::render::{INLINE_DIFF_CAP, resolve_inline_delta_total, resolve_inline_diff};
 
 /// How a tool-result body is colored, and the gutter parser that goes with it.
 ///
@@ -175,7 +176,7 @@ pub(super) fn result_body(
     };
     let (ok, duration_ms, speculated) = (*ok, *duration_ms, *speculated);
     let path = path.as_deref();
-    let diff_ref = diff_ref.as_ref();
+    let diff_ref = diff_ref.as_slice();
     let (name, full) = (name.as_str(), full.as_str());
     // One event, one metal (SPEC 6.2). The head above this row read the
     // same table, so the block is one unbroken vertical instead of a v2
@@ -214,11 +215,20 @@ pub(super) fn result_body(
     } else {
         human_duration(duration_ms)
     };
-    let inline = diff_ref.and_then(|d| resolve_inline_diff(d, view.files));
-    // The delta the emitter measured for this very mutation, carried
-    // alongside its diff — not a recount of the rendered hunk, which is
-    // a bounded view of the changed region and reports a smaller number.
-    let inline_delta = diff_ref.and_then(|d| resolve_inline_delta(d, view.files));
+    // The change the body shows: the first the claim window handed out,
+    // which is the call's own subject where it named one. The rest are
+    // counted rather than drawn — a codemod across twenty files would
+    // otherwise be the whole transcript (#4214).
+    let lead = diff_ref.first();
+    let inline = lead.and_then(|d| resolve_inline_diff(d, view.files));
+    // The delta the emitter measured for this call, summed over *every*
+    // path it claimed — not a recount of the rendered hunk, which is a
+    // bounded view of the changed region and reports a smaller number,
+    // and not the lead file's alone, which would disagree with the file
+    // count standing beside it.
+    let inline_delta = resolve_inline_delta_total(diff_ref, view.files);
+    // Of paths, not of claims: two edits to one file are one file.
+    let files_touched = crate::model::distinct_diff_paths(diff_ref);
 
     // The right-hand metric column. A diff states its own size in
     // added/removed lines, which is the honest unit for an edit —
@@ -235,6 +245,14 @@ pub(super) fn result_body(
     // with it — a fabricated `+0 −0` over a real edit is the defect
     // #4156 removed from the head row, and it has no place here.
     let mut metric: Vec<Span<'static>> = Vec::new();
+    // The scope of the counts beside it, stated only when there is more
+    // than one — a `1 files` (or `1 file`) chip over the overwhelmingly
+    // common single-path row would be a column that never varies, and
+    // the N=1 row is byte-identical to what it was without it.
+    if files_touched > 1 {
+        metric.push(Span::styled(format!("{files_touched} files"), dim));
+        metric.push(Span::styled(" · ".to_string(), dim));
+    }
     if let Some((added, removed)) = inline_delta {
         metric.push(Span::styled(
             format!("+{added}"),
@@ -374,28 +392,68 @@ pub(super) fn result_body(
     // looks"), gated on freshness: a later mutation of the same path
     // bumps `FileState::changes` past the recorded seq and the diff
     // no longer belongs to this call, so it is hidden rather than
-    // misattributed. Collapsed shows at most [`INLINE_DIFF_CAP`]
-    // styled lines; ctrl+o reveals the whole diff.
-    if let (Some(dref), Some(d)) = (diff_ref, inline) {
+    // misattributed. Collapsed shows the lead change, at most
+    // [`INLINE_DIFF_CAP`] styled lines of it; ctrl+o reveals every
+    // change the call made, whole.
+    if expanded {
+        // ctrl+o is where the elided files live, so expanded draws every
+        // one of them — an affordance that revealed only the lead file's
+        // remaining lines would be advertising content it does not show.
+        // Each is uncapped, exactly as the single diff has always been
+        // when expanded.
+        for dref in diff_ref {
+            let Some(d) = resolve_inline_diff(dref, view.files) else {
+                continue;
+            };
+            // The path *is* drawn here, and only here: with several
+            // diffs stacked the reader has no other way to tell where
+            // one file ends and the next begins. A single-diff block
+            // still draws none — the head above it names the file, and
+            // restating it is the chrome the collapsed rendering
+            // deliberately does without.
+            if diff_ref.len() > 1 {
+                push_detail_line(&margin, &dref.path, width, out);
+            }
+            let (body, _) =
+                diff::body_lines_inline(d, Some(&dref.path), usize::MAX, Some(" · ctrl+o"));
+            for line in body {
+                push_diff_line(&margin, line, width, out);
+            }
+        }
+    } else if let (Some(dref), Some(d)) = (lead, inline) {
         // No path header and no counts footer here, unlike the
         // standalone viewer: the call row above already names the file
         // and the metric column already states `+n −m`, so both rules
         // would be the same facts a second time — four rows of chrome
         // around what is often a two-row change.
-        let cap = if expanded {
-            usize::MAX
-        } else {
-            INLINE_DIFF_CAP
-        };
+        //
         // The fold row is the renderer's, not this call site's: a
         // head-and-tail rendering elides the *middle*, so the marker
         // has to sit where the missing lines were. Appending it after
         // the body — which is what happened here until the shared
         // policy landed — would put "and there is more" under a
         // rendering whose last row is already the file's last row.
-        let (body, _) = diff::body_lines_inline(d, Some(&dref.path), cap, Some(" · ctrl+o"));
+        let (body, _) =
+            diff::body_lines_inline(d, Some(&dref.path), INLINE_DIFF_CAP, Some(" · ctrl+o"));
         for line in body {
             push_diff_line(&margin, line, width, out);
+        }
+        // The same argument, one level out: what is elided here is the
+        // *other files*, and they come after the one shown, so the
+        // marker sits at the end of the diff block rather than being
+        // appended to the result's own body above it.
+        //
+        // Only under a rendered diff. With nothing drawn there is no
+        // elision to mark — the row has already degraded to stating
+        // `n files · +a −b` and nothing more, which is the same
+        // degradation a single unresolvable reference has always had.
+        if files_touched > 1 {
+            push_detail_line(
+                &margin,
+                &format!("⋯ {} more files · ctrl+o", files_touched - 1),
+                width,
+                out,
+            );
         }
     }
 }

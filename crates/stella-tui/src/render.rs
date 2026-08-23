@@ -593,6 +593,29 @@ pub(crate) fn resolve_inline_delta(
         .and_then(|f| f.delta_at(dref.seq))
 }
 
+/// The `(added, removed)` for a whole call: [`resolve_inline_delta`] summed
+/// over every change the call claimed (#4214).
+///
+/// A row states one scope or the other and never both at once. A head reading
+/// `3 files · +12 −4` where the counts were the *first* file's would be two
+/// numbers disagreeing about what they describe — the defect class #4155 and
+/// #4156 are about — so the count and the delta are derived from the same set
+/// here rather than from different ends of it.
+///
+/// A reference that no longer resolves (aged past `DIFF_HISTORY`, evicted with
+/// its path) contributes nothing rather than a zero, and `None` when *none* of
+/// them resolve, which is the same "no column at all" the singular resolver
+/// already returns. For a one-change call this is [`resolve_inline_delta`]
+/// exactly.
+pub(crate) fn resolve_inline_delta_total(
+    refs: &[InlineDiffRef],
+    files: &[FileState],
+) -> Option<(u32, u32)> {
+    refs.iter()
+        .filter_map(|dref| resolve_inline_delta(dref, files))
+        .reduce(|(a1, r1), (a2, r2)| (a1 + a2, r1 + r2))
+}
+
 /// Cost tone: green until the turn approaches its budget, then warning, then
 /// danger. Compared against the *turn* figure, because `limit_usd` is the
 /// guard's per-turn limit — matching it against the session-cumulative gauge

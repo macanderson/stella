@@ -40,6 +40,10 @@ pub use file_state::DIFF_HISTORY;
 // (#4217). `entry`'s module doc carries why the seam is declarations-vs-logic.
 pub use entry::{AskUserPrompt, InlineDiffRef, OpenPark, SubAgentSummary, TranscriptEntry};
 pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
+// The renderer's, not the fold's: the count a multi-path row states is decided
+// where the claims are defined, so the row cannot arrive at a different one
+// (#4214).
+pub(crate) use inline_diff::distinct_paths as distinct_diff_paths;
 pub use recall::{RecallBudget, RecalledFrameRow};
 pub use turn::{Hud, TurnCounters, TurnOpening, TurnReceipt};
 // Re-imported rather than left qualified, so the split was a pure move: every
@@ -527,12 +531,12 @@ impl SessionModel {
                 // deck has nothing but the tool's name to go on, which is the
                 // one job `is_file_mutation` still holds.
                 let baseline = self.claim_baselines.remove(call_id);
-                let mut diff = None;
+                let mut diff: Vec<InlineDiffRef> = Vec::new();
                 if ok {
                     if let Some(since) = baseline {
                         diff = self.claims.claim(since, path.as_deref());
                     }
-                    if diff.is_some() {
+                    if !diff.is_empty() {
                         self.per_call_producer_seen = true;
                     } else if !self.per_call_producer_seen
                         && let Some(path) = self.mutated_path_for(call_id)
@@ -542,7 +546,13 @@ impl SessionModel {
                             .iter()
                             .find(|f| f.path == path)
                             .map_or(0, |f| f.changes);
-                        diff = Some(InlineDiffRef {
+                        // One reference, because the name list this arm falls
+                        // back on names one path and the boundary producer
+                        // behind it emits one aggregate change per path. A
+                        // multi-path row is what the *claim window* answers
+                        // (#4214); predicting a second path here would be
+                        // predicting a change nothing measured.
+                        diff.push(InlineDiffRef {
                             path,
                             seq: recorded + 1,
                         });
@@ -558,9 +568,7 @@ impl SessionModel {
                 // have. Per-call measurement makes this the rarer path rather
                 // than the only one — two measured calls hold two distinct
                 // seqs and neither supersedes the other.
-                if let Some(dref) = diff.as_ref() {
-                    self.supersede_inline_diff(dref);
-                }
+                self.supersede_inline_diffs(&diff);
                 self.transcript.push(TranscriptEntry::ToolResult {
                     call_id: call_id.clone(),
                     name,
@@ -1303,8 +1311,8 @@ impl SessionModel {
         }
     }
 
-    /// Drop the inline-diff reference from every earlier result that pointed
-    /// at the same change as `dref`, so one change is claimed by one row.
+    /// Drop from every earlier result the inline-diff references that point at
+    /// the same changes as `fresh`, so one change is claimed by one row.
     ///
     /// Reachable whenever a path's mutations in a turn are measured only by the
     /// turn boundary, which emits **one** aggregate `FileChange` per path: every
@@ -1315,13 +1323,15 @@ impl SessionModel {
     /// showing it. Per-call measurement (#4175) gives each call its own seq and
     /// so never reaches here.
     ///
-    /// Called before the new result is pushed, so it never clears its own ref.
-    fn supersede_inline_diff(&mut self, dref: &InlineDiffRef) {
+    /// Called before the new result is pushed, so it never clears its own refs.
+    /// A no-op for the overwhelmingly common empty `fresh` (a read, a failure).
+    fn supersede_inline_diffs(&mut self, fresh: &[InlineDiffRef]) {
+        if fresh.is_empty() {
+            return;
+        }
         for entry in &mut self.transcript {
-            if let TranscriptEntry::ToolResult { diff, .. } = entry
-                && diff.as_ref().is_some_and(|d| d == dref)
-            {
-                *diff = None;
+            if let TranscriptEntry::ToolResult { diff, .. } = entry {
+                diff.retain(|d| !fresh.contains(d));
             }
         }
     }

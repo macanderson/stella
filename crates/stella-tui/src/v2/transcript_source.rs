@@ -80,17 +80,19 @@ pub fn head_metal(name: &str) -> Color {
 /// `following` is the rest of the lane's transcript *after* the head, and
 /// `files` the draw-side ledger. Two hops, both deliberate:
 ///
-/// 1. **The pair, by `call_id`.** A [`TranscriptEntry::ToolResult`] carries the
-///    [`crate::model::InlineDiffRef`] naming the change its own call produced,
-///    and shares its `call_id` with the head. The scan stops at the turn's
+/// 1. **The pair, by `call_id`.** A [`TranscriptEntry::ToolResult`] carries an
+///    [`crate::model::InlineDiffRef`] per change its own call produced, and
+///    shares its `call_id` with the head. The scan stops at the turn's
 ///    closing entry: a result cannot land after the turn that dispatched it
 ///    completed, so this bounds the walk by turn length rather than by session
 ///    length, and an unanswered head (a cancelled call) costs one turn's scan.
-/// 2. **The measurement, through that reference.** `render::resolve_inline_delta`
-///    (crate-private, so named rather than linked) reads
-///    [`crate::model::FileState::delta_at`] — the counts the *emitter*
-///    measured. Never the tool's input, never a recount of the rendered diff:
-///    the first is what #2290 established as the defect (`edit_file` with
+/// 2. **The measurement, through those references.**
+///    `render::resolve_inline_delta_total` (crate-private, so named rather than
+///    linked) reads [`crate::model::FileState::delta_at`] for each — the counts
+///    the *emitter* measured — and sums them, so the head states **the whole
+///    call**, every path it claimed, and not the first one it happened to lead
+///    with (#4214). Never the tool's input, never a recount of the rendered
+///    diff: the first is what #2290 established as the defect (`edit_file` with
 ///    `replace_all` makes an input-derived number wrong outright), and the
 ///    second counts a bounded rendering of the changed region rather than the
 ///    change.
@@ -110,10 +112,10 @@ pub fn measured_delta(
         .find_map(|e| match e {
             TranscriptEntry::ToolResult {
                 call_id: cid, diff, ..
-            } if cid == call_id => diff.as_ref(),
+            } if cid == call_id => Some(diff.as_slice()),
             _ => None,
         })
-        .and_then(|dref| crate::render::resolve_inline_delta(dref, files))
+        .and_then(|refs| crate::render::resolve_inline_delta_total(refs, files))
 }
 
 /// One dim line, no rail (SPEC 6.3).

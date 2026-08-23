@@ -19,7 +19,7 @@
 //!
 //! # The rule
 //!
-//! A row claims the change that folded *under its own call* — between its
+//! A row claims **every** change that folded *under its own call* — between its
 //! `ToolStart` and its `ToolResult` — whatever the tool is called. That is the
 //! same discipline #4227 landed, stated positionally instead of by name:
 //!
@@ -30,6 +30,13 @@
 //!   `ToolResult` of the turn has folded, so it never lands inside one. An
 //!   empty window is therefore a measurement, not an absence of one — the call
 //!   moved nothing, and the row says so by claiming nothing.
+//!
+//! One call can move several paths — an `apply_edits` batch, a `bash` codemod —
+//! and the per-call producer emits one `FileChange` for each, so a window can
+//! hold several. All of them are that call's, and the row takes all of them
+//! (#4214): taking one and leaving the others to expire is how a twenty-file
+//! codemod rendered as a one-file edit. Which one *leads* — and so which one the
+//! row draws inline — is the only thing `prefer` decides.
 //!
 //! A claim is **consumed** when it is taken, which is what keeps one change to
 //! one row without any name-based reasoning. It also shuts the one interleaving
@@ -98,29 +105,70 @@ impl ClaimWindow {
         }
     }
 
-    /// Take the change a call that dispatched at `since` may claim, consuming
-    /// every measurement that folded under it.
+    /// Take **every** change a call that dispatched at `since` may claim,
+    /// consuming each measurement that folded under it.
     ///
-    /// `prefer` is the path the call's own arguments named, when it named one:
-    /// a measurement of that path is the call's subject, and anything else that
-    /// moved while it ran is a bystander (a human saving in another window —
-    /// `call_measure`'s "observability, never evidence"). With no named path,
-    /// or none of the measurements matching it, the newest is the row's best
-    /// answer: it is the one whose post-state the tree reading describes.
+    /// The returned order is the row's reading order, and its head is what the
+    /// row renders inline. `prefer` is the path the call's own arguments named,
+    /// when it named one: a measurement of that path is the call's subject and
+    /// leads, because it is what the reader came to the row to see. With no
+    /// named path — every `bash`, MCP and custom-tool call — the newest leads,
+    /// since it is the one whose post-state the tree reading describes. The
+    /// rest follow in the order they were measured.
     ///
-    /// A multi-path call still surfaces exactly one change, because a row has
-    /// one inline diff to give — see #4214.
-    pub(super) fn claim(&mut self, since: u64, prefer: Option<&str>) -> Option<InlineDiffRef> {
+    /// Everything under the window is returned, not just the head. A call that
+    /// rewrites twenty files measured twenty changes and the row states all
+    /// twenty (#4214); before this it took one and the other nineteen expired
+    /// unclaimed, so a multi-file batch rendered one of its files and silently
+    /// dropped the rest. The consequence is that a *bystander* — a human
+    /// saving in another window while a measured call ran — is now counted by
+    /// the row rather than discarded. That is the honest trade: the claim
+    /// window cannot tell the two apart, and under-reporting a real codemod on
+    /// every call is a larger error than over-reporting an edit nobody else was
+    /// making. `prefer` still decides which change *leads*, so the subject is
+    /// what shows.
+    ///
+    /// Empty when nothing folded under the call — a measurement that the call
+    /// moved nothing, not an absence of one.
+    pub(super) fn claim(&mut self, since: u64, prefer: Option<&str>) -> Vec<InlineDiffRef> {
         let first = self.entries.partition_point(|c| c.index < since);
         let mine: Vec<Claim> = self.entries.drain(first..).collect();
-        let claim = prefer
-            .and_then(|path| mine.iter().rev().find(|c| c.path == path))
-            .or_else(|| mine.last())?;
-        Some(InlineDiffRef {
-            path: claim.path.clone(),
-            seq: claim.seq,
-        })
+        let Some(lead) = prefer
+            .and_then(|path| mine.iter().rposition(|c| c.path == path))
+            .or_else(|| mine.len().checked_sub(1))
+        else {
+            return Vec::new();
+        };
+        std::iter::once(&mine[lead])
+            .chain(mine.iter().enumerate().filter_map(|(i, c)| {
+                // The lead is already first; re-emitting it would give one
+                // change two rows in the same call's own list, which is the
+                // property `claim` exists to hold.
+                (i != lead).then_some(c)
+            }))
+            .map(|c| InlineDiffRef {
+                path: c.path.clone(),
+                seq: c.seq,
+            })
+            .collect()
     }
+}
+
+/// How many distinct paths this set of claims spans.
+///
+/// The count the row states (`3 files`) is of **paths**, not of claims: two
+/// measurements of one file are one file, and a row saying otherwise would be
+/// a number nothing measured. Order-preserving rather than sorted, so it is a
+/// pure count of what is there.
+#[must_use]
+pub(crate) fn distinct_paths(refs: &[InlineDiffRef]) -> usize {
+    let mut seen: Vec<&str> = Vec::with_capacity(refs.len());
+    for r in refs {
+        if !seen.contains(&r.path.as_str()) {
+            seen.push(&r.path);
+        }
+    }
+    seen.len()
 }
 
 #[cfg(test)]
@@ -137,11 +185,53 @@ mod tests {
 
         assert_eq!(
             window.claim(base, None),
-            Some(InlineDiffRef {
+            vec![InlineDiffRef {
                 path: "src/a.rs".into(),
                 seq: 1,
-            })
+            }]
         );
+    }
+
+    /// **Witness (#4214).** A call that moved three paths claims all three, in
+    /// reading order: the subject it named first, the bystanders behind it.
+    ///
+    /// Fails on the singular `Option`, which returned the subject and dropped
+    /// the other two on the floor.
+    #[test]
+    fn a_multi_path_call_claims_every_change() {
+        let mut window = ClaimWindow::default();
+        let base = window.open();
+        window.record("crates/a/src/lib.rs", 1);
+        window.record("crates/b/src/lib.rs", 1);
+        window.record("crates/c/src/lib.rs", 1);
+
+        let claimed = window.claim(base, Some("crates/b/src/lib.rs"));
+        assert_eq!(
+            claimed.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+            vec![
+                "crates/b/src/lib.rs",
+                "crates/a/src/lib.rs",
+                "crates/c/src/lib.rs",
+            ],
+        );
+        assert_eq!(distinct_paths(&claimed), 3);
+    }
+
+    /// Two edits to one file are one file: the count the row states is of
+    /// paths, so a repeated path does not inflate it.
+    #[test]
+    fn two_changes_to_one_path_are_one_file() {
+        let refs = [
+            InlineDiffRef {
+                path: "src/a.rs".into(),
+                seq: 1,
+            },
+            InlineDiffRef {
+                path: "src/a.rs".into(),
+                seq: 2,
+            },
+        ];
+        assert_eq!(distinct_paths(&refs), 1);
     }
 
     /// A claim is consumed: the row that folds first takes it, and no later row
@@ -154,11 +244,11 @@ mod tests {
         window.record("src/a.rs", 1);
 
         assert!(
-            window.claim(later, None).is_some(),
+            !window.claim(later, None).is_empty(),
             "the solo call takes it"
         );
         assert!(
-            window.claim(earlier, None).is_none(),
+            window.claim(earlier, None).is_empty(),
             "a call whose window merely overlapped finds nothing left"
         );
     }
@@ -171,36 +261,40 @@ mod tests {
         window.record("src/a.rs", 1);
         let base = window.open();
 
-        assert_eq!(window.claim(base, None), None);
+        assert_eq!(window.claim(base, None), Vec::new());
     }
 
-    /// A call that named a path claims that path, even when something else
-    /// moved while it ran and was measured later in the same window.
+    /// A call that named a path *leads* with that path, even when something
+    /// else moved while it ran and was measured later in the same window.
+    ///
+    /// The bystander is still claimed (#4214) — it is behind the subject, not
+    /// discarded, because the window cannot tell a bystander from the second
+    /// file of a batch.
     #[test]
-    fn a_named_path_wins_over_a_bystander() {
+    fn a_named_path_leads_over_a_bystander() {
         let mut window = ClaimWindow::default();
         let base = window.open();
         window.record("src/subject.rs", 3);
         window.record("src/bystander.rs", 1);
 
-        let claimed = window.claim(base, Some("src/subject.rs")).expect("claimed");
-        assert_eq!(claimed.path, "src/subject.rs");
-        assert_eq!(claimed.seq, 3);
+        let claimed = window.claim(base, Some("src/subject.rs"));
+        assert_eq!(claimed[0].path, "src/subject.rs");
+        assert_eq!(claimed[0].seq, 3);
+        assert_eq!(claimed[1].path, "src/bystander.rs");
     }
 
     /// With no named path — every `bash`, MCP and custom-tool call — the newest
-    /// measurement answers, because it is the one the tree reading describes.
+    /// measurement leads, because it is the one the tree reading describes.
     #[test]
-    fn an_unnamed_call_claims_the_newest_measurement() {
+    fn an_unnamed_call_leads_with_the_newest_measurement() {
         let mut window = ClaimWindow::default();
         let base = window.open();
         window.record("src/a.rs", 1);
         window.record("src/b.rs", 1);
 
-        assert_eq!(
-            window.claim(base, None).map(|r| r.path),
-            Some("src/b.rs".into())
-        );
+        let claimed = window.claim(base, None);
+        assert_eq!(claimed[0].path, "src/b.rs");
+        assert_eq!(claimed[1].path, "src/a.rs");
     }
 
     /// The window is bounded, and bounded from the front: an abandoned call's
@@ -215,9 +309,6 @@ mod tests {
         }
 
         assert_eq!(window.entries.len(), MAX_UNCLAIMED);
-        assert_eq!(
-            window.claim(base, None).map(|r| r.seq),
-            Some(MAX_UNCLAIMED as u32 + 9)
-        );
+        assert_eq!(window.claim(base, None)[0].seq, MAX_UNCLAIMED as u32 + 9);
     }
 }
