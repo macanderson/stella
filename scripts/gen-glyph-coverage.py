@@ -39,8 +39,8 @@ GLYPHS = REPO / "crates" / "stella-tui-theme" / "src" / "glyph.rs"
 BRAND_FONT = Path.home() / "Library" / "Fonts" / "JetBrainsMono-Regular.ttf"
 
 # A `char` literal in a const or an array: `'◐'` or `'\u{FF0B}'`. Deliberately
-# narrow — it reads declarations, not prose, so a glyph named in a doc comment
-# does not enter the table without being declared.
+# narrow, so a glyph that only appears inside a doc comment stays out of the
+# table until something declares it.
 CHAR_LITERAL = re.compile(r"'(\\u\{([0-9A-Fa-f]{2,6})\}|[^'\\])'")
 
 
