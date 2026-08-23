@@ -22,7 +22,7 @@
 //!
 //! Everything here is `pub(crate)`: nothing in this module is part of the
 //! crate's public surface, which is `serve`, `serve_until` and the types a
-//! host builds a [`ServeConfig`](crate::ServeConfig) out of.
+//! host builds a [`ServeConfig`] out of.
 
 use std::collections::HashMap;
 use std::collections::hash_map;

@@ -83,8 +83,10 @@ pub struct Oracle {
     /// `[runtime].argv` out a second time here, byte for byte: a grammar that
     /// forces a redundant declaration teaches every author a redundant
     /// concept, and it made three manifests differ in four lines where two
-    /// would do. [`PluginManifest::oracle_process`] is the resolved answer, so
-    /// a host never has to know which of the two shapes was written.
+    /// would do.
+    /// [`PluginManifest::oracle_process`](crate::PluginManifest::oracle_process)
+    /// is the resolved answer, so a host never has to know which of the two
+    /// shapes was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<OracleCommand>,
     /// Whether the host must observe a fail→pass flip before crediting.
@@ -131,7 +133,8 @@ pub struct OracleCommand {
 ///
 /// [`Oracle::command`] and [`Runtime`] are two ways to name one program, and a
 /// reader must not have to know which one an author chose —
-/// [`PluginManifest::oracle_process`] resolves it once. Its one shipped caller
+/// [`PluginManifest::oracle_process`](crate::PluginManifest::oracle_process)
+/// resolves it once. Its one shipped caller
 /// is [`crate::consent_text`], which names the program at install; nothing runs
 /// it (#3511). Borrowed rather than owned so resolving costs nothing;
 /// `${plugin_dir}` interpolation stays the host's job, exactly as it is for
