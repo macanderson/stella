@@ -73,7 +73,7 @@ fn registry_dir() -> PathBuf {
 /// load-bearing: a pid that does not fit `pid_t` must read as dead — an `as`
 /// cast would wrap it negative, and `kill(-N, 0)` probes process *group* N,
 /// which can spuriously report alive.
-fn pid_alive(pid: u32) -> bool {
+pub(crate) fn pid_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         let Ok(pid) = libc::pid_t::try_from(pid) else {

@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use stella_autonomy::{AimdLimits, Calibration, CycleRecord, Floors};
 
 use crate::timefmt::{now_unix, rfc3339_utc_now};
@@ -237,6 +237,69 @@ impl LoopState {
     }
     fn stats_path(&self) -> PathBuf {
         self.dir.join("stats.json")
+    }
+    fn queue_path(&self) -> PathBuf {
+        self.dir.join("queue.json")
+    }
+
+    /// Snapshot the ranked queue as the loop last saw it.
+    ///
+    /// The queue is a live tracker read and was never persisted, so the only
+    /// way to see it was to call the forge again. The observatory may not
+    /// (zero egress), and a person asking "what is the agent about to take?"
+    /// should not have to. Written atomically on every ranking pass, so a
+    /// dashboard sampling mid-write reads the previous complete snapshot.
+    ///
+    /// `rank` is the rung label an issue carries (`P0`, `P1`, …) or
+    /// `untriaged` for one nobody has placed — the same split the loop
+    /// claims by, spelled so a reader needs no ladder to interpret it.
+    pub fn write_queue_snapshot(
+        &self,
+        queue: &stella_autonomy::priority::Queue,
+        ladder: &stella_autonomy::priority::PriorityLadder,
+        open_total: usize,
+    ) {
+        let mut items: Vec<Value> = queue
+            .ranked
+            .iter()
+            .map(|issue| {
+                let rank = stella_autonomy::priority::rank_of(issue, ladder)
+                    .and_then(|i| ladder.rungs.get(usize::from(i)))
+                    .cloned()
+                    .unwrap_or_else(|| "untriaged".to_owned());
+                json!({
+                    "number": issue.number,
+                    "title": issue.title,
+                    "rank": rank,
+                    "labels": issue.labels.iter().map(|l| l.name.clone()).collect::<Vec<_>>(),
+                    "url": issue.url,
+                    "created_at": issue.created_at,
+                })
+            })
+            .collect();
+        items.extend(queue.unassessed.iter().map(|u| {
+            json!({
+                "number": u.key,
+                "title": u.title,
+                "rank": "untriaged",
+                "labels": Vec::<String>::new(),
+                "url": Value::Null,
+                "created_at": u.created_at,
+            })
+        }));
+        let doc = json!({
+            "at": crate::timefmt::rfc3339_utc_now(),
+            "open_total": open_total,
+            "ranked": queue.ranked.len(),
+            "untriaged": queue.unassessed.len(),
+            "items": items,
+        });
+        // Reported, never fatal: the snapshot is a view, and a loop that
+        // stopped working because it could not write one would trade the
+        // work for the paperwork.
+        if let Err(error) = write_json_atomic(&self.queue_path(), &doc) {
+            eprintln!("warning: could not write the queue snapshot: {error}");
+        }
     }
 
     /// The append-only record of everything the loop did.
@@ -759,5 +822,55 @@ mod tests {
             "this list is shared with stella-observatory through stella-home; \
              a second copy here is how the two surfaces drift (#1755)"
         );
+    }
+
+    /// **The queue-snapshot witness.** The ranked queue was a live tracker
+    /// read that nothing persisted, so the observatory (zero egress) had
+    /// nothing to show. One ranking pass now leaves `queue.json`: every
+    /// ranked issue with the rung it carries, every unassessed one marked
+    /// `untriaged`, and the totals the page's headline reads.
+    #[test]
+    fn a_ranking_pass_leaves_a_queue_snapshot_the_observatory_can_read() {
+        use stella_autonomy::priority::{TriagePolicy, triage};
+        use stella_autonomy::{IssueLabel, QueueIssue};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let st = LoopState {
+            dir: tmp.path().to_path_buf(),
+            repo_root: tmp.path().to_path_buf(),
+        };
+        let label = |n: &str| IssueLabel { name: n.to_owned() };
+        let issue = |number: u64, title: &str, labels: Vec<IssueLabel>| QueueIssue {
+            number,
+            title: title.to_owned(),
+            labels,
+            created_at: "2026-08-01T00:00:00Z".to_owned(),
+            url: format!("https://example.test/issues/{number}"),
+        };
+        let policy = TriagePolicy::default();
+        let queue = triage(
+            vec![
+                issue(2, "a P2 bug", vec![label("bug"), label("P2")]),
+                issue(1, "a P0 bug", vec![label("bug"), label("P0")]),
+                issue(3, "nobody placed this", vec![]),
+            ],
+            &policy,
+        );
+
+        st.write_queue_snapshot(&queue, &policy.ladder, 3);
+
+        let doc: Value =
+            serde_json::from_str(&std::fs::read_to_string(tmp.path().join("queue.json")).unwrap())
+                .unwrap();
+        assert_eq!(doc["open_total"], 3);
+        assert_eq!(doc["ranked"], 2);
+        assert_eq!(doc["untriaged"], 1);
+        let items = doc["items"].as_array().unwrap();
+        assert_eq!(items[0]["number"], 1, "P0 leads: {items:?}");
+        assert_eq!(items[0]["rank"], "P0");
+        assert_eq!(items[1]["rank"], "P2");
+        assert_eq!(items[2]["rank"], "untriaged");
+        assert_eq!(items[2]["number"], "3");
+        assert!(doc["at"].as_str().unwrap().ends_with('Z'));
     }
 }

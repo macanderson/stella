@@ -117,17 +117,26 @@ pub(super) fn drive(
         .unwrap_or("main")
         .to_owned();
 
+    // Minted before the first record, so the journal never holds a drive line
+    // without its session. A dashboard folds the journal by this id; a
+    // one-shot verb (triage, close) never mints one and folds into the
+    // session running around it.
+    let session_id = audit::begin_session();
     audit::record(
         durable,
         Audit::SessionStarted,
-        None,
+        Some(&session_id),
         &format!(
-            "session began — up to {max_issues} issue(s), {}, polling every {poll_secs}s",
+            "session began — up to {max_issues} issue(s), {}, polling every {poll_secs}s{}",
             if no_review {
                 "merging without waiting for review"
             } else {
                 "waiting for review before any merge"
-            }
+            },
+            // Named as what it is: each turn is its own `stella run` session
+            // with this ceiling (#4353), so a reader does not multiply it out
+            // as the run's total.
+            spend_limit.map_or(String::new(), |cap| format!(", ${cap} per turn")),
         ),
     );
 
@@ -334,7 +343,7 @@ pub(super) fn drive(
 
                 // A queue read is a network call. Failing it is a reason to
                 // wait, never a reason to end a run meant to be perpetual.
-                let ranked = match super::backlog::ranked_keys(&provider, &cfg.triage) {
+                let ranked = match super::backlog::ranked_keys(durable, &provider, &cfg.triage) {
                     Ok(ranked) => ranked,
                     Err(error) => {
                         audit::record(
