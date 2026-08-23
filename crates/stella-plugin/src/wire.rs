@@ -67,8 +67,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use stella_protocol::candidate::CandidateHandle;
 use stella_protocol::completion::CompletionMessage;
 
-pub(crate) use self::envelope::decode_body;
-use self::envelope::{FromEnvelope, deserialize_envelope};
+use self::envelope::deserialize_envelope;
+pub(crate) use self::envelope::{FromEnvelope, PendingBody, decode_body};
 use crate::manifest::PluginManifest;
 use crate::observed::ObservedEvidence;
 use crate::oracle::Oracle;
