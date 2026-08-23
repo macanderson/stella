@@ -201,7 +201,7 @@ min_paired_tasks = 8
 exclude_operational_aborts = true     # excluded from denominators, named in reports
 
 [dataset]
-capture = true                        # forces trace_capture on for campaign runs
+capture = true                        # intent: full record per trial (§7.1 — not `trace_capture`, a retired key)
 emit = ["sft", "dpo"]
 output = "~/.stella/foundry/datasets/tb21-perfect"
 accept = { min_reward = 1.0, require_verified_reconstruction = true, witness_intact = true }
