@@ -349,6 +349,20 @@ pub(crate) enum SelfDrivingCmd {
         cmd: RunCmd,
     },
 
+    /// Ask a running loop to park at its next boundary.
+    ///
+    /// Writes the flag `drive` re-reads on every poll (#3942). It parks
+    /// between issues and between turns — never mid-turn, because a killed
+    /// turn leaves a worktree, a branch and possibly a pull request that
+    /// nothing has recorded. Deleting the file puts the loop back to work with
+    /// no other input; the output names the path.
+    Stop {
+        /// The loop's durable state directory, for stopping a loop rooted
+        /// somewhere other than this workspace's own.
+        #[arg(long, value_name = "DIR")]
+        root: Option<std::path::PathBuf>,
+    },
+
     /// List runs (shorthand for `run list`).
     Runs,
 
@@ -650,6 +664,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
                 Ok(())
             }
         },
+        SelfDrivingCmd::Stop { root } => stop::request(root.as_deref().unwrap_or(&st.dir)),
         SelfDrivingCmd::Runs => runs_report(&st),
         SelfDrivingCmd::Phase { name } => {
             st.run_write(name, None, None);
