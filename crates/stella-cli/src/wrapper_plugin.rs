@@ -156,7 +156,14 @@ use crate::{OutputFormat, config::Config};
 
 /// Every `! wrapper:` line a run prints, in one renderer.
 mod report;
-use report::{fanout_spend_lines, report_lines, report_to, spend_lines, sweep_lines};
+use report::{report_to, sweep_lines};
+// The renderers `report_to` composes internally. Nothing in the shipped binary
+// calls them directly — only this module's tests do, through `super::` — so the
+// re-export is `#[cfg(test)]` rather than an `#[allow(unused_imports)]`: the
+// attribute would assert the lint is wrong, and it is not (AGENTS.md § *Code
+// style*, and CLAUDE.md on `#[cfg(test)]` being the better answer).
+#[cfg(test)]
+use report::{fanout_spend_lines, report_lines, spend_lines};
 
 /// Which wrapper runs over a one-shot turn.
 ///

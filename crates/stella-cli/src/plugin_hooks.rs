@@ -133,9 +133,13 @@ pub(crate) fn fold_plugin_routes(
 
 /// The list one event's matchers live in, created empty if this is the first.
 ///
-/// Exhaustive with no rest pattern, for [`crate::settings::completeness`]'
-/// reason: a new event added to `Hooks` stops this compiling until its author
-/// says whether a plugin may be routed at it.
+/// Exhaustive with no rest pattern, for `settings::completeness`' reason: a
+/// new event added to `Hooks` stops this compiling until its author says
+/// whether a plugin may be routed at it.
+///
+/// Named in code rather than linked: that module is `cfg(any(test, doc))` and
+/// **private** to `settings`, so it is nameable from inside that module (where
+/// `merge.rs` and `unknown.rs` do link to it) and from nowhere else.
 fn slot_for(hooks: &mut Hooks, event: HookEvent) -> &mut Vec<HookMatcher> {
     let slot = match event {
         HookEvent::SessionStart => &mut hooks.session_start,
