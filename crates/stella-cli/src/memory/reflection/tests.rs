@@ -421,6 +421,48 @@ fn tool_exchange(call_id: &str, name: &str, output: ToolOutput) -> Vec<Completio
     ]
 }
 
+/// **Witness (#4382), the half that shows what the slice buys.**
+///
+/// The transcript reflection is handed decides what the prompt argues about,
+/// and #2460's selection does not know where a turn starts: given a whole
+/// session it selects across turns, so an earlier turn's work reaches the
+/// prompt that mines lessons and rates the *current* execution. The
+/// interactive doors now hand over the turn slice
+/// (`agent::reflect::InteractiveTurn::evidence`); this is why that matters,
+/// asserted on the bytes that actually go on the wire.
+#[tokio::test]
+async fn an_earlier_turns_work_reaches_the_prompt_when_the_whole_session_is_handed_over() {
+    const EARLIER_TURN: &str = "swapped db() for withTenantDb in the tenant loader";
+
+    let mut session = vec![
+        CompletionMessage::user("fix the tenant leak"),
+        CompletionMessage::assistant(EARLIER_TURN),
+    ];
+    let turn_start = session.len();
+    session.extend(tool_exchange("c1", "task_list", ToolOutput::ok("6 done")));
+    session.push(CompletionMessage::assistant("six tasks, all done"));
+
+    let whole = prompt_for_evidence(super::TurnEvidence::from_transcript(&session, true)).await;
+    assert!(
+        whole.contains(EARLIER_TURN),
+        "the pre-fix call handed the session over and the earlier turn arrived with it"
+    );
+
+    let this_turn = prompt_for_evidence(super::TurnEvidence::from_transcript(
+        &session[turn_start..],
+        true,
+    ))
+    .await;
+    assert!(
+        !this_turn.contains(EARLIER_TURN),
+        "and the turn slice leaves it behind: {this_turn}"
+    );
+    assert!(
+        this_turn.contains("task_list"),
+        "without losing what this turn did: {this_turn}"
+    );
+}
+
 /// WITNESS (#2460, defect one — the window is in the wrong place).
 ///
 /// A thirty-message turn whose only learnable fact sits at index 8. The old
@@ -827,8 +869,15 @@ fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
     // The interactive door — one ledger for a plain prompt, a slice of them
     // for `/goal`, so the shared helper takes the slice shape.
     assert!(
-        REFLECT.contains("TurnEvidence::with_rounds("),
-        "reflect_on_interactive_turn must reflect with the turn's ledger"
+        REFLECT.contains("TurnEvidence::with_rounds(self.turn_slice(), self.friction"),
+        "reflect_on_interactive_turn must reflect with the turn's ledger, over \
+         the turn's own slice — the whole session made the lessons and the \
+         self-review describe an execution they are not keyed to (#4382)"
+    );
+    assert!(
+        DECK.contains("TurnEvidence::with_friction(turn,"),
+        "and so must the deck's lead turn, which had the same mismatch: its \
+         gate read the slice and its evidence read the session (#4382)"
     );
 
     // The `/goal` doors (#3962), both of which reflect ONCE over an arc of
