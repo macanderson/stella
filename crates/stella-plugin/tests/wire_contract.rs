@@ -812,3 +812,37 @@ fn a_fanout_width_must_bound_a_fanout_this_manifest_can_actually_ask_for() {
         "absent is the host's ceiling, not a load error"
     );
 }
+
+/// The whole-run child-turn ceiling gets the same two rules, against its own
+/// capability — and is a *different key* from `max_calls`, which is the point
+/// of #3839: one is per point conversation and resets, the other never does.
+#[test]
+fn a_child_turn_ceiling_must_bound_a_call_this_manifest_can_actually_make() {
+    let manifest = |calls: &str, ceiling: &str| {
+        PluginManifest::from_toml_str(&format!(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"after_turn\"]\n\
+             calls = [{calls}]\n{ceiling}"
+        ))
+    };
+
+    let declared = manifest("\"child_turn\"", "max_calls = 1\nmax_child_turns = 8").expect("loads");
+    assert_eq!(declared.loop_grant.max_calls, Some(1));
+    assert_eq!(declared.loop_grant.max_child_turns, Some(8));
+
+    assert!(matches!(
+        manifest("\"recall\"", "max_child_turns = 2").expect_err("a ceiling bounding nothing"),
+        stella_plugin::ManifestError::MaxChildTurnsRequiresChildTurn
+    ));
+    assert!(matches!(
+        manifest("\"child_turn\"", "max_child_turns = 0").expect_err("a zero ceiling"),
+        stella_plugin::ManifestError::ZeroMaxChildTurns
+    ));
+    assert_eq!(
+        manifest("\"child_turn\"", "")
+            .expect("loads")
+            .loop_grant
+            .max_child_turns,
+        None,
+        "absent falls back to max_calls, and then to the host's ceiling"
+    );
+}

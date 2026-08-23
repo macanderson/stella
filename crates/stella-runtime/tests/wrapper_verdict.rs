@@ -477,6 +477,7 @@ fn the_hold_allowance_is_the_ask_clamped_to_the_hosts_ceiling() {
         before_turn_stages: Vec::new(),
         calls: Vec::new(),
         max_calls: None,
+        max_child_turns: None,
         max_fanout_width: None,
         max_holds: ask,
     };
@@ -557,6 +558,7 @@ fn an_abstention_does_not_buy_another_turn() {
             before_turn_stages: Vec::new(),
             calls: Vec::new(),
             max_calls: None,
+            max_child_turns: None,
             max_fanout_width: None,
             max_holds: Some(8),
         },

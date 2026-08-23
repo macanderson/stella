@@ -96,9 +96,9 @@ to empty evidence (no `"met"` measurement) and is reported on stderr, never
 guessed at. Two further degradations are this program's own, past a
 successful call: a completed child turn whose report does not parse as
 `{"met": ..., ...}` (this plugin, like `stella-plan`, asks once per round and
-cannot afford the built-in verifier's own JSON-repair retry within it — see
-`plugin.toml`'s header for why "once per round" is not the same number as
-`[loop] max_calls` on the wire), and a child turn the
+cannot afford the built-in verifier's own JSON-repair retry within it: that is
+`[loop] max_calls = 1`, the per-point gate, and it is a different number from
+`max_child_turns`, which bounds the whole run), and a child turn the
 host reports as **incomplete** — `crates/stella-core/src/goal.rs::Engine::assess`
 treats an incomplete verifier sub-agent as no verdict at all
 (`GoalAssessError::Incomplete`, never a fabricated answer), and this plugin

@@ -223,13 +223,20 @@ impl<D> ChildTurns<D> {
     /// grant a human consented to at install is the authority, and a plane
     /// assembled from a hand-built map would be one nobody consented to.
     ///
-    /// `[loop] max_calls` is read here as the plugin's **ask** for child turns
-    /// and clamped against [`DEFAULT_HOST_MAX_CHILD_TURNS`]. That key is
-    /// deliberately reused rather than a new manifest field: it is already "the
-    /// most host calls per point the plugin asks for", it is already consented
-    /// to, and a second number would be a second thing to keep in step. The
-    /// clamp is the host's either way — a manifest asking for a thousand gets
-    /// the ceiling, and one asking for one gets one.
+    /// `[loop] max_child_turns` is the plugin's **ask** for child turns, and it
+    /// is clamped against [`DEFAULT_HOST_MAX_CHILD_TURNS`]. It is its own key
+    /// rather than a second meaning for `max_calls`, because the two bound
+    /// different axes: `max_calls` is per point conversation and resets on every
+    /// dispatch, and this one never resets. Reusing it cost `plugins/stella-goal`
+    /// its second round — an arbiter that asks once per point and holds N rounds
+    /// open needs N turns for the run, and had to declare `max_calls = 8` to say
+    /// so (#3839).
+    ///
+    /// A manifest that declares only `max_calls` still gets that number, which
+    /// is the only compatible reading: it is the one a human consented to, and
+    /// the host's job is to clamp an ask down rather than to widen one nobody
+    /// made. The clamp is the host's either way — a manifest asking for a
+    /// thousand gets the ceiling, and one asking for one gets one.
     #[must_use]
     pub fn declare(manifest: &PluginManifest, dispatcher: D) -> Self {
         let roles = manifest.roles.as_ref().map_or_else(BTreeMap::new, |roles| {
@@ -243,7 +250,10 @@ impl<D> ChildTurns<D> {
             dispatcher,
             roles,
             seats: default_seats(),
-            declared_max: manifest.loop_grant.max_calls,
+            declared_max: manifest
+                .loop_grant
+                .max_child_turns
+                .or(manifest.loop_grant.max_calls),
             ceiling: DEFAULT_HOST_MAX_CHILD_TURNS,
             budget_usd: None,
             turn_instance: 0,
@@ -705,6 +715,49 @@ mod tests {
                 .refusal,
             HostCallRefusal::AllowanceSpent
         );
+    }
+
+    /// **The #3839 witness.** A plugin that asks for one host call per point
+    /// and two child turns for the run gets both, rather than having the
+    /// per-point number cap its second round.
+    ///
+    /// `plugins/stella-goal` is the shape: an arbiter holds a round open, asks
+    /// once in each, and before `max_child_turns` existed the honest
+    /// `max_calls = 1` made round 2 `AllowanceSpent` — so the manifest had to
+    /// declare `max_calls = 8` and stop answering the question it was asked.
+    #[tokio::test]
+    async fn a_per_point_allowance_no_longer_caps_the_whole_run() {
+        let plane = ChildTurns::declare(
+            &manifest(
+                "[roles.reviewer]\ntier = \"research\"",
+                "max_calls = 1\nmax_child_turns = 2",
+            ),
+            Recording::default(),
+        );
+        assert_eq!(plane.max_turns(), 2);
+        plane.child_turn(ask("reviewer")).await.expect("round 1");
+        plane.child_turn(ask("reviewer")).await.expect("round 2");
+        assert_eq!(
+            plane
+                .child_turn(ask("reviewer"))
+                .await
+                .expect_err("round 3 is past what the manifest asked for")
+                .refusal,
+            HostCallRefusal::AllowanceSpent
+        );
+    }
+
+    /// A manifest written before the split still gets the number a human
+    /// consented to. The host clamps an ask down; it does not widen one nobody
+    /// made, which is what "absent means the host's ceiling" would have done to
+    /// every `max_calls = 1` manifest already installed.
+    #[tokio::test]
+    async fn a_manifest_declaring_only_the_per_point_number_keeps_it() {
+        let plane = ChildTurns::declare(
+            &manifest("[roles.reviewer]\ntier = \"research\"", "max_calls = 1"),
+            Recording::default(),
+        );
+        assert_eq!(plane.max_turns(), 1);
     }
 
     /// A host with no engine behind it reports that it tried, and records no

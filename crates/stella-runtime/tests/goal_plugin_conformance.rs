@@ -291,10 +291,14 @@ fn the_shipped_manifest_declares_both_points_and_the_arbiter_grant_they_need() {
     assert_eq!(manifest.loop_grant.calls, vec![HostCall::ChildTurn]);
     assert_eq!(
         manifest.loop_grant.max_calls,
+        Some(1),
+        "main.py asks the host for exactly one thing, once, every after_turn"
+    );
+    assert_eq!(
+        manifest.loop_grant.max_child_turns,
         Some(8),
-        "main.py asks once per round, but ChildTurns spends this number as a whole-run \
-         ceiling (not a per-point one), so the honest ask mirrors max_holds + 1 rounds — \
-         see plugin.toml's header"
+        "ChildTurns never resets between rounds, so an arbiter asking once in each of \
+         max_holds + 1 rounds needs that many for the whole run (#3839)"
     );
 
     let requirements = manifest

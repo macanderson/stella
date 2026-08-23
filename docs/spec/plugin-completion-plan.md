@@ -140,7 +140,7 @@ the sequencing in §6 is derivable rather than asserted.
 | A `ChildTurns` binding serving the `verifier` role intent | #3838 | stella-goal (its only job), vera (witness authoring) |
 | `stella run` raises `host_max_holds` / the `ChildTurns` ceiling to the manifest's ask | #3841 | stella-goal (`max_holds = 7`, capped at 3), vera |
 | `--pipeline <variant>` composes more than one plugin's contribution | #3801 | every realistic install — research + plan + vera is three plugins, not a choice of one |
-| `[loop] max_calls` separates per-point from whole-run budget | #3839 | vera, stella-candidates |
+| ~~`[loop] max_calls` separates per-point from whole-run budget~~ **landed** — `[loop] max_child_turns` is the whole-run key | #3839 | vera, stella-candidates |
 | A verifier's free-text reasoning reaches the next round's worker | #3840 | stella-goal, vera |
 | The role table is plugin-populated (`EngineRole` closed at six) | #3472, #3492 | vera (contributes `worker` + independent `verifier`) |
 | `Principal::Plugin` is constructed and a `[[capabilities]]` entry binds to an `AuthzGate` rule | #3482 | stella-selfdriving — **hard** gate, see §4.3 |
