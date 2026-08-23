@@ -591,15 +591,15 @@ pub struct PluginToolDir {
     pub dir: PathBuf,
 }
 
-/// The placeholder a package writes where its own installed directory
-/// belongs — the convention `stella_plugin`'s `Runtime::argv` documents for a
-/// plugin's process argv, applied to the tools that package ships. Expanding
-/// it is the host's job in both cases, because the plugin crate resolves no
-/// paths.
-const PLUGIN_DIR_PLACEHOLDER: &str = "${plugin_dir}";
-
-/// Expand [`PLUGIN_DIR_PLACEHOLDER`] through a contributed tool's `command`
-/// argv and `[env]` values.
+/// Expand `${plugin_dir}` through a contributed tool's `command` argv and
+/// `[env]` values.
+///
+/// The substitution itself is `stella_plugin::expand_plugin_dir`: the
+/// placeholder is a convention that crate *specifies* (`Runtime::argv`), and
+/// carrying it out is the host's job in every case because the plugin crate
+/// resolves no paths. It lived here as a second copy of the string literal
+/// until #4301, which is the shape where one copy gains an escape rule and the
+/// others silently do not.
 ///
 /// Called only for a manifest read out of a package directory. A user's own
 /// `.stella/tools/` manifest is left verbatim: no package is in scope there,
@@ -607,12 +607,11 @@ const PLUGIN_DIR_PLACEHOLDER: &str = "${plugin_dir}";
 /// `${plugin_dir}/x.sh` into a different path rather than leaving a visible
 /// spawn failure naming what the manifest actually asked for.
 fn expand_package_dir(tool: &mut CustomTool, package_dir: &Path) {
-    let dir = package_dir.to_string_lossy();
     for arg in &mut tool.command {
-        *arg = arg.replace(PLUGIN_DIR_PLACEHOLDER, &dir);
+        *arg = stella_plugin::expand_plugin_dir(arg, package_dir);
     }
     for value in tool.env.values_mut() {
-        *value = value.replace(PLUGIN_DIR_PLACEHOLDER, &dir);
+        *value = stella_plugin::expand_plugin_dir(value, package_dir);
     }
 }
 

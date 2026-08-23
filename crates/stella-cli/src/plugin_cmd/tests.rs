@@ -953,6 +953,91 @@ fn a_plugins_tool_installs_runs_as_the_plugin_and_retracts_with_it() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// **The end-to-end witness #3579 asked for and #4301 carried forward.** A
+/// package ships its own executable script, names it through `${plugin_dir}`,
+/// and the script's own stdout comes back through dispatch.
+///
+/// The test above proves the wiring with `/bin/echo` — an absolute path that
+/// would still run if the placeholder expanded to nothing, or to the wrong
+/// directory. This one cannot: the script exists only inside the installed
+/// package, so either mistake is a spawn failure rather than a green run. It
+/// also covers the `[env]` half of the expansion, which nothing reached.
+#[cfg(unix)]
+#[test]
+fn a_packages_own_script_runs_through_the_expanded_plugin_dir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let runtime = tokio::runtime::Runtime::new().expect("a runtime");
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-script");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let source = package(&root, "vera");
+    let scripts = source.join("scripts");
+    std::fs::create_dir_all(&scripts).expect("scripts dir");
+    let script = scripts.join("review.sh");
+    std::fs::write(&script, "#!/bin/sh\necho \"ran $0 RULESET=$RULESET\"\n").expect("script");
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+    let tools = source.join(package::TOOLS_DIR);
+    std::fs::create_dir_all(&tools).expect("tools dir");
+    std::fs::write(
+        tools.join("vera_review.toml"),
+        "name = \"vera_review\"\n\
+         description = \"review the diff the vera way\"\n\
+         command = [\"${plugin_dir}/scripts/review.sh\"]\n\
+         \n[env]\nRULESET = \"${plugin_dir}/rules/strict.yaml\"\n",
+    )
+    .expect("tool manifest");
+
+    let manifest = source.join(roster::MANIFEST_FILE);
+    let declared = format!(
+        "{}\n[[tools]]\nname = \"vera_review\"\n\
+         description = \"review the diff the vera way\"\n",
+        std::fs::read_to_string(&manifest).expect("the fixture manifest exists")
+    );
+    std::fs::write(&manifest, declared).expect("declared manifest");
+
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    let stack = crate::agent::tool_stack::session_stack_with_gate(
+        &EmptyBase,
+        contributed_tools(&root),
+        root.clone(),
+        stella_tools::policy::ToolPolicy::allow_all(),
+        crate::agent::tool_stack::session_gate(),
+        stella_core::ports::Principal::User,
+    );
+    let dir = stella_home::resolve_project_plugins_dir(&root).join("vera");
+    let dir = dir.to_string_lossy().into_owned();
+    match runtime.block_on(stack.execute("vera_review", &serde_json::json!({}))) {
+        stella_protocol::tool::ToolOutput::Ok { content, .. } => {
+            assert!(
+                content.contains(&format!("ran {dir}/scripts/review.sh")),
+                "the script did not run from the installed package: {content}"
+            );
+            assert!(
+                content.contains(&format!("RULESET={dir}/rules/strict.yaml")),
+                "the `[env]` placeholder was not expanded: {content}"
+            );
+        }
+        other => panic!("the package's own script must run: {other:?}"),
+    }
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// **The re-check witness.** `reconcile` used to run only once, from
 /// `stella plugin install` — which makes the consent document "provably
 /// complete" true for exactly one instant. A plugin runs as an ordinary

@@ -262,7 +262,7 @@ impl PluginRoster {
                 // A hook grant with no `[runtime]` has no process to call.
                 continue;
             };
-            let dir = plugin.dir.to_string_lossy().into_owned();
+            let dir = plugin.dir.clone();
             for event in EVENT_ORDER {
                 if !plugin.manifest.loop_grant.permits_hook(event) {
                     continue;
@@ -274,7 +274,7 @@ impl PluginRoster {
                     argv: runtime
                         .argv
                         .iter()
-                        .map(|arg| arg.replace("${plugin_dir}", &dir))
+                        .map(|arg| stella_plugin::expand_plugin_dir(arg, &dir))
                         .collect(),
                     timeout_secs: runtime.timeout_secs,
                     env_allowlist: runtime.env.clone(),

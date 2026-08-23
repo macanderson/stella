@@ -39,9 +39,38 @@
 //! withheld (#3512). So a manifest may still *name* `ANTHROPIC_API_KEY` and
 //! load cleanly; what it cannot do is receive it.
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
+
+/// The placeholder a manifest writes where the package's own installed
+/// directory belongs.
+///
+/// Declared here because this crate is where the convention is *specified* —
+/// see [`Runtime::argv`] — even though only a host can carry it out: this crate
+/// resolves no paths. It was previously a string literal in three places
+/// (hook argv, wrapper argv, and a contributed tool's `command`/`[env]`), which
+/// is the shape where one copy gains an escape rule and the others silently do
+/// not (#4301).
+pub const PLUGIN_DIR_PLACEHOLDER: &str = "${plugin_dir}";
+
+/// Replace every [`PLUGIN_DIR_PLACEHOLDER`] in `text` with `dir`.
+///
+/// Only ever called for something read out of an installed package directory.
+/// A user's own `.stella/tools/` manifest is left verbatim: no package is in
+/// scope there, and expanding the placeholder to nothing would silently turn
+/// `${plugin_dir}/x.sh` into a different path rather than leaving a visible
+/// spawn failure naming what the manifest actually asked for.
+///
+/// A path that is not valid UTF-8 substitutes lossily, which is what every
+/// caller did before this was shared: the alternative is refusing to start a
+/// plugin because the *installer's* home directory has an odd byte in it.
+#[must_use]
+pub fn expand_plugin_dir(text: &str, dir: &Path) -> String {
+    text.replace(PLUGIN_DIR_PLACEHOLDER, &dir.to_string_lossy())
+}
 
 /// The `[runtime]` block — how the host starts this plugin's process.
 ///
@@ -142,6 +171,7 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests {
+    use super::{Path, expand_plugin_dir};
     use crate::error::ManifestError;
     use crate::manifest::PluginManifest;
 
@@ -320,6 +350,28 @@ mod tests {
             assert_eq!(ra.timeout_secs, rb.timeout_secs);
             assert_eq!(ra.env, rb.env);
             assert_eq!(a.loop_grant, b.loop_grant, "and nothing else does");
+        }
+    }
+
+    /// The one substitution, pinned once. Three hosts call it — hook argv,
+    /// wrapper argv, and a contributed tool's `command`/`[env]` — and each used
+    /// to spell the literal itself (#4301).
+    #[test]
+    fn plugin_dir_expands_everywhere_it_appears_and_nowhere_else() {
+        let dir = Path::new("/home/a/.stella/plugins/vera");
+        assert_eq!(
+            expand_plugin_dir("${plugin_dir}/main.py", dir),
+            "/home/a/.stella/plugins/vera/main.py"
+        );
+        // Several in one string, and one embedded mid-value — an `[env]` entry
+        // like `PATH = "${plugin_dir}/bin:${plugin_dir}/vendor/bin"`.
+        assert_eq!(
+            expand_plugin_dir("${plugin_dir}/bin:${plugin_dir}/vendor/bin", dir),
+            "/home/a/.stella/plugins/vera/bin:/home/a/.stella/plugins/vera/vendor/bin"
+        );
+        // Nothing else is a placeholder: no shell expansion, no other name.
+        for verbatim in ["python3", "$plugin_dir", "${PLUGIN_DIR}", "${HOME}/x"] {
+            assert_eq!(expand_plugin_dir(verbatim, dir), verbatim);
         }
     }
 }

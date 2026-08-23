@@ -14,6 +14,8 @@ Drop a `<name>.toml` manifest file into one of these directories:
 
 If the same tool name is defined in both locations, the **workspace** manifest wins on collision. This lets a project override a personal default while keeping your global tools available everywhere else.
 
+A third source is read after both: `tools/*.toml` inside an installed [plugin](/docs/plugins). Those manifests are scanned last, so a name either of your own directories already defines keeps its own definition and the plugin's copy is dropped with a diagnostic naming both files — an install can never silently re-point a tool you already call. A plugin's tool also writes `${plugin_dir}` where its package directory belongs, in every `command` element and every `[env]` value; the placeholder is **not** expanded in your own manifests, where no package is in scope.
+
 Run `stella tools` at any time to see which custom tools were discovered, alongside the built-ins.
 
 <Callout type="warn">
