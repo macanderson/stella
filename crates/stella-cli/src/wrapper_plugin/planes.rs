@@ -54,8 +54,8 @@ pub(crate) type SessionTestRuns = TestRuns<GrantedTestRuns>;
 ///   contract is that a host wanting one *says so and owns the claim*. This
 ///   host says so.
 ///
-///   It reads as a reversal of what stood here before, so the two premises
-///   that changed are worth naming. The old refusal reasoned that attributing
+///   It reads as a reversal of what stood here before, and two premises
+///   changed under it. The old refusal reasoned that attributing
 ///   a plugin's child turn to `Verdict` "would put a call on the receipt the
 ///   pipeline itself did not make", `Verdict` being the model verdict #2584
 ///   removed structurally.
