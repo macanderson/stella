@@ -101,6 +101,12 @@ pub fn top_k(query: &[f32], candidates: &[Candidate<'_>], floor: f32, limit: usi
 /// about where a given embedder's cosines sit. An absolute cutoff does — and
 /// `DEFAULT_ADMISSION_FLOOR` is the cautionary case, sitting at 0.25 while
 /// `voyage-code-3` scores unrelated files at 0.604, dropping nothing.
+///
+/// What would confirm or retune it is a distribution:
+/// `crates/stella-tools/tests/relevance_calibration.rs` prints the boundary
+/// gap at each labelled query's true relevant/irrelevant frontier as a
+/// multiple of that ranking's mean gap, which is exactly the quantity this
+/// constant is compared against (#3096).
 pub const DEFAULT_RELEVANCE_GAP_RATIO: f32 = 2.5;
 
 /// The smallest drop in cosine that may be called a boundary at all.
@@ -122,7 +128,9 @@ pub const DEFAULT_RELEVANCE_GAP_RATIO: f32 = 2.5;
 /// an absolute *floor*: gaps between scores are much more comparable across
 /// models than the scores themselves, which is exactly why
 /// `DEFAULT_ADMISSION_FLOOR` sits at 0.25 while a real backend scores
-/// unrelated files at 0.604. It still wants measuring per model.
+/// unrelated files at 0.604. It still wants measuring per model, against the
+/// absolute boundary drops
+/// `crates/stella-tools/tests/relevance_calibration.rs` prints (#3096).
 pub const DEFAULT_MIN_BOUNDARY_GAP: f32 = 0.05;
 
 /// How many of a ranked list are relevant — the answer to "where does this

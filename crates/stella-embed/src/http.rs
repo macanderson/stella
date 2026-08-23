@@ -81,8 +81,15 @@ const MAX_BACKOFF: Duration = Duration::from_secs(8);
 /// observed relevant/irrelevant score distributions, and no such measurement
 /// exists yet for these backends on a code corpus. It is deliberately
 /// permissive: its job today is to drop the obviously-unrelated tail from an
-/// ordered list, not to certify anything. Measuring it per model is tracked
-/// work — see the crate README.
+/// ordered list, not to certify anything.
+///
+/// The measurement that settles it is written and reproducible:
+/// `crates/stella-tools/tests/relevance_calibration.rs` prints the labelled
+/// relevant/irrelevant score distributions over this repository for whatever
+/// backend is configured, and names the number to write here (#3096). It is
+/// `#[ignore]`d because it needs a real key and a full embedding pass. Until
+/// somebody runs it, this paragraph stays — deleting it without the
+/// measurement would turn an honest disclosure into a silent assumption.
 const DEFAULT_ADMISSION_FLOOR: f32 = 0.25;
 
 /// Models this crate knows the vector width of, so `STELLA_EMBED_DIMS` is only
@@ -491,7 +498,9 @@ impl Embedder for HttpEmbedder {
     /// backend exists — a query and a file that share no token can still land
     /// close together. The *floor*, unlike the posture, is provisional: no
     /// measured separation point exists yet for these backends on a code
-    /// corpus, and measuring one per model is tracked in #2993.
+    /// corpus. Measuring one per model is tracked in #2993 and #3096, and the
+    /// harness that produces the distribution is
+    /// `crates/stella-tools/tests/relevance_calibration.rs`.
     fn similarity_posture(&self) -> SimilarityPosture {
         SimilarityPosture::Semantic {
             admission_floor: self.admission_floor,
