@@ -39,7 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    dead-code-allows diagnostic-codes bench-suites wire-paths \
+                    dead-code-allows diagnostic-codes consumer-sites bench-suites wire-paths \
                     tokens hue-separation contrast transcript-surfaces prose \
                     deck-fit-all-test deck-paths css-vars reserved-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
@@ -455,6 +455,14 @@ diagnostic-codes: ## Assert docs/reference/diagnostics.md documents every emitte
 .PHONY: diag-reference
 diag-reference: ## Regenerate the diagnostic-code reference from the tree, preserving prose (#2507)
 	@python3 ./scripts/diagnostic-codes.py write
+
+.PHONY: consumer-sites
+consumer-sites: ## Assert every ConsumerPosture::Behavioral 'site' string still names live code (#4459)
+	@./scripts/check-consumer-sites.sh
+
+.PHONY: consumer-sites-test
+consumer-sites-test: ## Test the consumer-sites guard's failure directions (hermetic; not part of `gate`)
+	./scripts/test-consumer-sites.sh
 
 .PHONY: doc-warnings
 doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included (#634, #2336; CARGO_SCOPE to narrow)

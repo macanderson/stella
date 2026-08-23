@@ -114,6 +114,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-changelog-roll.sh
 
+      - name: consumer-sites guard failure directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-consumer-sites.sh
+
       - name: contrast ratchet direction
         if: ${{ !cancelled() }}
         run: ./scripts/test-contrast.sh

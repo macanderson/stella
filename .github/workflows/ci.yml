@@ -427,6 +427,14 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-diagnostic-codes.sh
 
+      # Also toolchain-free. consumers.rs is explicit that a Behavioral row's
+      # `site` string is unchecked prose for a reviewer (AGENTS.md invariant
+      # 10) — #3881 verified all of them by hand, and nothing preserved that
+      # once a symbol moves or is renamed (#4459).
+      - name: every ConsumerPosture::Behavioral site points at live code
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-consumer-sites.sh
+
       - name: make bench-test runs every suite bench.yml runs
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-bench-suites.sh
