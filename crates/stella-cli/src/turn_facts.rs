@@ -47,7 +47,8 @@
 //! writes (#2873). A plugin is told the same thing the Files tab is told.
 //!
 //! It lives beside `agent.rs` rather than inside it because `agent.rs` sits
-//! close to the 1500-line ratchet (AGENTS.md § "God files").
+//! close to the 1500-line ratchet (AGENTS.md § "God files") — new logic lands
+//! in a sibling.
 
 use std::sync::{Arc, Mutex, PoisonError};
 

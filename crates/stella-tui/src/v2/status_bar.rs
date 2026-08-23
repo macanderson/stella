@@ -303,9 +303,9 @@ fn help() -> Vec<Span<'static>> {
 /// Draw the deck's bottom band: the status bar, and the diagnosis row under it
 /// when the caller reserved one.
 ///
-/// Lives here rather than in `deck_render` because `deck_render.rs` is a
-/// grandfathered god file and closed to growth (AGENTS.md, "God files — plan
-/// around them, never into them"), and because the decision of what the band
+/// Lives here rather than in `deck_render` because `deck_render.rs` stays
+/// under the 1500-line ratchet by growing sideways (AGENTS.md, "God files —
+/// plan around them, never into them"), and because the decision of what the band
 /// contains is this module's, not the frame's. The frame's job is to hand it a
 /// `Rect`.
 pub fn render_band(

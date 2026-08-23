@@ -305,6 +305,10 @@ command-docs: ## Assert every stella subcommand has a listed reference page (#99
 brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
 	@./scripts/check-brand-case.sh
 
+.PHONY: brand-sync
+brand-sync: ## Mirror docs/brand/ outputs into website/ — the copy brand-parity.test.ts checks (#3983)
+	@python3 docs/brand/sync_site.py
+
 # The generated per-tool reference. Deliberately NOT scoped by CARGO_SCOPE:
 # the artifact is derived from stella-tools' catalog and stella-cli's session
 # layers at once, so a push narrowed to either crate must still re-derive the

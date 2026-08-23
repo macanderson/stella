@@ -3,9 +3,10 @@
 //! The keys come from [`crate::keymap`] — this file renders the table and
 //! owns none of its rows, so the sheet cannot drift from the hint row.
 //!
-//! Split out of `deck_render.rs` because that file is a grandfathered god file
-//! and closed to growth (AGENTS.md, "God files — plan around them, never into
-//! them"). It sat at 1514 lines against a 1518 ceiling — four lines of
+//! Split out of `deck_render.rs`, which was then a grandfathered god file
+//! (AGENTS.md, "God files — plan around them, never into them"); this split
+//! is what brought it back under the 1500-line ratchet and retired its
+//! baseline entry. It sat at 1514 lines against a 1518 ceiling — four lines of
 //! headroom, where the metric block below is forty. The move is the enabling
 //! step for #4188, not incidental to it: there was no way to add these rows in
 //! place.

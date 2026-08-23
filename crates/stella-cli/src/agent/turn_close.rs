@@ -20,7 +20,7 @@
 //!
 //! It lives beside `agent.rs` rather than inside it because `agent.rs` sits
 //! close to the 1500-line ratchet (AGENTS.md § "God files — plan around them,
-//! never into them").
+//! never into them") — new logic lands in a sibling.
 
 use std::sync::Arc;
 
