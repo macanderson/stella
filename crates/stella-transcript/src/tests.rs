@@ -1323,7 +1323,7 @@ fn a_note_renders_its_summary_as_its_own_row() {
         kind: NoteKind::Context,
         summary: "recalled 5 frames · 408 tok · 126ms".to_string(),
         detail: Vec::new(),
-        before_step: 0,
+        before_step: 0, inspect: None,
     }]);
     let mut state = FoldState::new();
     state.set_zoom(Zoom::Steps);
@@ -1344,7 +1344,7 @@ fn note_detail_folds_and_a_detailless_note_offers_no_control() {
         kind: NoteKind::Context,
         summary: "recalled 2 frames".to_string(),
         detail: vec!["symbol fn find — stella-cli/src/config_wiring.rs".to_string()],
-        before_step: 0,
+        before_step: 0, inspect: None,
     }]);
     let mut state = FoldState::new();
     state.set_zoom(Zoom::Steps);
@@ -1374,7 +1374,7 @@ fn note_detail_folds_and_a_detailless_note_offers_no_control() {
         kind: NoteKind::Meter,
         summary: "spend $0.0085".to_string(),
         detail: Vec::new(),
-        before_step: 0,
+        before_step: 0, inspect: None,
     }]);
     let bare_row = grid::to_plain(&grid::render(&bare, &FoldState::new(), 100))
         .lines()
@@ -1400,13 +1400,13 @@ fn notes_interleave_with_steps_by_before_step() {
             kind: NoteKind::Stage,
             summary: "BEFORE-FIRST".to_string(),
             detail: Vec::new(),
-            before_step: 0,
+            before_step: 0, inspect: None,
         },
         Note {
             kind: NoteKind::Verdict,
             summary: "AFTER-LAST".to_string(),
             detail: Vec::new(),
-            before_step: 2,
+            before_step: 2, inspect: None,
         },
     ];
     let mut state = FoldState::new();
@@ -1438,7 +1438,7 @@ fn both_renderers_show_a_note() {
         kind: NoteKind::Handoff,
         summary: "delegated to reviewer subagent".to_string(),
         detail: vec!["attempt 1 of 3".to_string()],
-        before_step: 0,
+        before_step: 0, inspect: None,
     }]);
     let state = FoldState::new();
 
