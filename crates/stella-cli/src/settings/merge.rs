@@ -284,7 +284,7 @@ impl Settings {
         // here, and the answer is yes, on a stated condition. Every knob in
         // this block selects among sources that are ALREADY gated one tier
         // down — `context_providers` above is trust-restored, custom tools ride
-        // `project_custom_tools_allowed`, hooks ride `trust.hooks` — so a knob
+        // `project_custom_tools_allowed`, hooks ride `trust.code_execution_trusted()` — so a knob
         // that only decides *whether to consult* them grants no authority the
         // repository does not already have. What would break that is a
         // steering source whose selection is itself the act of execution: the
@@ -346,7 +346,7 @@ impl Settings {
         let authority =
             AuthorityPolicy::compute(managed.managed_authority.as_ref(), trust.credentials);
 
-        if !trust.hooks && project.hooks.is_some() {
+        if !trust.code_execution_trusted() && project.hooks.is_some() {
             merged.hooks = trusted_only.hooks.clone();
         }
         // `context_providers` sits on the SAME code-execution boundary as
@@ -359,7 +359,7 @@ impl Settings {
         // payload, which carries workspace content, leave the machine. So an
         // untrusted project scope keeps whatever the user/managed scopes
         // declared and contributes nothing of its own.
-        if !trust.hooks && !project.context_providers.is_empty() {
+        if !trust.code_execution_trusted() && !project.context_providers.is_empty() {
             merged.context_providers = trusted_only.context_providers.clone();
         }
         if !trust.credentials {
@@ -537,7 +537,7 @@ impl Settings {
             }
         }
 
-        if announce && !trust.hooks && project.hooks.is_some() {
+        if announce && !trust.code_execution_trusted() && project.hooks.is_some() {
             eprintln!(
                 "  ! project hooks in {} were NOT loaded — set STELLA_PROJECT_HOOKS=1 \
                  (or STELLA_TRUST_PROJECT=1) to trust this repo's hooks",
@@ -545,7 +545,7 @@ impl Settings {
             );
         }
 
-        if announce && !trust.hooks && !project.context_providers.is_empty() {
+        if announce && !trust.code_execution_trusted() && !project.context_providers.is_empty() {
             eprintln!(
                 "  ! project context providers in {} were NOT loaded — set \
                  STELLA_TRUST_PROJECT=1 to let this repo run its context sources \
