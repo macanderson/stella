@@ -13,12 +13,12 @@
 //! the verdict as a statement about the tree they are looking at, and a proposal
 //! can sit in the queue for weeks: this repository's own queue held four claims
 //! rendering `supported` against paths a later PR had deleted, one of them naming
-//! a file `stella-tools` no longer has. `ingest_cmd::probe::evaluate` is a
-//! filesystem read for every kind that survives the sweep's gate, so re-asking
-//! costs a `stat` per proposal and buys the difference between a measurement and
-//! a memory. Where nothing can re-ask — a `manual` cadence, `none`, a gated probe
-//! on an unaudited record — the stored verdict is shown dimmed and dated instead
-//! of borrowing a fresh one's colour.
+//! a file `stella-tools` no longer has. What review re-runs is the filesystem
+//! kinds only, so re-asking costs a `stat` per proposal and buys the difference
+//! between a measurement and a memory. Where review will not re-ask — a `manual`
+//! cadence, `none`, or a gated probe, which this side declines whatever the
+//! record claims about itself — the stored verdict is shown dimmed and dated
+//! instead of borrowing a fresh one's colour.
 //!
 //! # What Keep actually does
 //!
@@ -125,9 +125,9 @@ pub fn run_review(root: &Path, show_all: bool) -> Result<(), String> {
 /// The two arms are not two renderings of one fact — they are different claims,
 /// and collapsing them is the defect (#4261). `Fresh` is an answer about the
 /// current tree. `Recorded` is an answer about the tree at ingest time, kept
-/// because a `manual` or `none` probe has no machine to re-ask and the recorded
-/// note is still the best a reviewer has; it renders dimmed and dated so it can
-/// never be mistaken for the other one.
+/// because a `manual`, `none` or gated probe has no machine review is willing
+/// to re-ask with, and the recorded note is still the best a reviewer has; it
+/// renders dimmed and dated so it can never be mistaken for the other one.
 enum Probed {
     /// The probe was re-run just now against the workspace.
     Fresh {
@@ -162,20 +162,31 @@ fn rank(verdict: Option<&str>) -> u8 {
 /// Re-run this proposal's probe against the workspace, or explain why nothing
 /// could.
 ///
-/// `honored_probe` applies the same gate the sweep does, so a `command_succeeds`
-/// or `http_ok` probe on an `imported`/`inferred` record is not run here either
-/// — review is a read of the tree, and it does not become the place a document
-/// nobody audited gets to execute a command. `evaluate` itself is filesystem
-/// only for the kinds that survive that gate, which is what makes re-asking on
-/// every review cheap enough to be unconditional.
+/// **A gated probe is never run here, whatever the record says about itself.**
+/// The sweep's rule ([`stella_core::records::honored_probe`]) admits a
+/// `command_succeeds` or `http_ok` on a human-decreed record, and it can,
+/// because it reads a *published* file that a reviewer has already accepted.
+/// This reads a **proposal**, whose `origin` may sit in the file's `[defaults]`
+/// header rather than on the record — so the trust question this side of the
+/// review cannot be answered from the record alone, and the safe answer to a
+/// question you cannot answer is no. Review is a read of the tree; it does not
+/// become the place a document nobody has reviewed yet gets to run a command or
+/// reach a host. The remaining kinds are filesystem reads, which is what makes
+/// re-asking on every review cheap enough to be unconditional.
 fn reprobe(root: &Path, found: &FoundProposal, now: &str) -> Probed {
     use stella_core::ingest::record::ProbeKind;
 
     let stored = found.proposal.refutation.clone();
-    let Some(probe) = stella_core::records::honored_probe(&found.proposal.record) else {
+    let Some(probe) = found
+        .proposal
+        .record
+        .truth
+        .as_ref()
+        .and_then(|truth| truth.probe.as_ref())
+    else {
         return Probed::Recorded(stored);
     };
-    if matches!(probe.kind, ProbeKind::Manual | ProbeKind::None) {
+    if probe.kind.is_gated() || matches!(probe.kind, ProbeKind::Manual | ProbeKind::None) {
         return Probed::Recorded(stored);
     }
     let refutation = crate::ingest_cmd::probe::evaluate(root, probe, now);

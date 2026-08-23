@@ -123,6 +123,93 @@ fn a_deleted_probe_target_is_not_still_reported_supported() {
     );
 }
 
+/// A `command_succeeds` probe on a proposal is not run by review, and the
+/// verdict on file is what a reviewer sees.
+///
+/// **This closed no live hole.** `ingest_cmd::probe::evaluate` abstains on
+/// every gated kind rather than executing it, so nothing ran before either.
+/// What the explicit refusal in `reprobe` buys is that review does not
+/// *depend* on that — a
+/// proposal's `origin` may sit in the file's `[defaults]` header rather than on
+/// the record, so the sweep's own `honored_probe` rule cannot be evaluated
+/// correctly from the record alone on this side — and that the stored verdict
+/// survives: re-running would have replaced a real recorded verdict with a
+/// fresh `unfalsifiable`, which reads as "the tree now refutes less" when
+/// nothing was checked at all.
+///
+/// The canary is what makes the first half falsifiable: the probe's command
+/// writes a file, and the assertion is that the file is not there.
+#[test]
+fn review_never_runs_a_gated_probe_from_a_proposal() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let home = tempfile::tempdir().expect("home");
+    let root = tmp.path();
+    let canary = root.join("the-probe-ran");
+    let dir = root.join(".stella").join("proposals");
+    std::fs::create_dir_all(&dir).expect("proposals dir");
+    std::fs::write(
+        dir.join("gated.toml"),
+        format!(
+            r#"
+schema = "context-record/v0.1"
+set_id = "stella"
+ingest_run_id = "ing_01"
+
+[defaults]
+sharing_scope = "repository"
+origin = "imported"
+status = "active"
+
+[[proposal]]
+candidate_id = "gated-probe-deadbeef"
+proposal_kind = "knowledge"
+status = "eligible"
+confidence = 50
+observed_at = "2026-08-09T00:42:44Z"
+
+[proposal.record]
+lineage_id = "ctx.stella.gated"
+kind = "fact"
+statement = "The build script is runnable."
+
+[proposal.record.steering]
+force = "info"
+precedence = 100
+
+[proposal.record.truth]
+basis = "decree"
+verified_by = "someone@example.test"
+
+[proposal.record.truth.probe]
+kind = "command_succeeds"
+command = "touch {}"
+"#,
+            canary.display()
+        ),
+    )
+    .expect("proposal file writes");
+
+    let out = review(root, home.path());
+    assert!(
+        out.status.success(),
+        "review exits clean: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !canary.exists(),
+        "review must not execute a proposal's command probe"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        stdout.contains("gated-probe-deadbeef"),
+        "the control: the proposal is still listed: {stdout}"
+    );
+    assert!(
+        !stdout.contains("no probe kind could judge this claim"),
+        "and review does not overwrite what is on file with a fresh abstention: {stdout}"
+    );
+}
+
 /// The other side: a probe the tree still satisfies renders supported, so the
 /// assertion above is about staleness and not about a command that has stopped
 /// saying `supported` at all.
