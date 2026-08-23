@@ -568,24 +568,23 @@ impl UsageStatsRow {
 /// session transcripts (prompts, tool outputs — which can carry file
 /// contents), so:
 /// - a directory this call just created gets owner-only permissions on unix,
-///   matching the credentials file's 0600-from-birth discipline; a
-///   pre-existing directory keeps whatever permissions the user chose. A
-///   failed chmod propagates and the store refuses to open, because proceeding
-///   writes transcripts into a world-readable directory; the CLI treats that
-///   failed open as observability loss and runs on without persistence.
-///   `created` is read only on unix, and elsewhere is discarded rather than
-///   cut from the signature, so every call site asks one question.
+///   matching the credentials file's 0600-from-birth discipline; a pre-existing
+///   directory keeps whatever permissions the user chose. A failed chmod
+///   propagates and the store refuses to open, because proceeding writes
+///   transcripts into a world-readable directory. `created` is read only on
+///   unix, and elsewhere discarded rather than cut from the signature, so every
+///   call site asks one question.
 /// - a `.gitignore` covering the *generated* artifacts (databases, their WAL
-///   siblings, the reflections mining log, and the whole `private/` subtree)
-///   is ensured. Deliberately NOT `*`: settings.json, mcp.toml, tools/,
-///   skills/ and memories/ are user-authored and meant to be committable. An
-///   ABSENT file is written whole; an EXISTING one gets a single `private/`
-///   line appended when it lacks one, preserving the user's entries and mode,
-///   and one that already ignores `private/` is left byte-for-byte alone
-///   (reopening never rewrites it). Both writes go through the atomic
-///   temp+fsync+rename primitive, and a failure propagates rather than being
-///   swallowed: a `.stella/` that cannot be made ignorable is one commit from
-///   publishing a session's transcripts.
+///   siblings, the reflections mining log, and the whole `private/` subtree) is
+///   ensured. Deliberately NOT `*`: settings.json, mcp.toml, tools/, skills/
+///   and memories/ are user-authored and meant to be committable. An ABSENT
+///   file is written whole; an EXISTING one gets a single `private/` line
+///   appended when it lacks one, preserving the user's entries and mode, and
+///   one that already ignores `private/` is left byte-for-byte alone (reopening
+///   never rewrites it). Both writes go through the atomic temp+fsync+rename
+///   primitive, and a failure propagates rather than being swallowed: a
+///   `.stella/` that cannot be ignored is one commit from publishing a
+///   session's transcripts.
 fn harden_workspace_dir(dir: &Path, created: bool) -> Result<()> {
     let metadata = std::fs::symlink_metadata(dir)
         .map_err(|e| StoreError::io(format!("cannot inspect {}", dir.display()), e))?;
