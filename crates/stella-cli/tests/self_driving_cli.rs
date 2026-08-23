@@ -292,3 +292,41 @@ fn stop_root_targets_another_loops_state_directory() {
         "and this workspace's own loop keeps working"
     );
 }
+
+/// **#4471's witness, at the process.** `--api-key` is a session global, so
+/// clap accepts it on every subcommand; before this it was accepted here and
+/// then reached no turn — the silent-drop shape #4352 had just fixed for
+/// `--model`.
+///
+/// The refusal lands before any state directory is touched, which is what
+/// makes it a refusal rather than a warning about work already done.
+#[test]
+fn an_api_key_is_refused_before_the_loop_touches_anything() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = tmp.path().join("state");
+
+    let out = stella(
+        tmp.path(),
+        &state,
+        &["state", "--api-key", "sk-should-never-reach-a-child"],
+    );
+
+    assert!(
+        !out.status.success(),
+        "a dropped credential is not a success"
+    );
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(said.contains("--api-key"), "{said}");
+    assert!(
+        said.contains("stella auth"),
+        "the refusal has to name a route that works: {said}"
+    );
+    assert!(
+        !said.contains("sk-should-never-reach-a-child") && !stdout(&out).contains("sk-should"),
+        "and must not echo the secret onto a terminal or a log: {said}"
+    );
+    assert!(
+        !state.exists(),
+        "nothing may be written before a flag this command cannot honour is refused"
+    );
+}

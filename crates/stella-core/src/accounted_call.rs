@@ -346,6 +346,7 @@ pub async fn run_accounted_call(
         // Management calls truncate too — a verifier verdict or a plan cut off at
         // the ceiling is exactly the silent failure this field exists to name.
         finish_reason: result.finish_reason,
+        sub_agent_id: None,
     });
     let budget_outcome = budget.record_spend(result.cost_usd);
     let _ = events.send(budget.tick_event(Instant::now()));
@@ -390,6 +391,7 @@ fn emit_incomplete(
         duration_ms: duration.as_millis() as u64,
         retries,
         partial,
+        sub_agent_id: None,
     });
 }
 

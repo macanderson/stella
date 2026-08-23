@@ -425,6 +425,11 @@ pub struct ExecutionReflectionRow {
     pub produced_output: bool,
     pub wrote_files: bool,
     pub truncated: bool,
+    /// The turn this assesses was stopped rather than finished — so far, a
+    /// cancel (#3808). It scopes the judgement above rather than replacing it:
+    /// a cancelled turn never reaches the reflection model call, so the
+    /// self-review columns are empty for a reason a reader can now see.
+    pub partial_run: bool,
 }
 
 /// One durable reflection/lesson row. `execution_id` is `None` for cross-turn

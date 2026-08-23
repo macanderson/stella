@@ -31,15 +31,34 @@
 //! The recorded pid, probed with [`stella_store::sessions::pid_alive`] — the
 //! predicate the session registry already downgrades a crashed session on, so
 //! this workspace has one answer to "is that process still there" rather than
-//! two.
+//! two — **and** the start token of whatever is wearing that pid now
+//! ([`proc_start`](super::proc_start)).
 //!
-//! Its one boundary is pid reuse: a recycled pid makes a dead owner read as
-//! live, and the record is then **not** reported. That is the safe direction
-//! and the deliberate one — the failure it buys is a leak that stays until the
-//! next sweep, against a false report that would invite a user to delete a
-//! running candidate's tree. `started_at_ms` is the record's own write time,
-//! so a report can say how long the residue has been there; it is not a
-//! process start time, which nothing portable here can read.
+//! The pid alone was not enough, and the gap was documented rather than
+//! closed: a recycled pid made a dead owner read as live, so its record went
+//! unreported and its checkout leaked (#4511). `(pid, start token)` closes it,
+//! because the kernel hands the number out again but not with the same start
+//! instant.
+//!
+//! Where a start token cannot be read — a platform with neither `/proc` nor
+//! `sysctl`, a record written by a build older than the field, a container
+//! that did not mount `/proc` — the pre-existing rule stands unchanged: pid
+//! alive means owner alive. `None` is "this host cannot tell", never "the
+//! owner is gone", and inventing the second would invite a user to delete a
+//! running candidate's tree.
+//!
+//! `started_at_ms` is a different number: the record's own **write** time, so a
+//! report can say how long residue has been there. Nothing compares the two.
+//!
+//! # What the sweep names besides checkouts
+//!
+//! A run that ends before anything scores its candidates writes each one's work
+//! out as a `.patch` beside the checkout and prints where (#2651). Removal then
+//! takes the checkout *and its record*, so from the next run on there was
+//! nothing left to re-name that patch — a user who missed one stderr line had
+//! to go and find it. So the sweep also lists the patches themselves, from the
+//! directory rather than from a record, which is what makes them keep being
+//! named until somebody removes them.
 
 use std::path::{Path, PathBuf};
 
@@ -73,6 +92,15 @@ pub(super) struct CandidateRecord {
     pub(super) top: Option<PathBuf>,
     /// The process that owns it, for as long as that process exists.
     pub(super) pid: u32,
+    /// The start token of that process, where this host could read one — the
+    /// half of the owner's identity that a recycled pid does not carry over
+    /// (#4511). See [`proc_start`](super::proc_start) for what the number is.
+    ///
+    /// `default` rather than required: a record written before this field
+    /// existed parses, and reads as the "cannot tell" case, which is exactly
+    /// what it is.
+    #[serde(default)]
+    pub(super) pid_start: Option<u64>,
     /// When this record was written, in milliseconds since the epoch.
     pub(super) started_at_ms: u64,
 }
@@ -96,6 +124,7 @@ impl CandidateRecord {
             branch: None,
             top: None,
             pid: std::process::id(),
+            pid_start: super::proc_start::of(std::process::id()),
             started_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0)),
@@ -142,12 +171,41 @@ pub(super) fn forget(checkout: &Path) {
     }
 }
 
+/// Whether the process that wrote `record` is gone.
+///
+/// Two questions, in the order that makes the second cheap: a pid nothing is
+/// wearing settles it, and only a live pid is worth asking whose it is now.
+///
+/// A start token on both sides that **differs** is a different process wearing
+/// the recorded number — the recycled-pid case, and the one this decides that
+/// `alive` alone could not. A token missing on either side leaves the
+/// pre-existing rule in place: alive means owner alive. See the module doc for
+/// why the absent reading is deliberately not the interesting answer.
+fn owner_is_gone(
+    record: &CandidateRecord,
+    alive: &dyn Fn(u32) -> bool,
+    started: &dyn Fn(u32) -> Option<u64>,
+) -> bool {
+    if !alive(record.pid) {
+        return true;
+    }
+    match (record.pid_start, started(record.pid)) {
+        (Some(recorded), Some(current)) => recorded != current,
+        _ => false,
+    }
+}
+
 /// Every record under `dir` whose owning process is gone, oldest first.
 ///
-/// `alive` is injected rather than called directly so the sweep is witnessable
-/// against a chosen answer — a test cannot kill a process and then be sure the
-/// pid was not reused before it looked.
-pub(super) fn orphans(dir: &Path, alive: &dyn Fn(u32) -> bool) -> Vec<CandidateRecord> {
+/// `alive` and `started` are injected rather than called directly so the sweep
+/// is witnessable against a chosen answer — a test cannot kill a process and
+/// then be sure the pid was not reused before it looked, which is the very
+/// race the pair exists to survive.
+pub(super) fn orphans(
+    dir: &Path,
+    alive: &dyn Fn(u32) -> bool,
+    started: &dyn Fn(u32) -> Option<u64>,
+) -> Vec<CandidateRecord> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         // No candidates directory is the ordinary case: a workspace that has
         // never fanned out has nothing to report.
@@ -167,7 +225,7 @@ pub(super) fn orphans(dir: &Path, alive: &dyn Fn(u32) -> bool) -> Vec<CandidateR
         // a reclaim command built from fields that did not parse is a command
         // that names the wrong path.
         .filter_map(|bytes| serde_json::from_slice::<CandidateRecord>(&bytes).ok())
-        .filter(|record| !alive(record.pid))
+        .filter(|record| owner_is_gone(record, alive, started))
         .collect();
     found.sort_by(|left, right| {
         (left.started_at_ms, &left.checkout).cmp(&(right.started_at_ms, &right.checkout))
@@ -206,13 +264,71 @@ pub(super) fn reclaim_lines(orphans: &[CandidateRecord]) -> Vec<String> {
         .collect()
 }
 
-/// One line per orphan under `dir`, for a substrate to hand its host.
+/// The extension [`SessionCandidateWorkspaces::write_patch`] keeps unscored
+/// work under, beside the checkout it came from.
+///
+/// [`SessionCandidateWorkspaces::write_patch`]: super::SessionCandidateWorkspaces
+const PATCH_EXT: &str = ".patch";
+
+/// Every preserved patch under `dir`, in a stable order.
+///
+/// Sorted by path rather than by mtime: the order a run reports its residue in
+/// must not change between two runs that found the same residue, and a
+/// filesystem's directory order is not an order at all.
+fn preserved_patches(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(PATCH_EXT))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// What a run says about the work earlier runs kept, one line per patch.
+///
+/// Each line names the removal as well as the application, because this list
+/// is the one thing that stops repeating: a patch nobody deletes is named by
+/// every run from now until somebody does, which is the point — and a user
+/// told only how to apply it has no way to make the line go away.
+fn preserved_lines(patches: &[PathBuf]) -> Vec<String> {
+    patches
+        .iter()
+        .map(|path| {
+            let path = path.display();
+            format!(
+                "a candidate's work was kept from a run that ended before anything scored it: \
+                 {path}. Apply it with `git apply --binary {path}`, then delete it — this line \
+                 repeats until you do"
+            )
+        })
+        .collect()
+}
+
+/// One line per orphan and one per preserved patch under `dir`, for a substrate
+/// to hand its host.
 ///
 /// A free function rather than a method because both substrates keep their
 /// checkouts in the same directory and answer this question identically — the
 /// records say which shape each one was.
+///
+/// Records first: a leftover checkout is a live question about disk somebody
+/// may still be writing to, and a patch is settled work waiting to be read.
 pub(super) fn report(dir: &Path) -> Vec<String> {
-    reclaim_lines(&orphans(dir, &stella_store::sessions::pid_alive))
+    let mut lines = reclaim_lines(&orphans(
+        dir,
+        &stella_store::sessions::pid_alive,
+        &super::proc_start::of,
+    ));
+    lines.extend(preserved_lines(&preserved_patches(dir)));
+    lines
 }
 
 #[cfg(test)]
@@ -226,8 +342,15 @@ mod tests {
             branch: Some(format!("candidate/{handle}")),
             top: Some(dir.to_path_buf()),
             pid,
+            pid_start: None,
             started_at_ms: at,
         }
+    }
+
+    /// A host with no start-time interface, which is the pre-#4511 answer and
+    /// still the answer wherever neither `/proc` nor `sysctl` exists.
+    fn unreadable_start(_pid: u32) -> Option<u64> {
+        None
     }
 
     /// The record is beside the checkout, never inside it — the removal it
@@ -250,7 +373,7 @@ mod tests {
         record("dead-0", 4242, 10, dir.path()).write().unwrap();
         record("live-0", 4243, 20, dir.path()).write().unwrap();
 
-        let found = orphans(dir.path(), &|pid| pid == 4243);
+        let found = orphans(dir.path(), &|pid| pid == 4243, &unreadable_start);
         assert_eq!(found.len(), 1, "exactly the dead owner's: {found:?}");
         assert_eq!(found[0].handle, "dead-0");
     }
@@ -258,7 +381,14 @@ mod tests {
     #[test]
     fn a_workspace_that_never_fanned_out_reports_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(orphans(&dir.path().join("candidates"), &|_| false).is_empty());
+        assert!(
+            orphans(
+                &dir.path().join("candidates"),
+                &|_| false,
+                &unreadable_start
+            )
+            .is_empty()
+        );
     }
 
     /// A half-written record from the crash itself is skipped, not reported: a
@@ -274,7 +404,7 @@ mod tests {
         .unwrap();
         record("dead-0", 4242, 10, dir.path()).write().unwrap();
 
-        let found = orphans(dir.path(), &|_| false);
+        let found = orphans(dir.path(), &|_| false, &unreadable_start);
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].handle, "dead-0");
     }
@@ -287,10 +417,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let kept = record("dead-0", 4242, 10, dir.path());
         kept.write().unwrap();
-        assert_eq!(orphans(dir.path(), &|_| false).len(), 1);
+        assert_eq!(orphans(dir.path(), &|_| false, &unreadable_start).len(), 1);
 
         forget(&kept.checkout);
-        assert!(orphans(dir.path(), &|_| false).is_empty());
+        assert!(orphans(dir.path(), &|_| false, &unreadable_start).is_empty());
         // Twice is not an error: the sweep removes what adoption already took.
         forget(&kept.checkout);
     }
@@ -320,5 +450,118 @@ mod tests {
         .remove(0);
         assert!(line.contains("rm -rf"), "{line}");
         assert!(!line.contains("git "), "{line}");
+    }
+
+    /// **#4511's witness, half one.** A recycled pid makes a dead owner read
+    /// live; the start token is what tells the two apart, and without it this
+    /// record goes unreported and its checkout leaks.
+    #[test]
+    fn a_recycled_pid_does_not_make_a_dead_owner_read_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut leaked = record("crashed-0", 4242, 10, dir.path());
+        leaked.pid_start = Some(1_000);
+        leaked.write().unwrap();
+
+        // The number is in use again — by something that started later.
+        let found = orphans(dir.path(), &|_| true, &|_| Some(2_000));
+        assert_eq!(
+            found.len(),
+            1,
+            "a different process wears the pid: {found:?}"
+        );
+        assert_eq!(found[0].handle, "crashed-0");
+
+        // And the owner itself still reads as its own owner.
+        assert!(
+            orphans(dir.path(), &|_| true, &|_| Some(1_000)).is_empty(),
+            "a live owner's own record must never be offered for reclaim"
+        );
+    }
+
+    /// A host that cannot read a start token keeps the pre-#4511 rule, and a
+    /// record written before the field existed is exactly that host's case.
+    /// `None` is "cannot tell", never "gone".
+    #[test]
+    fn an_unreadable_start_leaves_a_live_pid_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        record("live-0", 4242, 10, dir.path()).write().unwrap();
+        assert!(orphans(dir.path(), &|_| true, &|_| Some(2_000)).is_empty());
+
+        let mut recorded = record("live-1", 4243, 20, dir.path());
+        recorded.pid_start = Some(1_000);
+        recorded.write().unwrap();
+        assert!(orphans(dir.path(), &|_| true, &unreadable_start).is_empty());
+    }
+
+    /// A record written by a build older than `pid_start` still parses, and
+    /// reads as the host that cannot tell — which is what it is.
+    #[test]
+    fn a_record_from_before_the_field_existed_still_parses() {
+        let older = serde_json::json!({
+            "handle": "old-0",
+            "checkout": "/w/.stella/private/candidates/old-0",
+            "pid": 4242,
+            "started_at_ms": 10_u64,
+        });
+        let parsed: CandidateRecord = serde_json::from_value(older).unwrap();
+        assert_eq!(parsed.pid_start, None);
+    }
+
+    /// **#4511's witness, half two.** The patch outlives the record that named
+    /// its checkout, so the sweep has to find it in the directory or it is
+    /// named exactly once, on a stderr line the user may have missed.
+    #[test]
+    fn a_preserved_patch_is_named_by_every_sweep_until_it_is_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let kept = record("scored-nothing-0", 4242, 10, dir.path());
+        kept.write().unwrap();
+        let patch = dir.path().join("scored-nothing-0.patch");
+        std::fs::write(&patch, b"diff --git a/x b/x\n").unwrap();
+
+        // Removal takes the checkout and the record with it (#2651's ending),
+        // and the patch is what is left.
+        forget(&kept.checkout);
+        let named = report(dir.path());
+        assert_eq!(named.len(), 1, "{named:?}");
+        assert!(named[0].contains("scored-nothing-0.patch"), "{}", named[0]);
+        assert!(
+            named[0].contains("git apply --binary"),
+            "a path with no way to use it is half a report: {}",
+            named[0]
+        );
+        assert!(
+            named[0].contains("delete it"),
+            "a line that repeats forever must say how to stop it: {}",
+            named[0]
+        );
+
+        // A second run finds it again — that is the whole fix.
+        assert_eq!(report(dir.path()).len(), 1);
+
+        std::fs::remove_file(&patch).unwrap();
+        assert!(report(dir.path()).is_empty(), "and stops once it is gone");
+    }
+
+    /// Patches are named in a stable order: two runs that found the same
+    /// residue must say the same thing, and a directory's own order is not an
+    /// order.
+    #[test]
+    fn preserved_patches_are_reported_in_a_stable_order() {
+        let dir = tempfile::tempdir().unwrap();
+        for slug in ["p-2-cccc", "p-0-aaaa", "p-1-bbbb"] {
+            std::fs::write(dir.path().join(format!("{slug}.patch")), b"diff\n").unwrap();
+        }
+        // A record's own file must not be mistaken for a patch.
+        record("live-0", 4242, 10, dir.path()).write().unwrap();
+
+        let found = preserved_patches(dir.path());
+        let names: Vec<String> = found
+            .iter()
+            .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            ["p-0-aaaa.patch", "p-1-bbbb.patch", "p-2-cccc.patch"]
+        );
     }
 }

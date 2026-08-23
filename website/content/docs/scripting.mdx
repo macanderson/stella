@@ -65,7 +65,8 @@ declares `schema_version` (see [The envelope contract](#the-envelope-contract) b
 summary's other keys depend on the execution path: a default run drives the raw step loop
 and summarizes as `status`, `text`, `cost_usd`, `reason`, `model`, and `events`, plus a
 top-level `files_touched` key holding the
-[file-touch telemetry](/docs/telemetry) payload; `--pipeline <variant>` runs the turn under
+[file-touch telemetry](/docs/telemetry) payload and a top-level `withheld` key holding what
+this checkout's trust gate held back; `--pipeline <variant>` runs the turn under
 an installed [wrapper plugin](/docs/plugins) instead and summarizes as `status`, `text`,
 `cost_usd`, `reason`, `task_class`,
 `verdict`, `revisions`, `candidates_run`, `model`, `events`, and `reflection` — which does
@@ -418,6 +419,15 @@ stella run --output-format json --pipeline my-verifier --test-command "make test
 # `files_touched` key holds the array.
 stella run --output-format json "tidy up the error types in stella-store" \
   | jq -r '.files_touched.files_touched[] | "\(.path)\t+\(.lines_added)/-\(.lines_removed)"'
+```
+
+```bash
+# Refuse to act on a run whose project steering was never loaded. `withheld` is
+# null when the checkout got its steering (or had none to lose); otherwise it
+# carries `withheld_by` plus per-category counts, never a path or a filename.
+stella run --output-format json "$TASK" \
+  | jq -e '.withheld == null' >/dev/null \
+  || { echo "this checkout's memories and rules did not steer the run" >&2; exit 1; }
 ```
 
 ```bash

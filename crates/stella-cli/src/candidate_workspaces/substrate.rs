@@ -65,14 +65,33 @@ impl CandidateSubstrate {
     /// substrate, which is the direction that cannot destroy anything: the
     /// copy substrate overwrites the tree it promotes onto, and nothing may
     /// select it except an operator who wrote it down.
+    ///
+    /// Written down in a settings scope, or in
+    /// [`ISOLATION_ENV`](super::isolation::ISOLATION_ENV) — the spelling that
+    /// survives `STELLA_NO_SETTINGS=1`, under which `Settings::load` answers
+    /// its default and a launcher can otherwise say nothing at all (#4510).
+    /// See [`isolation`](super::isolation) for why the variable outranks the
+    /// file.
     pub(crate) fn for_session(
         cfg: &Config,
         plugin: &str,
         sub_agents: Arc<SessionSubAgents>,
     ) -> Self {
-        let isolation = crate::settings::Settings::load(&cfg.workspace_root)
+        let from_settings = crate::settings::Settings::load(&cfg.workspace_root)
             .map(|settings| settings.candidate_isolation())
             .unwrap_or_default();
+        let (isolation, notice) = super::isolation::selected(
+            std::env::var(super::isolation::ISOLATION_ENV)
+                .ok()
+                .as_deref(),
+            from_settings,
+        );
+        if let Some(notice) = notice {
+            // The same channel the sweep's residue lines take, for the same
+            // reason: it is a fact about how this run is configured, and the
+            // turn's own stdout belongs to the answer.
+            eprintln!("  ! wrapper: {notice}");
+        }
         Self::with_isolation(isolation, cfg, plugin, sub_agents)
     }
 

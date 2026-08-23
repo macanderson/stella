@@ -569,7 +569,10 @@ pub static CAPABILITIES: &[Capability] = &[
             mechanism: "POST /v1/turns, POST /v1/sessions/{id}/turns — `tools` carries full \
                         ToolContracts (a bare schema upgrades to declared), and \
                         RemoteToolExecutor evaluates the gate before a ToolRequest frame \
-                        leaves (#3286)",
+                        leaves (#3286). The engine-side `delegate` never reaches that \
+                        executor, so DelegatingTools evaluates the same gate against the \
+                        contract it declares, before a child is dispatched — \
+                        a_delegate_denied_by_authz_dispatches_no_child (#4464)",
             witness: "a_denying_gate_refuses_a_remoted_call_before_any_frame_leaves",
         },
     },
@@ -709,9 +712,13 @@ mod tests {
 
     /// API sources a witness may live in: the serve crate's unit tests plus
     /// its end-to-end suites.
-    fn api_sources() -> [&'static str; 15] {
+    fn api_sources() -> [&'static str; 16] {
         [
             include_str!("../../stella-serve/src/server.rs"),
+            // The engine-side `delegate` arm — the serve surface's second
+            // dispatch path, and home of the authorization witness the
+            // `tools.contracts` row cites (#4464).
+            include_str!("../../stella-serve/src/subagents.rs"),
             // The remoted ports — home of the `tools.contracts` witness
             // (#3286). The witness tests live in the split-out submodule
             // file, which `include_str!` of the parent does not pull in.
@@ -810,6 +817,38 @@ mod tests {
         assert!(
             witness_exists(&api_sources(), cited),
             "the deferral cites {cited}, which no swept serve source defines"
+        );
+    }
+
+    /// A surface can have more than one dispatch path, and `tools.contracts`
+    /// is where that bit. `RemoteToolExecutor` evaluates the authorization
+    /// gate for every tool the host advertised; `delegate` is implemented by
+    /// the engine's own wrapper and never reaches it, so the `High` contract
+    /// declared for it was evaluated on the CLI and not on serve (#4464).
+    ///
+    /// The `witness` field holds one name and the remoted path already has
+    /// it, so the second path is cited in the mechanism prose — and this keeps
+    /// that citation from decaying into a name nothing answers to, the same
+    /// job `the_deferred_resume_row_cites_a_test_that_exists` does for the
+    /// other prose citation in this matrix.
+    #[test]
+    fn the_contracts_row_cites_the_engine_side_dispatch_witness() {
+        let row = capability("tools.contracts").expect("the row is declared");
+        let SurfacePosture::Shipped { mechanism, .. } = row.api else {
+            panic!(
+                "tools.contracts' API posture moved — the authorization gate is either evaluated \
+                 on every serve dispatch path or the row says which one it misses"
+            );
+        };
+        let cited = "a_delegate_denied_by_authz_dispatches_no_child";
+        assert!(
+            mechanism.contains(cited),
+            "the row no longer cites {cited} — serve has a second dispatch path, and a row that \
+             names only the remoted one claims more coverage than it has"
+        );
+        assert!(
+            witness_exists(&api_sources(), cited),
+            "the row cites {cited}, which no swept serve source defines"
         );
     }
 

@@ -10,6 +10,10 @@
 // a rendered shape, and a property wants room to state itself.
 mod json_reindent;
 
+// The other half of that decision: a body that *does* parse is projected into
+// fields, so all three surfaces read a JSON result the same way (#4340).
+mod fields_projection;
+
 // The turn frame, and the append-only property the plain surface streams on.
 mod frame;
 

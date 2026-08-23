@@ -292,7 +292,61 @@ fn telemetry_row(step: u64, cost_usd: f64) -> TelemetryRow {
         retries: 0,
         tool_calls: 0,
         usage_complete: true,
+        sub_agent_id: None,
     }
+}
+
+/// **#4383's witness, at the ledger.** A turn's calls can be grouped by
+/// spender, which is what a `(role, model)` census needs and what execution 225
+/// of session `ses-1787465453163-60967` could not offer: ninety rows, all
+/// `worker`, five of them a parallel delegate fan-out.
+///
+/// A sub-agent opens no execution row of its own, so both the lead's calls and
+/// its delegates' land under one `execution_id`. The column is the only thing
+/// that separates them.
+#[test]
+fn a_turns_calls_can_be_grouped_by_the_sub_agent_that_spent_them() {
+    let store = Store::in_memory().unwrap();
+    let execution = store
+        .begin_execution("run", "research the engine", "openrouter", "kimi")
+        .unwrap();
+    store
+        .record_telemetry(execution, &telemetry_row(1, 0.10))
+        .unwrap();
+    for (step, agent) in [
+        (2, "researcher-0"),
+        (3, "researcher-1"),
+        (4, "researcher-0"),
+    ] {
+        store
+            .record_telemetry(
+                execution,
+                &TelemetryRow {
+                    sub_agent_id: Some(agent.into()),
+                    ..telemetry_row(step, 0.01)
+                },
+            )
+            .unwrap();
+    }
+
+    let mut by_spender: Vec<(Option<String>, usize)> = Vec::new();
+    for row in store.telemetry_rows_after(0, 100).unwrap() {
+        let owner = row.telemetry.sub_agent_id.clone();
+        match by_spender.iter_mut().find(|(seen, _)| *seen == owner) {
+            Some((_, count)) => *count += 1,
+            None => by_spender.push((owner, 1)),
+        }
+    }
+    by_spender.sort();
+    assert_eq!(
+        by_spender,
+        vec![
+            (None, 1),
+            (Some("researcher-0".into()), 2),
+            (Some("researcher-1".into()), 1),
+        ],
+        "the lead's own call and each delegate's must be separable"
+    );
 }
 
 #[test]

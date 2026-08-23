@@ -68,6 +68,7 @@ rather than cosmetic, so each is fixed structurally:
 | The command appeared up to three times per call | `Call` owns its `Output`, so they cannot be rendered apart; the invocation lives in exactly one field; `Call::extra_args` drops any argument the header already showed; and `digest::command_bar` draws the `$` bar **only when the digest elided the command** |
 | Call and result rendered as siblings | They are one node — there is no API that yields one without the other |
 | A raw JSON argument blob | Arguments are key/value rows behind a toggle, and only the ones not already displayed |
+| A JSON *result* read as syntax on two surfaces and as fields on the third | `fields` is the one projection — one field per row, no brace, quote or comma surviving — and `digest::fold_output` applies it before anything measures or paints the body, so the deck, the export and the Observatory read one result one way (#4340) |
 | Accounting inline at the weight of the work | `digest::Chip` is the only carrier: right-aligned, muted, subordinate to the digest |
 | `… 24 more lines` as dead text | `digest::fold_output` returns the hidden count *and* the hidden lines *and* the tail |
 

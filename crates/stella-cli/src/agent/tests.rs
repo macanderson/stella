@@ -160,6 +160,7 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
         tool_calls: 1,
         complete: true,
         finish_reason: None,
+        sub_agent_id: None,
     };
 
     assert!(persist_event(&store, execution_id, 0, &event, "anthropic"));
@@ -913,6 +914,7 @@ fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
             tool_calls: 0,
             complete: true,
             finish_reason: None,
+            sub_agent_id: None,
         }],
     };
 
@@ -1069,6 +1071,7 @@ fn the_summary_envelope_leads_with_its_version() {
         model: "anthropic/claude-opus".to_string(),
         events: Vec::new(),
         files_touched: serde_json::Value::Null,
+        withheld: serde_json::Value::Null,
     };
 
     let encoded = serde_json::to_string(&raw).unwrap();

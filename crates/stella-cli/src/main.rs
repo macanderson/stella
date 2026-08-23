@@ -201,6 +201,13 @@ pub(crate) fn note_json_summary_emitted() {
 /// addition cannot break a correct client and bumping would burn the signal
 /// (#644).
 ///
+/// The raw summary's `withheld` key (#4465) is the worked example of that
+/// second arm, recorded here because the issue asking for it asked for a bump
+/// too. Nothing was removed, renamed or retyped, and no existing key changed
+/// meaning; a v1 consumer reading the new envelope sees exactly what it saw
+/// before plus a key it ignores. Bumping would have told every correct client
+/// to re-read a contract that did not move.
+///
 /// The `events` array is out of scope: the event vocabulary carries its own
 /// forward-compatibility contract and never bumps this number. The
 /// consumer-facing statement lives in `website/content/docs/scripting.mdx`; keep
@@ -799,11 +806,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // definitions of a word end up disagreeing. Every routing and
             // ceiling flag, not the spend limit alone — `--model` was accepted
             // and dropped for as long as only that one was threaded (#4352).
-            return self_driving_cmd::run(
-                cmd,
-                &self_driving_cmd::turn_flags::TurnFlags::from_globals(&cli.globals),
-            )
-            .map_err(failure::CliFailure::from);
+            // The globals are read before anything else runs, so a flag this
+            // command cannot honour is refused before a state directory is
+            // touched or a turn is planned (#4471).
+            let flags = self_driving_cmd::turn_flags::TurnFlags::from_globals(&cli.globals)
+                .map_err(failure::CliFailure::from)?;
+            return self_driving_cmd::run(cmd, &flags).map_err(failure::CliFailure::from);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file

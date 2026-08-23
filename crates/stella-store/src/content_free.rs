@@ -481,6 +481,7 @@ pub fn poisoned_cloud_event() -> CloudTelemetryEvent {
             retries: 1,
             tool_calls: 4,
             usage_complete: true,
+            sub_agent_id: None,
         },
     }
 }

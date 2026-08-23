@@ -166,10 +166,12 @@ impl Lang {
 /// markers, but their interiors are unknown here — [`Highlighter`] knows).
 pub fn tokenize(code: &str, lang: Lang) -> Runs {
     if let Some(g) = lang.grammar() {
-        // `None` only when a grammar will not install, which is a build-time
-        // version skew rather than anything about this line. One untinted line
-        // is the right degradation for it, and `every_grammar_arms` is what
-        // stops it being discovered on a user's screen.
+        // `None` when a grammar will not install — a build-time version skew
+        // rather than anything about this line, which `every_grammar_arms`
+        // stops being discovered on a user's screen — or when the parse ran
+        // past its progress budget, which is a fact about *this* line and the
+        // only thing standing between a looping grammar and a wedged render
+        // (#4469). One untinted line is the right degradation for both.
         return grammar::runs(code, g).unwrap_or_else(|| vec![(code.to_string(), None)]);
     }
     match lang {
@@ -679,7 +681,24 @@ mod tests {
     // `tool_use_id` (see `markdown::parse_inline_spans`). A highlighter is the
     // same shape of code — it walks characters and re-emits them — so it gets
     // the same guarantee, stated over arbitrary input rather than a sample.
+    //
+    // The per-case `timeout` is the backstop, not the guarantee (#4469). The
+    // guarantee is `grammar::PARSE_PROGRESS_BUDGET`, which bounds the parse
+    // deterministically; this bounds the *test*, so a grammar added later that
+    // finds a loop the budget somehow does not cover fails in seconds with a
+    // seed instead of burning a CI job. Fifty minutes of one is what it cost
+    // the first time — the job was cancelled, so the run reported no failure at
+    // all and there was nothing to bisect from.
+    //
+    // A non-zero `timeout` implies `fork`, so the cases run in a child process
+    // the runner can kill. That is the whole point: a hung case is not
+    // interruptible from inside the test, which is why a plain assertion on
+    // elapsed time could not have caught this one.
     proptest! {
+        #![proptest_config(ProptestConfig {
+            timeout: 5_000,
+            ..ProptestConfig::default()
+        })]
         #[test]
         fn tokenize_re_emits_every_character_unchanged(text in ".{0,120}") {
             for lang in ALL_LANGS {
@@ -693,8 +712,9 @@ mod tests {
         }
     }
 
-    /// The identifier shapes that broke the markdown renderer, run past every
-    /// highlighter. Cheap, and it names the regression in the failure output.
+    /// The identifier shapes that broke the markdown renderer, plus the line
+    /// that hung CI, run past every highlighter. Cheap, and it names the
+    /// regression in the failure output.
     #[test]
     fn identifier_heavy_lines_survive_every_highlighter() {
         for text in [
@@ -703,6 +723,11 @@ mod tests {
             "stop_reason = \"end_turn\"  # __all__",
             "prose with _emphasis_ and __bold__ and snake_case_name",
             "MAX__DOUBLE__UNDERSCORE and a_b_c_d_e",
+            // #4469: fourteen characters the TSX grammar never finishes
+            // parsing. Fixed here rather than left to the property, because a
+            // regression in the budget that guards it must fail every run and
+            // not one in however-many-thousand.
+            "(s1.']z]9:A|8=",
         ] {
             for lang in ALL_LANGS {
                 assert_eq!(

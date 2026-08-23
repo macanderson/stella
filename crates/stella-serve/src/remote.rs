@@ -19,7 +19,6 @@ use async_trait::async_trait;
 use serde_json::Value;
 use stella_core::bus::{self, HookBus, HookEventDraft, names as hook_names};
 use stella_core::hooks::decision::{GateVerdict, OperatorPosture, resolve_precedence};
-use stella_core::ports::authz::authz_verdict;
 use stella_core::ports::{AuthzGate, DispatchAdmission, DispatchGate, Principal, ToolExecutor};
 use stella_core::retry::Sleeper;
 use stella_protocol::{
@@ -547,46 +546,17 @@ impl ToolExecutor for RemoteToolExecutor {
         // seam, at the same position, as the CLI's `GatedToolSet`: a denied
         // call costs the host nothing, no frame is ever built, and the
         // verdict folds through the one shared ladder so an `Err` from the
-        // gate denies whatever any softening flag says.
-        let evaluation = self
-            .gate
-            .check_traced(&self.contract_for(name), &self.principal, input);
-        // The rule-by-rule account (#3362), journaled before the fold
-        // consumes the evaluation — same builder, same event name, same
-        // payload shape as the CLI's `GatedToolSet`, so a host reading the
-        // policy plane sees one vocabulary across both surfaces. Telemetry:
-        // a session with no bus journals nothing and the call is unaffected.
-        if let Some(bus) = &self.bus {
-            bus.emit_named(
-                hook_names::POLICY_EVALUATED,
-                stella_core::ports::authz::evaluation_journal_payload(
-                    name,
-                    &self.principal,
-                    self.gate.name(),
-                    &evaluation,
-                ),
-            );
-        }
-        let evaluation = evaluation.map(|evaluation| evaluation.decision);
-        match authz_verdict(&OperatorPosture::NoOpinion, evaluation, false) {
-            GateVerdict::Allow => {}
-            GateVerdict::Deny { reason } => {
-                return ToolOutput::classified_error(
-                    stella_protocol::ErrorClass::RefusedByPolicy,
-                    reason,
-                );
-            }
-            // A served turn has no human to park on: the structured refusal
-            // is the honest answer, exactly as the CLI's headless
-            // `ApprovalBroker` refuses. Routing this through a host-side
-            // approval exchange is #3288's territory, not silently allowed
-            // here.
-            GateVerdict::RequireApproval { reason } => {
-                return ToolOutput::classified_error(
-                    stella_protocol::ErrorClass::RefusedByPolicy,
-                    format!("`{name}` requires approval before it can run: {reason}"),
-                );
-            }
+        // gate denies whatever any softening flag says. The fold itself lives
+        // in [`crate::authz`] because this is not the surface's only dispatch
+        // path any more (#4464).
+        if let Err(refused) = crate::authz::authorize(
+            self.gate.as_ref(),
+            &self.principal,
+            &self.contract_for(name),
+            input,
+            self.bus.as_ref(),
+        ) {
+            return refused;
         }
         let Some(bus) = &self.bus else {
             return self.dispatch(name, input).await;

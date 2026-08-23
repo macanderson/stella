@@ -51,7 +51,10 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use stella_core::ports::{DispatchAdmission, ReadOnlyTools, ToolExecutor, admit_dispatch};
+use stella_core::bus::HookBus;
+use stella_core::ports::{
+    AuthzGate, DispatchAdmission, Principal, ReadOnlyTools, ToolExecutor, admit_dispatch,
+};
 use stella_core::subagent::{
     SubAgentDispatcher, SubAgentHost, SubAgentOutcome, SubAgentSpec, push_sub_agent_spend,
 };
@@ -327,6 +330,18 @@ pub(crate) struct DelegatingTools<'a> {
     /// step-boundary budget check, which is what keeps the caller's `budget`
     /// a hard ceiling over spend its children incurred.
     spend: stella_core::subagent::SubAgentSpendLedger,
+    /// The turn's authorization gate, and who the call is made as.
+    ///
+    /// Carried rather than reached for through the port: [`AuthzGate`] is not
+    /// on `ToolExecutor`, and the inner executor holds its copy privately. The
+    /// session hands both wrappers the same `Arc`, so "the same gate" is
+    /// literal (#4464).
+    gate: Arc<dyn AuthzGate>,
+    principal: Principal,
+    /// This turn's hook plane, for the policy-evaluation journal only — the
+    /// blocking `tool.call.requested` chain is reached through
+    /// [`ToolExecutor::dispatch_gate`], which the inner executor owns.
+    bus: Option<HookBus>,
 }
 
 impl<'a> DelegatingTools<'a> {
@@ -335,12 +350,18 @@ impl<'a> DelegatingTools<'a> {
         dispatcher: Arc<dyn SubAgentDispatcher>,
         child_steps: usize,
         spend: stella_core::subagent::SubAgentSpendLedger,
+        gate: Arc<dyn AuthzGate>,
+        principal: Principal,
+        bus: Option<HookBus>,
     ) -> Self {
         Self {
             inner,
             dispatcher,
             child_steps,
             spend,
+            gate,
+            principal,
+            bus,
         }
     }
 
@@ -407,18 +428,36 @@ impl ToolExecutor for DelegatingTools<'_> {
         contracts
     }
 
-    /// `delegate` is dispatched HERE, never through the inner executor, so the
-    /// inner executor's `tool.call.requested` chain would never see it — the
-    /// #2793 hole, on the served surface (#3843). The shared gate closes it:
-    /// the same entry every remoted tool passes through, run before a child is
-    /// spawned, with a `modify` decision's rewritten input honoured — which is
-    /// why the gate runs before the `prompt`/`description` reads below rather
-    /// than beside the dispatch. Names this wrapper does not own fall through
-    /// ungated on purpose: the inner executor gates them itself, and gating
-    /// twice would run one deployment's policy twice for one call.
+    /// `delegate` is dispatched HERE, never through the inner executor, so
+    /// neither of the inner executor's two gates would see it. Both are
+    /// therefore run here, in the order the remoted path runs them:
+    ///
+    /// 1. **Authorization** ([`crate::authz::authorize`]) — "may this
+    ///    principal call `delegate` at all", answered from the same `High`
+    ///    contract [`Self::contracts`] advertises. Declared and never
+    ///    evaluated until #4464; the CLI, where `delegate` is an ordinary
+    ///    registry tool behind `GatedToolSet`, always evaluated it.
+    /// 2. **Extension policy** (`admit_dispatch`) — the `tool.call.requested`
+    ///    chain, the #2793 hole on the served surface (#3843), with a
+    ///    `modify` decision's rewritten input honoured, which is why it runs
+    ///    before the `prompt`/`description` reads below rather than beside the
+    ///    dispatch.
+    ///
+    /// Names this wrapper does not own fall through ungated on purpose: the
+    /// inner executor gates them itself, and gating twice would run one
+    /// deployment's policy twice for one call.
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         if name != DELEGATE_TOOL || self.inner.schemas().iter().any(|s| s.name == DELEGATE_TOOL) {
             return self.inner.execute(name, input).await;
+        }
+        if let Err(refused) = crate::authz::authorize(
+            self.gate.as_ref(),
+            &self.principal,
+            &stella_protocol::ToolContract::declared(Self::delegate_schema()),
+            input,
+            self.bus.as_ref(),
+        ) {
+            return refused;
         }
         let admitted = admit_dispatch(self.dispatch_gate(), name, input).await;
         let input = match &admitted {
@@ -694,12 +733,125 @@ mod tests {
         host: &'a GatedHost,
         dispatcher: &Arc<RecordingDispatcher>,
     ) -> DelegatingTools<'a> {
+        gated_delegating(host, dispatcher, Arc::new(stella_core::ports::NoAuthz))
+    }
+
+    fn gated_delegating<'a>(
+        host: &'a GatedHost,
+        dispatcher: &Arc<RecordingDispatcher>,
+        gate: Arc<dyn AuthzGate>,
+    ) -> DelegatingTools<'a> {
         DelegatingTools::new(
             host,
             Arc::clone(dispatcher) as Arc<dyn SubAgentDispatcher>,
             4,
             stella_core::subagent::SubAgentSpendLedger::default(),
+            gate,
+            Principal::Host("host-under-test".to_string()),
+            None,
         )
+    }
+
+    /// An authorization gate that denies exactly one tool by name.
+    struct DenyTool(&'static str);
+
+    impl AuthzGate for DenyTool {
+        fn name(&self) -> &'static str {
+            "deny-tool"
+        }
+
+        fn check(
+            &self,
+            contract: &stella_protocol::ToolContract,
+            _principal: &Principal,
+            _input: &Value,
+        ) -> Result<
+            stella_core::ports::authz::AuthzDecision,
+            stella_core::ports::authz::AuthzEvalError,
+        > {
+            Ok(if contract.name() == self.0 {
+                stella_core::ports::authz::AuthzDecision::Deny {
+                    reason: format!("`{}` is not permitted for this principal", self.0),
+                }
+            } else {
+                stella_core::ports::authz::AuthzDecision::Allow
+            })
+        }
+    }
+
+    /// **Witness (#4464).** The `High` contract `contracts()` advertises for
+    /// the engine-side `delegate` is now evaluated: an authorization policy
+    /// that denies it refuses the call and dispatches no child. Before this
+    /// change the arm reached the dispatcher having consulted the extension
+    /// chain and nothing else, so the declared contract was decorative on this
+    /// door and evaluated on the CLI's.
+    #[tokio::test]
+    async fn a_delegate_denied_by_authz_dispatches_no_child() {
+        let host = GatedHost::new(DispatchAdmission::Admit);
+        let dispatcher = Arc::new(RecordingDispatcher::default());
+        let tools = gated_delegating(&host, &dispatcher, Arc::new(DenyTool(DELEGATE_TOOL)));
+
+        let output = tools
+            .execute(
+                DELEGATE_TOOL,
+                &serde_json::json!({ "prompt": "read the code" }),
+            )
+            .await;
+
+        match &output {
+            ToolOutput::Error { message, class } => {
+                assert_eq!(
+                    *class,
+                    Some(stella_protocol::ErrorClass::RefusedByPolicy),
+                    "an authorization denial is classified, not a bare error: {output:?}"
+                );
+                assert!(
+                    message.contains("not permitted"),
+                    "the gate's own reason reaches the model: {message}"
+                );
+            }
+            ToolOutput::Ok { .. } => panic!("a denied delegate must not succeed: {output:?}"),
+        }
+        assert!(
+            dispatcher.instructions().is_empty(),
+            "a delegate the authorization gate denied must never spawn a child"
+        );
+        assert_eq!(
+            host.admits(),
+            0,
+            "the refusal lands before the extension chain is asked — a denied call costs the \
+             deployment nothing"
+        );
+    }
+
+    /// The other half of the arm above: authorization governs `delegate`, and
+    /// only `delegate`. A gate that denies some other tool leaves this one
+    /// alone, and a name the wrapper does not own is still the inner
+    /// executor's to authorize — gating it twice would run one deployment's
+    /// policy twice for one call.
+    #[tokio::test]
+    async fn authorization_here_governs_delegate_and_nothing_else() {
+        let host = GatedHost::new(DispatchAdmission::Admit);
+        let dispatcher = Arc::new(RecordingDispatcher::default());
+        let tools = gated_delegating(&host, &dispatcher, Arc::new(DenyTool("host_task")));
+
+        let delegated = tools
+            .execute(
+                DELEGATE_TOOL,
+                &serde_json::json!({ "prompt": "read the code" }),
+            )
+            .await;
+        assert!(
+            matches!(delegated, ToolOutput::Ok { .. }),
+            "a gate denying another tool must not refuse delegate: {delegated:?}"
+        );
+        assert_eq!(dispatcher.instructions(), vec!["read the code".to_string()]);
+
+        let forwarded = tools.execute("host_task", &serde_json::json!({})).await;
+        assert!(
+            matches!(forwarded, ToolOutput::Ok { .. }),
+            "a name this wrapper does not own is forwarded, not authorized here: {forwarded:?}"
+        );
     }
 
     /// **Witness (#3843).** An extension policy that denies `delegate` is
@@ -816,6 +968,9 @@ mod tests {
             Arc::new(RefusingDispatcher),
             4,
             stella_core::subagent::SubAgentSpendLedger::default(),
+            Arc::new(stella_core::ports::NoAuthz),
+            Principal::Host("host-under-test".to_string()),
+            None,
         );
         assert!(
             tools.parallel_safe_names().contains("host_task"),

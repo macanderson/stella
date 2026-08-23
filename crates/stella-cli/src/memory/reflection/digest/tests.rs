@@ -460,6 +460,7 @@ fn step_usage(step: usize, role: ModelCallRole, cost_usd: f64, duration_ms: u64)
         tool_calls: 2,
         complete: true,
         finish_reason: None,
+        sub_agent_id: None,
     }
 }
 

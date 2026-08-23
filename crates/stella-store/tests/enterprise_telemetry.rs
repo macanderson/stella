@@ -115,6 +115,7 @@ fn sqlite_integer_writes_reject_u64_overflow() {
         retries: 0,
         tool_calls: 0,
         usage_complete: true,
+        sub_agent_id: None,
     };
     assert!(store.record_telemetry(id, &telemetry).is_err());
     assert!(

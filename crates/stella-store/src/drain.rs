@@ -539,6 +539,7 @@ mod tests {
                 retries: 1,
                 tool_calls: 4,
                 usage_complete: true,
+                sub_agent_id: None,
             },
         }
     }
@@ -766,6 +767,7 @@ mod tests {
                         retries: 0,
                         tool_calls: 0,
                         usage_complete: true,
+                        sub_agent_id: None,
                     },
                 })
                 .collect();

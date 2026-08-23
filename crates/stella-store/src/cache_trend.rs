@@ -137,6 +137,7 @@ mod tests {
             retries: 0,
             tool_calls: 0,
             usage_complete: true,
+            sub_agent_id: None,
         }
     }
 
