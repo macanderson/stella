@@ -832,6 +832,19 @@ pub(crate) async fn run_goal_turn(
             )
             .await
     };
+    // What this arc changed, measured before the stream closes (#4159).
+    //
+    // Once for the run rather than once per round, and that is a limit of
+    // where this arm's loop lives rather than a choice: `Engine::run_goal`
+    // drives every round inside `stella-core`, so there is no round boundary
+    // in this function to measure at. What that costs is the *ordering* of
+    // these events and nothing else — a goal run is one execution row and one
+    // stream, so `files_touched`, the counts, and
+    // `finalize_execution_reflection`'s `wrote_files` flag are the same
+    // whichever boundary the reading is taken at; only "which round wrote it"
+    // is unavailable, and this arm never had it. The wrapped arm drives its
+    // own rounds and does measure per round (`goal_wrapped`).
+    crate::turn_files::emit_shared_tree_changes_raw(cfg, &tx, execution.as_ref());
     // This goal loop owns the stream, so it — not any single round — emits the
     // run's one ending (#3398). A goal that ends unmet still *ended*: the
     // rounds ran, the money was spent, and the outcome is carried by the

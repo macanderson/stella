@@ -298,6 +298,16 @@ pub(crate) async fn run_goal_wrapped_turn(
             // residual here, before the cost reads below (#3833). Draining is
             // destructive, so this takes only what no turn already took.
             crate::wrapper_plugin::settle_plugin_child_spend(registry, &mut *budget);
+            // What this round's worker turn changed, measured at the round
+            // boundary rather than at the run's end (#4159). The terminator
+            // stays where it is, below and outside this loop: a goal run drives
+            // several turns over one stream and owes exactly one ending, so
+            // paying both debts here would end the run on its first round.
+            //
+            // Exactly once per boundary: `snapshot_worktree` consumes what it
+            // reports, so a second reading in the same round would report an
+            // unchanged tree.
+            crate::turn_files::emit_shared_tree_changes_raw(cfg, &tx, execution.as_ref());
             let report = match dispatched {
                 Ok(report) => report,
                 Err(error) => {
