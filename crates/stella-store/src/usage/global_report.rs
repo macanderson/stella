@@ -41,6 +41,21 @@ pub struct GlobalTelemetryRow {
     /// "3 of 210 executions are floors" is the sentence a user checking a
     /// provider bill can act on.
     pub floor_executions: i64,
+    /// How many of the executions behind this line have **no verdict at
+    /// all** — their `telemetry` rows survive but the `execution_rollup` row
+    /// that would say complete-or-floor was pruned first (#4485). `prune`
+    /// ages `execution_rollup` and `telemetry` out on predicates they do not
+    /// share (`crates/stella-store/src/usage.rs`'s age-cutoff branch; the
+    /// same asymmetry `super::tool_fold` documents for #3411), so this is
+    /// not a hypothetical: an org-scoped, un-acked telemetry row survives an
+    /// age cutoff that its rollup row does not.
+    ///
+    /// Distinct from [`Self::floor_executions`] on purpose: a floor is a
+    /// **known** lower bound, this is an **unknown** verdict. Folding it into
+    /// the floor count would under-state the floor count's own meaning
+    /// (`floor_executions` used to do exactly that, by reading a missing
+    /// rollup row as complete via `COALESCE(r.usage_complete, 1)`).
+    pub unknown_executions: i64,
 }
 
 impl UsageStore {
@@ -59,11 +74,15 @@ impl UsageStore {
     /// `executions.usage_complete` in the project store and reaches the hub on
     /// the rollup row, so that is what the count reads.
     ///
-    /// A telemetry row whose rollup `prune` has already deleted reads as
-    /// complete (`COALESCE(…, 1)`). That is the pre-existing shape of hub
-    /// pruning rather than a new gap — the rollup and the replica are pruned on
-    /// predicates they do not share — and it costs a *marking*, never a
-    /// figure: the spend is summed from `telemetry` either way.
+    /// A telemetry row whose rollup `prune` has already deleted has no
+    /// verdict left to read: it counts toward
+    /// [`GlobalTelemetryRow::unknown_executions`], never silently toward
+    /// "complete" (#4485; before this it read as complete via
+    /// `COALESCE(r.usage_complete, 1)`, under-reporting how many figures were
+    /// floors). That gap is the pre-existing shape of hub pruning rather than
+    /// a new one — the rollup and the replica are pruned on predicates they
+    /// do not share — and it costs only a *marking*, never a figure: the
+    /// spend is summed from `telemetry` either way.
     pub fn global_telemetry_totals(&self, org: Option<&str>) -> Result<Vec<GlobalTelemetryRow>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
@@ -71,7 +90,9 @@ impl UsageStore {
                     SUM(t.output_tokens), SUM(t.cache_read_tokens), \
                     SUM(t.cache_write_tokens), SUM(t.cost_usd), \
                     COUNT(DISTINCT t.project_id), \
-                    COUNT(DISTINCT CASE WHEN COALESCE(r.usage_complete, 1) = 0 \
+                    COUNT(DISTINCT CASE WHEN r.usage_complete = 0 \
+                                        THEN t.project_id || ':' || t.execution_id END), \
+                    COUNT(DISTINCT CASE WHEN r.usage_complete IS NULL \
                                         THEN t.project_id || ':' || t.execution_id END) \
              FROM telemetry t \
              LEFT JOIN execution_rollup r \
@@ -93,6 +114,7 @@ impl UsageStore {
                 cost_usd: r.get(8)?,
                 projects: r.get(9)?,
                 floor_executions: r.get(10)?,
+                unknown_executions: r.get(11)?,
             })
         })?;
         let mut out = Vec::new();

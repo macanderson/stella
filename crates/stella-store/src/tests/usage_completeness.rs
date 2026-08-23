@@ -202,6 +202,78 @@ fn the_hub_marks_an_incomplete_executions_spend_as_a_floor() {
     );
 }
 
+/// #4485: a telemetry row whose `execution_rollup` row `prune` deleted first
+/// must read as **unknown**, never as silently complete.
+///
+/// `execution_rollup` and `telemetry` age out on predicates they do not
+/// share (`crate::usage`'s `prune`; `usage/tool_fold.rs` documents the same
+/// asymmetry for #3411): an org-scoped, un-acked `telemetry` row survives an
+/// age cutoff its rollup row does not, because only `telemetry` consults the
+/// cloud-drain guard. This test skips reproducing that exact age-cutoff
+/// timing (env-dependent org registration, multi-connection WAL races) and
+/// goes straight to the state it produces — a hub with `telemetry` for an
+/// execution but no matching `execution_rollup` row — which is the only
+/// thing [`super::global_report`]'s query can see either way.
+#[test]
+fn a_pruned_rollup_row_reports_as_unknown_never_as_complete() {
+    let workspace = tempfile::tempdir().unwrap();
+    let hub_dir = tempfile::tempdir().unwrap();
+    let hub = crate::usage::UsageStore::open_at(&hub_dir.path().join("usage.db")).unwrap();
+    let store = Store::in_memory().unwrap();
+
+    let execution = store
+        .begin_execution("deck", "ship it", "openrouter", "kimi")
+        .unwrap();
+    store
+        .record_telemetry(execution, &telemetry_row(1, 2.40))
+        .unwrap();
+    store
+        .finish_execution_accounted(execution, "completed", 2.40, true)
+        .unwrap();
+    assert!(
+        store
+            .sync_to_usage(execution, workspace.path(), &hub)
+            .unwrap(),
+        "execution must reach the hub"
+    );
+
+    let before = hub.global_telemetry_totals(None).unwrap();
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].floor_executions, 0, "synced complete, no floor");
+    assert_eq!(
+        before[0].unknown_executions, 0,
+        "rollup row present, no gap"
+    );
+
+    // What `prune`'s age-cutoff branch does to `execution_rollup` on its own
+    // predicate (unconditional -- `crate::usage`'s age-cutoff branch --
+    // while `telemetry` only ages out when `prunable_predicate` allows it).
+    // A second connection is deliberate: it is exactly what a real prune run
+    // is -- a write against the same WAL-mode file the open `hub` handle
+    // is still reading from.
+    {
+        let conn = rusqlite::Connection::open(hub_dir.path().join("usage.db")).unwrap();
+        let deleted = conn.execute("DELETE FROM execution_rollup", []).unwrap();
+        assert_eq!(deleted, 1, "the rollup row for this execution existed");
+    }
+
+    let after = hub.global_telemetry_totals(None).unwrap();
+    assert_eq!(after.len(), 1, "the telemetry row still reports: {after:?}");
+    assert_eq!(
+        after[0].floor_executions, 0,
+        "no rollup row left to say it IS a floor: {after:?}"
+    );
+    assert_eq!(
+        after[0].unknown_executions, 1,
+        "but it must not silently read as complete either: {after:?}"
+    );
+    assert!(
+        (after[0].cost_usd - 2.40).abs() < 1e-9,
+        "the spend is still summed from telemetry: {}",
+        after[0].cost_usd
+    );
+}
+
 /// One paid call at `cost_usd`, with everything else the shape a row needs.
 fn telemetry_row(step: u64, cost_usd: f64) -> TelemetryRow {
     TelemetryRow {

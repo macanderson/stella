@@ -176,14 +176,23 @@ fn open_hub() -> Result<UsageStore, String> {
 }
 
 /// A cost cell for the text table, prefixed `≥` when any execution behind it
-/// is a floor (#4171).
+/// is a known floor (#4171), else `?` when at least one has no verdict at
+/// all — its rollup row was pruned before its telemetry (#4485). `≥` wins
+/// when both are present: a known lower bound is the stronger claim.
 ///
 /// The prefix rather than a column: the report is a fixed-width table a user
 /// reads against a provider bill, and the fact they need at the number is
-/// whether the number is the whole story. `floor_executions` says how many in
-/// the JSON and CSV forms, and the footnote says it once for the table.
-fn cost_cell(cost_usd: f64, floor_executions: i64) -> String {
-    let marker = if floor_executions > 0 { "≥" } else { "" };
+/// whether the number is the whole story. `floor_executions` and
+/// `unknown_executions` say how many in the JSON and CSV forms, and the
+/// footnotes say it once for the table.
+fn cost_cell(cost_usd: f64, floor_executions: i64, unknown_executions: i64) -> String {
+    let marker = if floor_executions > 0 {
+        "≥"
+    } else if unknown_executions > 0 {
+        "?"
+    } else {
+        ""
+    };
     format!("{marker}{cost_usd:.4}")
 }
 
@@ -209,6 +218,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                         "cost_usd": r.cost_usd,
                         "projects": r.projects,
                         "floor_executions": r.floor_executions,
+                        "unknown_executions": r.unknown_executions,
                     })
                 })
                 .collect();
@@ -220,7 +230,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
         StatsFormat::Csv => {
             println!(
                 "org_id,provider,model,calls,input_tokens,output_tokens,cache_read_tokens,\
-                 cache_write_tokens,cost_usd,projects,floor_executions"
+                 cache_write_tokens,cost_usd,projects,floor_executions,unknown_executions"
             );
             for r in &rows {
                 // The three text columns are config- and catalog-supplied, so
@@ -228,7 +238,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 // — an org id or model slug carrying a comma must not silently
                 // shift every following column.
                 println!(
-                    "{},{},{},{},{},{},{},{},{},{},{}",
+                    "{},{},{},{},{},{},{},{},{},{},{},{}",
                     crate::stats::csv_escape(r.org_id.as_deref().unwrap_or("")),
                     crate::stats::csv_escape(&r.provider),
                     crate::stats::csv_escape(&r.model),
@@ -240,6 +250,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                     r.cost_usd,
                     r.projects,
                     r.floor_executions,
+                    r.unknown_executions,
                 );
             }
         }
@@ -266,6 +277,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
             );
             let mut totals = (0i64, 0i64, 0i64, 0i64, 0i64, 0f64);
             let mut floors = 0i64;
+            let mut unknowns = 0i64;
             for r in &rows {
                 println!(
                     "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10} {:>9}",
@@ -277,7 +289,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                     r.output_tokens,
                     r.cache_read_tokens,
                     r.cache_write_tokens,
-                    cost_cell(r.cost_usd, r.floor_executions),
+                    cost_cell(r.cost_usd, r.floor_executions, r.unknown_executions),
                     r.projects,
                 );
                 totals.0 += r.calls;
@@ -287,6 +299,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 totals.4 += r.cache_write_tokens;
                 totals.5 += r.cost_usd;
                 floors += r.floor_executions;
+                unknowns += r.unknown_executions;
             }
             println!(
                 "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10} {:>9}",
@@ -298,7 +311,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 totals.2,
                 totals.3,
                 totals.4,
-                cost_cell(totals.5, floors),
+                cost_cell(totals.5, floors, unknowns),
                 ""
             );
             if floors > 0 {
@@ -306,6 +319,14 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                     "\n≥ marks a lower bound: {floors} execution(s) finished with a paid call \
                      whose usage envelope never landed, so their receipts prove at least this \
                      much and possibly more."
+                );
+            }
+            if unknowns > 0 {
+                println!(
+                    "\n? marks {unknowns} execution(s) with no verdict at all: their telemetry \
+                     survived a hub prune but the rollup row that would say complete-or-floor \
+                     did not — their receipts may already be exact, or may be a floor; the hub \
+                     can no longer tell which."
                 );
             }
         }
