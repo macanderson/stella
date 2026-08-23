@@ -71,7 +71,7 @@ use crate::registry::Tool;
 mod words;
 
 use stella_core::shell_text::bare_sleep_seconds;
-use words::{cd_escape_target, is_operator_word, shell_words};
+use words::{cd_escape_target, shell_words};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// Byte cap on one `bash` result before head+tail elision
@@ -271,15 +271,20 @@ fn redirect_target(word: &str) -> Option<&str> {
     Some(rest.strip_prefix('|').unwrap_or(rest))
 }
 
-/// This command's own arguments: everything up to the next operator.
+/// This command's own arguments: everything up to the word that ends its
+/// reach.
 ///
 /// A pipeline or `&&` ends a command's reach — without that bound,
 /// `rm x && cd /tmp` would read `/tmp` as something `rm` was about to delete.
+/// So does a subshell or substitution boundary, which is the half
+/// [`words::ends_argument_reach`] added: `( mv src /etc/passwd )` put the
+/// closing paren after the real target, the `rfind` below picked `)` as the
+/// last positional, and `/etc/passwd` was never checked (#4408).
 fn segment_args(words: &[String], command_index: usize) -> Vec<&str> {
     words[command_index + 1..]
         .iter()
         .map(String::as_str)
-        .take_while(|word| !is_operator_word(word))
+        .take_while(|word| !words::ends_argument_reach(word))
         .collect()
 }
 

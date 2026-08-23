@@ -19,6 +19,7 @@ import argparse
 import io
 from types import SimpleNamespace
 
+from arenabench import balance
 from arenabench.cloud import CloudExecutor
 from arenabench.model import Contestant, Engine, MatchSpec
 
@@ -180,6 +181,40 @@ class FakeDynamo:
     def query(self, **kwargs: object) -> dict:
         self.calls.append(dict(kwargs))
         return self.pages[min(len(self.calls) - 1, len(self.pages) - 1)]
+
+
+class FakeWallet:
+    """A gateway balance preflight that answers a fixed figure (#4461).
+
+    The real one (`preflight.balance_verdict`) reads this host's own
+    `OPENROUTER_API_KEY` and asks OpenRouter what is left, so a test of the
+    submit path reached the network with a developer's real credential and
+    then passed or failed on an **account balance** — red on a clean tree
+    with no credit, green in CI, and neither answer about the code (#3668 for
+    the credential half).
+
+    `remaining_usd` is what the wallet reports; the verdict is computed by
+    `balance.verdict`, the same pure arithmetic production runs, so a test
+    asking for a funded wallet is not also stubbing out the decision.
+    """
+
+    def __init__(self, remaining_usd: float = 1_000.0) -> None:
+        self.remaining_usd = remaining_usd
+        self.calls: list[tuple[int, float | None, str | None]] = []
+
+    def __call__(
+        self,
+        trials: int,
+        cost_per_trial_usd: float | None,
+        seat_credential: str | None = None,
+    ) -> balance.Verdict:
+        self.calls.append((trials, cost_per_trial_usd, seat_credential))
+        return balance.verdict(
+            self.remaining_usd,
+            trials,
+            cost_per_trial_usd,
+            balance.Wallet(env_name="FAKE_KEY", seat_credential=seat_credential),
+        )
 
 
 def _executor(ls_remote=None, **clients: object) -> CloudExecutor:

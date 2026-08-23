@@ -723,10 +723,11 @@ impl Store {
     ///
     /// What it deliberately does **not** do is stamp an outcome on the
     /// execution. This runs at store open, and a second session opening the
-    /// same workspace must not declare a *live* turn dead — the caller who
-    /// knows the process is gone
-    /// ([`Store::mark_execution_interrupted`]) makes that call. The re-fold
-    /// is safe against a live execution with one visible wrinkle: an
+    /// same workspace must not declare a *live* turn dead — that needs a
+    /// proof of death, which is
+    /// [`Store::settle_orphaned_executions`]'s job: it asks the session
+    /// registry who owned the turn and stamps only what the registry shows is
+    /// gone. The re-fold is safe against a live execution with one wrinkle: an
     /// announced-but-unreturned call temporarily folds to that abandoned
     /// error, and is re-opened by its own `tool_result` when it lands.
     ///
@@ -749,6 +750,8 @@ impl Store {
     ///
     /// Separate from [`Store::reconcile_interrupted_executions`] because only
     /// the caller can know the owning process is actually gone — see there.
+    /// [`Store::settle_orphaned_executions`] is that caller in production; a
+    /// test that already knows the process is dead calls this directly.
     /// `finished_at` is taken from the execution's last event rather than the
     /// clock, so a run that died on Friday is not dated to the Monday someone
     /// reopened the workspace.
@@ -774,6 +777,8 @@ impl Store {
         Ok(())
     }
 }
+
+mod orphan_sweep;
 
 #[cfg(test)]
 mod tests;

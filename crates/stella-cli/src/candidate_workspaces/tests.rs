@@ -659,3 +659,158 @@ fn numstat_ignores_blank_and_pathless_rows() {
     // the one number a plugin scores on.
     assert_eq!(numstat_totals("1\t2\n"), (0, 0));
 }
+
+/// **#4390's ref half.** A candidate worktree shares the repository's `.git`,
+/// so `refs/heads/*` is one object the user's own checkout reads. A candidate
+/// that commits and then force-moves a shared branch onto its work has
+/// corrupted the tree it is asking to be adopted into — and until this, the
+/// adoption went through and said nothing.
+#[tokio::test]
+async fn a_candidate_that_force_moves_a_shared_branch_is_refused_adoption() {
+    let dir = repo();
+    let root = dir.path();
+    git(root, &["branch", "other"]);
+    let other_before = git(root, &["rev-parse", "other"]);
+    let subject = substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    let checkout = PathBuf::from(&candidate.root);
+    // The candidate does its work, commits it onto its own branch — which is
+    // its own business — and then puts it on the user's `other`, which is not.
+    std::fs::write(checkout.join("answer.txt"), "the candidate's answer\n").unwrap();
+    git(&checkout, &["add", "-A"]);
+    git(&checkout, &["commit", "-qm", "candidate work"]);
+    git(&checkout, &["branch", "-f", "other", "HEAD"]);
+
+    let error = subject.adopt(&candidate).await.unwrap_err();
+    match &error {
+        CandidateFanoutError::NotAdopted { handle, reason } => {
+            assert_eq!(handle, &candidate.handle);
+            assert!(
+                reason.contains("refs/heads/other"),
+                "the refusal must name the ref: {reason}"
+            );
+        }
+        other => panic!("expected NotAdopted, got {other:?}"),
+    }
+    assert!(
+        !root.join("answer.txt").exists(),
+        "a refused adoption writes nothing"
+    );
+    assert_ne!(
+        git(root, &["rev-parse", "other"]),
+        other_before,
+        "the refusal is detection, not repair: `other` is still where the \
+         candidate put it, and the reflog the refusal points at is what puts \
+         it back"
+    );
+}
+
+/// The control ported from the deleted `candidate_ws/ref_escape.rs`: a shared
+/// ref that simply *moved* proves nothing. A user committing — or here,
+/// rewinding — in their own checkout while a fan-out is in flight must not
+/// cost a good candidate its adoption.
+#[tokio::test]
+async fn a_mid_run_user_rewind_is_not_a_ref_escape() {
+    let dir = repo();
+    let root = dir.path();
+    std::fs::write(root.join("second.txt"), "second\n").unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "second"]);
+    let subject = substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    std::fs::write(
+        PathBuf::from(&candidate.root).join("answer.txt"),
+        "the candidate's answer\n",
+    )
+    .unwrap();
+
+    // The user, in their own checkout, throws away their last commit. That
+    // moves `refs/heads/main` backwards into history the tree already had.
+    git(root, &["reset", "--hard", "-q", "HEAD~1"]);
+
+    subject.adopt(&candidate).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("answer.txt")).unwrap(),
+        "the candidate's answer\n",
+        "a rewind into already-reachable history is the user's own action"
+    );
+}
+
+/// **#4390's mode half, tightening (#2935).** Git records exactly `100644` and
+/// `100755`, so a candidate that generates a private key and `chmod 600`s it
+/// had that half of its work dropped by `git apply`.
+#[cfg(unix)]
+#[tokio::test]
+async fn adoption_delivers_a_mode_the_patch_could_not_carry() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = repo();
+    let root = dir.path();
+    let subject = substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    let checkout = PathBuf::from(&candidate.root);
+    std::fs::write(checkout.join("server.key"), "-----BEGIN-----\n").unwrap();
+    std::fs::set_permissions(
+        checkout.join("server.key"),
+        PermissionsExt::from_mode(0o600),
+    )
+    .unwrap();
+
+    subject.adopt(&candidate).await.unwrap();
+    assert_eq!(
+        std::fs::metadata(root.join("server.key"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o600,
+        "the mode is half of what the candidate did, and a patch cannot say it"
+    );
+}
+
+/// **#4390's mode half, relaxing (#2988).** The direction the pre-#3865
+/// substrate could not deliver at all: `git worktree add` checks a tracked
+/// file out at git's own normalization, so a candidate cut from a `0600` tree
+/// saw `0644` and could not observe — let alone relax — the mode the user set.
+///
+/// Two assertions, and the first is what makes the second possible: the
+/// checkout is stamped faithful at creation, and the change the candidate then
+/// makes to it is delivered.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_candidate_sees_the_users_mode_and_can_relax_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = repo();
+    let root = dir.path();
+    std::fs::write(root.join("secret.txt"), "shh\n").unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "secret"]);
+    std::fs::set_permissions(root.join("secret.txt"), PermissionsExt::from_mode(0o600)).unwrap();
+    let subject = substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    let mine = PathBuf::from(&candidate.root).join("secret.txt");
+    assert_eq!(
+        std::fs::metadata(&mine).unwrap().permissions().mode() & 0o7777,
+        0o600,
+        "a candidate must see the tree the user has, or it cannot decide \
+         anything about a mode git does not record"
+    );
+
+    std::fs::set_permissions(&mine, PermissionsExt::from_mode(0o644)).unwrap();
+    subject.adopt(&candidate).await.unwrap();
+    assert_eq!(
+        std::fs::metadata(root.join("secret.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o644,
+        "the candidate relaxed it, and a pure chmod is not a diff — an empty \
+         patch still has a mode to deliver"
+    );
+}

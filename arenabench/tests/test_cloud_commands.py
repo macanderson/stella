@@ -25,6 +25,7 @@ from cloud_fakes import (
     FakeLsRemote,
     FakeS3,
     FakeSsm,
+    FakeWallet,
     _executor,
     _run_args,
 )
@@ -64,6 +65,7 @@ class TestCloudRunCommand:
             _run_args(template),
             executor=executor,
             task_lister=lambda _dataset: ["task-a"],
+            balance_check=FakeWallet(),
         )
 
         assert rc == 2
@@ -93,6 +95,7 @@ class TestCloudRunCommand:
             _run_args(template),
             executor=executor,
             task_lister=lambda _dataset: ["task-a", "task-b"],
+            balance_check=FakeWallet(),
         )
 
         assert rc == 2
@@ -133,6 +136,7 @@ class TestCloudRunCommand:
             _run_args(template),
             executor=executor,
             task_lister=lambda _dataset: [],
+            balance_check=FakeWallet(),
         )
 
         assert rc == 0
@@ -169,6 +173,7 @@ class TestCloudRunCommand:
             _run_args(template),
             executor=executor,
             task_lister=lambda _dataset: ["task-a"],
+            balance_check=FakeWallet(),
         )
 
         assert rc == 0
@@ -186,6 +191,51 @@ class TestCloudRunCommand:
             "submit-time output must name ref -> commit, so a reader can see "
             "which commit 'main' meant on this run (#2388)"
         )
+
+    def test_a_run_the_wallet_cannot_fund_is_refused_before_any_submit(
+        self, tmp_path, capsys, monkeypatch
+    ) -> None:
+        """The refusal these tests used to get from the *developer's* wallet.
+
+        With the preflight reaching the real gateway, an empty account refused
+        every submit — so this contract was covered by whichever key the host
+        happened to hold, red on a clean tree with no credit and green in CI,
+        and the two tests above failed for a reason that was not about the
+        code (#4461). Priced through the injected wallet it is a decision the
+        suite makes, on every host.
+        """
+        monkeypatch.delenv("ARENABENCH_STELLA_REPO", raising=False)
+        commit = "e" * 40
+        template = tmp_path / "match.toml"
+        template.write_text(TEMPLATE, encoding="utf-8")
+        s3 = FakeS3(
+            {
+                "binaries/main/latest.json": json.dumps(
+                    {"git_ref": "main", "commit": commit}
+                ).encode()
+            }
+        )
+        batch = FakeBatch()
+        executor = _executor(
+            s3=s3,
+            batch=batch,
+            ssm=FakeSsm(["/arenabench/openrouter_api_key"]),
+            codebuild=FakeCodeBuild(),
+            ls_remote=FakeLsRemote({"refs/heads/main": commit}),
+        )
+
+        rc = _cmd_cloud_run(
+            _run_args(template),
+            executor=executor,
+            task_lister=lambda _dataset: ["task-a"],
+            balance_check=FakeWallet(0.0),
+        )
+
+        assert rc == 2
+        assert batch.submitted == [], "an unfundable match must submit nothing"
+        err = capsys.readouterr().err
+        assert "$0.00" in err
+        assert "--ignore-balance" in err, "the refusal must name the override"
 
 
 class TestSubmitTaskValidation:
@@ -212,7 +262,9 @@ class TestSubmitTaskValidation:
         s3, batch = FakeS3(), FakeBatch()
         executor = _executor(s3=s3, batch=batch, ssm=FakeSsm(["openrouter_api_key"]))
 
-        rc = _cmd_cloud_run(_run_args(template), executor=executor)
+        rc = _cmd_cloud_run(
+            _run_args(template), executor=executor, balance_check=FakeWallet()
+        )
 
         assert rc == 2
         assert batch.submitted == [], "a refused match must submit nothing"
@@ -235,7 +287,9 @@ class TestSubmitTaskValidation:
 
         # The run stops later, at the missing --ref — which is the point:
         # validation let it through and said why it could not check.
-        rc = _cmd_cloud_run(_run_args(template, ref=""), executor=executor)
+        rc = _cmd_cloud_run(
+            _run_args(template, ref=""), executor=executor, balance_check=FakeWallet()
+        )
 
         captured = capsys.readouterr()
         assert "not validated" in captured.out

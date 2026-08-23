@@ -46,6 +46,7 @@ from arenabench.server import ArenaServer, _declared_caps, _uncapped
 
 _UI = Path(__file__).resolve().parents[1] / "ui"
 _SETUP_VIEW = _UI / "components" / "setup" / "setup-view.tsx"
+_SEAT_CARD = _UI / "components" / "setup" / "seat-card.tsx"
 
 #: Line prefixes that make a mention prose rather than code. The templates guard
 #: skips ``#`` for the same reason: a file explaining the rule is not breaking
@@ -367,3 +368,52 @@ class TestTheFormsRosterReachesTheSeat:
         engine = self._spec({"responsibilities": {}, "bare_loop": False}).contestants[0].engine
         posture, _, _ = arena_posture("openrouter/z-ai/glm-5.2", engine)
         assert "responsibilities" not in posture
+
+
+class TestRoleOverridesAreInertOnEveryArm:
+    """The card must not tell an operator a role override will be honoured.
+
+    ``bare_loop`` used to select between two loops, so the card greyed the role
+    controls out for the arms that had opted into the bare one and left them
+    live for everybody else. Stella's staged pipeline was deleted from its
+    workspace (stella#3865): ``stella run --pipeline classic`` is refused, every
+    remaining resolution lands on the raw step loop, and the adapter therefore
+    publishes ``stella_loop_mode`` as ``bare_step_loop`` on every trial
+    (stella#4023, corrected on the Python side in stella#4412). A live control
+    on an undeclared arm is an offer this bench cannot keep (stella#4413).
+    """
+
+    def test_no_control_is_gated_on_a_seats_bare_loop_declaration(self) -> None:
+        source = _SEAT_CARD.read_text(encoding="utf-8")
+        mentions = [
+            (number, line)
+            for number, line in enumerate(source.splitlines(), start=1)
+            if not _is_comment(line) and "bare_loop" in line
+        ]
+        assert mentions, (
+            "the card names no `bare_loop` at all — the declaration is still an "
+            "authoring field, so this guard would now pass vacuously"
+        )
+        offenders = [
+            f"seat-card.tsx:{number}: {line.strip()}"
+            for number, line in mentions
+            if "disabled" in line or "Inert" in line or "pipelineInert" in line
+        ]
+        assert not offenders, (
+            "role overrides are inert on every arm since stella#3865, so the "
+            "card must not derive their inertness from `bare_loop` — an arm "
+            "that declared nothing would read as one whose overrides apply:\n"
+            + "\n".join(offenders)
+        )
+
+    def test_the_card_says_the_overrides_do_not_apply(self) -> None:
+        """The other half: disabled controls with no reason are a puzzle."""
+        live = "\n".join(
+            line
+            for line in _SEAT_CARD.read_text(encoding="utf-8").splitlines()
+            if not _is_comment(line)
+        )
+        assert "raw step loop" in live, (
+            "the card disables every role control and must say why, naming the "
+            "loop that actually runs"
+        )

@@ -175,6 +175,18 @@ fn open_hub() -> Result<UsageStore, String> {
     UsageStore::open_default().map_err(|e| format!("cannot open the usage hub: {e}"))
 }
 
+/// A cost cell for the text table, prefixed `≥` when any execution behind it
+/// is a floor (#4171).
+///
+/// The prefix rather than a column: the report is a fixed-width table a user
+/// reads against a provider bill, and the fact they need at the number is
+/// whether the number is the whole story. `floor_executions` says how many in
+/// the JSON and CSV forms, and the footnote says it once for the table.
+fn cost_cell(cost_usd: f64, floor_executions: i64) -> String {
+    let marker = if floor_executions > 0 { "≥" } else { "" };
+    format!("{marker}{cost_usd:.4}")
+}
+
 fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
     let hub = open_hub()?;
     let rows = hub
@@ -196,6 +208,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                         "cache_write_tokens": r.cache_write_tokens,
                         "cost_usd": r.cost_usd,
                         "projects": r.projects,
+                        "floor_executions": r.floor_executions,
                     })
                 })
                 .collect();
@@ -207,7 +220,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
         StatsFormat::Csv => {
             println!(
                 "org_id,provider,model,calls,input_tokens,output_tokens,cache_read_tokens,\
-                 cache_write_tokens,cost_usd,projects"
+                 cache_write_tokens,cost_usd,projects,floor_executions"
             );
             for r in &rows {
                 // The three text columns are config- and catalog-supplied, so
@@ -215,7 +228,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 // — an org id or model slug carrying a comma must not silently
                 // shift every following column.
                 println!(
-                    "{},{},{},{},{},{},{},{},{},{}",
+                    "{},{},{},{},{},{},{},{},{},{},{}",
                     crate::stats::csv_escape(r.org_id.as_deref().unwrap_or("")),
                     crate::stats::csv_escape(&r.provider),
                     crate::stats::csv_escape(&r.model),
@@ -226,6 +239,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                     r.cache_write_tokens,
                     r.cost_usd,
                     r.projects,
+                    r.floor_executions,
                 );
             }
         }
@@ -251,9 +265,10 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 "PROJECTS"
             );
             let mut totals = (0i64, 0i64, 0i64, 0i64, 0i64, 0f64);
+            let mut floors = 0i64;
             for r in &rows {
                 println!(
-                    "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10.4} {:>9}",
+                    "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10} {:>9}",
                     r.org_id.as_deref().unwrap_or("(local)"),
                     r.provider,
                     r.model,
@@ -262,7 +277,7 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                     r.output_tokens,
                     r.cache_read_tokens,
                     r.cache_write_tokens,
-                    r.cost_usd,
+                    cost_cell(r.cost_usd, r.floor_executions),
                     r.projects,
                 );
                 totals.0 += r.calls;
@@ -271,11 +286,28 @@ fn report(format: StatsFormat, org: Option<&str>) -> Result<(), String> {
                 totals.3 += r.cache_read_tokens;
                 totals.4 += r.cache_write_tokens;
                 totals.5 += r.cost_usd;
+                floors += r.floor_executions;
             }
             println!(
-                "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10.4} {:>9}",
-                "TOTAL", "", "", totals.0, totals.1, totals.2, totals.3, totals.4, totals.5, ""
+                "{:<14} {:<10} {:<28} {:>8} {:>12} {:>12} {:>12} {:>12} {:>10} {:>9}",
+                "TOTAL",
+                "",
+                "",
+                totals.0,
+                totals.1,
+                totals.2,
+                totals.3,
+                totals.4,
+                cost_cell(totals.5, floors),
+                ""
             );
+            if floors > 0 {
+                println!(
+                    "\n≥ marks a lower bound: {floors} execution(s) finished with a paid call \
+                     whose usage envelope never landed, so their receipts prove at least this \
+                     much and possibly more."
+                );
+            }
         }
     }
     Ok(())

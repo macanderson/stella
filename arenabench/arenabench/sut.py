@@ -119,17 +119,31 @@ _SAFE_REF = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._/-]{0,200}\Z")
 #: test can point the walk somewhere that is deliberately not a checkout.
 _PACKAGE_DIR = Path(__file__).resolve().parent
 
+#: Repo-relative homes of the Rust-side sources this package reads, spelled
+#: **once for the whole project** (#4460). :mod:`arenabench.catalog` had its
+#: own copies of two of these; the catalog split (#3862) moved the seed rows
+#: and broke the readers that carried a second spelling, which is the second
+#: time a crate move did that.
+#:
+#: The seed directory is derived from the catalog module rather than written
+#: out, so the two cannot drift apart at all. What is left is one literal per
+#: file, checked against the tree by
+#: ``tests/test_sut.py::TestTheRustPathsThisProjectSpells``.
+CATALOG_MODULE_REL = Path("crates") / "stella-model" / "src" / "catalog.rs"
+#: Where the seeded model rows live — a directory since #3862 split them one
+#: module per provider. ``catalog.rs`` still holds ``Catalog`` and no rows, so
+#: a reader anchored on it parses cleanly and finds nothing.
+CATALOG_SEED_REL = CATALOG_MODULE_REL.parent / "catalog" / "seed"
+#: The benchmark posture, on the Python side of Stella's own bench harness.
+POSTURE_REL = Path("bench") / "harbor_adapter" / "stella_harbor" / "posture.py"
+
 #: Files that identify a tree as *this* repository rather than whatever git
 #: checkout the arena happens to be installed inside. Both sit beside what
 #: :mod:`arenabench.catalog` reads at runtime, so matching them means the
 #: discovery is self-validating: a tree that has them is one the arena can
-#: actually do its job against. (`catalog.rs` is the marker; the seed rows the
-#: catalog module parses moved to `catalog/seed/` in #3862, and a marker wants
-#: to be the most stable file of the pair rather than the most specific.)
-_STELLA_MARKERS = (
-    Path("crates") / "stella-model" / "src" / "catalog.rs",
-    Path("bench") / "harbor_adapter" / "stella_harbor" / "posture.py",
-)
+#: actually do its job against. ``catalog.rs`` is the marker rather than the
+#: seed directory: a marker wants to be the most stable file of the pair.
+_STELLA_MARKERS = (CATALOG_MODULE_REL, POSTURE_REL)
 
 
 class SutUnavailableError(RuntimeError):
