@@ -3,10 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ? lead  ·  needs input   0:00:00
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
 └─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
      model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
      ⚒ search_code trigger
@@ -15,31 +12,34 @@
      model glm-5.2-air · ctx 3.0k/200k · spend $0.00
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
-┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│    ⋯ ctrl+o for provenance and budget                                                                                ││Refactor the automations store into a…│
-│                                                                                                                      ││○ 1. extract types                    │
-│── PLAN ──────────────────────────────────────────────────────────────────────────────────────────────────────────────││○ 2. move hooks                       │
-│                                                                                                                      ││○ 3. update 9 imports                 │
-│  Planning the automations cluster: list, editor, t┌ plan  pending approval · 3 steps  x skip · esc close ┐           ││                                      │
-│                                                   │Refactor the automations store into a shared worksp…  │           ││                                      │
-│☰  plan  4/7  ·  Wire the triggers API             │                                                      │           ││                                      │
-│                                                   │▸ ○ 1. extract types                                  │           ││                                      │
-│── EXECUTE ────────────────────────────────────────│  ○ 2. move hooks                                     │───────────││                                      │
-│                                                   │  ○ 3. update 9 imports                               │           ││                                      │
-│ │ ⊙ apps/app/automations/page.tsx                 │                                                      │           ││                                      │
-│ │ ⎿ 312 lines                                     │repo      macanderson/web-app ⎇ feat/automations-store│       42ms││                                      │
-│                                                   │write     packages/automations/** · apps/app/automatio│           ││                                      │
-│☰  plan  5/7  ·  Workflows canvas                  │read      apps/** · packages/**  (2 globs)            │           ││                                      │
-│                                                   │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │           ││                                      │
-│⏸ plan  Refactor the automations store into a share│models    think — · work glm-5.2-air · verify —       │           ││                                      │
-│                                                   │shell     allowlisted                                 │           ││                                      │
-└─────────────────────────────────────────── ↑ selec└──────────────────────────────────────────────────────┘nd · /plan ┘└────────────────────── /plan reads it ┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
-✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
+── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
+    symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
+    memory  event-log REPL                                                                                                                90 tok
+    ⋯ ctrl+o for provenance and budget
+
+── PLAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Planning the automations cluster: list, editor, triggers, workflows.
+
+☰  plan  4/7  ·  Wire the triggers API              ┌ plan  pending approval · 3 steps  x skip · esc close ┐
+                                                    │Refactor the automations store into a shared worksp…  │
+── EXECUTE ─────────────────────────────────────────│                                                      │────────────────────────────────────────────────────
+                                                    │▸ ○ 1. extract types                                  │
+ │ ⊙ apps/app/automations/page.tsx                  │  ○ 2. move hooks                                     │
+ │ ⎿ 312 lines                                      │  ○ 3. update 9 imports                               │                                 42ms
+                                                    │                                                      │
+☰  plan  5/7  ·  Workflows canvas                   │repo      macanderson/web-app ⎇ feat/automations-store│
+                                                    │write     packages/automations/** · apps/app/automatio│
+⏸ plan  Refactor the automations store into a shared│read      apps/** · packages/**  (2 globs)            │
+                                                    │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │
+                                                    │models    think — · work glm-5.2-air · verify —       │
+                                                    │shell     allowlisted                                 │
+                                                    └──────────────────────────────────────────────────────┘
+
+
+
 >>>
- ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+ ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

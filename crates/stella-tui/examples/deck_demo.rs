@@ -250,7 +250,9 @@ async fn main() -> std::io::Result<()> {
                 WorkspaceInput::AgentsRefresh
                 | WorkspaceInput::AgentSave { .. }
                 | WorkspaceInput::AgentPin { .. }
-                | WorkspaceInput::AgentCreate { .. } => {
+                | WorkspaceInput::AgentCreate { .. }
+                | WorkspaceInput::AgentDelete { .. }
+                | WorkspaceInput::AgentAssume { .. } => {
                     let _ = react_tx.send(Inbound::AgentsList {
                         entries: vec![],
                         status: Some("the demo has no agents on disk".to_string()),
@@ -300,7 +302,8 @@ async fn main() -> std::io::Result<()> {
                 WorkspaceInput::SessionsRefresh
                 | WorkspaceInput::SessionArchive { .. }
                 | WorkspaceInput::SessionDelete { .. }
-                | WorkspaceInput::SessionResume { .. } => {
+                | WorkspaceInput::SessionResume { .. }
+                | WorkspaceInput::SessionNew => {
                     let _ = react_tx.send(Inbound::Sessions(vec![]));
                 }
                 // Replay needs the real driver's store; the demo has nothing

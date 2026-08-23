@@ -114,7 +114,12 @@ fn post_approval_the_card_reads_locked_with_the_edit_affordance() {
 #[test]
 fn the_card_lists_the_plan_steps_over_the_envelope() {
     let text = frame(&scoped_model(true), false);
-    for needle in ["route", "guard", "wire the automations API", "approved 0/2"] {
+    for needle in [
+        "route",
+        "guard",
+        "wire the automations API",
+        "approved · 0/2",
+    ] {
         assert!(
             text.contains(needle),
             "step list missing {needle:?}:\n{text}"

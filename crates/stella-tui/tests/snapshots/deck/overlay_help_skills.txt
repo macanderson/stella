@@ -3,17 +3,17 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ ┌ help — SKILLS · esc close ───────────────────────────────────────┐                                             │
-└─────────────────────────────────────────────│                                                                  │─────────────────────────────────────────────┘
-┌ Installed — 4 (user + project) ─────────────│  SKILLS tab                                                      │─────────────────────────────────────────────┐
-│  [x] release-checklist v3  (project·workspac│  ← →           switch panes                                      │                                             │
-│▸ [x] rust-review v2/4  (user·user)  Review R│  ↑ ↓           select a skill                                    │                                             │
-│  [ ] sql-tuning v1  (user·installed)  Read a│  space         enable / disable                                  │o search                                     │
-│  [x] bench-rig-access v1  (project·auto)  Re│  e             edit the selected skill                           │                                             │
-│                                             │  p             pin / unpin                                       │                                             │
-│                                             │  n             new skill — drafted by the LLM                    │                                             │
-│                                             │  ctrl-o        preview                                           │                                             │
+ SESSION AGENTS TRACES GRAPH FILES   SKILLS   MCP ISSUES SETTINGS                                                                                       stella*
+╭─────────────────────────────────────────────┌ help — SKILLS · esc close ───────────────────────────────────────┐─────────────────────────────────────────────╮
+│ ⌕                                           │                                                                  │                        installed + registry │
+╰─────────────────────────────────────────────│  SKILLS tab                                                      │─────────────────────────────────────────────╯
+ installed · 4                                │  ← →           switch panes                                      │
+╭─────────────────────────────────────────────│  ↑ ↓           select a skill                                    │─────────────────────────────────────────────╮
+│  [x] release-checklist        v3 · project  │  space         enable / disable                                  │                                             │
+│▸ [x] rust-review              v2/4 · user   │  e             edit the selected skill                           │                                             │
+│  [ ] sql-tuning               v1 · user   Re│  p             pin / unpin                                       │                                             │
+│ learned from traces · 1   stella wrote these│  n             new skill — drafted by the LLM                    │                                             │
+│  [x] bench-rig-access         learned   Reac│  ctrl-o        preview                                           │                                             │
 │                                             │  ctrl-x ×2     delete (press twice to confirm)                   │                                             │
 │                                             │  type          search skills                                     │                                             │
 │                                             │                                                                  │                                             │
@@ -34,12 +34,12 @@
 │                                             │  letter & arrow hotkeys apply while the prompt box is empty      │                                             │
 │                                             │                                                                  │                                             │
 │                                             │  model                                                           │                                             │
-│                                             │  worker        zai/glm-5.2-air · answering                       │                                             │
-└─────────────────────────────────────────────│                                                                  │─────────────────────────────────────────────┘
- space on/off · ctrl+o preview · ctrl+x×2 dele│  machine                                                         │
-──────────────────────────────────────────────│  engine        3 active · 3 total                                │──────────────────────────────────────────────
- ▸ stage  Refactor the automations store into │  cpu           42%                                               │
-✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50│  mem           148M                                              │
+╰─────────────────────────────────────────────│  worker        zai/glm-5.2-air · answering                       │─────────────────────────────────────────────╯
+ registry · web · type a term, ↵ searches     │                                                                  │
+                                              │  machine                                                         │
+ space on/off · ctrl+o preview · e edit · p pi│  engine        3 active · 3 total                                │
+ 4 installed · 1 learned · 3 enabled          │  cpu           42%                                               │
+                                              │  mem           148M                                              │
 >>>                                           └──────────────────────────────────────────────────────────────────┘
- ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+ ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

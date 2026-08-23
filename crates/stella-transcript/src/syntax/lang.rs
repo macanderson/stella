@@ -850,8 +850,8 @@ mod tests {
             Some(&Some(Tok::Function)),
             "the callee: {runs:?}"
         );
-        // ...and the identifier beside them stays plain, which is the half that
-        // makes the distinction worth a colour.
+        // ...and the identifier beside them stays plain — that contrast is
+        // what makes the distinction worth a colour.
         assert_eq!(run_tok(&runs, "x"), None, "a bare identifier: {runs:?}");
 
         let runs = tokenize("var d time.Duration = readAll(f)", Lang::Go);

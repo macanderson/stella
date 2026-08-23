@@ -252,6 +252,10 @@ pub enum Inbound {
     /// asks ([`WorkspaceInput::AgentsRefresh`]) and after every save / pin /
     /// create so the list stays live. `status`, when set, replaces the
     /// pane's hint line (op outcomes, errors).
+    /// Which installed agent the lead is running as, after a
+    /// [`WorkspaceInput::AgentAssume`] — `None` drops back to the plain
+    /// persona. The list marks the row.
+    AgentAssumed { name: Option<String> },
     AgentsList {
         entries: Vec<InstalledAgentEntry>,
         status: Option<String>,
@@ -605,6 +609,9 @@ pub struct SessionInfo {
     pub title: String,
     /// What work is involved — the latest prompt/goal, truncated.
     pub summary: String,
+    /// One sentence on what the session did, written by a model from its
+    /// prompts (`stella-cli`'s `sessions_view`); `None` until it has been.
+    pub description: Option<String>,
     /// Workspace path (dimmed detail line).
     pub workspace: String,
     pub phase: SessionPhase,
@@ -618,6 +625,13 @@ pub struct SessionInfo {
     /// history) is on disk. `⏎` on such a row sends
     /// [`WorkspaceInput::SessionResume`].
     pub resumable: bool,
+    /// Turns recorded in the store for this session.
+    pub turns: u32,
+    /// Spend across those turns, in micro-dollars — integral so the row stays
+    /// `Eq`, and six decimals is what the store keeps.
+    pub spend_micros: u64,
+    /// The model the latest turn ran on.
+    pub model: Option<String>,
 }
 
 /// One persist-until-read notification as the inbox overlay lists it. A
@@ -812,6 +826,16 @@ pub enum WorkspaceInput {
         scope: AgentScope,
         version: u32,
     },
+    /// INSTALLED AGENTS `x x`: delete the definition — its canonical file
+    /// and its archived versions. Answered with a fresh
+    /// [`Inbound::AgentsList`].
+    AgentDelete { name: String, scope: AgentScope },
+    /// INSTALLED AGENTS `a`: the lead assumes this agent's identity for the
+    /// rest of the session — its definition becomes the persona the system
+    /// prompt carries, from the next turn on. Between turns only; mid-turn
+    /// the driver answers with a transcript notice. Answered with
+    /// [`Inbound::AgentAssumed`].
+    AgentAssume { name: String, scope: AgentScope },
     /// Create a new agent from a short description with LLM assistance: the
     /// driver drafts the definition through the session's provider, installs
     /// it at `scope`, and answers with a fresh [`Inbound::AgentsList`].
@@ -885,6 +909,11 @@ pub enum WorkspaceInput {
     /// between turns — mid-turn the driver answers with a transcript notice
     /// instead of tearing down live work.
     SessionResume { id: String },
+    /// SESSIONS overlay `n`: park this session and open a fresh, empty one
+    /// — the same hand-over [`WorkspaceInput::SessionResume`] performs, with
+    /// a new record in place of a stored one. Between turns only; mid-turn
+    /// the driver answers with a transcript notice.
+    SessionNew,
     /// Inbox overlay: mark one notification read (it may then be pruned —
     /// "persists until read" is the store's contract). Answered with a fresh
     /// [`Inbound::Notifications`].

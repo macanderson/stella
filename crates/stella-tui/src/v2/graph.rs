@@ -172,8 +172,12 @@ fn bar(edges: usize, max: usize) -> String {
 pub fn render(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(Style::new().fg(token::BORDER))
-        .title(Span::styled(" coupling ", Style::new().fg(token::MUTED)));
+        .title(Line::from(vec![
+            Span::styled(" coupling", Style::new().fg(token::TEXT)),
+            Span::styled(" · neighbors by edge count ", Style::new().fg(token::MUTED)),
+        ]));
     let inner = block.inner(area);
     block.render(area, buf);
     if inner.height == 0 || inner.width < 12 {
@@ -224,6 +228,11 @@ pub fn render(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buf
             ])
         })
         .collect();
+    // The caption holds the panel's last row, so the eye finds it in the
+    // same place whatever the ranking's length.
+    while lines.len() + 1 < inner.height as usize {
+        lines.push(Line::default());
+    }
     lines.push(caption);
     Paragraph::new(lines).render(inner, buf);
 }

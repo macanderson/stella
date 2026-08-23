@@ -454,7 +454,9 @@ fn note_kind(event: &AgentEvent) -> NoteKind {
 }
 
 /// The one-line object a call's header states — the path for a file tool, the
-/// command for a shell, and the raw argument blob for anything else.
+/// command for a shell, and the arguments' own headline for anything else
+/// (`crate::v2::fields::headline`): never the raw argument blob, which is the
+/// wire's shape and not a sentence.
 fn header_object(tool: &ToolKind, input: &serde_json::Value) -> String {
     for key in ["path", "command", "query", "pattern"] {
         if let Some(value) = input.get(key).and_then(serde_json::Value::as_str) {
@@ -462,10 +464,7 @@ fn header_object(tool: &ToolKind, input: &serde_json::Value) -> String {
         }
     }
     let _ = tool;
-    input
-        .as_str()
-        .map(ToString::to_string)
-        .unwrap_or_else(|| input.to_string())
+    crate::v2::fields::headline(input)
 }
 
 /// Recover `(before, after)` text from a unified diff.

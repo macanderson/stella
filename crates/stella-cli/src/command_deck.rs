@@ -458,7 +458,7 @@ pub async fn run_deck_session(
     // personas on a mere resume would breach invariant #7. Chosen ONCE, byte-
     // stable (L-E8): see `session_persist::initial_pipeline_persona`.
     let pipeline_persona = crate::session_persist::initial_pipeline_persona(resume_state.as_ref());
-    let system_prompt = agent::with_session_hook_context(
+    let mut system_prompt = agent::with_session_hook_context(
         if pipeline_persona {
             // Assembled once per session, before any turn resolves wiring: no
             // model line rather than a possibly-false one (#2721).
@@ -469,6 +469,9 @@ pub async fn run_deck_session(
         cfg,
     )
     .await;
+    // The persona-free prompt an assumed agent's block is appended to
+    // (`WorkspaceInput::AgentAssume`), so assuming twice never stacks.
+    let base_system_prompt = system_prompt.clone();
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     if let Some(rs) = &mut resume_state {
         messages = crate::session_persist::restore_messages(
@@ -1039,6 +1042,35 @@ pub async fn run_deck_session(
                     }
                     // LLM-assisted agent creation needs the provider, which is
                     // free here (no turn in flight) — draft, install, refresh.
+                    // The lead assumes an installed agent's identity: the
+                    // system prompt grows the agent's persona block and the
+                    // seeded system message follows it, so the next turn
+                    // runs as that agent. Between turns only — the prompt
+                    // is byte-stable across a turn (invariant #7).
+                    Some(WorkspaceInput::AgentAssume { name, scope }) => {
+                        match authoring::assumed_persona(&cfg.workspace_root, &name, scope) {
+                            Ok(persona) => {
+                                system_prompt = format!("{base_system_prompt}\n\n{persona}");
+                                if let Some(first) = messages.first_mut()
+                                    && first.role == stella_protocol::MessageRole::System
+                                {
+                                    first.content = system_prompt.clone();
+                                }
+                                let _ = in_tx.send(Inbound::AgentAssumed {
+                                    name: Some(name.clone()),
+                                });
+                                let _ = in_tx.send(chrome_note(format!(
+                                    "the lead is now {name} — from the next turn on"
+                                )));
+                            }
+                            Err(error) => {
+                                let _ = in_tx.send(Inbound::AgentAssumed { name: None });
+                                let _ = in_tx
+                                    .send(chrome_note(format!("cannot assume {name}: {error}")));
+                            }
+                        }
+                        continue 'session;
+                    }
                     Some(WorkspaceInput::AgentCreate { description, scope }) => {
                         handle_agent_create(
                             &description,
@@ -1059,7 +1091,13 @@ pub async fn run_deck_session(
                     // lanes and settle against its records). The current
                     // session's durable state is already on disk, so switching
                     // away loses nothing.
-                    Some(WorkspaceInput::SessionResume { id }) => {
+                    Some(
+                        nav @ (WorkspaceInput::SessionResume { .. } | WorkspaceInput::SessionNew),
+                    ) => {
+                        let id = match &nav {
+                            WorkspaceInput::SessionResume { id } => id.clone(),
+                            _ => "new".to_string(),
+                        };
                         let loaded = if id == session_record.id {
                             Err("that is this session — you are already in it".to_string())
                         } else if subs.live() > 0 {
@@ -1068,6 +1106,11 @@ pub async fn run_deck_session(
                                  or wait for them to finish, then press ⏎ on the session \
                                  again",
                                 subs.live()
+                            ))
+                        } else if matches!(nav, WorkspaceInput::SessionNew) {
+                            Ok(crate::session_persist::fresh_state(
+                                &workspace_path,
+                                &workspace_name,
                             ))
                         } else {
                             crate::session_persist::load_resume(
@@ -1250,6 +1293,7 @@ pub async fn run_deck_session(
                                 }
                                 let _ = in_tx.send(sessions_inbound(
                                     &session_registry,
+                                    store.as_deref(),
                                     &session_record.id,
                                     &workspace_path,
                                 ));
@@ -1309,9 +1353,14 @@ pub async fn run_deck_session(
                         .await
                             && !service_registry_action(
                                 &other,
-                                &session_registry,
-                                &session_record.id,
-                                &workspace_path,
+                                &sessions_view::SessionScope {
+                                    registry: &session_registry,
+                                    store: &store,
+                                    cfg,
+                                    budget_limit,
+                                    mine: &session_record.id,
+                                    workspace: &workspace_path,
+                                },
                                 &in_tx,
                             )
                             && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
@@ -1686,7 +1735,10 @@ pub async fn run_deck_session(
                         | Some(WorkspaceInput::Control {
                             control: stella_tui::AgentControl::Stop, agent,
                         }) => {
-                            if agent == LEAD {
+                            // With prompts parked, the first Esc *delivers*
+                            // them — see `steer::stop_steers_backlog`. Only
+                            // an empty backlog makes it a stop.
+                            if agent == LEAD && !steer::stop_steers_backlog(&steering, &mut queue, &in_tx) {
                                 // First Esc = SOFT stop: end at the next
                                 // boundary keeping completed steps. The
                                 // pair's second press (StopAndHold below)
@@ -1700,7 +1752,7 @@ pub async fn run_deck_session(
                                         text: "\n[stopping at the next step boundary — Esc again to cancel immediately]\n".to_string(),
                                     },
                                 });
-                            } else {
+                            } else if agent != LEAD {
                                 subs.stop(&agent);
                             }
                         }
@@ -1782,7 +1834,8 @@ pub async fn run_deck_session(
                         Some(
                             input @ (WorkspaceInput::AgentsRefresh
                             | WorkspaceInput::AgentSave { .. }
-                            | WorkspaceInput::AgentPin { .. }),
+                            | WorkspaceInput::AgentPin { .. }
+                            | WorkspaceInput::AgentDelete { .. }),
                         ) => {
                             handle_agents_input(&input, cfg, &in_tx);
                         }
@@ -1884,9 +1937,14 @@ pub async fn run_deck_session(
                         ) => {
                             service_registry_action(
                                 &input,
-                                &session_registry,
-                                &session_record.id,
-                                &workspace_path,
+                                &sessions_view::SessionScope {
+                                    registry: &session_registry,
+                                    store: &store,
+                                    cfg,
+                                    budget_limit,
+                                    mine: &session_record.id,
+                                    workspace: &workspace_path,
+                                },
                                 &in_tx,
                             );
                         }
@@ -1902,7 +1960,12 @@ pub async fn run_deck_session(
                         // Navigation waits for the road to clear: switching
                         // sessions mid-turn would tear down live work, so the
                         // deck is told how to proceed instead.
-                        Some(WorkspaceInput::SessionResume { .. }) => {
+                        Some(WorkspaceInput::AgentAssume { name, .. }) => {
+                            let _ = deck_tx.send(chrome_note(format!(
+                                "a turn is running — press a on {name} again once it settles"
+                            )));
+                        }
+                        Some(WorkspaceInput::SessionResume { .. } | WorkspaceInput::SessionNew) => {
                             let _ = deck_tx.send(chrome_note(
                                 "a turn is running — esc stops it (esc esc holds the queue \
                                  too), then press ⏎ on the session again."
@@ -2414,29 +2477,30 @@ pub(crate) fn prompt_line(prompt: &str, max_chars: usize) -> String {
 /// cheap local file ops, serviced identically idle or mid-turn.
 fn service_registry_action(
     input: &WorkspaceInput,
-    registry: &stella_store::SessionRegistry,
-    my_session_id: &str,
-    workspace: &str,
+    scope: &sessions_view::SessionScope<'_>,
     in_tx: &mpsc::UnboundedSender<Inbound>,
 ) -> bool {
+    let sessions_view::SessionScope { registry, mine, .. } = *scope;
     match input {
         WorkspaceInput::SessionsRefresh => {
-            let _ = in_tx.send(sessions_inbound(registry, my_session_id, workspace));
+            let _ = in_tx.send(scope.snapshot());
+            // The rows without a description get one, off the pump.
+            sessions_view::describe_sessions(scope, in_tx.clone());
         }
         WorkspaceInput::SessionOpen { id } => {
             spawn_session_replay(id.clone(), registry.list(), in_tx.clone());
         }
         WorkspaceInput::SessionArchive { id } => {
             let _ = registry.set_status(id, stella_store::SessionStatus::Archived);
-            let _ = in_tx.send(sessions_inbound(registry, my_session_id, workspace));
+            let _ = in_tx.send(scope.snapshot());
         }
         WorkspaceInput::SessionDelete { id } => {
             // The deck refuses to delete its own record UI-side too; this is
             // the belt-and-suspenders check.
-            if id != my_session_id {
+            if id != mine {
                 let _ = registry.remove(id);
             }
-            let _ = in_tx.send(sessions_inbound(registry, my_session_id, workspace));
+            let _ = in_tx.send(scope.snapshot());
         }
         WorkspaceInput::NotificationRead { id } => {
             let store = stella_store::NotificationStore::open_default();
@@ -3353,7 +3417,7 @@ fn handle_agents_input(
             scope,
             content,
         } => {
-            let status = save_agent(root, name, *scope, content);
+            let status = authoring::save_agent(root, name, *scope, content);
             let _ = in_tx.send(agents_list_inbound(root, Some(status)));
             true
         }
@@ -3362,75 +3426,16 @@ fn handle_agents_input(
             scope,
             version,
         } => {
-            let status = pin_agent(root, name, *scope, *version);
+            let status = authoring::pin_agent(root, name, *scope, *version);
+            let _ = in_tx.send(agents_list_inbound(root, Some(status)));
+            true
+        }
+        WorkspaceInput::AgentDelete { name, scope } => {
+            let status = authoring::delete_agent(root, name, *scope);
             let _ = in_tx.send(agents_list_inbound(root, Some(status)));
             true
         }
         _ => false,
-    }
-}
-
-/// The edit-save path: archive-then-write a NEW version and pin it (see
-/// `agents_installed::save_new_version`). Returns the pane's status line.
-fn save_agent(root: &std::path::Path, name: &str, scope: AgentScope, content: &str) -> String {
-    let dir = match crate::agents_installed::agents_dir_for(scope, root) {
-        Ok(dir) => dir,
-        Err(e) => return format!("save failed: {e}"),
-    };
-    let slug = crate::agents_installed::find_slug(&dir, name)
-        .unwrap_or_else(|| crate::agents_installed::slugify(name));
-    match crate::agents_installed::save_new_version(&dir, &slug, content) {
-        Ok(version) => format!(
-            "saved {name} — v{version} is now pinned (previous versions preserved under \
-             .versions/{slug}/)"
-        ),
-        Err(e) => format!("save failed: {e}"),
-    }
-}
-
-/// The pin-set path: re-point the pin at an existing version — never
-/// creates one. Returns the pane's status line.
-fn pin_agent(root: &std::path::Path, name: &str, scope: AgentScope, version: u32) -> String {
-    let dir = match crate::agents_installed::agents_dir_for(scope, root) {
-        Ok(dir) => dir,
-        Err(e) => return format!("pin failed: {e}"),
-    };
-    let Some(slug) = crate::agents_installed::find_slug(&dir, name) else {
-        return format!(
-            "no installed agent named {name} at the {} scope",
-            scope.label()
-        );
-    };
-    match crate::agents_installed::pin_version(&dir, &slug, version) {
-        Ok(()) => format!("{name} pinned to v{version} — no new version written"),
-        Err(e) => format!("pin failed: {e}"),
-    }
-}
-
-/// Cap on the free-text `reason` stamped on an agent-use telemetry row.
-const AGENT_USE_REASON_MAX: usize = 120;
-
-/// Record the agent-usage telemetry for a `/agent-name task…` invocation:
-/// resolution mirrors `CustomExtensions::expand` (commands shadow skills
-/// shadow agents — only a real agent invocation records), `version` is the
-/// definition's pinned version at this moment, `reason` is the task
-/// snippet. The row rides the registry's ledger and is drained into
-/// store.db by `agent::record_execution_end` under the execution the
-/// expanded prompt runs as.
-fn record_agent_invocation(
-    input: &str,
-    custom: &crate::extensions::CustomExtensions,
-    registry: &ToolRegistry,
-) {
-    let trimmed = input.trim();
-    let (head, args) = match trimmed.split_once(char::is_whitespace) {
-        Some((head, args)) => (head, args),
-        None => (trimmed, ""),
-    };
-    if let Some(crate::extensions::Invocation::Agent(agent)) = custom.lookup(head) {
-        let version = crate::agents_installed::active_version_for_source(&agent.source_path);
-        let reason: String = args.trim().chars().take(AGENT_USE_REASON_MAX).collect();
-        registry.record_agent_use(&agent.name, version, &reason);
     }
 }
 
@@ -3631,7 +3636,7 @@ async fn run_deck_command(
             // An AGENT invocation additionally records a usage-telemetry
             // row (agent, pinned version, task) on the registry's ledger.
             if let Some(expanded) = custom.expand(trimmed, &skills::deck_reserved()) {
-                record_agent_invocation(trimmed, custom, registry);
+                authoring::record_agent_invocation(trimmed, custom, registry);
                 return DeckCommand::Expanded(expanded);
             }
             // A bare unknown /word is a typo'd command, not a prompt — say so

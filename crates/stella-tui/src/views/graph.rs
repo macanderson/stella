@@ -1,44 +1,22 @@
-//! Graph tab — a visual code-graph neighborhood inspector.
+//! Graph tab — the code-graph neighborhood inspector.
 //!
-//! Renders exclusively from [`DeckUi::graph`], the out-of-band
-//! [`GraphSnapshot`] (see `crate::graph` module docs — it is not folded from
-//! the `AgentEvent` log, so this view does not touch `WorkspaceModel` at all).
-//!
-//! Layout: a selectable node list on the left, colored by [`GraphNode::kind`]
-//! via [`theme::graph_kind_color`]; a detail panel on the right for the
-//! cursor node showing its human `label` (the primary identifier — a raw id
-//! is never shown, per project rule) plus its incident edges rendered as
-//! human relations (`imports → serde`, `called by ← driver.rs`), citing the
-//! *other* node's label, never an index or id. When there's room, the coupling
-//! ranking ([`crate::v2::graph`]) sits below the detail panel: neighbours
-//! ordered by how many edges tie them to the cursor, which is the question a
-//! reader has before editing a file.
-//!
-//! That panel replaced a dot-matrix sketch of the neighborhood drawn on a
-//! `ratatui` `Canvas`. SPEC 9.1 retires it by name; SPEC 2 forbids its
-//! `Marker::Dot` braille sub-cells; and it could not answer the question
-//! anyway, since a ring places every neighbour equidistant from the focus by
-//! construction.
+//! Renders from [`DeckUi::graph`], the out-of-band [`crate::graph::GraphSnapshot`] (see
+//! `crate::graph` module docs — it is not folded from the `AgentEvent` log),
+//! plus the focused lane's file ledger for the `● hot` mark. The drawing is
+//! [`crate::v2::graph_tab`] (SPEC 9.1); this module keeps the empty state and
+//! the cursor clamp, and its tests pin the tab through the deck's frozen
+//! `render` signature.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
+use ratatui::layout::{Alignment, Rect};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
-use crate::graph::{GraphNode, GraphSnapshot};
 use crate::theme;
 
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
-    // The graph snapshot is a labeled out-of-band read-model (set by the
-    // caller/scenario), not folded from the model's event log — see
-    // `crate::graph` module docs — so this view has nothing to read off
-    // `model`. Keep the parameter to honor the frozen `render` signature
-    // shared by every deck view.
-    let _ = model;
-
     let Some(snapshot) = ui.graph.as_ref().filter(|g| !g.is_empty()) else {
         render_empty(area, buf);
         return;
@@ -52,19 +30,13 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     let cursor = ui.graph_cursor.min(snapshot.nodes.len() - 1);
     ui.graph_cursor = cursor;
 
-    // Side by side normally; stacked in accessible mode. A row that carries
-    // the node list on its left and the detail panel on its right reads aloud
-    // as one interleaved line — the two panes are separate documents, so
-    // reading order has to be one then the other, not both at once (#1258).
-    // The list keeps the smaller share either way: it is an index, and the
-    // detail is what the index is for.
-    let panes = if ui.accessible {
-        Layout::vertical([Constraint::Percentage(40), Constraint::Percentage(60)]).split(area)
-    } else {
-        Layout::horizontal([Constraint::Percentage(34), Constraint::Percentage(66)]).split(area)
-    };
-    render_node_list(snapshot, cursor, panes[0], buf);
-    render_right(snapshot, cursor, panes[1], buf);
+    // The files this session changed, for the `● hot` mark.
+    let changed: Vec<String> = model
+        .agents
+        .get(ui.focused)
+        .map(|a| a.model.files.iter().map(|f| f.path.clone()).collect())
+        .unwrap_or_default();
+    crate::v2::graph_tab::render(snapshot, cursor, &changed, ui.accessible, area, buf);
 }
 
 /// The "nothing loaded" state: a centered muted hint, no border chrome beyond
@@ -98,170 +70,7 @@ fn render_empty(area: Rect, buf: &mut Buffer) {
     Paragraph::new(line).render(row, buf);
 }
 
-// Left: node list
-
-fn render_node_list(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
-    // Advertise the file picker in the title (the "/ files" affordance) when a
-    // file list is available — the whole point of the tab is being able to
-    // re-root, so the way to do it must be visible, not hidden behind a key.
-    let title = if snapshot.files.is_empty() {
-        format!(" nodes · {} ", snapshot.nodes.len())
-    } else {
-        format!(" nodes · {} · / files ", snapshot.nodes.len())
-    };
-    let block = Block::default().borders(Borders::ALL).title(title);
-    let inner = block.inner(area);
-    block.render(area, buf);
-    if inner.height == 0 || inner.width == 0 {
-        return;
-    }
-
-    // Window the list around the cursor (centered when possible) so the
-    // selection can never walk below the viewport into invisible rows — the
-    // same keep-in-view slice the Files ledger uses. One row per node (no
-    // wrap), so nodes map 1:1 to visible lines and the arithmetic is exact.
-    let total = snapshot.nodes.len();
-    let visible = inner.height as usize;
-    let start = if total <= visible {
-        0
-    } else {
-        cursor
-            .saturating_sub(visible.saturating_sub(1) / 2)
-            .min(total - visible)
-    };
-    let end = (start + visible).min(total);
-
-    let lines: Vec<Line<'static>> = snapshot.nodes[start..end]
-        .iter()
-        .enumerate()
-        .map(|(offset, node)| node_list_line(node, start + offset == cursor))
-        .collect();
-    Paragraph::new(Text::from(lines)).render(inner, buf);
-}
-
-fn node_list_line(node: &GraphNode, selected: bool) -> Line<'static> {
-    let mut style = Style::new().fg(theme::graph_kind_color(&node.kind));
-    if selected {
-        style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
-    }
-    let glyph = theme::graph_kind_glyph(&node.kind);
-    Line::from(vec![
-        Span::styled(format!("{glyph} "), style),
-        Span::styled(node.label.clone(), style),
-    ])
-}
-
-// Right: detail panel (+ bonus sketch when there's room)
-
-/// Below this height (rows) + width (cols), the spatial sketch is skipped —
-/// a cramped canvas reads as noise, not a diagram, and the list+detail view
-/// already fully covers the cursor node.
-/// Detail needs six rows above it before the ranking earns any.
-const COUPLING_MIN_HEIGHT: u16 = 10;
-/// Room for a caption plus the neighbours worth ranking; past a handful the
-/// tail is noise, and the list is sorted so the tail is what gets cut.
-const COUPLING_HEIGHT: u16 = 8;
-/// Under this the bars would be shorter than their own labels.
-const COUPLING_MIN_WIDTH: u16 = 24;
-
-fn render_right(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
-    let show_coupling =
-        area.height >= COUPLING_MIN_HEIGHT + COUPLING_HEIGHT && area.width >= COUPLING_MIN_WIDTH;
-    if show_coupling {
-        let rows =
-            Layout::vertical([Constraint::Min(6), Constraint::Length(COUPLING_HEIGHT)]).split(area);
-        render_detail(snapshot, cursor, rows[0], buf);
-        crate::v2::graph::render(snapshot, cursor, rows[1], buf);
-    } else {
-        render_detail(snapshot, cursor, area, buf);
-    }
-}
-
-fn render_detail(snapshot: &GraphSnapshot, cursor: usize, area: Rect, buf: &mut Buffer) {
-    let node = &snapshot.nodes[cursor];
-    let title = format!(" {} ", snapshot.focus);
-
-    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled(
-        node.label.clone(),
-        theme::heading(),
-    ))];
-
-    let mut meta = vec![Span::styled(
-        node.kind.clone(),
-        Style::new().fg(theme::graph_kind_color(&node.kind)),
-    )];
-    if let Some(loc) = &node.location {
-        meta.push(Span::styled("  ·  ", theme::muted()));
-        meta.push(Span::styled(loc.clone(), theme::muted()));
-    }
-    lines.push(Line::from(meta));
-    lines.push(Line::default());
-
-    let degree = snapshot.degree(cursor);
-    lines.push(Line::from(Span::styled(
-        format!("relations · {degree}"),
-        theme::heading(),
-    )));
-    if degree == 0 {
-        lines.push(Line::from(Span::styled(
-            "no known relations",
-            theme::muted(),
-        )));
-    } else {
-        for edge in &snapshot.edges {
-            let outgoing = edge.from == cursor;
-            let incoming = edge.to == cursor;
-            if !outgoing && !incoming {
-                continue;
-            }
-            // A self-loop (from == to == cursor) is cited once, outgoing,
-            // pointing at the node's own label.
-            let other_idx = if outgoing { edge.to } else { edge.from };
-            let Some(other) = snapshot.nodes.get(other_idx) else {
-                continue;
-            };
-            lines.push(relation_line(&edge.kind, outgoing, &other.label));
-        }
-    }
-
-    let block = Block::default().borders(Borders::ALL).title(title);
-    Paragraph::new(Text::from(lines))
-        .block(block)
-        .wrap(Wrap { trim: true })
-        .render(area, buf);
-}
-
-/// One relation line: `{kind} → {other}` outgoing, `{passive kind} ← {other}`
-/// incoming — always citing the *other* node's human label, never an index.
-fn relation_line(kind: &str, outgoing: bool, other_label: &str) -> Line<'static> {
-    if outgoing {
-        Line::from(Span::styled(
-            format!("{kind} → {other_label}"),
-            Style::new().fg(theme::OK),
-        ))
-    } else {
-        Line::from(Span::styled(
-            format!("{} ← {other_label}", passive(kind)),
-            Style::new().fg(theme::RUN),
-        ))
-    }
-}
-
-/// Best-effort passive form of an edge `kind` for incoming relations, e.g.
-/// `"imports"` → `"imported by"`, `"calls"` → `"called by"`, `"defines"` →
-/// `"defined by"`, `"references"` → `"referenced by"`. Regular-verb heuristic
-/// (strip a trailing `s`, add `"d"` if the stem ends in `e` else `"ed"`);
-/// covers every documented `GraphEdge::kind` and degrades to a readable
-/// (if not always grammatical) label for an unrecognized one.
-fn passive(kind: &str) -> String {
-    let stem = kind.strip_suffix('s').unwrap_or(kind);
-    let past = if stem.ends_with('e') {
-        format!("{stem}d")
-    } else {
-        format!("{stem}ed")
-    };
-    format!("{past} by")
-}
+pub use crate::v2::graph_tab::passive;
 
 #[cfg(test)]
 // The lint is wrong here: these fixtures build with `Type::default()` and
@@ -273,7 +82,7 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::*;
-    use crate::graph::{GraphEdge, GraphSnapshot};
+    use crate::graph::{GraphEdge, GraphNode, GraphSnapshot};
 
     /// Flatten a `TestBackend` buffer to plain text (styling stripped — L-T6
     /// convention shared with `render.rs`'s tests: assert on content, not

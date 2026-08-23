@@ -330,7 +330,7 @@ fn run_deck_paints_folds_resizes_and_restores_under_a_real_pty() {
     // The deck chrome paints: the tab bar's fixed labels…
     deck.wait_for("the tab bar", |d| {
         let s = d.painted();
-        s.contains("SESSION") && s.contains("AGENTS") && s.contains("SETTINGS")
+        s.contains("SESSION") && s.contains("stella*")
     });
     // …and the scripted scenario folded in over the inbound lane. The needle
     // is the recall row's *location* column rather than its citation label:
@@ -413,7 +413,7 @@ fn the_accessible_deck_runs_inline_answers_input_and_never_takes_the_screen() {
     deck.send(b"\x1b");
     deck.wait_for("the tab bar", |d| {
         let s = d.painted();
-        s.contains("SESSION") && s.contains("AGENTS") && s.contains("SETTINGS")
+        s.contains("SESSION") && s.contains("stella*")
     });
 
     // THE invariant. Everything else about this mode follows from drawing on
@@ -517,7 +517,7 @@ fn an_accessible_deck_degrades_rather_than_refusing_to_start() {
     deck.send(b"\x1b");
     deck.wait_for("the tab bar on a terminal that answers nothing", |d| {
         let s = d.painted();
-        s.contains("SESSION") && s.contains("AGENTS") && s.contains("SETTINGS")
+        s.contains("SESSION") && s.contains("stella*")
     });
     assert!(
         !deck.raw_contains(ENTER_ALT_SCREEN),

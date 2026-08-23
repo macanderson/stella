@@ -3,43 +3,43 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ Installed — 4 (user + project) ──────────────────────────────────────────────────────┐┌ Registry search ─────────────────────────────────────────────────────┐
-│  [x] release-checklist v3  (project·workspace)  Cut a release: version bump, change… ││find:                                                                 │
-│▸ [x] rust-review v2/4  (user·user)  Review Rust diffs for ownership, error handling… ││                                                                      │
-│  [ ] sql-tuning v1  (user·installed)  Read a query plan and propose indexes.         ││type a term and press ⏎ to search                                     │
-│  [x] bench-rig-access v1  (project·auto)  Reach the benchmark rig and read a run's … ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-│                                                                                      ││                                                                      │
-└──────────────────────────────────────────────────────────────────────────────────────┘└──────────────────────────────────────────────────────────────────────┘
- space on/off · ctrl+o preview · ctrl+x×2 delete · e edit · p pin · n new · → search
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
-✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
+ SESSION AGENTS TRACES GRAPH FILES   SKILLS   MCP ISSUES SETTINGS                                                                                       stella*
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ⌕                                                                                                                                       installed + registry │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ installed · 4
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│  [x] release-checklist        v3 · project   Cut a release: version bump, changelog, tag, artifacts.                                                         │
+│▸ [x] rust-review              v2/4 · user   Review Rust diffs for ownership, error handling, and API shape.                                                  │
+│  [ ] sql-tuning               v1 · user   Read a query plan and propose indexes.                                                                             │
+│ learned from traces · 1   stella wrote these after repeated wins                                                                                             │
+│  [x] bench-rig-access         learned   Reach the benchmark rig and read a run's reward.                                                                     │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ registry · web · type a term, ↵ searches
+
+ space on/off · ctrl+o preview · e edit · p pin · n new from prompt · ctrl+x ctrl+x delete · → search
+ 4 installed · 1 learned · 3 enabled
+
 >>>
- ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+ ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

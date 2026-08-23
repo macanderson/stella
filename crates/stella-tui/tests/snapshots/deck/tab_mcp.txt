@@ -3,43 +3,43 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ MCP — 3 configured / 2 connected ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│▸ ● Stripe                 http   live  ⚿ oauth ✓  · 21 tools  · 14×                                                                                          │
-│      stripe  ·  Payments, refunds, and balance reads.                                                                                                        │
-│  ● fs                     stdio  live  · 4 tools                                                                                                             │
-│      npx -y @modelcontextprotocol/server-filesystem /w                                                                                                       │
-│  ○ Linear                 http   disabled  ⚿ oauth: o to log in  · 0 tools                                                                                   │
-│      linear  ·  Issues, projects, cycles, and documents.                                                                                                     │
-│                                                                                                                                                              │
-│   ↑↓ select   ctrl+o inspect   e/␣ enable/disable   s search registry   a auth   o oauth login   x remove   r refresh                                        │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
-✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
+ SESSION AGENTS TRACES GRAPH FILES SKILLS   MCP   ISSUES SETTINGS                                                                                       stella*
+ servers · 3 · 2 connected
+▸ ● Stripe                 http   21 tools   live  oauth ✓  · 14×
+      stripe  ·  Payments, refunds, and balance reads.
+  ● fs                     stdio  4 tools    live
+      npx -y @modelcontextprotocol/server-filesystem /w
+  ○ Linear                 http   0 tools    disabled  o login
+      linear  ·  Issues, projects, cycles, and documents.
+
+ registry · web · s search · new servers land disabled · the handshake shows capabilities before first enable
+
+ ↵ tools · ctrl+o inspect · a auth · o login · e enable · x remove · r refresh · s search
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 >>>
- ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+ ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

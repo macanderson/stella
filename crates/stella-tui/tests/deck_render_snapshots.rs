@@ -78,12 +78,9 @@ const BLESS_CMD: &str = "BLESS=1 cargo test -p stella-tui --test deck_render_sna
 /// a live one makes the AGENTS dashboard's CPU%/MEM columns differ per run.
 const FIXTURE_PID: u32 = 424_242;
 
-/// The canonical viewport for the per-tab goldens.
-///
-/// 160 columns is above the AGENTS dashboard's compact threshold, so the dense
+/// The canonical viewport for the per-tab goldens: 160 columns pins the
+/// widest layout each tab has.
 /// column set renders in full — pinning the widest layout each tab has.
-/// `deck_render_snapshots_pin_the_compact_agents_dashboard` takes the other
-/// side of that threshold.
 const W: u16 = 160;
 const H: u16 = 40;
 
@@ -368,6 +365,42 @@ fn fixture_skills() -> SkillsView {
     }
 }
 
+fn fixture_agents() -> Vec<stella_tui::InstalledAgentEntry> {
+    let agent = |name: &str, scope, description: &str, tools: Option<&[&str]>, version| {
+        stella_tui::InstalledAgentEntry {
+            name: name.to_string(),
+            description: description.to_string(),
+            tools: tools.map(|t| t.iter().map(|s| s.to_string()).collect()),
+            scope,
+            source_path: format!(".stella/agents/{name}.md"),
+            version,
+            versions: (1..=version)
+                .map(|v| stella_tui::AgentVersionInfo {
+                    version: v,
+                    label: String::new(),
+                })
+                .collect(),
+            content: format!("---\nname: {name}\n---\n{description}\n"),
+        }
+    };
+    vec![
+        agent(
+            "reviewer",
+            stella_tui::AgentScope::Project,
+            "reviews a diff against the house rules",
+            Some(&["read_file", "search"]),
+            2,
+        ),
+        agent(
+            "release-captain",
+            stella_tui::AgentScope::User,
+            "cuts a release: bump, changelog, tag",
+            None,
+            1,
+        ),
+    ]
+}
+
 fn fixture_issues() -> Vec<IssueRow> {
     let issue = |key: &str, title: &str, state: &str, labels: &[&str], assignee: Option<&str>| {
         IssueRow {
@@ -480,8 +513,14 @@ fn ui_for(tab: DeckTab) -> DeckUi {
     match tab {
         // The transcript of the focused agent, scrolled to the live tail.
         DeckTab::Session => ui.focused = 0,
-        // Not row 0: a selection that never moves cannot pin the highlight.
-        DeckTab::Agents => ui.focused = 1,
+        // A populated list with the second row selected and the first assumed,
+        // so both marks are pinned.
+        DeckTab::Agents => {
+            ui.installed.entries = fixture_agents();
+            ui.installed.loaded = true;
+            ui.installed.sel = 1;
+            ui.installed.assumed = Some("reviewer".into());
+        }
         DeckTab::Traces => ui.trace_filter = None,
         DeckTab::Graph => ui.graph_cursor = 1,
         DeckTab::Files => ui.files_sel = 1,
@@ -538,27 +577,6 @@ fn deck_render_snapshots_cover_every_tab() {
             &frame,
         );
     }
-}
-
-/// The AGENTS dashboard below its compact threshold.
-///
-/// The table drops its density columns (CPU%, MEM, …) on a narrow terminal and
-/// keeps the identifying ones. That responsive break is a layout decision with
-/// no other guard: `tests/deck_snapshot.rs` asserts only that `CPU%` is absent
-/// and `Goal` present, which stays true however badly the surviving columns are
-/// spaced. This pins the actual narrow layout.
-#[test]
-fn deck_render_snapshots_pin_the_compact_agents_dashboard() {
-    let model = fixture_model();
-    let mut ui = ui_for(DeckTab::Agents);
-    let frame = render_frame(&model, &mut ui, 120, 24);
-    assert_golden(
-        "tab_agents_compact",
-        "the AGENTS dashboard below its 130-column compact threshold",
-        120,
-        24,
-        &frame,
-    );
 }
 
 /// The SETTINGS tab's second pane — the tool-switch editor.
