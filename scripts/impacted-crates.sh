@@ -38,7 +38,7 @@
 #      library does not.
 #
 #   2. Compile-time escapes. `crates/stella-parity/src/lib.rs` does
-#      `include_str!("../../stella-cli/src/subsession.rs")`, and
+#      `include_str!("../../stella-cli/src/subsession/tests.rs")`, and
 #      `crates/stella-tools/tests/doc_truth.rs` does `include_str!("../../README.md")`.
 #      No cargo edge names either one. These are resolved literally below, so
 #      touching that prompt file re-tests `stella-parity` even though nothing
