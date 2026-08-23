@@ -126,6 +126,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-deck-paths.sh
 
+      - name: deleted-tests guard reads a live PR body over a stale one
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-deleted-tests.sh
+
       - name: gate-parity guard failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-gate-parity.sh

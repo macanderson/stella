@@ -629,6 +629,10 @@ main-canary: ## Ask whether main still composes green (check only; no issue is f
 main-canary-test: ## Test the post-merge canary, announcements included (hermetic; not part of `gate`)
 	./scripts/test-main-canary.sh
 
+.PHONY: deleted-tests-test
+deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handling (hermetic; not part of `gate`; #4495)
+	./scripts/test-deleted-tests.sh
+
 # The canary's other half: it detects, this is what consumes the detection at
 # the point a merge is still a decision (#3917). Not a gate step for the same
 # reason the canary is not — it asks the issue tracker a question, and `gate`
