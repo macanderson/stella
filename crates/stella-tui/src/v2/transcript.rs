@@ -203,14 +203,16 @@ impl EventKind {
             EventKind::Memory => glyph::MEMORY,
             EventKind::Gate { .. } => glyph::GATE,
             EventKind::Model { .. } => glyph::RUNNING,
-            EventKind::Compaction { .. } => '↓',
+            EventKind::Compaction { .. } => glyph::COMPACTED,
             EventKind::Other { class } => match class {
                 ToolClass::Inspect => glyph::TOOL_INSPECT,
                 ToolClass::Mutate => glyph::TOOL_MUTATE,
                 ToolClass::Execute => glyph::TOOL_EXECUTE,
                 ToolClass::Delegate => glyph::TOOL_DELEGATE,
             },
-            _ => '●',
+            // Named rather than a wildcard, so a kind added to the vocabulary
+            // is an `E0004` here and has to state its own head (#4320).
+            EventKind::Read | EventKind::Edit { .. } | EventKind::Run => glyph::EVENT,
         }
     }
 

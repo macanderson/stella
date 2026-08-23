@@ -17,6 +17,7 @@ mod gates;
 mod graph;
 mod help;
 mod issues;
+mod list_vocabulary;
 mod queue;
 mod routing_card;
 mod selection;

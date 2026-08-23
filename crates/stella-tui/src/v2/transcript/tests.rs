@@ -351,6 +351,70 @@ fn a_command_subject_stays_one_unemphasised_span() {
     );
 }
 
+/// **The witness (#4320).** Every glyph a head can draw is in the vocabulary
+/// `glyph::ALL` enumerates.
+///
+/// `ALL` exists so the width test and `glyphs_are_distinct` walk one list
+/// rather than a second; a head drawn as a bare character literal is outside
+/// both, which is how `●` — the head of `edit`, `run` and an expanded `read`,
+/// the most-drawn rows in the deck — and `↓` came to have no stated width and
+/// no collision check.
+#[test]
+fn every_head_glyph_is_in_the_vocabulary() {
+    let kinds = [
+        EventKind::Read,
+        EventKind::Edit {
+            extent: Extent::delta(2, 1),
+        },
+        EventKind::Write {
+            extent: Extent::delta(9, 0),
+        },
+        EventKind::Delete {
+            extent: Extent::delta(0, 9),
+        },
+        EventKind::Run,
+        EventKind::Skill {
+            trigger: "auto".into(),
+            tokens: 1,
+        },
+        EventKind::Memory,
+        EventKind::Gate {
+            state: "pass".into(),
+            deterministic: true,
+        },
+        EventKind::Model { tokens_per_sec: 40 },
+        EventKind::Compaction {
+            from_tokens: 74_000,
+            to_tokens: 69_000,
+            evicted: 0,
+            deduped: 0,
+        },
+        EventKind::Other {
+            class: ToolClass::Inspect,
+        },
+        EventKind::Other {
+            class: ToolClass::Mutate,
+        },
+        EventKind::Other {
+            class: ToolClass::Execute,
+        },
+        EventKind::Other {
+            class: ToolClass::Delegate,
+        },
+    ];
+    for kind in kinds {
+        for collapsed in [false, true] {
+            let drawn = kind.head_glyph(collapsed);
+            assert!(
+                glyph::ALL.iter().any(|(_, ch)| *ch == drawn),
+                "{kind:?} (collapsed {collapsed}) draws {drawn:?}, which is in \
+                 no row of `glyph::ALL` — so it has no stated width and no \
+                 collision check"
+            );
+        }
+    }
+}
+
 /// prompt.md rule 3: no hex literal outside the theme crate.
 #[test]
 fn no_hex_literals_in_v2_transcript_code() {
