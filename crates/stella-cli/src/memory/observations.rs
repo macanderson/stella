@@ -54,12 +54,19 @@ const REFLECTION_SOURCE: &str = "reflections.jsonl";
 /// the concrete attack — a lesson repeated many times inside a single turn can
 /// never satisfy a three-task threshold.
 ///
-/// **Known limitation, stated rather than hidden.** A turn is not a task. Three
-/// turns spent on one task read as three distinct tasks, which is the *unsafe*
-/// direction: it under-counts how correlated the evidence is. Closing it needs a
-/// session- or goal-scoped identity that the reflection log does not currently
-/// carry. [`ReflectionLesson::task_id`] exists so a caller that knows better can
-/// supply one without a log-format change; nothing populates it yet.
+/// **The timestamp is the fallback, not the rule.** Every shipped door stamps a
+/// real boundary onto [`ReflectionLesson::task_id`] before anything persists the
+/// lesson: `SessionMemory::reflect_and_record` writes the session's own
+/// `session:<secs>-<pid>`, and a fleet attempt narrows that to `fleet:<task id>`
+/// (`fleet_cmd::attempt_task_boundary` → `SessionMemory::set_task_id`), so three
+/// attempts at one task merge rather than reading as three. The log line carries
+/// whichever it was, so extraction reads it back.
+///
+/// What reaches `turn:{occurred_at}` is a lesson with an empty `task_id` — a log
+/// line written before the field existed, which `#[serde(default)]` still
+/// parses. For those the turn is the best available boundary, and it is wrong in
+/// the *unsafe* direction: three turns spent on one task read as three distinct
+/// tasks, under-counting how correlated the evidence is.
 fn task_id_for(lesson: &ReflectionLesson) -> String {
     if !lesson.task_id.is_empty() {
         return lesson.task_id.clone();

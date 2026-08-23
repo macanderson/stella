@@ -155,7 +155,7 @@ lib.rs), never as a planning assumption.
 | [`src/budget.rs`](src/budget.rs) | `BudgetGuard` — USD spend against a turn and/or session cap. Returns `BudgetOutcome`; aborts nothing itself. |
 | [`src/compaction.rs`](src/compaction.rs) | `compact()` — dedup, supersession, aging, eviction. Open when the conversation is being rewritten wrongly. |
 | [`src/estimator.rs`](src/estimator.rs) | Conservative token estimate plus `Calibration`/`CalibrationMap`, the per-model drift correction fed by reported usage. |
-| [`src/loop_detect.rs`](src/loop_detect.rs) | `detect_loop()` — exact repeats and short cycles over `CallRecord`s. |
+| [`src/loop_detect.rs`](src/loop_detect.rs) + [`src/loop_detect/`](src/loop_detect) | `detect_loop()` — five rungs over `CallRecord`s: exact repeats, short cycles, stagnation, interleaved repeats, and a wrapped monotonic sweep. |
 | [`src/shell_text.rs`](src/shell_text.rs) | Reading a shell command as *text*: the quote-aware `shell_words` splitter, `is_operator_word`, and `bare_sleep_seconds` — the stall classifier the `bash` advisory and the engine's stall rung ([`src/driver/loop_escalation.rs`](src/driver/loop_escalation.rs)) share, so one operator list serves both (#2022). |
 | [`src/retry.rs`](src/retry.rs) | `RetryPolicy`, backoff computation, `retry_with_backoff*`, and the `Sleeper` port. |
 | [`src/starvation.rs`](src/starvation.rs) | Reasoning-starvation arithmetic: output-contract headroom, the empty-`length` signature, and the retry cap. Written to serve two chokepoints from one copy, because one copy is what makes a fix reach both (#2128, #2174): `stella-cli`'s standalone-call chokepoint, and the staged pipeline's management chokepoint until that crate was deleted (#3865). |

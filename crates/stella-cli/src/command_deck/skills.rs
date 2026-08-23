@@ -1,7 +1,7 @@
 //! SKILLS-tab helper cluster: the deck's skill vocabulary, npx-skills
 //! registry parsing, and install/preview/authoring ops.
 use super::*;
-use stella_tui::strip_ansi;
+use stella_tui::{SlashDomain, strip_ansi};
 
 /// The deck's slash vocabulary: the productized commands (🔒) followed by
 /// every custom command/skill (⚡) currently on disk. Rebuilt after `/init`
@@ -11,74 +11,112 @@ pub(super) fn deck_slash_commands(
 ) -> Vec<SlashCommand> {
     let mut commands: Vec<SlashCommand> = DECK_BUILTINS
         .iter()
-        .map(|(name, description)| SlashCommand::new(*name, *description))
+        .map(|(name, description, domain)| {
+            SlashCommand::new(*name, *description).in_domain(*domain)
+        })
         .collect();
     let customs = custom.slash_entries(&commands);
     commands.extend(customs);
     commands
 }
 
-/// The deck's productized vocabulary, as `(name, menu description)`. One
-/// source of truth for the menu's 🔒 rows and the reserved-name guard: a
+/// The deck's productized vocabulary, as `(name, menu description, domain)`.
+/// One source of truth for the menu's 🔒 rows and the reserved-name guard: a
 /// custom definition can never run under one of these names — not from the
 /// menu (`slash_entries` drops it) and not typed with arguments either
 /// (`expand` refuses reserved heads).
-pub(super) const DECK_BUILTINS: &[(&str, &str)] = &[
-    ("/help", "show commands"),
-    ("/clear", "reset the conversation"),
+///
+/// The domain is the palette's browse group (#4338). It rides here rather
+/// than being inferred from the name in the deck, because what a command is
+/// *about* is a fact about the command, and a second table keyed on names
+/// would be a copy to keep in step.
+pub(super) const DECK_BUILTINS: &[(&str, &str, SlashDomain)] = &[
+    ("/help", "show commands", SlashDomain::Session),
+    ("/clear", "reset the conversation", SlashDomain::Session),
     (
         "/model",
         "set the default model (persists; no arg shows current + list)",
+        SlashDomain::Config,
     ),
     (
         "/models",
         "model routing — the think · work · verify slots (`refresh` re-syncs)",
+        SlashDomain::Config,
     ),
     (
         "/profile",
         "retune every role: fast · balanced · pro · ultra · auto",
+        SlashDomain::Config,
     ),
     (
         "/theme",
         "switch colour theme (stella-dark · stella-light; persists; no arg shows current)",
+        SlashDomain::Config,
     ),
-    ("/init", "index the workspace: domains + code graph"),
+    (
+        "/init",
+        "index the workspace: domains + code graph",
+        SlashDomain::Code,
+    ),
     (
         "/agents",
         "open the AGENTS tab: executions & installed agents",
+        SlashDomain::Extend,
     ),
     (
         "/export",
         "export session telemetry to a ZIP + HTML dashboard",
+        SlashDomain::Session,
     ),
-    ("/files", "open the Files tab"),
-    ("/diff", "open the diff viewer"),
-    ("/graph", "open the code-graph tab"),
-    ("/skills", "open the SKILLS tab: manage · search · create"),
-    ("/mcp", "open the MCP servers tab"),
+    ("/files", "open the Files tab", SlashDomain::Code),
+    ("/diff", "open the diff viewer", SlashDomain::Code),
+    ("/graph", "open the code-graph tab", SlashDomain::Code),
+    (
+        "/skills",
+        "open the SKILLS tab: manage · search · create",
+        SlashDomain::Extend,
+    ),
+    ("/mcp", "open the MCP servers tab", SlashDomain::Extend),
     (
         "/sessions",
         "every stella session on this machine, grouped by status (also: ctrl-e)",
+        SlashDomain::Session,
     ),
     (
         "/context",
         "this session's active skills + MCP servers (also: ctrl-k)",
+        SlashDomain::Session,
     ),
     (
         "/subagents",
         "every dispatched sub-agent: purpose, where it is, stop · pause · restart (also: ctrl-a)",
+        SlashDomain::Plan,
     ),
     (
         "/plan",
         "the plan — every step, with where it may write and spend",
+        SlashDomain::Plan,
     ),
-    ("/budget", "set or clear the session spend cap"),
+    (
+        "/budget",
+        "set or clear the session spend cap",
+        SlashDomain::Plan,
+    ),
     (
         "/inspect",
         "the context sent to the model on any recorded call (also: ⌃g)",
+        SlashDomain::Plan,
     ),
-    ("/inbox", "notifications — messages persist until read"),
-    ("/mcp-search", "search the MCP registry & install servers"),
+    (
+        "/inbox",
+        "notifications — messages persist until read",
+        SlashDomain::Session,
+    ),
+    (
+        "/mcp-search",
+        "search the MCP registry & install servers",
+        SlashDomain::Extend,
+    ),
     // `/model` sets the DEFAULT model from the prompt (persisted, parity
     // with the tab). The full engine-config editor — per-agent models,
     // provider pins, effort, prompts — lives on the SETTINGS tab; there are
@@ -86,18 +124,28 @@ pub(super) const DECK_BUILTINS: &[(&str, &str)] = &[
     (
         "/settings",
         "open the SETTINGS tab — the home of all config (models included)",
+        SlashDomain::Config,
     ),
-    ("/donate", "support stella — become a GitHub Sponsor"),
+    (
+        "/donate",
+        "support stella — become a GitHub Sponsor",
+        SlashDomain::Session,
+    ),
     (
         "/add-dir",
         "let this session write inside another directory",
+        SlashDomain::Config,
     ),
-    ("/reload", "refresh your stella configurations"),
+    (
+        "/reload",
+        "refresh your stella configurations",
+        SlashDomain::Config,
+    ),
 ];
 
 /// The deck's reserved command names — see [`DECK_BUILTINS`].
 pub(super) fn deck_reserved() -> Vec<&'static str> {
-    DECK_BUILTINS.iter().map(|(name, _)| *name).collect()
+    DECK_BUILTINS.iter().map(|(name, ..)| *name).collect()
 }
 
 // SKILLS tab: driver-side ops (the deck routes `WorkspaceInput::Skill`)

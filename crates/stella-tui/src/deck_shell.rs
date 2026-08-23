@@ -110,6 +110,20 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// Whether `key` is `⌃V`, the deck's explicit clipboard pull.
+///
+/// The run loop claims this chord *above* [`handle_deck_key`], because the
+/// capture is blocking OS I/O the pure key layer cannot do. That makes it the
+/// one binding in [`crate::keymap`] whose witness cannot press a key through
+/// the dispatcher, so the predicate is a named function with a test rather
+/// than a guard inlined into a `select!` arm (#4368).
+fn is_clipboard_pull(key: crossterm::event::KeyEvent) -> bool {
+    key.code == crossterm::event::KeyCode::Char('v')
+        && key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+}
+
 /// Run one `!` shell command **immediately** on the local event lane.
 ///
 /// `target` is the lane the output belongs to. `Some(agent)` — the normal
@@ -654,9 +668,7 @@ pub async fn run_deck(
                     // the blocking pool and the result returns on `clip_rx` —
                     // the draw loop never waits on the clipboard.
                     Some(Event::Key(key))
-                        if key.kind != KeyEventKind::Release
-                            && key.code == crossterm::event::KeyCode::Char('v')
-                            && key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) =>
+                        if key.kind != KeyEventKind::Release && is_clipboard_pull(key) =>
                     {
                         let tx = clip_tx.clone();
                         tokio::task::spawn_blocking(move || {
@@ -822,6 +834,31 @@ pub async fn run_deck(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **The witness for `ctrl-v` (#4368).** The run loop's clipboard arm
+    /// fires on `⌃V` and on nothing else — a bare `v` is the next character
+    /// of a prompt, and `⌥V` / `⌘V` are the terminal's own paste, which
+    /// arrives as bracketed paste rather than a key.
+    #[test]
+    fn ctrl_v_is_the_clipboard_pull_and_a_bare_v_is_not() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        assert!(is_clipboard_pull(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!is_clipboard_pull(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::NONE
+        )));
+        assert!(!is_clipboard_pull(KeyEvent::new(
+            KeyCode::Char('v'),
+            KeyModifiers::ALT
+        )));
+        assert!(!is_clipboard_pull(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL
+        )));
+    }
 
     #[tokio::test]
     async fn shell_child_cannot_receive_explicit_credentials() {

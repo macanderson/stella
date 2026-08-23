@@ -600,6 +600,61 @@ fn the_toml_root_vocabulary_matches_the_document() {
     }
 }
 
+/// Every root section of `stella.toml` has a heading on the page that claims
+/// to document all of them.
+///
+/// The fifth edit a settings key needs, and the one nothing was checking. The
+/// test above makes the *parser* and the *warning vocabulary* agree; this makes
+/// the **reference page** agree with both. `[workspace]` and `[plugins]` were
+/// each accepted by the parser and named by no heading, so the page's own
+/// promise — "Every section, in the TOML shape" — was false for two sections
+/// at once (#4425). That is the same failure mode #928 found on the command
+/// surface, which is why the remedy is the same: relate the enum to the page
+/// and fail, rather than trust a reviewer to notice an absence.
+///
+/// Deliberately a heading check and not a content check. What a section's
+/// prose should say is a judgement; that a reader can *find* the section is
+/// not, and a heading is the smallest thing that cannot be satisfied by
+/// mentioning the name in passing. Any heading level counts, because `[meta]`
+/// earns an `##` of its own while the rest sit under one `##`.
+///
+/// **Witness.** Fails on the base commit: `[workspace]` and `[plugins]` carry
+/// no heading on the page.
+#[test]
+fn every_root_section_is_documented_on_the_reference_page() {
+    let page = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("crates/stella-cli sits two levels under the repository root")
+        .join("website/content/docs/configuration/stella-toml.mdx");
+    let body =
+        std::fs::read_to_string(&page).unwrap_or_else(|e| panic!("read {}: {e}", page.display()));
+
+    let headings: Vec<&str> = body
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with('#'))
+        .collect();
+
+    let undocumented: Vec<&str> = TOML_ROOT_FIELDS
+        .iter()
+        .copied()
+        .filter(|key| {
+            let marker = format!("`[{key}]`");
+            !headings.iter().any(|heading| heading.contains(&marker))
+        })
+        .collect();
+
+    assert!(
+        undocumented.is_empty(),
+        "stella.toml accepts these root sections and \
+         website/content/docs/configuration/stella-toml.mdx has no heading for them: {}\n\n\
+         Add a `### `[<name>]`` section written from the Rust field list in \
+         `settings/toml_config.rs`, not from memory.",
+        undocumented.join(", "),
+    );
+}
+
 /// Every key of `[agents]` is in the TOML vocabulary, and nothing else is.
 ///
 /// The same check as above, one level down, and it needs its own test because

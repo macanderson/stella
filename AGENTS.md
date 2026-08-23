@@ -92,11 +92,13 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + wire-paths (the hook derives wire-schema.yml's filter)
                          #   + tokens (hue clamp + no retired hex)
                          #   + hue-separation (30° OKLCH, web tokens)
+                         #   + contrast (WCAG, down-only ratchet)
                          #   + transcript-surfaces
                          #   + prose (no content-free constructions added)
                          #   + deck-fit-all-test (the deck enumeration)
                          #   + deck-paths (the decks' code-map citations)
                          #   + css-vars (every var() in a token sheet resolves)
+                         #   + reserved-paths (no Windows device name in a path)
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
@@ -189,6 +191,30 @@ canary's issue is the first. Compiles nothing. `make main-red-hold` asks by
 hand; `make main-red-hold-test` covers it, blocking branch included. Reporting
 becomes holding only when a maintainer adds it to main's required checks —
 a repository setting, not a file in this tree.
+
+A seventh, `windows-check.yml`, is the only compiler in this project that
+looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and
+`release.yml`'s matrix is two Apple targets and two Linux ones, so every
+non-unix body in the tree — `rootfd.rs`'s and `durable_write.rs`'s string
+resolvers, and the Job Object half of `exec::GroupKillGuard` (#3550) — was
+code no toolchain here or in CI ever parsed. It runs
+`cargo clippy -p stella-tools -p stella-runtime` on a Windows runner, on the
+paths that reach those two crates — the shipping code, deliberately not
+`--all-targets`, because several `#[cfg(test)]` bodies import
+`std::os::unix::fs::PermissionsExt` unconditionally and would fail the job on
+a fixture rather than on the platform split. Those fixtures are #3497's
+subject. It also does not run the tests: Stella ships no Windows binary and
+the suite has never run there, so a green compile is the honest claim it can
+make. Not a required check, and its own file rather than a job in `ci.yml`
+for the reason `wire-schema.yml` has one — a Windows runner is minutes a diff
+touching neither crate has no use for.
+
+Its first run paid for itself: `git checkout` failed before the build, on
+`crates/stella-cli/src/config/aux.rs` — `AUX` is a Windows device name, so
+the repository was unclonable there and had been for as long as that module
+existed. `reserved-paths` (`scripts/check-reserved-paths.sh`) is the fast
+half of that finding, because a failed checkout reports one bad path per run
+and there were two.
 
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
@@ -630,7 +656,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-six crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-five crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -661,7 +687,6 @@ the files you must plan around (see below).
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
 | MCP client (external tool servers) | [`stella-mcp`](crates/stella-mcp/README.md) | |
-| Multimodal generation | [`stella-media`](crates/stella-media/README.md) | |
 | Multi-agent fan-out, worktree isolation | [`stella-fleet`](crates/stella-fleet/README.md) | |
 | The Observatory telemetry dashboard (`stella observe`) | [`stella-observatory`](crates/stella-observatory/README.md) | Loopback-only, read-only, embedded HTML. |
 | The headless engine server a host process drives over the wire | [`stella-serve`](crates/stella-serve/README.md) | Its **own binary**, not linked into [`stella-cli`](crates/stella-cli/README.md). Every model/tool call is remoted back to the host; the engine holds no ambient authority. Design: [`docs/spec/serve-surface.md`](docs/spec/serve-surface.md). |
@@ -749,7 +774,7 @@ a plan needs and the part that rarely changes:
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs` |
 
-The other twenty-one crates carry no god files — keep it that way. Each crate's
+The other twenty crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 
@@ -974,7 +999,7 @@ be closed by exactly one PR; if a fix spans several, close on the last and
   workspace.
 - **Witness tests** for features — see above.
 - **Wiremock-based adapter tests** for provider SSE parsing and HTTP error
-  classification (`stella-model`, `stella-mcp`, `stella-media`).
+  classification (`stella-model`, `stella-mcp`).
 - **Integration tests** with fixture MCP servers (`crates/stella-mcp/tests/`).
 - **Golden frames** for the command deck
   (`crates/stella-tui/tests/deck_render_snapshots.rs`). Each tab and overlay renders

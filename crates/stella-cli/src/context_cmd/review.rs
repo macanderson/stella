@@ -9,6 +9,17 @@
 //! contradicts is the one where keeping it does real harm, and burying it at
 //! position nine of a list is how it gets kept by a reviewer working down the page.
 //!
+//! **The probe is re-run here, not read off the file** (#4261). A reviewer reads
+//! the verdict as a statement about the tree they are looking at, and a proposal
+//! can sit in the queue for weeks: this repository's own queue held four claims
+//! rendering `supported` against paths a later PR had deleted, one of them naming
+//! a file `stella-tools` no longer has. What review re-runs is the filesystem
+//! kinds only, so re-asking costs a `stat` per proposal and buys the difference
+//! between a measurement and a memory. Where review will not re-ask — a `manual`
+//! cadence, `none`, or a gated probe, which this side declines whatever the
+//! record claims about itself — the stored verdict is shown dimmed and dated
+//! instead of borrowing a fresh one's colour.
+//!
 //! # What Keep actually does
 //!
 //! Writes `.stella/rules/<lineage>.toml` — a Git-tracked file, one record, with the
@@ -58,21 +69,29 @@ pub fn run_review(root: &Path, show_all: bool) -> Result<(), String> {
     let states = decision::fold(&read_decisions(root));
     let now = now_rfc3339();
 
-    // Refuted first, then unfalsifiable, then supported — worst news at the top.
-    let mut ordered: Vec<&FoundProposal> = proposals.iter().collect();
-    ordered.sort_by_key(|found| {
-        let rank = match verdict_of(found) {
-            Some("refuted") => 0,
-            Some("unfalsifiable") | None => 1,
-            _ => 2,
-        };
-        (rank, found.proposal.candidate_id.clone())
+    // Re-run every runnable probe against the tree the reviewer is looking at,
+    // once, before anything is ordered or printed (#4261). The stored verdict
+    // is the one `stella ingest` recorded, and a proposal can sit in the queue
+    // for weeks: four in this repository's own queue rendered `supported` for
+    // paths a later PR had deleted. Ordering reads the fresh verdict too —
+    // "refuted first" is worth nothing if it sorts on a stale answer.
+    let mut ordered: Vec<(&FoundProposal, Probed)> = proposals
+        .iter()
+        .map(|found| {
+            let probed = reprobe(root, found, &now);
+            (found, probed)
+        })
+        .collect();
+    ordered.sort_by(|(a, a_probe), (b, b_probe)| {
+        rank(a_probe.verdict())
+            .cmp(&rank(b_probe.verdict()))
+            .then_with(|| a.proposal.candidate_id.cmp(&b.proposal.candidate_id))
     });
 
     let mut shown = 0;
     let mut dismissed = 0;
     println!();
-    for found in ordered {
+    for (found, probed) in ordered {
         let proposal = &found.proposal;
         let decided = states.get(&proposal.candidate_id);
         if proposal.dismissed_reason.is_some() && !show_all {
@@ -80,7 +99,7 @@ pub fn run_review(root: &Path, show_all: bool) -> Result<(), String> {
             continue;
         }
         shown += 1;
-        print_proposal(found, decided, &now);
+        print_proposal(found, &probed, decided, &now);
     }
 
     if dismissed > 0 {
@@ -101,8 +120,92 @@ pub fn run_review(root: &Path, show_all: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// What the probe says about the tree the reviewer is looking at.
+///
+/// The two arms are not two renderings of one fact — they are different claims,
+/// and collapsing them is the defect (#4261). `Fresh` is an answer about the
+/// current tree. `Recorded` is an answer about the tree at ingest time, kept
+/// because a `manual`, `none` or gated probe has no machine review is willing
+/// to re-ask with, and the recorded note is still the best a reviewer has; it
+/// renders dimmed and dated so it can never be mistaken for the other one.
+enum Probed {
+    /// The probe was re-run just now against the workspace.
+    Fresh {
+        refutation: stella_core::ingest::record::Refutation,
+        /// The verdict the proposal file stores, when it disagrees with the
+        /// one above — the tree moved under the claim, and that is news.
+        superseded: Option<(String, String)>,
+    },
+    /// No machine could re-ask: the proposal's stored verdict, as stored.
+    Recorded(Option<stella_core::ingest::record::Refutation>),
+}
+
+impl Probed {
+    /// The verdict to sort and colour by — the fresh one whenever there is one.
+    fn verdict(&self) -> Option<&str> {
+        match self {
+            Self::Fresh { refutation, .. } => Some(refutation.verdict.as_str()),
+            Self::Recorded(stored) => stored.as_ref().map(|r| r.verdict.as_str()),
+        }
+    }
+}
+
+/// Worst news first: refuted, then unfalsifiable (and unprobed), then supported.
+fn rank(verdict: Option<&str>) -> u8 {
+    match verdict {
+        Some("refuted") => 0,
+        Some("unfalsifiable") | None => 1,
+        _ => 2,
+    }
+}
+
+/// Re-run this proposal's probe against the workspace, or explain why nothing
+/// could.
+///
+/// **A gated probe is never run here, whatever the record says about itself.**
+/// The sweep's rule ([`stella_core::records::honored_probe`]) admits a
+/// `command_succeeds` or `http_ok` on a human-decreed record, and it can,
+/// because it reads a *published* file that a reviewer has already accepted.
+/// This reads a **proposal**, whose `origin` may sit in the file's `[defaults]`
+/// header rather than on the record — so the trust question this side of the
+/// review cannot be answered from the record alone, and the safe answer to a
+/// question you cannot answer is no. Review is a read of the tree; it does not
+/// become the place a document nobody has reviewed yet gets to run a command or
+/// reach a host. The remaining kinds are filesystem reads, which is what makes
+/// re-asking on every review cheap enough to be unconditional.
+fn reprobe(root: &Path, found: &FoundProposal, now: &str) -> Probed {
+    use stella_core::ingest::record::ProbeKind;
+
+    let stored = found.proposal.refutation.clone();
+    let Some(probe) = found
+        .proposal
+        .record
+        .truth
+        .as_ref()
+        .and_then(|truth| truth.probe.as_ref())
+    else {
+        return Probed::Recorded(stored);
+    };
+    if probe.kind.is_gated() || matches!(probe.kind, ProbeKind::Manual | ProbeKind::None) {
+        return Probed::Recorded(stored);
+    }
+    let refutation = crate::ingest_cmd::probe::evaluate(root, probe, now);
+    let superseded = stored
+        .filter(|old| old.verdict != refutation.verdict)
+        .map(|old| (old.verdict.as_str().to_string(), old.checked_at));
+    Probed::Fresh {
+        refutation,
+        superseded,
+    }
+}
+
 /// One proposal, with everything that changes the decision.
-fn print_proposal(found: &FoundProposal, decided: Option<&decision::CandidateState>, now: &str) {
+fn print_proposal(
+    found: &FoundProposal,
+    probed: &Probed,
+    decided: Option<&decision::CandidateState>,
+    now: &str,
+) {
     let proposal = &found.proposal;
     let record = &proposal.record;
     println!(
@@ -151,15 +254,45 @@ fn print_proposal(found: &FoundProposal, decided: Option<&decision::CandidateSta
         println!("    {}", format!("from {source}{lines}").dimmed());
     }
 
-    if let Some(refutation) = proposal.refutation.as_ref() {
-        println!(
-            "    probe: {}  {}",
-            verdict_label(refutation.verdict.as_str()),
-            refutation.detail.dimmed()
-        );
-        if let Some(recommend) = refutation.recommend.as_deref() {
-            println!("    {}", format!("recommended: {recommend}").yellow());
+    match probed {
+        Probed::Fresh {
+            refutation,
+            superseded,
+        } => {
+            println!(
+                "    probe: {}  {}",
+                verdict_label(refutation.verdict.as_str()),
+                refutation.detail.dimmed()
+            );
+            if let Some((was, at)) = superseded {
+                println!(
+                    "    {}",
+                    format!("the tree has moved: recorded {was} at {at}").yellow()
+                );
+            }
+            if let Some(recommend) = refutation.recommend.as_deref() {
+                println!("    {}", format!("recommended: {recommend}").yellow());
+            }
         }
+        Probed::Recorded(Some(refutation)) => {
+            // Dimmed whatever it says, including `supported`. A green cell for
+            // a claim nothing re-checked is the exact reading this command was
+            // giving a reviewer who had no way to know (#4261).
+            println!(
+                "    {}",
+                format!(
+                    "probe: {} (recorded {}, not re-checked — nothing here can re-ask)",
+                    refutation.verdict.as_str(),
+                    refutation.checked_at
+                )
+                .dimmed()
+            );
+            println!("    {}", refutation.detail.dimmed());
+            if let Some(recommend) = refutation.recommend.as_deref() {
+                println!("    {}", format!("recommended: {recommend}").yellow());
+            }
+        }
+        Probed::Recorded(None) => {}
     }
     if let Some(validation) = proposal.validation.as_ref() {
         println!(
@@ -455,13 +588,4 @@ pub(crate) fn actor() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "local".to_string())
-}
-
-/// The proposal's probe verdict, when one ran.
-fn verdict_of(found: &FoundProposal) -> Option<&str> {
-    found
-        .proposal
-        .refutation
-        .as_ref()
-        .map(|refutation| refutation.verdict.as_str())
 }

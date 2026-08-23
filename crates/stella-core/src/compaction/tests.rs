@@ -92,16 +92,26 @@ fn long_turn(count: usize, size: usize) -> Vec<CompletionMessage> {
     messages
 }
 
+/// A budget this conversation is over half of and still under: pass 0's own
+/// trigger is met, the budget passes' is not (#4381). Derived from the
+/// transcript rather than written as a literal, so a change to the estimator
+/// moves both sides of the comparison together.
+fn retention_pressure_budget(messages: &[CompletionMessage]) -> u64 {
+    estimate_conversation_tokens(messages) * 3 / 2
+}
+
 #[test]
-fn retention_ages_results_past_the_horizon_with_no_budget_pressure() {
+fn retention_ages_results_past_the_horizon_before_the_budget_passes_engage() {
     // The #1285 witness: below budget the old passes did NOTHING, so a
     // long turn re-sent every old tool output verbatim on every step
     // until the transcript crossed ~100k tokens. Pass 0 must age results
-    // older than the horizon even under an effectively infinite budget.
+    // older than the horizon while the budget passes are still silent —
+    // which since #4381 means "past half the budget", not "at any size".
     let mut messages = long_turn(12, 5_000);
+    let budget = retention_pressure_budget(&messages);
     let (_, report) = compact_measured(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 4,
         }),
@@ -139,9 +149,10 @@ fn retention_reports_the_block_identity_the_manifest_cited() {
     // §6.2 for pass 0: the aged block is named by its PRE-mutation id.
     let mut messages = long_turn(6, 5_000);
     let expected = tool_result_block_id(&messages[3].tool_results[0].output);
+    let budget = retention_pressure_budget(&messages);
     let (_, report) = compact_measured(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 1,
         }),
@@ -162,9 +173,10 @@ fn every_in_place_rewrite_journals_its_replacement_bytes() {
     // distinct outputs here, so 8 distinct replacement records must ride the
     // report — each one the record OF THE CURRENT (post-rewrite) output.
     let mut messages = long_turn(12, 5_000);
+    let budget = retention_pressure_budget(&messages);
     let (_, report) = compact_measured(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 4,
         }),
@@ -216,9 +228,12 @@ fn retention_waits_for_a_batch_before_touching_the_prefix() {
     // moves.
     let mut messages = long_turn(5, 5_000);
     // Horizon leaves 3 stale results reclaiming ~10 KB: below the floor.
+    // The budget is deliberately one retention pressure would clear, so the
+    // reclaim floor is the only thing that can be holding the pass back.
+    let budget = retention_pressure_budget(&messages);
     let (_, report) = compact_measured(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 2,
         }),
@@ -237,9 +252,10 @@ fn retention_fires_on_reclaimable_bytes_before_any_count_floor() {
     // reclaim pays for the prefix rewrite — a count gate (the original
     // four-result floor) held them verbatim for the rest of the turn.
     let mut messages = long_turn(4, 100_000);
+    let budget = retention_pressure_budget(&messages);
     let (_, report) = compact_measured(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 2,
         }),
@@ -255,9 +271,10 @@ fn retention_skips_a_trickle_of_barely_ageable_results() {
     // cache-invalidating prefix rewrite for under 4 KB back. The bytes
     // gate must leave the transcript byte-stable instead.
     let mut messages = long_turn(12, 2_100);
+    let budget = retention_pressure_budget(&messages);
     let (_, report) = compact_measured(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 4,
         }),
@@ -273,25 +290,85 @@ fn retention_is_idempotent_between_batches() {
     // After a batch fires, aged results are below the threshold, so an
     // immediately following pass finds no candidates and mutates nothing
     // — the prefix stays byte-stable until a NEW batch accumulates.
+    //
+    // Driven through the pass itself rather than `compact_measured`, and the
+    // budget is pinned so both calls are past the #4381 pressure gate
+    // (`current_tokens > budget_tokens / 2` holds for any non-empty
+    // transcript at a budget of 2). Aging this batch reclaims most of the
+    // transcript, so a realistic budget would put the second call under the
+    // pressure gate and its silence would prove nothing about the reclaim
+    // floor this test is about.
     let mut messages = long_turn(12, 5_000);
-    let policy = Some(RetentionPolicy {
+    let policy = RetentionPolicy {
         keep_recent_steps: 4,
-    });
-    let (_, first) = compact_measured(&mut messages, u64::MAX, policy);
-    assert!(first.is_some());
+    };
+    let pinned_past_the_pressure_gate = 2u64;
+    let tokens = estimate_conversation_tokens(&messages);
+    let (aged, _, _, _) =
+        age_stale_tool_results(&mut messages, policy, tokens, pinned_past_the_pressure_gate);
+    assert_eq!(aged, 8, "the first batch must fire");
     let snapshot: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
-    let (_, second) = compact_measured(&mut messages, u64::MAX, policy);
-    assert!(second.is_none(), "second pass must be a no-op: {second:?}");
+    let tokens = estimate_conversation_tokens(&messages);
+    let (again, _, _, _) =
+        age_stale_tool_results(&mut messages, policy, tokens, pinned_past_the_pressure_gate);
+    assert_eq!(again, 0, "second pass must be a no-op");
     let after: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
     assert_eq!(snapshot, after, "no bytes may move between batches");
+}
+
+/// **Witness (#4381).** The measured shape: a conversation at a quarter of its
+/// budget with well over [`RETENTION_MIN_RECLAIM_CHARS`] reclaimable past the
+/// horizon. Pass 0 used to rewrite mid-history there on an absolute trigger,
+/// which cost a near-total prompt-cache miss on the next call — 137 K tokens
+/// re-billed across five firings to save 4–8 K per call, against 90–97% hit
+/// rates on the steps between them. Below the pressure gate the transcript
+/// must not move a byte.
+#[test]
+fn retention_does_not_fire_at_a_quarter_of_the_budget() {
+    let mut messages = long_turn(12, 5_000);
+    let budget = estimate_conversation_tokens(&messages) * 4;
+    let before: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
+    let (_, report) = compact_measured(
+        &mut messages,
+        budget,
+        Some(RetentionPolicy {
+            keep_recent_steps: 4,
+        }),
+    );
+    assert!(
+        report.is_none(),
+        "a conversation at 25% of budget must keep its cache prefix: {report:?}"
+    );
+    let after: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
+    assert_eq!(before, after, "no bytes may move below the pressure gate");
+}
+
+/// The other side of the same gate: the identical transcript, the identical
+/// reclaimable batch, a budget it is over half of — and the pass fires. Two
+/// tests rather than one because the pair is what shows the gate reads the
+/// budget and nothing else changed between them.
+#[test]
+fn retention_fires_once_the_conversation_passes_half_its_budget() {
+    let mut messages = long_turn(12, 5_000);
+    let budget = retention_pressure_budget(&messages);
+    let (_, report) = compact_measured(
+        &mut messages,
+        budget,
+        Some(RetentionPolicy {
+            keep_recent_steps: 4,
+        }),
+    );
+    let report = report.expect("past half the budget the batch must age");
+    assert_eq!(report.aged, 8, "{report:?}");
 }
 
 #[test]
 fn retention_never_touches_the_newest_tool_message_even_at_horizon_zero() {
     let mut messages = long_turn(6, 5_000);
+    let budget = retention_pressure_budget(&messages);
     let (_, _) = compact_measured(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 0,
         }),
@@ -311,9 +388,10 @@ fn small_recent_and_already_aged_results_are_not_retention_candidates() {
     // long turn of small outputs never triggers the batch — and never
     // churns the cache prefix.
     let mut messages = long_turn(20, 100);
+    let budget = retention_pressure_budget(&messages);
     let (_, report) = compact_measured(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 2,
         }),

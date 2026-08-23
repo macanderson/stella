@@ -41,7 +41,7 @@
 //!   Profile files, SSO caches, IMDS, and the container-role endpoints stay
 //!   out on purpose rather than as a gap: each resolves an identity
 //!   *ambiently*, so a process would authenticate as whatever the host
-//!   happens to be carrying. `stella-cli`'s `config::aux` module states the
+//!   happens to be carrying. `stella-cli`'s `config::aux_credentials` module states the
 //!   supported and excluded sources in full.
 //!
 //! Requests are signed with SigV4 implemented in `sigv4` below — pure

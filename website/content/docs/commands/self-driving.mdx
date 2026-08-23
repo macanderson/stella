@@ -22,6 +22,7 @@ stella self-driving queue [--limit N] [--format <text|json>]
 stella self-driving file --title TEXT [--body TEXT] [--label L…] [--format <text|json>]
 stella self-driving work --issue KEY [--spend-limit USD] [--format <text|json>]
 stella self-driving drive [--max-issues N] [--no-review] [--poll-secs N]
+stella self-driving stop [--root DIR]
 stella self-driving stats [--format <text|json>]
 stella self-driving triage --issue KEY [--dry-run] [--format <text|json>]
 stella self-driving close --issue KEY (--completed | --not-planned REASON | --duplicate-of KEY | --partial DONE --remaining KEY…) [--pr KEY | --commit SHA] [--per CITATION]
@@ -136,6 +137,18 @@ Worktrees live under `.stella/private/self-driving/` on `self-driving/` branches
 `--max-issues` bounds one invocation so it terminates. The real loop never does, which is why the bound is a flag rather than a constant, and why reaching it is reported as *reached the bound* rather than as *finished*.
 
 Steps the machine returns that this build cannot perform — sweeping an audit lens, curating a proposal — are **reported and then stop the loop**, never silently skipped. A driver that did nothing for a step it was handed would look healthy forever.
+
+### stop
+
+`stella self-driving stop` asks a running loop to park. It writes the flag `drive` re-reads on every poll and prints the path it wrote.
+
+The loop parks at its **next boundary** — between issues, between turns — and never mid-turn. A turn killed where it stands leaves a worktree, a branch and possibly a pull request that nothing has recorded, which is a mess an operator then has to clean up by hand.
+
+**Nothing latches the request.** Deleting the file puts the loop back to work with no other input, which is the same self-resume property every other block has: the machine recomputes from scratch on every call, so a cause that is gone stops being returned on the very next poll. There is no `resume` verb because `rm` is the whole operation.
+
+`--root` names the loop's durable state directory, for stopping a loop rooted somewhere other than this workspace's own — a second clone, or a state root shared across machines. Without it the flag lands in the root this workspace resolves, the same one the [Observatory](/docs/commands/observe) reads.
+
+Asking a loop that is already stopping is not an error; the output says which case it was, because "already asked" tells an operator whose loop is still working that the flag is not what is holding it.
 
 ### stats
 

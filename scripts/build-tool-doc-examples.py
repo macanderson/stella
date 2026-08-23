@@ -4,10 +4,12 @@
 `docs/tools/*.toml` carries, per tool, one **observed** input payload and one
 **observed** output payload. Observed is the whole point: an invented example
 teaches the reader what the author imagined the tool is for, and this
-repository has been wrong about that before — 33 of the 72 declared tools were
-never called once across 408 bench trials, which is the single most useful
-fact about them and exactly the fact a plausible hand-written payload would
-hide.
+repository has been wrong about that before — in the 2026-08-11 capture, 33 of
+the 72 tools declared *then* were never called once across 408 bench trials,
+which is the single most useful fact about them and exactly the fact a
+plausible hand-written payload would hide. Both numbers are properties of that
+capture and not of today's catalog, which declares far fewer tools; the pages
+recompute their own from the fixture rather than repeating these (#4420).
 
 The capture itself is a bench artifact and does not live in the repository, so
 this script is the reproducible step between the two: point it at a capture,
@@ -149,6 +151,12 @@ def load_census(path):
         # traffic without appearing in the advertised schema list. Those rows
         # are real observations about the runtime, not tools this catalog
         # declares, so they carry no doc page.
+        #
+        # It is also the only direct evidence any page has for saying a tool
+        # *was* advertised, which is why `tool_docs.rs::Usage` deserializes it
+        # without a default (#4420): a fixture that cannot answer must fail to
+        # parse rather than let the pages infer advertisement from the row
+        # merely existing.
         usage[row["tool"]] = {
             "calls": int(row["calls"]),
             "trials_used": int(row["trials_used"]),

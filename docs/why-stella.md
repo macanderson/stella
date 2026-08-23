@@ -81,7 +81,7 @@ plane.
 ## Also in the box
 
 An **offline tree-sitter code graph** queried instead of grepping (`stella
-search`; Rust/TS/TSX/JS/Python/Go/Java/C/PHP/SQL, no
+search`; Rust/TS/TSX/JS/Python/Go/Java/C/C++/PHP/SQL, no
 key needed) ·
 **prompt-cache-native memory** that loads once into a byte-stable system prompt
 at ~0.1× input cost · a **fleet mode** that fans a task DAG out to

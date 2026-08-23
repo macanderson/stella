@@ -23,6 +23,7 @@ pub enum Language {
     Go,
     Java,
     C,
+    Cpp,
     Php,
     /// Prose, split on its heading hierarchy by this crate's private
     /// `markdown` module rather than by a grammar — the one language here
@@ -56,16 +57,14 @@ impl Language {
             "tsx" => Language::Tsx,
             "go" => Language::Go,
             "java" => Language::Java,
-            // C and C++ both index under the C grammar. A C++ file still
-            // yields its free functions, structs, and many declarations under
-            // it — tree-sitter is error-tolerant, so the class/template/
-            // namespace syntax it cannot parse degrades to error nodes around
-            // the symbols it can, and partial symbols beat the zero a
-            // `.cpp` gets when it maps to no language at all (search then has
-            // nothing to rank and falls to a lexical scan). This extends the
-            // header-under-C precedent to C++ source; a dedicated
-            // `tree-sitter-cpp` grammar is the sharper fix (#3184).
-            "c" | "h" | "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hh" | "hxx" => Language::C,
+            // `.h` stays C, and is the one ambiguous extension here: a C++
+            // project writes its headers `.h` as readily as `.hpp`, but so
+            // does every C project, and C is the reading that indexes both
+            // correctly when the file is plain C. A `.h` that declares a
+            // class loses those members; its `.cpp` is where the definitions
+            // are, and those index under the C++ grammar (#3184).
+            "c" | "h" => Language::C,
+            "cpp" | "cc" | "cxx" | "c++" | "hpp" | "hh" | "hxx" => Language::Cpp,
             "php" => Language::Php,
             "sql" => Language::Sql,
             "md" | "markdown" => Language::Markdown,
@@ -86,7 +85,7 @@ impl Language {
     }
 
     /// Every language the enum knows, compiled in or not.
-    pub const ALL: [Language; 11] = [
+    pub const ALL: [Language; 12] = [
         Language::Rust,
         Language::Python,
         Language::JavaScript,
@@ -96,6 +95,7 @@ impl Language {
         Language::Go,
         Language::Java,
         Language::C,
+        Language::Cpp,
         Language::Php,
         Language::Markdown,
     ];
@@ -138,6 +138,7 @@ impl Language {
             Language::Go => "go",
             Language::Java => "java",
             Language::C => "c",
+            Language::Cpp => "cpp",
             Language::Php => "php",
             Language::Markdown => "markdown",
         }
@@ -171,6 +172,8 @@ impl Language {
             Language::Java => tree_sitter_java::LANGUAGE.into(),
             #[cfg(feature = "lang-c")]
             Language::C => tree_sitter_c::LANGUAGE.into(),
+            #[cfg(feature = "lang-cpp")]
+            Language::Cpp => tree_sitter_cpp::LANGUAGE.into(),
             // The HTML-embedding grammar, not `LANGUAGE_PHP_ONLY`: real
             // `.php` files routinely open and close `<?php` around markup,
             // and the PHP-only grammar cannot parse those at all.
@@ -194,6 +197,7 @@ impl Language {
             Language::Go => queries::GO_SYMBOLS,
             Language::Java => queries::JAVA_SYMBOLS,
             Language::C => queries::C_SYMBOLS,
+            Language::Cpp => queries::CPP_SYMBOLS,
             Language::Php => queries::PHP_SYMBOLS,
             Language::Markdown => NO_QUERY,
         }
@@ -210,6 +214,7 @@ impl Language {
             Language::Go => queries::GO_IMPORTS,
             Language::Java => queries::JAVA_IMPORTS,
             Language::C => queries::C_IMPORTS,
+            Language::Cpp => queries::CPP_IMPORTS,
             Language::Php => queries::PHP_IMPORTS,
             Language::Markdown => NO_QUERY,
         }
@@ -226,6 +231,7 @@ impl Language {
             Language::Go => queries::GO_CALLS,
             Language::Java => queries::JAVA_CALLS,
             Language::C => queries::C_CALLS,
+            Language::Cpp => queries::CPP_CALLS,
             Language::Php => queries::PHP_CALLS,
             Language::Markdown => NO_QUERY,
         }
@@ -259,6 +265,7 @@ mod tests {
         feature = "lang-go",
         feature = "lang-java",
         feature = "lang-c",
+        feature = "lang-cpp",
         feature = "lang-php"
     ))]
     #[test]
@@ -297,20 +304,36 @@ mod tests {
         assert_eq!(Language::from_path(Path::new("noext")), None);
     }
 
-    /// C++ source and headers index under the C grammar (#3184). Before this
-    /// they mapped to `None` — a `.cpp` file declared nothing to the graph, so
-    /// `search` had no symbols to rank over a C++ codebase (`build-pov-ray`,
-    /// `sqlite`'s amalgamation) and fell to a lexical scan.
-    #[cfg(feature = "lang-c")]
+    /// C++ source and headers index under the C++ grammar (#3184). They first
+    /// mapped to `None` (a `.cpp` declared nothing, so `search` had no symbols
+    /// to rank over a C++ codebase and fell to a lexical scan), then to
+    /// `Language::C` as a dependency-free stopgap — which reached a C++ file's
+    /// free functions but lost every class body to an error node.
+    #[cfg(feature = "lang-cpp")]
     #[test]
-    fn cpp_source_and_headers_index_under_the_c_grammar() {
+    fn cpp_source_and_headers_index_under_the_cpp_grammar() {
         for probe in [
             "ray.cpp", "scene.cc", "mesh.cxx", "vec.c++", "vec.hpp", "vec.hh", "vec.hxx",
         ] {
             assert_eq!(
                 Language::from_path(Path::new(probe)),
+                Some(Language::Cpp),
+                "`{probe}` must index as C++ so search sees its classes and methods"
+            );
+        }
+    }
+
+    /// `.c` and `.h` stay C. A C++ project writes headers `.h` too, but so
+    /// does every C project, and C is the reading that indexes both correctly
+    /// when the file is plain C.
+    #[cfg(feature = "lang-c")]
+    #[test]
+    fn c_source_and_plain_headers_stay_under_the_c_grammar() {
+        for probe in ["kv.c", "kv.h"] {
+            assert_eq!(
+                Language::from_path(Path::new(probe)),
                 Some(Language::C),
-                "`{probe}` must index (as C) so search has C++ symbols to rank"
+                "`{probe}` is C"
             );
         }
     }
@@ -337,6 +360,7 @@ mod tests {
         feature = "lang-go",
         feature = "lang-java",
         feature = "lang-c",
+        feature = "lang-cpp",
         feature = "lang-php"
     ))]
     #[test]
@@ -371,7 +395,7 @@ mod tests {
             );
         }
         for probe in [
-            "a.rs", "a.py", "a.go", "a.java", "a.c", "a.php", "a.sql", "a.tsx", "a.md",
+            "a.rs", "a.py", "a.go", "a.java", "a.c", "a.cpp", "a.php", "a.sql", "a.tsx", "a.md",
         ] {
             if let Some(lang) = Language::from_path(Path::new(probe)) {
                 assert!(

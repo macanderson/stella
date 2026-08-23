@@ -66,8 +66,10 @@ use stella_autonomy::{
 };
 use stella_fleet::issue_claim_key;
 
+mod ending;
 mod settlement;
 
+use ending::{Tally, budget_reached, report, stopped_by_signal};
 use settlement::{Settlement, issue_finished_by};
 
 use super::audit::{self, Action as Audit};
@@ -85,14 +87,6 @@ struct Spent {
     /// Whether the stale-red re-run has already been spent on this pull
     /// request. Exactly one is allowed — see [`advance`].
     rerun: bool,
-}
-
-/// What one run of the loop did, for the closing line.
-#[derive(Debug, Default)]
-struct Tally {
-    opened: u32,
-    merged: u32,
-    escalated: u32,
 }
 
 /// Drive until there is nothing left to do, or a bound is reached.
@@ -138,12 +132,12 @@ pub(super) fn drive(
             } else {
                 "waiting for review before any merge"
             },
-            // Named as what it is: each turn is its own `stella run` session
-            // with this ceiling (#4353), so a reader does not multiply it out
-            // as the run's total.
+            // Named as what it is: the ceiling on this whole run, not on each
+            // turn (#4353). Each child turn is handed the remainder, so a
+            // reader must not multiply it out by the issue count.
             flags
                 .spend_limit
-                .map_or(String::new(), |cap| format!(", ${cap} per turn")),
+                .map_or(String::new(), |cap| format!(", ${cap} for the whole run")),
         ),
     );
 
@@ -271,6 +265,12 @@ pub(super) fn drive(
         let _ = crate::issue_provider::ensure_label(kind, "Work the self-driving loop may take.");
     }
 
+    // The run's USD ceiling, and the accounting that makes `--spend-limit`
+    // mean what its help says (#4353). Every child turn is spawned through
+    // `work::run_turn`, which takes this rather than the flags — so a turn
+    // cannot be started against the original cap, and cannot finish without
+    // its cost being folded in.
+    let mut budget = super::budget::RunBudget::new(flags.clone());
     let mut spent: HashMap<String, Spent> = HashMap::new();
     // The ledger claims this run holds, one per issue taken and not yet
     // worked. Keyed by issue so the Work arm can take back the one it is
@@ -304,6 +304,14 @@ pub(super) fn drive(
         // of what a caught signal buys.
         if let Some(signal) = super::stop::caught() {
             return stopped_by_signal(durable, &tally, signal);
+        }
+
+        // The run's own ceiling, asked at the same boundary and for the same
+        // reason (#4353). Before the observation rather than after it, because
+        // an exhausted run has nothing to decide: reading the queue would spend
+        // a tracker call to choose an issue it cannot pay to work.
+        if let Some(out) = budget.exhausted() {
+            return budget_reached(durable, &tally, out);
         }
 
         let obs = observe(
@@ -378,7 +386,8 @@ pub(super) fn drive(
                 // operator whose clone is full of their own leftovers wants
                 // `ContentionPolicy::ClaimsOnly`, which is what that policy
                 // is for (`stella_autonomy::ContentionPolicy`).
-                if let Err(error) = assess_one(durable, &root, &provider, &cfg, flags, &mut triaged)
+                if let Err(error) =
+                    assess_one(durable, &root, &provider, &cfg, &mut budget, &mut triaged)
                 {
                     audit::record(
                         durable,
@@ -539,19 +548,20 @@ pub(super) fn drive(
                 // A `work` that cannot start is one issue's problem, not the
                 // loop's: a single leftover branch must not halt a run that has
                 // other issues to get on with.
-                let outcome = match super::work::start(&root, &resolved, flags, &cfg.attribution) {
-                    Ok(outcome) => outcome,
-                    Err(reason) => {
-                        audit::record(
-                            durable,
-                            Audit::Deferred,
-                            Some(&issue.0),
-                            &format!("could not start ({reason}); moving on"),
-                        );
-                        durable.update_stats(|s| s.issues_deferred += 1);
-                        continue;
-                    }
-                };
+                let outcome =
+                    match super::work::start(&root, &resolved, &mut budget, &cfg.attribution) {
+                        Ok(outcome) => outcome,
+                        Err(reason) => {
+                            audit::record(
+                                durable,
+                                Audit::Deferred,
+                                Some(&issue.0),
+                                &format!("could not start ({reason}); moving on"),
+                            );
+                            durable.update_stats(|s| s.issues_deferred += 1);
+                            continue;
+                        }
+                    };
                 let learned = super::learning::tally(&root).since(learned_before);
 
                 // Every counter this unit moves, in one write — shared with the
@@ -834,7 +844,7 @@ pub(super) fn drive(
                          it (#3599). Stopping rather than spinning on a step it cannot take."
                     ),
                 );
-                return report(durable, &tally);
+                return report(durable, &tally, &budget);
             }
 
             LoopStep::Curate => {
@@ -844,7 +854,7 @@ pub(super) fn drive(
                     None,
                     "the machine asked to curate and this build cannot — B6 builds it (#3599).",
                 );
-                return report(durable, &tally);
+                return report(durable, &tally, &budget);
             }
 
             LoopStep::Watch { until } => {
@@ -854,7 +864,7 @@ pub(super) fn drive(
                     None,
                     &format!("nothing left to do; the machine would watch for {until:?}"),
                 );
-                return report(durable, &tally);
+                return report(durable, &tally, &budget);
             }
         }
     }
@@ -952,7 +962,7 @@ fn assess_one(
     root: &std::path::Path,
     provider: &crate::issue_provider::GhIssueProvider,
     cfg: &super::config::LoopConfig,
-    flags: &TurnFlags,
+    budget: &mut super::budget::RunBudget,
     triaged: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
     let unassessed = super::backlog::unassessed(provider, &cfg.triage)?;
@@ -976,7 +986,7 @@ fn assess_one(
         .unwrap_or_default();
 
     let prompt = super::triage::prompt(&issue, &body, &cfg.triage);
-    let output = super::work::run_turn(root, root, &prompt, flags)?;
+    let output = super::work::run_turn(root, root, &prompt, budget)?;
 
     let Some(assessment) = super::triage::parse(&output, &cfg.triage) else {
         super::backlog::escalate_blocking(
@@ -1423,46 +1433,6 @@ fn sleep(secs: u64) {
         }
         std::thread::sleep(remaining.min(SLICE));
     }
-}
-
-/// End the run because the operating system said so, with the record that a
-/// killed process could never write (#4361).
-///
-/// Returns `Err` so `main` reports the shell-conventional `128 + signum` —
-/// `stella self-driving drive` cut short by SIGTERM must be distinguishable
-/// from one that finished, the same contract every other door honours
-/// ([`crate::signals`]).
-fn stopped_by_signal(
-    durable: &Durable,
-    tally: &Tally,
-    signal: crate::signals::Interrupt,
-) -> Result<(), String> {
-    let reason = signal.reason();
-    audit::record(
-        durable,
-        Audit::SessionStopped,
-        None,
-        &format!(
-            "{reason} by a signal — {} opened, {} merged, {} escalated. Every claim this run \
-             held is released.",
-            tally.opened, tally.merged, tally.escalated
-        ),
-    );
-    crate::signals::note_interrupt(signal);
-    Err(reason.to_owned())
-}
-
-fn report(durable: &Durable, tally: &Tally) -> Result<(), String> {
-    audit::record(
-        durable,
-        Audit::SessionStopped,
-        None,
-        &format!(
-            "{} opened, {} merged, {} escalated — `stella self-driving stats` has the rest",
-            tally.opened, tally.merged, tally.escalated
-        ),
-    );
-    Ok(())
 }
 
 #[cfg(test)]

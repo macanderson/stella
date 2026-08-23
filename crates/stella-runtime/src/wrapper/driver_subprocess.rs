@@ -309,7 +309,6 @@ impl SubprocessDriver {
         // The rest of the tree. A driver is the plugin most likely to background
         // something — it exists to start long work — and a backgrounded
         // grandchild is exactly what `kill_on_drop` cannot reach.
-        #[cfg(unix)]
         stella_tools::exec::detach_into_own_process_group(&mut command);
 
         let mut child = command.spawn().map_err(|source| DriverError::Spawn {
@@ -319,7 +318,6 @@ impl SubprocessDriver {
         // The child leads the group, so its pid *is* the group id. Armed
         // immediately: between here and the disarm below, every path out — a
         // returned error, a dropped future, a panic — reaps the whole group.
-        #[cfg(unix)]
         let mut guard =
             stella_tools::exec::GroupKillGuard::arm(child.id().unwrap_or(0).cast_signed());
         let (Some(stdin), Some(mut stdout), Some(mut stderr)) =
@@ -395,7 +393,6 @@ impl SubprocessDriver {
                 // still be writing past the ceiling, or wedged. Kill the group
                 // before answering rather than leaving the drop to reach the
                 // direct child alone.
-                #[cfg(unix)]
                 guard.kill_now();
                 // `converse` already joined the writer when it needed to report
                 // its own failure (`AnswerChannelFailed`); any other error path
@@ -406,7 +403,6 @@ impl SubprocessDriver {
                 return Err(error);
             }
             Err(_) => {
-                #[cfg(unix)]
                 guard.kill_now();
                 if let Some(writer) = writer.take() {
                     writer.abort();
@@ -419,7 +415,6 @@ impl SubprocessDriver {
         };
         // The child has answered and been reaped. Anything it detached on
         // purpose is not this transport's to kill.
-        #[cfg(unix)]
         guard.disarm();
 
         // A child that answered without reading its request is not an error: a

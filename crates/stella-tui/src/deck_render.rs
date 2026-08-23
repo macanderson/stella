@@ -18,7 +18,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 use unicode_width::UnicodeWidthChar;
 
 use crate::cache_panel;
-use crate::composer::{ComposerLayout, layout as composer_layout, split_row_at};
+use crate::composer::{ComposerLayout, PaletteState, layout as composer_layout, split_row_at};
 use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
@@ -124,11 +124,13 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     // Floating popups sit above the chrome: the slash menu anchors to the
     // composer; the queue editor centers over the content.
-    let slash = ui.composer.slash_menu(&ui.slash_commands);
+    let slash = ui
+        .composer
+        .slash_menu(&ui.slash_commands, &palette_state(model, ui));
     let slash_open = slash.as_ref().is_some_and(|m| !m.is_empty());
     if let Some(menu) = slash.filter(|m| !m.is_empty()) {
         let selected = ui.slash_selected.min(menu.matches.len().saturating_sub(1));
-        let popup = slash_popup_area(area, bands[3], menu.matches.len());
+        let popup = slash_popup_area(area, bands[3], crate::render::display_rows(&menu).len());
         // Live values in descriptions, read from the model at render time —
         // never cached in `DeckUi` (D3).
         let live = slash_live_hints(model, ui);
@@ -258,6 +260,29 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 /// The slash popup's live description overrides, read from the model at
 /// render time so a row like `/inbox` carries its current unread count.
 /// Recomputed per frame — never cached in `DeckUi` (D3).
+/// What the session is doing, as the command palette needs to see it
+/// (#4338).
+///
+/// Read from the model and the deck at render time and never cached, the
+/// same discipline [`slash_live_hints`] follows: a relevance block computed
+/// once at session start would be advice about a turn that has since ended.
+///
+/// The key handler calls this too — the palette's selection index means a
+/// position in the ordered match list, so the renderer and the handler have
+/// to order it from the same facts or the highlighted row and the dispatched
+/// command drift apart.
+pub(crate) fn palette_state(model: &WorkspaceModel, ui: &DeckUi) -> PaletteState {
+    let agent = model.agents.get(ui.focused);
+    PaletteState {
+        turn_running: agent.is_some_and(|a| a.status == crate::AgentStatus::Running),
+        plan_steps: agent.map_or(0, |a| a.model.plan.steps().len()),
+        subagents: model.subagent_count(),
+        unread: ui.notifications.iter().filter(|n| !n.read).count(),
+        changed_files: model.ledger.records.len(),
+        graph_missing: ui.graph.is_none(),
+    }
+}
+
 fn slash_live_hints(model: &WorkspaceModel, ui: &DeckUi) -> Vec<(String, String)> {
     let mut hints = Vec::new();
     let unread = ui.notifications.iter().filter(|n| !n.read).count();

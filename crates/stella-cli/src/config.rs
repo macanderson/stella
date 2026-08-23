@@ -209,14 +209,16 @@ fn interactive_allowed() -> bool {
     INTERACTIVE_CREDENTIALS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
-mod aux;
+// Not `aux`: that spelling made the repository un-checkoutable on Windows.
+// The module's own header carries the argument.
+mod aux_credentials;
 mod listing;
 mod providers;
 mod reload;
 
 // Re-exported at the old paths: the table moved for the line ratchet, not
 // for callers, and `crate::config::PROVIDERS` stays the one way to reach it.
-pub(crate) use aux::{AuxField, has_required_aux, provider_aux, settable_aux_fields};
+pub(crate) use aux_credentials::{AuxField, has_required_aux, provider_aux, settable_aux_fields};
 pub(crate) use providers::no_api_key_error;
 pub use providers::{Dialect, LOCAL_PROVIDER, PROVIDERS, ProviderConfig};
 
@@ -585,7 +587,7 @@ pub struct Config {
     /// The values this provider needs *beyond* `api_key`, resolved through
     /// the same chain the key came from — Bedrock's AWS secret access key,
     /// optional session token, and region today; empty for every other
-    /// provider. See `config::aux` for which credential sources are
+    /// provider. See `config::aux_credentials` for which credential sources are
     /// supported and which are deliberately excluded.
     pub aux_credentials: AuxCredentials,
     /// The prompt-cache window this session's providers request (#1839).

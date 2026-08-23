@@ -165,7 +165,7 @@ pub const BRAND_LIVE: Color = token::GOLD_BRIGHT;
 // walks the same hue down until it clears AA. Applied by the per-frame theme
 // remap in [`crate::theme`], truecolor only.
 
-/// The light-theme brand hue -- OKLCH hue 90.6 (0.2 deg from [`BRAND`]),
+/// The light-theme brand hue -- OKLCH hue 90.6 (0.1 deg from [`BRAND`]),
 /// 6.02:1 on [`PAPER`], 5.31:1 on [`PAPER_RAISED`]. Gold *text* on paper.
 pub const BRAND_INK: Color = Color::Rgb(0x72, 0x5A, 0x00);
 

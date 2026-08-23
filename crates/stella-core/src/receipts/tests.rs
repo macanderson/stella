@@ -325,6 +325,36 @@ fn the_drivers_own_messages_stop_being_attributed_to_the_user() {
     assert_eq!(user_block_kind("fix the failing test"), BlockKind::UserGoal);
 }
 
+/// The #4323 decision, pinned: both automatic steer rungs file as `Steered`
+/// and a receipt says no more than that.
+///
+/// It is pinned rather than left implicit because the collapse is not an
+/// accident of the two strings — `STALL_STEER_PREFIX` extends
+/// `LOOP_STEER_PREFIX`, so a prefix test cannot separate them even in
+/// principle, and a later edit that made the two markers disjoint would
+/// silently start splitting a wire kind on a sentence. The loop/stall
+/// distinction is an event-log question (`AgentEvent::Steered { cause }`,
+/// #3622); `user_block_kind`'s doc comment carries the argument.
+#[test]
+fn both_automatic_steer_rungs_file_as_one_receipt_kind() {
+    let loop_steer = format!(
+        "{} you appear to be looping",
+        crate::driver::LOOP_STEER_PREFIX
+    );
+    let stall_steer = format!(
+        "{} — 900s of pure sleep",
+        crate::driver::loop_escalation::STALL_STEER_PREFIX
+    );
+    assert!(
+        crate::driver::loop_escalation::STALL_STEER_PREFIX
+            .starts_with(crate::driver::LOOP_STEER_PREFIX),
+        "the stall marker extends the loop marker, which is why no prefix test \
+         can separate the two rungs"
+    );
+    assert_eq!(user_block_kind(&loop_steer), BlockKind::Steered);
+    assert_eq!(user_block_kind(&stall_steer), BlockKind::Steered);
+}
+
 /// **Witness (#2837).** An invoked skill's body and a parked wait's wake
 /// report both ride as user-role text the engine wrote, and both redirect the
 /// model, so both file as [`BlockKind::Steered`]. Each read as the person's

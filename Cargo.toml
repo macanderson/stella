@@ -17,7 +17,6 @@ members = [
   "crates/stella-context",
   "crates/stella-graph",
   "crates/stella-mcp",
-  "crates/stella-media",
   "crates/stella-engine",
   "crates/stella-runtime",
   "crates/stella-fleet",
@@ -46,7 +45,7 @@ members = [
 exclude = [".stella-examples"]
 
 [workspace.package]
-version = "0.9.159"
+version = "0.9.161"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
@@ -128,7 +127,6 @@ crossterm = "0.29"
 notify = "8"
 ratatui = "0.30"
 unicode-width = "0.2"
-roxmltree = "0.21"
 # `default-features = false` drops scraper's `main` feature, which exists only
 # to build scraper's OWN command-line binary and drags `getopts` into the
 # workspace with it — an argument parser compiled into a coding agent that
@@ -176,6 +174,7 @@ tree-sitter-sequel = "0.3"
 tree-sitter-go = "0.25"
 tree-sitter-java = "0.23"
 tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
 tree-sitter-php = "0.24"
 
 # stella-tui reads process stats and nothing else (`Pid`, `ProcessRefreshKind`,

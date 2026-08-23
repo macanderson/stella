@@ -115,6 +115,12 @@ zeroize.workspace = true
 contextgraph-conformance.workspace = true
 
 [dev-dependencies]
+# The OKLCH ruler the 30° hue-separation law is measured with. `design_token_parity`
+# transcribed Ottosson's matrices a second time and then held one law to a 20°
+# floor while `stella-tui` held it to 30 (#4071); this crate is the single Rust
+# implementation. Already in the tree — `stella-tui`, which this crate depends
+# on, links it — and it is a near-leaf whose only dependency is `ratatui`.
+stella-tui-theme = { path = "../stella-tui-theme" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "test-util"] }
 rusqlite.workspace = true
 # The eager-embedding witness points `stella init` at a local embeddings

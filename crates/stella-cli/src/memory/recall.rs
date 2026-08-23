@@ -26,6 +26,14 @@ pub struct RecalledBlock {
     /// What recall actually returned and what it cost — the material the
     /// `ContextRecall` event is built from.
     pub recall: Recall,
+    /// The frames and skills that reached [`Self::text`], by steering handle.
+    ///
+    /// The render's own answer to "what has the model now been shown", which
+    /// is a different question from what recall returned: the plane's budget
+    /// and the citation-label rule both cut between the two. A mid-turn
+    /// re-query carries this forward so the next block renders only what is
+    /// new (#4236).
+    pub produced: super::steering::ProducedSteering,
 }
 
 impl RecalledBlock {
@@ -210,11 +218,14 @@ impl SessionMemory {
         );
         report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
 
+        let frames = kept_frames(&recall.frames, &set);
+        let kept = kept_skills(&selected.selected, &set);
+        let produced = super::steering::ProducedSteering::of(&frames, &kept);
+
         let mut sections: Vec<String> = Vec::new();
-        if let Some(section) = render_context_section(&kept_frames(&recall.frames, &set)) {
+        if let Some(section) = render_context_section(&frames) {
             sections.push(section);
         }
-        let kept = kept_skills(&selected.selected, &set);
         if !kept.is_empty() {
             sections.push(skills::render_skills_section(&kept));
         }
@@ -239,6 +250,7 @@ impl SessionMemory {
             text: (!sections.is_empty())
                 .then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n"))),
             recall,
+            produced,
         }
     }
 
@@ -263,9 +275,19 @@ impl SessionMemory {
     /// stream (#3366). `RecalledBlock::text` is `None` when nothing
     /// surfaced, when the turn is an A/B control, or when steering is off —
     /// the same gates, for the same reasons.
+    ///
+    /// `produced` is what this turn's earlier blocks already rendered, and
+    /// every frame and skill in it is left out of this one (#4236). Drift is
+    /// incremental — a re-query answering `{A, B, C, D}` after one that
+    /// answered `{A, B, C}` differs by one frame — so a block deduped by its
+    /// bytes alone is a block that always differs and is therefore always
+    /// injected, whole. These are `User` messages that only the overflow
+    /// summarizer can ever reclaim, so each repeat is permanent in the paid
+    /// prefix for the rest of the session.
     pub async fn signal_recall_block(
         &self,
         signal: &stella_core::steering::TurnSignal<'_>,
+        produced: &super::steering::ProducedSteering,
     ) -> RecalledBlock {
         if self.ab_suppressed || !self.steering_enabled {
             return RecalledBlock::default();
@@ -314,11 +336,26 @@ impl SessionMemory {
         );
         report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
 
+        // The per-frame cut this block exists to make. It runs AFTER the plane
+        // has packed, not before the query: the drop is about what the model
+        // has already been shown, and the ledger must still report the frame as
+        // selected — recall spent the tokens fetching it either way, and a
+        // ledger that quietly forgot the ones the render suppressed would
+        // under-report the fan-out the re-query paid for.
+        let frames: Vec<RecalledFrame> = kept_frames(&recall.frames, &set)
+            .into_iter()
+            .filter(|frame| !produced.has_frame(&super::steering::frame_handle(frame)))
+            .collect();
+        let kept: Vec<skills::SelectedSkill> = kept_skills(&selected.selected, &set)
+            .into_iter()
+            .filter(|sel| !produced.has_skill(&sel.skill.name))
+            .collect();
+        let block_produced = super::steering::ProducedSteering::of(&frames, &kept);
+
         let mut sections: Vec<String> = Vec::new();
-        if let Some(section) = render_context_section(&kept_frames(&recall.frames, &set)) {
+        if let Some(section) = render_context_section(&frames) {
             sections.push(section);
         }
-        let kept = kept_skills(&selected.selected, &set);
         if !kept.is_empty() {
             sections.push(skills::render_skills_section(&kept));
         }
@@ -329,6 +366,7 @@ impl SessionMemory {
             text: (!sections.is_empty())
                 .then(|| format!("{RECALL_MARKER}\n\n{}", sections.join("\n\n"))),
             recall,
+            produced: block_produced,
         }
     }
 

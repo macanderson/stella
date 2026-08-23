@@ -257,6 +257,76 @@ pub const C_CALLS: &str = r#"
 (call_expression function: (field_expression field: (_) @callee))
 "#;
 
+// C++
+/// C's surface plus the four shapes the C grammar cannot reach at all — a
+/// class body, a member function, an out-of-line member definition, and a
+/// `using` alias (#3184).
+///
+/// Three conventions carry most of the weight:
+/// - **The wrapped-declarator pattern is written twice.** `int *f()` and
+///   `int &f()` put a `pointer_declarator`/`reference_declarator` between the
+///   definition and its `function_declarator`, and C++ returns references
+///   constantly; `(_ declarator: …)` matches whatever that wrapper is without
+///   naming each one.
+/// - **A qualified definition is a method, and keeps its unqualified name.**
+///   `void KvStore::put(…) {}` in a `.cpp` stores `put`, not `KvStore::put`,
+///   so it reaches the same name the call edges and the header's declaration
+///   use. Two levels of qualification are spelled out (`A::B::f`); deeper
+///   nesting is skipped rather than stored under a name nothing would match.
+/// - **A namespace is not a symbol.** It declares no callable and no type,
+///   and PHP — the other indexed language with namespaces — does not capture
+///   them either. What the DoD asks for, a *namespaced free function*, is the
+///   plain `function_definition` pattern: the namespace is the node above it.
+///
+/// Free-function prototypes are deliberately absent, matching C: a header's
+/// `void f();` yields no symbol, while a class's `void f();` does, because
+/// that member declaration is the C++ API surface a search asks for.
+pub const CPP_SYMBOLS: &str = r#"
+(class_specifier name: (type_identifier) @name) @class
+(struct_specifier name: (type_identifier) @name) @struct
+(union_specifier name: (type_identifier) @name) @struct
+(enum_specifier name: (type_identifier) @name) @enum
+(type_definition declarator: (type_identifier) @name) @struct
+(alias_declaration name: (type_identifier) @name) @struct
+(function_definition
+  declarator: (function_declarator declarator: (identifier) @name)) @fn
+(function_definition
+  declarator: (_ declarator: (function_declarator declarator: (identifier) @name))) @fn
+(function_definition
+  declarator: (function_declarator declarator: (field_identifier) @name)) @method
+(function_definition
+  declarator: (_ declarator: (function_declarator declarator: (field_identifier) @name))) @method
+(function_definition
+  declarator: (function_declarator
+    declarator: (qualified_identifier name: (identifier) @name))) @method
+(function_definition
+  declarator: (function_declarator
+    declarator: (qualified_identifier
+      name: (qualified_identifier name: (identifier) @name)))) @method
+(field_declaration
+  declarator: (function_declarator declarator: (field_identifier) @name)) @method
+(field_declaration
+  declarator: (_ declarator: (function_declarator declarator: (field_identifier) @name))) @method
+"#;
+
+/// `#include`, decoded by C's reader — the preprocessor is the same one.
+/// `using` is captured by neither: it names a namespace or a type, never a
+/// file, so an edge from it could not resolve to anything in the tree.
+pub const CPP_IMPORTS: &str = r#"
+(preproc_include) @import
+"#;
+
+/// C's call surface plus the two spellings it has no node for: a qualified
+/// call (`geometry::area()`, `Cache::flush()`) and an explicitly instantiated
+/// template call (`make<Widget>()`). Both keep only the final name, which is
+/// the name a definition is indexed under.
+pub const CPP_CALLS: &str = r#"
+(call_expression function: (identifier) @callee)
+(call_expression function: (field_expression field: (_) @callee))
+(call_expression function: (qualified_identifier name: (identifier) @callee))
+(call_expression function: (template_function name: (identifier) @callee))
+"#;
+
 // PHP
 /// Classes, interfaces, traits, enums, free functions, and methods.
 pub const PHP_SYMBOLS: &str = r#"
