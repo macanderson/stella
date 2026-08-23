@@ -10,8 +10,6 @@
 //!
 //! # What is proved here
 //!
-//! Two things a single arm could not distinguish, which is the point:
-//!
 //! * `an_unsealed_child_reaches_the_configured_backend` spawns a child with
 //!   the embedder configured and *not* sealed, and asserts the listener is
 //!   connected to. Without it, "zero connections" in the arm below would be
