@@ -68,8 +68,7 @@ pub use deliver::{
     PrState, ReviewState, Transition, deliver_next,
 };
 pub use doctrine::{
-    Contention, ContentionPolicy, ContentionVerdict, Doctrine, ForeignBreakage, QueueCriterion,
-    contention_verdict,
+    Contention, ContentionPolicy, ContentionVerdict, Doctrine, ForeignBreakage, contention_verdict,
 };
 pub use gate::{BlockingPolicy, DEFAULT_STUCK_AFTER, blocking, stuck_on_base, waived};
 pub use stats::SessionStats;
