@@ -24,6 +24,13 @@
 //! from a [`HostCallResponse`], so a plugin that asked with an argument the
 //! host cannot decode fails **here** rather than in the field.
 //!
+//! The `.expected.json` sibling is compared — and regenerated under `BLESS=1` —
+//! through `common::bless_or_assert`, the same path the four conformance
+//! harnesses take (#3548, #4437, #4475). What is bespoke here is the *vector
+//! loop*: these vectors run through `converse` with a `.calls.json` script
+//! rather than through `SubprocessWrapper`, so this file owns how a response
+//! is produced and nothing about how one is graded.
+//!
 //! `cfg(unix)` for `wrapper_socket.rs`'s reason, tracked in the same place
 //! (#3497): the child is spawned with a POSIX `PATH` and named `python3`.
 
@@ -37,6 +44,8 @@ use std::process::{Child, Command, Stdio};
 use stella_plugin::{
     HostCallRequest, HostCallResponse, PluginManifest, PluginMessage, WrapperResponse,
 };
+
+mod common;
 
 fn plugin_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -285,10 +294,10 @@ fn every_hostcall_vector_ends_at_its_golden_evidence() {
         let response = held
             .response
             .unwrap_or_else(|| panic!("{name}: the plugin never answered the point"));
-        let golden: WrapperResponse =
-            serde_json::from_str(&fs::read_to_string(&golden_path).expect("a readable golden"))
-                .unwrap_or_else(|e| panic!("{name}'s golden is not a response: {e}"));
-        assert_eq!(response, golden, "{name} did not answer with its golden");
+        // Nothing in this plugin's evidence is wall clock — the verdict it
+        // parses out of a child turn's report is the whole of it — so there is
+        // nothing to pin before the comparison.
+        common::bless_or_assert(&name, &golden_path, &response, |_| {});
 
         let WrapperResponse::AfterTurn(_after) = response else {
             panic!("{name} answers a point this vector set does not exercise");
