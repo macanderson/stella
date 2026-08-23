@@ -823,9 +823,9 @@ six-variant enum at `crates/stella-tui/src/envelope.rs:993`).
 
 **Net-new, not ported:** the durable flip record. Today a `LadderSnapshot` rides
 inside `AgentEvent::Verdict`, but there is no dedicated flip-transition event and
-the `verdict` tag's consumer posture is `Unclassified` (#2703) — nothing is
-declared to read it. Vera owns a declared flip record whose named consumer is
-the fine-tuning corpus. A verification signal nothing reads is the exact failure
+the `verdict` tag's consumer posture is `RecordedOnly` (#3790) — its readers all
+render, and nothing decides on it. Vera owns a declared flip record whose named
+consumer is the fine-tuning corpus. A verification signal nothing reads is the exact failure
 mode this project exists to end.
 
 ---
