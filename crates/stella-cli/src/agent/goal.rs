@@ -464,6 +464,10 @@ pub async fn run_goal_cmd(
     goal: &str,
     budget_limit: Option<f64>,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
+    // `--test-command`: the oracle a bound wrapper's `[oracle]` observes its
+    // flip with (#3835). Refused before this function on the raw arm, where
+    // there is no oracle to arm.
+    test_command: Option<&str>,
 ) -> Result<(), crate::failure::CliFailure> {
     // `Plugin` reads as `Raw` for every branch below except the final
     // dispatch: the wrapped arm builds the same system prompt, the same
@@ -497,19 +501,49 @@ pub async fn run_goal_cmd(
         crate::wrapper_plugin::reject_arbiter_wrapper_on_goal(resolved)
             .map_err(crate::failure::CliFailure::from)?;
     }
+    // Pinned *before* the first round, which is the whole content of the
+    // tamper claim, and pinned exactly once for the run rather than refreshed
+    // per round (#3835).
+    //
+    // Re-pinning would read as the more careful choice and is the unsafe one.
+    // What the watch covers is the artifacts the test command names — the
+    // witness the flip is observed against, not whatever files a round
+    // happened to touch — and those do not legitimately change while the loop
+    // runs. A baseline taken at the top of round 3 would vouch for a witness
+    // the worker rewrote in round 2, which is precisely the laundering the
+    // watch exists to refuse. So the finding is sticky by design: once a
+    // witness has moved under the run, no later round earns a `Clean`.
+    //
+    // The same breath as the resolve above, and for the same reason: a
+    // `--test-command` the host's parser refuses must stop the run here, not
+    // after it is paid for.
+    let candidate = match &resolved {
+        Some(_) => Some(
+            crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
+                .map_err(crate::failure::CliFailure::from)?,
+        ),
+        None => None,
+    };
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
-    crate::subagent::install_for_session(cfg, &registry)?;
-    // The goal door's host serves `recall` only — no `child_turn` plane; see
-    // `crate::wrapper_plugin`'s module doc for why a fixed slot is unsafe
-    // across a goal loop's own even/odd round math.
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
+    // The goal door serves `recall` and `child_turn` (#3833). The plane is
+    // built here rather than beside `resolve` above for the ordering
+    // `run_raw_one_shot` documents: a `--pipeline` naming nothing installed
+    // must fail as a typo before a paid call, while a child-turn plane needs
+    // this session's dispatcher, which needs the provider built above. It
+    // allocates its receipt slots through `stella_core::turn_slots`, whose
+    // lanes are what let a plane counting its own calls run beside a goal
+    // round's own worker/verifier pair without overwriting either.
     let bound = match resolved {
         Some(resolved) => {
-            let host = crate::wrapper_plugin::WrapperHost::recalling(Box::new(
-                crate::wrapper_recall::SessionRecallHost::open(&cfg.workspace_root),
-            ));
+            let host = crate::wrapper_plugin::round_driver_host(
+                &cfg.workspace_root,
+                resolved.manifest(),
+                sub_agents,
+            );
             Some(
                 resolved
                     .serving(host)
@@ -588,7 +622,10 @@ pub async fn run_goal_cmd(
     // it empty for the same reason `run_raw_one_shot`'s does: those turns are
     // the plugin's to observe through the wrapper socket.
     let mut rounds: Vec<TurnFriction> = Vec::new();
-    let outcome = if let Some(bound) = &bound {
+    // Both are set together above, so the mismatched pairs are unreachable;
+    // matching the tuple keeps that visible rather than unwrapping a grant on
+    // the strength of having checked the wrapper — `run_raw_one_shot`'s shape.
+    let outcome = if let (Some(bound), Some(candidate)) = (&bound, &candidate) {
         goal_wrapped::run_goal_wrapped_turn(
             &*provider,
             base_tools,
@@ -605,6 +642,7 @@ pub async fn run_goal_cmd(
             recall_event,
             memory.as_mut(),
             bound,
+            candidate,
         )
         .await
     } else {
@@ -794,6 +832,19 @@ pub(crate) async fn run_goal_turn(
             )
             .await
     };
+    // What this arc changed, measured before the stream closes (#4159).
+    //
+    // Once for the run rather than once per round, and that is a limit of
+    // where this arm's loop lives rather than a choice: `Engine::run_goal`
+    // drives every round inside `stella-core`, so there is no round boundary
+    // in this function to measure at. What that costs is the *ordering* of
+    // these events and nothing else — a goal run is one execution row and one
+    // stream, so `files_touched`, the counts, and
+    // `finalize_execution_reflection`'s `wrote_files` flag are the same
+    // whichever boundary the reading is taken at; only "which round wrote it"
+    // is unavailable, and this arm never had it. The wrapped arm drives its
+    // own rounds and does measure per round (`goal_wrapped`).
+    crate::turn_files::emit_shared_tree_changes_raw(cfg, &tx, execution.as_ref());
     // This goal loop owns the stream, so it — not any single round — emits the
     // run's one ending (#3398). A goal that ends unmet still *ended*: the
     // rounds ran, the money was spent, and the outcome is carried by the
