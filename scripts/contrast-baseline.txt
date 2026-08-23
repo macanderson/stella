@@ -1,0 +1,17 @@
+# Down-only ratchet for scripts/check-contrast.py.
+#
+# Each line is `<foreground> <background> <ratio>` -- the WCAG 2.1 contrast the
+# pairing measured when it was recorded. A pairing may only get *lighter*: the
+# guard fails if the measured ratio drops below the number here, and it fails on
+# any sub-threshold pairing that has no line at all.
+#
+# `make contrast-update` rewrites a number upward, drops a pairing that now
+# clears its threshold, and refuses to lower a floor or to add a pairing. So the
+# only way past a red gate is to move the colour -- see `make contrast-report`
+# for every pairing and the ground it is measured on.
+#
+# This file records the debt #4423 found; it is meant to reach empty.
+comment panel 2.64
+dim bg 2.30
+muted bg 4.47
+muted panel 4.32

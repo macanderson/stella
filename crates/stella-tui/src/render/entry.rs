@@ -20,7 +20,7 @@ use crate::model::{FileState, TranscriptEntry};
 use crate::render::row::*;
 use crate::textline::{
     budget_mode_label, ci_status_label, media_kind_label, media_state_label, pr_status_label,
-    stage_label,
+    stage_label, steering_withheld,
 };
 use crate::theme;
 
@@ -545,6 +545,34 @@ fn entry_body(
                 width,
                 out,
             );
+        }
+        // Composed from `textline::steering_withheld`, the same wording the
+        // plain door prints (#4463). Rebuilt here it would be a second copy
+        // of a sentence whose whole point is naming the *right* remedy, and
+        // the two surfaces would drift on the day one of them was corrected.
+        TranscriptEntry::SteeringWithheld {
+            withheld_by,
+            memories,
+            records,
+            skills,
+            commands,
+            agents,
+        } => {
+            let line = steering_withheld(
+                *withheld_by,
+                &[
+                    (*memories, "memory", "memories"),
+                    (*records, "context record", "context records"),
+                    (*skills, "skill", "skills"),
+                    (*commands, "command", "commands"),
+                    (*agents, "agent", "agents"),
+                ],
+            );
+            let mut content = vec![Span::styled(line.body, value())];
+            if let Some(detail) = line.detail {
+                content.push(Span::styled(format!("  ·  {detail}"), quiet()));
+            }
+            push_note("⚠ steering", loud(theme::WARNING), content, width, out);
         }
         TranscriptEntry::ContextRecall {
             frames,

@@ -307,7 +307,7 @@ fn slash_on_the_mcp_tab_opens_the_command_menu_not_search() {
     );
     assert_eq!(ui.composer.buffer(), "/", "the slash query is typing");
     assert!(
-        !slash_matches(&ui).is_empty(),
+        !slash_matches(&model, &ui).is_empty(),
         "…and the command menu is open over it"
     );
 }
@@ -520,6 +520,7 @@ fn a_refreshed_graph_snapshot_updates_the_view_out_of_band() {
         }],
         edges: vec![],
         files: vec!["src/lib.rs".into()],
+        query_ms: None,
     };
     ingest_inbound(
         &Inbound::GraphSnapshot(snapshot.clone()),

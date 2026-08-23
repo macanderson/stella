@@ -656,6 +656,12 @@ pub(crate) fn graph_snapshot_focus(
     if !db_path.exists() {
         return None;
     }
+    // The query bar reports what this cost, so the clock covers the whole
+    // round-trip — open, read, close — and not just the neighborhood read.
+    // Opening the database is a real per-query cost here (there is no pooled
+    // handle to amortize it against), so a number that excluded it would be
+    // the answer to a question nobody asked (#4335).
+    let started = std::time::Instant::now();
     let graph = stella_graph::CodeGraph::open(workspace_root, &db_path).ok()?;
     // An explicit pick roots there; otherwise fall back to the busiest file.
     let focus = match focus {
@@ -666,6 +672,7 @@ pub(crate) fn graph_snapshot_focus(
     // The full file list backs the picker (a superset of this neighborhood).
     let files = graph.all_files().unwrap_or_default();
     graph.shutdown();
+    let query_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
     let mut nodes = vec![GraphNode {
         label: hood.file.clone(),
@@ -714,6 +721,7 @@ pub(crate) fn graph_snapshot_focus(
         nodes,
         edges,
         files,
+        query_ms: Some(query_ms),
     })
 }
 

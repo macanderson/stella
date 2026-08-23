@@ -49,14 +49,21 @@ pub const FAILED: char = '✗';
 
 /// Drift, plan revision. Gold-bright.
 ///
-/// U+2442 OCR FORK is missing from a good many terminal fonts, where it
-/// renders as a replacement box — and a box is worse than a different glyph,
-/// because it reads as a rendering bug rather than as drift. [`DRIFT_FALLBACK`]
-/// is SPEC 4's stated substitute.
-pub const DRIFT: char = '⑂';
-
-/// The substitute for [`DRIFT`] on fonts lacking U+2442 (SPEC 4).
-pub const DRIFT_FALLBACK: char = '↯';
+/// U+2325 OPTION KEY — a line that leaves its course and rejoins it, which is
+/// what a plan revision is. Native to JetBrains Mono (SPEC 3.4) and width `N`.
+///
+/// It replaces U+2442 OCR FORK, whose shape was the better literal fork and
+/// whose coverage was the worst in the whole vocabulary: absent from the brand
+/// font, resolving on macOS to the proportional Apple Symbols — the exact
+/// bucket that got U+2317 rejected in #4125 — and to tofu on a bare Linux
+/// terminal. SPEC 4 answered that with a stated substitute, `↯` U+21AF, and
+/// **the brand font lacks that too**, so on the one font the design names the
+/// remedy was as absent as the thing it remedied (#4318). A fallback that is
+/// missing wherever its subject is missing is not a fallback, and nothing
+/// here selects between two glyphs anyway — this crate reads no font. So the
+/// pair collapses to one character the brand font ships, and `DRIFT_FALLBACK`
+/// is gone rather than repointed.
+pub const DRIFT: char = '⌥';
 
 /// Collapsed, expandable. Takes the metal of the event it heads.
 pub const COLLAPSED: char = '▸';
@@ -165,14 +172,13 @@ pub const METER_TRACK: char = '░';
 ///
 /// The tests walk this instead of a second list, so a glyph added without a
 /// stated width is caught rather than assumed.
-pub const ALL: [(&str, char); 22] = [
+pub const ALL: [(&str, char); 21] = [
     ("done", DONE),
     ("running", RUNNING),
     ("queued", QUEUED),
     ("gate", GATE),
     ("failed", FAILED),
     ("drift", DRIFT),
-    ("drift_fallback", DRIFT_FALLBACK),
     ("collapsed", COLLAPSED),
     ("write", WRITE),
     ("memory", MEMORY),
@@ -188,6 +194,93 @@ pub const ALL: [(&str, char); 22] = [
     ("compacted", COMPACTED),
     ("block_full", BLOCK_EIGHTHS[8]),
     ("meter_track", METER_TRACK),
+];
+
+// ── Brand-font coverage (SPEC 4.2) ──────────────────────────────────────────
+
+/// Does the brand terminal font ship this glyph, and if not, what draws it?
+///
+/// Only the first half travels. `Native` and the *absence* it contrasts with
+/// are facts about JetBrains Mono's `cmap` and hold on every machine; the face
+/// named by [`Coverage::Substituted`] is a fact about one fallback chain,
+/// CoreText's on macOS. A bare Linux terminal on DejaVu Sans Mono resolves the
+/// same codepoints differently and some of them to nothing at all, which is the
+/// hazard this table keeps visible rather than one it can answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Coverage {
+    /// In the brand font's own `cmap`.
+    Native,
+    /// Absent from it. The named face is what CoreText resolves it to on
+    /// macOS, and it is recorded rather than repaired because the substitute
+    /// is monospace and the cell grid survives — the one exception being
+    /// U+FF0B, below.
+    Substituted(&'static str),
+}
+
+/// Every character this vocabulary declares, against the brand font (SPEC 3.4).
+///
+/// SPEC 4's glyphs had never been checked against the font the design names.
+/// Doing it for the four tool classes in #4125 found six shipped glyphs
+/// resolving through font fallback; doing it exhaustively here found **eight**
+/// — the issue's own list missed U+25A2 and counted the spinner as one glyph
+/// when three of its four frames are absent (#4318). That gap is the argument
+/// for a walked table over a prose list.
+///
+/// Regenerate after adding a glyph, on a machine with the font installed:
+///
+/// ```text
+/// uv run --with fonttools --with pyobjc-framework-CoreText \
+///     python scripts/gen-glyph-coverage.py
+/// ```
+///
+/// The output is this table. It is **committed** rather than computed, because
+/// `make gate` may not assume a font is installed and a guard that skips when
+/// one is missing reports green over an unrun check —
+/// `every_glyph_declares_its_brand_font_coverage` walks [`ALL`] against this
+/// with no font involved.
+///
+/// Two rows are worth knowing before adding a ninth:
+///
+/// - Menlo is monospace, so those substitutions cost nothing on macOS and cost
+///   a tofu box on a bare Linux terminal. That is the trade SPEC 4.2 accepts
+///   and states.
+/// - U+FF0B [`WRITE`] resolves to **PingFang SC**, a CJK face, into a cell the
+///   layout budgets as fullwidth. It is the one row here whose substitute
+///   brings unrelated metrics, and it is unresolved: moving it means moving
+///   SPEC 4's named character and the width contract [`width`] states, which
+///   is a design decision rather than a coverage fix (#4318).
+pub const COVERAGE: [(char, Coverage); 31] = [
+    ('\u{0192}', Coverage::Native), // LATIN SMALL LETTER F WITH HOOK
+    ('\u{2193}', Coverage::Native), // DOWNWARDS ARROW
+    ('\u{21B3}', Coverage::Substituted("Menlo")), // DOWNWARDS ARROW WITH TIP RIGHTWARDS
+    ('\u{2299}', Coverage::Native), // CIRCLED DOT OPERATOR
+    ('\u{2325}', Coverage::Native), // OPTION KEY
+    ('\u{2588}', Coverage::Native), // FULL BLOCK
+    ('\u{2589}', Coverage::Native), // LEFT SEVEN EIGHTHS BLOCK
+    ('\u{258A}', Coverage::Native), // LEFT THREE QUARTERS BLOCK
+    ('\u{258B}', Coverage::Native), // LEFT FIVE EIGHTHS BLOCK
+    ('\u{258C}', Coverage::Native), // LEFT HALF BLOCK
+    ('\u{258D}', Coverage::Native), // LEFT THREE EIGHTHS BLOCK
+    ('\u{258E}', Coverage::Native), // LEFT ONE QUARTER BLOCK
+    ('\u{258F}', Coverage::Native), // LEFT ONE EIGHTH BLOCK
+    ('\u{2591}', Coverage::Native), // LIGHT SHADE
+    ('\u{25A2}', Coverage::Substituted("Menlo")), // WHITE SQUARE WITH ROUNDED CORNERS
+    ('\u{25A4}', Coverage::Substituted("Menlo")), // SQUARE WITH HORIZONTAL FILL
+    ('\u{25B8}', Coverage::Native), // BLACK RIGHT-POINTING SMALL TRIANGLE
+    ('\u{25C6}', Coverage::Native), // BLACK DIAMOND
+    ('\u{25C7}', Coverage::Native), // WHITE DIAMOND
+    ('\u{25C9}', Coverage::Native), // FISHEYE
+    ('\u{25CB}', Coverage::Native), // WHITE CIRCLE
+    ('\u{25CC}', Coverage::Native), // DOTTED CIRCLE
+    ('\u{25CF}', Coverage::Native), // BLACK CIRCLE
+    ('\u{25D0}', Coverage::Substituted("Menlo")), // CIRCLE WITH LEFT HALF BLACK
+    ('\u{25D1}', Coverage::Substituted("Menlo")), // CIRCLE WITH RIGHT HALF BLACK
+    ('\u{25D2}', Coverage::Substituted("Menlo")), // CIRCLE WITH LOWER HALF BLACK
+    ('\u{25D3}', Coverage::Substituted("Menlo")), // CIRCLE WITH UPPER HALF BLACK
+    ('\u{2713}', Coverage::Native), // CHECK MARK
+    ('\u{2717}', Coverage::Native), // BALLOT X
+    ('\u{2726}', Coverage::Substituted("Menlo")), // BLACK FOUR POINTED STAR
+    ('\u{FF0B}', Coverage::Substituted("PingFang SC")), // FULLWIDTH PLUS SIGN
 ];
 
 /// How many terminal cells `glyph` occupies.

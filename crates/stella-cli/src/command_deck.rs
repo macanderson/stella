@@ -102,6 +102,7 @@ mod sessions_view;
 mod settings_io;
 mod settle;
 mod slash_pump;
+mod steering;
 mod task_tap;
 mod theme_cmd;
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
@@ -606,6 +607,7 @@ pub async fn run_deck_session(
     for notice in crate::engine_config::boot_notices(cfg) {
         let _ = deck_tx.send(system_notice(notice));
     }
+    steering::announce_withheld(cfg, &in_tx);
     // An idle lead is waiting on the human, not queued behind a supervisor —
     // asserted outright, since the startup chrome above no longer folds it to
     // `Running` (see `system_notice`).

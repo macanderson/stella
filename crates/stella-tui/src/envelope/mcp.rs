@@ -54,6 +54,18 @@ pub struct McpServerInfo {
     /// where the cap bites, so tools the server would have listed later are
     /// never counted.
     pub dropped_tools: usize,
+    /// Tools this server advertised that were **trimmed** to fit the
+    /// per-server schema byte budget (`stella_mcp::MAX_SERVER_SCHEMA_BYTES`).
+    /// `0` for every server that fits, which is nearly all of them.
+    ///
+    /// A different wall from `dropped_tools`, and the row says which one was
+    /// hit: 300 tools trips the count cap, twelve verbose ones trip this. A
+    /// reader told only "dropped past cap" would go looking for the wrong
+    /// limit and find the server nowhere near it (#4441).
+    ///
+    /// Unlike `dropped_tools` this is a total, not a floor: the budget sees
+    /// the whole advertised list and counts every tool it cuts.
+    pub trimmed_tools: usize,
     /// Configured credential field names (env vars / headers) — presence means
     /// auth is set; the values are never carried here.
     pub auth_fields: Vec<String>,
@@ -181,6 +193,9 @@ pub struct McpServerDetail {
     /// Tools refused past the per-server cap (a floor — see
     /// [`McpServerInfo::dropped_tools`]).
     pub dropped_tools: usize,
+    /// Tools trimmed to fit the per-server schema byte budget (a total — see
+    /// [`McpServerInfo::trimmed_tools`]).
+    pub trimmed_tools: usize,
     /// Total recorded calls across this server's tools.
     pub calls: u64,
     /// The handshake identity, when the server is connected this session.

@@ -94,8 +94,8 @@ pub use ansi::strip_ansi;
 pub use attach::probe_path_attachment;
 pub use clipboard::{ClipboardPaste, default_attachments_dir};
 pub use composer::{
-    Composer, ComposerEntry, DEFAULT_PASTE_LINE_THRESHOLD, SlashCommand, SlashKind, SlashMenu,
-    Submission,
+    Composer, ComposerEntry, DEFAULT_PASTE_LINE_THRESHOLD, PaletteState, SlashCommand, SlashDomain,
+    SlashKind, SlashMenu, Submission,
 };
 pub use debug_log::DebugLog;
 pub use input::UserInput;

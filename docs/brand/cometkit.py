@@ -60,18 +60,31 @@ BRAND = "#EFC53F"  # gold — the comet, on either ground
 # that the floor was never the right test — WCAG 1.4.3 and 1.4.11 both exempt
 # logotypes by name, which is exactly what lets rule 6 permit a gold mark on
 # paper while forbidding gold body text there. `scripts/check-contrast.py`
-# records this pairing at 1.65:1 as an exemption rather than hiding it: the
+# records this pairing at 1.61:1 as an exemption rather than hiding it: the
 # number is stated, and the reason it does not fail is stated beside it.
+#
+# Every ratio in this block names its ground, because this kit and that checker
+# measure on two different ones and quoted the same pairing at two numbers for
+# a release (#4423). The checker measures on the `paper` token `#FFFCF5`; the
+# kit renders on the pure white below, which every generated asset already
+# sits on. Gold is 1.61:1 on `paper` and 1.65:1 on white.
 BRAND_ON_LIGHT = BRAND
 # Small brand *text* on light surfaces is not gold at all — rule 6 forbids it,
-# and at 1.65:1 the measurement agrees. Brand text on paper is `ink`.
+# and at 1.65:1 on this kit's white the measurement agrees. Brand text on paper
+# is `ink`.
 BRAND_DEEP = "#141413"  # ink
 INK = "#0A0A0C"  # bg — the canvas
 PAPER = "#F4F1EA"  # text — primary text on dark
-PAPER_BG = "#FFFFFF"  # paper — the light-mode surface
+# Pure white, and deliberately not the `paper` token `#FFFCF5`: an asset is
+# composited onto whatever page carries it, and white is the ground that makes
+# no assumption about which. It is the one value here that is not a token.
+PAPER_BG = "#FFFFFF"
 MUTED_ON_DARK = "#777782"  # muted
 # `dim` rather than `muted` on light. Both are tokens; this one is the pairing
-# that measures — 8.61:1 on paper against muted's 4.42:1, which is under AA.
+# that measures — 8.61:1 on the white above against muted's 4.43:1, which is
+# under AA. The checker reads `dim` on the `paper` token as 8.40:1 and licenses
+# no light pairing for `muted` at all, which is the same verdict arrived at
+# from the other side.
 MUTED_ON_LIGHT = "#4B4B56"  # dim
 
 # JetBrains Mono advances 0.6em per glyph, which is what lets every string's

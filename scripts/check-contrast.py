@@ -16,9 +16,25 @@ colour:
   - exempt logotypes. 1.4.3 and 1.4.11 both carve out logos and brand marks by
     name, which is why a gold mark is allowed on paper where gold *text* is not.
 
-The exemption is the load-bearing one for this palette: it is what lets rule 6
-say "gold for the mark and for icons at 24px and larger, never gold body text on
-light" without contradicting itself.
+The logotype exemption is what lets rule 6 say "gold for the mark and for icons
+at 24px and larger, never gold body text on light" without contradicting
+itself.
+
+Four pairings sit under their threshold today, and they are palette values
+rather than an oversight: `muted` is 4.47:1 on the canvas against a 4.5 floor,
+and `dim`/`comment` are decorative tiers the terminal already documents as
+below every text floor. Moving them is a recolour and belongs to whoever owns
+the palette (#4063), so this guard records them in a **down-only ratchet**
+(`scripts/contrast-baseline.txt`) rather than waiting to become a gate step
+until they are fixed -- which is what it did for two releases, in no gate at
+all, while the tree carried figures that disagreed with it (#4423).
+
+The ratchet records a **measured ratio**, not a count, which is what makes it
+strictly stronger than the threshold it stands in for: a baselined pairing is
+held to the exact number it shipped at, so darkening `muted` by one point fails
+even though it was already failing. `--update` rewrites a recorded ratio
+upward, drops a pairing that has climbed back over its threshold, and refuses
+both to lower a floor and to admit a pairing that is not already listed.
 """
 
 from __future__ import annotations
@@ -28,7 +44,24 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-TOKENS = REPO / "design" / "tokens" / "stella-tokens.json"
+TOKENS_REL = Path("design") / "tokens" / "stella-tokens.json"
+BASELINE_REL = Path("scripts") / "contrast-baseline.txt"
+
+BASELINE_HEADER = """\
+# Down-only ratchet for scripts/check-contrast.py.
+#
+# Each line is `<foreground> <background> <ratio>` -- the WCAG 2.1 contrast the
+# pairing measured when it was recorded. A pairing may only get *lighter*: the
+# guard fails if the measured ratio drops below the number here, and it fails on
+# any sub-threshold pairing that has no line at all.
+#
+# `make contrast-update` rewrites a number upward, drops a pairing that now
+# clears its threshold, and refuses to lower a floor or to add a pairing. So the
+# only way past a red gate is to move the colour -- see `make contrast-report`
+# for every pairing and the ground it is measured on.
+#
+# This file records the debt #4423 found; it is meant to reach empty.
+"""
 
 
 def channels(hex_value: str) -> tuple[int, int, int]:
@@ -86,38 +119,180 @@ PAIRINGS = [
 ]
 
 
-def main() -> int:
-    doc = json.loads(TOKENS.read_text())
+def measure(root: Path) -> list[tuple[str, str, str, float | None, float]]:
+    """Every licensed pairing, as (fg, bg, role, threshold, ratio)."""
+    doc = json.loads((root / TOKENS_REL).read_text())
     hexes = {t["name"]: t["hex"] for t in doc["tokens"]}
+    return [
+        (fg, bg, role, threshold, round(contrast(hexes[fg], hexes[bg]), 2))
+        for fg, bg, role, threshold in PAIRINGS
+    ]
 
-    failures: list[str] = []
-    rows: list[tuple[str, str, str, float, str]] = []
 
-    for fg, bg, role, threshold in PAIRINGS:
-        ratio = contrast(hexes[fg], hexes[bg])
+def read_baseline(root: Path) -> dict[tuple[str, str], float]:
+    path = root / BASELINE_REL
+    if not path.exists():
+        return {}
+    floors: dict[tuple[str, str], float] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fg, bg, ratio = line.split()
+        floors[(fg, bg)] = float(ratio)
+    return floors
+
+
+def write_baseline(root: Path, floors: dict[tuple[str, str], float]) -> None:
+    body = "".join(f"{fg} {bg} {ratio:.2f}\n" for (fg, bg), ratio in sorted(floors.items()))
+    (root / BASELINE_REL).write_text(BASELINE_HEADER + body, encoding="utf-8")
+
+
+def report(root: Path, rows: list[tuple[str, str, str, float | None, float]]) -> int:
+    floors = read_baseline(root)
+    width = max(len(f"{fg} on {bg}") for fg, bg, _, _, _ in rows)
+    print(f"{'pairing'.ljust(width)}  ratio   verdict    role")
+    for fg, bg, role, threshold, ratio in rows:
         if threshold is None:
             verdict = "exempt"
         elif ratio >= threshold:
             verdict = f"pass ({threshold})"
+        elif (fg, bg) in floors:
+            verdict = f"held ({floors[(fg, bg)]:.2f})"
         else:
             verdict = f"FAIL ({threshold})"
-            failures.append(
-                f"{fg} on {bg} — {role}: {ratio:.2f}:1, needs {threshold}:1"
-            )
-        rows.append((fg, bg, role, ratio, verdict))
+        print(f"{f'{fg} on {bg}'.ljust(width)}  {ratio:5.2f}:1  {verdict:<10} {role}")
+    print(
+        "\nEvery ratio is measured against the named background token in "
+        "design/tokens/stella-tokens.json, so a figure quoted elsewhere against "
+        "a different ground will not match this table."
+    )
+    return 0
 
-    width = max(len(f"{fg} on {bg}") for fg, bg, _, _, _ in rows)
-    print(f"{'pairing'.ljust(width)}  ratio   verdict   role")
-    for fg, bg, role, ratio, verdict in rows:
-        print(f"{f'{fg} on {bg}'.ljust(width)}  {ratio:5.2f}:1  {verdict:<9} {role}")
 
-    if failures:
-        print(f"\n{len(failures)} pairing(s) below threshold:", file=sys.stderr)
-        for failure in failures:
-            print(f"  {failure}", file=sys.stderr)
+def update(root: Path, rows: list[tuple[str, str, str, float | None, float]]) -> int:
+    floors = read_baseline(root)
+    merged: dict[tuple[str, str], float] = {}
+    lowered: list[str] = []
+    unlisted: list[str] = []
+
+    for fg, bg, role, threshold, ratio in rows:
+        if threshold is None or ratio >= threshold:
+            continue
+        recorded = floors.get((fg, bg))
+        if recorded is None:
+            unlisted.append(f"{fg} on {bg} — {role}: {ratio:.2f}:1, needs {threshold}:1")
+            continue
+        if ratio < recorded:
+            lowered.append(f"{fg} on {bg}: {recorded:.2f}:1 -> {ratio:.2f}:1")
+            continue
+        merged[(fg, bg)] = ratio
+
+    if unlisted or lowered:
+        print("check-contrast: refusing to update.", file=sys.stderr)
+        for line in unlisted:
+            print(f"  new sub-threshold pairing: {line}", file=sys.stderr)
+        for line in lowered:
+            print(f"  darkened: {line}", file=sys.stderr)
+        print(
+            "\nThis ratchet only ever tightens. Move the colour, or take the "
+            "pairing out of PAIRINGS if the system no longer licenses it.",
+            file=sys.stderr,
+        )
         return 1
 
-    print("\nevery licensed pairing clears its threshold")
+    write_baseline(root, merged)
+    print(f"check-contrast: {BASELINE_REL.name} retightened to {len(merged)} pairing(s).")
+    return 0
+
+
+def bootstrap(root: Path, rows: list[tuple[str, str, str, float | None, float]]) -> int:
+    """Write the ratchet for the first time. Runs once, and says so afterwards."""
+    if (root / BASELINE_REL).exists():
+        print(
+            f"check-contrast: refusing to bootstrap -- {BASELINE_REL.name} already "
+            "exists. Use --update, which only ever raises a floor.",
+            file=sys.stderr,
+        )
+        return 1
+    floors = {
+        (fg, bg): ratio
+        for fg, bg, _, threshold, ratio in rows
+        if threshold is not None and ratio < threshold
+    }
+    write_baseline(root, floors)
+    print(f"check-contrast: wrote {BASELINE_REL.name} with {len(floors)} pairing(s).")
+    return 0
+
+
+def main() -> int:
+    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    positional = [a for a in sys.argv[1:] if not a.startswith("--")]
+    # A root argument is what lets scripts/test-contrast.sh drive the writing
+    # paths against a fixture tree instead of rewriting this repository's own
+    # baseline as a side effect of running the tests.
+    root = Path(positional[0]).resolve() if positional else REPO
+    rows = measure(root)
+
+    if "--report" in flags:
+        return report(root, rows)
+    if "--bootstrap" in flags:
+        return bootstrap(root, rows)
+    if "--update" in flags:
+        return update(root, rows)
+
+    floors = read_baseline(root)
+    failures: list[str] = []
+    held = 0
+
+    for fg, bg, role, threshold, ratio in rows:
+        if threshold is None or ratio >= threshold:
+            continue
+        recorded = floors.get((fg, bg))
+        if recorded is None:
+            failures.append(
+                f"{fg} on {bg} — {role}: {ratio:.2f}:1, needs {threshold}:1 "
+                "(no baseline entry; a new sub-threshold pairing is a defect)"
+            )
+        elif ratio < recorded:
+            failures.append(
+                f"{fg} on {bg} — {role}: {ratio:.2f}:1, darker than the "
+                f"{recorded:.2f}:1 the ratchet holds it to"
+            )
+        else:
+            held += 1
+
+    stale = sorted(
+        f"{fg} on {bg}"
+        for (fg, bg), _ in floors.items()
+        if all(
+            not (fg == f and bg == b and t is not None and r < t)
+            for f, b, _, t, r in rows
+        )
+    )
+    for pairing in stale:
+        failures.append(
+            f"{pairing}: baselined, but it clears its threshold now — "
+            "run `make contrast-update` so the ratchet retightens"
+        )
+
+    if failures:
+        print("check-contrast: FAIL\n", file=sys.stderr)
+        for failure in failures:
+            print(f"  {failure}", file=sys.stderr)
+        print(
+            "\nA pairing that got darker is fixed by moving the colour, never by "
+            "editing the ratchet; one that got lighter is fixed by "
+            "`make contrast-update`. `make contrast-report` names every pairing "
+            "and the ground it is measured on.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"check-contrast: {len(rows)} licensed pairing(s), "
+        f"{held} held by the ratchet, none darker than it allows."
+    )
     return 0
 
 

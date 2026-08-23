@@ -528,3 +528,40 @@ fn skills_tab_still_leaves_via_tab_key() {
     // for MCP (still proving SKILLS is not a dead end).
     assert_eq!(ui.tab, DeckTab::Mcp, "Tab cycles Skills → Mcp");
 }
+
+/// **The witness (#4368).** `→` crosses from the installed pane to the
+/// registry search and `←` comes back; past the search, with the query empty,
+/// `→` rises to the tab strip instead of being swallowed — the keymap row's
+/// parenthetical, which nothing pressed.
+#[test]
+fn skills_left_and_right_cross_the_panes_and_then_leave_the_tab() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    assert_eq!(ui.skills.focus, SkillsFocus::Installed);
+
+    handle_deck_key(key(KeyCode::Right), &model, &mut ui);
+    assert_eq!(ui.skills.focus, SkillsFocus::Search);
+    handle_deck_key(key(KeyCode::Left), &model, &mut ui);
+    assert_eq!(ui.skills.focus, SkillsFocus::Installed);
+
+    handle_deck_key(key(KeyCode::Right), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Right), &model, &mut ui);
+    assert_eq!(
+        ui.tab,
+        DeckTab::Skills.next(),
+        "→ past the search is the next tab"
+    );
+}
+
+/// A half-typed query claims `→` the way the composer does: leaving the tab
+/// under it would strand the search the user is in the middle of writing.
+#[test]
+fn skills_a_typed_query_holds_on_to_the_right_arrow() {
+    let model = WorkspaceModel::new();
+    let mut ui = skills_ui();
+    ui.skills.focus = SkillsFocus::Search;
+    handle_deck_key(ch('p'), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Right), &model, &mut ui);
+    assert_eq!(ui.tab, DeckTab::Skills, "the tab did not move");
+    assert_eq!(ui.skills.query, "p");
+}
