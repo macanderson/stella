@@ -28,6 +28,9 @@ pure module beside the adapter, so the adapter keeps one line per concern.
 
 from __future__ import annotations
 
+import re
+from typing import Any
+
 #: The step did not run at all. A real state, and deliberately spelled the
 #: same way :func:`run_git_baseline`'s absence is, so a reader learns one
 #: convention rather than two.
@@ -36,8 +39,23 @@ NOT_ATTEMPTED: dict[str, str] = {"state": "not_attempted"}
 #: The substring ``stella init`` prints its index summary on.
 _SUMMARY_MARKER = "code graph:"
 
+#: The substring every line about the semantic-search embedding pass carries
+#: — progress ticks and the final outcome line alike
+#: (``warm_semantic_index``/``format_warm_outcome`` in
+#: ``crates/stella-cli/src/agent/graph.rs``).
+_SEMANTIC_MARKER = "semantic index:"
 
-def from_stdout(stdout: str | None) -> dict[str, str]:
+#: ``format_warm_outcome``'s success line: ``✓ semantic index: N files
+#: embedded by <model>``, with or without a trailing "N left unembedded"
+#: clause the parser does not need. Matched only against a line already
+#: known to start with the ✓ prefix, so a partial/failed line with the same
+#: "N files embedded by <model>" substring can never be mistaken for one.
+_SEMANTIC_BUILT_PATTERN = re.compile(
+    r"(?P<count>\d+) files? embedded by (?P<model>\S+)"
+)
+
+
+def from_stdout(stdout: str | None) -> dict[str, Any]:
     """Classify what ``stella init`` said about the graph it built.
 
     ``no_summary_line`` is the state that earns this function: an init that
@@ -47,22 +65,86 @@ def from_stdout(stdout: str | None) -> dict[str, str]:
     The line count rides along because it is the cheapest thing that
     separates "produced no output at all" from "produced output we did not
     recognise" without shipping the container's stdout into trial metadata.
+
+    The returned dict carries a ``semantic`` sub-dict answering the
+    independent question of whether the semantic index was built — built,
+    skipped for want of a backend, or attempted and not fully built — so a
+    trial's metadata no longer reads identically across all three (#3669).
     """
     text = stdout or ""
-    for line in text.splitlines():
+    lines = text.splitlines()
+    result: dict[str, Any] | None = None
+    for line in lines:
         if _SUMMARY_MARKER in line:
-            return {"state": "reported", "summary": line.strip()}
-    return {
-        "state": "no_summary_line",
-        "detail": (
-            f"`stella init` exited without a '{_SUMMARY_MARKER}' line "
-            f"({len(text.splitlines())} line(s) of stdout)"
-        ),
-    }
+            result = {"state": "reported", "summary": line.strip()}
+            break
+    if result is None:
+        result = {
+            "state": "no_summary_line",
+            "detail": (
+                f"`stella init` exited without a '{_SUMMARY_MARKER}' line "
+                f"({len(lines)} line(s) of stdout)"
+            ),
+        }
+    return {**result, "semantic": _semantic_from_lines(lines)}
+
+
+def _semantic_from_lines(lines: list[str]) -> dict[str, str]:
+    """Classify the semantic-index outcome, keyed on the *last* matching line.
+
+    Progress ticks (``· semantic index: N files embedded…``) share the same
+    marker as the final outcome line and are printed first, so the last
+    match in program order is always the terminal state — the one
+    ``format_warm_outcome`` writes once the pass has stopped.
+    """
+    semantic_lines = [line.strip() for line in lines if _SEMANTIC_MARKER in line]
+    if not semantic_lines:
+        return {"state": "no_summary_line"}
+    last = semantic_lines[-1]
+    if "skipped" in last:
+        return {"state": "skipped_no_backend", "line": last}
+    if last.startswith("✓"):
+        match = _SEMANTIC_BUILT_PATTERN.search(last)
+        if match:
+            return {
+                "state": "built",
+                "files_embedded": match.group("count"),
+                "model": match.group("model"),
+                "line": last,
+            }
+    return {"state": "attempted_failed", "line": last}
+
+
+#: Harbor's own ``InstalledAgentBase._exec`` (harbor/agents/installed/base.py)
+#: formats a non-zero exit exactly this way, with ``stdout``/``stderr``
+#: already truncated to 1000 characters on its side. Parsed rather than
+#: re-truncated here, so a change to Harbor's truncation length cannot
+#: silently disagree with a second one of ours.
+_NONZERO_EXIT_PATTERN = re.compile(
+    r"^Command failed \(exit (?P<exit_code>-?\d+)\):.*?\nstderr: (?P<stderr>.*)$",
+    re.DOTALL,
+)
 
 
 def unavailable(error: BaseException) -> dict[str, str]:
     """The step raised. Best-effort by construction, so never fatal — but a
     failure that is not recorded is a failure that gets attributed to
-    whatever is measured next."""
-    return {"state": "unavailable", "detail": str(error)}
+    whatever is measured next.
+
+    ``kind`` carries the exception's class name so a reader does not have to
+    re-derive, from the message shape alone, which of Harbor's two failure
+    modes this was. The two disclose differently: a non-zero exit
+    (``NonZeroAgentExitCodeError``) embeds an exit code and captured stderr
+    in its message, which this function lifts into their own ``exit_code``/
+    ``stderr`` fields; a timeout (``RuntimeError("Command timed out after N
+    seconds")``) does not, because Harbor's own Docker exec discards the
+    process's stdout/stderr before raising it, and there is nothing this
+    adapter can recover for that path (#3670).
+    """
+    message = str(error)
+    result = {"state": "unavailable", "kind": type(error).__name__, "detail": message}
+    match = _NONZERO_EXIT_PATTERN.match(message)
+    if match:
+        result["exit_code"] = match.group("exit_code")
+        result["stderr"] = match.group("stderr")
+    return result

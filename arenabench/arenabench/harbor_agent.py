@@ -41,19 +41,43 @@ ARENA_ENGINE_ENV = "ARENABENCH_ENGINE_JSON"
 #: Root keys Stella's trusted-launcher seam accepts. Anything else makes the
 #: engine reject the config outright (it fails closed on unknown root fields),
 #: so this list is a hard schema boundary and not a style preference.
+#:
+#: A hand copy of ``crates/stella-cli/src/settings/unknown.rs``'s
+#: ``ENGINE_ROOT_FIELDS`` (plus the four non-worker ``pipeline_*_model`` keys
+#: from its ``RETIRED_ENGINE_ROOT``, still recognized there) — kept honest
+#: against drift by ``tests/test_engine_root_fields.py``, which parses the
+#: Rust source rather than trusting this list (#3879, mirroring
+#: ``bench/harbor_adapter/tests/test_posture.py::_engine_root_fields``,
+#: #2033).
+#:
+#: ``responsibilities`` is a deliberate, tracked exception: it is not in the
+#: Rust vocabulary at all, so every arena posture that declares a
+#: responsibility override (#2381) is refused at the launcher seam today
+#: (#3871 noted this as pre-existing and out of scope; #3879 is the tracking
+#: issue). Left in this set rather than pulled out, because
+#: `tests/test_responsibilities.py` exercises the emission as a real,
+#: actively-developed feature and pulling it would silently disable that
+#: surface — whether to stop emitting the key or give it a home in the Rust
+#: engine config is a decision for whoever picks up #3879, not a mechanical
+#: sync.
 _ENGINE_ROOT_FIELDS = frozenset(
     {
         "default_model",
+        "seat_models",
         "pipeline_verifier_model",
         "pipeline_worker_model",
         "pipeline_triage_model",
         "pipeline_research_model",
         "pipeline_plan_model",
         "allowed_models",
+        "model_output_caps",
         "auto_mode",
         "effort_auto",
         "reasoning_auto",
         "headless_scope_bypass",
+        "model_timeout_secs",
+        "compaction_budget_tokens",
+        "tool_result_horizon_steps",
         "agents",
         "responsibilities",
     }

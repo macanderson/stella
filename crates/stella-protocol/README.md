@@ -88,20 +88,14 @@ and fails on any difference, so a change to the event vocabulary regenerates
 put the wire diff on the reviewer's screen, because "additive" is a review
 judgment, not a mechanical one.
 
-From this crate's seat the workspace-wide new-crate rule almost always answers
-"extend". A new crate is justified only when functionality (a) sits behind a
-port and would drag heavy dependencies into a deliberately light crate — but a
-type heavy enough to need such a dependency has no business on the shared
-contract at all; (b) needs a dependency direction the current graph forbids —
-the reason leaf crates like `stella-home` and `stella-diag` exist, and already
-solved for anything expressible as a type here at the bottom; or (c) is a
-genuinely separate deliverable with its own binary and release cadence.
-Splitting the shared vocabulary across two type crates would cost every
-consumer a second dependency and reviewers a second place to look, on top of
-the standing price of any new crate — an AGENTS.md workspace-table row, an
-impacted-crates scope, CI time, a README — and a wrong split is harder to undo
-than a wrong merge. A justified new crate updates AGENTS.md's workspace table
-and the root `Cargo.toml` members list in the same PR.
+From this crate's seat the three-case rule in
+AGENTS.md § "When a new crate is justified" almost always answers "extend". (a) A
+type heavy enough to need a port has no business on the shared contract at
+all; (b) is why leaf crates like `stella-home` and `stella-diag` exist, and is
+already solved for anything expressible as a type here at the bottom; (c) a
+shared vocabulary is not a deliverable. Splitting it across two type crates
+would cost every consumer a second dependency and reviewers a second place to
+look.
 
 ## God files — do not add lines
 

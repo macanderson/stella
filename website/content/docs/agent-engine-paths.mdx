@@ -59,9 +59,8 @@ came through:
   path; without it, spend is still metered for the cost summary.
 - **Everything is recorded.** Each turn opens an execution record (files
   touched, tool use, memory citations, cost, outcome) in the workspace
-  store, feeding [telemetry](/docs/telemetry), `stella stats`, and the
-  deck's AGENTS tab. Sessions are durable and resumable
-  (`stella resume`).
+  store, feeding [telemetry](/docs/telemetry) and `stella stats`. Sessions are
+  durable and resumable (`stella resume`).
 - **Per-seat model routing applies.** The
   [agent engine config](/docs/configuration/agent-engine-config) pins models
   per seat, and every path that uses those seats honors the pins.
@@ -236,10 +235,11 @@ TUI over the engine. Each prompt becomes a lead-agent turn. The deck
 is more than a chat surface: prompts queue while a turn runs, `!` lines run
 shell commands inline in the transcript, `>` steers the turn in flight, Esc
 soft-stops (both below), and tabs expose the session's
-files, diff, code graph, skills, MCP servers, the AGENTS tab with live
-executions, and the SETTINGS tab's
+files, diff, code graph, skills, MCP servers, the AGENTS tab's installed
+agents, and the SETTINGS tab's
 [config panel](/docs/configuration/agent-engine-config) with per-seat model
-pickers.
+pickers. Running lanes are not a tab: `ctrl-a` (or `↓` from an empty prompt)
+opens the SUB-AGENTS overlay over whatever tab you are on.
 
 Two things are unique to deck turns:
 
@@ -274,9 +274,11 @@ conversation and the same tool stack — running concurrently while the lead
 keeps working, its spend metered into the session's **shared** budget guard
 (child spend always reaches the parent's ledger; fleet children, by
 contrast, each run under their own slice of the cap). Results return to the
-lead for review; every sub-agent turn is recorded (`deck-sub`) and visible in the
-AGENTS tab. You don't invoke this path directly — you ask for work
-that warrants it, and the lead fans out.
+lead for review; every sub-agent turn is recorded (`deck-sub`) and visible in
+the SUB-AGENTS overlay (`ctrl-a`, `↓` from an empty prompt, or `/subagents`),
+which is also where you stop, pause, restart, nudge or open one. You don't
+invoke this path directly — you ask for work that warrants it, and the lead
+fans out.
 
 **Use it when** (implicitly) a deck task decomposes into independent chunks —
 noisy searches, parallel investigations — that shouldn't bloat the lead's
@@ -432,9 +434,8 @@ If you're changing engine behavior, these are the seams:
 
 The execution-kind strings in [the map](#the-map) are what these paths stamp
 on their execution records — the same strings in
-`stella stats`, the exported [dashboard](/docs/telemetry/dashboard), and the
-deck's AGENTS tab. A telemetry row always traces back to the door
-the work came through.
+`stella stats` and the exported [dashboard](/docs/telemetry/dashboard). A
+telemetry row always traces back to the door the work came through.
 
 The store is ordinary SQLite, so you can ask that question directly — which
 doors your spend actually went through:

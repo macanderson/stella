@@ -1,12 +1,23 @@
 name: Issue triage
 
-# Every issue starts life as a request in `triage`. Converting it to a type is
-# just adding the type label — `gh issue edit N --add-label bug` or one click in
-# the sidebar — and this workflow clears `triage` in response.
+# Every issue starts life as a request in `triage`. That label is the triage
+# queue's membership marker, not a status: it comes off last, when all six of
+# /backlog-triage's facets hold, and the sweep removes it itself as its own
+# final write.
+#
+# This workflow therefore only ever adds it. It used to remove it as soon as a
+# type label arrived, which inverted that ordering — and the workflow won,
+# because it fires on the webhook. On 2026-08-19 a sweep applied type labels to
+# 21 issues as facet 1 of 6; `gh issue list --label triage` immediately
+# returned 7. The 14 that had just been typed were gone from the queue while
+# still missing Impact, a parent epic and an assignee. They were finished only
+# because that run held its work list in memory: an interrupted run would have
+# left 14 half-triaged issues invisible to every future sweep, which is the
+# unrecoverable state the ordering exists to prevent (#3851).
 
 on:
   issues:
-    types: [opened, labeled]
+    types: [opened]
 
 permissions:
   issues: write
@@ -23,7 +34,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: New issues start in triage
-        if: github.event.action == 'opened'
         run: |
           # Issues opened outside the template (gh issue create, the API) carry
           # no labels at all — those are exactly the ones this catches.
@@ -35,16 +45,3 @@ jobs:
           else
             gh issue edit "$ISSUE" --repo "$REPO" --add-label triage
           fi
-
-      - name: Typing an issue clears triage
-        if: github.event.action == 'labeled'
-        run: |
-          added=$(jq -r '.label.name' "$GITHUB_EVENT_PATH")
-          case " $TYPE_LABELS " in
-            *" $added "*)
-              gh issue edit "$ISSUE" --repo "$REPO" --remove-label triage
-              ;;
-            *)
-              echo "'$added' is not a type label, nothing to do"
-              ;;
-          esac
