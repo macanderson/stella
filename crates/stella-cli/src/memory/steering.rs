@@ -69,13 +69,20 @@ pub(crate) struct ProducedSteering {
 impl ProducedSteering {
     /// The handles a rendered block contributed — the frames and skills that
     /// reached its bytes, not the wider set recall returned.
+    ///
+    /// `skills` is the plane's selection, and only its `section_fit` prefix
+    /// actually renders: [`stella_core::skills::render_skills_section`] stops at
+    /// its own token budget and marks the rest omitted. Counting the omitted
+    /// tail as produced would suppress a skill the model was never shown, which
+    /// is the one direction this set must not be wrong in.
     pub(super) fn of(
         frames: &[RecalledFrame],
         skills: &[stella_core::skills::SelectedSkill],
     ) -> Self {
+        let rendered = &skills[..stella_core::skills::section_fit(skills)];
         Self {
             frames: frames.iter().map(frame_handle).collect(),
-            skills: skills.iter().map(|s| s.skill.name.clone()).collect(),
+            skills: rendered.iter().map(|s| s.skill.name.clone()).collect(),
         }
     }
 
@@ -314,5 +321,73 @@ impl SteeringPlane for GatheredSteering {
         let mut set = pack_to_budget(self.candidates.clone(), authorized);
         set.dropped.extend(self.source_drops.iter().cloned());
         set
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stella_core::skills::{SelectedSkill, Skill, SkillOrigin};
+
+    fn selected(name: &str, body_bytes: usize) -> SelectedSkill {
+        SelectedSkill {
+            skill: Skill {
+                name: name.to_string(),
+                description: "a skill".to_string(),
+                domains: Vec::new(),
+                body: "x".repeat(body_bytes),
+                source_path: format!(".stella/skills/{name}/SKILL.md"),
+                origin: SkillOrigin::Workspace,
+            },
+            score: 1.0,
+            matched_terms: Vec::new(),
+            matched_domains: Vec::new(),
+        }
+    }
+
+    /// A skill the section renderer's own token budget omitted was never shown
+    /// to the model, so it must not be recorded as produced — recording it
+    /// would suppress it on every later re-query of the turn, which is the one
+    /// direction this set must not be wrong in.
+    ///
+    /// Six full-length skills, because a single one cannot blow the section
+    /// budget: each body is truncated to its own `SKILL_BODY_TOKEN_BUDGET`
+    /// first, so the cut is only reachable by accumulation. The arithmetic
+    /// itself is `section_fit`'s to own — this asserts against whatever it
+    /// answers rather than pinning a number that would drift with either
+    /// budget.
+    #[test]
+    fn a_skill_the_section_budget_omitted_is_not_recorded_as_produced() {
+        let skills: Vec<_> = (0..6).map(|i| selected(&format!("s{i}"), 4_000)).collect();
+        let fit = stella_core::skills::section_fit(&skills);
+        assert!(
+            fit > 0 && fit < skills.len(),
+            "the control: the section renderer renders some and cuts the rest, got {fit}"
+        );
+
+        let produced = ProducedSteering::of(&[], &skills);
+        for sel in &skills[..fit] {
+            assert!(
+                produced.has_skill(&sel.skill.name),
+                "a rendered skill is produced: {}",
+                sel.skill.name
+            );
+        }
+        for sel in &skills[fit..] {
+            assert!(
+                !produced.has_skill(&sel.skill.name),
+                "a skill the model was never shown stays offerable: {}",
+                sel.skill.name
+            );
+        }
+    }
+
+    /// Frames carry no such cut — the plane's pack already decided them, and
+    /// every one that reaches [`ProducedSteering::of`] reaches the bytes.
+    #[test]
+    fn an_empty_selection_produces_nothing_and_does_not_panic() {
+        let produced = ProducedSteering::of(&[], &[]);
+        assert!(!produced.has_skill("anything"));
+        assert!(!produced.has_frame("nod_anything"));
     }
 }
