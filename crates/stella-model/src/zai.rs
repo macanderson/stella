@@ -21,7 +21,7 @@ use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
 use crate::provider::{Provider, ToolCallObserver};
-use crate::stream_recovery::{StreamFault, StreamRecovery};
+use crate::stream_recovery::StreamRecovery;
 
 pub(crate) mod effort;
 mod stream;
@@ -1191,7 +1191,7 @@ impl ZaiProvider {
             self.first_byte_deadline,
         )
         .await
-        .map_err(|fault| self.absorb_stream_fault(fault))?;
+        .map_err(|fault| self.recovery.absorb(fault))?;
         // A gateway-reported cost (OpenRouter usage accounting) is
         // authoritative; catalog list pricing is the estimate for providers
         // that don't report one.
@@ -1209,27 +1209,6 @@ impl ZaiProvider {
             finish_reason: outcome.finish_reason,
             upstream_provider: outcome.upstream_provider,
         })
-    }
-
-    /// Route a [`StreamFault`] back into the retry ladder. An eligible fault
-    /// (hung before its first byte / empty stream) arms the fallback latch —
-    /// the caller's retry of this attempt will go out unary — and its error
-    /// is retryable Transport, so the ordinary retry machinery both drives
-    /// that switch and bills this discarded attempt through its
-    /// `UsageIncomplete` observer, exactly like every other doomed attempt.
-    /// The message names the switch only when THIS fault armed the latch, so
-    /// an error never promises a fallback some other attempt already made.
-    fn absorb_stream_fault(&self, fault: StreamFault) -> ProviderError {
-        if fault.fallback_eligible && self.recovery.note_stream_fault() {
-            return match fault.error {
-                ProviderError::Transport { message, partial } => ProviderError::Transport {
-                    message: format!("{message}; retrying this attempt as a non-streaming request"),
-                    partial,
-                },
-                other => other,
-            };
-        }
-        fault.error
     }
 
     /// The one request body both delivery paths serialize — `stream` is the

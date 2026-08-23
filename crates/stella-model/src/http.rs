@@ -90,7 +90,7 @@ pub(crate) const UNARY_READ_TIMEOUT: Duration = Duration::from_secs(600);
 /// stream, bounded by [`UNARY_READ_TIMEOUT`] instead of
 /// [`STREAM_IDLE_TIMEOUT`].
 ///
-/// `bedrock.rs` is the only such adapter: it calls `Converse`, not
+/// `bedrock.rs` is unary by construction: it calls `Converse`, not
 /// `ConverseStream`, so the whole generation happens before the first
 /// response byte arrives. On the shared client that made every completion
 /// slower than [`STREAM_IDLE_TIMEOUT`] fail as `ProviderError::Transport`,
@@ -98,8 +98,10 @@ pub(crate) const UNARY_READ_TIMEOUT: Duration = Duration::from_secs(600);
 /// too-long request and it timed out again, burning the retry budget and
 /// paying for all four attempts (#547).
 ///
-/// When Bedrock moves to the event-stream transport this becomes dead code
-/// and the adapter should go back to [`client`].
+/// Every streaming adapter also holds one, for the fallback the same issue
+/// motivates from the other side: when a session's streaming path proves
+/// broken, [`crate::stream_recovery`] sends the retried attempt out unary,
+/// and that attempt has no first token to reset the clock either.
 pub(crate) fn unary_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
@@ -696,6 +698,20 @@ pub(crate) fn truncated_tool_input_error(
          accumulated JSON is incomplete and cannot be parsed ({total_chars} chars: \
          `{snippet}{ellipsis}`). Raise max_output_tokens or have the model emit a \
          smaller payload, then retry."
+    ))
+}
+
+/// Build the retryable error for a stream whose body never delivered a first
+/// byte inside `deadline`. One wording for every dialect: the fault is a
+/// property of the streaming *path* (a proxy buffering the SSE body), not of
+/// the request, so an adapter has nothing of its own to add beyond its name.
+/// The caller classifies it as fallback-eligible — see
+/// [`crate::stream_recovery`].
+pub(crate) fn hung_before_first_byte(provider: &str, deadline: Duration) -> ProviderError {
+    ProviderError::transport(format!(
+        "{provider} stream hung before its first byte: no data within the {}s \
+         first-byte deadline",
+        deadline.as_secs()
     ))
 }
 
