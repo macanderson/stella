@@ -118,14 +118,16 @@
 //! whole run, honest because every round under that row really was
 //! dispatched through it.
 //!
-//! The goal door's [`WrapperHost`] serves `recall` and deliberately no
-//! `child_turn` plane: [`PLUGIN_CHILD_TURN_SLOT`] is a fixed `turn_instance`,
-//! chosen because `stella run`'s one-shot worker never uses more than slot 0
-//! — a goal round's own worker/verifier pair already occupies the even/odd
-//! slot beside every round, so a fixed slot collides with whichever round
-//! lands on it (round 1's verifier is already slot 1). Wiring a
-//! collision-safe per-round slot for goal-mode `child_turn` is left to a
-//! follow-up rather than guessed at here (#3833).
+//! The goal door serves `child_turn` too, through [`round_driver_host`]
+//! (#3833). It could not while this module pinned the plane to a fixed
+//! `turn_instance`: `stella run`'s one-shot worker never uses more than slot 0,
+//! but a goal round's own worker/verifier pair claims a slot beside every
+//! round, so a fixed child slot collided with whichever round landed on it.
+//! [`stella_core::turn_slots`] is the allocation that settles it, and it is
+//! stated once there rather than per door — `turn_instance` is read as a lane
+//! plus a sequence within that lane, so a plane counting only its own calls
+//! can never land where a door's rounds will. `stella fleet` reaches
+//! `child_turn` through the same assembly and the same rule (#3882).
 
 use std::sync::Arc;
 
@@ -533,43 +535,10 @@ impl BoundWrapper {
 /// and a second ledger over one session's money.
 pub(crate) type SessionChildTurns = ChildTurns<Arc<dyn SubAgentDispatcher>>;
 
-/// The receipt turn slot a plugin's child turns are recorded under.
-///
-/// Not the parent's. A raw `stella run` turn is built from
-/// [`crate::agent::engine_config_for_kind`], which leaves `turn_instance` at
-/// its default of 0, and context receipts key on
-/// `(execution_id, turn_instance, step, call_seq)` with `step` restarting at 0
-/// every turn — so a child sharing slot 0 could overwrite the parent's step
-/// manifests. One slot along is enough to keep them apart, and it is a
-/// constant rather than a per-round bump because a plugin's points run
-/// *between* the rounds they are about: each round opens its own execution
-/// row, so the key is already unique across rounds without this moving.
-const PLUGIN_CHILD_TURN_SLOT: u32 = 1;
-
 /// The candidate fan-out plane a `stella run` session installs: the plugin's
 /// declared role intents over **this session's own** worktree substrate.
 pub(crate) type SessionCandidateFanouts =
     CandidateFanouts<crate::candidate_workspaces::CandidateSubstrate>;
-
-/// The receipt turn slot a plugin's candidate turns are recorded under.
-///
-/// [`PLUGIN_CHILD_TURN_SLOT`]'s neighbour and deliberately **not** the same
-/// number. Receipts key on `(execution_id, turn_instance, step, call_seq)`
-/// with `step` restarting at 0 every turn, so two planes sharing a slot would
-/// have a candidate's step manifests overwrite a child turn's the moment a
-/// plugin used both — which a best-of-N plugin does by construction, since it
-/// fans out and then reads. The candidates of one fan-out are told apart from
-/// each other by `call_seq` within this slot, not by a slot each: a width the
-/// host clamps is not a number that may reach a database key.
-///
-/// It is a constant for [`PLUGIN_CHILD_TURN_SLOT`]'s reason — a plugin's
-/// points run *between* rounds, and each round opens its own execution row —
-/// and that is exactly why the **goal door installs no fan-out plane at all**.
-/// `stella goal`'s own even/odd worker/verifier slot math (#3833) owns the
-/// low slots across a loop, so a fixed one here would collide there rather
-/// than merely crowd. Declining the capability on that door is the same
-/// judgement `session_host` already makes for `child_turn`.
-const PLUGIN_CANDIDATE_FANOUT_SLOT: u32 = 2;
 
 /// This host's child-turn plane for one installed plugin.
 ///
@@ -632,7 +601,7 @@ pub(crate) fn child_turn_plane(
     dispatcher: Arc<dyn SubAgentDispatcher>,
 ) -> SessionChildTurns {
     ChildTurns::declare(manifest, dispatcher)
-        .with_turn_instance(PLUGIN_CHILD_TURN_SLOT)
+        .in_turn_lane(stella_core::turn_slots::CHILD_TURN_LANE)
         .with_seat("verifier", stella_protocol::event::ModelCallRole::Verdict)
 }
 
@@ -665,7 +634,8 @@ pub(crate) fn candidate_fanout_plane(
     manifest: &stella_plugin::PluginManifest,
     workspaces: crate::candidate_workspaces::CandidateSubstrate,
 ) -> SessionCandidateFanouts {
-    CandidateFanouts::declare(manifest, workspaces).with_turn_instance(PLUGIN_CANDIDATE_FANOUT_SLOT)
+    CandidateFanouts::declare(manifest, workspaces)
+        .in_turn_lane(stella_core::turn_slots::FANOUT_LANE)
 }
 
 /// What this host will do for a plugin, assembled after the resources exist.
@@ -713,7 +683,8 @@ impl WrapperHost {
 /// Everything a `stella run` session can do for the plugin wrapping it.
 ///
 /// The one place both planes are named together, so a driver cannot install
-/// half of them by accident.
+/// half of them by accident. A door that installs half of them on purpose says
+/// so through [`round_driver_host`] instead.
 pub(crate) fn session_host(
     cfg: &crate::config::Config,
     manifest: &stella_plugin::PluginManifest,
@@ -729,6 +700,47 @@ pub(crate) fn session_host(
     )))
     .with_child_turns(Arc::new(child_turn_plane(manifest, dispatcher)))
     .with_candidate_fanout(Arc::new(candidate_fanout_plane(manifest, workspaces)))
+}
+
+/// What a door that drives **several rounds under one execution row** can do
+/// for the plugin wrapping it: `recall` and `child_turn` (#3833, #3882).
+///
+/// `stella goal` (per judged round) and `stella fleet` (per worker attempt)
+/// both took [`WrapperHost::recalling`] alone until the slot rule existed, so a
+/// plugin declaring `[loop] calls = ["child_turn"]` was answered `Unavailable`
+/// on either door however its manifest was written. What blocked them was one
+/// allocation, not two: a fixed child-turn slot collided with whichever of the
+/// door's own rounds landed on it, and neither door could hand the plane a
+/// per-round slot because a plugin's points run *between* the rounds they are
+/// about. [`stella_core::turn_slots`] settles it by residue instead — the plane
+/// counts only its own calls and still never lands on a round's slot — and both
+/// doors reach `child_turn` through this one assembly.
+///
+/// `recall_root` is the workspace the context plane is read from, and it is a
+/// parameter because the two doors disagree about it honestly: `stella goal`
+/// runs in the workspace it was invoked from, while a fleet attempt may run in
+/// a fresh worktree that has no context plane of its own and must read the
+/// invocation root's (`crate::fleet_cmd::wrapped`'s module doc).
+///
+/// **No candidate fan-out plane, and no longer for want of a slot.**
+/// [`stella_core::turn_slots::FANOUT_LANE`] is reserved beside every round the
+/// same way the child lane is, so the collision that justified declining it is
+/// gone. What is left is the capability itself: a fan-out is N *writing* worker
+/// turns in isolated trees plus an adoption that lands one of them, and both
+/// doors already have a writer in the tree — a goal round's own worker turn, a
+/// fleet attempt's — so an adoption landing mid-loop would apply a diff over a
+/// tree the loop is still mutating. That is a decision about the doors, not
+/// about receipt keys, and it is left to whoever takes it rather than shipped
+/// as a side effect of the slot rule (#3892 is where the plane came from).
+pub(crate) fn round_driver_host(
+    recall_root: &std::path::Path,
+    manifest: &stella_plugin::PluginManifest,
+    dispatcher: Arc<dyn SubAgentDispatcher>,
+) -> WrapperHost {
+    WrapperHost::recalling(Box::new(crate::wrapper_recall::SessionRecallHost::open(
+        recall_root,
+    )))
+    .with_child_turns(Arc::new(child_turn_plane(manifest, dispatcher)))
 }
 
 /// An installed wrapper plugin, found and start-able, before this host has
@@ -1439,7 +1451,18 @@ fn fanout_spend_lines(spends: &[CandidateFanoutSpend]) -> Vec<String> {
 /// Draining is destructive by contract, so this is exactly-once even though it
 /// runs after turns that already drained: what it takes is only what no turn
 /// did.
-fn settle_plugin_child_spend(registry: &dyn ToolExecutor, budget: &mut BudgetGuard) -> f64 {
+///
+/// A door that drives **rounds** calls it after every round's dispatch rather
+/// than once at the end (`crate::agent::goal::goal_wrapped`,
+/// `crate::fleet_cmd`): a round's `after_turn` spend is folded by the *next*
+/// round's turn, so the loop's last round would otherwise leave it unbilled —
+/// and those doors read `session_spent_usd` at each round's exit to report the
+/// run's cost, which would then be short by whatever the plugin had just
+/// spent.
+pub(crate) fn settle_plugin_child_spend(
+    registry: &dyn ToolExecutor,
+    budget: &mut BudgetGuard,
+) -> f64 {
     let residual = registry.drain_sub_agent_spend_usd();
     if residual > 0.0 {
         budget.record_spend(residual);

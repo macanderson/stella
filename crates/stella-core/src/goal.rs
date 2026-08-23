@@ -180,18 +180,26 @@ pub fn verifier_feedback_text(goal: &str, verdict: &GoalVerifierVerdict) -> Stri
     )
 }
 
-/// The receipt turn-slot offset of `round`'s worker calls: worker rounds
-/// take even slots (0, 2, 4, …) and each round's verifier takes the odd slot
-/// beside them ([`Engine::assess`] adds the `+ 1`), so no two model calls in
-/// a goal arc share a `(turn_instance, step, call_seq)` receipt key within
-/// one execution.
+/// The receipt turn-slot offset of `round`'s worker calls: round `n` takes
+/// the `n`-th slot of [`crate::turn_slots::WORKER_LANE`] and its verifier the
+/// `n`-th of [`crate::turn_slots::VERIFIER_LANE`] beside it ([`Engine::assess`]
+/// adds the `+ 1`), so no two model calls in a goal arc share a
+/// `(turn_instance, step, call_seq)` receipt key within one execution.
+///
+/// The two lanes beside them are not spare: they belong to the `child_turn`
+/// and `candidate_fanout` planes a wrapper plugin's host serves while this
+/// loop runs, which is the whole reason the stride is
+/// [`crate::turn_slots::TURN_LANES`] rather than the 2 a goal round needs for
+/// itself (#3833). See that module for the rule and for why the host cannot
+/// be handed a per-round window instead.
 ///
 /// Shared by the same three goal loops as [`goal_kickoff_text`] — a surface
 /// that re-derived the slot math differently would silently overwrite a
 /// sibling round's step manifests in the store.
 #[must_use]
 pub fn goal_round_turn_offset(round: usize) -> u32 {
-    u32::try_from(round.saturating_sub(1).saturating_mul(2)).unwrap_or(u32::MAX)
+    let index = u32::try_from(round.saturating_sub(1)).unwrap_or(u32::MAX);
+    crate::turn_slots::slot(crate::turn_slots::WORKER_LANE, index)
 }
 
 /// Public so the CLI's goal loop can pin its tool allowlist against this
@@ -235,7 +243,8 @@ impl Engine<'_> {
         for round in 1..=goal_config.max_rounds {
             budget.begin_turn();
             // Each round is its own turn for receipt purposes — see
-            // `goal_round_turn_offset` for the even/odd slot rule.
+            // `goal_round_turn_offset`, and `crate::turn_slots` for the lane
+            // rule it allocates through.
             let round_offset = goal_round_turn_offset(round);
             let round_engine =
                 self.with_turn_instance(self.config.turn_instance.saturating_add(round_offset));
@@ -355,10 +364,11 @@ impl Engine<'_> {
         goal_config: &GoalConfig,
     ) -> Result<(GoalVerifierVerdict, f64), GoalAssessError> {
         let transcript = render_transcript_tail(messages, goal_config.verifier_transcript_chars);
-        // The odd slot beside this engine's turn: the verifier's own step loop
-        // restarts at step 0 with call_seq 0, so without a turn of its own
-        // its manifests would overwrite the worker receipts they are meant
-        // to sit beside.
+        // The slot beside this engine's turn — `crate::turn_slots`'
+        // `VERIFIER_LANE`, which is the worker's lane plus one for exactly this
+        // addition. The verifier's own step loop restarts at step 0 with
+        // call_seq 0, so without a turn of its own its manifests would
+        // overwrite the worker receipts they are meant to sit beside.
         let turn_instance = self.config.turn_instance.saturating_add(1);
         let spec = SubAgentSpec {
             agent_id: format!("verifier-{turn_instance}"),
@@ -679,10 +689,14 @@ mod tests {
                 _ => None,
             })
             .collect();
-        // Two worker rounds + two verifier turns, one committed step each:
-        // worker r1 = 0, verifier r1 = 1, worker r2 = 2, verifier r2 = 3.
+        // Two worker rounds + two verifier turns, one committed step each, on
+        // the worker and verifier lanes of `crate::turn_slots`: worker r1 = 0,
+        // verifier r1 = 1, worker r2 = 4, verifier r2 = 5. The two slots each
+        // round skips are the host's own lanes, kept free so a wrapper
+        // plugin's child turns and fan-outs can run beside this loop without
+        // overwriting a round's manifests (#3833).
         let turns: Vec<u32> = manifests.iter().map(|(turn, ..)| *turn).collect();
-        assert_eq!(turns, vec![0, 1, 2, 3], "manifests: {manifests:?}");
+        assert_eq!(turns, vec![0, 1, 4, 5], "manifests: {manifests:?}");
         // And therefore no two manifests share a receipt key.
         let mut keys = manifests.clone();
         keys.sort_unstable();
@@ -1323,10 +1337,29 @@ mod tests {
         assert!(
             verifier_feedback_text("ship it", &bare).contains("Verifier feedback: tests missing")
         );
-        // Worker rounds take even slots; `Engine::assess` adds the verifier's +1.
+        // Worker rounds take the worker lane's successive slots; `Engine::assess`
+        // adds the verifier's +1, and the two lanes above each round belong to
+        // the host's own planes (#3833).
         assert_eq!(goal_round_turn_offset(1), 0);
-        assert_eq!(goal_round_turn_offset(2), 2);
-        assert_eq!(goal_round_turn_offset(3), 4);
-        assert_eq!(goal_round_turn_offset(usize::MAX), u32::MAX);
+        assert_eq!(goal_round_turn_offset(2), 4);
+        assert_eq!(goal_round_turn_offset(3), 8);
+        for round in 1..=8 {
+            assert_eq!(
+                crate::turn_slots::lane_of(goal_round_turn_offset(round)),
+                crate::turn_slots::WORKER_LANE,
+                "round {round} left the worker lane"
+            );
+            assert_eq!(
+                crate::turn_slots::lane_of(goal_round_turn_offset(round) + 1),
+                crate::turn_slots::VERIFIER_LANE,
+                "round {round}'s verifier left the verifier lane"
+            );
+        }
+        // Saturation stays in the worker's lane rather than landing on
+        // `u32::MAX`, which belongs to the fan-out lane alone.
+        assert_eq!(
+            crate::turn_slots::lane_of(goal_round_turn_offset(usize::MAX)),
+            crate::turn_slots::WORKER_LANE
+        );
     }
 }

@@ -683,6 +683,18 @@ pub(crate) enum Command {
         /// is unchanged either way.
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
+
+        /// The oracle a wrapper plugin's `[oracle]` observes the flip with.
+        ///
+        /// One command for the whole goal run, not per round: it names the
+        /// witness the run is judged against, and a witness that changed
+        /// between rounds is the tampering the host is watching for. It
+        /// crosses the host's closed runner vocabulary before reaching a
+        /// plugin, and the artifacts it names are pinned once before the
+        /// first round. Refused rather than silently ignored unless
+        /// `--pipeline` names a wrapper that can honor it (#3835).
+        #[arg(long, value_name = "CMD")]
+        test_command: Option<String>,
     },
 
     /// Watch CI for a branch or PR and fix it until green

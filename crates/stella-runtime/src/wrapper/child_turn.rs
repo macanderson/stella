@@ -194,7 +194,7 @@ pub struct ChildTurns<D> {
     declared_max: Option<u32>,
     ceiling: u32,
     budget_usd: Option<f64>,
-    turn_instance: u32,
+    turn_lane: u32,
     spent: AtomicU32,
     ledger: Mutex<Vec<ChildTurnSpend>>,
 }
@@ -256,7 +256,7 @@ impl<D> ChildTurns<D> {
                 .or(manifest.loop_grant.max_calls),
             ceiling: DEFAULT_HOST_MAX_CHILD_TURNS,
             budget_usd: None,
-            turn_instance: 0,
+            turn_lane: stella_core::turn_slots::CHILD_TURN_LANE,
             spent: AtomicU32::new(0),
             ledger: Mutex::new(Vec::new()),
         }
@@ -294,15 +294,33 @@ impl<D> ChildTurns<D> {
         self
     }
 
-    /// The receipt turn slot the child's manifests are recorded under.
+    /// The `turn_instance` lane this plane's child turns are recorded in.
     ///
-    /// Context receipts key on `(execution_id, turn_instance, step, call_seq)`
-    /// and every turn restarts `step` at 0, so a child sharing the parent's
-    /// slot would overwrite the parent's manifests in the store.
+    /// A **lane**, not a slot, and that is the whole of #3833/#3882's
+    /// allocation: `stella_core::turn_slots` partitions `turn_instance` by
+    /// residue, so this plane hands its `n`-th child turn the `n`-th slot of
+    /// the lane it was given, and can never land on a slot
+    /// a door's own rounds or the fan-out plane beside it will use — however
+    /// many rounds that door runs, and without either counter having to know
+    /// the other's.
+    ///
+    /// A fixed slot was what stood here before, and it was safe only on a door
+    /// whose every round opens its own execution row (`stella run`'s one-shot
+    /// driver). `stella goal` and `stella fleet` both run their rounds under
+    /// **one** row, so a fixed slot collided with whichever round landed on it
+    /// and both doors declined to serve `child_turn` at all rather than guess.
+    ///
+    /// Defaults to [`stella_core::turn_slots::CHILD_TURN_LANE`], so a host that
+    /// says nothing still gets the lane this rule reserves for it.
     #[must_use]
-    pub fn with_turn_instance(mut self, turn_instance: u32) -> Self {
-        self.turn_instance = turn_instance;
+    pub fn in_turn_lane(mut self, lane: u32) -> Self {
+        self.turn_lane = lane;
         self
+    }
+
+    /// The `turn_instance` the `seq`-th child turn of this plane lands on.
+    fn slot_for(&self, seq: u32) -> u32 {
+        stella_core::turn_slots::slot(self.turn_lane, seq)
     }
 
     /// The effective ceiling on child turns, after the clamp.
@@ -431,7 +449,7 @@ impl<D: SubAgentDispatcher> ChildTurnPlane for ChildTurns<D> {
             // still have the user's model choice reach it. Nothing below this
             // line may branch on the contents.
             seat: Some(args.role.clone()),
-            turn_instance: self.turn_instance,
+            turn_instance: self.slot_for(taken),
             budget_usd: self.budget_usd,
             ..SubAgentSpec::read_only(
                 format!("plugin:{}/{}#{taken}", self.plugin, args.role),
