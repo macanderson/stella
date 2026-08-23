@@ -71,11 +71,18 @@
 //! A workspace that is not a repository, or one with no commit for `HEAD` to
 //! name, fails at `git worktree add` — which surfaces as
 //! [`CandidateFanoutError::NotCreated`], then as a `Failed` answer carrying
-//! git's own words. That is the honest outcome: best-of-N *is* "snapshot the
-//! tree N ways", and a host with nothing to snapshot cannot serve it. The
-//! alternative — copying the tree by hand — would silently drop `.gitignore`
-//! semantics, so an adoption would carry a candidate's `target/` back onto the
-//! user's tree.
+//! git's own words. That is the honest outcome for *this* substrate: what it
+//! promotes is a patch, and a patch is a statement about a commit.
+//!
+//! Copying the tree instead is the other answer, and it is a second substrate
+//! rather than a fallback here ([`copy_tree`], #1383). It is not
+//! interchangeable: a copy carries no `.gitignore` semantics, so its adoption
+//! carries a candidate's `target/` too — right where the tree is a disposable
+//! container whose ignored state the task's own tests execute, wrong where
+//! the tree is
+//! somebody's working copy. Which one a workspace gets is
+//! [`CandidateIsolation`](crate::settings::CandidateIsolation), an operator's
+//! setting that defaults to this one and is never inferred.
 //!
 //! # What is left behind, and by what
 //!
@@ -445,10 +452,7 @@ impl SessionCandidateWorkspaces {
     /// deleting the second on this host's own authority would destroy a
     /// fan-out somebody is watching. See [`record`].
     pub(crate) fn orphaned_candidates(&self) -> Vec<String> {
-        record::reclaim_lines(&record::orphans(
-            &self.repo_root.join(CANDIDATES_DIR),
-            &stella_store::sessions::pid_alive,
-        ))
+        record::report(&self.repo_root.join(CANDIDATES_DIR))
     }
 
     /// The candidate's whole change against the tree it was cut from.
@@ -610,55 +614,14 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
         workspace: &CandidateWorkspace,
         work: CandidateWork,
     ) -> Result<CandidateReport, CandidateFanoutError> {
-        let root = PathBuf::from(&workspace.root);
-        // Rooted at the candidate, and carrying the operator's `--allow-dir`
-        // grant — which is the whole reason this goes through `write_dirs`
-        // rather than `ToolRegistry::new`. See that module's own witness.
-        let registry = Arc::new(crate::write_dirs::registry_rooted_at(
+        let outcome = dispatch_candidate_turn(
             &self.cfg,
-            root.clone(),
-        ));
-        let spec = SubAgentSpec {
-            role: work.seat,
-            // The plugin's own word for the role, passed through untouched —
-            // the routing key the user's seat assignment is looked up by.
-            // `role` above is the receipt label. Nothing below may branch on
-            // this string's contents.
-            seat: Some(work.role.clone()),
-            turn_instance: work.turn_instance,
-            budget_usd: work.budget_usd,
-            // The whole capability. Every other dispatched child in this crate
-            // is read-only; a candidate that could not write would have
-            // nothing to adopt.
-            write_access: true,
-            // The session's own cap, not `SubAgentSpec`'s 16: a candidate is
-            // not a searcher summarizing for a parent, it is the work, and
-            // capping it below the turn it stands in for would make best-of-N
-            // structurally worse than the single turn it replaces.
-            max_steps: crate::agent::engine_config_for(&self.cfg).max_steps,
-            max_report_chars: CANDIDATE_REPORT_CHARS,
-            ..SubAgentSpec::read_only(work.agent_id, work.instruction)
-        };
-
-        let outcome = self
-            .sub_agents
-            .dispatch_in_workspace(
-                spec,
-                registry,
-                crate::agent::session_tool_policy(&self.cfg),
-                stella_core::ports::Principal::Plugin(self.plugin.clone()),
-            )
-            .await;
-        // A refusal is "never reached its first model call, cost exactly
-        // zero", which is the one outcome that is genuinely an error here: the
-        // plane reports every other shape to the plugin as a candidate that
-        // ran and did not finish, and a plugin can score that. It cannot score
-        // a candidate that never existed.
-        if let SubAgentOutcome::Refused { reason } = &outcome {
-            return Err(CandidateFanoutError::NotRun {
-                reason: reason.clone(),
-            });
-        }
+            &self.plugin,
+            &self.sub_agents,
+            PathBuf::from(&workspace.root),
+            work,
+        )
+        .await?;
 
         // Measured after the turn and from the tree, never from what the turn
         // said it did: the two disagree exactly when it matters. At the
@@ -805,6 +768,69 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
     }
 }
 
+/// Run one candidate's writing turn, rooted at `root`.
+///
+/// Shared by both substrates because the turn is the one part of a candidate
+/// that does not depend on how its tree was isolated: the same registry rooted
+/// at the same kind of directory, the same seat, the same session pool and
+/// ledger. Only what surrounds it — snapshot, measure, promote — differs (see
+/// [`copy_tree`]).
+///
+/// # Errors
+///
+/// [`CandidateFanoutError::NotRun`] for a turn that never reached its first
+/// model call and cost exactly zero. That is the one outcome that is genuinely
+/// an error: every other shape is a candidate that ran and did not finish,
+/// which a plugin can score. It cannot score one that never existed.
+async fn dispatch_candidate_turn(
+    cfg: &Config,
+    plugin: &str,
+    sub_agents: &SessionSubAgents,
+    root: PathBuf,
+    work: CandidateWork,
+) -> Result<SubAgentOutcome, CandidateFanoutError> {
+    // Rooted at the candidate, and carrying the operator's `--allow-dir`
+    // grant — which is the whole reason this goes through `write_dirs`
+    // rather than `ToolRegistry::new`. See that module's own witness.
+    let registry = Arc::new(crate::write_dirs::registry_rooted_at(cfg, root));
+    let spec = SubAgentSpec {
+        role: work.seat,
+        // The plugin's own word for the role, passed through untouched —
+        // the routing key the user's seat assignment is looked up by.
+        // `role` above is the receipt label. Nothing below may branch on
+        // this string's contents.
+        seat: Some(work.role.clone()),
+        turn_instance: work.turn_instance,
+        budget_usd: work.budget_usd,
+        // The whole capability. Every other dispatched child in this crate
+        // is read-only; a candidate that could not write would have
+        // nothing to adopt.
+        write_access: true,
+        // The session's own cap, not `SubAgentSpec`'s 16: a candidate is
+        // not a searcher summarizing for a parent, it is the work, and
+        // capping it below the turn it stands in for would make best-of-N
+        // structurally worse than the single turn it replaces.
+        max_steps: crate::agent::engine_config_for(cfg).max_steps,
+        max_report_chars: CANDIDATE_REPORT_CHARS,
+        ..SubAgentSpec::read_only(work.agent_id, work.instruction)
+    };
+
+    let outcome = sub_agents
+        .dispatch_in_workspace(
+            spec,
+            registry,
+            crate::agent::session_tool_policy(cfg),
+            stella_core::ports::Principal::Plugin(plugin.to_string()),
+        )
+        .await;
+    if let SubAgentOutcome::Refused { reason } = &outcome {
+        return Err(CandidateFanoutError::NotRun {
+            reason: reason.clone(),
+        });
+    }
+    Ok(outcome)
+}
+
 /// Sum `git diff --numstat` into `(files, lines added + removed)`.
 ///
 /// A binary file reports `-\t-\t<path>` rather than counts; it is counted as a
@@ -831,9 +857,13 @@ fn numstat_totals(numstat: &str) -> (u32, u32) {
     (files, lines)
 }
 
+mod copy_tree;
 mod modes;
 mod record;
 mod ref_guard;
+mod substrate;
+
+pub(crate) use substrate::CandidateSubstrate;
 
 #[cfg(test)]
 mod tests;

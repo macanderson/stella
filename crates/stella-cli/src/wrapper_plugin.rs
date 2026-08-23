@@ -549,7 +549,7 @@ const PLUGIN_CHILD_TURN_SLOT: u32 = 1;
 /// The candidate fan-out plane a `stella run` session installs: the plugin's
 /// declared role intents over **this session's own** worktree substrate.
 pub(crate) type SessionCandidateFanouts =
-    CandidateFanouts<crate::candidate_workspaces::SessionCandidateWorkspaces>;
+    CandidateFanouts<crate::candidate_workspaces::CandidateSubstrate>;
 
 /// The receipt turn slot a plugin's candidate turns are recorded under.
 ///
@@ -663,7 +663,7 @@ pub(crate) fn child_turn_plane(
 ///   Neither is overridden.
 pub(crate) fn candidate_fanout_plane(
     manifest: &stella_plugin::PluginManifest,
-    workspaces: crate::candidate_workspaces::SessionCandidateWorkspaces,
+    workspaces: crate::candidate_workspaces::CandidateSubstrate,
 ) -> SessionCandidateFanouts {
     CandidateFanouts::declare(manifest, workspaces).with_turn_instance(PLUGIN_CANDIDATE_FANOUT_SLOT)
 }
@@ -719,7 +719,7 @@ pub(crate) fn session_host(
     manifest: &stella_plugin::PluginManifest,
     dispatcher: Arc<crate::subagent::SessionSubAgents>,
 ) -> WrapperHost {
-    let workspaces = crate::candidate_workspaces::SessionCandidateWorkspaces::new(
+    let workspaces = crate::candidate_workspaces::CandidateSubstrate::for_session(
         cfg,
         &manifest.name,
         Arc::clone(&dispatcher),

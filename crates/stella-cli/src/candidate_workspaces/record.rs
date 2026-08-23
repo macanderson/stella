@@ -62,10 +62,15 @@ pub(super) struct CandidateRecord {
     /// The checkout, absolute.
     pub(super) checkout: PathBuf,
     /// The branch the checkout is cut onto — the second thing a reclaim has to
-    /// remove, and the one a `rm -rf` would leave behind.
-    pub(super) branch: String,
-    /// The repository top level, so a reclaim command works from anywhere.
-    pub(super) top: PathBuf,
+    /// remove, and the one a `rm -rf` would leave behind. `None` for a
+    /// copy-tree candidate ([`super::copy_tree`]), which is a directory and
+    /// nothing else, so its reclaim is a directory's.
+    #[serde(default)]
+    pub(super) branch: Option<String>,
+    /// The repository top level a reclaim command runs at, so it works from
+    /// anywhere. `None` alongside a `None` branch, for the same reason.
+    #[serde(default)]
+    pub(super) top: Option<PathBuf>,
     /// The process that owns it, for as long as that process exists.
     pub(super) pid: u32,
     /// When this record was written, in milliseconds since the epoch.
@@ -82,17 +87,27 @@ fn path_for(checkout: &Path) -> Option<PathBuf> {
 }
 
 impl CandidateRecord {
-    /// The record this process would write for `worktree`, now.
-    pub(super) fn of(handle: &str, worktree: &stella_fleet::git::Worktree, top: &Path) -> Self {
+    /// The record this process would write for a plain directory, now — the
+    /// copy-tree substrate's shape, where the reclaim is a directory's.
+    pub(super) fn of_directory(handle: &str, checkout: &Path) -> Self {
         Self {
             handle: handle.to_string(),
-            checkout: worktree.path.clone(),
-            branch: worktree.branch.clone(),
-            top: top.to_path_buf(),
+            checkout: checkout.to_path_buf(),
+            branch: None,
+            top: None,
             pid: std::process::id(),
             started_at_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |since| u64::try_from(since.as_millis()).unwrap_or(0)),
+        }
+    }
+
+    /// The record this process would write for `worktree`, now.
+    pub(super) fn of(handle: &str, worktree: &stella_fleet::git::Worktree, top: &Path) -> Self {
+        Self {
+            branch: Some(worktree.branch.clone()),
+            top: Some(top.to_path_buf()),
+            ..Self::of_directory(handle, &worktree.path)
         }
     }
 
@@ -168,20 +183,34 @@ pub(super) fn reclaim_lines(orphans: &[CandidateRecord]) -> Vec<String> {
     orphans
         .iter()
         .map(|record| {
+            let checkout = record.checkout.display();
+            let how = match (&record.branch, &record.top) {
+                (Some(branch), Some(top)) => format!(
+                    "`git -C {top} worktree remove --force {checkout} && \
+                     git -C {top} branch -D {branch}`",
+                    top = top.display()
+                ),
+                // A copy-tree candidate is a directory and nothing else, so a
+                // directory's reclaim is the whole of it.
+                _ => format!("`rm -rf {checkout}`"),
+            };
             format!(
-                "a candidate workspace outlived the run that made it (pid {}, gone): {} on \
-                 branch {}. Nothing was deleted — copy any work out, then reclaim it with \
-                 `git -C {} worktree remove --force {} && git -C {} branch -D {}`",
+                "a candidate workspace outlived the run that made it (pid {}, gone): \
+                 {checkout}. Nothing was deleted — copy any work out, then reclaim it \
+                 with {how}",
                 record.pid,
-                record.checkout.display(),
-                record.branch,
-                record.top.display(),
-                record.checkout.display(),
-                record.top.display(),
-                record.branch,
             )
         })
         .collect()
+}
+
+/// One line per orphan under `dir`, for a substrate to hand its host.
+///
+/// A free function rather than a method because both substrates keep their
+/// checkouts in the same directory and answer this question identically — the
+/// records say which shape each one was.
+pub(super) fn report(dir: &Path) -> Vec<String> {
+    reclaim_lines(&orphans(dir, &stella_store::sessions::pid_alive))
 }
 
 #[cfg(test)]
@@ -192,8 +221,8 @@ mod tests {
         CandidateRecord {
             handle: handle.to_string(),
             checkout: dir.join(handle),
-            branch: format!("candidate/{handle}"),
-            top: dir.to_path_buf(),
+            branch: Some(format!("candidate/{handle}")),
+            top: Some(dir.to_path_buf()),
             pid,
             started_at_ms: at,
         }
@@ -274,5 +303,20 @@ mod tests {
             line.contains("Nothing was deleted"),
             "the sweep reports; it does not reclaim: {line}"
         );
+    }
+
+    /// A copy-tree candidate is a directory and nothing else, so naming a
+    /// branch reclaim for it would send a user to a `git` command against a
+    /// tree that may not even be a repository.
+    #[test]
+    fn a_directory_candidates_reclaim_is_a_directorys() {
+        let dir = tempfile::tempdir().unwrap();
+        let line = reclaim_lines(&[CandidateRecord::of_directory(
+            "candidate-0",
+            &dir.path().join("copy-0"),
+        )])
+        .remove(0);
+        assert!(line.contains("rm -rf"), "{line}");
+        assert!(!line.contains("git "), "{line}");
     }
 }

@@ -499,7 +499,7 @@ name = "research"
 
     let plane = crate::wrapper_plugin::candidate_fanout_plane(
         &manifest,
-        substrate(root, Arc::new(WritesOneFile::new("answer.txt"))),
+        CandidateSubstrate::Worktree(substrate(root, Arc::new(WritesOneFile::new("answer.txt")))),
     );
 
     let result = plane
@@ -844,14 +844,18 @@ async fn a_candidate_that_outlives_its_run_is_named_by_the_next_one() {
         killed,
         "the record names the checkout"
     );
-    assert!(mine.branch.starts_with(CANDIDATE_BRANCH_PREFIX));
+    let branch = mine
+        .branch
+        .clone()
+        .expect("a worktree candidate records its branch");
+    assert!(branch.starts_with(CANDIDATE_BRANCH_PREFIX));
     mine.pid = u32::MAX - 1;
     mine.write().unwrap();
 
     let named = substrate(root, Arc::new(NoTools)).orphaned_candidates();
     assert_eq!(named.len(), 1, "the residue is named: {named:?}");
     assert!(
-        named[0].contains(&mine.checkout.display().to_string()) && named[0].contains(&mine.branch),
+        named[0].contains(&mine.checkout.display().to_string()) && named[0].contains(&branch),
         "and named with both halves of a reclaim: {}",
         named[0]
     );
@@ -1079,5 +1083,152 @@ async fn a_candidate_sees_the_users_mode_and_can_relax_it() {
         0o644,
         "the candidate relaxed it, and a pure chmod is not a diff — an empty \
          patch still has a mode to deliver"
+    );
+}
+
+/// The same session, told to isolate by copying instead (#1383).
+fn copy_substrate(root: &Path, provider: Arc<dyn Provider>) -> CandidateSubstrate {
+    let mut cfg = Config::for_tests(crate::config::PROVIDERS[0].clone(), "m".to_string());
+    cfg.workspace_root = root.to_path_buf();
+    let session_registry = Arc::new(stella_tools::ToolRegistry::new(root.to_path_buf()));
+    let sub_agents = Arc::new(
+        crate::subagent::SessionSubAgents::new(
+            provider,
+            &session_registry,
+            EngineConfig::default(),
+            stella_protocol::BudgetMode::Observed,
+        )
+        .with_pool_limit(None),
+    );
+    // Leaked for `substrate`'s reason: `SessionSubAgents` holds a `Weak`.
+    std::mem::forget(session_registry);
+    CandidateSubstrate::with_isolation(
+        crate::settings::CandidateIsolation::CopyTree,
+        &cfg,
+        "candidates-plugin",
+        sub_agents,
+    )
+}
+
+/// **#1383's witness, stated as the fact about the filesystem that it is.**
+///
+/// A gitignored dependency — `node_modules/`, `.venv/`, a dataset installed by
+/// task setup — is absent from a git-worktree candidate by construction, so
+/// the candidate solves a different tree than the grader inspects. The
+/// copy-tree substrate carries it, and that is the whole reason it exists.
+///
+/// The worktree half is in this test on purpose: an assertion that the copy
+/// has the file proves nothing on its own, since a substrate that copied
+/// *nothing* would also have to be told apart from one that copied everything.
+#[tokio::test]
+async fn only_the_copy_substrate_carries_what_gitignore_excludes() {
+    let dir = repo();
+    let root = dir.path();
+    std::fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-qm", "ignore"]);
+    std::fs::create_dir_all(root.join("node_modules/left-pad")).unwrap();
+    std::fs::write(
+        root.join("node_modules/left-pad/index.js"),
+        "module.exports = 1;\n",
+    )
+    .unwrap();
+
+    let by_worktree = substrate(root, Arc::new(NoTools))
+        .create("plugin:p/worker#0")
+        .await
+        .unwrap();
+    assert!(
+        !PathBuf::from(&by_worktree.root)
+            .join("node_modules/left-pad/index.js")
+            .exists(),
+        "premise: a git snapshot is a git view, and the ignored dependency is \
+         not in it"
+    );
+
+    let copied = copy_substrate(root, Arc::new(NoTools));
+    let by_copy = copied.create("plugin:p/worker#0").await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(
+            PathBuf::from(&by_copy.root).join("node_modules/left-pad/index.js")
+        )
+        .unwrap(),
+        "module.exports = 1;\n",
+        "the copy substrate's candidate is the tree, ignored files included"
+    );
+    assert!(
+        PathBuf::from(&by_copy.root).join("seed.txt").exists(),
+        "and the tracked files with them"
+    );
+}
+
+/// The copy substrate promotes by replacing the tree's contents: what the
+/// winner wrote lands, and what the winner deleted goes.
+#[tokio::test]
+async fn a_copy_candidate_is_promoted_by_replacing_the_tree() {
+    let dir = repo();
+    let root = dir.path();
+    std::fs::write(root.join("doomed.txt"), "the user's file\n").unwrap();
+    let subject = copy_substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    let mine = PathBuf::from(&candidate.root);
+    std::fs::write(mine.join("answer.txt"), "the candidate's answer\n").unwrap();
+    std::fs::remove_file(mine.join("doomed.txt")).unwrap();
+
+    subject.adopt(&candidate).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("answer.txt")).unwrap(),
+        "the candidate's answer\n",
+        "what the winner wrote lands"
+    );
+    assert!(
+        !root.join("doomed.txt").exists(),
+        "and what the winner deleted goes — a replacement is not a patch"
+    );
+    assert!(
+        root.join(".stella/private/candidates").exists(),
+        "the host's own state survives the promotion it is running"
+    );
+
+    subject.remove(&candidate).await.unwrap();
+    assert!(!mine.exists(), "removal is the directory's");
+}
+
+/// The selector is the setting and nothing else — no probe, no detection —
+/// and a workspace that says nothing gets the substrate that cannot overwrite
+/// a tree.
+#[tokio::test]
+async fn the_default_substrate_is_the_one_that_cannot_overwrite_a_tree() {
+    assert_eq!(
+        crate::settings::Settings::default().candidate_isolation(),
+        crate::settings::CandidateIsolation::Worktree,
+        "whole-tree promotion is destructive, so it is never the default"
+    );
+
+    // And the wiring agrees with the policy: a workspace with no settings file
+    // gets a candidate under a git branch, which only the worktree substrate
+    // mints.
+    let dir = repo();
+    let subject = CandidateSubstrate::for_session(
+        &{
+            let mut cfg = Config::for_tests(crate::config::PROVIDERS[0].clone(), "m".to_string());
+            cfg.workspace_root = dir.path().to_path_buf();
+            cfg
+        },
+        "candidates-plugin",
+        Arc::new(
+            crate::subagent::SessionSubAgents::new(
+                Arc::new(NoTools),
+                &Arc::new(stella_tools::ToolRegistry::new(dir.path().to_path_buf())),
+                EngineConfig::default(),
+                stella_protocol::BudgetMode::Observed,
+            )
+            .with_pool_limit(None),
+        ),
+    );
+    assert!(
+        matches!(subject, CandidateSubstrate::Worktree(_)),
+        "an unstated policy must not select the destructive substrate"
     );
 }
