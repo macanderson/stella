@@ -93,6 +93,7 @@ python3 ./scripts/check-tokens.py
 python3 ./scripts/check-hue-separation.py
 python3 ./scripts/check-transcript-surfaces.py
 python3 ./scripts/check-prose.py
+./scripts/test-deck-fit-all.sh
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check

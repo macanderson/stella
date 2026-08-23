@@ -93,6 +93,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + hue-separation (30° OKLCH, web tokens)
                          #   + transcript-surfaces
                          #   + prose (no content-free constructions added)
+                         #   + deck-fit-all-test (the deck enumeration)
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)

@@ -101,8 +101,7 @@ esac
 C="$(fixture clean)"
 echo hello >"$C/real.txt"
 git -C "$C" add real.txt >/dev/null 2>&1
-out="$(cd "$C" && bash scripts/check-no-scratch.sh 2>&1)"
-if [ $? -eq 0 ]; then
+if out="$(cd "$C" && bash scripts/check-no-scratch.sh 2>&1)"; then
   ok "C1 a tracked, unignored file passes"
 else
   no "C1 a tracked, unignored file passes" "$out"

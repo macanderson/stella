@@ -25,6 +25,7 @@ on:
       - "website/public/presentations/**"
       - "website/public/brand/fonts/**"
       - "scripts/deck-fit.mjs"
+      - "scripts/deck-fit-all.sh"
       - ".github/workflows/deck-fit.yml"
   push:
     branches: [main]
@@ -32,6 +33,7 @@ on:
       - "website/public/presentations/**"
       - "website/public/brand/fonts/**"
       - "scripts/deck-fit.mjs"
+      - "scripts/deck-fit-all.sh"
       - ".github/workflows/deck-fit.yml"
   workflow_dispatch:
 
@@ -101,41 +103,11 @@ jobs:
       # a fixed-canvas deck and prints the path and the reason. That is reported
       # here as a skip. A skip is never a pass — a silent one is exactly the bug
       # this step keeps re-learning.
+      # The walk and the accounting live in the script, not in this block. They
+      # were inline until #3404, which is why #3376 — an enumeration that
+      # measured less than this workflow's trigger implied — had no regression
+      # test: there was no addressable unit to point one at. The script is
+      # covered by `make deck-fit-all-test`, a gate step, which stubs `node`
+      # and so needs none of the browser machinery above.
       - name: every slide fits the canvas at every viewport
-        run: |
-          # `git ls-files`, not a `**` glob: `**` needs `shopt -s globstar`, and
-          # a shell without it (bash 3.2, still the system bash on macOS, where
-          # this gets run by hand) does not error — it silently degrades `**` to
-          # `*` and drops every top-level deck. A check that quietly measures
-          # less than it claims is the bug being fixed here, so the enumeration
-          # must not have a mode where it does that. A git pathspec matches
-          # across `/` at any depth on every version, sorts deterministically,
-          # and restricts the walk to tracked files, which is what CI measures.
-          decks=()
-          while IFS= read -r -d '' deck; do
-            decks+=("$deck")
-          done < <(git ls-files -z 'website/public/presentations/*.html')
-          if [ ${#decks[@]} -eq 0 ]; then
-            echo "deck-fit: no HTML under website/public/presentations/" >&2
-            exit 1
-          fi
-          status=0
-          measured=0
-          skipped=0
-          for deck in "${decks[@]}"; do
-            echo "::group::$deck"
-            # `|| rc=$?`, not a bare call followed by `rc=$?`: the default shell
-            # here is `bash -e`, which would abort the step on the first failing
-            # deck before the status was ever read — losing both the remaining
-            # decks and the summary line below.
-            rc=0
-            node scripts/deck-fit.mjs "$deck" || rc=$?
-            echo "::endgroup::"
-            case $rc in
-              0) measured=$((measured + 1)) ;;
-              3) skipped=$((skipped + 1)); echo "deck-fit: SKIPPED $deck (not a fixed-canvas deck)" ;;
-              *) measured=$((measured + 1)); status=1 ;;
-            esac
-          done
-          echo "deck-fit: ${#decks[@]} file(s) found, $measured measured, $skipped skipped."
-          exit $status
+        run: ./scripts/deck-fit-all.sh
