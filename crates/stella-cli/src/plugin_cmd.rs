@@ -110,12 +110,21 @@ pub fn run_plugin(cmd: &PluginCmd) -> Result<(), String> {
 fn tier_dir(workspace_root: &Path, scope: PluginScope) -> Result<PathBuf, String> {
     match scope {
         PluginScope::Project => Ok(stella_home::resolve_project_plugins_dir(workspace_root)),
-        PluginScope::User => stella_home::resolve_user_plugins_dir(crate::paths::stella_root())
-            .ok_or_else(|| {
-                "no home directory is discoverable, so there is no user scope to install into \
+        // `user_extension_root`, not `stella_root` — the accessor
+        // `PluginRoster::load` reads the same directory through (#3520). A
+        // plugin is a user-scope extension, so install and load must answer
+        // "where is the user tier?" the same way or a test build installs into
+        // a directory the loader will not read. Identical in production; in a
+        // test build with no home installed it answers `None`, which lands on
+        // the arm below rather than the developer's real `~/.stella/plugins`.
+        PluginScope::User => stella_home::resolve_user_plugins_dir(
+            crate::paths::user_extension_root(),
+        )
+        .ok_or_else(|| {
+            "no home directory is discoverable, so there is no user scope to install into \
                  — use --scope project"
-                    .to_string()
-            }),
+                .to_string()
+        }),
     }
 }
 

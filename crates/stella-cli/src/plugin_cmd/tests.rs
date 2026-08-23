@@ -445,6 +445,43 @@ fn the_user_tier_loads_and_routes_even_in_an_untrusted_workspace() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// **Witness (#3520).** `install --scope user` and `PluginRoster::load`
+/// resolve one directory, so a unit test can reach neither the developer's own
+/// `~/.stella/plugins` nor a tier the loader would decline to read.
+///
+/// Both halves are asserted because either alone passes on the defect: with a
+/// home installed the two accessors agree anyway, and without one only
+/// `tier_dir` used to answer at all.
+#[test]
+fn the_user_tier_installs_where_the_loader_reads_and_nowhere_else() {
+    let root = temp_root("user-tier-accessor");
+
+    // No home installed: an un-redirected unit test gets the refusal, not a
+    // path into whatever `$HOME` the developer happens to have.
+    let refusal = tier_dir(&root, PluginScope::User).expect_err(
+        "an un-redirected test has no visible user tier, so there is nothing to install into",
+    );
+    assert!(
+        refusal.contains("--scope project"),
+        "the refusal names the remedy: {refusal}"
+    );
+
+    // A home installed: install and load land on the same directory.
+    let home = root.join("home");
+    let _paths = crate::paths::test_user_home(home.clone());
+    let installs_into = tier_dir(&root, PluginScope::User).expect("a home was installed");
+    let loads_from = stella_home::resolve_user_plugins_dir(crate::paths::user_extension_root())
+        .expect("the loader sees the installed home");
+    assert_eq!(installs_into, loads_from);
+    assert!(
+        installs_into.starts_with(&home),
+        "and it is under the test's own home, not the developer's: {}",
+        installs_into.display()
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Plant a package whose directory name is **not** its manifest `name` — the
 /// shape a tarball, a `git subtree`, or a rename produces, and the shape the
 /// loader has to resolve by manifest rather than by path.
