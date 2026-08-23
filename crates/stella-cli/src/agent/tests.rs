@@ -1071,6 +1071,7 @@ fn the_summary_envelope_leads_with_its_version() {
         model: "anthropic/claude-opus".to_string(),
         events: Vec::new(),
         files_touched: serde_json::Value::Null,
+        withheld: serde_json::Value::Null,
     };
 
     let encoded = serde_json::to_string(&raw).unwrap();

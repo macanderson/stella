@@ -22,8 +22,18 @@
 //! workspace constructs the [`RuntimeBuilder`]/[`SessionRuntime`] composite —
 //! `stella-serve` does not depend on this crate at all. The paragraph above is
 //! the shape the composite is built to, not a path in use. That is gap **G1**
-//! in `doc:engine-embedding` §4 (#3731); closing it means serve assembling its
-//! resource half through [`RuntimeBuilder::with_provider`] rather than by hand.
+//! in `doc:engine-embedding` §4, tracked by #4403.
+//!
+//! G1 named the serve sidecar as the caller that would close it, and the
+//! sidecar cannot be. `stella-serve` executes no tool and holds no credential,
+//! which is why it depends on three workspace crates and not on `stella-store`
+//! (`crates/stella-serve/README.md`); this crate depends on `stella-model`,
+//! `stella-tools` and `stella-store`, and [`RuntimeBuilder::build`] refuses a
+//! `workspace_root` that is not a directory and returns an `Arc<ToolRegistry>`
+//! rooted at it. A filesystem and a local executor are what ADR-033 Option B
+//! withholds from the sidecar. The caller this crate was written for is
+//! `stella-cli`'s seven drivers, which have all five resources and re-type the
+//! assembly today.
 //!
 //! # The invariant
 //!

@@ -23,6 +23,13 @@ serde = { workspace = true }
 # reason, so it is resident in the tree rather than new supply chain, and it is
 # a pure table lookup over `&str` — no I/O, no allocation, invariant #2 intact.
 unicode-width = { workspace = true }
+# The field projection (#4340) reads a tool's arguments and results as a
+# `serde_json::Value`, which is the shape they already travel in — reparsing
+# them into a local tree would be a second JSON model in a crate whose whole
+# argument is that there is one of everything. It was already a dev-dependency
+# here and is a dependency of eleven other members, so nothing joins the graph;
+# this only stops it being test-only. No I/O, invariant #2 intact.
+serde_json = { workspace = true }
 # The grammar-backed half of the shared lexer (#4283). The near-leaf contract
 # above is weakened by this, not waived, and three things pay for it:
 #
@@ -50,5 +57,4 @@ tree-sitter-sequel = { workspace = true }
 tree-sitter-php = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 proptest = { workspace = true }

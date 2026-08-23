@@ -201,6 +201,13 @@ pub(crate) fn note_json_summary_emitted() {
 /// addition cannot break a correct client and bumping would burn the signal
 /// (#644).
 ///
+/// The raw summary's `withheld` key (#4465) is the worked example of that
+/// second arm, recorded here because the issue asking for it asked for a bump
+/// too. Nothing was removed, renamed or retyped, and no existing key changed
+/// meaning; a v1 consumer reading the new envelope sees exactly what it saw
+/// before plus a key it ignores. Bumping would have told every correct client
+/// to re-read a contract that did not move.
+///
 /// The `events` array is out of scope: the event vocabulary carries its own
 /// forward-compatibility contract and never bumps this number. The
 /// consumer-facing statement lives in `website/content/docs/scripting.mdx`; keep

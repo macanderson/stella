@@ -107,19 +107,7 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
         echo_hidden = true;
     }
 
-    // Re-laid one member to a line before the fold measures it, for the reason
-    // [`crate::syntax::reindent_json`] gives: an API response arrives as a
-    // single line, so a fold that counted lines counted *one*, hid nothing, and
-    // called an eight-thousand-column blob fully shown. The deck normalises the
-    // same body through the same function, so "how much of this result do I
-    // see" still has one answer across the surfaces (#3644).
-    let body = match crate::syntax::body_reads_as_json(lines) {
-        true => crate::syntax::reindent_json(&lines.join("\n"))
-            .lines()
-            .map(str::to_owned)
-            .collect(),
-        false => lines.to_vec(),
-    };
+    let body = json_body(lines).unwrap_or_else(|| lines.to_vec());
     let total = body.len();
     if total <= PREVIEW_LINES {
         return OutputFold {
@@ -150,6 +138,42 @@ pub fn fold_output(output: &Output, invocation: &str) -> OutputFold {
         body,
         echo_hidden,
     }
+}
+
+/// Re-read a JSON result before the fold measures it, or `None` when it is
+/// not JSON at all.
+///
+/// This runs before anything measures or paints the body, because both
+/// questions are about *lines*. An API response arrives as a single line, so a
+/// fold that counted lines counted one, hid nothing, and called an
+/// eight-thousand-column blob fully shown.
+///
+/// A well-formed document becomes [`crate::fields`]' projection: one field per
+/// row, no brace or quote surviving (#4340). That is what the Command Deck has
+/// shown since it grew the projection, and what the export and the Observatory
+/// did not — they re-indented and syntax-coloured the same bytes as JSON, so
+/// one result had two readings and, because the two shapes have different line
+/// counts, two answers to "how much of this am I seeing".
+///
+/// A body that *opens* as JSON but does not parse — a truncated response, an
+/// error with a brace in it — keeps the character re-layout, which needs no
+/// grammar. Losing the re-layout there would put the single-line blob back.
+///
+/// The renderers need no arm of their own for either: they derive their paint
+/// from the folded body ([`crate::syntax::lines_body_paint`]), and neither
+/// shape opens on a brace any more.
+fn json_body(lines: &[String]) -> Option<Vec<String>> {
+    if !crate::syntax::body_reads_as_json(lines) {
+        return None;
+    }
+    let joined = lines.join("\n");
+    Some(match crate::fields::parse_document(&joined) {
+        Some(document) => crate::fields::text_rows(&document),
+        None => crate::syntax::reindent_json(&joined)
+            .lines()
+            .map(str::to_owned)
+            .collect(),
+    })
 }
 
 /// Whether an output line is just the invocation coming back.

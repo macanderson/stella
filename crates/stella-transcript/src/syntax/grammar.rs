@@ -52,12 +52,48 @@
 //! sanity check (zero width, out of order, not on a `char` boundary) is skipped
 //! without advancing the cursor, so its bytes are still emitted — untagged
 //! rather than dropped.
+//!
+//! ## Termination is bought, not assumed (#4469)
+//!
+//! A parse is not guaranteed to finish. `tokenize("(s1.']z]9:A|8=", Lang::TsJs)`
+//! — fourteen characters — spins inside tree-sitter's own error recovery
+//! (`ts_parser__condense_stack` → `ts_parser__handle_error`) and had not
+//! returned after five minutes. It reached CI as a fifty-minute stall on the
+//! losslessness property, which feeds arbitrary text through all eight
+//! grammars, and the job was cancelled rather than failed.
+//!
+//! The walk above terminates by construction, so the bound belongs on the
+//! parse: [`parse_bounded`] spends a fixed [`PARSE_PROGRESS_BUDGET`] of
+//! tree-sitter's own progress callbacks and cancels beyond it, which reads as
+//! "this grammar will not install" to the caller and renders the line plain.
+//! The budget is counted in callbacks rather than measured in wall clock on
+//! purpose: the same line must lex to the same runs on a loaded CI box and on a
+//! quiet laptop, and a clock makes the output a property of the machine.
+//!
+//! **A cancelled parse must be followed by [`Parser::reset`].** tree-sitter
+//! returns `NULL` on cancellation without running its own reset, so the parser
+//! is left holding an outstanding parse and the *next* call resumes it — every
+//! later line on this thread would inherit the loop this one escaped. That is
+//! `a_pathological_line_does_not_poison_the_next_one`.
 
 use std::cell::RefCell;
+use std::ops::ControlFlow;
 
-use tree_sitter::{Node, Parser};
+use tree_sitter::{Node, ParseOptions, ParseState, Parser, Tree};
 
 use super::{Runs, Tok};
+
+/// How many of tree-sitter's progress callbacks one line may spend before the
+/// parse is cancelled.
+///
+/// The library fires one every 100 parser operations
+/// (`OP_COUNT_PER_PARSER_CALLBACK_CHECK` in `parser.c`), so this is a ceiling
+/// of ~200k operations for a line no surface renders wider than a few hundred
+/// characters. `a_realistic_line_stays_far_inside_the_budget` measures the real
+/// draw of this crate's own longest lines through every grammar and asserts the
+/// headroom, so a budget that starts cutting real source fails a test rather
+/// than silently greying out code.
+const PARSE_PROGRESS_BUDGET: u32 = 2_000;
 
 /// A grammar compiled into this crate.
 ///
@@ -170,11 +206,48 @@ fn with_parser<T>(g: Grammar, f: impl FnOnce(&mut Parser) -> T) -> Option<T> {
     })
 }
 
-/// Tokenize one line under `g`, or `None` when the grammar would not install.
+/// Parse one line, cancelling rather than hanging when the grammar loops.
 ///
-/// Lossless and panic-free by construction — see the module doc.
+/// Returns `None` for a cancelled parse — indistinguishable to the caller from
+/// a grammar that would not install, and wanting the same degradation. See the
+/// module doc for why the budget is counted rather than timed, and why the
+/// reset is not optional.
+fn parse_bounded(parser: &mut Parser, code: &str) -> Option<Tree> {
+    parse_within(parser, code, PARSE_PROGRESS_BUDGET).0
+}
+
+/// [`parse_bounded`] with the budget named, reporting what the parse actually
+/// spent. The budget is a parameter so a test can measure the real draw of a
+/// line without the production ceiling truncating the measurement.
+fn parse_within(parser: &mut Parser, code: &str, budget: u32) -> (Option<Tree>, u32) {
+    let bytes = code.as_bytes();
+    let mut spent: u32 = 0;
+    let mut progress = |_: &ParseState| {
+        spent += 1;
+        if spent > budget {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+    let tree = parser.parse_with_options(
+        &mut |i, _| bytes.get(i..).unwrap_or_default(),
+        None,
+        Some(ParseOptions::new().progress_callback(&mut progress)),
+    );
+    if tree.is_none() {
+        parser.reset();
+    }
+    (tree, spent)
+}
+
+/// Tokenize one line under `g`, or `None` when the grammar would not install
+/// or the parse ran past [`PARSE_PROGRESS_BUDGET`].
+///
+/// Lossless and panic-free by construction, and terminating by budget — see the
+/// module doc.
 pub(super) fn runs(code: &str, g: Grammar) -> Option<Runs> {
-    let tree = with_parser(g, |parser| parser.parse(code.as_bytes(), None))??;
+    let tree = with_parser(g, |parser| parse_bounded(parser, code))??;
 
     let mut out = Emit::new(code);
     let mut cursor = tree.walk();
@@ -482,6 +555,79 @@ mod tests {
                 "{g:?} did not install — a tree-sitter/grammar version skew"
             );
         }
+    }
+
+    /// What one line of real source actually draws, through every grammar.
+    ///
+    /// The number in [`PARSE_PROGRESS_BUDGET`] is only defensible against a
+    /// measurement, so this is the measurement: the longest lines this crate
+    /// writes, plus the widest shapes a `read_file` lands on, must finish an
+    /// order of magnitude inside the ceiling. If a budget ever starts cutting
+    /// real source it fails here rather than greying out code on a screen.
+    #[test]
+    fn a_realistic_line_stays_far_inside_the_budget() {
+        // The measurement runs against a budget well above the production one
+        // so the ceiling cannot truncate what it reports — and still bounded,
+        // because an unbounded one is the bug this whole change is about.
+        let headroom = PARSE_PROGRESS_BUDGET * 50;
+        let lines = [
+            "pub(super) fn runs(code: &str, g: Grammar) -> Option<Runs> { let tree = with_parser(g, |parser| parse_bounded(parser, code))??; }",
+            "    if kind == \"type_identifier\" || kind == \"primitive_type\" || kind.ends_with(\"_type\") { return Some(Tok::Type); }",
+            "export const Component = ({ a, b }: Props) => <div className={cx('x', b)}>{a.map((v) => <span key={v.id}>{v.name}</span>)}</div>;",
+            "SELECT u.id, u.name, count(o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE u.created_at > $1 GROUP BY u.id ORDER BY 3 DESC;",
+            "static inline int f(const char *restrict s, size_t n, unsigned long *out) { for (size_t i = 0; i < n; i++) { out[i] = (unsigned long)s[i]; } return 0; }",
+            "public static <T extends Comparable<T>> List<T> sorted(Collection<? extends T> in) { return in.stream().sorted().collect(Collectors.toList()); }",
+            "func (s *Server) Handle(ctx context.Context, req *pb.Request) (*pb.Response, error) { return &pb.Response{Ok: true, Body: strings.Repeat(\"x\", 12)}, nil }",
+            "def f(self, *args, **kwargs): return {k: [v for v in vals if v is not None] for k, vals in sorted(kwargs.items(), key=lambda kv: kv[0])}",
+            "<?php function h(array $rows): string { return implode(\", \", array_map(fn($r) => sprintf(\"%s=%d\", $r['k'], (int)$r['v']), $rows)); }",
+        ];
+        let mut worst = 0;
+        for line in lines {
+            for g in Grammar::ALL {
+                let spent = with_parser(g, |p| parse_within(p, line, headroom).1).unwrap_or(0);
+                assert!(
+                    spent * 8 <= PARSE_PROGRESS_BUDGET,
+                    "{g:?} spent {spent} of {PARSE_PROGRESS_BUDGET} on {line:?} — \
+                     under an eighth of the budget is the headroom this test buys"
+                );
+                worst = worst.max(spent);
+            }
+        }
+        // Names the real number in the failure output of any later change that
+        // moves it, rather than leaving the margin implicit.
+        assert!(worst > 0, "no grammar reported any progress at all");
+    }
+
+    /// The fourteen characters that hung CI for fifty minutes (#4469).
+    ///
+    /// Not merely "fast": the parse does not terminate at all, so a machine
+    /// slow enough to make a duration assertion flaky is not the hazard here.
+    /// What is asserted is the contract the budget preserves — the line still
+    /// round-trips, as one untinted run.
+    #[test]
+    fn a_grammar_that_loops_is_cancelled_not_awaited() {
+        let text = "(s1.']z]9:A|8=";
+        assert!(
+            runs(text, Grammar::Tsx).is_none(),
+            "the TSX error-recovery loop must be cancelled, not parsed"
+        );
+    }
+
+    /// A cancelled parse leaves tree-sitter holding an outstanding parse, and
+    /// the next call on that thread's parser *resumes* it. Without the reset in
+    /// [`parse_within`] every later line on this thread inherits the loop.
+    #[test]
+    fn a_pathological_line_does_not_poison_the_next_one() {
+        assert!(runs("(s1.']z]9:A|8=", Grammar::Tsx).is_none());
+        let after = runs("const x = 'ok';", Grammar::Tsx).expect("the next line still parses");
+        let rebuilt: String = after.iter().map(|(t, _)| t.as_str()).collect();
+        assert_eq!(rebuilt, "const x = 'ok';");
+        assert!(
+            after
+                .iter()
+                .any(|(t, tok)| t == "'ok'" && *tok == Some(Tok::Str)),
+            "the next line is still coloured, not degraded: {after:?}"
+        );
     }
 
     /// Distinct cache slots, so no grammar parses with another's parser.

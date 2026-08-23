@@ -43,14 +43,15 @@
 //! is proved by a process test
 //! (`crates/stella-cli/tests/settings_warnings_cli.rs`), not by this module.
 //!
-//! **Two carriers, one answer.** #2302 asks for the counts on stderr *and* in
-//! `--output-format stream-json`, so a harness sees them without scraping the
-//! human channel. [`WithheldNotice::line`] is the first and
+//! **Three carriers, one answer.** #2302 asks for the counts on stderr *and*
+//! in `--output-format stream-json`, so a harness sees them without scraping
+//! the human channel. [`WithheldNotice::line`] is the first and
 //! [`WithheldNotice::event`] the second (#3616), and both read one
 //! [`withheld`] survey rather than deriving anything of their own — a second
 //! derivation is how two carriers of one fact start disagreeing. The `json`
-//! **summary** object is still missing, and needs a `SUMMARY_SCHEMA_VERSION`
-//! bump of its own.
+//! summary's `withheld` object is the third (#4465), and it goes one better:
+//! `agent::summary::withheld` reads the emitted event back off the turn's
+//! journal, so it is not a third derivation at all.
 
 use std::path::Path;
 

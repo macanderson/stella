@@ -10,8 +10,24 @@ free functions directly, and nothing in the workspace constructs the
 `RuntimeBuilder`/`SessionRuntime` composite — `stella-serve` does not depend
 on this crate at all. Read the paragraph above as the shape the composite is
 built to, not as a path in use. That is gap **G1** in
-`doc:engine-embedding` §4 (#3731), and closing it means serve assembling its
-resource half through `RuntimeBuilder::with_provider` rather than by hand.
+`doc:engine-embedding` §4, tracked by #4403.
+
+**The serve sidecar cannot be the caller that closes it**, and G1 named it as
+one. `stella-serve` depends on three workspace crates and states the reason it
+depends on no more: it never executes a tool and never holds a credential, so
+"a local tool surface is not a configuration option" and "this crate does not
+depend on `stella-store`" (`crates/stella-serve/README.md`). This crate
+depends on `stella-model`, `stella-tools` and `stella-store`, and
+`RuntimeBuilder::build` refuses a `workspace_root` that is not a directory and
+hands back an `Arc<ToolRegistry>` rooted at it — a filesystem and a local
+executor, which is exactly what ADR-033 Option B withholds from the sidecar.
+
+The candidate caller is the one the crate was written for: `stella-cli`'s
+seven drivers, which have a workspace root, a registry, a store, calibration
+and a budget, and which re-type this assembly today. Which of the two G1
+becomes — retarget it, or delete the composite and say `parts::*` is the whole
+surface — is #4403's open question, and it is a decision about who this crate
+serves rather than a defect to fix.
 
 The crate exists because `stella-cli` is a bin-only crate — no `[lib]` target —
 so nothing inside it is callable from anywhere else. That one manifest fact is

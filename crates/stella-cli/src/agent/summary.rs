@@ -3,14 +3,25 @@
 
 //! The `--output-format json` envelope for a raw (`--no-pipeline`) run.
 //!
-//! Split out of `agent.rs`, which is a grandfathered god file closed to growth
-//! (AGENTS.md § "God files — plan around them, never into them").
+//! Split out of `agent.rs` when that file was a grandfathered god file closed
+//! to growth (AGENTS.md § "God files — plan around them, never into them"). It
+//! has since fallen back under the ratchet and its baseline entry was removed
+//! with #3852, so the split is no longer forced — it is kept because the
+//! envelope's folds belong together.
 //!
 //! Its `files_touched` key used to be a hardcoded empty list, with a comment
 //! saying why: "the CLI keeps no per-file recorder". That stopped being true
 //! when [`crate::turn_files`] gave the engine path a measured producer
 //! (#3413), so the envelope is now filled from the turn's own stream rather
 //! than declared empty.
+//!
+//! [`withheld`] is folded the same way, and for a stronger reason: #3616 put
+//! the withheld-steering counts on `stream-json` as an event and left the
+//! `json` summary with no answer at all (#4465). Reading them back off this
+//! turn's own journal rather than re-surveying the workspace is what makes the
+//! two machine channels incapable of disagreeing — they are one event, read
+//! twice. `crates/stella-cli/src/settings/withheld.rs` states the same rule
+//! for its own two carriers.
 
 use stella_protocol::event::AgentEvent;
 
@@ -43,6 +54,7 @@ pub(super) fn print_json_summary(cfg: &Config, outcome: &TurnOutcome, events: Ve
         reason,
         model: format!("{}/{}", cfg.provider.id, cfg.model_id),
         files_touched: files_touched(&events),
+        withheld: withheld(&events),
         events,
     };
     println!(
@@ -101,8 +113,50 @@ fn files_touched(events: &[AgentEvent]) -> serde_json::Value {
     serde_json::json!({ "files_touched": rows })
 }
 
+/// What this checkout's trust gate held back, or `null` when it held nothing.
+///
+/// Read off the turn's own `SteeringWithheld` event — the one
+/// `crates/stella-cli/src/agent/output.rs` opens every raw run with — rather
+/// than re-surveying the workspace. The counts are already resolved by then,
+/// and a second survey could report a number the session did not run under.
+///
+/// `null` covers both silent arms and they are not the same fact: a trusted
+/// checkout loaded its steering, and an untrusted one with nothing on disk had
+/// nothing to lose. Neither is a suppression, and the envelope does not invent
+/// a distinction the event itself declines to carry.
+///
+/// Counts and the authority, never a path, a filename or a body — the rule the
+/// stderr line and the event are both held to, for the reason
+/// `settings::withheld`'s module doc gives: a refusal that echoed
+/// repository-controlled strings would be the exfiltration channel it exists
+/// to prevent.
+fn withheld(events: &[AgentEvent]) -> serde_json::Value {
+    events
+        .iter()
+        .find_map(|event| match event {
+            AgentEvent::SteeringWithheld {
+                withheld_by,
+                memories,
+                records,
+                skills,
+                commands,
+                agents,
+            } => Some(serde_json::json!({
+                "withheld_by": withheld_by,
+                "memories": memories,
+                "records": records,
+                "skills": skills,
+                "commands": commands,
+                "agents": agents,
+            })),
+            _ => None,
+        })
+        .unwrap_or(serde_json::Value::Null)
+}
+
 #[cfg(test)]
 mod tests {
+    use stella_protocol::Withholder;
     use stella_protocol::event::FileChangeKind;
 
     use super::*;
@@ -144,6 +198,36 @@ mod tests {
         assert_eq!(rows[0]["lines_added"], 7);
         assert_eq!(rows[0]["lines_removed"], 1);
         assert_eq!(rows[0]["ops"], "created,modified");
+    }
+
+    /// **Witness (#4465).** The `json` summary answers what `stream-json` has
+    /// answered since #3616: a harness reading the summary alone can tell an
+    /// untrusted checkout from a trusted one. Before this the key did not
+    /// exist and the only machine answer was the event stream.
+    #[test]
+    fn the_envelope_reports_what_the_trust_gate_withheld() {
+        let value = withheld(&[AgentEvent::SteeringWithheld {
+            withheld_by: Withholder::ManagedCeiling,
+            memories: 3,
+            records: 2,
+            skills: 1,
+            commands: 0,
+            agents: 0,
+        }]);
+        assert_eq!(value["withheld_by"], "managed_ceiling");
+        assert_eq!(value["memories"], 3);
+        assert_eq!(value["records"], 2);
+        assert_eq!(value["skills"], 1);
+        assert_eq!(value["commands"], 0);
+        assert_eq!(value["agents"], 0);
+    }
+
+    /// A run whose steering was loaded — or which had none to lose — reports
+    /// `null`, not a zeroed object: an object would read as a suppression that
+    /// cost nothing, which is a different claim from "nothing was suppressed".
+    #[test]
+    fn a_run_with_nothing_withheld_reports_null() {
+        assert!(withheld(&[]).is_null());
     }
 
     #[test]
