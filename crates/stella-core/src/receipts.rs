@@ -350,6 +350,38 @@ pub const RECALL_MARKER: &str = "[auto-recalled context]";
 /// same argument one step further out: it is what the *compaction* passes
 /// destroyed, re-stated, and a reader reconciling a compaction round wants it
 /// beside the summary rather than mistaken for the person naming files.
+///
+/// # A receipt says `Steered` and no more (#4323)
+///
+/// The two automatic steer rungs — a detected loop and a stalled turn — both
+/// file here as [`BlockKind::Steered`], and this classifier **cannot tell them
+/// apart even in principle**: `driver::loop_escalation::STALL_STEER_PREFIX`
+/// extends `LOOP_STEER_PREFIX`, so the prefix test that decides the kind is
+/// answering a question about English, not about provenance.
+///
+/// #3622 put the cause on the wire — `AgentEvent::Steered { cause }` with
+/// `SteerCause::{Loop, Stall, …}`, stamped at the emit sites — and this
+/// function is structurally unable to read it: its input is
+/// `&[CompletionMessage]`, and a `CompletionMessage` carries `role` and
+/// `content` and nothing else. The cause lives on the event stream, which the
+/// receipt builder never sees.
+///
+/// **That split is the decision, not an omission.** The loop/stall
+/// distinction is an event-log question, and a receipt answers a different
+/// one: which *mechanism* put these bytes in front of the model. Both rungs
+/// genuinely are `Steered` blocks, so nothing is misattributed. Closing it
+/// costs more than it returns either way it could be closed: a
+/// `#[serde(default)]` origin on `CompletionMessage` touches the type every
+/// provider adapter serializes and has to be proven never to reach a provider
+/// request (invariant 7, byte-stable prompts) for a field no provider wants;
+/// handing the builder a `&[(usize, SteerCause)]` beside the messages is a
+/// second array indexed into the first, which drifts the moment anything
+/// inserts or rewrites a message — and compaction does both, on every step.
+///
+/// What follows for a reader: separate the rungs from `stella-events.jsonl`,
+/// where `Steered { cause }` says which one fired. If a receipt ever has to
+/// answer it, the honest fix is provenance on the history message, and the
+/// wire-safety argument above is the work that buys.
 fn user_block_kind(content: &str) -> BlockKind {
     if content.starts_with(crate::driver::SUMMARY_MARKER_PREFIX)
         || content.starts_with(crate::restore::RESTORE_MARKER_PREFIX)
