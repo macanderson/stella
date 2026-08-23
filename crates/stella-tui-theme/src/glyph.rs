@@ -9,19 +9,21 @@
 //!
 //! ## Cell width
 //!
-//! Every glyph here is one terminal cell wide except [`WRITE`], which is
-//! U+FF0B FULLWIDTH PLUS SIGN and occupies **two**. SPEC 4 names that
-//! character specifically; a layout that budgets one cell for it will shear
-//! the row to its right, so [`width`] states the width rather than leaving
-//! each call site to measure. Nothing else here is fullwidth.
+//! Every glyph here is one terminal cell wide; [`width`] is the single
+//! source of truth so a call site never has to measure one by hand. [`WRITE`]
+//! used to be the one exception — U+FF0B FULLWIDTH PLUS SIGN, budgeted as
+//! two cells — until #4482: on macOS it fell through to PingFang SC, a
+//! proportional CJK face, into the one cell the layout budgeted as fullwidth,
+//! which is a visible hazard rather than a design a font can honour. It is
+//! now the native ASCII `+` (U+002B), one cell everywhere, and nothing here
+//! is fullwidth any more.
 //!
-//! [`WRITE`] is the only *unconditionally* wide one. Nine others carry East
-//! Asian Width `A` (**ambiguous**) rather than `N`, so a terminal configured
-//! for CJK double-width ambiguity draws them in two cells: [`RUNNING`],
-//! [`QUEUED`], [`GATE`], [`MEMORY`], [`NODE_FILE`], [`TOOL_EXECUTE`],
-//! [`EVENT`], [`COMPACTED`], and `BLOCK_EIGHTHS[8]`. [`width`] answers one for
-//! all of them, because that is what every non-CJK configuration draws and
-//! what the layout budgets.
+//! Nine glyphs still carry East Asian Width `A` (**ambiguous**) rather than
+//! `N`, so a terminal configured for CJK double-width ambiguity draws them in
+//! two cells: [`RUNNING`], [`QUEUED`], [`GATE`], [`MEMORY`], [`NODE_FILE`],
+//! [`TOOL_EXECUTE`], [`EVENT`], [`COMPACTED`], and `BLOCK_EIGHTHS[8]`.
+//! [`width`] answers one for all of them, because that is what every
+//! non-CJK configuration draws and what the layout budgets.
 //!
 //! The hazard predates the tool-class rows below: six of the nine shipped
 //! before them. It is not guarded, because nothing here knows the terminal's
@@ -70,8 +72,11 @@ pub const COLLAPSED: char = '▸';
 
 /// Write (new file). Green sign on a gold rail (SPEC 4).
 ///
-/// Fullwidth: **two cells**. See the module doc.
-pub const WRITE: char = '＋';
+/// One cell, like everything else here. Was U+FF0B FULLWIDTH PLUS SIGN,
+/// budgeted as two; #4482 replaced it with the native ASCII `+` after the
+/// fullwidth form was found resolving to a proportional CJK face on macOS.
+/// See the module doc.
+pub const WRITE: char = '+';
 
 /// Memory. Silver.
 pub const MEMORY: char = '◆';
@@ -171,10 +176,16 @@ pub const METER_TRACK: char = '░';
 /// Every glyph in the vocabulary, paired with its name.
 ///
 /// The tests walk this instead of a second list, so a glyph added without a
-/// stated width is caught rather than assumed.
-pub const ALL: [(&str, char); 21] = [
+/// stated width is caught rather than assumed. Includes every frame of
+/// [`SPINNER`] and every fill of [`BLOCK_EIGHTHS`] except the empty one
+/// (`' '` is a cell state, not a glyph) — #4482 folded both in after a walk
+/// over `ALL` alone was found to inherit their blind spot silently.
+pub const ALL: [(&str, char); 31] = [
     ("done", DONE),
     ("running", RUNNING),
+    ("spinner_2", SPINNER[1]),
+    ("spinner_3", SPINNER[2]),
+    ("spinner_4", SPINNER[3]),
     ("queued", QUEUED),
     ("gate", GATE),
     ("failed", FAILED),
@@ -192,6 +203,13 @@ pub const ALL: [(&str, char); 21] = [
     ("tool_delegate", TOOL_DELEGATE),
     ("event", EVENT),
     ("compacted", COMPACTED),
+    ("eighth_1", BLOCK_EIGHTHS[1]),
+    ("eighth_2", BLOCK_EIGHTHS[2]),
+    ("eighth_3", BLOCK_EIGHTHS[3]),
+    ("eighth_4", BLOCK_EIGHTHS[4]),
+    ("eighth_5", BLOCK_EIGHTHS[5]),
+    ("eighth_6", BLOCK_EIGHTHS[6]),
+    ("eighth_7", BLOCK_EIGHTHS[7]),
     ("block_full", BLOCK_EIGHTHS[8]),
     ("meter_track", METER_TRACK),
 ];
@@ -212,8 +230,7 @@ pub enum Coverage {
     Native,
     /// Absent from it. The named face is what CoreText resolves it to on
     /// macOS, and it is recorded rather than repaired because the substitute
-    /// is monospace and the cell grid survives — the one exception being
-    /// U+FF0B, below.
+    /// is monospace and the cell grid survives.
     Substituted(&'static str),
 }
 
@@ -239,56 +256,53 @@ pub enum Coverage {
 /// `every_glyph_declares_its_brand_font_coverage` walks [`ALL`] against this
 /// with no font involved.
 ///
-/// Two rows are worth knowing before adding a ninth:
-///
-/// - Menlo is monospace, so those substitutions cost nothing on macOS and cost
-///   a tofu box on a bare Linux terminal. That is the trade SPEC 4.2 accepts
-///   and states.
-/// - U+FF0B [`WRITE`] resolves to **PingFang SC**, a CJK face, into a cell the
-///   layout budgets as fullwidth. It is the one row here whose substitute
-///   brings unrelated metrics, and it is unresolved: moving it means moving
-///   SPEC 4's named character and the width contract [`width`] states, which
-///   is a design decision rather than a coverage fix (#4318).
+/// Menlo is monospace, so its substitutions cost nothing on macOS and cost a
+/// tofu box on a bare Linux terminal. That is the trade SPEC 4.2 accepts and
+/// states. It used to hold one row that was not that trade: U+FF0B
+/// [`WRITE`] resolved to **PingFang SC**, a proportional CJK face, into the
+/// one cell the layout budgeted as fullwidth — #4482 retired that character
+/// for the native `+` (U+002B), which every row here confirms is `Native`.
 pub const COVERAGE: [(char, Coverage); 31] = [
-    ('\u{0192}', Coverage::Native), // LATIN SMALL LETTER F WITH HOOK
-    ('\u{2193}', Coverage::Native), // DOWNWARDS ARROW
+    ('\u{002B}', Coverage::Native),               // PLUS SIGN
+    ('\u{0192}', Coverage::Native),               // LATIN SMALL LETTER F WITH HOOK
+    ('\u{2193}', Coverage::Native),               // DOWNWARDS ARROW
     ('\u{21B3}', Coverage::Substituted("Menlo")), // DOWNWARDS ARROW WITH TIP RIGHTWARDS
-    ('\u{2299}', Coverage::Native), // CIRCLED DOT OPERATOR
-    ('\u{2325}', Coverage::Native), // OPTION KEY
-    ('\u{2588}', Coverage::Native), // FULL BLOCK
-    ('\u{2589}', Coverage::Native), // LEFT SEVEN EIGHTHS BLOCK
-    ('\u{258A}', Coverage::Native), // LEFT THREE QUARTERS BLOCK
-    ('\u{258B}', Coverage::Native), // LEFT FIVE EIGHTHS BLOCK
-    ('\u{258C}', Coverage::Native), // LEFT HALF BLOCK
-    ('\u{258D}', Coverage::Native), // LEFT THREE EIGHTHS BLOCK
-    ('\u{258E}', Coverage::Native), // LEFT ONE QUARTER BLOCK
-    ('\u{258F}', Coverage::Native), // LEFT ONE EIGHTH BLOCK
-    ('\u{2591}', Coverage::Native), // LIGHT SHADE
+    ('\u{2299}', Coverage::Native),               // CIRCLED DOT OPERATOR
+    ('\u{2325}', Coverage::Native),               // OPTION KEY
+    ('\u{2588}', Coverage::Native),               // FULL BLOCK
+    ('\u{2589}', Coverage::Native),               // LEFT SEVEN EIGHTHS BLOCK
+    ('\u{258A}', Coverage::Native),               // LEFT THREE QUARTERS BLOCK
+    ('\u{258B}', Coverage::Native),               // LEFT FIVE EIGHTHS BLOCK
+    ('\u{258C}', Coverage::Native),               // LEFT HALF BLOCK
+    ('\u{258D}', Coverage::Native),               // LEFT THREE EIGHTHS BLOCK
+    ('\u{258E}', Coverage::Native),               // LEFT ONE QUARTER BLOCK
+    ('\u{258F}', Coverage::Native),               // LEFT ONE EIGHTH BLOCK
+    ('\u{2591}', Coverage::Native),               // LIGHT SHADE
     ('\u{25A2}', Coverage::Substituted("Menlo")), // WHITE SQUARE WITH ROUNDED CORNERS
     ('\u{25A4}', Coverage::Substituted("Menlo")), // SQUARE WITH HORIZONTAL FILL
-    ('\u{25B8}', Coverage::Native), // BLACK RIGHT-POINTING SMALL TRIANGLE
-    ('\u{25C6}', Coverage::Native), // BLACK DIAMOND
-    ('\u{25C7}', Coverage::Native), // WHITE DIAMOND
-    ('\u{25C9}', Coverage::Native), // FISHEYE
-    ('\u{25CB}', Coverage::Native), // WHITE CIRCLE
-    ('\u{25CC}', Coverage::Native), // DOTTED CIRCLE
-    ('\u{25CF}', Coverage::Native), // BLACK CIRCLE
+    ('\u{25B8}', Coverage::Native),               // BLACK RIGHT-POINTING SMALL TRIANGLE
+    ('\u{25C6}', Coverage::Native),               // BLACK DIAMOND
+    ('\u{25C7}', Coverage::Native),               // WHITE DIAMOND
+    ('\u{25C9}', Coverage::Native),               // FISHEYE
+    ('\u{25CB}', Coverage::Native),               // WHITE CIRCLE
+    ('\u{25CC}', Coverage::Native),               // DOTTED CIRCLE
+    ('\u{25CF}', Coverage::Native),               // BLACK CIRCLE
     ('\u{25D0}', Coverage::Substituted("Menlo")), // CIRCLE WITH LEFT HALF BLACK
     ('\u{25D1}', Coverage::Substituted("Menlo")), // CIRCLE WITH RIGHT HALF BLACK
     ('\u{25D2}', Coverage::Substituted("Menlo")), // CIRCLE WITH LOWER HALF BLACK
     ('\u{25D3}', Coverage::Substituted("Menlo")), // CIRCLE WITH UPPER HALF BLACK
-    ('\u{2713}', Coverage::Native), // CHECK MARK
-    ('\u{2717}', Coverage::Native), // BALLOT X
+    ('\u{2713}', Coverage::Native),               // CHECK MARK
+    ('\u{2717}', Coverage::Native),               // BALLOT X
     ('\u{2726}', Coverage::Substituted("Menlo")), // BLACK FOUR POINTED STAR
-    ('\u{FF0B}', Coverage::Substituted("PingFang SC")), // FULLWIDTH PLUS SIGN
 ];
 
 /// How many terminal cells `glyph` occupies.
 ///
-/// One for everything in this vocabulary except [`WRITE`]. Stated here rather
-/// than measured per call site so the fullwidth case cannot be forgotten in
-/// the one place it would shear a row.
+/// One, for every glyph in this vocabulary (#4482 retired the one fullwidth
+/// exception, [`WRITE`]). Kept as a function rather than assumed at each call
+/// site, so a future glyph that genuinely needs two cells has one place to
+/// change.
 #[must_use]
-pub const fn width(glyph: char) -> usize {
-    if glyph == WRITE { 2 } else { 1 }
+pub const fn width(_glyph: char) -> usize {
+    1
 }
