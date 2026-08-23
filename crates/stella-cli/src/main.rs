@@ -84,6 +84,9 @@ mod paths;
 // that selects it (`--plain`, `STELLA_PLAIN`, `plain_fallback`); it was
 // `tui` until #2421, which was the one name it is not.
 mod plain;
+// An accepted `[[capabilities]]` list, as the `AuthzGate` rule that refuses
+// the installed plugin everything else (#3482).
+mod plugin_authz;
 // The plugin loader (`doc:pipeline-as-plugins` §A4): install/list/remove, the
 // two-tier roster, and the hook routes a declared grant produces.
 mod plugin_cmd;

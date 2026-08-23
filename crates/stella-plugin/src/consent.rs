@@ -38,7 +38,8 @@
 //! this crate, because the two crates may not depend on each other in either
 //! direction and a hand-kept copy of that string would be the mirror #3310
 //! removed. Binding a declared capability to an `AuthzGate` rule is the
-//! loader's job (`doc:pipeline-as-plugins` §A4).
+//! loader's job (`doc:pipeline-as-plugins` §A4) — `stella-cli`'s
+//! `plugin_authz` does it, and that is where the two vocabularies meet.
 
 use serde::{Deserialize, Serialize};
 

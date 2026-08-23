@@ -239,7 +239,7 @@ fn a_plugins_tool_installs_runs_as_the_plugin_and_retracts_with_it() {
         installed.clone(),
         root.clone(),
         stella_tools::policy::ToolPolicy::allow_all(),
-        crate::agent::tool_stack::session_gate(),
+        crate::agent::tool_stack::session_gate(&root),
         stella_core::ports::Principal::User,
     );
     match runtime.block_on(stack.execute("vera_review", &serde_json::json!({}))) {
@@ -260,7 +260,7 @@ fn a_plugins_tool_installs_runs_as_the_plugin_and_retracts_with_it() {
         contributed_tools(&root),
         root.clone(),
         stella_tools::policy::ToolPolicy::allow_all(),
-        crate::agent::tool_stack::session_gate(),
+        crate::agent::tool_stack::session_gate(&root),
         stella_core::ports::Principal::User,
     );
     match runtime.block_on(after.execute("vera_review", &serde_json::json!({}))) {
@@ -336,7 +336,7 @@ fn a_packages_own_script_runs_through_the_expanded_plugin_dir() {
         contributed_tools(&root),
         root.clone(),
         stella_tools::policy::ToolPolicy::allow_all(),
-        crate::agent::tool_stack::session_gate(),
+        crate::agent::tool_stack::session_gate(&root),
         stella_core::ports::Principal::User,
     );
     let dir = stella_home::resolve_project_plugins_dir(&root).join("vera");
