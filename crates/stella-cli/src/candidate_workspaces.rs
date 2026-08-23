@@ -460,6 +460,80 @@ impl SessionCandidateWorkspaces {
         self.git(root, &["diff", "--binary", "--no-ext-diff", "HEAD"])
             .await
     }
+
+    /// Write `checkout`'s uncommitted work out beside it, and say where.
+    ///
+    /// `Ok(None)` for a candidate that changed nothing — there is no file to
+    /// point a user at, and writing an empty one would put a path in a report
+    /// that is worth nothing to open.
+    ///
+    /// The file is named for the checkout's **slug**, not for the handle a
+    /// plugin spells. `candidate-0` is unique within one run and repeats in
+    /// the next, so a second aborted run would overwrite the first's rescued
+    /// work — which is the exact loss this exists to prevent. The slug carries
+    /// this run's scope hash ([`WorktreeManager::with_run_scope`]).
+    async fn write_patch(&self, checkout: &Path) -> Result<Option<PathBuf>, String> {
+        self.stage_intent(checkout).await?;
+        let patch = self.patch(checkout).await?;
+        if patch.trim().is_empty() {
+            return Ok(None);
+        }
+        let slug = checkout
+            .file_name()
+            .and_then(|slug| slug.to_str())
+            .ok_or_else(|| "a candidate checkout with no final path component".to_string())?;
+        let path = self
+            .repo_root
+            .join(CANDIDATES_DIR)
+            .join(format!("{slug}.patch"));
+        std::fs::write(&path, patch.as_bytes())
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        Ok(Some(path))
+    }
+
+    /// Write out every candidate still live, before anything removes it, and
+    /// say where each landed (#2651).
+    ///
+    /// Called when a run ends **abnormally** — the turn budget stopped it, the
+    /// dispatch failed, a turn aborted — which is precisely the ending where
+    /// no plugin ever got to score what these candidates did. The end-of-run
+    /// sweep then deletes the checkouts and their branches unconditionally, so
+    /// without this a candidate that solved the task is discarded with no
+    /// residue at all.
+    ///
+    /// The patch is written, never applied. Which candidate deserved to land
+    /// is the plugin's judgement, and a host that made it on an abort would be
+    /// adopting an unscored answer onto the user's tree on its own authority
+    /// — the same line [`Self::adopt`] refuses to cross when a patch does not
+    /// fit.
+    pub(crate) async fn preserve_unscored(&self) -> Vec<String> {
+        let live: Vec<(CandidateHandle, PathBuf)> = self
+            .minted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(handle, minted)| (handle.clone(), minted.worktree.path.clone()))
+            .collect();
+        let mut lines = Vec::new();
+        for (handle, checkout) in live {
+            match self.write_patch(&checkout).await {
+                Ok(Some(path)) => lines.push(format!(
+                    "the run ended before anything scored candidate {handle}; its work is \
+                     kept at {} and applies with `git apply --binary`",
+                    path.display()
+                )),
+                Ok(None) => {}
+                // Reported rather than raised, like the sweep beside it: the
+                // run is over, and a patch that would not write is a fact the
+                // user needs, not the run's exit status.
+                Err(reason) => lines.push(format!(
+                    "candidate {handle}'s work could not be written out before its \
+                     workspace was removed: {reason}"
+                )),
+            }
+        }
+        lines
+    }
 }
 
 #[async_trait]

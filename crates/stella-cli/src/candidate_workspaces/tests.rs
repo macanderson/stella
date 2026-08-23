@@ -738,6 +738,76 @@ async fn a_mid_run_user_rewind_is_not_a_ref_escape() {
     );
 }
 
+/// **#2651's witness.** A run that ends before anything scores its candidates
+/// keeps their work: the patch is on disk, and the sweep that follows takes
+/// the checkout and leaves the patch standing.
+///
+/// The measured shape was a solved task scoring zero — the turn budget ended
+/// the run, the plugin never adopted, and the end-of-run sweep deleted the
+/// checkout and its branch with nothing written out first.
+#[tokio::test]
+async fn work_nothing_scored_is_written_out_before_the_sweep_takes_it() {
+    let dir = repo();
+    let root = dir.path();
+    let subject = substrate(root, Arc::new(WritesOneFile::new("answer.txt")));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    subject
+        .work(&candidate, work("worker", "write the answer"))
+        .await
+        .unwrap();
+    let wrote = std::fs::read_to_string(PathBuf::from(&candidate.root).join("answer.txt")).unwrap();
+
+    // The run ends abnormally: nothing adopts, and the sweep is about to take
+    // everything.
+    let kept = subject.preserve_unscored().await;
+    assert_eq!(kept.len(), 1, "one unscored candidate: {kept:?}");
+
+    let patch = root.join(CANDIDATES_DIR).join(format!(
+        "{}.patch",
+        PathBuf::from(&candidate.root)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+    ));
+    assert!(
+        kept[0].contains(&patch.display().to_string()),
+        "the report must name the file: {}",
+        kept[0]
+    );
+
+    subject.remove(&candidate).await.unwrap();
+    assert!(
+        !PathBuf::from(&candidate.root).exists(),
+        "premise: the sweep really took the checkout"
+    );
+    let rescued = std::fs::read_to_string(&patch).expect("the patch outlives the workspace");
+    assert!(
+        rescued.contains("answer.txt") && rescued.contains(wrote.trim()),
+        "and carries what the candidate wrote: {rescued}"
+    );
+    assert!(
+        !root.join("answer.txt").exists(),
+        "keeping is not adopting — which candidate deserved to land is a \
+         judgement nobody made"
+    );
+}
+
+/// A candidate that changed nothing writes no patch: a path in a report is
+/// worth nothing to open if the file behind it is empty.
+#[tokio::test]
+async fn a_candidate_that_changed_nothing_is_kept_as_nothing() {
+    let dir = repo();
+    let subject = substrate(dir.path(), Arc::new(NoTools));
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    subject
+        .work(&candidate, work("worker", "decide nothing is needed"))
+        .await
+        .unwrap();
+
+    assert!(subject.preserve_unscored().await.is_empty());
+}
+
 /// **#2813's witness.** A candidate that is created and never removed leaves
 /// a record on disk, and a later run names it — while a record whose owner is
 /// still running is left alone.
