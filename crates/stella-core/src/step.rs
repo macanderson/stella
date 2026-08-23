@@ -1309,6 +1309,7 @@ impl Drop for CancelUsageGuard {
             // ever returned an error to salvage from. The server-side cost of
             // an abandoned call stays genuinely unknowable.
             partial: None,
+            sub_agent_id: None,
         });
     }
 }

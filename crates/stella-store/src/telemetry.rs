@@ -27,6 +27,14 @@ pub struct TelemetryRow {
     pub retries: u32,
     pub tool_calls: u64,
     pub usage_complete: bool,
+    /// Which delegate spent this call; `None` is the lead's own (#4383).
+    ///
+    /// Local to `store.db` on purpose: it is deliberately **not** replicated
+    /// to the usage hub, which is a cross-project surface and has its own
+    /// reviewed column allowlist (`content_free.rs`). A handle like
+    /// `plugin:vera/worker#0` names a plugin and an ordinal, which is a fact
+    /// about this workspace's configuration and has no business in a rollup.
+    pub sub_agent_id: Option<String>,
 }
 
 /// One source-store telemetry row addressed for hub replication: its stable
@@ -96,8 +104,9 @@ impl Store {
         tx.execute(
             "INSERT INTO telemetry (execution_id, step, provider, call_role, model, input_tokens, \
              estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens, \
-             cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete, \
+             sub_agent_id) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 execution_id,
                 step,
@@ -115,6 +124,7 @@ impl Store {
                 row.retries,
                 tool_calls,
                 row.usage_complete,
+                row.sub_agent_id,
             ],
         )?;
         tx.execute(
@@ -141,7 +151,7 @@ impl Store {
                     t.call_role, t.model, t.input_tokens, t.estimated_input_tokens, \
                     t.output_tokens, t.cache_read_tokens, t.cache_miss_tokens, \
                     t.cache_write_tokens, t.cost_usd, t.duration_ms, t.retries, t.tool_calls, \
-                    t.usage_complete \
+                    t.usage_complete, t.sub_agent_id \
              FROM telemetry t LEFT JOIN executions e ON e.id = t.execution_id \
              WHERE t.rowid > ?1 ORDER BY t.rowid ASC LIMIT ?2",
         )?;
@@ -166,6 +176,7 @@ impl Store {
                     retries: r.get(15)?,
                     tool_calls: r.get::<_, i64>(16)? as u64,
                     usage_complete: r.get(17)?,
+                    sub_agent_id: r.get(18)?,
                 },
             })
         })?;
@@ -415,6 +426,7 @@ mod tests {
             retries: 0,
             tool_calls: 1,
             usage_complete: true,
+            sub_agent_id: None,
         }
     }
 

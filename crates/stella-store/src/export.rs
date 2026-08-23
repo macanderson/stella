@@ -134,8 +134,8 @@ const CHILD_TABLES: [(&str, &str, &str); 8] = [
         "telemetry",
         "SELECT execution_id, step, ts, provider, call_role, model, input_tokens, \
          estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens, \
-         cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete \
-         FROM telemetry",
+         cache_write_tokens, cost_usd, duration_ms, retries, tool_calls, usage_complete, \
+         sub_agent_id FROM telemetry",
         "ORDER BY execution_id ASC, step ASC",
     ),
     (
@@ -167,7 +167,8 @@ const CHILD_TABLES: [(&str, &str, &str); 8] = [
     (
         "execution_reflection",
         "SELECT execution_id, prompt, delivered, self_rating, what_went_well, what_to_improve, \
-         critique, produced_output, wrote_files, truncated FROM execution_reflection",
+         critique, produced_output, wrote_files, truncated, partial_run \
+         FROM execution_reflection",
         "ORDER BY execution_id ASC",
     ),
     (
@@ -539,6 +540,7 @@ mod tests {
                         retries: 0,
                         tool_calls: 0,
                         usage_complete: true,
+                        sub_agent_id: None,
                     },
                 )
                 .expect("telemetry");
@@ -721,6 +723,7 @@ mod tests {
                         retries: 0,
                         tool_calls: 0,
                         usage_complete: true,
+                        sub_agent_id: None,
                     },
                 )
                 .expect("telemetry");

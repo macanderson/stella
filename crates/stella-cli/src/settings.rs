@@ -402,20 +402,38 @@ pub enum CandidateIsolation {
     CopyTree,
 }
 
+impl CandidateIsolation {
+    /// Read one written token — the settings value, or the environment
+    /// override that reaches a host no settings file can (#4510).
+    ///
+    /// One parse for both because they are one setting spelled twice, and a
+    /// second `match` over the same two words is how `"copytree"` ends up
+    /// accepted on one surface and refused on the other.
+    ///
+    /// # Errors
+    ///
+    /// The clause a surface appends to its own prefix, naming the token it was
+    /// given and the two it accepts.
+    pub fn from_token(raw: &str) -> Result<Self, String> {
+        match raw.trim() {
+            "" | "worktree" => Ok(Self::Worktree),
+            "copy-tree" => Ok(Self::CopyTree),
+            other => Err(format!(
+                "{other:?} is not one of \"worktree\", \"copy-tree\" \
+                 (empty or absent means \"worktree\")"
+            )),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for CandidateIsolation {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // Through `Option<String>` so an explicit `null` lands here rather than
         // being rejected before this function sees it — `create_worktrees`'
         // shape, for its reason.
         let raw = Option::<String>::deserialize(deserializer)?;
-        match raw.as_deref().map(str::trim).unwrap_or("") {
-            "" | "worktree" => Ok(Self::Worktree),
-            "copy-tree" => Ok(Self::CopyTree),
-            other => Err(serde::de::Error::custom(format!(
-                "\"candidate_isolation\": {other:?} is not one of \"worktree\", \"copy-tree\" \
-                 (empty or absent means \"worktree\")"
-            ))),
-        }
+        Self::from_token(raw.as_deref().unwrap_or(""))
+            .map_err(|why| serde::de::Error::custom(format!("\"candidate_isolation\": {why}")))
     }
 }
 

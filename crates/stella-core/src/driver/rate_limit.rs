@@ -237,6 +237,7 @@ impl<'a> Engine<'a> {
                     // returns history only for calls that COMMIT, so a doomed
                     // attempt's accounting reaches the wire here or nowhere.
                     partial: error.partial_usage().copied(),
+                    sub_agent_id: None,
                 });
             },
             &mut park,

@@ -1207,6 +1207,7 @@ mod tests {
                 tool_calls: 0,
                 complete: true,
                 finish_reason: None,
+                sub_agent_id: None,
             },
             AgentEvent::GoalVerdict {
                 round: 1,
