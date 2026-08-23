@@ -25,6 +25,37 @@
 //! precisely as [`stella_core::Engine::run_goal`] does, and only the WORKER
 //! turn inside each round is what reaches the wrapper.
 //!
+//! # One grant for the run, pinned before the first round
+//!
+//! Every round carries the same [`stella_plugin::CandidateGrant`] over the
+//! shared work tree, and the same tamper baseline, minted once by
+//! [`super::run_goal_cmd`] before the provider is built (#3835). Until that
+//! existed this door sent `candidate: None` and reported
+//! [`stella_plugin::TamperFinding::NotChecked`] on every round, so a plugin
+//! had no root to read, no test plan to run, and no host vouching for what it
+//! observed.
+//!
+//! What that does **not** yet buy is a decided verdict off a flip, and the
+//! obstacle is a different rule rather than a missing wire. A tamper finding
+//! only reaches a verdict through an `[oracle]`, an oracle is only decidable
+//! against `[requirements]`, and `[requirements]` is refused below
+//! `participation = "arbiter"`
+//! ([`stella_plugin::ManifestError::RequirementsRequireArbiter`]) — a grade
+//! this door refuses outright (#3832). So every plugin `stella goal` can bind
+//! today carries an empty rule, which `judge` answers `Met` without consulting
+//! the flip at all. The grant and the watch are what such an oracle would
+//! need; admitting one is a decision about the two rules, not about this
+//! module.
+//!
+//! Pinned once for the run rather than refreshed per round, and the safe
+//! direction is the one that looks less careful. The watch covers the
+//! artifacts the `--test-command` names — the witness the flip is judged
+//! against — and those do not legitimately change while the loop runs. A
+//! baseline retaken at the top of round 3 would vouch for a witness the worker
+//! rewrote in round 2, which is the laundering the watch exists to refuse. So
+//! the finding is sticky: once a witness has moved under this run, no later
+//! round earns a `Clean`.
+//!
 //! # One round, one wrapper-internal turn
 //!
 //! Only an arbiter-grade wrapper can hold a round open past its first
@@ -46,7 +77,7 @@
 //! #3832 for the full reasoning.
 
 use async_trait::async_trait;
-use stella_plugin::{TamperFinding, TurnOutcome as WrapperTurnOutcome};
+use stella_plugin::TurnOutcome as WrapperTurnOutcome;
 use stella_runtime::wrapper::{DrivenTurn, RoundInput, TurnDriver, TurnPrelude};
 
 use super::*;
@@ -72,6 +103,14 @@ struct GoalRoundDriver<'r, 'e> {
     messages: &'r mut Vec<CompletionMessage>,
     budget: &'r mut BudgetGuard,
     events: &'r mpsc::UnboundedSender<AgentEvent>,
+    /// The artifacts this host pinned before the **run**, and the finding it
+    /// reports about them after every round's worker turn (#3835).
+    ///
+    /// Before the run and not before the round, and that is the decision
+    /// rather than an approximation of one — see [`run_goal_wrapped_turn`]'s
+    /// caller for why re-pinning per round would launder a witness the worker
+    /// rewrote in an earlier one.
+    watch: &'r crate::wrapper_candidate::TamperWatch,
     /// This round's outcome, written on the first call to [`Self::run_turn`]
     /// and left alone on any further one — see the module doc's
     /// turn_instance guard, enforced by [`run_goal_wrapped_turn`] reading
@@ -114,9 +153,11 @@ impl TurnDriver for GoalRoundDriver<'_, '_> {
         }
         DrivenTurn {
             outcome: turn,
-            // No candidate grant on this path yet (#3835) — a host that took
-            // no snapshot says so itself (#3499).
-            tamper: TamperFinding::NotChecked,
+            // The host's own comparison, over artifacts it pinned before the
+            // run — never the plugin's claim about its own witness (#3499).
+            // `NotChecked` survives as a real answer for an invocation that
+            // named nothing to watch; see `crate::wrapper_candidate`.
+            tamper: self.watch.finding(),
         }
     }
 }
@@ -149,6 +190,10 @@ pub(crate) async fn run_goal_wrapped_turn(
     recall_event: Option<AgentEvent>,
     session_memory: Option<&mut crate::memory::SessionMemory>,
     bound: &BoundWrapper,
+    // The grant over the tree every round runs in, and the tamper baseline
+    // pinned before the first one (#3835). Minted by the caller, in the same
+    // breath as the wrapper it belongs to.
+    candidate: &crate::wrapper_candidate::GrantedCandidate,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     // This is the WRAPPED arm — `run_goal_cmd` calls it only when
@@ -208,7 +253,13 @@ pub(crate) async fn run_goal_wrapped_turn(
         stella_core::goal::goal_kickoff_text(goal),
     ));
     let starting_cost_usd = budget.session_spent_usd();
-    let signals = crate::wrapper_plugin::pre_turn_signals(false, budget_limit.is_some());
+    // Read off the grant rather than re-derived: the plan on the wire is what
+    // a plugin can actually run, so a signal saying a test exists must be the
+    // same fact the grant carries (#3835).
+    let signals = crate::wrapper_plugin::pre_turn_signals(
+        candidate.grant.test.is_some(),
+        budget_limit.is_some(),
+    );
 
     let mut last_report = None;
     let outcome: GoalOutcome = 'rounds: {
@@ -226,15 +277,38 @@ pub(crate) async fn run_goal_wrapped_turn(
                 messages: &mut *messages,
                 budget: &mut *budget,
                 events: &tx,
+                watch: &candidate.watch,
                 driven: None,
             };
             let input = RoundInput {
                 goal: goal.to_string(),
                 signals,
-                // No candidate grant for a goal-wrapped round yet (#3835).
-                candidate: None,
+                // The tree every round actually runs in — see
+                // `crate::wrapper_candidate` for why that is the shared work
+                // tree and not an isolated worktree.
+                candidate: Some(candidate.grant.clone()),
             };
-            let report = match bound.dispatch.run(input, &mut driver).await {
+            let dispatched = bound.dispatch.run(input, &mut driver).await;
+            // Read out before the settlement below, because the driver holds
+            // this round's borrow of `budget` until its last use.
+            let driven = driver.driven;
+            // Whatever this round's `after_turn` spent on a child turn has no
+            // next engine turn to fold it in until the *next* round runs, and
+            // the last round has none at all — so every round settles its own
+            // residual here, before the cost reads below (#3833). Draining is
+            // destructive, so this takes only what no turn already took.
+            crate::wrapper_plugin::settle_plugin_child_spend(registry, &mut *budget);
+            // What this round's worker turn changed, measured at the round
+            // boundary rather than at the run's end (#4159). The terminator
+            // stays where it is, below and outside this loop: a goal run drives
+            // several turns over one stream and owes exactly one ending, so
+            // paying both debts here would end the run on its first round.
+            //
+            // Exactly once per boundary: `snapshot_worktree` consumes what it
+            // reports, so a second reading in the same round would report an
+            // unchanged tree.
+            crate::turn_files::emit_shared_tree_changes_raw(cfg, &tx, execution.as_ref());
+            let report = match dispatched {
                 Ok(report) => report,
                 Err(error) => {
                     break 'rounds GoalOutcome::Unmet {
@@ -275,7 +349,7 @@ pub(crate) async fn run_goal_wrapped_turn(
             }
             last_report = Some(report);
 
-            let Some(turn_outcome) = driver.driven else {
+            let Some(turn_outcome) = driven else {
                 break 'rounds GoalOutcome::Unmet {
                     rounds: round,
                     reason: format!("wrapper \"{}\" drove a round with no turn", bound.variant()),
@@ -345,16 +419,10 @@ pub(crate) async fn run_goal_wrapped_turn(
         bound.report(None, OutputFormat::Text, report);
     }
 
-    // Both halves of the boundary, in the one order that is correct: what the
-    // arc changed in the shared tree, then the run's terminator (#3421).
+    // The rounds measured themselves as they closed (#4159, above); this is the
+    // run's single terminator.
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
-    crate::turn_files::close_turn_boundary_on_raw(
-        cfg,
-        registry,
-        &tx,
-        execution.as_ref(),
-        *cost_usd,
-    );
+    persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
 

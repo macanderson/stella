@@ -288,35 +288,6 @@ pub(crate) fn close_turn_boundary_raw(
     );
 }
 
-/// [`close_turn_boundary`] for a driver whose ending is a **cost** rather than
-/// a [`TurnOutcome`] — the goal loops, where the thing that ends is the whole
-/// arc and its terminator carries the arc's spend (#3421).
-///
-/// They reached only the terminator half through
-/// `persistence::emit_run_complete_on_raw`, so `stella goal`'s Files tab was
-/// as empty as the deck's had been. Routing them here is what makes the
-/// measurement a debt of *ending a turn* rather than a debt of one outcome
-/// type.
-///
-/// Two drivers are deliberately **not** here. A fleet worker and a deck
-/// sub-session each run against a `Config::clone` of their parent's, which
-/// shares one `SessionDurability` cell — and `snapshot_worktree` consumes its
-/// baseline, so a lane calling it takes the changes out of the lead's reading
-/// rather than adding its own. Giving those lanes a journal of their own is
-/// #3233; until then a call here would move a turn's changes, not measure
-/// them.
-pub(crate) fn close_turn_boundary_on_raw(
-    cfg: &Config,
-    registry: &stella_tools::ToolRegistry,
-    tx: &tokio::sync::mpsc::UnboundedSender<AgentEvent>,
-    execution: Option<&(Arc<Store>, i64)>,
-    cost_usd: f64,
-) {
-    let tx = EventSender::new(tx.clone());
-    note_stale_lane(registry, emit_shared_tree_changes(cfg, &tx, execution));
-    crate::agent::persistence::emit_run_complete(&tx, &cfg.model_id, cost_usd);
-}
-
 /// How many changed files make an untouched board worth a record.
 ///
 /// One file is the ordinary shape of a turn that is genuinely still on the
@@ -339,6 +310,16 @@ const STALE_LANE_FILES: usize = 3;
 /// decidable from the board, so the only honest first move is to measure how
 /// often a turn ends in that shape at all. `agent.turn_complete` is emitted
 /// once per turn, so the ratio is a join, not a second counter.
+///
+/// # Which drivers it covers
+///
+/// The two that close a turn through [`close_turn_boundary`]: `run_turn`
+/// (`stella run`, the plain REPL) and the deck's lead turn, which is the
+/// surface the divergence was reported on. The goal arcs and `run_resume`
+/// measure per round through [`emit_shared_tree_changes_raw`] and pay one
+/// terminator at the end (#4159), so a lane observation there is a question
+/// about a round rather than about a turn — a different reading, and one to
+/// take only if the numbers this produces say it is worth taking.
 ///
 /// # Why counts only
 ///
@@ -423,6 +404,39 @@ pub(crate) fn emit_shared_tree_changes(
     execution: Option<&(Arc<Store>, i64)>,
 ) -> usize {
     emit_measured_tree_changes(&cfg.durability, tx, execution).len()
+}
+
+/// [`emit_shared_tree_changes`] for a driver holding the raw channel sender
+/// rather than an [`EventSender`], at a boundary that is **not** the run's end
+/// (#4159).
+///
+/// The measurement half of [`close_turn_boundary_raw`] without the terminator
+/// beside it, and that separation is the opposite of the one
+/// `persistence::emit_run_complete_raw` made before it was deleted. That
+/// helper let a driver pay the *loud* debt alone — a terminated run with an
+/// empty file ledger, which renders as an honest-looking "this turn changed
+/// nothing". This one pays only the silent debt, which is what a multi-turn
+/// driver actually needs: `stella goal` and `stella daemon resume` drive
+/// several turns over one stream and must emit exactly one terminator for the
+/// whole run (`emit_run_complete`'s own doc), so swapping in
+/// `close_turn_boundary` at each of their boundaries would end the run at the
+/// first one.
+///
+/// The sender it wraps is a **temporary**, dropped when this call returns, for
+/// [`close_turn_boundary_raw`]'s reason: a clone left alive in the driver's
+/// scope keeps the channel open and wedges the renderer that is waiting for it
+/// to close (#960, #2290).
+///
+/// Call it **exactly once per boundary**. The snapshot consumes what it
+/// reports — `snapshot_worktree` commits the tree onto the session's snapshot
+/// ref and diffs against the previous commit — so a second caller at the same
+/// boundary reports an unchanged tree.
+pub(crate) fn emit_shared_tree_changes_raw(
+    cfg: &Config,
+    tx: &tokio::sync::mpsc::UnboundedSender<AgentEvent>,
+    execution: Option<&(Arc<Store>, i64)>,
+) {
+    emit_shared_tree_changes(cfg, &EventSender::new(tx.clone()), execution);
 }
 
 /// [`emit_shared_tree_changes`] over the durability handle alone.
@@ -576,25 +590,35 @@ mod tests {
     #[test]
     fn every_turn_owner_pays_both_halves_of_the_boundary() {
         // Built rather than written out, so this file is not its own match.
-        let seam = format!("close_turn_{}", "boundary");
+        let closing = format!("close_turn_{}", "boundary");
+        let measuring = format!("emit_shared_tree_{}", "changes");
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        for (file, driver) in [
+        for (file, driver, seam) in [
             // The raw engine turn: `stella run`, the plain REPL.
-            ("agent.rs", "run_turn"),
+            ("agent.rs", "run_turn", &closing),
             // The interactive deck's lead turn — the driver that had the hole.
-            ("command_deck.rs", "run_lead_turn"),
-            // The two goal arcs, which reached only the terminator until
-            // #3421: their ending is a cost rather than a `TurnOutcome`, so
-            // they pay it through `close_turn_boundary_on_raw`.
-            ("agent/goal.rs", "run_goal_turn"),
-            ("agent/goal/goal_wrapped.rs", "run_goal_wrapped_turn"),
+            ("command_deck.rs", "run_lead_turn", &closing),
+            // The three drivers of #4159, which own several turns over one
+            // stream and therefore pay the two debts at different points: the
+            // measurement at each turn boundary inside their loop, and the
+            // run's single terminator at the end (`emit_run_complete_on_raw`).
+            // They name the measuring seam rather than the closing one for
+            // that reason — `close_turn_boundary` at a mid-loop boundary would
+            // terminate the run on its first round.
+            ("agent/goal.rs", "run_goal_turn", &measuring),
+            (
+                "agent/goal/goal_wrapped.rs",
+                "run_goal_wrapped_turn",
+                &measuring,
+            ),
+            ("agent/resume.rs", "run_resume", &measuring),
         ] {
             let body = std::fs::read_to_string(src.join(file))
                 .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
             assert!(
-                body.contains(&seam),
-                "{file} ({driver}) owns a turn and no longer closes it through \
-                 `turn_files::close_turn_boundary`. A boundary that stops \
+                body.contains(seam.as_str()),
+                "{file} ({driver}) owns a turn and no longer measures what it \
+                 changed (`turn_files::{seam}`). A boundary that stops \
                  measuring does not degrade loudly — it silently empties the \
                  Files tab, `stella export` and the audit log for that whole \
                  surface while every other surface keeps working."

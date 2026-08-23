@@ -52,6 +52,7 @@ pub mod subagent;
 mod summarize;
 pub mod tasks;
 pub mod tool_foundry;
+pub mod turn_slots;
 pub mod waiting;
 pub mod workspace_scope;
 
