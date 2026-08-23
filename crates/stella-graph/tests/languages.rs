@@ -319,6 +319,61 @@ fn javascript_require_resolves_relative() {
     );
 }
 
+/// C's quoted include and PHP's `require` name their target file exactly.
+/// Routed through the TS/JS candidate ladder, which pushes the literal join
+/// only for an extension it recognizes, `#include "kvstore.h"` asked for
+/// `kvstore.h.ts`, `kvstore.h.tsx`, …, `kvstore.h/index.ts` — never
+/// `kvstore.h` — so every such edge was stored unresolved (#3197). The
+/// existing tests never caught it because they assert the `ImportSpec`
+/// classification, not the resolution.
+#[test]
+fn c_and_php_literal_includes_resolve_to_the_file_they_name() {
+    let fx = Fixture::build(&[
+        ("src/kvstore.h", "int put(void);\n"),
+        (
+            "src/main.c",
+            "#include \"kvstore.h\"\n#include <stdio.h>\nint main(void) { return 0; }\n",
+        ),
+        ("app/bootstrap.php", "<?php\nfunction boot() {}\n"),
+        (
+            "app/index.php",
+            "<?php\nrequire 'bootstrap.php';\nboot();\n",
+        ),
+    ]);
+
+    let targets = fx.import_targets("src/main.c");
+    assert!(
+        targets.iter().any(|t| t == "src/kvstore.h"),
+        "a quoted include must resolve to the header beside it; got {targets:?}"
+    );
+    assert!(
+        targets.iter().any(|t| t == "stdio.h"),
+        "a system header is not in the tree and stays its unresolved \
+         specifier; got {targets:?}"
+    );
+
+    let targets = fx.import_targets("app/index.php");
+    assert!(
+        targets.iter().any(|t| t == "app/bootstrap.php"),
+        "`require 'bootstrap.php'` must resolve against the requiring \
+         file's directory; got {targets:?}"
+    );
+
+    // Reverse edge: the included file knows who includes it.
+    let importers: Vec<String> = fx
+        .graph
+        .importers_of(Path::new("src/kvstore.h"))
+        .unwrap()
+        .into_iter()
+        .flat_map(|f| f.relations)
+        .filter_map(|r| r.display_name)
+        .collect();
+    assert!(
+        importers.iter().any(|i| i == "src/main.c"),
+        "the reverse edge must name the including file; got {importers:?}"
+    );
+}
+
 #[test]
 fn byte_compat_skip_across_two_index_passes() {
     let ws = TempDir::new().unwrap();

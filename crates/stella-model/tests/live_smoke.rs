@@ -5,16 +5,25 @@
 //! exactly the gap that let the Anthropic adapter's legacy `thinking` shape
 //! ship for months before a live call surfaced its 400 (see #240).
 //!
-//! **Gate**: every test here is a no-op unless `STELLA_LIVE_SMOKE=1` is set
-//! (see [`live_smoke_enabled`]) AND that provider's own credential resolves
-//! (env var, or a `~/.stella/credentials.toml` entry — the same two
-//! non-interactive steps `stella-cli`'s chain uses, see [`resolve_key`]).
-//! Neither condition met -> the test prints why to stderr and returns
-//! `Ok` (a clean skip, never a failure) — so `cargo test`/`make gate`/CI's
-//! default `cargo test --workspace` never makes a network call or spends
-//! real money. Wire it up locally with e.g.
+//! **Gate**: every live call is `#[ignore]`d, so `cargo test`/`make gate`/
+//! CI's default `cargo test --workspace` never makes a network call or
+//! spends real money — and reports the nine as `9 ignored`, which nobody
+//! reads as a pass. Running one takes naming it: `--ignored`, plus
+//! `STELLA_LIVE_SMOKE=1` (see [`live_smoke_enabled`]) and that provider's
+//! own credential (env var, or a `~/.stella/credentials.toml` entry — the
+//! same two non-interactive steps `stella-cli`'s chain uses, see
+//! [`resolve_key`]). Wire it up locally with e.g.
 //! `STELLA_LIVE_SMOKE=1 ANTHROPIC_API_KEY=sk-… cargo test -p stella-model \
-//! --test live_smoke -- --nocapture`.
+//! --test live_smoke -- --ignored --nocapture`.
+//!
+//! **A named smoke that cannot run fails.** The attribute is what makes a
+//! skip visible; it is also what makes the absence of a credential a
+//! failure rather than a default. Nothing reaches one of these tests unless
+//! a human or the workflow asked for it by name, so "no key resolved" is a
+//! failure to run what was asked for — see [`required_key`]. The eprintln
+//! skip it replaces went through libtest's output capture, so a
+//! credential-less run printed nothing and reported nine passes in 0.01s
+//! having contacted nothing (#3856).
 //!
 //! **What is NOT gated**: the drift guards over [`LIVE_PROVIDERS`] — the
 //! table this suite drives — run on every `cargo test`, with no credential
@@ -124,11 +133,11 @@ fn resolve_key(provider_id: &str, env_var: &str, aliases: &[&str]) -> Option<Api
 /// `std::sync::Mutex` is not reentrant, so a witness test that already
 /// holds the guard and then called `armed_key` (which locks again on the
 /// same thread) would deadlock rather than assert. Always logs WHY to
-/// stderr (visible with `cargo test -- --nocapture`) so a run makes it
-/// obvious which providers were actually exercised versus skipped.
+/// stderr (visible with `cargo test -- --nocapture`), so a `--nocapture` run
+/// names the missing half before [`required_key`] turns it into a failure.
 fn armed_key_locked(provider_id: &str, env_var: &str, aliases: &[&str]) -> Option<ApiKey> {
     if !live_smoke_enabled() {
-        eprintln!("[live_smoke] {provider_id}: skipped — set STELLA_LIVE_SMOKE=1 to run");
+        eprintln!("[live_smoke] {provider_id}: unarmed — set STELLA_LIVE_SMOKE=1 to run");
         return None;
     }
     match resolve_key(provider_id, env_var, aliases) {
@@ -140,20 +149,21 @@ fn armed_key_locked(provider_id: &str, env_var: &str, aliases: &[&str]) -> Optio
                 format!(" (or {})", aliases.join("/"))
             };
             eprintln!(
-                "[live_smoke] {provider_id}: skipped — no {env_var}{alias_note} env var and no \
-                 `{provider_id}` entry in ~/.stella/credentials.toml"
+                "[live_smoke] {provider_id}: no credential — no {env_var}{alias_note} env var \
+                 and no `{provider_id}` entry in ~/.stella/credentials.toml"
             );
             None
         }
     }
 }
 
-/// The credential to run `provider_id`'s smoke test with, or `None` to skip
-/// cleanly — never a failure — when the suite isn't armed or the
-/// credential isn't resolvable. Takes `env_lock()` for the synchronous
-/// gate-check + resolve step only, released well before any caller's
-/// network `.await` (see `env_lock`'s doc). Callers that already hold the
-/// guard themselves must call [`armed_key_locked`] instead, not this.
+/// The credential `provider_id`'s smoke test would run with, or `None` when
+/// the suite isn't armed or the credential isn't resolvable —
+/// [`required_key`] is what decides that `None` is a failure. Takes
+/// `env_lock()` for the synchronous gate-check + resolve step only, released
+/// well before any caller's network `.await` (see `env_lock`'s doc). Callers
+/// that already hold the guard themselves must call [`armed_key_locked`]
+/// instead, not this.
 fn armed_key(provider_id: &str, env_var: &str, aliases: &[&str]) -> Option<ApiKey> {
     let _guard = env_lock();
     armed_key_locked(provider_id, env_var, aliases)
@@ -267,6 +277,60 @@ fn armed_key_skips_cleanly_when_the_gate_is_on_but_no_key_resolves() {
         std::env::remove_var("STELLA_LIVE_SMOKE");
     }
 }
+
+/// Every live call carries `#[ignore]`, and this is what keeps it that way.
+///
+/// libtest reports an ignored test as `ignored, <reason>` and counts it in
+/// the summary line as `N ignored`; a test that returns early reports `ok`.
+/// Without the attribute a credential-less run said `9 passed` in 0.01s for
+/// a run that contacted nothing — indistinguishable, in the one line
+/// anybody reads, from nine live endpoints accepting the shape stella sends
+/// (#3856). Reads this file's own source because the fact being pinned is
+/// an attribute, which no runtime value carries.
+#[test]
+fn every_live_call_is_ignored_by_default() {
+    let source = include_str!("live_smoke.rs");
+    let lines: Vec<&str> = source.lines().collect();
+    let mut found = 0;
+    for (index, line) in lines.iter().enumerate() {
+        // Only a declaration at column zero: this guard's own mention of
+        // the pattern is indented, so it cannot match itself.
+        if !(line.starts_with("async fn ") && line.contains("_smoke(")) {
+            continue;
+        }
+        found += 1;
+        let attributes = &lines[index.saturating_sub(3)..index];
+        assert!(
+            attributes
+                .iter()
+                .any(|a| a.trim_start().starts_with("#[ignore")),
+            "`{line}` has no #[ignore]: a credential-less run would report it as a pass"
+        );
+    }
+    assert_eq!(
+        found,
+        LIVE_PROVIDERS.len(),
+        "every LIVE_PROVIDERS row has one `*_smoke` test and no more"
+    );
+}
+
+/// The other half: a smoke that was named and cannot run is a failure.
+///
+/// `#[ignore]` means nothing reaches these tests unless a human or the
+/// workflow asked for one by name, so "no credential resolved" is a failure
+/// to run what was asked for rather than the hermetic default it used to
+/// be. Asserted against [`required_key`] directly, so this witness needs no
+/// env var, no network, and no `env_lock` — the panic is the contract.
+#[test]
+fn a_named_smoke_with_no_credential_fails_rather_than_skipping() {
+    let row = row("anthropic");
+    let outcome = std::panic::catch_unwind(|| required_key(row, None));
+    assert!(
+        outcome.is_err(),
+        "an unresolvable credential must fail a named smoke, never skip it"
+    );
+}
+
 // ---- the provider matrix -------------------------------------------------
 
 /// One row of the live matrix — the parts needed to construct a provider and
@@ -520,40 +584,93 @@ fn the_provider_table_is_well_formed() {
 
 // ---- live smoke: one minimal real call per adapter -----------------------
 
-/// Construct `provider`'s adapter through the production factory, or `None`
-/// to skip cleanly.
+/// Why a named smoke could not run, phrased as the failure it is.
 ///
-/// Returns `None` — never a failure — when the suite is unarmed, the
-/// credential does not resolve, or (Vertex/Bedrock) the extra addressing the
-/// factory needs is absent. A factory error for any *other* reason is a real
-/// failure: that is the anti-phantom-slug gate and the dialect dispatch
-/// talking, and a live run must not paper over them.
-fn armed_provider(provider: &LiveProvider) -> Option<Box<dyn Provider>> {
-    let key = armed_key(provider.id, provider.env_var, provider.aliases)?;
+/// Every caller of this is inside an `#[ignore]`d test, which libtest runs
+/// only when someone names it — so there is no hermetic default to fall back
+/// to and nothing to protect a default `cargo test` from. Reporting `ok` for
+/// a call that never left the machine is the failure mode #3856 was filed
+/// on; this reports the opposite.
+fn unrunnable(provider_id: &str, detail: &str) -> String {
+    format!(
+        "[live_smoke] {provider_id}: asked for but unrunnable — {detail}. This test runs \
+         only when named (`-- --ignored`), so a run that contacts nothing is a failure to \
+         run what was asked for, not a skip."
+    )
+}
+
+/// The credential a named smoke runs with. Panics when nothing resolved.
+///
+/// Takes the `Option` rather than resolving it, so the "unrunnable is a
+/// failure" contract is witnessable without an env var, a network call, or
+/// the environment lock — see
+/// [`a_named_smoke_with_no_credential_fails_rather_than_skipping`].
+fn required_key(provider: &LiveProvider, key: Option<ApiKey>) -> ApiKey {
+    key.unwrap_or_else(|| {
+        let alias_note = if provider.aliases.is_empty() {
+            String::new()
+        } else {
+            format!(" (or {})", provider.aliases.join("/"))
+        };
+        panic!(
+            "{}",
+            unrunnable(
+                provider.id,
+                &format!(
+                    "STELLA_LIVE_SMOKE is not `1`, or no {}{alias_note} env var and no `{}` \
+                     entry in ~/.stella/credentials.toml",
+                    provider.env_var, provider.id
+                )
+            )
+        )
+    })
+}
+
+/// Construct `provider`'s adapter through the production factory.
+///
+/// Panics when the suite is unarmed, the credential does not resolve, or
+/// (Vertex/Bedrock) the extra addressing the factory needs is absent — all
+/// three are "asked for and could not run" (see [`unrunnable`]). A factory
+/// error for any *other* reason is a failure too: that is the
+/// anti-phantom-slug gate and the dialect dispatch talking, and a live run
+/// must not paper over them.
+fn armed_provider(provider: &LiveProvider) -> Box<dyn Provider> {
+    let key = required_key(
+        provider,
+        armed_key(provider.id, provider.env_var, provider.aliases),
+    );
 
     // Vertex/Bedrock need more than the one credential `armed_key` resolves.
     // The factory resolves that itself (via `stella_model::credential`), so
-    // pre-flighting here keeps "not configured" a clean skip while leaving the
-    // real resolution to production code.
+    // pre-flighting here names the missing half while leaving the real
+    // resolution to production code.
     match provider.dialect {
         Dialect::Vertex => {
             if let Err(e) = stella_model::credential::VertexAddressing::resolve() {
-                eprintln!(
-                    "[live_smoke] {}: skipped — {} is set but Vertex addressing does not \
-                     resolve: {e}",
-                    provider.id, provider.env_var
+                panic!(
+                    "{}",
+                    unrunnable(
+                        provider.id,
+                        &format!(
+                            "{} is set but Vertex addressing does not resolve: {e}",
+                            provider.env_var
+                        )
+                    )
                 );
-                return None;
             }
         }
         Dialect::Bedrock => {
             if let Err(e) = stella_model::credential::BedrockCredentials::resolve() {
-                eprintln!(
-                    "[live_smoke] {}: skipped — {} is set but the AWS credential chain does \
-                     not resolve: {e}",
-                    provider.id, provider.env_var
+                panic!(
+                    "{}",
+                    unrunnable(
+                        provider.id,
+                        &format!(
+                            "{} is set but the AWS credential chain does not resolve: {e}",
+                            provider.env_var
+                        )
+                    )
                 );
-                return None;
             }
         }
         _ => {}
@@ -569,7 +686,7 @@ fn armed_provider(provider: &LiveProvider) -> Option<Box<dyn Provider>> {
         // adapter's own fallback expects them: as AWS environment variables.
         &AuxCredentials::default(),
     ) {
-        Ok(built) => Some(built),
+        Ok(built) => built,
         Err(e) => panic!(
             "`{}` failed to construct through the factory — this is a config/catalog fault, \
              not a network one, and would fail an ordinary `stella --model {}/{}` run the \
@@ -999,11 +1116,10 @@ async fn smoke(provider: &LiveProvider, built: Box<dyn Provider>, request: Compl
 /// when a request is actually malformed, so a balance rejection never
 /// exercises the request shape at all.
 #[tokio::test]
+#[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn anthropic_smoke() {
     let provider = row("anthropic");
-    let Some(built) = armed_provider(provider) else {
-        return;
-    };
+    let built = armed_provider(provider);
     // The one provider whose system prompt is not tiny — see the probe's doc.
     let request = tiny_request(anthropic_cache_probe_system_prompt());
     match built.complete(request).await {
@@ -1026,22 +1142,20 @@ async fn anthropic_smoke() {
 
 /// OpenAI Responses API.
 #[tokio::test]
+#[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn openai_smoke() {
     let provider = row("openai");
-    let Some(built) = armed_provider(provider) else {
-        return;
-    };
+    let built = armed_provider(provider);
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
 /// Gemini direct `generateContent`. `GEMINI_API_KEY` (spec-documented alias
 /// `GOOGLE_API_KEY`, same as `stella-cli`'s `config::PROVIDERS` row).
 #[tokio::test]
+#[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn gemini_smoke() {
     let provider = row("gemini");
-    let Some(built) = armed_provider(provider) else {
-        return;
-    };
+    let built = armed_provider(provider);
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1054,11 +1168,10 @@ async fn gemini_smoke() {
 /// `Dialect::Vertex`), so this test cannot drift from what a real
 /// `stella --model vertex/…` run does — it calls the same code.
 #[tokio::test]
+#[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn vertex_smoke() {
     let provider = row("vertex");
-    let Some(built) = armed_provider(provider) else {
-        return;
-    };
+    let built = armed_provider(provider);
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1068,11 +1181,10 @@ async fn vertex_smoke() {
 /// `stella_model::credential::BedrockCredentials` — the same resolution a
 /// real run uses.
 #[tokio::test]
+#[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn bedrock_smoke() {
     let provider = row("bedrock");
-    let Some(built) = armed_provider(provider) else {
-        return;
-    };
+    let built = armed_provider(provider);
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
@@ -1084,40 +1196,36 @@ async fn bedrock_smoke() {
 /// for OpenRouter's own auto-router model, and genuinely how `stella-cli`'s
 /// auto-detected default reaches it.
 #[tokio::test]
+#[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn openrouter_smoke() {
     let provider = row("openrouter");
-    let Some(built) = armed_provider(provider) else {
-        return;
-    };
+    let built = armed_provider(provider);
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
 /// Z.ai (GLM), via the OpenAI-compatible adapter under its own identity.
 #[tokio::test]
+#[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn zai_smoke() {
     let provider = row("zai");
-    let Some(built) = armed_provider(provider) else {
-        return;
-    };
+    let built = armed_provider(provider);
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
 /// DeepSeek, via the OpenAI-compatible adapter under its own identity.
 #[tokio::test]
+#[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn deepseek_smoke() {
     let provider = row("deepseek");
-    let Some(built) = armed_provider(provider) else {
-        return;
-    };
+    let built = armed_provider(provider);
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }
 
 /// xAI (Grok), via the OpenAI-compatible adapter under its own identity.
 #[tokio::test]
+#[ignore = "live provider call — run with `-- --ignored`, STELLA_LIVE_SMOKE=1 and a credential"]
 async fn xai_smoke() {
     let provider = row("xai");
-    let Some(built) = armed_provider(provider) else {
-        return;
-    };
+    let built = armed_provider(provider);
     smoke(provider, built, tiny_request(TINY_SYSTEM_PROMPT)).await;
 }

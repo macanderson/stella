@@ -86,15 +86,15 @@ pub(crate) enum ImportSpec {
     RustMod { name: String },
     /// A literal file path resolved against the importing file's directory:
     /// C's quoted `#include "x.h"`, PHP's `require`/`include`. Distinct from
-    /// [`Self::TsRelative`] only in name — the resolution is the same — so
-    /// neither language has to borrow the other's vocabulary.
+    /// [`Self::TsRelative`] in resolution as well as name: these languages
+    /// name their file exactly, so there is no extension ladder to climb and
+    /// the literal join is the only candidate.
     PathRelative { specifier: String },
     /// A markdown link target (#3103): an inline `[text](./doc.md)` or a
     /// reference definition `[label]: ../spec.md`, resolved literally
-    /// against the linking document's directory. Distinct from
-    /// [`Self::PathRelative`] in resolution, not just name: a document names
-    /// its target file exactly — no extension ladder — and may suffix a
-    /// `#fragment` naming a section inside it.
+    /// against the linking document's directory. Resolved like
+    /// [`Self::PathRelative`], and separate from it because a link may
+    /// suffix a `#fragment` naming a section inside its target.
     MarkdownLink { specifier: String },
 }
 
@@ -143,8 +143,24 @@ pub(crate) fn resolve(
                     kind: ImportKind::Relative,
                 });
             }
-            ImportSpec::TsRelative { specifier } | ImportSpec::PathRelative { specifier } => {
+            ImportSpec::TsRelative { specifier } => {
                 let to_path = resolve_ts_relative(&specifier, file_dir, root);
+                edges.push(ImportEdge {
+                    specifier,
+                    to_path,
+                    kind: ImportKind::Relative,
+                });
+            }
+            // C and PHP name their files exactly, so the literal join is the
+            // only candidate — the same shape the markdown arm below takes.
+            // Sharing `resolve_ts_relative` meant `#include "kvstore.h"`
+            // asked for `kvstore.h.ts`, `kvstore.h.tsx`, …,
+            // `kvstore.h/index.ts` and never `kvstore.h`, because the ladder
+            // pushes the literal path only for an extension it recognizes —
+            // so every quoted include and every `require` was stored
+            // unresolved (#3197).
+            ImportSpec::PathRelative { specifier } => {
+                let to_path = existing_within_root(&file_dir.join(&specifier), root);
                 edges.push(ImportEdge {
                     specifier,
                     to_path,

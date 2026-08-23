@@ -65,8 +65,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use stella_protocol::candidate::CandidateHandle;
 use stella_protocol::completion::CompletionMessage;
 
-use crate::manifest::{Oracle, PluginManifest};
+use crate::manifest::PluginManifest;
 use crate::observed::ObservedEvidence;
+use crate::oracle::Oracle;
 use crate::wrapper::{Signal, SignalKind, StageName};
 
 /// The version every message on this wire carries.

@@ -859,12 +859,7 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
 
     // New process group so a timeout kills the whole child tree.
     #[cfg(unix)]
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
+    crate::exec::detach_into_own_process_group(&mut cmd);
 
     let mut child = match spawn_retrying_etxtbsy(&mut cmd).await {
         Ok(c) => c,

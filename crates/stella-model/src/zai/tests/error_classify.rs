@@ -135,6 +135,42 @@ async fn complete_maps_openrouter_402_to_a_terminal_billing_error() {
     assert!(msg.contains("account balance depleted"), "{msg}");
 }
 
+/// The third 402 (#4380), replayed verbatim off the session that died of it:
+/// the balance is committed to the caller's *own* concurrent calls, and the
+/// provider says to wait. Terminal, it aborted a turn with 46 model calls and
+/// four edits in flight and told the user the account was out of credit —
+/// while the same key funded $0.10 of calls two minutes later. It must reach
+/// the caller retryable so the ladder re-issues, and it must not claim the
+/// account is out of credits.
+#[tokio::test]
+async fn complete_maps_an_openrouter_in_flight_402_to_a_retryable_rate_limit() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(402).set_body_string(
+            r#"{"error":{"message":"This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.","code":402}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let provider = ZaiProvider::new(ApiKey::new("sk-or-test"), "moonshotai/kimi-k3")
+        .with_base_url(server.uri())
+        .with_identity("openrouter", "OpenRouter");
+
+    let err = provider.complete(hi_request()).await.unwrap_err();
+    assert!(
+        err.is_retryable(),
+        "the provider itself says to retry: {err:?}"
+    );
+    assert!(matches!(err, ProviderError::RateLimited { .. }), "{err:?}");
+    let msg = err.to_string();
+    assert!(msg.contains("in-flight"), "{msg}");
+    assert!(
+        !msg.contains("out of credits"),
+        "{msg}: the provider did not say that"
+    );
+}
+
 /// End-to-end funnel proof for the shared chat-completions adapter (#2680):
 /// an OpenAI-dialect `context_length_exceeded` 400 must reach the caller as
 /// `ProviderError::ContextOverflow` — the class the engine's reactive

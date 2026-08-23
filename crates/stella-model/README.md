@@ -212,10 +212,13 @@ Two integration tests in [`tests/`](tests):
 
 - [`tests/live_smoke.rs`](tests/live_smoke.rs) — one minimal *real* call per
   adapter, asserting wire-shape acceptance (200, and stella's own parser
-  reassembles the result), never model quality. A clean skip unless
-  `STELLA_LIVE_SMOKE=1` is set **and** that provider's credential resolves, so
-  `make gate` and CI never make a network call:
-  `STELLA_LIVE_SMOKE=1 ANTHROPIC_API_KEY=sk-… cargo test -p stella-model --test live_smoke`.
+  reassembles the result), never model quality. Every live call is
+  `#[ignore]`d, so `make gate` and CI never make a network call and report
+  them as `ignored` rather than as passes. Running one takes naming it, with
+  `STELLA_LIVE_SMOKE=1` and that provider's credential — and a named smoke
+  whose credential does not resolve **fails**, because at that point the
+  absence of a key is a failure to run what was asked for:
+  `STELLA_LIVE_SMOKE=1 ANTHROPIC_API_KEY=sk-… cargo test -p stella-model --test live_smoke -- --ignored`.
 - [`tests/credential_prompt_degrade.rs`](tests/credential_prompt_degrade.rs) —
   the regression guard for "an interactive prompt that cannot read stdin degrades
   to `NotFound`", never a hang and never a raw `PromptFailed`.
@@ -267,7 +270,9 @@ Adding a provider. **Step 0 is the one most new providers stop at.**
    `VertexAddressing` / `BedrockCredentials` in
    [`src/credential.rs`](src/credential.rs), so a second host of the engine gets
    the same variable names, fallback order, and named errors without copying them.
-5. **Add a gated live-smoke test** to [`tests/live_smoke.rs`](tests/live_smoke.rs).
+5. **Add a live-smoke test** to [`tests/live_smoke.rs`](tests/live_smoke.rs) — a
+   `LIVE_PROVIDERS` row plus a four-line `#[ignore]`d test, which a guard there
+   checks for.
 
 A *new* per-provider divergence (attachment dialects, tool schemas) means a third
 axis in `provider_parity.rs` — record it as a matrix, not as adapter folklore.

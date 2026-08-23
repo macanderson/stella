@@ -25,17 +25,23 @@
 //! for operator attachment, with the same cost per occurrence.
 //!
 //! [`cd_escape_target`] therefore strips those regions and requires the `cd`
-//! to sit in **command position** before it will name a target. The audit in
-//! [`super::shell_write_audit`] deliberately does neither: it is a fence
-//! around what the shell may be about to overwrite, so a path appearing
-//! anywhere in the text is exactly what it wants to see. That is the right
-//! call for the write half and an open question for the read half, where the
-//! same data text can refuse a read the shell never performs (#3618).
+//! to sit in **command position** before it will name a target.
+//!
+//! The audit in [`super::shell_write_audit`] is split on it. Its **write**
+//! half runs on the raw text and must: it fences what the shell may be about
+//! to overwrite, and every degradation [`strip_data_regions`] documents loses
+//! text, so scrubbing there could drop the redirect target it exists to catch.
+//! Its **read** half strips (#3618) — that half already fails open by
+//! construction, and a heredoc body naming a sibling worktree refused a
+//! command that reads nothing, which the agent could not diagnose because the
+//! path it was refused for was one it never asked for.
 //!
 //! Command position is read from the word *before* the `cd`, so it is only as
-//! good as the splitter's word boundaries: `(` and `)` are ordinary word
-//! characters there, which is why the glued `(cd /outside; ls)` is still
-//! missed (#3619). Every miss here is silence, never a wrong note.
+//! good as the splitter's word boundaries. `(`, `)` and `$(` became words of
+//! their own in #3619, which is what lets the glued `(cd /outside; ls)` read
+//! the same as the spaced `( cd /outside )`. A backtick substitution
+//! (`` `cd /outside` ``) is still one word and still missed. Every miss here
+//! is silence, never a wrong note.
 
 use std::path::Path;
 
@@ -70,7 +76,14 @@ struct Heredoc {
 /// (`<<$END`) is taken literally (#3620), and an unterminated heredoc
 /// swallows the rest of the command rather than guessing where it ended. Both
 /// directions lose a warning; neither invents one.
-fn strip_data_regions(command: &str) -> String {
+///
+/// **Every degradation loses text**, which is why only the callers that fail
+/// *open* on missing text may use it: [`cd_escape_target`] below, and the read
+/// half of [`super::shell_write_audit`] (#3618). The audit's write half runs
+/// on the raw command text and must keep doing so — a scrubber that can drop a
+/// redirect target is the unsafe direction for a fence around what the shell
+/// is about to overwrite.
+pub(super) fn strip_data_regions(command: &str) -> String {
     let chars: Vec<char> = command.chars().collect();
     let mut out = String::with_capacity(command.len());
     let mut pending: Vec<Heredoc> = Vec::new();
@@ -280,10 +293,14 @@ fn next_word_is_a_command(word: &str, word_is_a_command: bool) -> bool {
 /// `for`, `select`, `case` and `in` are absent on purpose: what follows them
 /// is a name or a word list, not a command, and the command only starts at
 /// the `do`/`)` that closes the header.
+///
+/// `$(` is here beside `(` because a command substitution runs its body the
+/// same way a subshell does — `out=$(cd /outside && pwd)` really does leave
+/// the session root.
 fn introduces_a_command(word: &str) -> bool {
     matches!(
         word,
-        "if" | "then" | "elif" | "else" | "while" | "until" | "do" | "{" | "(" | "!"
+        "if" | "then" | "elif" | "else" | "while" | "until" | "do" | "{" | "(" | "$(" | "!"
     )
 }
 
@@ -499,6 +516,51 @@ mod tests {
         }
     }
 
+    /// The glued spelling of the subshell, which the spaced `( cd /outside )`
+    /// above had covered since #2301 while `(cd /outside; ls)` said nothing:
+    /// the splitter kept the paren attached to the word, so no word ever
+    /// equalled `cd` and the detector had nothing to look at (#3619).
+    #[test]
+    fn a_cd_glued_to_a_subshell_paren_is_still_an_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        assert_eq!(cd_escape_target("(cd /; ls)", &root).as_deref(), Some("/"));
+        for command in [
+            "(cd /outside; ls)",
+            "(cd /outside && make)",
+            "$(cd /outside && pwd)",
+            "out=$(cd /outside && pwd)",
+        ] {
+            assert_eq!(
+                cd_escape_target(command, &root).as_deref(),
+                Some("/outside"),
+                "{command} escapes the root and must still warn"
+            );
+        }
+        // The in-root glued form stays silent, and names no `/outside;`.
+        assert_eq!(cd_escape_target("(cd .; ls)", &root), None);
+    }
+
+    /// The over-suppression counterpart of the glued form: a paren that is
+    /// *data* still promotes nothing, so a quoted or echoed `(cd` is silent.
+    #[test]
+    fn a_paren_in_data_does_not_promote_a_cd() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for command in [
+            "echo \"(cd /outside)\"",
+            "echo '(cd /outside)'",
+            "echo (cd /outside",
+            "echo $(cd /outside",
+        ] {
+            assert_eq!(
+                cd_escape_target(command, &root),
+                None,
+                "{command} runs no cd and must stay silent"
+            );
+        }
+    }
+
     /// The other half of the rule above: a keyword or a prefix word that is
     /// itself an *argument* introduces nothing, so the `cd` behind it is
     /// still data.
@@ -539,6 +601,62 @@ mod tests {
         assert_eq!(
             cd_escape_target("cat <<'EOF' $((1 << 3))\ncd /outside\nEOF", &root),
             None
+        );
+    }
+
+    /// **The chosen behaviour for #3620**, pinned rather than left to be
+    /// rediscovered as a bug: a delimiter produced by expansion is recorded
+    /// literally, so the terminator this scan looks for is the two-character
+    /// text `$END` and the terminator the shell looks for is whatever `END`
+    /// expands to. Where those differ, [`skip_heredoc_body`] runs to
+    /// end-of-input and every later line is dropped as body — including a
+    /// real `cd`.
+    ///
+    /// The miss is the deliberate side of this module's posture. The
+    /// alternative — open no heredoc at all when the delimiter carries an
+    /// unquoted `$` or a backtick — trades this silence for a *wrong* note on
+    /// a `cd` that really does sit inside such a body, and a false warning
+    /// telling the agent its work is invisible to verification is the defect
+    /// #2301 was filed for. Between two misses, take the one that stays quiet.
+    ///
+    /// Contrast [`an_arithmetic_shift_is_not_a_heredoc`] above: that shape
+    /// swallowed the command through a genuine *misparse* — a left shift read
+    /// as an opener — and was fixed. This one reads the text correctly and
+    /// declines to evaluate it.
+    #[test]
+    fn an_expansion_valued_heredoc_delimiter_is_taken_literally() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+
+        // The divergence, which needs the expansion to have a value: the
+        // shell ends the body at `DONE`, this scan is still looking for the
+        // literal `$END`, and the `cd` two lines later is never seen.
+        assert_eq!(
+            cd_escape_target(
+                "END=DONE\ncat <<$END > s.sh\nhello\nDONE\ncd /outside",
+                &root
+            ),
+            None,
+            "an expansion-valued delimiter loses the rest of the command, by choice (#3620)"
+        );
+
+        // #3620's own repro writes the terminator as `$END`, and that one is
+        // seen — the literal delimiter this scan recorded happens to match
+        // the literal line in the text, so the two agree by coincidence
+        // rather than by resolution. Pinned so a later reading of the issue
+        // does not mistake this for the fix having landed.
+        assert_eq!(
+            cd_escape_target("cat <<$END > s.sh\nhello\n$END\ncd /outside", &root).as_deref(),
+            Some("/outside"),
+            "a literally-written terminator still closes the body"
+        );
+
+        // The quoted spelling is what the detector is built for, and is
+        // unaffected: the body is hidden, the `cd` after it is seen.
+        assert_eq!(
+            cd_escape_target("cat <<'END' > s.sh\nhello\nEND\ncd /outside", &root).as_deref(),
+            Some("/outside"),
+            "a literal delimiter must still terminate its body"
         );
     }
 

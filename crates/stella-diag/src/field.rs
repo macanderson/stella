@@ -559,6 +559,17 @@ macro_rules! log_enum {
         }
 
         impl $name {
+            /// Every variant, in declaration order.
+            ///
+            /// Generated from the same list as [`Self::as_static`], which is
+            /// the point: a caller that has to walk the vocabulary — a
+            /// classifier, a completion list, a table — walks *this* rather
+            /// than re-typing the variants beside it, so adding one is still
+            /// the one-line change the enum's own doc promises. A hand-copied
+            /// second list compiles clean and silently stops covering the new
+            /// variant (#3710).
+            pub const ALL: [Self; [$(Self::$variant),*].len()] = [$(Self::$variant),*];
+
             /// This variant's stable spelling, as it appears in a record.
             #[must_use]
             pub const fn as_static(self) -> &'static str {
@@ -610,6 +621,19 @@ mod tests {
             FieldValue::Str(StaticStr::new("hit"))
         );
         assert_eq!(Outcome::Miss.to_string(), "miss");
+    }
+
+    /// `ALL` is generated from the same list as `as_static`, in declaration
+    /// order, and its length is the number of variants — the property a caller
+    /// walking the vocabulary depends on, and the one a hand-copied list
+    /// cannot promise (#3710).
+    #[test]
+    fn a_log_enum_can_be_walked_in_declaration_order() {
+        assert_eq!(Outcome::ALL, [Outcome::Hit, Outcome::Miss]);
+        assert_eq!(
+            Outcome::ALL.map(Outcome::as_static).to_vec(),
+            vec!["hit", "miss"]
+        );
     }
 
     #[test]

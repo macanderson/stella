@@ -889,7 +889,7 @@ async fn caller_entries_carry_their_site_not_a_placeholder() {
         Depth::new(8),
     );
     assert!(
-        block.contains("callers:"),
+        block.contains("callers (by name):"),
         "no callers line rendered: {block}"
     );
     assert!(

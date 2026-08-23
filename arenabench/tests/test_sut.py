@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -785,6 +786,16 @@ def _stub_harbor(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(
         "arenabench.harbor.supports_agent_import_path", lambda binary=None: False
+    )
+    # The stubbed "/usr/bin/harbor" above does not exist, so
+    # `adapter.harbor_interpreter`'s shebang read fails and it falls back to
+    # walking the (nonexistent) binary's parent directory, which resolves the
+    # system `/usr/bin/python3` on macOS — 3.9, with no `tomllib` (#4117).
+    # These tests are about wiring and provenance, not about which
+    # interpreter a real Harbor install ships with, so pin the answer to the
+    # interpreter actually running the test.
+    monkeypatch.setattr(
+        "arenabench.adapter.harbor_interpreter", lambda binary: sys.executable
     )
 
 

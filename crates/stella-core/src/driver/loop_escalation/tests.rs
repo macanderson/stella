@@ -624,6 +624,21 @@ mod stall {
             .collect()
     }
 
+    /// #3624's decision, pinned: a sleep the shell never ran to term
+    /// still contributes its full request, because the bound is what the
+    /// model asked for and that is what the steer names.
+    #[test]
+    fn a_sleep_the_shell_never_ran_still_counts_what_it_asked_for() {
+        let mut window = records(&["sleep 300; echo done"; 3]);
+        for record in &mut window {
+            record.output = Some(Cow::Owned(ToolOutput::error(
+                "command timed out after 120s",
+            )));
+        }
+        assert_eq!(turn_stall_seconds(&window), 900);
+        assert!(turn_stall_seconds(&window) >= STALL_STEER_THRESHOLD_SECS);
+    }
+
     /// #2022's witness, in the shape the trace recorded: three
     /// `sleep 300; echo done` calls with a poll between each, 900s of a
     /// 900s allowance spent waiting.

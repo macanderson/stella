@@ -154,10 +154,28 @@ pub fn render_hit(
                         .iter()
                         .filter_map(|symbol| doc_comment(source.as_deref(), symbol)),
                 ),
+                // A caller lookup is a reverse name lookup with no resolution
+                // (#335), and the label now says so — the `why:` line's "not
+                // by meaning" covers the ranking, not the facets, so nothing
+                // else told the reader this list is best-effort.
+                //
+                // `frame_is_about` would be wrong here: a caller legitimately
+                // lives in another file, and that is the whole point of the
+                // facet. Another *language* is different — a Rust definition
+                // is essentially never called from a Python file, so a hit on
+                // `SearchConfig` used to list a Python test as its caller
+                // because the leading symbol shared a name (#3142).
                 Facet::Callers => list_line(
-                    "callers",
+                    "callers (by name)",
                     leading.iter().flat_map(|symbol| {
-                        frame_labels(graph.callers(&symbol.name).unwrap_or_default())
+                        frame_labels(
+                            graph
+                                .callers(&symbol.name)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .filter(|frame| frame_shares_language(frame, &hit.path))
+                                .collect(),
+                        )
                     }),
                 ),
                 // Callee lookup is name-based across the whole index, so a
@@ -235,6 +253,26 @@ fn frame_is_about(frame: &stella_graph::ContextFrame, path: &str) -> bool {
         .uri
         .as_deref()
         .is_some_and(|uri| uri.ends_with(&format!("/{path}")))
+}
+
+/// Whether a frame's file could be in the same language as `path`.
+///
+/// A frame is dropped only when **both** sides classify and they differ.
+/// Unknown on either side is not evidence of a conflation, and dropping a
+/// real caller costs the reader more than listing a doubtful one — so an
+/// extension this build cannot name (`Language::from_path` also answers
+/// `None` for a grammar that was trimmed out, #1268) keeps the frame.
+///
+/// The URI carries a `file://` scheme, which the extension lookup ignores:
+/// only the final path component's last dot is read.
+fn frame_shares_language(frame: &stella_graph::ContextFrame, path: &str) -> bool {
+    let Some(here) = stella_graph::Language::from_path(Path::new(path)) else {
+        return true;
+    };
+    let Some(uri) = frame.uri.as_deref() else {
+        return true;
+    };
+    stella_graph::Language::from_path(Path::new(uri)).is_none_or(|there| there == here)
 }
 
 /// The symbol's declaration line, as written in the file.
@@ -651,5 +689,80 @@ mod tests {
         let one = exact_symbol_hits(&graph, "alpha_symbol", 10);
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].focus.as_deref(), Some("alpha_symbol"));
+    }
+
+    /// **The witness for #3142.** A Rust hit whose leading symbol shares a
+    /// name with a Python call site lists the Rust caller and not the Python
+    /// one, and the line says out loud that it matched by name.
+    ///
+    /// Fails before this change: the branch rendered
+    /// `list_line("callers", graph.callers(&symbol.name))` unfiltered, so the
+    /// Python site appeared under a bare `callers:` label — the shape
+    /// observed live on this repo, where searching `SearchConfig` cited an
+    /// `arenabench` Python test as a caller.
+    #[test]
+    fn a_caller_in_another_language_is_not_this_hits_caller() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        for (path, body) in [
+            (
+                "src/config.rs",
+                "pub fn resolve_budget() -> u8 {\n    9\n}\n\npub fn rust_call_site() -> u8 {\n    \
+                 resolve_budget()\n}\n",
+            ),
+            (
+                "probe.py",
+                "def python_call_site():\n    return resolve_budget()\n",
+            ),
+        ] {
+            let file = workspace.path().join(path);
+            std::fs::create_dir_all(file.parent().expect("a parent")).expect("mkdir");
+            std::fs::write(&file, body).expect("write");
+        }
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+        graph.index_all().expect("index");
+
+        // The premise, checked rather than assumed: the name-based lookup
+        // really does reach both languages. Without this the assertions below
+        // would pass on a graph that never indexed the Python file at all.
+        let raw = graph.callers("resolve_budget").expect("callers");
+        let labels = frame_labels(raw.clone());
+        assert!(
+            labels.iter().any(|label| label.contains("probe.py")),
+            "the fixture must reproduce the cross-language name match: {labels:?}"
+        );
+
+        let hit = Hit {
+            path: "src/config.rs".into(),
+            why: "matched 1 query term(s)".into(),
+            focus: Some("resolve_budget".into()),
+        };
+        // Depth 8 is the Callers rung and stops there, so nothing below it
+        // can supply the strings these assertions look for.
+        let block = render_hit(
+            Some(&graph),
+            &root,
+            &hit,
+            Depth::new(8),
+            &mut GatherCache::default(),
+        );
+        graph.shutdown();
+
+        let callers = block
+            .lines()
+            .find(|line| line.trim_start().starts_with("callers"))
+            .unwrap_or_else(|| panic!("no callers line in:\n{block}"));
+        assert!(
+            callers.contains("callers (by name):"),
+            "the line did not disclose that it matched by name: {callers}"
+        );
+        assert!(
+            !callers.contains("probe.py"),
+            "a Python call site was listed as a caller of a Rust definition: {callers}"
+        );
+        assert!(
+            callers.contains("config.rs"),
+            "the same-language caller was dropped with the conflation: {callers}"
+        );
     }
 }

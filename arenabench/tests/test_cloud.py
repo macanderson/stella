@@ -782,6 +782,56 @@ class TestFetchResults:
             "a missing results.json must be said out loud, not skipped silently"
         )
 
+    def test_a_gated_runs_settlement_fetch_is_not_downloaded_twice(
+        self, tmp_path
+    ) -> None:
+        """#3400: the gate watcher and the artifacts fetch must land on one
+        tree, not two full copies of every job's prefix."""
+        s3 = FakeS3(
+            {
+                "runs/r1/match.toml": b"template",
+                "runs/r1/jobs.json": b'{"jobs": []}',
+                "runs/r1/trials/000-stella-task-a/match.toml": b"slice",
+                "runs/r1/job-001/results.json": b'{"ok": true}',
+                "runs/r1/job-001/agent/stella-events.jsonl": b"{}\n",
+            }
+        )
+        jobs = [{"id": "job-001", "label": "000-stella-task-a"}]
+        executor = _executor(s3=s3)
+
+        # The gate watcher's settlement fetch — one job's whole prefix,
+        # straight into its label directory, exactly as `GateWatch.__call__`
+        # does mid-run.
+        executor._fetch_prefix(
+            "runs/r1/job-001/", tmp_path / "000-stella-task-a", out=lambda _: None
+        )
+        events_key = "runs/r1/job-001/agent/stella-events.jsonl"
+        assert [c for c in s3.calls if c == ("get_object", BUCKET, events_key)] == [
+            ("get_object", BUCKET, events_key)
+        ]
+
+        # The run-level fetch tail `cloud run`/`cloud fetch` issues afterwards.
+        fetched = executor.fetch_results(
+            "r1", jobs, tmp_path, artifacts=True, out=lambda _: None
+        )
+
+        assert fetched >= 1
+        assert [c for c in s3.calls if c == ("get_object", BUCKET, events_key)] == [
+            ("get_object", BUCKET, events_key)
+        ], "the job's artifact must be GET at most once across both fetches"
+        assert (
+            tmp_path / "000-stella-task-a" / "agent" / "stella-events.jsonl"
+        ).read_bytes() == b"{}\n", "both writers land on the label directory"
+        assert not (tmp_path / "job-001").exists(), (
+            "no second, job-uuid-named copy of the same prefix"
+        )
+        assert (tmp_path / "match.toml").read_bytes() == b"template", (
+            "run-scoped objects outside any job prefix are still fetched"
+        )
+        assert (
+            tmp_path / "trials" / "000-stella-task-a" / "match.toml"
+        ).read_bytes() == b"slice"
+
 
 def _single_task_result(task: str, contestant_id: str, reward: float) -> bytes:
     body = {

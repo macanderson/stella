@@ -415,8 +415,8 @@ def declared_flag(value: Any) -> bool | None:
 
     ``bool(value)`` is the wrong reader for a config flag: it answers ``True``
     for the string ``"false"``, for the sole reason that it is not empty. A
-    seat spelled to run the staged pipeline would then run the bare loop — a
-    selector spelled to close must never open, which is the discipline
+    seat spelled ``bare_loop = "false"`` would then be read as having asked
+    for it — a selector spelled to close must never open, which is the discipline
     ``STELLA_TRUST_PROJECT`` paid for.
 
     Returning ``None`` for anything unrecognised is what lets each caller
@@ -486,13 +486,19 @@ class Engine:
     effort: str = "high"
     #: Explicit base URL override. ``None`` uses the api's default route.
     base_url: str | None = None
-    #: Run the agent's raw step loop instead of its staged pipeline. For Stella
-    #: that is ``--no-pipeline``, which settles triage, witness and verify at
-    #: once because all three ARE the pipeline. Declared on the engine rather
-    #: than exported at launch: the runner scrubs every ambient ``STELLA_*`` so
-    #: a host setting can never quietly reconfigure a seat, and which loop an
-    #: arm ran belongs in the match's published identity either way. Agents
-    #: with no pipeline ignore it, like the role overrides below.
+    #: Declares an explicit ask for the agent's raw step loop. Historically
+    #: this settled ``--no-pipeline`` for Stella, when ``stella run`` still had
+    #: a staged pipeline to turn off; post-#3865 that pipeline is deleted from
+    #: the workspace and the raw step loop is the only one the binary can run,
+    #: so the flag this arm carries no longer changes what the seat does (see
+    #: ``bench/harbor_adapter/stella_harbor/loop_mode.py``, #4023). Kept as a
+    #: declaration rather than retired: a template's stated intent to measure
+    #: the bare loop is still worth refusing on any non-``stella`` seat
+    #: (``arenabench/arenabench/config.py``) and still worth recording.
+    #: Declared on the engine rather than exported at launch: the runner
+    #: scrubs every ambient ``STELLA_*`` so a host setting can never quietly
+    #: reconfigure a seat. Agents with no pipeline ignore it, like the role
+    #: overrides below.
     bare_loop: bool = False
     #: The exact tools this seat's agent is offered, or ``()`` for the shipping
     #: catalog. For Stella that is ``STELLA_LEAN_TOOLS``. (Some archived

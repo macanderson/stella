@@ -5,6 +5,14 @@
 registry, store, calibration, budget — built from explicit inputs into one
 value any surface can drive: the CLI, the serve sidecar, or a test.
 
+**What drives it today: only the parts.** `stella-cli` calls the `parts::*`
+free functions directly, and nothing in the workspace constructs the
+`RuntimeBuilder`/`SessionRuntime` composite — `stella-serve` does not depend
+on this crate at all. Read the paragraph above as the shape the composite is
+built to, not as a path in use. That is gap **G1** in
+`doc:engine-embedding` §4 (#3731), and closing it means serve assembling its
+resource half through `RuntimeBuilder::with_provider` rather than by hand.
+
 The crate exists because `stella-cli` is a bin-only crate — no `[lib]` target —
 so nothing inside it is callable from anywhere else. That one manifest fact is
 why the same engine setup got re-typed at seven call sites (`agent.rs` twice,
@@ -235,6 +243,7 @@ it crosses.
 | `src/wrapper/child_turn.rs` | The `ChildTurn` port: the host spends a model call at a declared role intent (`triage`, `planner`, `witness_author`, …) so a plugin never holds a provider credential itself (`doc:turn-loop-wrappers` §9.3). |
 | `src/wrapper/candidate_fanout.rs` | The `candidate_fanout`/`adopt_candidate` plane: N isolated writable workspaces, one worker turn in each, and the one adoption that lands a winner — over a `CandidateWorkspaces` substrate a host supplies (`stella-cli`'s worktree one, #3892; a host with none installs no plane and both calls answer `unavailable`). #3844, `doc:wrapper-socket` §6b. |
 | `tests/no_ambient_reads.rs` | The executable form of the invariant above. |
+| `tests/runtime_build.rs` | The construction sequence's own witnesses (#3733): `RuntimeError::WorkspaceRoot` on a root that is not a directory, `with_provider` beating the spec's own adapter, and each `parts::*` step — a disabled store creating no `.stella/`, an unopenable one degrading to a `Notice` instead of failing, calibration starting at 1.0, and observed-vs-enforced budget. Every root is an explicit `TempDir`, never the process's own directory. |
 | `tests/wrapper_socket.rs` | The socket's end-to-end proof: a real `/bin/sh` subprocess plugin driven through `TurnWrapper` by the test's own round loop. It proves the socket *answers*; what it cannot prove is that anything in the workspace holds the same order, which is what `tests/wrapper_dispatch.rs` is for. `#![cfg(unix)]`; #3497 tracks the portable in-tree plugin binary a Windows-proof version needs. |
 | `tests/wrapper_dispatch.rs` | The host sequence's witness: the same kind of `/bin/sh` plugin driven through the **shipped** `WrapperDispatch`, proving a contribution reaches the turn after the stable prefix, its evidence reaches `judge`, and the verdict is what decides whether another turn runs. `#![cfg(unix)]` for the same reason. |
 | `tests/wrapper_verdict.rs` | The property tests behind `judge`/`again`'s totality claim. |

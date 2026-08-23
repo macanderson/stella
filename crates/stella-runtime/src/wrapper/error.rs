@@ -191,15 +191,23 @@ pub enum WrapperError {
         source: std::io::Error,
     },
 
-    /// The plugin's last message was a host call and then its stdout ended, so
-    /// it could not have read the answer it asked for.
+    /// The plugin asked the host for a capability, was served it, and then
+    /// exited cleanly without the response that ends the point.
     ///
     /// A plugin that asks and stops listening has abandoned the point, and
     /// crediting the round to it would mean judging a turn on evidence it never
-    /// finished gathering.
+    /// finished gathering. Distinct from
+    /// [`WrapperError::NoResponse`](Self::NoResponse), which is the same
+    /// silence from a plugin that asked for nothing first — a plugin that had
+    /// nothing to say versus one that was mid-errand. The host cannot see
+    /// whether the answer was *read*, only that the plugin never came back
+    /// with it, which is why this names the errand rather than the reading.
+    /// A plugin that dies instead of exiting cleanly is a
+    /// [`WrapperError::Exit`](Self::Exit) either way, so its stderr is not
+    /// lost here (#3794).
     #[error(
-        "wrapper `{program}` asked the host for \"{call}\" and then closed its output without \
-         reading the answer"
+        "wrapper `{program}` asked the host for \"{call}\" and then exited without answering the \
+         point"
     )]
     UnansweredCall {
         /// `argv[0]`, as declared.
@@ -539,15 +547,23 @@ pub enum DriverError {
         source: std::io::Error,
     },
 
-    /// The driver's last message was a capability ask and then its stdout
-    /// ended, so it could not have read the answer.
+    /// The driver asked the host for a capability, was served it, and then
+    /// exited cleanly without the `next` that ends the session.
     ///
     /// A driver that asks and stops listening has abandoned the session, and
     /// crediting it with a `next` it never wrote would be inventing the one
-    /// decision this channel exists to carry.
+    /// decision this channel exists to carry. Distinct from
+    /// [`DriverError::NoResponse`](Self::NoResponse), which is the same
+    /// silence from a driver that asked for nothing first — a driver that
+    /// decided nothing versus one that was mid-errand. The host cannot see
+    /// whether the answer was *read*, only that the driver never came back
+    /// with it, which is why this names the errand rather than the reading.
+    /// A driver that dies instead of exiting cleanly is a
+    /// [`DriverError::Exit`](Self::Exit) either way, so its stderr is not lost
+    /// here (#3794).
     #[error(
-        "driver `{program}` asked the host for \"{call}\" and then closed its output without \
-         reading the answer"
+        "driver `{program}` asked the host for \"{call}\" and then exited without ending its \
+         session"
     )]
     UnansweredCall {
         /// `argv[0]`, as declared.

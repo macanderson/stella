@@ -6,12 +6,14 @@
 //! The engine holds one provider for the whole turn, so before this module a
 //! wedged provider ended the turn as `Aborted { Failure }` even when a
 //! healthy fallback was configured and resolvable — every completed step's
-//! work stranded in the transcript. This is the recovery rung for the
-//! failure classes [`overflow_recovery`](super::overflow_recovery) does not
-//! own: transport faults, 5xx, auth revocation, and rate limiting that
-//! outlived the parked ladder (`driver/rate_limit.rs`, #2677) — everything
-//! that surfaces as `ModelCallFailure::Exhausted`. A child module of
-//! `driver` (the `settlement.rs` pattern), so the seam stays out of the
+//! work stranded in the transcript. Its first class of failure is everything
+//! that surfaces as `ModelCallFailure::Exhausted`: transport faults, 5xx,
+//! auth revocation, and rate limiting that outlived the parked ladder
+//! (`driver/rate_limit.rs`, #2677). Its second is the one rejection
+//! [`overflow_recovery`](super::overflow_recovery) cannot compact its way out
+//! of — a transcript still too large once that ladder is spent, which a
+//! provider with a wider window may accept unchanged (#2770). A child module
+//! of `driver` (the `settlement.rs` pattern), so the seam stays out of the
 //! god-file ceiling.
 //!
 //! # How the fallback is chosen
@@ -108,6 +110,34 @@ use crate::step::TurnState;
 pub(crate) const FALLBACK_TOOL_RESULT: &str =
     "not executed — the turn switched to a fallback provider after exhausted retries";
 
+/// Why the turn is asking for a replacement provider.
+///
+/// The two failure classes that reach the fallback are true of different
+/// things, and the notice has to say which: an exhausted ladder is a claim
+/// about the provider's *health*, an overflow is a claim about its *window*.
+/// A swap announced as "exhausted its retries" when the ladder never ran once
+/// is the misclassification #2743 names elsewhere, arriving by another route.
+#[derive(Clone, Copy)]
+pub(crate) enum FallbackCause {
+    /// The retry ladder ran out against the active provider (#2679).
+    RetriesExhausted,
+    /// The transcript still exceeds the active provider's context window
+    /// after the compaction ladder is spent (#2770).
+    ContextOverflow,
+}
+
+impl FallbackCause {
+    /// What this cause says about the provider being left, for the notice.
+    fn clause(self, from: &str) -> String {
+        match self {
+            Self::RetriesExhausted => format!("`{from}` exhausted its retries"),
+            Self::ContextOverflow => {
+                format!("`{from}` rejected the transcript as too large and compaction is spent")
+            }
+        }
+    }
+}
+
 impl<'a> Engine<'a> {
     /// The provider this engine's calls go to: the constructor-time primary
     /// until a fallback latches, the replacement afterwards. Every site that
@@ -122,14 +152,21 @@ impl<'a> Engine<'a> {
     }
 
     /// Try to continue the turn on a replacement provider after `message`
-    /// exhausted the retry ladder against the active one. `true` latched the
+    /// ended the call against the active one for `cause`. `true` latched the
     /// swap — the caller re-runs the step against the replacement, terminal
     /// events withheld. `false` means the turn must surface the failure
     /// terminally: no resolver attached, the latch already spent, no healthy
     /// alternative, or resolution landing back on the failed provider.
+    ///
+    /// The set-once latch is the entire bound for both causes, which is why
+    /// the overflow rung needs no bound of its own: it can burn at most one
+    /// paid call on a replacement whose window may be no larger, and a
+    /// replacement that also overflows finds both the compaction ladder and
+    /// this latch spent, so it is terminal with no loop.
     pub(crate) fn attempt_provider_fallback(
         &self,
         message: &str,
+        cause: FallbackCause,
         state: &mut TurnState,
         events: &EventSender,
     ) -> bool {
@@ -164,8 +201,8 @@ impl<'a> Engine<'a> {
         // an observer must read this as the turn continuing, never ending.
         let _ = events.send(AgentEvent::Error {
             message: format!(
-                "{message} — `{from}` exhausted its retries; continuing the turn on `{to}` \
-                 ({reason})",
+                "{message} — {clause}; continuing the turn on `{to}` ({reason})",
+                clause = cause.clause(&from),
                 reason = resolved.reason
             ),
             retryable: true,
