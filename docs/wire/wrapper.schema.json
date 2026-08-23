@@ -1,476 +1,624 @@
 {
   "$defs": {
-    "WrapperRequest": {
-      "$defs": {
-        "AfterTurnRequest": {
-          "additionalProperties": false,
-          "description": "Everything a wrapper is given once the turn's completion lands.\n\nIt receives the outcome; it does **not** hold a channel into the turn. That\nis #3379's one-directional connection stated as a socket rule — the\npipeline no longer edits the engine's stream, and no plugin ever gets to.",
-          "properties": {
-            "candidate": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/CandidateGrant"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "The candidate workspace the turn ran against, when there was one —\nsee [`CandidateGrant`]."
+    "AfterTurnRequest": {
+      "additionalProperties": false,
+      "description": "Everything a wrapper is given once the turn's completion lands.\n\nIt receives the outcome; it does **not** hold a channel into the turn. That\nis #3379's one-directional connection stated as a socket rule — the\npipeline no longer edits the engine's stream, and no plugin ever gets to.",
+      "properties": {
+        "candidate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CandidateGrant"
             },
-            "goal": {
-              "description": "The goal, as the user stated it.",
-              "type": "string"
-            },
-            "protocol_version": {
-              "description": "The version this message is written at.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "round": {
-              "description": "Which round of the wrapper's loop just ran.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "stage": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/StageName"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Which declared stage this evidence is about, mirroring the stage the same round's before_turn named. Absent means this host runs no stage program at all — never a default stage."
-            },
-            "turn": {
-              "$ref": "#/$defs/TurnOutcome",
-              "description": "What the turn did."
-            },
-            "wrapper": {
-              "description": "The variant id of the wrapper being asked.",
-              "type": "string"
+            {
+              "type": "null"
             }
-          },
-          "required": [
-            "protocol_version",
-            "wrapper",
-            "round",
-            "goal",
-            "turn"
           ],
-          "type": "object"
+          "description": "The candidate workspace the turn ran against, when there was one —\nsee [`CandidateGrant`]."
         },
-        "BeforeTurnRequest": {
-          "additionalProperties": false,
-          "description": "Everything a wrapper is given before a turn runs.\n\nEvery capability arrives *in the request* — there is no ambient authority\nto reach for, which is the property that lets the same plugin run under\n`stella-cli`, `stella-serve` and an embedded host without change\n(`doc:wrapper-socket` §6).",
-          "properties": {
-            "candidate": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/CandidateGrant"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "The candidate workspace this turn will run against, when the host has\ncreated one — see [`CandidateGrant`]."
-            },
-            "goal": {
-              "description": "The goal, as the user stated it.",
-              "type": "string"
-            },
-            "protocol_version": {
-              "description": "The version this message is written at.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "published": {
-              "description": "What earlier stages of this same turn published, in publication order.",
-              "items": {
-                "$ref": "#/$defs/PublishedSignal"
-              },
-              "type": "array"
-            },
-            "round": {
-              "description": "Which round of the wrapper's loop this is; `0` for the first turn.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "stage": {
-              "$ref": "#/$defs/StageName",
-              "description": "Which declared stage this call is for. before_turn runs once per stage the host resolved this wrapper's declared order down to."
-            },
-            "wrapper": {
-              "description": "The variant id of the wrapper being asked — `StageProgram::variant`,\nand the join key of every per-variant comparison (#3388).",
-              "type": "string"
-            }
-          },
-          "required": [
-            "protocol_version",
-            "wrapper",
-            "stage",
-            "round",
-            "goal"
-          ],
-          "type": "object"
-        },
-        "CandidateGrant": {
-          "additionalProperties": false,
-          "description": "The candidate workspace, as a plugin receives it.\n\n**A capability the host resolves and bounds, never a path a plugin is\ntrusted to stay inside.** The distinction is the whole design and it is\nworth being exact about, because the grant does hand out an absolute path:\n\n- [`Self::root`] is where the plugin's *own* reads and its *own* test run\n  happen. A plugin that runs a test suite needs a directory, and pretending\n  otherwise is what pushed three reference plugins onto `[runtime] env` for\n  their test command (#3498).\n- [`Self::handle`] is the capability. Every path the plugin names on the\n  way *back* — a scope, a withheld adoption path, a witness artifact — is\n  resolved against this handle's root by the host and refused if it lands\n  anywhere else, after symlinks, on the host's own filesystem\n  (`CandidateDenial`, and this crate's `candidate_grant::fence` for the\n  implementation — it was the staged pipeline's\n  `ports::CandidateHandles` until #3865 deleted that crate). The refusal is\n  the host's; nothing here is a promise\n  the plugin was asked to keep.\n\nSo a plugin that ignores the root and lies about where it went has told the\nhost nothing the host will act on, which is the property that lets the same\ngrant cross to a process in any language.",
-          "properties": {
-            "handle": {
-              "$ref": "#/$defs/CandidateHandle",
-              "description": "The name the host minted for this workspace, and the only thing that\nre-addresses it. Opaque: see [`CandidateHandle`]."
-            },
-            "root": {
-              "description": "The workspace's absolute root on the host's filesystem, canonical — the\nhost resolves symlinks *before* minting the grant, so the path a plugin\nis told and the path the host fences against are the same one.",
-              "type": "string"
-            },
-            "test": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/TestPlan"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "The test the host would run in this workspace, when it has one to\ngive. `None` is \"the host has no test invocation\", never \"run whatever\nyou like\": a plugin with no plan reports\n[`FlipObservation::Unobservable`] rather than guessing."
-            }
-          },
-          "required": [
-            "handle",
-            "root"
-          ],
-          "type": "object"
-        },
-        "CandidateHandle": {
-          "description": "A serializable name for one live candidate workspace.\n\nOpaque by construction: the string is the host's, and nothing but the host\nthat minted it can turn one back into a workspace. It carries no path, no\nfile descriptor and no authority of its own — resolving it is a lookup in\nthe minting registry, so a handle for a workspace that was never created,\nor one already removed, is [`CandidateDenial::UnknownHandle`].\n\nA newtype rather than a bare `String` for the reason AGENTS.md's glossary\ngives: this workspace already has six identifiers that read alike, and an\nunwrapped `String` is how a seventh joins them.\n\n**It is a name, not a bearer token.** Ids are minted in order, so a plugin\nthat holds one handle can spell a sibling candidate's. Binding a handle to\nthe principal it was issued to belongs with plugin identity (#3380 A1) —\nuntil that exists (#3484), a host must not hand handles to two principals\nit means to keep apart.",
+        "goal": {
+          "description": "The goal, as the user stated it.",
           "type": "string"
         },
-        "HostStage": {
-          "description": "A stage boundary **this host itself** emits.\n\nClosed by design, and the claim it makes is deliberately smaller than it\nused to be: this is not the stage vocabulary any more (that is\n[`StageName`], which is open), it is the set of boundaries the host knows\nhow to name on its own. The names and their order were taken from\n`stage_rank` in the staged pipeline's `replay.rs` (`crates/stella-pipeline`,\ndeleted in #3865), which was the canonical ordering then — and\n[`HostStage::kind`] makes the correspondence mechanical rather than a\nclaim, since it is one-to-one onto [`StageKind`]'s twelve. With that crate\ngone, this enum *is* the ordering of the host's own stages.\n\n**A name here is not a promise that every host runs it.** The vocabulary\nmirrors [`StageKind`] because a wrapper that cannot spell a boundary\ncannot describe the run it wraps; which hosts emit which boundary today\ndiffers per stage, and each variant below says so rather than leaving a\nmanifest author to discover it from a run that quietly did nothing.",
-          "oneOf": [
-            {
-              "const": "triage",
-              "description": "Classify the task and name what must be researched.",
-              "type": "string"
-            },
-            {
-              "const": "recall",
-              "description": "Pull prior context for the goal.",
-              "type": "string"
-            },
-            {
-              "const": "research",
-              "description": "Answer triage's questions with read-only sub-agents.",
-              "type": "string"
-            },
-            {
-              "const": "plan",
-              "description": "Turn the goal into steps.",
-              "type": "string"
-            },
-            {
-              "const": "scope",
-              "description": "Review the plan's scope before spending on it.",
-              "type": "string"
-            },
-            {
-              "const": "execute",
-              "description": "Run the turn.",
-              "type": "string"
-            },
-            {
-              "const": "witness",
-              "description": "Author the failing test that will measure the turn.",
-              "type": "string"
-            },
-            {
-              "const": "verify",
-              "description": "Turn evidence into a verdict.",
-              "type": "string"
-            },
-            {
-              "const": "verdict",
-              "description": "The verdict boundary — and **the staged pipeline does not dispatch\nit**, which is the one thing a manifest author has to know before\nwriting the name down.\n\nThe staged pipeline emitted no [`StageKind::Verdict`] at all: its\nverify stage emitted the `Verdict` *event* directly from\n`ladder_decision`, and its own `pipeline/tests.rs` asserted the stage\nnever appeared in that stream (`crates/stella-pipeline`, deleted in\n#3865). The hosts that do emit the boundary are the\ngoal loops — `crates/stella-cli/src/agent/goal.rs` and\n`crates/stella-serve/src/goal.rs` run-scoped,\n`crates/stella-core/src/goal.rs` turn-scoped — so a wrapper naming\n`verdict` describes a goal-loop run and not a staged one.",
-              "type": "string"
-            },
-            {
-              "const": "reflect",
-              "description": "Post-verdict self-reflection: mine the finished turn for lessons and\nrecord them for later recall.\n\nEmitted run-scoped today by `crates/stella-cli/src/agent.rs`, gated\nthere on the turn having done real work — the branch\n[`Signal::MutatingActions`] transcribes.",
-              "type": "string"
-            },
-            {
-              "const": "contextwrite",
-              "description": "Context write-back: episode summaries and fact upserts landing in the\ncontext plane.\n\nA **declared gap**: the work happens (`crates/stella-cli/src/agent.rs`\nrecords the episode under the same \"did real work\" gate as reflection)\nbut no host emits this boundary today, so nothing yet reports it.\nDeclarable so a wrapper can order the write-back it will drive once\nthe socket exists (#3380), and named as a gap here rather than\ndiscovered as a silence.",
-              "type": "string"
-            },
-            {
-              "const": "complete",
-              "description": "The run is done — the last boundary a run emits.\n\nEmitted run-scoped today by `stella-core`'s\n`EventSender::pairing_stage_complete` and by `stella-cli`'s command-deck\nforwarder.",
-              "type": "string"
-            }
-          ]
+        "protocol_version": {
+          "description": "The version this message is written at.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
-        "PublishedSignal": {
-          "additionalProperties": false,
-          "description": "One signal value a stage published.\n\nThe signal set is the manifest's closed [`Signal`] vocabulary, so a stage\ncannot invent a fact for a later condition to read — the load-time rule\n(\"a condition naming a signal the host does not publish is a load error\")\nstated for the socket that actually dispatches.",
-          "properties": {
-            "signal": {
-              "$ref": "#/$defs/Signal",
-              "description": "Which signal."
+        "round": {
+          "description": "Which round of the wrapper's loop just ran.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StageName"
             },
-            "value": {
-              "$ref": "#/$defs/SignalValue",
-              "description": "Its value this turn."
+            {
+              "type": "null"
             }
-          },
-          "required": [
-            "signal",
-            "value"
           ],
-          "type": "object"
+          "description": "Which declared stage this evidence is about, mirroring the stage the same round's before_turn named. Absent means this host runs no stage program at all — never a default stage."
         },
-        "Signal": {
-          "description": "A fact a condition may read.\n\nThe **published set** — naming anything outside it is a load error. Every\nentry transcribes a branch the pipeline takes today, at a named line; a\nfact with no live branch behind it is not added, because the grammar's\nwhole defence is that a new name is a reviewable decision rather than a\ndial someone might find a use for. Growing this set is how a wrapper gains\nexpressiveness — never a richer condition syntax.\n\nHost facts, readable by any stage:\n\n- `test-command` — `Pipeline::config.test_command`, the fact gating\n  witness authoring (`pipeline.rs`, the `authored_witness` conjunction).\n- `candidates` — `PipelineConfig::candidate_count()`. `n == 1` is the\n  single-shot/best-of-N split in `pipeline.rs::run`.\n- `budget-metered` — `budget.mode() != BudgetMode::Off`, the first thing\n  `pipeline/repair_gate.rs::repair_headroom` asks before a repair round\n  may be bought. Metered, not the amount: dollars are a float, the grammar\n  compares against whole numbers only, and a threshold silently coarser\n  than the guard's would be worse than no threshold.\n\nTriage's assessment, which decides the conversational fast path, whether\nresearch runs, and what the class is owed:\n\n- `conversational`, `questions`, `plans`, `verifies` — as before.\n- `wants-witness` — `assessment.wants_witness()`, a conjunct of the\n  authored-witness decision in `pipeline.rs::run`.\n- `wants-verifier` — `assessment.wants_verifier()`, read by the\n  `LadderDecision::Unverified` arm of `pipeline.rs::verify_candidate`.\n\nWhat execution produced, read by the ladder in `verify.rs`:\n\n- `mutating-actions` — `mutating_actions == 0`, a conjunct of\n  `LadderInputs::nothing_was_attempted`.\n- `diff-lines` — `diff_lines <= diff_budget`, the diff-budget conjunct of\n  the `SubmitFast` rung.\n\nWhat the witness stage produced:\n\n- `witness-authored` — `witness.is_some()`, which decides the effective\n  test command, the tamper sweep, and the mutation audit in\n  `pipeline.rs::verify_candidate`.\n\nWhat verification observed. The two test signals are **both** false when no\ntest ran, and that is deliberate: `touched_tests_passed` is an\n`Option<bool>`, and one `tests-passed` boolean would report a suite that\nnever ran identically to one that went red. Two total predicates keep the\nthird state visible, the way [`FlipOutcome::is_achieved`] and\n[`FlipOutcome::was_observed`] do for the flip:\n\n- `flip-achieved` — `flip.is_achieved()`, the receipt half of the\n  `SubmitFast` rung.\n- `tests-red` — `touched_tests_passed == Some(false)`, the ladder's\n  deterministic-failure rung.\n- `tests-green` — `touched_tests_passed == Some(true)`, the corroboration\n  the pipeline's own flip needs beside it.\n\n[`FlipOutcome::is_achieved`]: stella_protocol::FlipOutcome::is_achieved\n[`FlipOutcome::was_observed`]: stella_protocol::FlipOutcome::was_observed",
-          "oneOf": [
-            {
-              "const": "test-command",
-              "description": "Boolean, host: a `--test-command` is configured for this run.",
-              "type": "string"
-            },
-            {
-              "const": "candidates",
-              "description": "Count, host: how many candidates this run executes (best-of-N).",
-              "type": "string"
-            },
-            {
-              "const": "budget-metered",
-              "description": "Boolean, host: spend is actually gated, not merely recorded.",
-              "type": "string"
-            },
-            {
-              "const": "conversational",
-              "description": "Boolean, triage: this turn is chat, not a software task.",
-              "type": "string"
-            },
-            {
-              "const": "questions",
-              "description": "Count, triage: how many research questions triage named.",
-              "type": "string"
-            },
-            {
-              "const": "plans",
-              "description": "Boolean, triage: this task class plans.",
-              "type": "string"
-            },
-            {
-              "const": "verifies",
-              "description": "Boolean, triage: this task class verifies unconditionally.",
-              "type": "string"
-            },
-            {
-              "const": "wants-witness",
-              "description": "Boolean, triage: this turn warrants an authored witness test.",
-              "type": "string"
-            },
-            {
-              "const": "wants-verifier",
-              "description": "Boolean, triage: an inconclusive ladder warrants a model verifier.",
-              "type": "string"
-            },
-            {
-              "const": "mutating-actions",
-              "description": "Count, execute: calls dispatched that were able to change the tree.",
-              "type": "string"
-            },
-            {
-              "const": "diff-lines",
-              "description": "Count, execute: lines of diff the turn produced.",
-              "type": "string"
-            },
-            {
-              "const": "witness-authored",
-              "description": "Boolean, witness: a witness test was authored and accepted.",
-              "type": "string"
-            },
-            {
-              "const": "flip-achieved",
-              "description": "Boolean, verify: the tracked command went fail→pass and held. `false`\ncovers \"no flip\" **and** \"nothing observed one\" — pair it with\n`tests-green` rather than reading it as a negative finding.",
-              "type": "string"
-            },
-            {
-              "const": "tests-red",
-              "description": "Boolean, verify: a touched test ran and failed. `false` means \"no test\nran red\", which includes no test having run at all.",
-              "type": "string"
-            },
-            {
-              "const": "tests-green",
-              "description": "Boolean, verify: a touched test ran and passed. `false` means \"no test\nran green\", which includes no test having run at all.",
-              "type": "string"
-            }
-          ]
+        "turn": {
+          "$ref": "#/$defs/TurnOutcome",
+          "description": "What the turn did."
         },
-        "SignalValue": {
-          "description": "A published signal's value — the two shapes [`SignalKind`] enumerates.",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "description": "A truth value.",
-              "properties": {
-                "boolean": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "boolean"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "A non-negative count.",
-              "properties": {
-                "count": {
-                  "format": "uint64",
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "count"
-              ],
-              "type": "object"
-            }
-          ]
+        "wrapper": {
+          "description": "The variant id of the wrapper being asked.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "wrapper",
+        "round",
+        "goal",
+        "turn"
+      ],
+      "type": "object"
+    },
+    "AfterTurnResponse": {
+      "additionalProperties": false,
+      "description": "The evidence a wrapper gathered.",
+      "properties": {
+        "evidence": {
+          "$ref": "#/$defs/ObservedEvidence",
+          "description": "What the wrapper observed — its own half of the evidence, never the\nhost's ([`ObservedEvidence`], and #3499 for why the difference is a\ntype)."
         },
-        "StageName": {
-          "description": "The name of a stage a wrapper declares: one of the host's own, or a word\nthis manifest contributed (#3963).\n\n# Why this is open, and what still refuses to load\n\nA closed vocabulary capped the set of turn shapes a plugin could express at\nthe set the host anticipated, which is the exact shape `doc:roleless-core`\nexists to remove. What it bought — that a manifest cannot declare a stage\nnothing will dispatch — is kept, and by a stronger route than a closed enum:\nthe dispatcher iterates whatever the resolved program holds, so a\ncontributed stage dispatches *because* it was declared, and\nloading still refuses the names that could not be dispatched, rendered, or\ntold apart from a host boundary.\n\n# Normalization is what keeps one word one stage\n\n[`StageName::new`] resolves a name [`HostStage`] knows into\n[`StageName::Host`], so [`StageName::Contributed`] never holds a word the\nhost already answers to — the same discipline, and the same reason, as\n`stella_protocol::StageName`: a value that does not survive its own round\ntrip is what invariant 4 forbids.",
-          "oneOf": [
+        "protocol_version": {
+          "description": "The version this message is written at.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "BeforeTurnRequest": {
+      "additionalProperties": false,
+      "description": "Everything a wrapper is given before a turn runs.\n\nEvery capability arrives *in the request* — there is no ambient authority\nto reach for, which is the property that lets the same plugin run under\n`stella-cli`, `stella-serve` and an embedded host without change\n(`doc:wrapper-socket` §6).",
+      "properties": {
+        "candidate": {
+          "anyOf": [
             {
-              "additionalProperties": false,
-              "description": "A boundary this host emits.",
-              "properties": {
-                "Host": {
-                  "$ref": "#/$defs/HostStage"
-                }
-              },
-              "required": [
-                "Host"
-              ],
-              "type": "object"
+              "$ref": "#/$defs/CandidateGrant"
             },
             {
-              "additionalProperties": false,
-              "description": "A stage the manifest contributed, under its own word. Never one of the host's own boundary names, and checked at manifest load for being dispatchable, renderable, and distinguishable from them.",
-              "properties": {
-                "Contributed": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "Contributed"
-              ],
-              "type": "object"
+              "type": "null"
             }
-          ]
-        },
-        "TestBaseline": {
-          "description": "What a [`TestPlan`]'s invocation reported before the turn ran.\n\nFour answers rather than an exit code, and the fourth is why: a run that\ntimed out or could not find its toolchain never observed an assertion, and\nscoring its non-zero exit as \"red\" is exactly the bug `CmdOutcome`'s\n`assertion_result` exists to close (#860) — an infra failure would satisfy\na flip's precondition and the next clean run would be credited as a fix.",
-          "oneOf": [
-            {
-              "const": "not-run",
-              "description": "The host did not run the invocation before the turn, so nothing is\nclaimed about it.",
-              "type": "string"
-            },
-            {
-              "const": "passed",
-              "description": "It ran and its assertions passed.",
-              "type": "string"
-            },
-            {
-              "const": "failed",
-              "description": "It ran and its assertions genuinely failed — the red a flip needs.",
-              "type": "string"
-            },
-            {
-              "const": "unobserved",
-              "description": "It was attempted and did not complete, so it says nothing about\nassertions either way.",
-              "type": "string"
-            }
-          ]
-        },
-        "TestPlan": {
-          "additionalProperties": false,
-          "description": "One test invocation, as the host already parsed it.\n\n**argv, never a shell string** — the #1400 rule every spawned thing in this\nworkspace follows, and the reason the host's own strict test-command parser\nruns before a grant is minted rather than inside the plugin. A plugin\nreceives a program and its arguments; it never receives a line to hand to a\nshell, and a command the host's parser refuses produces no grant to carry\none.",
-          "properties": {
-            "args": {
-              "description": "Its exact argument vector.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "baseline": {
-              "$ref": "#/$defs/TestBaseline",
-              "default": "not-run",
-              "description": "What this same invocation reported *before* the turn ran — the red half\nof a fail→pass flip, handed over so a plugin does not have to\nreconstruct it (or take it from an environment variable, which is what\nTrack C had to do)."
-            },
-            "program": {
-              "description": "The test runner executable, from the host's closed runner vocabulary.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "program"
           ],
-          "type": "object"
+          "description": "The candidate workspace this turn will run against, when the host has\ncreated one — see [`CandidateGrant`]."
         },
-        "TurnOutcome": {
-          "additionalProperties": false,
-          "description": "The read-only report of a turn that finished.\n\nThe engine always finishes its own turn and always says so; `completed` is\nthat statement, and a wrapper's \"the whole job is over\" is a separate,\nseparately named thing ([`Continuation`]) that cannot fake it.\n\n# Why two of the four fields are optional\n\n`tools` and `changed_files` are facts a host **may not have**, and the two\nanswers a plugin needs to tell apart are \"the turn dispatched no tools /\nchanged no files\" and \"this host does not report them\". They were plain\n`Vec`s until #3552, so every host that could not measure them sent `[]` —\nwhich reads as the first answer and *is* the second. A wrapper that gates\nits evidence on \"did the turn touch anything\" then graded every run as\nuntouched, and nothing in the message let it notice.\n\nSo the absent case is spelled `None` (the key is omitted on the wire) and\nthe empty case is spelled `Some(vec![])` (`[]`). Additive:\n[`PROTOCOL_VERSION`] is unchanged, a plugin written against the old shape\nreads `[]` exactly where it always did, and a host that omits the key sends\nbytes the old readers already accepted as \"no entries\" — the difference is\nthat a reader who *cares* can now ask.",
-          "properties": {
-            "answer": {
-              "description": "The final assistant text.",
-              "type": "string"
-            },
-            "changed_files": {
-              "description": "Workspace-relative paths the turn changed, or `None` when this host does\nnot measure them. `Some(vec![])` is \"the turn changed nothing\".",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            },
-            "completed": {
-              "description": "Whether the engine reported the turn complete, as opposed to aborted.",
-              "type": "boolean"
-            },
-            "tools": {
-              "description": "The tools the turn dispatched, in call order, by name — or `None` when\nthis host does not observe them. See the type docs: `Some(vec![])` is\n\"the turn dispatched none\", which is a different claim.",
-              "items": {
-                "type": "string"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
-            }
+        "goal": {
+          "description": "The goal, as the user stated it.",
+          "type": "string"
+        },
+        "protocol_version": {
+          "description": "The version this message is written at.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "published": {
+          "description": "What earlier stages of this same turn published, in publication order.",
+          "items": {
+            "$ref": "#/$defs/PublishedSignal"
           },
-          "required": [
-            "completed"
+          "type": "array"
+        },
+        "round": {
+          "description": "Which round of the wrapper's loop this is; `0` for the first turn.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "stage": {
+          "$ref": "#/$defs/StageName",
+          "description": "Which declared stage this call is for. before_turn runs once per stage the host resolved this wrapper's declared order down to."
+        },
+        "wrapper": {
+          "description": "The variant id of the wrapper being asked — `StageProgram::variant`,\nand the join key of every per-variant comparison (#3388).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "wrapper",
+        "stage",
+        "round",
+        "goal"
+      ],
+      "type": "object"
+    },
+    "BeforeTurnResponse": {
+      "additionalProperties": false,
+      "description": "What a wrapper contributes to the turn about to run.\n\nEverything here is an *offer*: the host applies it, bounded by what the\nmanifest declared and what the user consented to. A wrapper cannot run the\nloop itself, and nothing in this type is a channel into it.",
+      "properties": {
+        "context": {
+          "description": "Context to put in front of the model — as volatile messages *after* the\nbyte-stable prefix, which [`VolatileContext`] makes the only option.",
+          "items": {
+            "$ref": "#/$defs/VolatileContext"
+          },
+          "type": "array"
+        },
+        "protocol_version": {
+          "description": "The version this message is written at.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "publish": {
+          "description": "Signals this stage publishes for later stages of the same turn to read. The host validates each value's type and carries it forward into the next stage's request. It does not change which stages run: that is resolved once, before the first stage.",
+          "items": {
+            "$ref": "#/$defs/PublishedSignal"
+          },
+          "type": "array"
+        },
+        "role": {
+          "description": "A role *intent* for this turn: the name of a `[roles.<name>]` entry the\nsame manifest declares. Never a model id, a provider, a URL or a\ncredential — the host resolves the intent against the user's BYOK\nproviders, and refuses an intent the manifest never declared.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scope": {
+          "description": "Workspace-relative paths the wrapper believes the turn should stay\nwithin. Advisory input to the host's own scoping — a plugin-supplied\npath is never itself a permission (`stella_protocol::candidate`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "witness": {
+          "description": "Workspace-relative paths this wrapper will judge its flip against. The host snapshots their identity before the turn and re-checks after it; the plugin never vouches for its own witness. A path outside the granted root is dropped from the watch, and declaring nothing leaves the tamper finding unchecked, which is not a pass.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "protocol_version"
+      ],
+      "type": "object"
+    },
+    "CandidateGrant": {
+      "additionalProperties": false,
+      "description": "The candidate workspace, as a plugin receives it.\n\n**A capability the host resolves and bounds, never a path a plugin is\ntrusted to stay inside.** The distinction is the whole design and it is\nworth being exact about, because the grant does hand out an absolute path:\n\n- [`Self::root`] is where the plugin's *own* reads and its *own* test run\n  happen. A plugin that runs a test suite needs a directory, and pretending\n  otherwise is what pushed three reference plugins onto `[runtime] env` for\n  their test command (#3498).\n- [`Self::handle`] is the capability. Every path the plugin names on the\n  way *back* — a scope, a withheld adoption path, a witness artifact — is\n  resolved against this handle's root by the host and refused if it lands\n  anywhere else, after symlinks, on the host's own filesystem\n  (`CandidateDenial`, and this crate's `candidate_grant::fence` for the\n  implementation — it was the staged pipeline's\n  `ports::CandidateHandles` until #3865 deleted that crate). The refusal is\n  the host's; nothing here is a promise\n  the plugin was asked to keep.\n\nSo a plugin that ignores the root and lies about where it went has told the\nhost nothing the host will act on, which is the property that lets the same\ngrant cross to a process in any language.",
+      "properties": {
+        "handle": {
+          "$ref": "#/$defs/CandidateHandle",
+          "description": "The name the host minted for this workspace, and the only thing that\nre-addresses it. Opaque: see [`CandidateHandle`]."
+        },
+        "root": {
+          "description": "The workspace's absolute root on the host's filesystem, canonical — the\nhost resolves symlinks *before* minting the grant, so the path a plugin\nis told and the path the host fences against are the same one.",
+          "type": "string"
+        },
+        "test": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TestPlan"
+            },
+            {
+              "type": "null"
+            }
           ],
+          "description": "The test the host would run in this workspace, when it has one to\ngive. `None` is \"the host has no test invocation\", never \"run whatever\nyou like\": a plugin with no plan reports\n[`FlipObservation::Unobservable`] rather than guessing."
+        }
+      },
+      "required": [
+        "handle",
+        "root"
+      ],
+      "type": "object"
+    },
+    "CandidateHandle": {
+      "description": "A serializable name for one live candidate workspace.\n\nOpaque by construction: the string is the host's, and nothing but the host\nthat minted it can turn one back into a workspace. It carries no path, no\nfile descriptor and no authority of its own — resolving it is a lookup in\nthe minting registry, so a handle for a workspace that was never created,\nor one already removed, is [`CandidateDenial::UnknownHandle`].\n\nA newtype rather than a bare `String` for the reason AGENTS.md's glossary\ngives: this workspace already has six identifiers that read alike, and an\nunwrapped `String` is how a seventh joins them.\n\n**It is a name, not a bearer token.** Ids are minted in order, so a plugin\nthat holds one handle can spell a sibling candidate's. Binding a handle to\nthe principal it was issued to belongs with plugin identity (#3380 A1) —\nuntil that exists (#3484), a host must not hand handles to two principals\nit means to keep apart.",
+      "type": "string"
+    },
+    "FlipObservation": {
+      "description": "What a wrapper saw of the fail→pass flip. Closed: a host refuses a value it does not know rather than reading it as a weaker one.",
+      "oneOf": [
+        {
+          "const": "not-attempted",
+          "description": "No flip was attempted — this wrapper's evidence is not a transition\n(`flip = \"not-applicable\"`), or no witness was authored this turn.",
+          "type": "string"
+        },
+        {
+          "const": "achieved",
+          "description": "Red before the work, green after it: the flip the witness contract\nasks for.",
+          "type": "string"
+        },
+        {
+          "const": "not-achieved",
+          "description": "The witness ran on both sides and did not flip.",
+          "type": "string"
+        },
+        {
+          "const": "unsatisfiable",
+          "description": "The witness failed **the same way** before and after, so its red says\nnothing about the change (#2540). A claim about the instrument, not\nabout the work — which is why it makes `judge` abstain rather than\nblame a worker who cannot repair an instrument.",
+          "type": "string"
+        },
+        {
+          "const": "unobservable",
+          "description": "The witness could not be run at all.",
+          "type": "string"
+        }
+      ]
+    },
+    "HostStage": {
+      "description": "A stage boundary **this host itself** emits.\n\nClosed by design, and the claim it makes is deliberately smaller than it\nused to be: this is not the stage vocabulary any more (that is\n[`StageName`], which is open), it is the set of boundaries the host knows\nhow to name on its own. The names and their order were taken from\n`stage_rank` in the staged pipeline's `replay.rs` (`crates/stella-pipeline`,\ndeleted in #3865), which was the canonical ordering then — and\n[`HostStage::kind`] makes the correspondence mechanical rather than a\nclaim, since it is one-to-one onto [`StageKind`]'s twelve. With that crate\ngone, this enum *is* the ordering of the host's own stages.\n\n**A name here is not a promise that every host runs it.** The vocabulary\nmirrors [`StageKind`] because a wrapper that cannot spell a boundary\ncannot describe the run it wraps; which hosts emit which boundary today\ndiffers per stage, and each variant below says so rather than leaving a\nmanifest author to discover it from a run that quietly did nothing.",
+      "oneOf": [
+        {
+          "const": "triage",
+          "description": "Classify the task and name what must be researched.",
+          "type": "string"
+        },
+        {
+          "const": "recall",
+          "description": "Pull prior context for the goal.",
+          "type": "string"
+        },
+        {
+          "const": "research",
+          "description": "Answer triage's questions with read-only sub-agents.",
+          "type": "string"
+        },
+        {
+          "const": "plan",
+          "description": "Turn the goal into steps.",
+          "type": "string"
+        },
+        {
+          "const": "scope",
+          "description": "Review the plan's scope before spending on it.",
+          "type": "string"
+        },
+        {
+          "const": "execute",
+          "description": "Run the turn.",
+          "type": "string"
+        },
+        {
+          "const": "witness",
+          "description": "Author the failing test that will measure the turn.",
+          "type": "string"
+        },
+        {
+          "const": "verify",
+          "description": "Turn evidence into a verdict.",
+          "type": "string"
+        },
+        {
+          "const": "verdict",
+          "description": "The verdict boundary — and **the staged pipeline does not dispatch\nit**, which is the one thing a manifest author has to know before\nwriting the name down.\n\nThe staged pipeline emitted no [`StageKind::Verdict`] at all: its\nverify stage emitted the `Verdict` *event* directly from\n`ladder_decision`, and its own `pipeline/tests.rs` asserted the stage\nnever appeared in that stream (`crates/stella-pipeline`, deleted in\n#3865). The hosts that do emit the boundary are the\ngoal loops — `crates/stella-cli/src/agent/goal.rs` and\n`crates/stella-serve/src/goal.rs` run-scoped,\n`crates/stella-core/src/goal.rs` turn-scoped — so a wrapper naming\n`verdict` describes a goal-loop run and not a staged one.",
+          "type": "string"
+        },
+        {
+          "const": "reflect",
+          "description": "Post-verdict self-reflection: mine the finished turn for lessons and\nrecord them for later recall.\n\nEmitted run-scoped today by `crates/stella-cli/src/agent.rs`, gated\nthere on the turn having done real work — the branch\n[`Signal::MutatingActions`] transcribes.",
+          "type": "string"
+        },
+        {
+          "const": "contextwrite",
+          "description": "Context write-back: episode summaries and fact upserts landing in the\ncontext plane.\n\nA **declared gap**: the work happens (`crates/stella-cli/src/agent.rs`\nrecords the episode under the same \"did real work\" gate as reflection)\nbut no host emits this boundary today, so nothing yet reports it.\nDeclarable so a wrapper can order the write-back it will drive once\nthe socket exists (#3380), and named as a gap here rather than\ndiscovered as a silence.",
+          "type": "string"
+        },
+        {
+          "const": "complete",
+          "description": "The run is done — the last boundary a run emits.\n\nEmitted run-scoped today by `stella-core`'s\n`EventSender::pairing_stage_complete` and by `stella-cli`'s command-deck\nforwarder.",
+          "type": "string"
+        }
+      ]
+    },
+    "ObservedEvidence": {
+      "additionalProperties": false,
+      "description": "The evidence a wrapper gathered — the plugin-owned half of an\n[`EvidenceSet`].\n\nEvery field here is something a plugin's own process can honestly observe:\nit ran the witness and watched it flip, or it ran a benchmark and counted.\nNothing here is a verdict, and nothing here is a fact only the host holds.",
+      "properties": {
+        "detail": {
+          "description": "What this wrapper's own process wants the next round told, in its own words. Advisory: it never decides a verdict, it only rides onto the correction a held-open round renders. Absent when there is nothing to add.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flip": {
+          "$ref": "#/$defs/FlipObservation",
+          "description": "What the wrapper saw of the fail→pass flip."
+        },
+        "measurements": {
+          "additionalProperties": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "description": "The numbers the oracle reported, by declared measurement name. A name\nabsent here is *missing*, never a satisfied budget — see\n`stella_runtime::wrapper::judge`.",
           "type": "object"
         }
       },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "flip"
+      ],
+      "type": "object"
+    },
+    "PublishedSignal": {
+      "additionalProperties": false,
+      "description": "One signal value a stage published.\n\nThe signal set is the manifest's closed [`Signal`] vocabulary, so a stage\ncannot invent a fact for a later condition to read — the load-time rule\n(\"a condition naming a signal the host does not publish is a load error\")\nstated for the socket that actually dispatches.",
+      "properties": {
+        "signal": {
+          "$ref": "#/$defs/Signal",
+          "description": "Which signal."
+        },
+        "value": {
+          "$ref": "#/$defs/SignalValue",
+          "description": "Its value this turn."
+        }
+      },
+      "required": [
+        "signal",
+        "value"
+      ],
+      "type": "object"
+    },
+    "Signal": {
+      "description": "A fact a condition may read.\n\nThe **published set** — naming anything outside it is a load error. Every\nentry transcribes a branch the pipeline takes today, at a named line; a\nfact with no live branch behind it is not added, because the grammar's\nwhole defence is that a new name is a reviewable decision rather than a\ndial someone might find a use for. Growing this set is how a wrapper gains\nexpressiveness — never a richer condition syntax.\n\nHost facts, readable by any stage:\n\n- `test-command` — `Pipeline::config.test_command`, the fact gating\n  witness authoring (`pipeline.rs`, the `authored_witness` conjunction).\n- `candidates` — `PipelineConfig::candidate_count()`. `n == 1` is the\n  single-shot/best-of-N split in `pipeline.rs::run`.\n- `budget-metered` — `budget.mode() != BudgetMode::Off`, the first thing\n  `pipeline/repair_gate.rs::repair_headroom` asks before a repair round\n  may be bought. Metered, not the amount: dollars are a float, the grammar\n  compares against whole numbers only, and a threshold silently coarser\n  than the guard's would be worse than no threshold.\n\nTriage's assessment, which decides the conversational fast path, whether\nresearch runs, and what the class is owed:\n\n- `conversational`, `questions`, `plans`, `verifies` — as before.\n- `wants-witness` — `assessment.wants_witness()`, a conjunct of the\n  authored-witness decision in `pipeline.rs::run`.\n- `wants-verifier` — `assessment.wants_verifier()`, read by the\n  `LadderDecision::Unverified` arm of `pipeline.rs::verify_candidate`.\n\nWhat execution produced, read by the ladder in `verify.rs`:\n\n- `mutating-actions` — `mutating_actions == 0`, a conjunct of\n  `LadderInputs::nothing_was_attempted`.\n- `diff-lines` — `diff_lines <= diff_budget`, the diff-budget conjunct of\n  the `SubmitFast` rung.\n\nWhat the witness stage produced:\n\n- `witness-authored` — `witness.is_some()`, which decides the effective\n  test command, the tamper sweep, and the mutation audit in\n  `pipeline.rs::verify_candidate`.\n\nWhat verification observed. The two test signals are **both** false when no\ntest ran, and that is deliberate: `touched_tests_passed` is an\n`Option<bool>`, and one `tests-passed` boolean would report a suite that\nnever ran identically to one that went red. Two total predicates keep the\nthird state visible, the way [`FlipOutcome::is_achieved`] and\n[`FlipOutcome::was_observed`] do for the flip:\n\n- `flip-achieved` — `flip.is_achieved()`, the receipt half of the\n  `SubmitFast` rung.\n- `tests-red` — `touched_tests_passed == Some(false)`, the ladder's\n  deterministic-failure rung.\n- `tests-green` — `touched_tests_passed == Some(true)`, the corroboration\n  the pipeline's own flip needs beside it.\n\n[`FlipOutcome::is_achieved`]: stella_protocol::FlipOutcome::is_achieved\n[`FlipOutcome::was_observed`]: stella_protocol::FlipOutcome::was_observed",
+      "oneOf": [
+        {
+          "const": "test-command",
+          "description": "Boolean, host: a `--test-command` is configured for this run.",
+          "type": "string"
+        },
+        {
+          "const": "candidates",
+          "description": "Count, host: how many candidates this run executes (best-of-N).",
+          "type": "string"
+        },
+        {
+          "const": "budget-metered",
+          "description": "Boolean, host: spend is actually gated, not merely recorded.",
+          "type": "string"
+        },
+        {
+          "const": "conversational",
+          "description": "Boolean, triage: this turn is chat, not a software task.",
+          "type": "string"
+        },
+        {
+          "const": "questions",
+          "description": "Count, triage: how many research questions triage named.",
+          "type": "string"
+        },
+        {
+          "const": "plans",
+          "description": "Boolean, triage: this task class plans.",
+          "type": "string"
+        },
+        {
+          "const": "verifies",
+          "description": "Boolean, triage: this task class verifies unconditionally.",
+          "type": "string"
+        },
+        {
+          "const": "wants-witness",
+          "description": "Boolean, triage: this turn warrants an authored witness test.",
+          "type": "string"
+        },
+        {
+          "const": "wants-verifier",
+          "description": "Boolean, triage: an inconclusive ladder warrants a model verifier.",
+          "type": "string"
+        },
+        {
+          "const": "mutating-actions",
+          "description": "Count, execute: calls dispatched that were able to change the tree.",
+          "type": "string"
+        },
+        {
+          "const": "diff-lines",
+          "description": "Count, execute: lines of diff the turn produced.",
+          "type": "string"
+        },
+        {
+          "const": "witness-authored",
+          "description": "Boolean, witness: a witness test was authored and accepted.",
+          "type": "string"
+        },
+        {
+          "const": "flip-achieved",
+          "description": "Boolean, verify: the tracked command went fail→pass and held. `false`\ncovers \"no flip\" **and** \"nothing observed one\" — pair it with\n`tests-green` rather than reading it as a negative finding.",
+          "type": "string"
+        },
+        {
+          "const": "tests-red",
+          "description": "Boolean, verify: a touched test ran and failed. `false` means \"no test\nran red\", which includes no test having run at all.",
+          "type": "string"
+        },
+        {
+          "const": "tests-green",
+          "description": "Boolean, verify: a touched test ran and passed. `false` means \"no test\nran green\", which includes no test having run at all.",
+          "type": "string"
+        }
+      ]
+    },
+    "SignalValue": {
+      "description": "A published signal's value — the two shapes [`SignalKind`] enumerates.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A truth value.",
+          "properties": {
+            "boolean": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "boolean"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A non-negative count.",
+          "properties": {
+            "count": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "count"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "StageName": {
+      "description": "The name of a stage a wrapper declares: one of the host's own, or a word\nthis manifest contributed (#3963).\n\n# Why this is open, and what still refuses to load\n\nA closed vocabulary capped the set of turn shapes a plugin could express at\nthe set the host anticipated, which is the exact shape `doc:roleless-core`\nexists to remove. What it bought — that a manifest cannot declare a stage\nnothing will dispatch — is kept, and by a stronger route than a closed enum:\nthe dispatcher iterates whatever the resolved program holds, so a\ncontributed stage dispatches *because* it was declared, and\nloading still refuses the names that could not be dispatched, rendered, or\ntold apart from a host boundary.\n\n# Normalization is what keeps one word one stage\n\n[`StageName::new`] resolves a name [`HostStage`] knows into\n[`StageName::Host`], so [`StageName::Contributed`] never holds a word the\nhost already answers to — the same discipline, and the same reason, as\n`stella_protocol::StageName`: a value that does not survive its own round\ntrip is what invariant 4 forbids.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A boundary this host emits.",
+          "properties": {
+            "Host": {
+              "$ref": "#/$defs/HostStage"
+            }
+          },
+          "required": [
+            "Host"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A stage the manifest contributed, under its own word. Never one of the host's own boundary names, and checked at manifest load for being dispatchable, renderable, and distinguishable from them.",
+          "properties": {
+            "Contributed": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "Contributed"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TestBaseline": {
+      "description": "What a [`TestPlan`]'s invocation reported before the turn ran.\n\nFour answers rather than an exit code, and the fourth is why: a run that\ntimed out or could not find its toolchain never observed an assertion, and\nscoring its non-zero exit as \"red\" is exactly the bug `CmdOutcome`'s\n`assertion_result` exists to close (#860) — an infra failure would satisfy\na flip's precondition and the next clean run would be credited as a fix.",
+      "oneOf": [
+        {
+          "const": "not-run",
+          "description": "The host did not run the invocation before the turn, so nothing is\nclaimed about it.",
+          "type": "string"
+        },
+        {
+          "const": "passed",
+          "description": "It ran and its assertions passed.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "It ran and its assertions genuinely failed — the red a flip needs.",
+          "type": "string"
+        },
+        {
+          "const": "unobserved",
+          "description": "It was attempted and did not complete, so it says nothing about\nassertions either way.",
+          "type": "string"
+        }
+      ]
+    },
+    "TestPlan": {
+      "additionalProperties": false,
+      "description": "One test invocation, as the host already parsed it.\n\n**argv, never a shell string** — the #1400 rule every spawned thing in this\nworkspace follows, and the reason the host's own strict test-command parser\nruns before a grant is minted rather than inside the plugin. A plugin\nreceives a program and its arguments; it never receives a line to hand to a\nshell, and a command the host's parser refuses produces no grant to carry\none.",
+      "properties": {
+        "args": {
+          "description": "Its exact argument vector.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "baseline": {
+          "$ref": "#/$defs/TestBaseline",
+          "default": "not-run",
+          "description": "What this same invocation reported *before* the turn ran — the red half\nof a fail→pass flip, handed over so a plugin does not have to\nreconstruct it (or take it from an environment variable, which is what\nTrack C had to do)."
+        },
+        "program": {
+          "description": "The test runner executable, from the host's closed runner vocabulary.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "program"
+      ],
+      "type": "object"
+    },
+    "TurnOutcome": {
+      "additionalProperties": false,
+      "description": "The read-only report of a turn that finished.\n\nThe engine always finishes its own turn and always says so; `completed` is\nthat statement, and a wrapper's \"the whole job is over\" is a separate,\nseparately named thing ([`Continuation`]) that cannot fake it.\n\n# Why two of the four fields are optional\n\n`tools` and `changed_files` are facts a host **may not have**, and the two\nanswers a plugin needs to tell apart are \"the turn dispatched no tools /\nchanged no files\" and \"this host does not report them\". They were plain\n`Vec`s until #3552, so every host that could not measure them sent `[]` —\nwhich reads as the first answer and *is* the second. A wrapper that gates\nits evidence on \"did the turn touch anything\" then graded every run as\nuntouched, and nothing in the message let it notice.\n\nSo the absent case is spelled `None` (the key is omitted on the wire) and\nthe empty case is spelled `Some(vec![])` (`[]`). Additive:\n[`PROTOCOL_VERSION`] is unchanged, a plugin written against the old shape\nreads `[]` exactly where it always did, and a host that omits the key sends\nbytes the old readers already accepted as \"no entries\" — the difference is\nthat a reader who *cares* can now ask.",
+      "properties": {
+        "answer": {
+          "description": "The final assistant text.",
+          "type": "string"
+        },
+        "changed_files": {
+          "description": "Workspace-relative paths the turn changed, or `None` when this host does\nnot measure them. `Some(vec![])` is \"the turn changed nothing\".",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "completed": {
+          "description": "Whether the engine reported the turn complete, as opposed to aborted.",
+          "type": "boolean"
+        },
+        "tools": {
+          "description": "The tools the turn dispatched, in call order, by name — or `None` when\nthis host does not observe them. See the type docs: `Some(vec![])` is\n\"the turn dispatched none\", which is a different claim.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "completed"
+      ],
+      "type": "object"
+    },
+    "VolatileContext": {
+      "additionalProperties": false,
+      "description": "Context a wrapper contributes to a turn.\n\n**The invariant-7 constraint, encoded in the type.** Contributed context\nrides as a volatile message *after* the byte-stable system-prompt prefix,\nnever inside it: prompt-cache hits are a feature, and a wrapper that could\ninject into the stable prefix would make every installed plugin a per-turn\ncost regression for every user who installed it. That is the same\ndiscipline `crates/stella-cli/src/agent/prompt.rs::build_system_prompt` and\n`crates/stella-cli/src/memory.rs` already hold for recalled context.\n\nSo this type carries no placement field. There is no `Placement::System`\nto pick, no `stable: bool` to set, and **the body is not reachable as a\nfield**: the one way out of the value is\n[`VolatileContext::into_message`], which builds a\n[`CompletionMessage::user`] — a message that by construction is not index\n0's system message.\n\nThe privacy is the enforcement, and it was prose until #3524. While `text`\nwas public, a host could write `prompt.push_str(&ctx.text)` into the stable\nprefix, change no type, and stay green — the unit test below constructs a\nvalue and calls `into_message`, so it can say nothing about a caller that\nnever does. Every installed plugin then became a per-turn prompt-cache\nmiss, which is exactly the cost regression this type exists to make\nunrepresentable. Now that line does not compile out of crate, which the\n`compile_fail` doctest below pins:\n\n```compile_fail,E0616\nlet ctx = stella_plugin::VolatileContext::new(\"recall\", \"the last run failed on I/O\");\nlet mut prompt = String::from(\"<system prefix>\");\nprompt.push_str(&ctx.text);\n```\n\nThe sanctioned reads, and all of them: the provenance label a journal\nprints, and spending the value as the message it is.\n\n```\nuse stella_plugin::VolatileContext;\nlet ctx = VolatileContext::new(\"recall\", \"the last run failed on I/O\");\nassert_eq!(ctx.label(), \"recall\");\nassert_eq!(ctx.into_message().content, \"the last run failed on I/O\");\n```\n\nWhat this does **not** claim: that a host cannot splice the body in\nanywhere at all. A caller that spends the contribution and then reaches\ninto the returned [`CompletionMessage`] has unwrapped a *user* message on\npurpose, in a line that says so; no type can stop that, and pretending\notherwise would be the same overclaim the field made. What is closed is the\ncheap path — the one a contributor takes without noticing they took it.",
+      "properties": {
+        "label": {
+          "description": "A short human-readable name for where this came from, for the journal\nand the deck. Not shown to the model as a header — the host decides\npresentation. Read through [`VolatileContext::label`].",
+          "type": "string"
+        },
+        "text": {
+          "description": "The context itself. Private on purpose — see the type docs; the only\nexit is [`VolatileContext::into_message`].",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "text"
+      ],
+      "type": "object"
+    },
+    "WrapperRequest": {
       "description": "One request on the wire: `{\"point\": …, \"body\": {…}}`.\n\nAdjacently framed rather than internally tagged so the body keeps\n`deny_unknown_fields` — an internally tagged enum hands the tag field down\ninto the variant, where a denying struct rejects it. `Serialize` is derived\nfrom that framing; `Deserialize` is written out by hand over a two-key\nenvelope that denies unknown fields, because the derived reader for the\nsame framing accepts any number of keys beside `point` and `body` and drops\nthem silently (#3500 — see this module's `Envelope`).",
       "oneOf": [
         {
@@ -513,292 +661,6 @@
       "title": "WrapperRequest"
     },
     "WrapperResponse": {
-      "$defs": {
-        "AfterTurnResponse": {
-          "additionalProperties": false,
-          "description": "The evidence a wrapper gathered.",
-          "properties": {
-            "evidence": {
-              "$ref": "#/$defs/ObservedEvidence",
-              "description": "What the wrapper observed — its own half of the evidence, never the\nhost's ([`ObservedEvidence`], and #3499 for why the difference is a\ntype)."
-            },
-            "protocol_version": {
-              "description": "The version this message is written at.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "protocol_version",
-            "evidence"
-          ],
-          "type": "object"
-        },
-        "BeforeTurnResponse": {
-          "additionalProperties": false,
-          "description": "What a wrapper contributes to the turn about to run.\n\nEverything here is an *offer*: the host applies it, bounded by what the\nmanifest declared and what the user consented to. A wrapper cannot run the\nloop itself, and nothing in this type is a channel into it.",
-          "properties": {
-            "context": {
-              "description": "Context to put in front of the model — as volatile messages *after* the\nbyte-stable prefix, which [`VolatileContext`] makes the only option.",
-              "items": {
-                "$ref": "#/$defs/VolatileContext"
-              },
-              "type": "array"
-            },
-            "protocol_version": {
-              "description": "The version this message is written at.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "publish": {
-              "description": "Signals this stage publishes for later stages of the same turn to read. The host validates each value's type and carries it forward into the next stage's request. It does not change which stages run: that is resolved once, before the first stage.",
-              "items": {
-                "$ref": "#/$defs/PublishedSignal"
-              },
-              "type": "array"
-            },
-            "role": {
-              "description": "A role *intent* for this turn: the name of a `[roles.<name>]` entry the\nsame manifest declares. Never a model id, a provider, a URL or a\ncredential — the host resolves the intent against the user's BYOK\nproviders, and refuses an intent the manifest never declared.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "scope": {
-              "description": "Workspace-relative paths the wrapper believes the turn should stay\nwithin. Advisory input to the host's own scoping — a plugin-supplied\npath is never itself a permission (`stella_protocol::candidate`).",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "witness": {
-              "description": "Workspace-relative paths this wrapper will judge its flip against. The host snapshots their identity before the turn and re-checks after it; the plugin never vouches for its own witness. A path outside the granted root is dropped from the watch, and declaring nothing leaves the tamper finding unchecked, which is not a pass.",
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "protocol_version"
-          ],
-          "type": "object"
-        },
-        "FlipObservation": {
-          "description": "What a wrapper saw of the fail→pass flip. Closed: a host refuses a value it does not know rather than reading it as a weaker one.",
-          "oneOf": [
-            {
-              "const": "not-attempted",
-              "description": "No flip was attempted — this wrapper's evidence is not a transition\n(`flip = \"not-applicable\"`), or no witness was authored this turn.",
-              "type": "string"
-            },
-            {
-              "const": "achieved",
-              "description": "Red before the work, green after it: the flip the witness contract\nasks for.",
-              "type": "string"
-            },
-            {
-              "const": "not-achieved",
-              "description": "The witness ran on both sides and did not flip.",
-              "type": "string"
-            },
-            {
-              "const": "unsatisfiable",
-              "description": "The witness failed **the same way** before and after, so its red says\nnothing about the change (#2540). A claim about the instrument, not\nabout the work — which is why it makes `judge` abstain rather than\nblame a worker who cannot repair an instrument.",
-              "type": "string"
-            },
-            {
-              "const": "unobservable",
-              "description": "The witness could not be run at all.",
-              "type": "string"
-            }
-          ]
-        },
-        "ObservedEvidence": {
-          "additionalProperties": false,
-          "description": "The evidence a wrapper gathered — the plugin-owned half of an\n[`EvidenceSet`].\n\nEvery field here is something a plugin's own process can honestly observe:\nit ran the witness and watched it flip, or it ran a benchmark and counted.\nNothing here is a verdict, and nothing here is a fact only the host holds.",
-          "properties": {
-            "detail": {
-              "description": "What this wrapper's own process wants the next round told, in its own words. Advisory: it never decides a verdict, it only rides onto the correction a held-open round renders. Absent when there is nothing to add.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "flip": {
-              "$ref": "#/$defs/FlipObservation",
-              "description": "What the wrapper saw of the fail→pass flip."
-            },
-            "measurements": {
-              "additionalProperties": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": "integer"
-              },
-              "description": "The numbers the oracle reported, by declared measurement name. A name\nabsent here is *missing*, never a satisfied budget — see\n`stella_runtime::wrapper::judge`.",
-              "type": "object"
-            }
-          },
-          "required": [
-            "flip"
-          ],
-          "type": "object"
-        },
-        "PublishedSignal": {
-          "additionalProperties": false,
-          "description": "One signal value a stage published.\n\nThe signal set is the manifest's closed [`Signal`] vocabulary, so a stage\ncannot invent a fact for a later condition to read — the load-time rule\n(\"a condition naming a signal the host does not publish is a load error\")\nstated for the socket that actually dispatches.",
-          "properties": {
-            "signal": {
-              "$ref": "#/$defs/Signal",
-              "description": "Which signal."
-            },
-            "value": {
-              "$ref": "#/$defs/SignalValue",
-              "description": "Its value this turn."
-            }
-          },
-          "required": [
-            "signal",
-            "value"
-          ],
-          "type": "object"
-        },
-        "Signal": {
-          "description": "A fact a condition may read.\n\nThe **published set** — naming anything outside it is a load error. Every\nentry transcribes a branch the pipeline takes today, at a named line; a\nfact with no live branch behind it is not added, because the grammar's\nwhole defence is that a new name is a reviewable decision rather than a\ndial someone might find a use for. Growing this set is how a wrapper gains\nexpressiveness — never a richer condition syntax.\n\nHost facts, readable by any stage:\n\n- `test-command` — `Pipeline::config.test_command`, the fact gating\n  witness authoring (`pipeline.rs`, the `authored_witness` conjunction).\n- `candidates` — `PipelineConfig::candidate_count()`. `n == 1` is the\n  single-shot/best-of-N split in `pipeline.rs::run`.\n- `budget-metered` — `budget.mode() != BudgetMode::Off`, the first thing\n  `pipeline/repair_gate.rs::repair_headroom` asks before a repair round\n  may be bought. Metered, not the amount: dollars are a float, the grammar\n  compares against whole numbers only, and a threshold silently coarser\n  than the guard's would be worse than no threshold.\n\nTriage's assessment, which decides the conversational fast path, whether\nresearch runs, and what the class is owed:\n\n- `conversational`, `questions`, `plans`, `verifies` — as before.\n- `wants-witness` — `assessment.wants_witness()`, a conjunct of the\n  authored-witness decision in `pipeline.rs::run`.\n- `wants-verifier` — `assessment.wants_verifier()`, read by the\n  `LadderDecision::Unverified` arm of `pipeline.rs::verify_candidate`.\n\nWhat execution produced, read by the ladder in `verify.rs`:\n\n- `mutating-actions` — `mutating_actions == 0`, a conjunct of\n  `LadderInputs::nothing_was_attempted`.\n- `diff-lines` — `diff_lines <= diff_budget`, the diff-budget conjunct of\n  the `SubmitFast` rung.\n\nWhat the witness stage produced:\n\n- `witness-authored` — `witness.is_some()`, which decides the effective\n  test command, the tamper sweep, and the mutation audit in\n  `pipeline.rs::verify_candidate`.\n\nWhat verification observed. The two test signals are **both** false when no\ntest ran, and that is deliberate: `touched_tests_passed` is an\n`Option<bool>`, and one `tests-passed` boolean would report a suite that\nnever ran identically to one that went red. Two total predicates keep the\nthird state visible, the way [`FlipOutcome::is_achieved`] and\n[`FlipOutcome::was_observed`] do for the flip:\n\n- `flip-achieved` — `flip.is_achieved()`, the receipt half of the\n  `SubmitFast` rung.\n- `tests-red` — `touched_tests_passed == Some(false)`, the ladder's\n  deterministic-failure rung.\n- `tests-green` — `touched_tests_passed == Some(true)`, the corroboration\n  the pipeline's own flip needs beside it.\n\n[`FlipOutcome::is_achieved`]: stella_protocol::FlipOutcome::is_achieved\n[`FlipOutcome::was_observed`]: stella_protocol::FlipOutcome::was_observed",
-          "oneOf": [
-            {
-              "const": "test-command",
-              "description": "Boolean, host: a `--test-command` is configured for this run.",
-              "type": "string"
-            },
-            {
-              "const": "candidates",
-              "description": "Count, host: how many candidates this run executes (best-of-N).",
-              "type": "string"
-            },
-            {
-              "const": "budget-metered",
-              "description": "Boolean, host: spend is actually gated, not merely recorded.",
-              "type": "string"
-            },
-            {
-              "const": "conversational",
-              "description": "Boolean, triage: this turn is chat, not a software task.",
-              "type": "string"
-            },
-            {
-              "const": "questions",
-              "description": "Count, triage: how many research questions triage named.",
-              "type": "string"
-            },
-            {
-              "const": "plans",
-              "description": "Boolean, triage: this task class plans.",
-              "type": "string"
-            },
-            {
-              "const": "verifies",
-              "description": "Boolean, triage: this task class verifies unconditionally.",
-              "type": "string"
-            },
-            {
-              "const": "wants-witness",
-              "description": "Boolean, triage: this turn warrants an authored witness test.",
-              "type": "string"
-            },
-            {
-              "const": "wants-verifier",
-              "description": "Boolean, triage: an inconclusive ladder warrants a model verifier.",
-              "type": "string"
-            },
-            {
-              "const": "mutating-actions",
-              "description": "Count, execute: calls dispatched that were able to change the tree.",
-              "type": "string"
-            },
-            {
-              "const": "diff-lines",
-              "description": "Count, execute: lines of diff the turn produced.",
-              "type": "string"
-            },
-            {
-              "const": "witness-authored",
-              "description": "Boolean, witness: a witness test was authored and accepted.",
-              "type": "string"
-            },
-            {
-              "const": "flip-achieved",
-              "description": "Boolean, verify: the tracked command went fail→pass and held. `false`\ncovers \"no flip\" **and** \"nothing observed one\" — pair it with\n`tests-green` rather than reading it as a negative finding.",
-              "type": "string"
-            },
-            {
-              "const": "tests-red",
-              "description": "Boolean, verify: a touched test ran and failed. `false` means \"no test\nran red\", which includes no test having run at all.",
-              "type": "string"
-            },
-            {
-              "const": "tests-green",
-              "description": "Boolean, verify: a touched test ran and passed. `false` means \"no test\nran green\", which includes no test having run at all.",
-              "type": "string"
-            }
-          ]
-        },
-        "SignalValue": {
-          "description": "A published signal's value — the two shapes [`SignalKind`] enumerates.",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "description": "A truth value.",
-              "properties": {
-                "boolean": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "boolean"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "A non-negative count.",
-              "properties": {
-                "count": {
-                  "format": "uint64",
-                  "minimum": 0,
-                  "type": "integer"
-                }
-              },
-              "required": [
-                "count"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "VolatileContext": {
-          "additionalProperties": false,
-          "description": "Context a wrapper contributes to a turn.\n\n**The invariant-7 constraint, encoded in the type.** Contributed context\nrides as a volatile message *after* the byte-stable system-prompt prefix,\nnever inside it: prompt-cache hits are a feature, and a wrapper that could\ninject into the stable prefix would make every installed plugin a per-turn\ncost regression for every user who installed it. That is the same\ndiscipline `crates/stella-cli/src/agent/prompt.rs::build_system_prompt` and\n`crates/stella-cli/src/memory.rs` already hold for recalled context.\n\nSo this type carries no placement field. There is no `Placement::System`\nto pick, no `stable: bool` to set, and **the body is not reachable as a\nfield**: the one way out of the value is\n[`VolatileContext::into_message`], which builds a\n[`CompletionMessage::user`] — a message that by construction is not index\n0's system message.\n\nThe privacy is the enforcement, and it was prose until #3524. While `text`\nwas public, a host could write `prompt.push_str(&ctx.text)` into the stable\nprefix, change no type, and stay green — the unit test below constructs a\nvalue and calls `into_message`, so it can say nothing about a caller that\nnever does. Every installed plugin then became a per-turn prompt-cache\nmiss, which is exactly the cost regression this type exists to make\nunrepresentable. Now that line does not compile out of crate, which the\n`compile_fail` doctest below pins:\n\n```compile_fail,E0616\nlet ctx = stella_plugin::VolatileContext::new(\"recall\", \"the last run failed on I/O\");\nlet mut prompt = String::from(\"<system prefix>\");\nprompt.push_str(&ctx.text);\n```\n\nThe sanctioned reads, and all of them: the provenance label a journal\nprints, and spending the value as the message it is.\n\n```\nuse stella_plugin::VolatileContext;\nlet ctx = VolatileContext::new(\"recall\", \"the last run failed on I/O\");\nassert_eq!(ctx.label(), \"recall\");\nassert_eq!(ctx.into_message().content, \"the last run failed on I/O\");\n```\n\nWhat this does **not** claim: that a host cannot splice the body in\nanywhere at all. A caller that spends the contribution and then reaches\ninto the returned [`CompletionMessage`] has unwrapped a *user* message on\npurpose, in a line that says so; no type can stop that, and pretending\notherwise would be the same overclaim the field made. What is closed is the\ncheap path — the one a contributor takes without noticing they took it.",
-          "properties": {
-            "label": {
-              "description": "A short human-readable name for where this came from, for the journal\nand the deck. Not shown to the model as a header — the host decides\npresentation. Read through [`VolatileContext::label`].",
-              "type": "string"
-            },
-            "text": {
-              "description": "The context itself. Private on purpose — see the type docs; the only\nexit is [`VolatileContext::into_message`].",
-              "type": "string"
-            }
-          },
-          "required": [
-            "label",
-            "text"
-          ],
-          "type": "object"
-        }
-      },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
       "description": "One response on the wire, in the same framing as [`WrapperRequest`] — and\nrefused the same way when it carries a key this host does not know.",
       "oneOf": [
         {
@@ -842,6 +704,6 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "The two messages a wrapper plugin exchanges with its host at a point. WrapperRequest is what the host writes to the plugin's stdin; WrapperResponse is what the plugin writes back to stdout to end the point. Both are adjacently framed as {\"point\": …, \"body\": {…}} and both refuse a key beside those two. This document is a definitions container, not a union: the two are not interchangeable, and `point` does not discriminate between them. The host-call and driver channels cross the same pipes and are published in wrapper.wire.json instead — see crates/stella-plugin/src/wire_schema.rs for why.",
+  "description": "The two messages a wrapper plugin exchanges with its host at a point, and every payload they carry. WrapperRequest is what the host writes to the plugin's stdin; WrapperResponse is what the plugin writes back to stdout to end the point. Both are adjacently framed as {\"point\": …, \"body\": {…}} and both refuse a key beside those two. This document is a definitions container, not a union: the two are not interchangeable, and `point` does not discriminate between them. The host-call and driver channels cross the same pipes and are published in wrapper.wire.json instead — see crates/stella-plugin/src/wire_schema.rs for why.",
   "title": "StellaWrapperSocket"
 }
