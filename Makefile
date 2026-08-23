@@ -173,7 +173,7 @@ record-demo: ## Record a terminal timelapse (LIMIT=mins TARGET=secs CMD="..."; d
 record-demo-video: ## Re-cut docs/demo/stella-deck.mp4 from the command deck (FILM=path to keep the intermediate)
 	cargo run -q --release -p stella-tui --example deck_film > $(FILM)
 	./scripts/render-deck-film.py $(FILM) -o docs/demo/stella-deck.mp4 \
-		--poster docs/demo/stella-deck-poster.png --poster-frame 1100
+		--poster docs/demo/stella-deck-poster.png --poster-frame 807
 	@echo "Re-cut. Watch it before committing — the shot list frames rows the"
 	@echo "deck's own layout decides, so a layout change can move content out"
 	@echo "of shot without failing anything."
