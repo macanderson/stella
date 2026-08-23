@@ -177,6 +177,28 @@ pub(super) fn migrate_v15_to_v16(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// v29 → v30: the stall rung's own number on the receipt header (#3621).
+///
+/// `turn_stall_seconds` computes the pure-`sleep` seconds a turn has asked
+/// for on every step of every turn, and until now nothing persisted it: a
+/// bench trial that slept away its allowance could only be counted by joining
+/// `tool_start` → `tool_result` in the event stream and re-running the
+/// classifier by hand. One nullable column on the header the engine already
+/// writes per model call.
+///
+/// Nullable with no default and no backfill, and the distinction is the
+/// point: NULL means "this emitter did not classify", which is what every
+/// pre-v30 row is and what the replay path — a receipt rebuilt from stored
+/// messages, with no detector window around it — keeps writing. A `0` default
+/// would claim every historical turn was observed and found not to sleep,
+/// which is the invented answer this column exists to replace.
+pub(super) fn migrate_v29_to_v30(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "step_receipt", "stall_seconds_requested")? {
+        tx.execute_batch("ALTER TABLE step_receipt ADD COLUMN stall_seconds_requested INTEGER;")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,5 +471,56 @@ mod tests {
 
         // Idempotent on a file already at the v16 shape.
         apply_migration(&mut conn, migrate_v15_to_v16, 16).expect("idempotent");
+    }
+
+    /// **Witness (#3621).** A file written before the stall column existed
+    /// gains it, and its rows read back NULL — "nobody classified this", which
+    /// is exactly true of every receipt written before the rung recorded
+    /// anything. A `0` default would have claimed each of them was observed
+    /// and found not to sleep.
+    #[test]
+    fn v30_migration_adds_the_stall_column_and_leaves_legacy_receipts_null() {
+        let mut conn = Connection::open_in_memory().expect("db");
+        conn.execute_batch(
+            "CREATE TABLE step_receipt (
+               execution_id INTEGER NOT NULL,
+               turn_instance INTEGER NOT NULL,
+               step INTEGER NOT NULL,
+               call_seq INTEGER NOT NULL DEFAULT 0,
+               provider TEXT NOT NULL,
+               model TEXT NOT NULL,
+               call_role TEXT NOT NULL,
+               effective_budget_tokens INTEGER NOT NULL,
+               calibration_factor REAL NOT NULL,
+               estimated_input_tokens INTEGER NOT NULL,
+               compiled_frame_id TEXT,
+               frame_hash TEXT,
+               PRIMARY KEY (execution_id, turn_instance, step, call_seq)
+             );
+             INSERT INTO step_receipt VALUES
+               (1, 0, 3, 0, 'anthropic', 'opus', 'worker', 100, 1.0, 40, NULL, NULL);",
+        )
+        .expect("v29 schema");
+
+        apply_migration(&mut conn, migrate_v29_to_v30, 30).expect("migrate");
+
+        let stall: Option<i64> = conn
+            .query_row(
+                "SELECT stall_seconds_requested FROM step_receipt WHERE execution_id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .expect("the legacy row survives with the column readable");
+        assert_eq!(stall, None, "a pre-v30 receipt classified nothing");
+
+        conn.execute(
+            "INSERT INTO step_receipt VALUES
+               (1, 0, 4, 0, 'anthropic', 'opus', 'worker', 100, 1.0, 40, NULL, NULL, 900)",
+            [],
+        )
+        .expect("the new shape accepts the rung's number");
+
+        // Idempotent on a file already at the v30 shape.
+        apply_migration(&mut conn, migrate_v29_to_v30, 30).expect("idempotent");
     }
 }

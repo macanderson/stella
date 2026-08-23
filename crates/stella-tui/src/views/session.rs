@@ -667,19 +667,19 @@ mod tests {
         // the result has folded (#4155). The result's inline diff must
         // render, and must go on rendering *the change that call made*.
         //
-        // It used to vanish instead: `FileState` kept one `latest_diff` and
-        // the ref resolved only while `changes` still equalled the recorded
-        // seq, so the second edit to a file silently stripped the first
-        // edit's diff off its row. A session that touched one file five
+        // It used to vanish instead: `FileState` kept one diff for the path
+        // and the ref resolved only while `changes` still equalled the
+        // recorded seq, so the second edit to a file silently stripped the
+        // first edit's diff off its row. A session that touched one file five
         // times showed four edits with nothing under them. The path now
-        // remembers its last `DIFF_HISTORY` diffs by seq, so each row
-        // resolves its own — attribution, which was always the point, now
-        // achieved by keeping the right diff rather than by dropping every
-        // diff that might be the wrong one.
+        // remembers every mutation by seq, so each row resolves its own —
+        // attribution, which was always the point, achieved by keeping the
+        // right diff rather than by dropping every diff that might be the
+        // wrong one.
         //
-        // The fold cache still keys on the total mutation count, because
-        // eviction from that history *can* change how a settled entry
-        // renders while nothing is appended to the transcript.
+        // The fold cache still keys on the total mutation count, because a
+        // release from that history *can* change how a settled entry renders
+        // while nothing is appended to the transcript.
         let mut model = SessionModel::new();
         model.apply(&AgentEvent::ToolStart {
             call: ToolCall {
@@ -767,11 +767,12 @@ mod tests {
             "and never adopts a later call's change:\n{text}"
         );
 
-        // Past `DIFF_HISTORY` mutations the recorded seq falls off the end
-        // of the ring and there is no diff left that belongs to this call.
-        // The row degrades to naming its result — and the fold must refold
-        // to show that, with the transcript still untouched.
-        for i in 0..crate::model::DIFF_HISTORY {
+        // **The witness (#4365).** Nine more mutations of the same path. The
+        // eight-deep ring this replaced dropped the first edit's diff on the
+        // ninth, and this block used to assert that loss as the contract;
+        // nothing about the ninth edit makes the first row's change less
+        // true, so the assertion is now that it still renders.
+        for i in 0..9 {
             model.apply(&AgentEvent::FileChange {
                 path: "src/x.rs".into(),
                 kind: FileChangeKind::Modified,
@@ -800,12 +801,13 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.content.clone()))
             .collect();
         assert!(
-            !text.contains("first_diff_line"),
-            "an evicted diff stops rendering:\n{text}"
+            text.contains("first_diff_line"),
+            "the ninth mutation does not take the first row's diff:\n{text}"
         );
         assert!(
             !text.contains("evicting_edit_"),
-            "and is not replaced by a change the call never made:\n{text}"
+            "and the row is still not replaced by a change the call never \
+             made:\n{text}"
         );
 
         // And the incrementally-invalidated fold stays line-exact.

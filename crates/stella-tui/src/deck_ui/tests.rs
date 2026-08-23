@@ -10,6 +10,7 @@ use super::*;
 use crate::envelope::AgentMeta;
 use stella_protocol::AgentEvent;
 
+mod agents;
 mod composer;
 mod esc;
 mod focus;
@@ -25,6 +26,7 @@ mod sessions;
 mod skills;
 mod splash;
 mod tabs;
+mod traces;
 mod transcript_nav;
 
 /// A model whose lead already has `prompts` queued, for the queue-editor and

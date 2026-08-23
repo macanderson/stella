@@ -22,17 +22,17 @@
  │ ⊙ apps/app/automations/page.tsx          ┌ models  resolved routing ───────────────────────────────── esc close ┐
  │ ⎿ 312 lines                              │session   glm-5.2                                                     │                         42ms
                                             │auto      model off · effort on · thinking off                        │
-☰  plan  5/7  ·  Workflows canvas           │                                                                      │
-                                            │lead      zai/glm-5.2-air                                             │
-⏸ plan  Refactor the automations store into │          medium · thinking on · from default_model                   │
-                                            │think     z-ai/glm-5.2                                    unassigned  │
-                                            │          low · thinking off · from agents.triage.model               │
-                                            │research  zai/glm-5.2-air                                             │
-                                            │          low · thinking off · from default_model                     │
+ │ ● edit apps/app/automations/page.tsx +4 -│                                                                      │
+ │ ⎿                                        │lead      zai/glm-5.2-air                                             │                 +4 −1 · 18ms
+ │     10 -  const items = []               │          medium · thinking on · from default_model                   │
+ │     10 +  const items = useAutomations() │think     z-ai/glm-5.2                                    unassigned  │
+ │     11 +  const [q, setQ] = useState("") │          low · thinking off · from agents.triage.model               │
+ │     12 +  const filtered = filter(items, │research  zai/glm-5.2-air                                             │
+ │     13 +  const onNew = () => open()     │          low · thinking off · from default_model                     │
                                             │plan      zai/glm-5.2-air                                             │
-                                            │          medium · thinking on · from default_model                   │
+☰  plan  5/7  ·  Workflows canvas           │          medium · thinking on · from default_model                   │
                                             │work      zai/glm-5.2-air                                     served  │
-                                            │          medium · thinking on · from default_model                   │
+⏸ plan  Refactor the automations store into │          medium · thinking on · from default_model                   │
                                             │verify    anthropic/claude-opus-5                         unassigned  │
                                             │          high  (effort_auto replaced "max") · thinking on            │
                                             │          from pipeline_verifier_model                                │

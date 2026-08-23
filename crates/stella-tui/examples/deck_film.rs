@@ -75,9 +75,9 @@ use ratatui::style::{Color, Modifier};
 use stella_tui::scenario::{demo_engine_config, demo_graph, demo_inbound};
 use stella_tui::views::engine::EngineTab;
 use stella_tui::{
-    DeckTab, DeckUi, EngineRole, IssueRow, McpServerInfo, ResourceSample, SettingsPane, SkillRow,
-    SkillScope, SkillsView, ToolDenial, ToolPolicyState, ToolRow, ToolScope, WorkspaceModel,
-    render_deck,
+    AgentScope, AgentVersionInfo, DeckTab, DeckUi, EngineRole, InstalledAgentEntry, IssueRow,
+    McpServerInfo, ResourceSample, SettingsPane, SkillRow, SkillScope, SkillsView, ToolDenial,
+    ToolPolicyState, ToolRow, ToolScope, WorkspaceModel, render_deck,
 };
 
 // ───────────────────────────── film geometry ─────────────────────────────
@@ -255,6 +255,13 @@ enum Scene {
     Splash,
     /// A deck tab. `sel` drives whichever cursor that tab owns.
     Tab(DeckTab),
+    /// The SESSION tab with lane `focused` selected — `0` is the lead, whose
+    /// view carries the sub-agent band; a sub-agent's own transcript fills the
+    /// tab instead, which is what `⏎ focus` on a lane does.
+    SessionLane(usize),
+    /// The FILES tab with the diff pane open under row `sel` — the PR-style
+    /// view `⏎` toggles on a row.
+    FilesDiff,
     /// The SETTINGS tab's TOOLS pane — the session's tool surface.
     SettingsTools,
     /// The SETTINGS tab's AGENTS pane: the `agent_engine_config` editor, on
@@ -273,9 +280,13 @@ struct Shot {
     /// Cursor row within the scene's list, as `(start, end)` — stepped over the
     /// shot so a list visibly reads itself rather than sitting frozen.
     sel: (usize, usize),
-    /// Share of the scripted session folded in by the shot's start and end.
-    /// Ramping this is what makes the SESSION shot *stream* instead of cut.
-    session: (f64, f64),
+    /// How many of the scripted session's events have folded in by the shot's
+    /// start and end. Ramping this is what makes a SESSION shot *stream*
+    /// instead of cut; a count rather than a share because the story beats
+    /// are specific events — a shot that should end on the edit's inline diff
+    /// has to end on exactly the `ToolResult` that claims it, not on "about
+    /// half". [`EVENTS`] names the indices the shot list uses.
+    session: (usize, usize),
 }
 
 fn shot(
@@ -284,7 +295,7 @@ fn shot(
     secs: f64,
     keys: Vec<Key>,
     sel: (usize, usize),
-    session: (f64, f64),
+    session: (usize, usize),
 ) -> Shot {
     Shot {
         label,
@@ -296,110 +307,183 @@ fn shot(
     }
 }
 
+/// Indices into the scripted session, in play order — the beats the shot
+/// list is cut on. Each is the count of events folded in *after* the named
+/// one, so `session: (EVENTS.lead_planned, EVENTS.edit_done)` streams from
+/// the lead's plan to the edit's result inclusive.
+///
+/// Pinned against the fixture by `film()`: a fixture edit that moves an event
+/// fails the run by name rather than quietly cutting a shot on the wrong beat.
+struct Events {
+    /// Lead registered, context recalled, plan stated, task board posted.
+    lead_planned: usize,
+    /// Both sub-agents registered and running.
+    subs_dispatched: usize,
+    /// The lead's `edit_file` result, with the `FileChange` inside its window
+    /// — the event the transcript's inline diff is claimed on.
+    edit_done: usize,
+    /// The board moved: the triggers task done, the workflows task active.
+    board_moved: usize,
+    /// `sub:auth` asked its question, having searched and written the route.
+    auth_asked: usize,
+    /// Everything: `sub:ci` verified, committed and opened the PR, and the
+    /// lead proposed the larger refactor that now waits at the gate.
+    all: usize,
+}
+
+const EVENTS: Events = Events {
+    lead_planned: 8,
+    subs_dispatched: 12,
+    edit_done: 18,
+    board_moved: 21,
+    auth_asked: 31,
+    all: 37,
+};
+
+/// Wide: the whole deck in frame.
+const WIDE: Key = key(0.0, 1.0, 0.5, 0.5);
+
+/// A wide key at `at`.
+const fn wide(at: f64) -> Key {
+    key(at, 1.0, 0.5, 0.5)
+}
+
+/// A push-in key at `at`, anchored to the deck's top-left corner.
+fn close(at: f64, zoom: f64) -> Key {
+    key(at, zoom, left(zoom), top(zoom))
+}
+
 /// The film.
 ///
-/// Read it as a shot list: every deck tab appears, the two the deck is least
-/// able to explain in a screenshot get the longest takes (GRAPH, and the
-/// `agent_engine_config` editor behind SETTINGS), and every shot opens or
-/// closes on a move so no frame is a still. Total length is the sum of `secs`
-/// — currently 48s, which is long for a loop and is the price of showing nine
-/// tabs honestly rather than cutting to the three that demo best.
+/// Read it as a story in four acts rather than as a tab tour, because that is
+/// what a narrator has to say over it (`docs/demo/stella-deck-script.md`
+/// carries the words, cut to these timestamps):
+///
+/// 1. **A turn happens.** The lead boots, recalls, plans, fans out, reads and
+///    edits — and the edit lands in the transcript as a real diff.
+/// 2. **The fan-out is a set of sessions.** One keypress puts a sub-agent's own
+///    transcript in the tab: its search, the file it created, the question it
+///    is waiting on.
+/// 3. **The deck is how you read the run.** FILES with the PR-style pane,
+///    GRAPH, TRACES, the installed AGENTS, SKILLS, MCP, ISSUES.
+/// 4. **And how you steer it.** SETTINGS — the agent editor, the tool surface —
+///    then back to the session, where the PR is open and a bigger change is
+///    waiting for a human at the gate.
+///
+/// The camera has one rule: a tab opens **wide**, holds long enough to read,
+/// and makes one slow push onto the thing the narration is about. A cut always
+/// lands on wide, so no tab change happens mid-move — the cut the previous
+/// film made at 1.45x into a different tab is exactly the "zoomed in at
+/// random" a viewer remembers. Every push is anchored top-left ([`close`]):
+/// the deck is left- and top-anchored, and a centred push slices the first
+/// glyph of every row it crosses.
 #[rustfmt::skip]
 fn shots() -> Vec<Shot> {
+    let e = EVENTS;
     vec![
-        // Cold open: push out of the mark into the deck, the way a title card
-        // resolves into the thing it titles. 1.7s is the mark's own screen time
-        // (ASSEMBLE + UNHELD_HOLD, 1.66s) rounded up by a frame — longer and it
-        // hands off to an empty deck, shorter and the assemble is cut.
+        // ── act 1 · a turn happens ──────────────────────────────────────
+        // Cold open: the mark resolves into the deck. 1.7s is the mark's own
+        // screen time (ASSEMBLE + UNHELD_HOLD, 1.66s) rounded up by a frame.
         shot("splash", Scene::Splash, 1.7,
-             vec![key(0.0, 1.30, 0.5, 0.5), key(1.7, 1.0, 0.5, 0.5)],
-             (0, 0), (0.0, 0.0)),
+             vec![key(0.0, 1.30, 0.5, 0.5), wide(1.7)],
+             (0, 0), (0, 0)),
 
-        // The session doing work. The whole deck is in frame and stays there
-        // while the transcript builds: this is the shot that has to establish
-        // what the thing *is*, and a camera move during it competes with the
-        // one thing on screen that is already moving.
-        shot("session · streaming", Scene::Tab(DeckTab::Session), 5.2,
-             vec![key(0.0, 1.0, 0.5, 0.5), key(5.2, 1.0, 0.5, 0.5)],
-             (0, 0), (0.12, 0.62)),
-        // Now in, on the transcript itself — tool calls, stages, the diff.
-        shot("session · the transcript", Scene::Tab(DeckTab::Session), 4.4,
-             vec![key(0.0, 1.0, 0.5, 0.5), key(1.0, 1.0, 0.5, 0.5),
-                  key(4.4, 1.45, left(1.45), top(1.45))], (0, 0), (0.62, 1.0)),
+        // The lead boots and plans; the two lanes appear. Wide and still: the
+        // transcript is already moving, and it is the one thing on screen
+        // that should be.
+        shot("session · the lead boots and plans", Scene::SessionLane(0), 3.4,
+             vec![WIDE], (0, 0), (0, e.lead_planned)),
+        shot("session · the fan-out", Scene::SessionLane(0), 2.6,
+             vec![WIDE], (0, 0), (e.lead_planned, e.subs_dispatched)),
+        // The read, then the edit. Still wide — the diff arrives at the
+        // bottom of the transcript and the eye should be allowed to find it.
+        shot("session · the edit lands", Scene::SessionLane(0), 3.5,
+             vec![WIDE], (0, 0), (e.subs_dispatched, e.edit_done)),
+        // And in on it: the inline diff, GitHub-style, under the call that
+        // made it. The push centres on the transcript rows below the band.
+        shot("session · the diff, inline", Scene::SessionLane(0), 4.5,
+             vec![wide(0.0), wide(0.6), key(4.5, 1.45, left(1.45), 0.62)],
+             (0, 0), (e.edit_done, e.edit_done)),
 
-        // The fan-out. Out to the whole dashboard, then in on the rows.
-        shot("agents · fan-out", Scene::Tab(DeckTab::Agents), 4.0,
-             vec![key(0.0, 1.45, left(1.45), top(1.45)), key(1.0, 1.0, 0.5, 0.5),
-                  key(4.0, 1.35, left(1.35), top(1.35))], (0, 2), (1.0, 1.0)),
+        // ── act 2 · the fan-out is a set of sessions ────────────────────
+        // `⏎ focus` on the auth lane: its own transcript fills the tab. It
+        // searches, writes the route (a created-file diff), then asks.
+        shot("session · a lane's own view", Scene::SessionLane(1), 6.0,
+             vec![wide(0.0), wide(1.2), close(6.0, 1.35)],
+             (0, 0), (e.board_moved, e.auth_asked)),
 
-        // The proof plane. `--extents` reports it drawing to every row, so it
-        // takes the deepest push of the tabs and loses nothing to a void.
-        shot("traces · the proof tree", Scene::Tab(DeckTab::Traces), 3.6,
-             vec![key(0.0, 1.35, left(1.35), top(1.35)), key(1.2, 1.55, left(1.55), top(1.55)),
-                  key(3.6, 1.0, 0.5, 0.5)], (0, 0), (1.0, 1.0)),
+        // ── act 3 · the deck is how you read the run ────────────────────
+        // FILES: the ledger, two rows, who touched what.
+        shot("files · the ledger", Scene::Tab(DeckTab::Files), 2.6,
+             vec![WIDE], (0, 0), (e.all, e.all)),
+        // `⏎` on a row opens the PR-style pane; the cursor moves to the
+        // second file halfway through so both diffs are seen.
+        shot("files · the diff pane", Scene::FilesDiff, 5.5,
+             vec![wide(0.0), wide(0.8), close(5.5, 1.30)],
+             (0, 1), (e.all, e.all)),
 
-        // The code graph: the longest take after the engine editor. It is the
-        // surface a screenshot explains worst and the camera helps most, so the
-        // shot holds wide, comes in on the node list, then crosses to the
-        // relations panel beside it.
+        // GRAPH: the surface a screenshot explains worst. Wide, in on the
+        // node list, then across to the relations panel beside it.
         shot("graph · the neighborhood", Scene::Tab(DeckTab::Graph), 6.0,
-             vec![key(0.0, 1.0, 0.5, 0.5), key(1.4, 1.0, 0.5, 0.5),
-                  key(3.4, 1.40, left(1.40), top(1.40)),
-                  key(6.0, 1.40, left(1.40) + 0.28, top(1.40))], (0, 4), (1.0, 1.0)),
+             vec![wide(0.0), wide(1.4), close(3.4, 1.40),
+                  key(6.0, 1.40, left(1.40) + 0.28, top(1.40))],
+             (0, 4), (e.all, e.all)),
 
-        // What changed on disk. The shallowest push in the film: the fixture
-        // touches two files, and the panel's columns span the full width, so a
-        // close shot finds two rows and a lot of empty panel.
-        shot("files · what changed", Scene::Tab(DeckTab::Files), 3.2,
-             vec![key(0.0, 1.40, left(1.40) + 0.28, top(1.40)),
-                  key(1.0, 1.20, left(1.20), top(1.20)),
-                  key(3.2, 1.0, 0.5, 0.5)], (0, 1), (1.0, 1.0)),
+        // TRACES: every event of the run, one line each, in order.
+        shot("traces · the event log", Scene::Tab(DeckTab::Traces), 3.6,
+             vec![wide(0.0), wide(0.8), close(3.6, 1.30)],
+             (0, 0), (e.all, e.all)),
 
-        shot("skills", Scene::Tab(DeckTab::Skills), 3.0,
-             vec![key(0.0, 1.0, 0.5, 0.5), key(3.0, 1.35, left(1.35), top(1.35))],
-             (0, 3), (1.0, 1.0)),
+        // AGENTS: the definitions installed on disk, the ones a lead can
+        // assume and a sub-agent can be dispatched as.
+        shot("agents · installed definitions", Scene::Tab(DeckTab::Agents), 4.2,
+             vec![wide(0.0), wide(1.0), close(4.2, 1.35)],
+             (0, 2), (e.all, e.all)),
 
-        shot("mcp · connected servers", Scene::Tab(DeckTab::Mcp), 3.2,
-             vec![key(0.0, 1.35, left(1.35), top(1.35)), key(1.0, 1.30, left(1.30), top(1.30)),
-                  key(3.2, 1.0, 0.5, 0.5)], (0, 3), (1.0, 1.0)),
+        shot("skills", Scene::Tab(DeckTab::Skills), 3.6,
+             vec![wide(0.0), wide(0.8), close(3.6, 1.35)],
+             (0, 3), (e.all, e.all)),
 
-        shot("issues", Scene::Tab(DeckTab::Issues), 2.6,
-             vec![key(0.0, 1.0, 0.5, 0.5), key(2.6, 1.35, left(1.35), top(1.35))],
-             (0, 2), (1.0, 1.0)),
+        shot("mcp · connected servers", Scene::Tab(DeckTab::Mcp), 3.0,
+             vec![wide(0.0), wide(0.6), close(3.0, 1.30)],
+             (0, 3), (e.all, e.all)),
 
-        // The agent config: global routing, then the agent tab, so the film
-        // shows that model / effort / reasoning is a real editor and not a
-        // settings blurb. Held close throughout — these rows are the point,
-        // and the agent tab draws down to row 17, so close costs nothing.
-        //
-        // It ran three shots until #3908: `global`, `worker`, `verifier`. Core
-        // has one role now, and a film advertising two more tabs than the deck
-        // draws would be marketing a screen nobody can reach.
-        shot("engine config · global", Scene::EngineConfig(EngineTab::Global), 3.2,
-             vec![key(0.0, 1.35, left(1.35), top(1.35)), key(1.0, 1.30, left(1.30), top(1.30)),
-                  key(3.2, 1.45, left(1.45), top(1.45))], (0, 2), (1.0, 1.0)),
-        shot("engine config · default", Scene::EngineConfig(EngineTab::Agent(EngineRole::Default)), 3.2,
-             vec![key(0.0, 1.45, left(1.45), top(1.45)), key(1.2, 1.55, left(1.55), top(1.55)),
-                  key(3.2, 1.0, 0.5, 0.5)], (0, 3), (1.0, 1.0)),
+        shot("issues", Scene::Tab(DeckTab::Issues), 3.0,
+             vec![wide(0.0), wide(0.6), close(3.0, 1.30)],
+             (0, 2), (e.all, e.all)),
 
-        // The tool surface, and out on the whole deck.
+        // ── act 4 · and how you steer it ────────────────────────────────
+        // The agent config: global routing, then the agent's own tab, held
+        // close — these rows are the point.
+        shot("settings · agents · global", Scene::EngineConfig(EngineTab::Global), 3.2,
+             vec![wide(0.0), wide(0.6), close(3.2, 1.40)],
+             (0, 2), (e.all, e.all)),
+        shot("settings · agents · default", Scene::EngineConfig(EngineTab::Agent(EngineRole::Default)), 3.4,
+             vec![close(0.0, 1.40), close(3.4, 1.45)],
+             (0, 3), (e.all, e.all)),
+        // The tool surface, and out.
         shot("settings · tools", Scene::SettingsTools, 3.4,
-             vec![key(0.0, 1.0, 0.5, 0.5), key(1.2, 1.40, left(1.40), top(1.40)),
-                  key(3.4, 1.0, 0.5, 0.5)], (0, 3), (1.0, 1.0)),
+             vec![wide(0.0), wide(0.6), close(2.2, 1.30), wide(3.4)],
+             (0, 3), (e.all, e.all)),
+
+        // Back where it started: the PR is open, the board has moved, and
+        // the lead's next, larger change is waiting at the gate for a human.
+        // Wide and still, like the opening — the film is a loop.
+        shot("session · shipped, and waiting at the gate", Scene::SessionLane(0), 5.5,
+             vec![WIDE], (0, 0), (e.all, e.all)),
     ]
 }
 
 // ───────────────────────────── the fixtures ─────────────────────────────
 
-/// The scripted session, folded up to `share` of its events.
+/// The scripted session, folded up to its first `take` events.
 ///
 /// Folding a prefix is what animates the transcript: the model is rebuilt from
 /// scratch each frame rather than mutated forward, which costs a few hundred
 /// microseconds and buys the guarantee that frame *n* depends on nothing but
 /// *n* — the property `--verify` checks.
-fn model_at(share: f64) -> WorkspaceModel {
+fn model_at(take: usize) -> WorkspaceModel {
     let inbound = demo_inbound(0, FIXTURE_PID);
-    let take = ((inbound.len() as f64) * share.clamp(0.0, 1.0)).round() as usize;
 
     let mut model = WorkspaceModel::new();
     model.now_ms = 312_000;
@@ -487,6 +571,65 @@ fn fixture_skills() -> SkillsView {
         busy: false,
         created: None,
     }
+}
+
+/// The definitions the AGENTS tab lists: what is installed on disk at the
+/// project and user levels. A project agent with a scoped toolbelt, a user
+/// agent with none (the pane says "all tools" honestly), and a versioned one
+/// whose picker has something to pick.
+fn fixture_installed_agents() -> Vec<InstalledAgentEntry> {
+    let version = |n: u32, label: &str| AgentVersionInfo {
+        version: n,
+        label: label.to_string(),
+    };
+    let entry = |name: &str,
+                 description: &str,
+                 tools: Option<&[&str]>,
+                 scope: AgentScope,
+                 versions: Vec<AgentVersionInfo>| {
+        let dir = match scope {
+            AgentScope::Project => ".stella/agents",
+            AgentScope::User => "~/.stella/agents",
+        };
+        let pinned = versions.last().map_or(1, |v| v.version);
+        InstalledAgentEntry {
+            name: name.to_string(),
+            description: description.to_string(),
+            tools: tools.map(|t| t.iter().map(|s| s.to_string()).collect()),
+            scope,
+            source_path: format!("{dir}/{name}.md"),
+            version: pinned,
+            versions,
+            content: format!("---\nname: {name}\ndescription: {description}\n---\n"),
+        }
+    };
+    vec![
+        entry(
+            "reviewer",
+            "Reviews a diff for API shape and errors.",
+            Some(&["read_file", "search", "bash"]),
+            AgentScope::Project,
+            vec![
+                version(1, "2026-07-02"),
+                version(2, "2026-07-19"),
+                version(3, "2026-08-14"),
+            ],
+        ),
+        entry(
+            "migrator",
+            "Ports a module, behaviour pinned by tests.",
+            Some(&["read_file", "write_file", "edit_file", "search", "bash"]),
+            AgentScope::Project,
+            vec![version(1, "2026-08-01")],
+        ),
+        entry(
+            "release-captain",
+            "Cuts a release: bump, changelog, tag, ship.",
+            None,
+            AgentScope::User,
+            vec![version(1, "2026-06-11"), version(2, "2026-08-09")],
+        ),
+    ]
 }
 
 fn fixture_issues() -> Vec<IssueRow> {
@@ -623,12 +766,27 @@ fn ui_for(scene: Scene, sel: usize, model: &WorkspaceModel, splash_ms: u64) -> D
             ui.tab = DeckTab::Session;
             return ui;
         }
+        Scene::SessionLane(focused) => {
+            ui.splash.skip();
+            ui.tab = DeckTab::Session;
+            ui.focused = focused.min(model.agents.len().saturating_sub(1));
+        }
+        Scene::FilesDiff => {
+            ui.splash.skip();
+            ui.tab = DeckTab::Files;
+            ui.files_sel = sel;
+            ui.files_diff_open = true;
+        }
         Scene::Tab(tab) => {
             ui.splash.skip();
             ui.tab = tab;
             match tab {
                 DeckTab::Session => ui.focused = 0,
-                DeckTab::Agents => ui.focused = sel.min(model.agents.len().saturating_sub(1)),
+                DeckTab::Agents => {
+                    ui.installed.entries = fixture_installed_agents();
+                    ui.installed.loaded = true;
+                    ui.installed.sel = sel.min(ui.installed.entries.len().saturating_sub(1));
+                }
                 DeckTab::Traces => ui.trace_filter = None,
                 DeckTab::Graph => ui.graph_cursor = sel,
                 DeckTab::Files => ui.files_sel = sel,
@@ -877,6 +1035,13 @@ fn json_string(s: &str) -> String {
 /// Returned as a `Vec` rather than streamed so `--verify` can render twice and
 /// compare without re-plumbing the writer.
 fn film() -> Vec<String> {
+    let scripted = demo_inbound(0, FIXTURE_PID).len();
+    assert_eq!(
+        scripted, EVENTS.all,
+        "deck_film: the scripted session has {scripted} events but EVENTS.all says \
+         {}; re-cut the beats in EVENTS against scenario::demo_inbound",
+        EVENTS.all
+    );
     let shots = shots();
     let total: f64 = shots.iter().map(|s| s.secs).sum();
     let frames = (total * f64::from(FPS)).round() as usize;
@@ -902,8 +1067,9 @@ fn film() -> Vec<String> {
                 0.0
             };
 
-            let share = s.session.0 + (s.session.1 - s.session.0) * progress;
-            let model = model_at(share);
+            let (from, to) = (s.session.0 as f64, s.session.1 as f64);
+            let take = (from + (to - from) * progress).round() as usize;
+            let model = model_at(take);
             let sel = s.sel.0
                 + (((s.sel.1 as f64 - s.sel.0 as f64) * progress).round() as usize)
                     .min(s.sel.1.saturating_sub(s.sel.0));

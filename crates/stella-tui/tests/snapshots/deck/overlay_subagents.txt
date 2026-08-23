@@ -22,17 +22,17 @@
  │ ⊙ apps/app/automations│                                                                                                            │
  │ ⎿ 312 lines           │                                                                                                            │      42ms
                          │                                                                                                            │
+ │ ● edit apps/app/automa│                                                                                                            │
+ │ ⎿                     │                                                                                                            │ −1 · 18ms
+ │     10 -  const items │                                                                                                            │
+ │     10 +  const items │                                                                                                            │
+ │     11 +  const [q, se│                                                                                                            │
+ │     12 +  const filter│                                                                                                            │
+ │     13 +  const onNew │                                                                                                            │
+                         │                                                                                                            │
 ☰  plan  5/7  ·  Workflow│                                                                                                            │
                          │                                                                                                            │
 ⏸ plan  Refactor the auto│                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
-                         │                                                                                                            │
                          │                                                                                                            │
                          │                                                                                                            │
                          │                                                                                                            │

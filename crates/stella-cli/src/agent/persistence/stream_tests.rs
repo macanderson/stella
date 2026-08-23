@@ -358,6 +358,7 @@ fn receipt_events_persist_into_queryable_block_and_manifest_rows() {
         effective_budget_tokens: 136_363,
         calibration_factor: 1.1,
         estimated_input_tokens: 40,
+        stall_seconds_requested: None,
         compiled_frame: None,
     };
     assert!(persist_event(&store, id, 1, &manifest, "anthropic"));

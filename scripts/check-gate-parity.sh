@@ -31,13 +31,19 @@
 #      gate step — which is how a removed guard leaves a ghost behind. Only
 #      that fence is checked this way: it is a delimited list of commands,
 #      whereas AGENTS.md's block is prose with parenthetical glosses.
+#   4. Every step actually RUNS in some workflow, and every hermetic guard
+#      self-test (`scripts/test-*`) either runs in one or is named in the
+#      Makefile's `UNHOSTED_SELF_TESTS` with the reason (#3820, #4427). The
+#      three checks above are about prose; this one is about whether anything
+#      server-side fires at all.
 #
 # What it deliberately does NOT check: the spelled-out step total — that check
 # existed and was removed; see "The count is deliberately NOT checked any
 # more" below (#1883) — and the prose *around* the lists. Whether
 # "ci.yml's required job runs everything except invariants and doc-links" is
-# still true is a claim about a workflow, not about this list, and pretending a
-# grep could settle it would be worse than leaving it to review.
+# still true is a claim about which workflow runs a step, not about whether one
+# does, and pretending a grep could settle it would be worse than leaving it to
+# review.
 #
 # Uses portable POSIX tools so it runs on a bare CI runner. `make` is required —
 # it is how the step list is read, and a runner that cannot run make cannot run
@@ -115,11 +121,16 @@ if [ -z "$word" ]; then
   exit 1
 fi
 
-# CONTRIBUTING.md lists raw commands rather than make targets. Every guard is
+# The command a step is spelled as outside the Makefile. Every guard is
 # `scripts/check-<target>.sh` except the ones named here, and the four compile
 # steps are cargo invocations. An alias is a deliberate, reviewable statement
 # that two spellings mean the same step.
-contributing_alias() {
+#
+# One table serves both readers below — CONTRIBUTING.md's fence and the
+# workflows — because both spell a step as the command that runs it. A second
+# table would be a second thing to keep in sync, which is the defect this
+# script exists to catch.
+step_command() {
   case "$1" in
   # The one step the fence spells as a make target. Its argument list — which
   # files get linted — is the Makefile recipe's and nowhere else's, after a
@@ -160,7 +171,7 @@ for doc in "$agents" "$contributing"; do
 
   for step in $steps; do
     if [ "$doc" = "$contributing" ]; then
-      needle="$(contributing_alias "$step")"
+      needle="$(step_command "$step")"
     else
       needle="$step"
     fi
@@ -204,6 +215,121 @@ else
   done
 fi
 
+# ── The workflows ────────────────────────────────────────────────────────────
+#
+# The question neither document can answer: does anything server-side actually
+# RUN this step? The two checks above are about prose — whether a reader is
+# told the truth — and a step named correctly in both documents and run by no
+# workflow is still a step that only fires on a contributor's machine. The
+# pre-push hook is advisory, per-clone and bypassable, and on the maintainer's
+# laptop the gate is not run at all, so for such a step there is no server-side
+# check for the hook to complement.
+#
+# It has happened twice. `tokens` was red on `main` from #4066 until #4086 —
+# seven retired brand hexes — with every PR otherwise green and nothing saying
+# so; #4089 wired five steps that were in `GATE_GUARDS_FAST` and in no
+# workflow; and the sweep that found `prose`, `hue-separation` and
+# `transcript-surfaces` in the same hole (#4427) also found the PR that wired
+# the previous batch had itself landed a gate step running nowhere.
+
+workflows=".github/workflows"
+
+# Every command the workflows run, one per line: the text after an inline
+# `run:`, and each line of a `run: |` block. Nothing else — a `paths:` entry
+# naming a guard script is a trigger, not a run, and counting it would report a
+# guard as hosted because a workflow *watches its file*, which is exactly what
+# wire-schema.yml does. Shell comments inside a block go too, for the reason a
+# YAML comment does: prose about a command is not the command, and both
+# release.yml and tool-docs.yml discuss commands they do not run.
+workflow_commands() {
+  awk '
+    function indent_of(s,   i) { i = match(s, /[^ ]/); return i ? i - 1 : length(s) }
+    { line = $0; sub(/\r$/, "", line) }
+    block && line ~ /[^ ]/ && indent_of(line) > block_indent {
+      s = line
+      sub(/^[ \t]*/, "", s)
+      if (s !~ /^#/) print s
+      next
+    }
+    block && line ~ /[^ ]/ { block = 0 }
+    /^[ \t]*(-[ \t]+)?run:[ \t]*[|>]/ { block = 1; block_indent = indent_of(line); next }
+    /^[ \t]*(-[ \t]+)?run:[ \t]*[^|> \t]/ {
+      s = line
+      sub(/^[ \t]*(-[ \t]+)?run:[ \t]*/, "", s)
+      print s
+    }
+  ' "$workflows"/*.yml
+}
+
+if [ ! -d "$workflows" ]; then
+  note "FAIL — $workflows does not exist, so no gate step can be shown to run."
+  fail=1
+else
+  # Written to a file rather than held in a variable and piped into each grep.
+  # `grep -q` exits on its first match and closes the pipe under it, so the
+  # writer takes a SIGPIPE — and `pipefail` then reports 141 for a pipeline
+  # that MATCHED. It is a race, so it fails on some runs and not others: the
+  # same shape #1815 is about, arriving here through the reader instead of the
+  # reader's reader.
+  commands="$(mktemp "${TMPDIR:-/tmp}/stella-gate-parity.XXXXXX")"
+  trap 'rm -f "$commands"' EXIT INT TERM
+  workflow_commands >"$commands"
+
+  for step in $steps; do
+    needle="$(step_command "$step")"
+    if ! grep -qF -- "$needle" "$commands"; then
+      note "FAIL — no workflow runs the gate step '$step'"
+      note "     (looked for '$needle' in a run: step under $workflows/)."
+      note "     A step the gate names and CI never runs fires only on a"
+      note "     contributor's machine, past a hook that is bypassable."
+      fail=1
+    fi
+  done
+
+  # The same question one layer down, for the suites that prove a guard can
+  # still FAIL (#3820). A ratchet that has quietly become incapable of failing
+  # reports green forever, which is worse than not having one — and #3750 is
+  # the concrete instance: the typed-errors writer path grandfathered a
+  # brand-new violation for as long as the guard existed, because the suite
+  # that would have caught it ran only when a human typed the target.
+  #
+  # A suite may be excluded, but only out loud: `UNHOSTED_SELF_TESTS` in the
+  # Makefile names each one with the reason beside it. Silence is the failure.
+  if ! unhosted="$(make -s print-unhosted-self-tests 2>/dev/null)"; then
+    note "FAIL — could not read UNHOSTED_SELF_TESTS (\`make -s print-unhosted-self-tests\`)."
+    note "     Restore that target in the Makefile; it is what keeps the"
+    note "     exclusions reviewable instead of hidden in this script."
+    fail=1
+  else
+    for suite in scripts/test-*.sh scripts/test-*.py; do
+      [ -f "$suite" ] || continue
+      name="${suite#scripts/}"
+      case " $unhosted " in
+      *" $name "*) continue ;;
+      esac
+      if ! grep -qF -- "$name" "$commands"; then
+        note "FAIL — no workflow runs the guard self-test '$suite'."
+        note "     Add it to a workflow, or name it in UNHOSTED_SELF_TESTS in"
+        note "     the Makefile with the reason it is excluded."
+        fail=1
+      fi
+    done
+
+    # And the other direction: an exclusion for a suite that no longer exists,
+    # or one that has since been wired up, reads as a live decision and is not.
+    for name in $unhosted; do
+      if [ ! -f "scripts/$name" ]; then
+        note "FAIL — UNHOSTED_SELF_TESTS names 'scripts/$name', which does not exist."
+        fail=1
+      elif grep -qF -- "$name" "$commands"; then
+        note "FAIL — UNHOSTED_SELF_TESTS names '$name', but a workflow runs it."
+        note "     Drop it from the list; the exclusion is stale."
+        fail=1
+      fi
+    done
+  fi
+fi
+
 if [ "$fail" -ne 0 ]; then
   note ""
   note "The gate's composition lives in GATE_STEPS in the Makefile, and these"
@@ -214,5 +340,5 @@ if [ "$fail" -ne 0 ]; then
 fi
 
 emit
-printf 'check-gate-parity: OK — %s (%s) gate steps, named in %s and %s.\n' \
+printf 'check-gate-parity: OK — %s (%s) gate steps, named in %s and %s, each run by a workflow.\n' \
   "$count" "$word" "$agents" "$contributing" || true
