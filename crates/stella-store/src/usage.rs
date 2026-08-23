@@ -112,6 +112,7 @@ pub struct ExecutionRollupRow {
 }
 
 mod schema;
+mod tool_fold;
 
 /// The user-tier aggregate store. Read/write, loopback-local, no server.
 pub struct UsageStore {
@@ -160,9 +161,11 @@ impl UsageStore {
     /// Roll one finished turn up into the aggregate: upsert its project, insert
     /// (or replace) the execution rollup, and fold the tool histogram into the
     /// per-day counts. One transaction; idempotent on (project_id,
-    /// execution_id) so a re-sync (e.g. `stella usage sync`) never double-counts
-    /// the execution rollup. Tool-day counts are additive, so a backfill must
-    /// run against a fresh aggregate (documented on the sync command).
+    /// execution_id) — the execution rollup because it is `INSERT OR REPLACE`,
+    /// the additive tool-day counts because `tool_fold` holds a claim per
+    /// execution that outlives the rollup row (#3411). So a re-sync, a cursor
+    /// rewind, and a backfill are all safe to run against a hub that already
+    /// holds some of the same executions.
     pub fn sync_execution(&self, r: &ExecutionRollupRow) -> Result<()> {
         let mut conn = self.lock();
         let tx = conn.transaction()?;
@@ -176,20 +179,10 @@ impl UsageStore {
                last_seen_at = excluded.last_seen_at",
             params![r.project_id, r.project_name, r.project_root, r.started_at],
         )?;
-        // Was this execution already rolled up? If so, its tool counts were too
-        // — skip the additive fold to stay idempotent. NoRows is the only
-        // "not yet" answer: `.is_ok()` read a genuine query error as "not
-        // rolled up" and re-ran the additive tool-histogram fold, breaking
-        // the documented never-double-counts contract.
-        let already: bool = match tx.query_row(
-            "SELECT 1 FROM execution_rollup WHERE project_id = ?1 AND execution_id = ?2",
-            params![r.project_id, r.execution_id],
-            |_| Ok(()),
-        ) {
-            Ok(()) => true,
-            Err(rusqlite::Error::QueryReturnedNoRows) => false,
-            Err(e) => return Err(e.into()),
-        };
+        // Claim the additive tool-day fold. Asked of `tool_fold_ledger` rather
+        // than of `execution_rollup`, which `prune` deletes from on predicates
+        // `tool_usage_rollup` does not share — see [`tool_fold`] (#3411).
+        let first_fold = tool_fold::claim(&tx, &r.project_id, r.execution_id, &r.day)?;
         tx.execute(
             "INSERT OR REPLACE INTO execution_rollup \
              (project_id, execution_id, kind, prompt_digest, prompt_preview, model, provider, \
@@ -216,7 +209,7 @@ impl UsageStore {
                 r.started_at,
             ],
         )?;
-        if !already {
+        if first_fold {
             for b in &r.tool_histogram {
                 tx.execute(
                     "INSERT INTO tool_usage_rollup (project_id, tool, surface, day, calls, errors) \
@@ -677,6 +670,7 @@ impl UsageStore {
                     "DELETE FROM tool_usage_rollup WHERE project_id = ?1",
                     params![pid],
                 )?;
+                tool_fold::forget_project(&tx, pid)?;
                 tx.execute(
                     "DELETE FROM telemetry_sync_cursors WHERE project_id = ?1",
                     params![pid],
@@ -718,6 +712,9 @@ impl UsageStore {
                     "DELETE FROM tool_usage_rollup WHERE day < date('now', ?1)",
                     params![modifier],
                 )? as u64;
+                // Not counted as a rollup: it is the ledger over them, and it
+                // ages out on exactly their predicate so the two never part.
+                tool_fold::age_out(&tx, modifier)?;
             }
 
             // 3) Hard row ceiling on `telemetry` — evict the oldest prunable
@@ -1045,7 +1042,7 @@ mod rekey;
 mod tests {
     use super::*;
 
-    fn rollup(execution_id: i64, tools: Vec<ToolBucket>) -> ExecutionRollupRow {
+    pub(super) fn rollup(execution_id: i64, tools: Vec<ToolBucket>) -> ExecutionRollupRow {
         ExecutionRollupRow {
             usage_complete: true,
             project_id: "proj_a".into(),

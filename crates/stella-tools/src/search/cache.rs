@@ -28,18 +28,31 @@
 //! bypasses the cache entirely: it is gathered fresh every time, which is the
 //! conservative direction.
 //!
-//! # The precision boundary
+//! # The precision boundary, and the second key that closes it
 //!
 //! Symbols, kinds and import *specifiers* are functions of the file's own
-//! bytes, so the key invalidates them exactly. Two facts in the bundle are
-//! drawn from the rest of the tree: the `importers` list, and the resolution
-//! of an import specifier to a path. Those can go one index generation stale
-//! while the file itself is unchanged — file B gaining an import of A does
-//! not change A's bytes, so A's cached entry keeps its old importers until A
-//! changes or the entry is evicted. The per-symbol facets (callers, callees,
-//! body spans) are **not** cached and stay live for this reason. Tightening
-//! the cross-file half — e.g. keying entries additionally by an index
-//! generation stamp — is #3196.
+//! bytes, so the content identity invalidates them exactly. Two facts in the
+//! bundle are drawn from the rest of the tree: the `importers` list, and the
+//! resolution of an import specifier to a path. File B gaining an import of A
+//! does not change A's bytes, so A's identity alone cannot invalidate them —
+//! and until #3196 it did not: a second search in one session served the old
+//! `imported by:` list for an untouched file.
+//!
+//! The cross-file half is keyed by the **index generation** instead
+//! ([`stella_graph::CodeGraph::index_generation`]): a digest over every
+//! indexed file's `(path, content sha)`, which is equal exactly when no file
+//! was added, removed or re-indexed — and therefore when every graph-derived
+//! answer is byte-identical. [`GatherCache::observe_generation`] compares the
+//! stamp the entries were gathered under against the stamp now and empties the
+//! cache when they differ. A whole-cache flush rather than a per-entry one,
+//! because the stamp is a fact about the tree: once it moves, no entry can
+//! prove its own cross-file half survived.
+//!
+//! An unknown stamp — the graph could not answer — flushes too. The
+//! conservative direction is the one that gathers again.
+//!
+//! The per-symbol facets (callers, callees, body spans) are **not** cached and
+//! stay live independently of both keys.
 //!
 //! # The bound
 //!
@@ -77,6 +90,9 @@ struct GatherEntry {
 #[derive(Debug, Default)]
 pub struct GatherCache {
     entries: Vec<GatherEntry>,
+    /// The index generation every entry was gathered under, or `None` before
+    /// the first observation. See [`GatherCache::observe_generation`].
+    generation: Option<[u8; 32]>,
     /// How many times a neighborhood was gathered from the graph — the
     /// witness counter for #3163: unchanged across a repeat search that was
     /// served from cache, incremented again once the file's bytes change.
@@ -89,6 +105,27 @@ pub struct GatherCache {
 }
 
 impl GatherCache {
+    /// Point the cache at the index generation `stamp` names, emptying it if
+    /// that is not the generation its entries were gathered under. Returns
+    /// whether anything was discarded.
+    ///
+    /// Called once per search, before any hit is rendered, so a single render
+    /// pass can never straddle two generations. `None` means the stamp could
+    /// not be read, and flushes: an entry that cannot prove which generation
+    /// it belongs to is exactly the entry that must not be served.
+    ///
+    /// Pure over owned data — the stamp is computed by the caller, which is
+    /// what keeps this module free of I/O (invariant 2).
+    pub fn observe_generation(&mut self, stamp: Option<[u8; 32]>) -> bool {
+        if self.generation == stamp && stamp.is_some() {
+            return false;
+        }
+        self.generation = stamp;
+        let flushed = !self.entries.is_empty();
+        self.entries.clear();
+        flushed
+    }
+
     /// The cached neighborhood for `path`, if one exists **and** its identity
     /// still matches. An entry whose identity does not match is removed on
     /// the spot — the file changed, and a stale bundle must not survive to
@@ -128,4 +165,61 @@ impl GatherCache {
 /// the git blob sha — is the invalidation authority.
 pub fn content_identity(source: &str) -> [u8; 32] {
     Sha256::digest(source.as_bytes()).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn warmed(stamp: Option<[u8; 32]>) -> GatherCache {
+        let mut cache = GatherCache::default();
+        cache.observe_generation(stamp);
+        cache.store(
+            "src/a.rs".to_string(),
+            content_identity("pub fn a() {}"),
+            FileNeighborhood::default(),
+        );
+        cache
+    }
+
+    /// The same generation keeps the entries: a stamp that has not moved is
+    /// the proof every cross-file answer is still the one that was gathered.
+    #[test]
+    fn an_unmoved_stamp_keeps_the_entries() {
+        let mut cache = warmed(Some([7; 32]));
+        assert!(!cache.observe_generation(Some([7; 32])));
+        assert!(
+            cache
+                .lookup("src/a.rs", &content_identity("pub fn a() {}"))
+                .is_some()
+        );
+    }
+
+    /// A moved stamp empties the cache whole. Per-entry retention is not
+    /// available here: the stamp says the tree changed and says nothing about
+    /// which file's importers moved with it.
+    #[test]
+    fn a_moved_stamp_empties_the_cache() {
+        let mut cache = warmed(Some([7; 32]));
+        assert!(cache.observe_generation(Some([8; 32])));
+        assert!(
+            cache
+                .lookup("src/a.rs", &content_identity("pub fn a() {}"))
+                .is_none()
+        );
+    }
+
+    /// An unreadable stamp flushes, and keeps flushing. Equality with the
+    /// previous unknown would let two unrelated failures agree with each other
+    /// and serve entries neither of them can place.
+    #[test]
+    fn an_unknown_stamp_flushes_every_time() {
+        let mut cache = warmed(None);
+        assert!(cache.observe_generation(None));
+        assert!(
+            cache
+                .lookup("src/a.rs", &content_identity("pub fn a() {}"))
+                .is_none()
+        );
+    }
 }

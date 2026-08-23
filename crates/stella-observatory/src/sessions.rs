@@ -457,10 +457,31 @@ fn attach_journal_turns(conn: &Connection, id: &str, turns: &mut [Value]) -> Res
 
 pub(crate) fn session_detail(
     conn: Option<&Connection>,
-    _workspace_root: &Path,
+    workspace_root: &Path,
     id: &str,
 ) -> Result<Value, DbError> {
-    let record = registry_record(id);
+    // Scoped to the served workspace, the way the list route already is
+    // (#3725). `registry_record` reads `~/.stella/sessions/<id>.json` by id
+    // alone, so without this a drill on another project's session id joined
+    // that project's title, summary and root onto *this* project's turn and
+    // task rows and presented the two as one session. `found` falls back to
+    // whether the store holds turns for the id, which is the honest answer for
+    // a session this workspace has no registry record for.
+    //
+    // `workspace_root` is the effective root, so `?project=<id>` switching
+    // carries through: `respond` resolves the parameter into the `Observatory`
+    // this call is made on.
+    let canon_root =
+        std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
+    let record = registry_record(id).filter(|record| {
+        same_workspace(
+            record
+                .get("workspace")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            &canon_root,
+        )
+    });
     let registry = record.as_ref().map(|record| {
         let (status, live, crashed) = presented_status(record);
         json!({
@@ -941,6 +962,59 @@ mod tests {
         assert_eq!(ms_from_id("ses-1722900000000-4242"), 1_722_900_000_000);
         assert_eq!(ms_from_id("not-an-id"), 0);
         assert_eq!(ms_from_id(""), 0);
+    }
+
+    /// Write one registry record under the current `STELLA_HOME`.
+    fn seed_record(id: &str, workspace: &Path) {
+        let dir = registry_dir();
+        std::fs::create_dir_all(&dir).expect("registry dir");
+        let record = json!({
+            "id": id,
+            "workspace": workspace.to_string_lossy(),
+            "title": format!("title of {id}"),
+            "summary": format!("summary of {id}"),
+            "status": "complete",
+            "pid": 0,
+        });
+        std::fs::write(dir.join(format!("{id}.json")), record.to_string()).expect("write record");
+    }
+
+    /// The witness for #3725: the detail route took `workspace_root` and named
+    /// it `_workspace_root`, so a drill on a session id belonging to another
+    /// project on the same machine answered with that project's registry
+    /// fields — joined, in the same payload, to turn rows read from the
+    /// workspace actually being served.
+    #[test]
+    fn a_detail_drill_ignores_a_registry_record_from_another_workspace() {
+        let _lock = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_HOME"]);
+        let home = tempfile::tempdir().expect("home");
+        // SAFETY: the env lock is held for this guard's whole lifetime.
+        unsafe { std::env::set_var("STELLA_HOME", home.path()) };
+
+        let served = tempfile::tempdir().expect("served workspace");
+        let other = tempfile::tempdir().expect("other workspace");
+        seed_record("ses-1722900000000-1", served.path());
+        seed_record("ses-1722900000000-2", other.path());
+
+        let mine = session_detail(None, served.path(), "ses-1722900000000-1").expect("detail");
+        assert_eq!(
+            mine["registry"]["title"], "title of ses-1722900000000-1",
+            "this workspace's own session still resolves: {mine}"
+        );
+
+        let theirs = session_detail(None, served.path(), "ses-1722900000000-2").expect("detail");
+        assert_eq!(
+            theirs["registry"],
+            Value::Null,
+            "another project's registry record must not be joined to this \
+             workspace's rows: {theirs}"
+        );
+        assert_eq!(
+            theirs["found"],
+            json!(false),
+            "with no registry record and no turns there is nothing to show: {theirs}"
+        );
     }
 
     #[test]

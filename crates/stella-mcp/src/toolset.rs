@@ -535,21 +535,6 @@ impl McpToolSet {
         &self.collisions
     }
 
-    /// How many advertised tools this session refused across *every* connected
-    /// server — the single number a status line can carry ("2 servers
-    /// truncated, 31 tools dropped") without iterating
-    /// [`McpToolSet::over_advertising_servers`] itself. `0` when nothing was
-    /// truncated, which is the case for every well-behaved server.
-    ///
-    /// A floor, for the same reason each per-server count is: discovery stops
-    /// on the page where the cap bites, so tools the server would have listed
-    /// later are never counted. A non-zero value means *at least* this many
-    /// tools exist that the model was never told about — the operator-visible
-    /// half of the cap.
-    pub fn dropped_tool_count(&self) -> usize {
-        self.clients.iter().map(McpClient::dropped_tool_count).sum()
-    }
-
     /// How many servers are live.
     pub fn connected_count(&self) -> usize {
         self.clients.len()

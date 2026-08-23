@@ -329,27 +329,32 @@ pub const RECALL_MARKER: &str = "[auto-recalled context]";
 
 /// Which block kind a `User`-role message actually is.
 ///
-/// Not every `User` message is the user's goal. The driver injects four of its
-/// own — the overflow summary, its working-set restoration (#2685), the
-/// stuck-loop steer, the output-limit continuation nudge, and the #2684
-/// Stop-hook feedback, all `CompletionMessage::user` — and the CLI injects
-/// the recalled-context block. Before Phase 2 they all collapsed onto
-/// [`BlockKind::UserGoal`], so a receipt attributed engine-generated text to
-/// the person. The six markers are prefixes on content the engine and CLI
-/// both write, which is why this is a prefix match and not a heuristic.
+/// Not every `User` message is the user's goal. The engine and the CLI write
+/// several of their own as `CompletionMessage::user`, and
+/// [`crate::engine_markers::ENGINE_MARKERS`] is the enumeration. Before Phase 2
+/// they all collapsed onto [`BlockKind::UserGoal`], so a receipt attributed
+/// engine-generated text to the person. Every marker is a prefix on content the
+/// engine and CLI write themselves, which is why this is a prefix match and not
+/// a heuristic.
 ///
 /// The continuation nudge and the Stop-hook feedback file as
 /// [`BlockKind::Steered`] rather than earning kinds of their own: each is a
 /// mid-turn injected instruction that redirects the model, which is exactly
 /// what that kind means, and reusing it keeps the wire enum (and every reader
-/// of it) unchanged. The working-set restoration (#2685) files as
-/// [`BlockKind::Summary`] for the same reason: it is the summary splice's
-/// companion — what the splice destroyed, re-attached — and a receipt reader
-/// reconciling a summarization round wants the pair under one kind rather
-/// than a new wire variant. The already-read digest (#3806) joins it on the
-/// same argument one step further out: it is what the *compaction* passes
-/// destroyed, re-stated, and a reader reconciling a compaction round wants it
-/// beside the summary rather than mistaken for the person naming files.
+/// of it) unchanged. An inline skill invocation (#2682) and a parked wait's
+/// wake report join them on that same test: the invocation injects a skill's
+/// instructions into the transcript for the model to act on, and a wake report
+/// tells it what the engine observed and — on the timeout arm — to reassess
+/// rather than re-poll. Both redirect; neither is the person speaking.
+///
+/// The working-set restoration (#2685) files as [`BlockKind::Summary`]: it is
+/// the summary splice's companion — what the splice destroyed, re-attached —
+/// and a receipt reader reconciling a summarization round wants the pair under
+/// one kind rather than a new wire variant. The already-read digest (#3806)
+/// joins it on the same argument one step further out: it is what the
+/// *compaction* passes destroyed, re-stated, and a reader reconciling a
+/// compaction round wants it beside the summary rather than mistaken for the
+/// person naming files.
 fn user_block_kind(content: &str) -> BlockKind {
     if content.starts_with(crate::driver::SUMMARY_MARKER_PREFIX)
         || content.starts_with(crate::restore::RESTORE_MARKER_PREFIX)
@@ -359,6 +364,8 @@ fn user_block_kind(content: &str) -> BlockKind {
     } else if content.starts_with(crate::driver::LOOP_STEER_PREFIX)
         || content.starts_with(crate::driver::CONTINUATION_MARKER_PREFIX)
         || content.starts_with(crate::driver::user_hooks::STOP_HOOK_MARKER_PREFIX)
+        || content.starts_with(crate::skills::invoke::SKILL_INVOCATION_PREFIX)
+        || content.starts_with(crate::waiting::WAKE_MARKER)
     {
         BlockKind::Steered
     } else if content.starts_with(RECALL_MARKER) {

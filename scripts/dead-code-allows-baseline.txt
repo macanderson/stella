@@ -9,5 +9,5 @@
 # The counts here are the debt #3872 left behind, not permission to add more.
 # The remedy is almost always `#[cfg(test)]` -- compiler-enforced, and honest
 # about what the item is for -- or deletion. This file is meant to reach empty.
-stella-cli 17
-stella-core 3
+stella-cli 7
+stella-core 2

@@ -972,7 +972,6 @@ async fn tools_past_the_per_server_cap_are_dropped_recorded_and_the_server_still
 async fn a_well_behaved_server_records_no_overflow() {
     let set = McpToolSet::from_clients(vec![connected_client("files", "read").await]);
     assert!(set.over_advertising_servers().is_empty());
-    assert_eq!(set.dropped_tool_count(), 0);
 }
 
 /// A connected client that advertised `overflow` tools past the cap.
@@ -997,6 +996,11 @@ async fn over_advertising_client(name: &str, overflow: usize) -> McpClient {
 /// number for the session and one record per server — never folded into
 /// `failed_servers`, which is rendered as "server unavailable" and would be
 /// a lie about a server that is up and answering.
+///
+/// The session number is derived from the per-server record rather than
+/// carried alongside it (#3723): the status line that renders it lives in
+/// `stella-tui`, which never sees an `McpToolSet`, so a second fold here
+/// would be a copy of a sum nobody could call.
 #[tokio::test]
 async fn truncation_is_reported_per_server_and_as_a_session_total() {
     let set = McpToolSet::from_clients(vec![
@@ -1011,7 +1015,10 @@ async fn truncation_is_reported_per_server_and_as_a_session_total() {
         "the bounded record names only the servers that truncated"
     );
     assert_eq!(
-        set.dropped_tool_count(),
+        set.over_advertising_servers()
+            .iter()
+            .map(|(_, dropped)| dropped)
+            .sum::<usize>(),
         47,
         "…and the total is the one number a status line can carry"
     );

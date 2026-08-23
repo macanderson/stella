@@ -162,6 +162,7 @@ pub mod journal;
 pub mod notify;
 pub mod prune;
 pub mod reflection;
+pub mod rules_peek;
 pub mod scoreboard;
 pub mod session_stats;
 pub mod sessions;
