@@ -197,6 +197,18 @@ fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
             Style::default().fg(theme::WARNING_BRIGHT),
         )));
     }
+    // The other wall (#4441). Worded apart from the count cap above and
+    // without "at least": the budget sees the whole advertised list, so this
+    // number is exact where that one is a floor.
+    if detail.trimmed_tools > 0 {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "    ! {} trimmed over the per-server schema byte budget — never offered to the model",
+                detail.trimmed_tools
+            ),
+            Style::default().fg(theme::WARNING_BRIGHT),
+        )));
+    }
     if detail.tools.is_empty() {
         lines.push(Line::from(Span::styled(
             if detail.connected {
@@ -466,6 +478,25 @@ mod tests {
         capped.dropped_tools = 12;
         let text = rendered(&capped);
         assert!(text.contains("at least 12 more"), "{text}");
+    }
+
+    /// **The witness (#4441).** The byte budget's warning is exact where the
+    /// count cap's is a floor, and names the budget rather than the cap — the
+    /// two limits are different and an operator has to know which to go and
+    /// look at.
+    #[test]
+    fn the_budget_warning_is_exact_and_names_the_other_wall() {
+        let mut over_budget = stripe();
+        over_budget.trimmed_tools = 4;
+        let text = rendered(&over_budget);
+        assert!(
+            text.contains("4 trimmed over the per-server schema byte budget"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("at least"),
+            "the budget counts exactly: {text}"
+        );
     }
 
     #[test]

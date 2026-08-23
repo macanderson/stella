@@ -56,6 +56,7 @@ pub(crate) async fn mcp_snapshot(
     };
     let schemas = mcp.map(|s| s.schemas()).unwrap_or_default();
     let dropped = crate::mcp_cmd::dropped_by_server(mcp);
+    let trimmed = crate::mcp_cmd::trimmed_by_server(mcp);
     let usage = crate::mcp_cmd::usage_stats(&cfg.workspace_root)?;
     let disabled_set = disabled.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let oauth_logins: HashSet<String> = crate::mcp_cmd::oauth_logged_in(&cfg.workspace_root)?
@@ -107,6 +108,7 @@ pub(crate) async fn mcp_snapshot(
                 health: connected_now.then_some(health).flatten(),
                 tool_count,
                 dropped_tools: dropped.get(name).copied().unwrap_or(0),
+                trimmed_tools: trimmed.get(name).copied().unwrap_or(0),
                 auth_fields: transport
                     .credential_names()
                     .into_iter()
@@ -243,6 +245,10 @@ pub(crate) async fn mcp_detail(
         connected,
         health: connected.then_some(health).flatten(),
         dropped_tools: crate::mcp_cmd::dropped_by_server(mcp)
+            .get(name)
+            .copied()
+            .unwrap_or(0),
+        trimmed_tools: crate::mcp_cmd::trimmed_by_server(mcp)
             .get(name)
             .copied()
             .unwrap_or(0),
