@@ -347,6 +347,11 @@ access are needed; the suites either bind `127.0.0.1:0` or use no socket at all.
   result reports real input usage and reads the gap back from
   `GET /v1/calibration`, including that two providers sharing a model name keep
   separate rows.
+- [`tests/route_docs.rs`](tests/route_docs.rs) holds
+  [`src/server.rs`](src/server.rs)'s endpoint table to the `Route` enum in both
+  directions (#3758): every declared route appears in the table, and the table
+  names no path nothing routes. The table had silently dropped two live routes,
+  and a website page citing it as a source of truth inherited the undercount.
 - Unit tests live beside the code in [`src/frame.rs`](src/frame.rs) (wire
   round-trips, including that a legacy `aborted` payload without `cost_usd` still
   deserializes), [`src/server.rs`](src/server.rs) (the step-cap and deadline

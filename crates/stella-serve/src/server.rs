@@ -10,10 +10,12 @@
 //! | `GET /healthz` | liveness — is this process alive |
 //! | `GET /readyz` | readiness — is it safe to send new work (#1131) |
 //! | `GET /v1/metrics` | counters ([`crate::observe::Snapshot`]) — authenticated, pull-only |
+//! | `GET /v1/calibration` | token drift — what the engine estimated against what the provider billed (#1298) |
 //! | `POST /v1/turns` | start a turn (`TurnRequest` body) → `{ "turn_id": … }` |
 //! | `GET /v1/turns/{id}/events` | SSE stream of [`ServerFrame`](crate::frame::ServerFrame)s until `turn_complete` |
 //! | `POST /v1/turns/{id}/tool-result` | answer a `tool_request` (`ToolResultIn`) |
 //! | `POST /v1/turns/{id}/provider-result` | answer a `provider_request` (`ProviderResultIn`) |
+//! | `POST /v1/turns/{id}/provider-delta` | stream fragments of an in-flight `provider_request`, ahead of its result (#1165) |
 //! | `POST /v1/turns/{id}/cancel` | end an in-flight turn → `{ "status": "cancelled" }` |
 //! | `POST /v1/turns/{id}/steer` | inject a mid-turn user message (#932) |
 //! | `POST /v1/turns/{id}/pause` | hold the turn at its next step boundary; optional `{"reason"}` (#932) |
@@ -22,7 +24,8 @@
 //! | `GET /v1/sessions/{id}` | history, cost to date, live turn |
 //! | `POST /v1/sessions/{id}/turns` | run the next turn (turn semantics minus `messages`) |
 //! | `DELETE /v1/sessions/{id}` | end the session, cancelling its live turn |
-//! | `GET`/`DELETE` `/v1/{turns,sessions}/{id}/checkpoint` | read back or reclaim a resume point (#1198) |
+//! | `GET`/`DELETE` `/v1/turns/{id}/checkpoint` | read back or reclaim a turn's resume point (#1198) |
+//! | `GET`/`DELETE` `/v1/sessions/{id}/checkpoint` | the same, for a server-owned session (#1198) |
 //!
 //! Any other method on one of those paths is a `405` carrying `Allow`; any
 //! other path is a `404`. The handlers themselves live in `src/routes.rs` and
