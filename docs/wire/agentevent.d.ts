@@ -1329,9 +1329,9 @@ export type Withholder = "project_untrusted" | "managed_ceiling";
  *
  * `remote = "Self"` keeps the derived codec as a pair of *inherent*
  * associated functions instead of the trait impls, so the hand-written
- * [`Serialize`]/[`Deserialize`] impls below can delegate to it after routing
- * [`AgentEvent::Unknown`] around it. Without that indirection the forward-
- * compat fallback would mean hand-writing a visitor for every variant.
+ * [`Serialize`]/[`Deserialize`] impls in `event.rs` can delegate to it after
+ * routing [`AgentEvent::Unknown`] around it. Without that indirection the
+ * forward-compat fallback would mean hand-writing a visitor for every variant.
  */
 export type AgentEvent = {
   /**

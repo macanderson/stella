@@ -26,8 +26,8 @@
 //!
 //! # It lives beside `agent.rs`, not inside it
 //!
-//! `crates/stella-cli/src/agent.rs` is a grandfathered god file closed to
-//! growth (AGENTS.md § "God files"), so this is a sibling module — the same
+//! `crates/stella-cli/src/agent.rs` sits close to the 1500-line ratchet
+//! (AGENTS.md § "God files"), so this is a sibling module — the same
 //! placement, for the same reason, as `crate::turn_files`.
 //!
 //! # What a plugin is handed, and what it is told it cannot have

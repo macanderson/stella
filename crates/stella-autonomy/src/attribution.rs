@@ -99,7 +99,7 @@ pub struct Attribution {
     /// indistinguishable from a human's at a glance.
     ///
     /// Deliberately **not** applied to commit messages. Those follow
-    /// Conventional Commits (`fix(stella-cli): …`), the scope is load-bearing,
+    /// Conventional Commits (`fix(stella-cli): …`), the scope is required,
     /// and a prefix in front of it would break the convention the repository
     /// enforces. The commit identifies its author through the footer instead.
     pub title_prefix: String,

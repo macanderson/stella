@@ -311,7 +311,7 @@ Read this before installing a verification plugin, and match it to what the inst
 
 **Verification is delivered by an installed plugin.** A plugin's `[oracle]` runs in the plugin's own process. stella does not run that oracle, and it does not re-check what comes back: the fail→pass flip, and every number a declared check compares against a budget, are what the plugin's own process said it saw. stella applies the declared rule — `[requirements]`, the flip policy, the checks — to those reported claims, and it will not credit a requirement they leave undecided. What it cannot do is tell an earned result from a typed one.
 
-Two things stay true regardless, and they are the load-bearing half of the design:
+Two things stay true regardless, and they are the half of the design that cannot be delegated to a plugin:
 
 - **`judge` is still synchronous, I/O-free, and total**, over the evidence the plugin reported. A plugin cannot decide "done" for itself, in any language — see [What a plugin is](#what-a-plugin-is) above. What changed with this architecture is not that guarantee; it is where the *evidence* comes from.
 - **The tamper finding is the host's, never the plugin's.** Snapshotting witness-artifact identity happens host-side, and the response type a plugin sends has no field for a tamper finding in any language — a plugin cannot vouch for its own witness even if it wanted to.

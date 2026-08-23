@@ -194,7 +194,7 @@ pub(crate) fn records_of_kind(
 /// Every record of one kind in **append order** — the order the ledger accepted
 /// them.
 ///
-/// Distinct from [`records_of_kind`], and the distinction is load-bearing.
+/// Distinct from [`records_of_kind`], and the distinction is required.
 /// `observed_at` is the wall clock of the *described event*, at second
 /// granularity, and `record_id` is a content hash — so two decisions made in the
 /// same second sort by hash, which is to say arbitrarily. A replay that folds
@@ -248,7 +248,7 @@ pub(crate) fn records_of_kind_newest(
 
 /// The **newest** `limit` records of one kind in **append order** — the
 /// recency-window counterpart of [`records_of_kind_in_append_order`], carrying
-/// the same load-bearing `rowid` ordering (a last-write-wins fold needs append
+/// the same required `rowid` ordering (a last-write-wins fold needs append
 /// order, not `observed_at`). Selects by `rowid DESC LIMIT` then reverses, so
 /// the result is the newest `limit` records in ascending append order.
 pub(crate) fn records_of_kind_newest_in_append_order(

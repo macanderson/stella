@@ -3,7 +3,7 @@
 
 //! Tests for the live `tool_calls` projection.
 //!
-//! The load-bearing ones are [`count_is_visible_while_the_turn_is_still_running`]
+//! The two this module exists to fix are [`count_is_visible_while_the_turn_is_still_running`]
 //! and [`an_interrupted_execution_recovers_every_call_from_the_log`] — those
 //! two are the bugs this module exists to fix, and each fails outright
 //! against the pre-v18 write path.

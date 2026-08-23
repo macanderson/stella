@@ -84,7 +84,7 @@ pub struct Observation {
     pub ci: CiConclusion,
     /// What the *same* checks concluded on the base branch.
     ///
-    /// The load-bearing field, and the reason `deliver observe` reads twice.
+    /// The field the whole comparison depends on, and the reason `deliver observe` reads twice.
     /// Without it a red build is indistinguishable from an inherited one, and
     /// the loop spends its whole budget fixing `main`.
     pub base_ci: CiConclusion,

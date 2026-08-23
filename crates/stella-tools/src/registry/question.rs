@@ -29,7 +29,7 @@
 //! # Why this flow serializes
 //!
 //! `ask_question` advertises `read_only: true` — truthfully, it changes
-//! nothing — and that is load-bearing twice over: it is what lets a
+//! nothing — and that is required twice over: it is what lets a
 //! `ReadOnlyTools`-wrapped child call the tool at all, and it is what makes
 //! the engine's dispatcher run sibling calls **concurrently**. The second
 //! consequence is a hazard the approval flow never had: two questions

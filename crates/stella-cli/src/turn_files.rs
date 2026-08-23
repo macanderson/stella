@@ -53,9 +53,9 @@
 //! authority on what the agent did is the pipeline's adoption, which measures
 //! a candidate against a sealed baseline and can tell the two apart.
 //!
-//! It lives beside `agent.rs` rather than inside it because `agent.rs` is a
-//! grandfathered god file, closed to growth (AGENTS.md § "God files — plan
-//! around them, never into them").
+//! It lives beside `agent.rs` rather than inside it because `agent.rs` sits
+//! close to the 1500-line ratchet (AGENTS.md § "God files — plan around them,
+//! never into them").
 
 use std::sync::Arc;
 
@@ -444,9 +444,9 @@ pub(crate) fn emit_shared_tree_changes_raw(
 /// The whole of `cfg` this ever needed was `cfg.durability`, and taking the
 /// narrower thing is what lets the per-call measurer (#4175) hold one cheaply
 /// for the length of a turn instead of cloning a `Config`. Both granularities
-/// then run the *same* function, which is the load-bearing half of the
-/// no-double-counting argument in `stella_tools::call_measure`: there is one
-/// measurement, called more or less often, not two that have to agree.
+/// then run the *same* function, which is what makes the no-double-counting
+/// argument in `stella_tools::call_measure` hold: there is one measurement,
+/// called more or less often, not two that have to agree.
 ///
 /// Returns the paths it published, so a per-call reading the tool supplied
 /// itself ([`emit_own_changes`]) can be published for the rest and no path

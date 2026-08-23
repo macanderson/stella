@@ -16,7 +16,7 @@ publish.workspace = true
 # it names.
 [dependencies]
 serde.workspace = true
-# `float_roundtrip` is declared HERE rather than inherited, and it is load-bearing
+# `float_roundtrip` is declared HERE rather than inherited, and it is required
 # rather than tidy. serde_json's default parser is lossy by one ULP for a large
 # fraction of full-precision doubles (its writer is exact), so without it a `f64`
 # field does not survive a round trip and invariant 4 is false for any record

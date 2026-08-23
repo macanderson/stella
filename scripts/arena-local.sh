@@ -221,7 +221,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 printf '\n'
-# Argument order is load-bearing, not stylistic. `arena_local.py` collects the
+# Argument order is required, not stylistic. `arena_local.py` collects the
 # `arenabench run` passthrough with `nargs=REMAINDER`, and argparse stops
 # parsing options at the first positional — so every flag must precede
 # $TEMPLATE and the passthrough must follow it. Built the other way round,

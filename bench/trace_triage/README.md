@@ -130,7 +130,7 @@ cohort split that separates "the run is broken" from "the agent did badly"
 a loss), and it writes `postmortem.md` / `postmortem.json` into the match
 `arenabench assemble` folded the run into.
 
-A healthy run gets one clean paragraph. That is the load-bearing behaviour, not
+A healthy run gets one clean paragraph. That is the required behaviour, not
 a nicety: a detector that always fires is noise, and noise is how a real
 finding gets ignored.
 

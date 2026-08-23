@@ -17,7 +17,7 @@
  *
  * - **Stages are section rules**, not rows — the label *is* the stage.
  * - **Reasoning is quiet.** Dim, italic, collapsed to a preview with its line
- *   count; the least load-bearing text on screen never outshouts the response.
+ *   count; the least required text on screen never outshouts the response.
  * - **The label is coloured, the value is read.** A tool's name takes its
  *   CLASS's hue — read/write/run/verify/repo/delegate
  *   (`crates/stella-tui/src/tool_class.rs`, mirrored server-side by
@@ -607,7 +607,7 @@ function resultParts(result: TranscriptEntry, resultOpen: boolean): ResultParts 
   // grammar (`crates/stella-tui/src/render/entry.rs`): the metric column states
   // the emitter's own `+N −M` instead of a line count, the collapsed row
   // suppresses the output preview (a prose "Applied edit to …" would restate
-  // the call row above it and the diff under it in the same breath), and the
+  // both the call row above it and the diff under it), and the
   // diff shows at most `INLINE_DIFF_CAP` lines until disclosed. Only a
   // successful mutation carries one, so `isError` never coincides with a diff.
   const diffText = typeof meta.diff === "string" ? meta.diff : "";

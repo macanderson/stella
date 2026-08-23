@@ -2,12 +2,12 @@
 
 The second half is the one that matters. A detector that always fires is noise,
 and noise is how a real finding gets ignored — so the healthy fixture here is
-not a smoke test, it is the load-bearing assertion. It is built to the measured
+not a smoke test, it is the required assertion. It is built to the measured
 healthy profile (30 tool calls a trial, no identical consecutive calls, a
 prompt cache above 93%) and the report on it must be one clean paragraph with
 no manufactured concern in it.
 
-The other load-bearing case is the separation the report exists to make
+The other required case is the separation the report exists to make
 impossible to miss: an arm whose credential never authenticated writes reward
 files full of zeros, and those zeros must never reach a solve rate.
 

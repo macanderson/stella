@@ -300,7 +300,7 @@ impl SessionModel {
     /// went to `(no diff captured)`: an accurate `+64 -6` beside a claim that
     /// nothing was captured.
     ///
-    /// Carrying `file_touch_seq` across is load-bearing, not tidiness. It
+    /// Carrying `file_touch_seq` across is required, not tidiness. It
     /// stamps [`FileState::touched_seq`], the recency key
     /// [`MAX_TRACKED_FILES`] eviction orders by; restarting it at 0 under
     /// retained files would rank every surviving path above every new one and

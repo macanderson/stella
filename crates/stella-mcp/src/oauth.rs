@@ -22,7 +22,7 @@
 //!    browser while the deck shows the same flow inline.
 //! 2. [`OAuthManager`] / [`OAuthTokenSource`] — the runtime side. The manager
 //!    owns the on-disk [`TokenStore`] and hands each HTTP transport a lazy
-//!    per-server token source. "Lazy" is load-bearing: a source attached to a
+//!    per-server token source. "Lazy" is required: a source attached to a
 //!    server with no stored tokens yields no header (static-header servers
 //!    keep working untouched), and it re-checks the store until tokens
 //!    appear — so a login completed mid-session takes effect on the next

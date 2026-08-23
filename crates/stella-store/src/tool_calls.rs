@@ -16,7 +16,7 @@
 //!
 //! Until v18 this projection had exactly one writer:
 //! [`Store::materialize_tool_calls`], called once from the CLI's turn
-//! finalizer. Two consequences followed, and both were load-bearing bugs
+//! finalizer. Two consequences followed, and both were serious bugs
 //! rather than cosmetic ones:
 //!
 //! 1. **An in-flight turn reported zero tool calls.** Every count surface —

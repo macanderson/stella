@@ -104,7 +104,7 @@ const MIN_RESULT_CHARS: usize = 160;
 
 /// Per-call character cap on a tool call's rendered arguments.
 ///
-/// The arguments are load-bearing in a way the old `[called: bash]` rendering
+/// The arguments are essential in a way the old `[called: bash]` rendering
 /// was not: "ran the wrong command for twenty minutes" is a fact about the
 /// argument, not about the tool.
 const TOOL_INPUT_CHARS: usize = 140;

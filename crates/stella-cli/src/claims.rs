@@ -495,7 +495,7 @@ mod tests {
         }
     }
 
-    /// The commit lane's load-bearing property, and the reason
+    /// The commit lane's decisive property, and the reason
     /// [`crate::fleet_commits`] can attribute a shared tree's `HEAD` advance
     /// at all: the lane is held for the whole inner call — so a rival cannot
     /// commit inside the window the observer nested there — and released the

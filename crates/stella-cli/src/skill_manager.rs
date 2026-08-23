@@ -76,7 +76,7 @@ fn state_path(scope_root: &Path) -> PathBuf {
 }
 
 /// Read a scope's sidecar state (a missing/corrupt file reads as default —
-/// state is a convenience layer, never load-bearing enough to fail an op).
+/// state is a convenience layer, never essential enough to fail an op).
 pub fn read_state(scope_root: &Path) -> ScopeState {
     std::fs::read_to_string(state_path(scope_root))
         .ok()

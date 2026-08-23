@@ -122,7 +122,7 @@ mod tests {
     }
 
     proptest! {
-        /// #2682 witness (b), the load-bearing half: whatever the skill's
+        /// #2682 witness (b), the decisive half: whatever the skill's
         /// grant names — including the very tool, its group, or a grant that
         /// spells `on` for it — a tool the operator denied stays denied.
         #[test]

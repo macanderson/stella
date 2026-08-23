@@ -414,7 +414,7 @@ fn doctor_parses_bare_and_with_repair() {
     ));
 }
 
-/// The load-bearing invariant: every flag defined at the root MUST be
+/// The invariant everything else depends on: every flag defined at the root MUST be
 /// `global = true`, or it is silently unaccepted after a subcommand token
 /// (`stella fleet … --spend-limit 5` → "unexpected argument"). Introspects the
 /// built command rather than the source so any future root flag — added to

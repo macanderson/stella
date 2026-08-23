@@ -26,7 +26,7 @@ use ratatui::style::Color;
 
 /// The green ratio a gold must clear, as a percentage of red.
 ///
-/// The green ratio is the load-bearing half: below it the hue is orange, and orange on a near-black ground reads brown on cheap panels.
+/// The green ratio is the decisive half: below it the hue is orange, and orange on a near-black ground reads brown on cheap panels.
 pub const GOLD_GREEN_PCT: u32 = 78;
 
 /// The blue ceiling a resting gold must stay under, as a percentage of red.

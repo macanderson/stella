@@ -28,7 +28,7 @@ gates) — both deleted in #3865.
 
 ## Two kinds of recording, deliberately not interchangeable
 
-A golden's manifest named its `source`, and the distinction was load-bearing:
+A golden's manifest named its `source`, and the distinction was decisive:
 
 | Source | What it is | What it proves |
 |---|---|---|

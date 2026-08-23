@@ -178,7 +178,7 @@ oracle's existing command-identity rule stays until there is evidence that
 false flips from *changed* failure modes are a real source of bad verdicts,
 rather than a hypothesis with a cheap-looking fix.
 
-### 4.3 The scrubber is the load-bearing part
+### 4.3 The scrubber is the required part
 
 A symptom class is prose, and prose describing a failure will happily quote the
 assertion that produced it. So the redactor does not trust the description: a

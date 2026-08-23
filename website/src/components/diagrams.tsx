@@ -14,7 +14,7 @@
  * - One stroke weight, one radius, two type sizes. Boxes are outlines, not
  *   fills, so a diagram reads as line art rather than as a stack of panels.
  * - Glyphs are line art at the same weight, and only earn their place when the
- *   *kind* of a node is load-bearing — a subprocess versus a remote endpoint,
+ *   *kind* of a node is essential — a subprocess versus a remote endpoint,
  *   a lock versus a box. A glyph that merely decorates a label is noise, so
  *   most diagrams here carry none.
  * - Accessible: every diagram carries `role="img"` plus a `<title>` and an
@@ -580,7 +580,7 @@ export function EngineGateDiagram() {
 
 /**
  * CI guide: loop-bench's verdict ladder, in its real precedence order. Drawn as
- * rungs because the *order* is load-bearing — reward outranks everything, so a
+ * rungs because the *order* is required — reward outranks everything, so a
  * solved task is never called silent no matter what its event stream lost.
  */
 export function LoopVerdictDiagram() {

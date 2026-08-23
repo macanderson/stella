@@ -4,9 +4,9 @@
 //! Only the flag definitions and the `match` live here. Each verb's actual
 //! work is a sibling module — [`crate::fleet_gc`] for `clean`,
 //! [`crate::fleet_claims`] for `claims` — for the reason `fleet_gc.rs` was
-//! split out in the first place: `fleet_cmd.rs` is a grandfathered god file
-//! closed to growth (AGENTS.md § *God files*), so the fleet's non-fan-out
-//! surface grows sideways rather than into it.
+//! split out in the first place: `fleet_cmd.rs` sits close to the 1500-line
+//! ratchet (AGENTS.md § *God files*), so the fleet's non-fan-out surface
+//! grows sideways rather than into it.
 //!
 //! The enum sits in its own module rather than in the first verb's file
 //! (where it started, when `clean` was the only one) so adding a verb does

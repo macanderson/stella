@@ -63,7 +63,7 @@ async fn a_step_walks_the_transcript_to_estimate_it_at_most_twice() {
     assert!(
         walks <= 2 * STEPS,
         "{STEPS} steps performed {walks} whole-transcript estimate walks; at most \
-         two per step are load-bearing (compaction's measurement and the step's \
+         two per step are required (compaction's measurement and the step's \
          own input size). The other two were recomputations of a number the \
          caller already had."
     );

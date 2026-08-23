@@ -349,7 +349,7 @@ class TestTheRigMustBeAbleToRunTheSeatItAccepts:
     def test_the_launch_refuses_the_seat_rather_than_exiting_zero(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The load-bearing witness: no container, and a named infrastructure
+        """The decisive witness: no container, and a named infrastructure
         failure instead of a seat that reports done having measured nothing."""
         import subprocess
 

@@ -287,7 +287,7 @@ pub struct RetrievalSettings {
     /// one-turn-per-process surface takes part in it too (#1221).
     ///
     /// Settings-backed rather than a constant because arming it on every
-    /// driver makes it load-bearing: it is now the reason ~1 turn in
+    /// driver makes it consequential: it is now the reason ~1 turn in
     /// `ab_recall_rate` sees no memories, no skills, and no records anywhere
     /// in the pipeline, and a workspace that would rather not pay that needs a
     /// way to say so that is not a source edit.

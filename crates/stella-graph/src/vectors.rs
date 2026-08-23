@@ -188,7 +188,7 @@ pub fn render_file_text(rel_path: &str, symbol_names: &[String], content: &str) 
 /// keeps rather than from a priority queue that could disagree with it. There
 /// is no queue to drain, invalidate, or leak.
 ///
-/// The `path ASC` tiebreak is load-bearing, not decoration: a fresh
+/// The `path ASC` tiebreak is required, not decoration: a fresh
 /// `stella init` stamps a whole tree within the same second, so without it the
 /// order inside a timestamp would be SQLite's choice and a capped pass could
 /// revisit files it already did instead of resuming past them.

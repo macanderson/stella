@@ -89,7 +89,7 @@ const SELF_DRIVING_JS: &str = include_str!("assets/self_driving.js");
 ///
 /// It covers **reading the head only**, never the response. That distinction
 /// used to be invisible — every route answered once and closed, so wrapping
-/// the whole exchange was equivalent — and became load-bearing the moment
+/// the whole exchange was equivalent — and became required the moment
 /// `/api/v1/live` existed: a ten-second cap on a healthy SSE stream would
 /// sever it on a timer. The hazard this guards against (a peer that connects
 /// and says nothing) ends when the head arrives, so that is where the timeout

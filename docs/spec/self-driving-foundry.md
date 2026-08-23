@@ -48,7 +48,7 @@ supervisor — not new machinery.
 
 ## 2. The parts bin — what exists today
 
-The design builds on surveyed, working code. Paths are load-bearing;
+The design builds on surveyed, working code. Paths are precise on purpose;
 each row is a dependency of a later section.
 
 | Primitive | Where | State |

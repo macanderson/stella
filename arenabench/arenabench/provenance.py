@@ -83,7 +83,7 @@ a raised error rather than into a wrong number.
 The key is *appended to* rather than restructured, so every key written before
 lineage existed keeps its exact spelling and the whole archive stays groupable
 against itself. A clean match today is byte-identical to a clean match last
-month. That is deliberate and load-bearing: the feature is only defensible
+month. That is deliberate and required: the feature is only defensible
 because opting out of it costs nothing and changes nothing.
 
 What *is* recoverable is a bound. Harbor's own ``JobConfig`` grew fields over
@@ -773,7 +773,7 @@ def assert_aggregable(records: Iterable[Provenance | None]) -> None:
     real failure modes is exactly that (see the module docstring on why history
     is labelled rather than guessed).
 
-    This is belt and braces on purpose. Because :meth:`Provenance._key` already
+    This is checked twice on purpose. Because :meth:`Provenance._key` already
     appends the lineage label, a seeded and a clean record cannot share a key
     and this function cannot fire on that pair *while the key is intact*. That
     is the point: deleting the lineage component from the key — the tempting

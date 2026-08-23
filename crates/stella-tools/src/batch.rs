@@ -143,7 +143,7 @@ impl From<BatchError> for stella_protocol::ToolOutput {
 /// tool's own parser for one target — the same function the single form uses,
 /// which is what keeps the two spellings from drifting into two meanings.
 ///
-/// Returns targets in the caller's order. Order is load-bearing for
+/// Returns targets in the caller's order. Order is required for
 /// `edit_file`, where two edits to one file compose, so this never sorts or
 /// deduplicates.
 pub fn targets<T>(
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn the_plural_form_keeps_the_callers_order() {
-        // Order is load-bearing for edit_file, where two edits to one file
+        // Order is required for edit_file, where two edits to one file
         // compose. Sorting or deduplicating here would silently change meaning.
         let many =
             serde_json::json!({"files": [{"path": "b.rs"}, {"path": "a.rs"}, {"path": "b.rs"}]});

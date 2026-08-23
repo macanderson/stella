@@ -249,7 +249,7 @@ fn the_scan_catches_the_advisory_that_shipped() {
     );
 }
 
-/// The exclusions are load-bearing in the other direction: the prompt says
+/// The exclusions are required in the other direction: the prompt says
 /// "bash with grep only when you need every occurrence of one exact literal
 /// string", which is true and must stay sayable.
 #[test]
