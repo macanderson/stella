@@ -587,8 +587,7 @@ pub struct DeckUi {
     /// to say whether it steers the running turn, continues the thread, or
     /// forks a sidecar. See [`dispatch`].
     pub pending_dispatch: Option<PendingDispatch>,
-    /// What a plain mid-turn prompt does — queue for the lead (the default),
-    /// raise that card, or fork a sidecar. `ui.mid_turn_prompt` in settings.
+    /// What a plain mid-turn prompt does (`ui.mid_turn_prompt`); see [`dispatch`].
     pub mid_turn_prompt: MidTurnPrompt,
     pub splash: SplashState,
     /// Startup system notifications, shown as a transient dialog rather than
