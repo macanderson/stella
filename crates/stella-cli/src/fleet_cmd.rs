@@ -1095,6 +1095,19 @@ async fn run_task(
             None,
         ),
     };
+    // What this workspace's trust gate withheld, first on the channel — the
+    // ordering `agent::output::open_raw_turn` argues for, and the door parity
+    // #4500 asks for: `stella fleet` reached neither opener that carries this
+    // notice, so an untrusted checkout's refusal was on stderr and in no
+    // attempt's journal. Once per ATTEMPT, deliberately not through the
+    // process-wide latch (`agent::claim_withheld_announcement`) the goal door
+    // spends: each fleet worker is its own session in its own workspace — its
+    // own store, its own SessionStart hooks, its own system prompt — so "once
+    // per session" means once per lane here, and the latch would let the first
+    // lane's journal vouch for every sibling's.
+    if let Some(withheld) = cfg.authority.withheld.as_ref() {
+        let _ = tx.send(withheld.event());
+    }
 
     // The task's control lines (stella-fleet's `WorkerControls`), composed
     // with the dispatch-drop line from `EngineWorker::run` — see
