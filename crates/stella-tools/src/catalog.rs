@@ -248,7 +248,8 @@ catalog! {
     "ask_question"        => (true, false, Low, Always, "question", "ask_question"),
 }
 
-/// Tool names Stella once dispatched and no longer does.
+/// Names Stella once dispatched, or once told the model it dispatched, and no
+/// longer does.
 ///
 /// This list exists because #3244 deleted a tool surface that prose kept
 /// referring to. `bash`'s long-sleep advisory told the model to *"poll with
@@ -264,25 +265,103 @@ catalog! {
 /// decide in general which prose token is tool-shaped, and cannot false-fire
 /// on ordinary English.
 ///
-/// Every entry must be absent from [`ALL_NAMES`], which
-/// `no_retired_name_is_also_a_live_tool` pins: restoring a tool means deleting
-/// its line here, in the same change.
+/// # "or once told the model it dispatched"
+///
+/// `wait_for` is the reason that clause is in the first sentence. It never
+/// carried a `ToolSchema` and appears in no revision of this file — it entered
+/// the list because the advisory above *named* it, so the model carries its
+/// priors exactly as if it had existed. The set worth reserving is what the
+/// model was told about, which is a superset of what shipped.
+///
+/// # How the rest of it was recovered
+///
+/// #3237 reserved fifteen names, and #3853 found that was not the history:
+/// `web_fetch` — the name #3237's own problem statement uses as its example —
+/// was in neither list, so a manifest could claim it. The gap was invisible,
+/// because acceptance meant "not on our two lists" rather than "never a
+/// built-in".
+///
+/// The rest were reconstructed from git rather than from memory. Every name
+/// Stella ever dispatched was declared in this file (or its pre-move path)
+/// since `6d7483c50` made adding a tool a one-place change, so the universe is
+/// the union of every `"name" =>` row across every revision of it:
+///
+/// ```text
+/// git log --all -p -- crates/stella-tools/src/catalog.rs stella-tools/src/catalog.rs \
+///   | rg -o '^[+-] *"[a-z_0-9]+" +=>' | rg -o '"[a-z_0-9]+"' | sort -u
+/// ```
+///
+/// That yields 81 names; subtracting [`ALL_NAMES`] — which includes the six
+/// `6365cf330` restored — leaves the retired set. `54233fd68` (#3244) is where
+/// most of them went in one commit. One name predates the table and is not in
+/// that union: `code_graph`, which `33ac2f31a` shipped and `326cf4917`
+/// renamed to `graph_query`.
+///
+/// The command is deliberately not a test. It reads every revision on every
+/// ref, which is neither hermetic nor fast, and a shallow CI clone would make
+/// it answer differently — a guard that is wrong on the machine it runs on is
+/// worse than a documented procedure. Re-run it when adding a name; the
+/// disjointness half *is* enforced, by `no_retired_name_is_also_a_live_tool`,
+/// so restoring a tool means deleting its line here in the same change.
 pub const RETIRED_TOOL_NAMES: &[&str] = &[
     "apply_edits",
     "ask_user",
     "build_project",
+    "ci_status",
+    "cite_memory",
+    "clear_output",
+    "close_issue",
+    "code_graph",
+    "create_issue",
     "format_code",
     "gather_context",
+    "generate_image",
+    "generate_svg",
+    "generate_video",
+    "get_issue",
     "graph_query",
+    "install_skill",
+    "invoke_skill",
+    "list_labels",
+    "list_members",
+    "list_scripts",
+    "mcp_search",
+    "poll_video",
+    "probe_capability",
     "project_overview",
     "read_output",
     "read_symbol",
+    "recall_context",
+    "repo_commit",
+    "repo_diff",
+    "repo_history",
+    "repo_pull",
+    "repo_push",
+    "repo_recover",
+    "repo_rollback",
+    "repo_status",
+    "restart_process",
     "run_lint",
     "run_script",
     "run_tests",
+    "save_exploration",
+    "save_memory",
+    "search_issues",
+    "search_skills",
+    "semantic_code_search",
+    "send_stdin",
+    "skill_search",
     "start_process",
+    "start_work_on_issue",
+    "stop_process",
+    "tool_search",
+    "update_issue",
     "verify_done",
     "wait_for",
+    "web_download",
+    "web_extract_assets",
+    "web_fetch",
+    "web_search",
 ];
 
 /// Retired names that are also ordinary words outside Stella — deliberately
@@ -303,7 +382,32 @@ pub const RETIRED_TOOL_NAMES: &[&str] = &[
 /// reserved ([`is_reserved`]) so a `.stella/tools/*.toml` manifest cannot
 /// claim a name an operator's `"tools": {"task": …}` entry already addresses
 /// as a group; it is simply not greppable.
-pub const RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN: &[&str] = &["glob", "grep", "task"];
+///
+/// `diagnostics`, `explorations` and `screenshot` joined in #3853 on the same
+/// test. All three were real dispatch names deleted by #3244, and all three
+/// are also words this repository's own runtime prose uses about something
+/// else — the diagnostic plane, an agent exploring a tree, an image someone
+/// took. The scan requires a backticked whole token, which is most of what
+/// keeps it off English, but these three are exactly the ones a correct
+/// sentence would still backtick.
+///
+/// # The split still earns its keep, and it is about one thing
+///
+/// #3853 asked whether two lists are still worth having. They are, and the
+/// distinction is **only** about prose scanning: [`is_retired`] is their
+/// union, so a manifest naming anything on either list is refused
+/// identically, and `is_reserved` follows. Nothing a caller asks about a
+/// `name` field can tell the two apart. What the split buys is a scanner that
+/// does not cry wolf — and a guard that cries wolf gets deleted, which costs
+/// the whole check rather than one name.
+pub const RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN: &[&str] = &[
+    "diagnostics",
+    "explorations",
+    "glob",
+    "grep",
+    "screenshot",
+    "task",
+];
 
 /// Whether `name` was a dispatch name Stella has since deleted — the union of
 /// [`RETIRED_TOOL_NAMES`] and [`RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN`].

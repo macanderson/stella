@@ -32,9 +32,10 @@ type PreludeCall = (&'static str, fn() -> Value);
 
 /// What one tool is driven with, and the state it needs in front of it.
 ///
-/// Both halves are re-applied before **every** measured call, which is what
-/// makes the two calls comparable: the second one must see exactly what the
-/// first did, or a difference in the output says nothing about the tool.
+/// The files and the prelude are re-applied before **every** measured call,
+/// which is what makes the two calls comparable: the second one must see
+/// exactly what the first did, or a difference in the output says nothing
+/// about the tool.
 struct Probe {
     /// Workspace files, rewritten from scratch each round after the previous
     /// round's tree is removed.
@@ -271,8 +272,8 @@ fn every_non_exempt_tool_is_driven_by_the_sentinel() {
 /// `VolatileWithNormalizer` tool must produce output that differs raw and
 /// matches once normalized.
 ///
-/// Both halves are chosen so the two postures are not interchangeable, which
-/// is the first thing this harness was caught getting wrong. Comparing
+/// The two arms are chosen so the postures are not interchangeable, which is
+/// the first thing this harness was caught getting wrong. Comparing
 /// `comparable_output` on the `Deterministic` arm let `read_file` — whose
 /// footer is volatile and whose normalizer works — pass as `Deterministic`,
 /// so the distinction the registry exists to record was unenforced in exactly
