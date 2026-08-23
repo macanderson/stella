@@ -94,15 +94,23 @@ still a design question; making an already-reachable one writable is not.
 Every entry arrives with doc prose explaining its place in the host-driving
 story.
 
-**Declared exclusions.** `Engine::with_hooks` (`Hooks`, `HookRunner`) and
-`Engine::with_bus` (`HookBus`) are deliberately not closed over, and say so in
-`src/lib.rs` rather than being left as a silence. Their closure is the
-shell-command hook plane, an extension surface whose purpose is to *execute*
-things, fronted here by a crate that inherits `stella-core`'s I/O-free
-posture; the supported host-extension door is
-[`stella-runtime`](../stella-runtime)'s wrapper socket (#3380), which lives one
-layer above this facade precisely because two of its four points do I/O.
-Tracked in #3768.
+**The hook plane is the wrong layer, by design.** `Engine::with_hooks`
+(`Hooks`, `HookRunner`) and `Engine::with_bus` (`HookBus`) are not closed
+over. Their closure is the shell-command hook plane, an extension surface
+whose purpose is to *execute* things, fronted here by a crate that inherits
+`stella-core`'s I/O-free posture; the supported host-extension door is
+[`stella-runtime`](../stella-runtime)'s wrapper socket (#3380,
+`wrapper::WrapperDispatch::bind`), which lives one layer above this facade
+precisely because two of its four points do I/O.
+
+#3768 asked whether to close over both, over the observer half alone, or
+neither. **Neither**, permanently: closing over either method would let a host
+reach the engine's shell-execution authority by naming `stella_engine::` paths
+alone. Nothing is stranded by it — [`stella-serve`](../stella-serve), the
+embedded host that would have been the observer half's first caller, already
+links `stella-core` directly and mints its bus from `stella_core::bus::HookBus`.
+`tests/embedding.rs` enforces the boundary: it stops compiling if any of the
+five hook-plane names becomes reachable through `stella_engine::*`.
 
 Two contracts every consumer must know, documented at length in `src/lib.rs`:
 

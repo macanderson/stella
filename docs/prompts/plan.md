@@ -1,10 +1,16 @@
 ---
 id: prompt-plan
 title: "plan — the effective prompt"
-status: living
+status: archived
 ---
 
 # `plan`
+
+**This page documents the pre-#3865 staged pipeline, kept for reference; the
+shape lives in an installed wrapper plugin now (`plugins/stella-plan`).**
+`stella-pipeline` was deleted in #3865, so `Pipeline::plan_stage` and every
+symbol this page cites dispatch from no code in this tree — see
+`docs/prompts/README.md § Half of this set is history`.
 
 Authoring the ordered plan. Runs after triage, recall and research; produces a
 JSON array of step strings that becomes the task board the user watches and the

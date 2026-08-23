@@ -65,7 +65,7 @@ against that sentence. Where speed and soundness conflict, speed wins on the
 things a later commit can fix, and soundness wins on the seams — because a seam
 is what a later commit cannot cheaply change.
 
-Four consequences, and they are acceptance criteria, not aspirations:
+What follows are acceptance criteria, not aspirations:
 
 1. **The wrapper socket must not assume a host.** A wrapper that only works when
    a terminal, a git workspace, or `stella-cli`'s process is present is not a
@@ -312,7 +312,7 @@ mode already shipped. One constructor, or every wrapper re-authors the defect.
 and `after_turn` spawns processes, and invariant 2 bans I/O in the engine
 (`doc:turn-loop-wrappers` §9.1).
 
-Two halves, and they shipped together:
+They shipped together:
 
 - **A3a — the in-process contract.** The `TurnWrapper` trait
   (`crates/stella-runtime/src/wrapper/mod.rs`), plus `[loop] points` — the
@@ -474,7 +474,7 @@ bus catalog (`crates/stella-core/src/bus/names.rs:284`, with
 `crates/stella-cli/src/trace.rs` gained the fold arm: `TraceRecord::plugin_facts:
 Vec<PluginFact>` (`trace.rs:130-136`, `:195-207`), folded from `plugin.<id>.*`
 journal events (`trace.rs:351-354`) — present and empty, never omitted, when
-no plugin ran. Both halves this item asked for exist.
+no plugin ran. Everything this item asked for exists.
 
 (Correction, 2026-08-17: an earlier draft said this namespace was "already
 contemplated at `crates/stella-core/src/bus/names.rs:3-4`". It is not — the
@@ -578,7 +578,7 @@ the host evaluates it.**
   programming language, so a Python author and a Rust author write the identical
   artifact.
 
-Three reasons this is the better decision, not merely the conservative one:
+This is the better decision, not merely the conservative one:
 
 1. **The failure it forecloses is the one the project exists to prevent.** A
    verification plugin that quietly calls a model to decide "done" is the worker
@@ -622,7 +622,7 @@ clauses. `[oracle]`'s command/timeout carried the evidence-gathering process —
 a benchmark run is precisely the workload the in-process bus cannot host, which
 is §6's own argument arriving intact from a completely different plugin. And
 `tamper = "artifact-identity"` transferred with no change of meaning and turned
-out to be load-bearing for a reason nobody designed it for: the recorded
+out to be required for a reason nobody designed it for: the recorded
 baseline is the "before" half of every comparison, so a worker that rewrites
 `benches/baseline.json` wins the budget without touching the code.
 
@@ -685,9 +685,9 @@ Also unstated: the
 provenance of a baseline (that it is the one from the merge base, not merely
 unmodified since), and any quantifier over a set the host does not know, such
 as "no changed file is at zero coverage". The general shape of that second
-limit is worth naming, because it bounds what this grammar will ever do: **it
-carries a verdict over an aggregate the oracle computes, not a quantifier the
-host evaluates.** That is a real constraint and it is also the reason the
+limit bounds what this grammar will ever do: **it carries a verdict over an
+aggregate the oracle computes, not a quantifier the host evaluates.** That is
+a real constraint and it is also the reason the
 decision survives — the plugin chooses what to measure, and the manifest, which
 a human reads and a reviewer diffs, decides what counts as done.
 
@@ -823,9 +823,9 @@ six-variant enum at `crates/stella-tui/src/envelope.rs:993`).
 
 **Net-new, not ported:** the durable flip record. Today a `LadderSnapshot` rides
 inside `AgentEvent::Verdict`, but there is no dedicated flip-transition event and
-the `verdict` tag's consumer posture is `Unclassified` (#2703) — nothing is
-declared to read it. Vera owns a declared flip record whose named consumer is
-the fine-tuning corpus. A verification signal nothing reads is the exact failure
+the `verdict` tag's consumer posture is `RecordedOnly` (#3790) — its readers all
+render, and nothing decides on it. Vera owns a declared flip record whose named
+consumer is the fine-tuning corpus. A verification signal nothing reads is the exact failure
 mode this project exists to end.
 
 ---
@@ -1209,7 +1209,7 @@ declaration names, and an entry declared that the directories do not hold.
 `stella plugin install` calls it before it prints anything, which is what makes
 the consent document provably complete rather than well-intentioned.
 
-Three consequences worth stating:
+Three details of that reconciliation carry weight:
 
 - **Names, never paths**, so nothing here needs `${plugin_dir}` interpolation
   (contrast `[runtime]` and `[oracle] command`, where the host expands it).
@@ -1234,9 +1234,9 @@ arrive with an install, not a review, and `stella context validate` verifies the
 chain against the repository's tree, which never contained them.
 
 The loader half placed plugin records in the **project** trust tier and
-**first** in merge order so a user's own copy wins. Both halves are correct and
-together they are **not sufficient** — which was a live security finding when
-this section was written:
+**first** in merge order so a user's own copy wins. Each choice is correct on
+its own, and together they are **not sufficient** — which was a live security
+finding when this section was written:
 
 > A promotion grant is keyed on a **lineage**, and `registry_from` armed
 > `(Trust::Project, lineage)` for every live grant in the ledger. A plugin's

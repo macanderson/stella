@@ -140,9 +140,7 @@ export function VeraStation() {
         <FactCard title="the witness does not stay">
           It encodes a moment — &quot;this code doesn&apos;t do X yet&quot; —
           not an invariant, so it lives and dies with the candidate workspace.
-          You never inherit an already-satisfied test nobody reviewed.{" "}
-          <BrandFace>--keep-witness</BrandFace> promotes it if it is worth
-          keeping.
+          You never inherit an already-satisfied test nobody reviewed.
         </FactCard>
         <FactCard title="verification buys no model call">
           The ladder is arithmetic over measurements. Every rung is terminal,

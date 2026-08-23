@@ -535,3 +535,79 @@ fn a_touched_path_that_is_not_a_file_is_not_an_anchor() {
             .is_empty()
     );
 }
+
+/// **Witness (#3437).** One drop line per evicted candidate, whatever its
+/// source, each carrying the remedy its own channel answers to.
+///
+/// Fails on base, where `report_record_drops` filtered `SteeringSet::dropped`
+/// to `SteeringSource::Record` and emitted through a single producer that hard-
+/// coded the record channel's precedence advice. A skill that lost its seat
+/// every turn and a frame the recall host's merge evicted were both queryable
+/// on the ledger (#3358) and said nothing to the person watching the run.
+///
+/// The two skill classes are the part that needs care: a skill cut by the
+/// section's own token budget appears in `selected` **and** `dropped` by
+/// design, and its remedy is not `skills.max_skills` — that budget is a
+/// constant nothing configurable widens until #3243 Phase 4.
+#[test]
+fn every_dropped_source_gets_a_line_with_its_own_remedy() {
+    use stella_core::steering::{DroppedCandidate, SteeringCandidate, SteeringSet, SteeringSource};
+
+    fn dropped(source: SteeringSource, handle: &str) -> DroppedCandidate {
+        DroppedCandidate {
+            source,
+            handle: handle.to_string(),
+            est_tokens: 100,
+        }
+    }
+
+    let set = SteeringSet {
+        // The section-budget class: still selected on the plane, and still
+        // absent from the rendered section.
+        selected: vec![SteeringCandidate {
+            source: SteeringSource::Skill,
+            handle: "section-cut".to_string(),
+            score: 1.0,
+            why: "matched terms: deploy".to_string(),
+            est_tokens: 100,
+        }],
+        dropped: vec![
+            dropped(SteeringSource::Record, "deploy-policy"),
+            dropped(SteeringSource::Memory, "nod_evicted"),
+            dropped(SteeringSource::Skill, "seat-loser"),
+            dropped(SteeringSource::Skill, "section-cut"),
+            // Nothing on this path produces one; the silence is the absence
+            // of a producer, not a withheld report.
+            dropped(SteeringSource::Tool, "bash"),
+        ],
+    };
+
+    let mut lines = Vec::new();
+    crate::memory::recall::report_steering_drops(&set, |message| lines.push(message));
+
+    assert_eq!(lines.len(), 4, "one line per reportable source: {lines:?}");
+    let joined = lines.join("\n");
+    assert!(
+        lines[0].contains("^deploy-policy") && lines[0].contains("raise its precedence"),
+        "the record channel's own sentence is unchanged: {joined}"
+    );
+    assert!(
+        lines[1].contains("nod_evicted") && lines[1].contains("`context.retrieval.max_tokens`"),
+        "a frame the merge evicted names the retrieval budget: {joined}"
+    );
+    assert!(
+        lines[2].contains("seat-loser") && lines[2].contains("`skills.max_skills`"),
+        "a skill that lost its seat names the seat count: {joined}"
+    );
+    assert!(
+        lines[3].contains("section-cut")
+            && lines[3].contains("skills section's token budget")
+            && lines[3].contains("#3243"),
+        "and one cut by the section budget says so, rather than advising a \
+         knob that would not have saved it: {joined}"
+    );
+    assert!(
+        !joined.contains("bash"),
+        "no source invents a line it has no producer for: {joined}"
+    );
+}

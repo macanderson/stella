@@ -83,7 +83,7 @@ kind of statement — so it gets split between the plane that is easiest to reac
 | **Presentation** | *What should the human see?* | 682 `println!` in `stella-cli`, the TUI | built |
 | **Diagnostic** | *Why did the program behave this way?* | — | **missing** |
 
-Two consequences follow, and they are the whole design brief:
+This is the whole design brief:
 
 1. **The new plane must not duplicate the first.** A second stream carrying what
    `AgentEvent` already carries would be a weaker parallel authority — the exact
@@ -137,8 +137,8 @@ Each has already rejected an obvious approach.
 
 ## 4. What breaks when `observe/` scales from one crate to seventeen
 
-The shipped design is right. Four things in it do not survive the jump, and this
-is the entire delta:
+The shipped design is right. What follows is the entire delta at workspace
+scale:
 
 | # | Holds at crate scope | Breaks at workspace scope | Fixed in |
 |---|---|---|---|
@@ -400,8 +400,9 @@ domain plane stays the source of truth and the diagnostic plane points at it.
 
 ## 9. Retiring the 71 `eprintln!`s and ratcheting the 625 discards
 
-Design without a migration path is a wish. Both halves are ratchets, because a
-625-site cleanup as one heroic PR is not reviewable and will not land.
+Design without a migration path is a wish. The discards and the `eprintln!`s
+are each retired by their own ratchet, because a 625-site cleanup as one
+heroic PR is not reviewable and will not land.
 
 **The discards.** An extension trait makes naming the loss the same length as
 dropping it:
@@ -435,9 +436,9 @@ they do talk, over reverse-RPC. The propagation value is real.
 
 **The recommendation is nonetheless to defer, for reasons that changed:**
 
-1. The four arguments in §9 of that document mostly still hold, but the
-   load-bearing one is now different: §7.1. Correlation is free here because
-   invariant 2 already banned ambient state. `tracing`'s spans exist to
+1. The four arguments in §9 of that document mostly still hold, but the one
+   everything else depends on is now different: §7.1. Correlation is free
+   here because invariant 2 already banned ambient state. `tracing`'s spans exist to
    reconstruct context that ordinary code loses; this codebase does not lose it.
 2. §5.2 is not available through `tracing`. `%value` / `?value` log anything
    `Display`/`Debug` can render, which is the precise hole invariant 3 cannot
@@ -484,7 +485,7 @@ Per AGENTS.md, each slice needs a test that fails on the old code.
 | # | Property | Test |
 |---|---|---|
 | 1 | Content cannot enter a record | a `trybuild` compile-fail case: `diag!(info, "x", p = String::from("secret"))` **must not compile**. This is the witness for §5.2, and it is a stronger artifact than a sentinel sweep because it fails at the only moment that matters |
-| 2 | The sentinel sweep still runs | belt and braces. Retained from serve, extended workspace-wide, with the planted-leak discipline §8 of that doc learned |
+| 2 | The sentinel sweep still runs | checked twice. Retained from serve, extended workspace-wide, with the planted-leak discipline §8 of that doc learned |
 | 3 | Filter never gates emission | property: for any filter and any record sequence, counters and the ring are identical; only sink output differs |
 | 4 | A failing sink never fails a caller | property: a sink returning `Err` on every write leaves `emit` infallible and the turn intact |
 | 5 | The ring survives a panic | integration: panic mid-turn, assert the crash file exists, is 0600, parses as JSONL, and contains the last pre-panic record |

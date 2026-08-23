@@ -3483,7 +3483,7 @@
       "type": "object"
     },
     {
-      "description": "A media generation job changed state. Video jobs are async and\nlong-lived; this event is how the TUI shows progress without polling\nshared state (L-T1).",
+      "description": "A media generation job changed state. Video jobs are async and\nlong-lived; this event is how the TUI shows progress without polling\nshared state (L-T1).\n\n**No producer in this workspace** (#4454): #4448 removed\n`crates/stella-media`, and CLAUDE.md's tool-surface rule forbids the\nmedia built-in that would have been its caller (#3236, #3845). This\nvariant and [`AgentEvent::MediaComplete`] stay as the wire contract an\nout-of-tree media MCP surface speaks, and because dropping the tags\nwould demote an older recording's media events to\n[`AgentEvent::Unknown`]. Retiring them belongs to a `PROTOCOL_VERSION`\nbump, which #4454 decides.",
       "properties": {
         "artifact_id": {
           "type": "string"
@@ -3514,7 +3514,7 @@
       "type": "object"
     },
     {
-      "description": "A media artifact landed under `.stella/artifacts/` with a manifest\nrow.",
+      "description": "A media artifact landed under `.stella/artifacts/` with a manifest\nrow. Producerless here for the reason\n[`AgentEvent::MediaProgress`] gives (#4454).",
       "properties": {
         "artifact": {
           "$ref": "#/$defs/MediaArtifactRef"

@@ -52,6 +52,12 @@
 # setting either configured nothing. They are recognised as retired rather
 # than misspelled — `stella` names them and says the feature is gone.
 #
+# Neither is coming back, and the reasons differ. The recap's one addition
+# over the file and cost lines a run already prints was the word `verified`,
+# and host-run verification left this workspace with the pipeline (#3893). The
+# trace duplicated `.stella/private/store.db`, which records every step, tool
+# call and cost it wrote and which `stella observe` reads (#3894).
+#
 # `ignore_gitignore`: `on` (the default) = the workspace probe skips paths the
 #   repository's own .gitignore excludes. `off` restores the unfiltered walk.
 # `create_worktrees`: `always` / `ask` / `never` — whether a run does its work

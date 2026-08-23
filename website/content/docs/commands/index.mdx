@@ -227,6 +227,14 @@ The cards below are in `stella --help`'s own order, for the same reason the subc
     Freeze all deck animation to a static frame, for CI and asciinema-style recordings.
     Env `STELLA_NO_ANIM` / `NO_COLOR`.
   </OptionCard>
+  <OptionCard name="-v / --verbose" defaultValue="warn">
+    Diagnostics: `-v` info, `-vv` debug, `-vvv` trace. See
+    [below](#diagnostics--v---log-level---log-file).
+  </OptionCard>
+  <OptionCard name="--log-level <spec>" defaultValue="warn">
+    Per-crate diagnostic filter — `warn,stella_store=debug`. Env `STELLA_LOG`; the flag
+    wins over both it and `-v`.
+  </OptionCard>
   <OptionCard name="--plan-mode" defaultValue="off">
     Show the plan and wait for approval before anything runs, whatever its size. Needs an
     interactive terminal — there is nobody to ask in a headless run. Scope review already
@@ -236,14 +244,6 @@ The cards below are in `stella --help`'s own order, for the same reason the subc
     Turn tools off for this run only: `--tools '*:off,task_list:on,get_state:on'` is a
     read-only run. Same spelling as the settings `tools` table. **Can only narrow** — it
     never switches on what a policy turned off. See [below](#--tools-narrowing-for-one-run).
-  </OptionCard>
-  <OptionCard name="-v / --verbose" defaultValue="warn">
-    Diagnostics: `-v` info, `-vv` debug, `-vvv` trace. See
-    [below](#diagnostics--v---log-level---log-file).
-  </OptionCard>
-  <OptionCard name="--log-level <spec>" defaultValue="warn">
-    Per-crate diagnostic filter — `warn,stella_store=debug`. Env `STELLA_LOG`; the flag
-    wins over both it and `-v`.
   </OptionCard>
   <OptionCard name="--log-file <path>" defaultValue="none">
     Write diagnostics as JSONL to a file, created `0600`, defaulting to `info`. An

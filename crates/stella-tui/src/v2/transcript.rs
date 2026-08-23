@@ -124,7 +124,7 @@ pub enum EventKind {
     /// Absent until the emitter has measured the change (#4154), which is the
     /// turn boundary rather than the moment the call returns.
     Edit { extent: Extent },
-    /// `＋ write <path> · new file · n lines`, the count on `Extent::added`.
+    /// `+ write <path> · new file · n lines`, the count on `Extent::added`.
     Write { extent: Extent },
     /// `✗ delete <path> · -n lines · git-backed · u undo`, the count on
     /// `Extent::removed`.

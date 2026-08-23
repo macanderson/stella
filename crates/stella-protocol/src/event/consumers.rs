@@ -76,7 +76,7 @@ use super::KNOWN_TYPE_TAGS;
 
 /// A surface that renders some signals and not others.
 ///
-/// Deliberately narrow. Three plausible surfaces are **absent** because
+/// Deliberately narrow. Two plausible surfaces are **absent** because
 /// membership in them is not a per-variant fact:
 ///
 /// - The **TUI** matches `AgentEvent` exhaustively
@@ -85,8 +85,13 @@ use super::KNOWN_TYPE_TAGS;
 /// - **Replay** likewise tagged every variant, in the then-existing
 ///   `stella-pipeline`'s `replay::event_signature`; that crate was deleted in
 ///   #3865 and no replay tagger has replaced it yet.
-/// - **Serve** forwards the event stream opaquely rather than selecting
-///   variants.
+///
+/// `stella-serve` mostly forwards the stream opaquely, which is why it was
+/// listed here as absent until the #4501 census read its `observe/tally.rs`:
+/// `TallyFold::observe` names ten variants by hand and folds them into the
+/// `TurnTally` that rides each settle record. That fold is the per-variant
+/// fact [`Surface::Serve`] records, and a row claiming it is checkable against
+/// that match.
 ///
 /// A field whose value is the same on every row records nothing. This enum
 /// names only surfaces that *choose*, which is what makes a surface claim
@@ -146,7 +151,9 @@ pub enum ConsumerPosture {
     /// total. It is **not** a synonym for [`ConsumerPosture::RecordedOnly`] —
     /// claiming "nothing consumes this" without looking would put a false
     /// statement in the ledger, and a ledger that lies is worse than no
-    /// ledger. Under a down-only ratchet ([`MAX_UNCLASSIFIED`]).
+    /// ledger. Under a down-only ratchet ([`MAX_UNCLASSIFIED`]), which #4501
+    /// drove to zero: no shipped row holds this posture, and adding one fails
+    /// the ratchet test.
     Unclassified {
         /// The tracking issue, as `#1234`. Empty fails the audit.
         issue: &'static str,
@@ -175,16 +182,18 @@ pub use super::tags::SIGNAL_CONSUMERS;
 
 /// How many rows may still be [`ConsumerPosture::Unclassified`].
 ///
-/// A **down-only** ratchet, legitimate for the one reason a ratchet ever is
-/// here: the audit predates the guard, so this records a debt that already
-/// existed rather than granting new permission. The same argument
-/// `scripts/typed-errors-baseline.txt` makes for its own count.
+/// **Zero since #4501**, which censused the last 32 rows one at a time. A new
+/// variant therefore cannot reach `Unclassified` at all: the equality test
+/// below goes red the moment one does, and the way past it is to name what
+/// reads the signal.
 ///
-/// The test asserts equality, not `<=`. Lowering it is the point and must
-/// show up as a diff; raising it means a new variant was filed away unread,
-/// which is the exact move the ledger exists to prevent. #2703 drives it to
-/// zero, after which a new variant cannot reach `Unclassified` at all.
-pub const MAX_UNCLASSIFIED: usize = 32;
+/// It stays a **down-only** ratchet rather than an assertion so the shape is
+/// still available to a future protocol import that arrives with genuinely
+/// unaudited variants — and so that raising it remains a visible diff a
+/// reviewer has to accept. The test asserts equality, not `<=`: raising the
+/// number means a variant was filed away unread, which is the exact move the
+/// ledger exists to prevent.
+pub const MAX_UNCLASSIFIED: usize = 0;
 
 /// What the audit found wrong with one ledger row.
 ///
