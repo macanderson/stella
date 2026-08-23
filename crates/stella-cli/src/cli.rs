@@ -548,6 +548,10 @@ pub(crate) enum Command {
         /// `classic` named the built-in staged pipeline and is refused
         /// outright: that pipeline was deleted from the workspace (#3865), and
         /// the refusal names `stella plugin install` as the remedy.
+        ///
+        /// Several ids separated by commas — `--pipeline research-v1,plan-v1`
+        /// — run as one composed selection, in the order given: the selection
+        /// states the order because no manifest vocabulary does (#3801).
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
 
@@ -640,7 +644,7 @@ pub(crate) enum Command {
         /// nothing over it (the default since #3381). The same flag
         /// [`stella run`](crate::cli::Command::Run) takes, so a panel can
         /// measure either driver rather than only the one the default
-        /// happens to name.
+        /// happens to name — comma-separated ids included.
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
 
@@ -680,7 +684,8 @@ pub(crate) enum Command {
         /// the raw step-loop runs with nothing over it (the default since
         /// #3381). A named plugin variant dispatches every round's worker
         /// turn through the wrapper; the goal verifier that decides met/unmet
-        /// is unchanged either way.
+        /// is unchanged either way. Comma-separated ids run as one composed
+        /// selection, in the order given.
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
 

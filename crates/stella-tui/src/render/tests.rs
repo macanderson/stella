@@ -391,6 +391,7 @@ fn the_receipt_reports_what_the_turn_measured() {
         tool_calls: 0,
         complete: true,
         finish_reason: None,
+        sub_agent_id: None,
     });
     // files ← FileChange, distinct paths
     for path in ["src/a.rs", "src/b.rs", "src/a.rs"] {

@@ -45,6 +45,7 @@ fn seed_session(root: &Path, session: &str, provider: &str, touched: &str) {
                 retries: 1,
                 tool_calls: 3,
                 usage_complete: true,
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -416,6 +417,7 @@ fn export_round_trips_through_a_real_store() {
                 retries: 0,
                 tool_calls: 1,
                 usage_complete: true,
+                sub_agent_id: None,
             },
         )
         .unwrap();

@@ -266,6 +266,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 tool_calls: 0,
                 complete: true,
                 finish_reason: None,
+                sub_agent_id: None,
             },
         ),
         ev(
@@ -381,6 +382,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 tool_calls: 1,
                 complete: true,
                 finish_reason: None,
+                sub_agent_id: None,
             },
         ),
         ev(
@@ -499,6 +501,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 tool_calls: 1,
                 complete: true,
                 finish_reason: None,
+                sub_agent_id: None,
             },
         ),
         ev(
@@ -577,6 +580,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 tool_calls: 0,
                 complete: true,
                 finish_reason: None,
+                sub_agent_id: None,
             },
         ),
         // ── lead proposes a larger scope change (gate) ──────────────────

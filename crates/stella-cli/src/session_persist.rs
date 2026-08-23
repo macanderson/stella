@@ -1294,6 +1294,7 @@ mod tests {
                     tool_calls: 1,
                     complete: true,
                     finish_reason: None,
+                    sub_agent_id: None,
                 },
             },
             Inbound::Event {

@@ -24,10 +24,20 @@
 //! from a [`HostCallResponse`], so a plugin that asked with an argument the
 //! host cannot decode fails **here** rather than in the field.
 //!
+//! Goldens are regenerated with `BLESS=1 cargo test -p stella-runtime --test
+//! goal_plugin_hostcall`, through the same [`common::bless_or_assert`] the
+//! three conformance harnesses use (#3548, #4437). This harness drives its
+//! vectors through [`converse`] rather than `SubprocessWrapper`, so what it
+//! shares is the comparison and not the loop — and, as everywhere else,
+//! **read the diff**: a golden blessed without looking is a changelog, not a
+//! test.
+//!
 //! `cfg(unix)` for `wrapper_socket.rs`'s reason, tracked in the same place
 //! (#3497): the child is spawned with a POSIX `PATH` and named `python3`.
 
 #![cfg(unix)]
+
+mod common;
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -285,10 +295,10 @@ fn every_hostcall_vector_ends_at_its_golden_evidence() {
         let response = held
             .response
             .unwrap_or_else(|| panic!("{name}: the plugin never answered the point"));
-        let golden: WrapperResponse =
-            serde_json::from_str(&fs::read_to_string(&golden_path).expect("a readable golden"))
-                .unwrap_or_else(|e| panic!("{name}'s golden is not a response: {e}"));
-        assert_eq!(response, golden, "{name} did not answer with its golden");
+        // Nothing in a `child_turn` contribution is wall clock: the host's
+        // scripted answer supplies every number, so `actual` is already
+        // deterministic and there is nothing to pin.
+        common::bless_or_assert(&name, &golden_path, &response, |_| {});
 
         let WrapperResponse::AfterTurn(_after) = response else {
             panic!("{name} answers a point this vector set does not exercise");

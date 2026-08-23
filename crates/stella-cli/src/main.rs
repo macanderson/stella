@@ -90,6 +90,9 @@ mod plugin_authz;
 // The plugin loader (`doc:pipeline-as-plugins` §A4): install/list/remove, the
 // two-tier roster, and the hook routes a declared grant produces.
 mod plugin_cmd;
+// Where those routes become dispatches: the session's hook plane, folded
+// once at config assembly (#4417, #3521).
+mod plugin_hooks;
 mod scoreboard_cmd;
 mod self_driving_cmd;
 // The `/profile` posture planner (fast · balanced · pro · ultra).
@@ -109,6 +112,10 @@ mod settings;
 mod settings_check;
 mod signals;
 mod skill_manager;
+// Reads this crate's own source so a security chokepoint's "these are all
+// the sites" claim can be asserted rather than reviewed (#3521, #4426).
+#[cfg(test)]
+mod source_scan;
 mod startup;
 mod stats;
 mod storage_cmd;
@@ -792,11 +799,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // definitions of a word end up disagreeing. Every routing and
             // ceiling flag, not the spend limit alone — `--model` was accepted
             // and dropped for as long as only that one was threaded (#4352).
-            return self_driving_cmd::run(
-                cmd,
-                &self_driving_cmd::turn_flags::TurnFlags::from_globals(&cli.globals),
-            )
-            .map_err(failure::CliFailure::from);
+            // The globals are read before anything else runs, so a flag this
+            // command cannot honour is refused before a state directory is
+            // touched or a turn is planned (#4471).
+            let flags = self_driving_cmd::turn_flags::TurnFlags::from_globals(&cli.globals)
+                .map_err(failure::CliFailure::from)?;
+            return self_driving_cmd::run(cmd, &flags).map_err(failure::CliFailure::from);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file

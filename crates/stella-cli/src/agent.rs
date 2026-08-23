@@ -25,7 +25,7 @@ use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput,
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool};
-use stella_tools::hook_runner::ShellHookRunner;
+use stella_tools::hook_runner::HostHookRunner;
 use stella_tools::validate;
 use tokio::sync::mpsc;
 
@@ -71,8 +71,10 @@ pub(crate) use init::{
     InitIo, InitLine, deck_narrator, deck_notice_narrator, deck_readiness_reporter, init_workspace,
 };
 pub(crate) use outcome::settled_cost_since;
-pub(crate) use output::reflection_explicitly_disabled;
+#[cfg(test)]
+pub(crate) use output::latch_for_withheld_test;
 use output::*;
+pub(crate) use output::{claim_withheld_announcement, reflection_explicitly_disabled};
 pub(crate) use persistence::{
     PersistOutcome, ReasoningRun, begin_execution, close_event_stream, flush_reasoning_tail,
     persist_event, persist_owed, record_execution_end, seed_calibration, spawn_renderer,
@@ -1215,7 +1217,7 @@ pub(crate) async fn run_turn(
         let bus = registry.hook_bus();
         let tools =
             tool_stack::session_stack(base_tools, custom_tools.to_vec(), cfg, Principal::User, bus);
-        let hook_runner = ShellHookRunner;
+        let hook_runner = HostHookRunner;
         // A PreToolUse hook's `require_approval` parks on the #2676 broker
         // flow (#2684). Snapshotted here, after assembly attached any
         // responder and bus, so the route asks the surface this run has.

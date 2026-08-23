@@ -305,3 +305,114 @@ async fn a_cancelled_child_closes_its_bracket_with_committed_steps_and_cost() {
         budget.session_spent_usd()
     );
 }
+
+// ---- the ceiling a child runs under (#4488) ---------------------------
+
+/// A provider that never answers — the shape of the defect, once the idle
+/// bound is out of the picture.
+///
+/// `model_timeout` measures **silence**, so a stream that dribbles a fragment
+/// every few seconds re-arms it forever and the call runs until something else
+/// stops it. Under `tokio::time::pause()` a sleep that outlasts every ceiling
+/// is the same fact with no streaming machinery in the way: whatever cuts this
+/// call is the only thing that could ever have cut a dribbling one.
+struct NeverAnswers;
+
+#[async_trait]
+impl Provider for NeverAnswers {
+    fn id(&self) -> &str {
+        "never-answers"
+    }
+
+    async fn complete_ref(
+        &self,
+        _request: CompletionRequestRef<'_>,
+    ) -> Result<CompletionResult, ProviderError> {
+        tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
+        unreachable!("the deadline is what ends this call")
+    }
+}
+
+/// **#4488's witness.** A child sees its own deadline before the dispatch
+/// ceiling reaches the tool that spawned it, so one call can no longer consume
+/// the whole delegate and leave nothing salvaged.
+///
+/// The ceiling here is `tool_timeout`, the engine's whole-tool dispatch
+/// backstop (`execute_with_repair`), which is what bounds a `delegate` call.
+/// `model_timeout: None` is the dribbling stream: an idle bound that never
+/// trips. Before the fix, nothing inside the child knew the outer ceiling, so
+/// it ran until `execute_with_repair` abandoned it.
+#[tokio::test(start_paused = true)]
+async fn a_child_is_bounded_by_the_ceiling_its_whole_run_sits_under() {
+    let ceiling = std::time::Duration::from_secs(900);
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = NeverAnswers;
+    let tools = MixedTools::default();
+    let parent = Engine::with_sleeper(
+        &parent_provider,
+        &tools,
+        EngineConfig {
+            tool_timeout: Some(ceiling),
+            // The dribbling stream: an idle bound that never trips.
+            model_timeout: None,
+            ..EngineConfig::default()
+        },
+        &NoSleep,
+    );
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    let started = tokio::time::Instant::now();
+    let outcome = parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("dribbler", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+    let spent = started.elapsed();
+
+    assert!(
+        matches!(outcome, SubAgentOutcome::Incomplete { .. }),
+        "the child must end itself, not be abandoned: {outcome:?}"
+    );
+    assert!(
+        spent < ceiling,
+        "the child has to see its deadline before the dispatch ceiling sees the tool, \
+         and it spent {spent:?} of a {ceiling:?} ceiling"
+    );
+}
+
+/// The derivation, in both directions. A parent already racing a deadline
+/// never hands a child more time than the parent itself has.
+#[test]
+fn a_childs_deadline_is_the_tighter_of_what_it_inherited_and_the_ceiling() {
+    use std::time::Duration;
+    let now = std::time::Instant::now();
+    let ceiling = Duration::from_secs(900);
+
+    let from_ceiling =
+        crate::subagent::bounded_by_ceiling(None, Some(ceiling), now).expect("a ceiling bounds it");
+    assert!(
+        from_ceiling < now + ceiling,
+        "a deadline at the ceiling is a coin flip against the dispatch timeout"
+    );
+
+    let sooner = now + Duration::from_secs(10);
+    assert_eq!(
+        crate::subagent::bounded_by_ceiling(Some(sooner), Some(ceiling), now),
+        Some(sooner),
+        "the parent's own deadline is not widened by having a child"
+    );
+    assert_eq!(
+        crate::subagent::bounded_by_ceiling(Some(sooner), None, now),
+        Some(sooner),
+        "no ceiling leaves what was inherited exactly as it was"
+    );
+    assert_eq!(
+        crate::subagent::bounded_by_ceiling(None, None, now),
+        None,
+        "and an unbounded parent with no ceiling stays unbounded"
+    );
+}

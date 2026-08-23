@@ -100,9 +100,63 @@
 #
 #     ./scripts/check-deleted-tests.sh origin/main
 #
-# Uses portable POSIX tools so it runs on a bare CI runner (macOS ships bash
-# 3.2, so no associative arrays).
+# ── Reading the acknowledgement (#4495) ──────────────────────────────────────
+#
+# The remedy above says "name the test in the PR description", which used to
+# mean the description as it stood in the `pull_request` event payload that
+# triggered the run — `PR_BODY` below, set from `github.event.pull_request.body`
+# in ci.yml. That is frozen at trigger time: editing the description and
+# re-running the same job (or a fresh re-run of the failed one) replays that
+# same stale payload, so the edit is invisible until a new push starts a new
+# event. Hit three times on 2026-08-23 (#4419, #4448 twice) before #4456 added
+# the explanation below to the failure text as a stopgap.
+#
+# The fix is to read the CURRENT body through the API instead: when
+# `PR_NUMBER` names a pull request and `gh` is on PATH, `gh pr view --json
+# body` with the workflow token gets whatever the description reads right
+# now, so editing it and re-running the job satisfies this guard without a
+# new push. `PR_BODY` remains the fallback — no `gh`, no `PR_NUMBER` (this
+# was not a `pull_request` event), or the API call itself fails — and that
+# fallback still needs a new push to see an edit, which the failure text says
+# explicitly when it is the path actually taken.
+#
+# `--fixture-pr-body <text>` and `--fixture-pr-body-error` are test-only
+# seams for scripts/test-deleted-tests.sh: the first stands in for a
+# successful `gh pr view`, the second for an unreachable one, so the suite
+# needs no live `gh` or network — the same shape check-main-red-hold.sh uses
+# for its own fixture flags.
+#
+# Uses portable POSIX tools plus `gh` so it runs on a bare CI runner (macOS
+# ships bash 3.2, so no associative arrays — the fixture flags below use a
+# plain indexed array instead, which bash 3.2 also has).
 set -euo pipefail
+
+fixture_pr_body=""
+fixture_pr_body_set=0
+fixture_pr_body_error=0
+positional=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+  --fixture-pr-body)
+    [ $# -ge 2 ] || {
+      echo "check-deleted-tests: --fixture-pr-body needs a value" >&2
+      exit 2
+    }
+    fixture_pr_body="$2"
+    fixture_pr_body_set=1
+    shift 2
+    ;;
+  --fixture-pr-body-error)
+    fixture_pr_body_error=1
+    shift
+    ;;
+  *)
+    positional+=("$1")
+    shift
+    ;;
+  esac
+done
+set -- "${positional[@]+"${positional[@]}"}"
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
@@ -163,8 +217,18 @@ base_names="$(mktemp)"
 head_names="$(mktemp)"
 trap 'rm -f "$base_names" "$head_names"' EXIT
 
-test_names_at "$base_ref" >"$base_names"
-test_names_at "$head_ref" >"$head_names"
+# `|| true` on each: `git grep` exits 1 on zero matches, which `test_names_at`'s
+# trailing pipe (with `pipefail`) turns into the whole function returning
+# nonzero — and under `set -e` a bare statement failing aborts the script here
+# and now, silently, before the actual comparison below ever runs. A tree with
+# no `#[test]`/`#[tokio::test]` attribute anywhere is not an error condition —
+# it is a real, if rare, shape (any fixture smaller than this repository's own
+# ~9000 tests can hit it, which is how scripts/test-deleted-tests.sh found
+# this while building a minimal one) — and it is exactly the shape a deletion
+# of the LAST test in a tree produces, which is precisely what this guard
+# exists to notice rather than crash silently on.
+test_names_at "$base_ref" >"$base_names" || true
+test_names_at "$head_ref" >"$head_names" || true
 
 # In the base tree and not in the merged tree.
 removed="$(LC_ALL=C comm -23 "$base_names" "$head_names")"
@@ -179,11 +243,51 @@ if [ -z "$removed" ]; then
   exit 0
 fi
 
-# The acknowledgement text. `PR_BODY` is the reliable channel in CI — a
-# shallow checkout has no commit messages to read — and `git log` is a
-# best-effort addition for local runs and deeper clones, so a commit trailer
-# naming the test also passes.
-ack="${PR_BODY:-}"
+# The acknowledgement text: the PR's CURRENT description when it can be
+# fetched live, `PR_BODY` (the event-payload snapshot) when it cannot, plus
+# `git log` best-effort on top of either — see "Reading the acknowledgement"
+# above for why the live fetch is the point of #4495.
+live_body=""
+live_body_available=0
+stale_fallback=0
+
+if [ "$fixture_pr_body_set" -eq 1 ]; then
+  live_body="$fixture_pr_body"
+  live_body_available=1
+elif [ "$fixture_pr_body_error" -eq 1 ]; then
+  stale_fallback=1
+elif [ -n "${PR_NUMBER:-}" ]; then
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "check-deleted-tests: note: gh is not installed, so PR #$PR_NUMBER's" >&2
+    echo "     current description could not be fetched. Falling back to the" >&2
+    echo "     event-payload body (stale if the description was edited after" >&2
+    echo "     this run's triggering push — #4495)." >&2
+    stale_fallback=1
+  else
+    gh_args=(pr view "$PR_NUMBER" --json body --jq .body)
+    [ -n "${GH_REPO:-}" ] && gh_args+=(--repo "$GH_REPO")
+    if live_body="$(gh "${gh_args[@]}" 2>/dev/null)"; then
+      live_body_available=1
+    else
+      echo "check-deleted-tests: note: could not fetch PR #$PR_NUMBER's current" >&2
+      echo "     description via the API. Falling back to the event-payload" >&2
+      echo "     body (stale if the description was edited after this run's" >&2
+      echo "     triggering push — #4495)." >&2
+      stale_fallback=1
+    fi
+  fi
+else
+  # Not a pull_request event (no PR_NUMBER), or run locally with neither
+  # fixture flag: the old channel, unconditionally.
+  stale_fallback=1
+fi
+
+if [ "$live_body_available" -eq 1 ]; then
+  ack="$live_body"
+else
+  ack="${PR_BODY:-}"
+fi
+
 if commits="$(git log --format='%B' "$base_ref..$head_ref" 2>/dev/null)"; then
   ack="$ack
 $commits"
@@ -232,13 +336,21 @@ fi
   echo "bare function name; that is deliberate, and naming it in the PR is the"
   echo "whole cost."
   echo ""
-  echo "AFTER EDITING THE DESCRIPTION, PUSH — do not re-run this job. In CI the"
-  echo "acknowledgement is read from PR_BODY, which is the description as it"
-  echo "stood in the event payload that started the run; a re-run replays that"
-  echo "same payload and sees the same stale text. The commit-message channel"
-  echo "cannot cover for it either: the checkout is fetch-depth 2, so the"
-  echo "\`git log\` above walks no branch history. A new commit is what carries"
-  echo "the edited description into a fresh event."
+  if [ "$stale_fallback" -eq 1 ]; then
+    echo "THIS RUN READ A STALE DESCRIPTION. It could not fetch the PR's"
+    echo "current body through the API (see the 'note:' line above, if any),"
+    echo "so it fell back to the description as it stood in the event payload"
+    echo "that started the run — editing the description and re-running this"
+    echo "same job replays that same stale text and will not help. The"
+    echo "commit-message channel cannot cover for it either: the checkout is"
+    echo "fetch-depth 2, so the \`git log\` above walks no branch history. A"
+    echo "new commit is what carries an edited description into a fresh event"
+    echo "that CAN be fetched live."
+  else
+    echo "This run read the PR's CURRENT description through the API, so"
+    echo "editing it now and re-running this job (no new push needed) is"
+    echo "enough — name the test above in the description and re-run."
+  fi
 } >&2
 
 exit 1

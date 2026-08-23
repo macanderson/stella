@@ -8,6 +8,7 @@
 
 mod private_state;
 mod toml;
+mod trust;
 
 use super::*;
 

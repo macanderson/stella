@@ -374,6 +374,10 @@ export type AgentEvent = {
    */
   role?: ModelCallRole;
   step: number;
+  /**
+   * Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text.
+   */
+  sub_agent_id?: string | null;
   tool_calls: number;
   type: "step_usage";
   /**
@@ -414,6 +418,10 @@ export type AgentEvent = {
    */
   retries?: number | null;
   role: ModelCallRole;
+  /**
+   * Which sub-agent's call died. Absent means the lead's own. Same contract as a `step_usage` event's field of this name: an abandoned delegate lands one flagged row, and a row nobody can attribute explains an execution's incomplete usage without saying whose call it was.
+   */
+  sub_agent_id?: string | null;
   type: "usage_incomplete";
 } | {
   cost_usd: number;

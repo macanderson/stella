@@ -758,6 +758,7 @@ pub(crate) fn persist_event_detailed(
         retries,
         tool_calls,
         complete,
+        sub_agent_id,
         ..
     } = event
     {
@@ -790,6 +791,9 @@ pub(crate) fn persist_event_detailed(
                     retries: *retries,
                     tool_calls: *tool_calls as u64,
                     usage_complete: *complete,
+                    // Whose call this was. `None` is the lead's own — the
+                    // ordinary case, and a fact rather than a gap (#4383).
+                    sub_agent_id: sub_agent_id.clone(),
                 },
             )
             .is_ok();
@@ -803,6 +807,7 @@ pub(crate) fn persist_event_detailed(
         retries,
         partial,
         reason,
+        sub_agent_id,
         ..
     } = event
     {
@@ -864,6 +869,11 @@ pub(crate) fn persist_event_detailed(
                     // The attempt died before any tool call could settle.
                     tool_calls: 0,
                     usage_complete: false,
+                    // A delegate abandoned at the engine's dispatch ceiling
+                    // lands here, and a row nobody can attribute explains the
+                    // execution's `usage_complete = 0` without saying whose
+                    // call it was.
+                    sub_agent_id: sub_agent_id.clone(),
                 },
             )
             .is_ok();
@@ -1035,6 +1045,7 @@ mod usage_recovery_tests {
             duration_ms: 4_200,
             retries: Some(1),
             partial,
+            sub_agent_id: None,
         }
     }
 
@@ -1062,6 +1073,7 @@ mod usage_recovery_tests {
             tool_calls: 0,
             complete: false,
             finish_reason: None,
+            sub_agent_id: None,
         }
     }
 

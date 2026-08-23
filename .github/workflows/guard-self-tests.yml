@@ -114,6 +114,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-changelog-roll.sh
 
+      - name: consumer-sites guard failure directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-consumer-sites.sh
+
       - name: contrast ratchet direction
         if: ${{ !cancelled() }}
         run: ./scripts/test-contrast.sh
@@ -125,6 +129,22 @@ jobs:
       - name: deck path guard directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-deck-paths.sh
+
+      - name: deleted-tests guard reads a live PR body over a stale one
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-deleted-tests.sh
+
+      # Was in UNHOSTED_SELF_TESTS until #4443: 14 of its 38 cases failed
+      # everywhere, not just outside a Linux dev box as first suspected — the
+      # fixture built a synthetic repo shaped `stella-core/src/`, and
+      # setup-dev-env.sh's own workspace-shape check requires
+      # `crates/stella-core/`. Needs the runner's preinstalled rustfmt for the
+      # formatting-hook cases (H6/H6b); ubuntu-latest ships one, so this adds
+      # no toolchain-install step the way test-main-canary.sh/
+      # test-guard-sigpipe.sh's `cargo check`/`cargo build` exclusion would.
+      - name: dev-env setup script and its fmt-file hook
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-dev-env.sh
 
       - name: gate-parity guard failure directions
         if: ${{ !cancelled() }}

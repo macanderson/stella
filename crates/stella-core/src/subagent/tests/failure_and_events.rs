@@ -164,6 +164,78 @@ async fn the_childs_stage_and_narration_never_reach_the_parents_stream() {
     }
 }
 
+/// **#4383's witness.** A child's metering records reach the parent naming the
+/// child. Without the stamp they are indistinguishable from the lead's own
+/// calls, which is how execution 225 of session `ses-1787465453163-60967` came
+/// to record ninety `worker` rows for a turn that fanned out five delegates.
+///
+/// The bracket cannot answer this, and that is the whole reason for the field:
+/// independent delegates are dispatched concurrently, so `Started`/`Finished`
+/// pairs interleave and enclose each other's calls.
+#[tokio::test]
+async fn a_childs_metering_records_name_the_child_that_spent_them() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![Ok(text_result("done", 0.02))]);
+    let tools = MixedTools::default();
+    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("researcher-7", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+    let events = drain(&mut rx);
+
+    let spenders: Vec<Option<String>> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::StepUsage { sub_agent_id, .. } => Some(sub_agent_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        spenders,
+        vec![Some("researcher-7".to_string())],
+        "every call the child made must name the child"
+    );
+    // And the bracket still says the same thing, so a consumer that reads
+    // either one gets the same answer rather than two competing ones.
+    match finished(&events) {
+        SubAgentPhase::Finished { agent_id, .. } => assert_eq!(agent_id, "researcher-7"),
+        other => panic!("expected Finished, got {other:?}"),
+    }
+}
+
+/// A call the lead made itself is the lead's, and must not acquire an id from
+/// a child that ran beside it. `None` is a fact — "the lead spent this" — so a
+/// reader summing by spender gets the turn's real shape.
+#[tokio::test]
+async fn the_leads_own_calls_name_no_sub_agent() {
+    let provider = ScriptedProvider::new(vec![Ok(text_result("answered", 0.05))]);
+    let tools = MixedTools::default();
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut messages = vec![CompletionMessage::user("do it")];
+
+    let _ = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    let events = drain(&mut rx);
+
+    let spenders: Vec<Option<String>> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::StepUsage { sub_agent_id, .. } => Some(sub_agent_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(spenders, vec![None], "{spenders:?}");
+}
+
 #[tokio::test]
 async fn step_usage_and_tool_activity_reach_the_parent_so_cost_rolls_up() {
     // Dropping StepUsage is precisely how child spend would vanish from

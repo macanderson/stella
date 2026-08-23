@@ -160,6 +160,25 @@ regression for every turn. This is the same discipline
 `crates/stella-cli/src/agent.rs::build_system_prompt` and
 `crates/stella-cli/src/memory.rs` already hold for recalled context.
 
+**A stage gated on a triage signal is a stage that never runs, on every host
+that ships today** (#3547). `Signal::Conversational`, `Questions`, `Plans`,
+`Verifies`, `WantsWitness` and `WantsVerifier` are triage's assessment, and no
+shipping host performs one: `crates/stella-cli/src/wrapper_plugin.rs::pre_turn_signals`
+publishes them all false or zero, honestly, because nothing has assessed
+anything. `Wrapper::resolve` reads those values and drops the stage, so a
+manifest writing `if = "questions > 0"` declares a stage the host will never
+ask it to contribute at — and the plugin is installed, selected, dispatched,
+and silently useless. Both first-party plugins shipped that way until #3547
+took the conditions off; `plugins/stella-plan` was inert end to end, because
+the gated stage was the only one it answered at.
+
+Until a triage producer exists, gate on a **host fact** — `test-command`,
+`candidates`, `budget-metered` — or on nothing. The producer, when it arrives,
+is a composed triage plugin: `HostStage::Triage.publishes()` already includes
+these signals and `open_round` already carries `published` forward, so a
+manifest's condition starts working the moment something publishes a value,
+with no change here.
+
 **A stage receives typed signals, never free text — and the one place that
 bites is research questions** (#3539). `published` is a `Vec<PublishedSignal>`
 typed by the closed `Signal` vocabulary, whose whole defence is that a stage

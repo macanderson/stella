@@ -392,6 +392,7 @@ impl UsageStore {
                     retries: r.get(19)?,
                     tool_calls: r.get::<_, i64>(20)? as u64,
                     usage_complete: r.get(21)?,
+                    sub_agent_id: None,
                 },
             })
         })?;
@@ -1123,6 +1124,7 @@ mod tests {
                 retries: 0,
                 tool_calls: 2,
                 usage_complete: true,
+                sub_agent_id: None,
             },
         }
     }

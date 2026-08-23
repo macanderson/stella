@@ -83,8 +83,17 @@ impl SubAgentStatus {
 pub enum SubAgentPhase {
     /// A child turn is about to start. Every event between this and the
     /// matching `Finished` with the same `agent_id` belongs to the child,
-    /// not the parent — this bracket IS the attribution mechanism, which is
-    /// why no per-event agent field was added to the rest of the event vocabulary.
+    /// not the parent — this bracket is the attribution mechanism for every
+    /// event except the two metering records, which carry their own
+    /// `sub_agent_id` (#4383).
+    ///
+    /// They have to, and the reason is what bounds this bracket's reach: the
+    /// engine dispatches independent delegates **concurrently**, so several
+    /// children's events interleave here and "between `Started` and
+    /// `Finished`" no longer names one child's work. For a `Stage` or a
+    /// `ToolStart` that costs a reader a little context; for a `StepUsage` it
+    /// cost the whole cost census, which read a five-way parallel fan-out as
+    /// ninety of the lead's own calls.
     Started {
         /// Stable id for this child, unique within the parent turn.
         agent_id: String,

@@ -184,7 +184,7 @@ repository's `.gitignore` would drop.
 
 | Gap | Issue |
 | --- | --- |
-| **Its research half contributes nothing under `stella-cli` today**: the driver passes `candidate: None`, so there is no workspace to read, and it publishes `questions: 0`, so the stage's own condition skips it. Recall needs no candidate, so it is the half that can reach a real turn first | #3547 |
+| ~~Its research half contributes nothing under `stella-cli`~~ — closed. #3553 mints a `CandidateGrant` over the shared work tree, so there is a workspace to read; #3547 took the stage's `if = "questions > 0"` off, since no host runs a triage stage and the condition made this the one stage the plugin was never asked to contribute at | #3547 |
 | ~~And recall does not reach one yet either: `stella-cli` attaches no `HostCallGate`~~ — closed by #3576: `ResolvedWrapper::serving` (`crates/stella-cli/src/wrapper_plugin.rs`) attaches one, and #4489 mints one gate per composed member | #3561 |
 | It cannot answer triage's questions — the wire carries their count, not their text. Blocked on a producer, not on a design: nothing publishes `Signal::Questions` today (`pre_turn_signals` sends `0`), and the shape the field takes when a triage plugin does is written down in `doc:wrapper-socket` §5 | #3539 |
 | It cannot cause a model call, so the sub-agent fan-out did not come with it | #3541 |

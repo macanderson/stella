@@ -180,12 +180,15 @@ pub(super) fn event_sender_for_run(
 /// `recall_event` is: the answer exists long before this channel does, and
 /// re-deriving it could announce something the session did not actually run
 /// under.
+///
+/// It is also announced **once per session**, which is what [`to_announce`]
+/// is for: this function is per-turn, and the notice is not.
 pub(super) fn open_raw_turn(
     events: &EventSender,
     recall_event: Option<AgentEvent>,
     withheld: Option<&crate::settings::WithheldNotice>,
 ) {
-    if let Some(withheld) = withheld {
+    if let Some(withheld) = to_announce(withheld, &ANNOUNCED) {
         let _ = events.send(withheld.event());
     }
     if let Some(event) = recall_event {
@@ -195,6 +198,68 @@ pub(super) fn open_raw_turn(
         name: stella_protocol::StageKind::Execute.into(),
         scope: stella_protocol::StageScope::Run,
     });
+}
+
+/// Whether this session has already put its withheld-steering notice on a
+/// stream.
+///
+/// Process-scoped because a session **is** a process for every door that
+/// reaches [`open_raw_turn`]: `stella run` and `stella goal` are one run per
+/// invocation, and the interactive REPL is one loop inside one. The deck's
+/// boot announcement (`command_deck::steering::announce_withheld`, named in
+/// prose rather than linked because that module is private and an intra-doc
+/// link to it does not resolve) shares it, so a deck that later drives a raw
+/// turn does not say it twice.
+///
+/// A static rather than a field on [`crate::settings::WithheldNotice`] because
+/// that type is `Copy` and rides a `Serialize`/`Deserialize`/`Eq`
+/// `AuthorityPolicy` — interior mutability there would cost all four to record
+/// something that is not part of the setting.
+static ANNOUNCED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The notice this call should announce: `Some` the first time a session with
+/// something withheld asks, `None` on every later ask.
+///
+/// The latch is taken as an argument so the decision is testable without the
+/// process's own, and it is spent **only** when there is something to
+/// announce: a trusted checkout must not consume the session's one
+/// announcement on a notice it never had.
+fn to_announce<'a>(
+    withheld: Option<&'a crate::settings::WithheldNotice>,
+    announced: &std::sync::atomic::AtomicBool,
+) -> Option<&'a crate::settings::WithheldNotice> {
+    withheld.filter(|_| !announced.swap(true, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Spend this session's withheld-steering announcement from outside the raw
+/// door, for a surface that announces at boot instead of at a turn.
+///
+/// The deck is that surface (#4463): the refusal is established before any
+/// turn opens, and sending it from `run_lead_turn` would repeat it on every
+/// prompt. Sharing the latch is what keeps the two answers to "has this
+/// session been told?" from being two answers.
+pub(crate) fn claim_withheld_announcement() -> bool {
+    !ANNOUNCED.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Give this test the session's latch, unspent, and hold every other test that
+/// wants it until this one is done.
+///
+/// [`ANNOUNCED`] is process state and `cargo test` runs a crate's unit tests in
+/// one process, on many threads — so two tests that both spend it are two
+/// tests whose result depends on which ran first. The guard is returned rather
+/// than dropped here so it lives for the caller's body; binding it to `_`
+/// releases it immediately and is the one way to misuse this.
+///
+/// `#[cfg(test)]` rather than an `#[allow(dead_code)]` production item: it
+/// exists for the tests, and the compiler is the right thing to enforce that
+/// (AGENTS.md § "Code style").
+#[cfg(test)]
+pub(crate) fn latch_for_withheld_test() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    ANNOUNCED.store(false, std::sync::atomic::Ordering::Relaxed);
+    guard
 }
 
 /// [`event_sender_for_run`] for a **raw** (non-staged) run: the same boundary,
@@ -382,6 +447,65 @@ mod durable_stream_tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), format!("{event}\n"));
     }
 
+    /// **Witness (#4500).** The withheld-steering notice is a fact about the
+    /// **session**, so a second turn of the same session announces nothing.
+    ///
+    /// `open_raw_turn` sits inside a per-turn function and `AuthorityPolicy`
+    /// never clears `withheld`, so before this the interactive REPL — which
+    /// calls `agent::run_turn` once per prompt with the one `Config` it loaded
+    /// at boot — put the notice on the stream on every turn of the session.
+    /// The deck already answered this by announcing at boot instead
+    /// (`command_deck::steering`, #4463); the raw door had no such place to
+    /// stand, and this is it.
+    ///
+    /// Driven through the exported entry point rather than [`to_announce`]
+    /// alone, so the wiring is proved and not only the decision. That means it
+    /// spends the process's own latch, so it takes
+    /// [`latch_for_withheld_test`] first — as every test that spends it must.
+    #[test]
+    fn the_withheld_notice_is_announced_once_per_session_not_once_per_turn() {
+        let dir = tempfile::tempdir().expect("workspace");
+        std::fs::create_dir_all(dir.path().join(".stella/memories")).expect("memories");
+        std::fs::write(dir.path().join(".stella/memories/a.md"), "lesson").expect("memory");
+        let notice = crate::settings::withheld_notice(
+            dir.path(),
+            Some(stella_protocol::Withholder::ProjectUntrusted),
+        )
+        .expect("the fixture withholds");
+
+        let (raw_tx, mut rx) = mpsc::unbounded_channel();
+        let sender = EventSender::new(raw_tx);
+        let _latch = latch_for_withheld_test();
+        for _ in 0..3 {
+            open_raw_turn(&sender, None, Some(&notice));
+        }
+        drop(sender);
+
+        let mut announced = 0;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, AgentEvent::SteeringWithheld { .. }) {
+                announced += 1;
+            }
+        }
+        assert_eq!(
+            announced, 1,
+            "three turns of one session are owed one notice, not three"
+        );
+    }
+
+    /// The decision itself, over a latch of the caller's own — the arm the
+    /// test above cannot reach twice, and the arm that must stay silent.
+    #[test]
+    fn a_session_with_nothing_withheld_claims_nothing_and_leaves_the_latch_alone() {
+        let latch = std::sync::atomic::AtomicBool::new(false);
+        assert!(to_announce(None, &latch).is_none());
+        assert!(
+            !latch.load(std::sync::atomic::Ordering::Relaxed),
+            "a checkout that was owed no notice must not spend the session's one \
+             announcement on it"
+        );
+    }
+
     #[test]
     fn durable_sink_is_flushed_before_stdout_publication() {
         let dir = tempfile::tempdir().unwrap();
@@ -470,6 +594,7 @@ mod durable_stream_tests {
             tool_calls: 0,
             complete: true,
             finish_reason: None,
+            sub_agent_id: None,
         };
 
         sender.send(stage.clone()).unwrap();

@@ -133,6 +133,14 @@ jobs:
     # "run the gate". `!cancelled()` (not the implicit success()) is what
     # lets this evaluate at all in that case.
     if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+    # Job-level permissions REPLACE the workflow-level block above rather than
+    # adding to it, so `contents: read` is restated here — the only addition
+    # is `pull-requests: read`, which is what lets the deleted-test guard read
+    # a PR's CURRENT description via `gh pr view` (#4495) instead of only the
+    # stale payload snapshot every other step already had no need for.
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     # Bundled SQLite (stella-store, rusqlite) and tree-sitter grammars are
     # heavy C compiles on a cold cache; rust-cache keeps warm runs fast.
@@ -312,9 +320,19 @@ jobs:
       # than forbidding deletion — naming the test in this PR's description
       # passes it. `pull_request` only: on a squash-merged push to `main` there
       # is no merge to inspect and the report would arrive too late anyway.
+      #
+      # PR_NUMBER lets the guard fetch the description LIVE through the API
+      # (`gh pr view`, with the job's own `pull-requests: read` grant below)
+      # instead of only the PR_BODY snapshot frozen at trigger time — #4495:
+      # a re-run of this job used to replay that same stale payload, so
+      # editing the description and re-running never satisfied it, only a
+      # new push did. PR_BODY stays wired as the fallback for when the live
+      # fetch is unavailable (no `gh`, an unreachable API).
       - name: no test disappears in the merge unacknowledged
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' && github.event_name == 'pull_request' }}
         env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: ./scripts/check-deleted-tests.sh
 
@@ -418,6 +436,14 @@ jobs:
       - name: every emitted diagnostic code is documented
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-diagnostic-codes.sh
+
+      # Also toolchain-free. consumers.rs is explicit that a Behavioral row's
+      # `site` string is unchecked prose for a reviewer (AGENTS.md invariant
+      # 10) — #3881 verified all of them by hand, and nothing preserved that
+      # once a symbol moves or is renamed (#4459).
+      - name: every ConsumerPosture::Behavioral site points at live code
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-consumer-sites.sh
 
       - name: make bench-test runs every suite bench.yml runs
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}

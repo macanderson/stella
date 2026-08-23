@@ -663,6 +663,13 @@
               "minimum": 0,
               "type": "integer"
             },
+            "sub_agent_id": {
+              "description": "Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "tool_calls": {
               "format": "uint",
               "minimum": 0,
@@ -734,6 +741,13 @@
             },
             "role": {
               "$ref": "#/$defs/ModelCallRole"
+            },
+            "sub_agent_id": {
+              "description": "Which sub-agent's call died. Absent means the lead's own. Same contract as a `step_usage` event's field of this name: an abandoned delegate lands one flagged row, and a row nobody can attribute explains an execution's incomplete usage without saying whose call it was.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "const": "usage_incomplete",
@@ -3508,7 +3522,7 @@
       "description": "One point in a sub-agent's lifecycle. Exactly one `Started` and exactly\none `Finished` are emitted per spawn, in that order, even when the child\nis refused before its first model call (a refusal still brackets, so a\nconsumer folding these never sees an unclosed child).",
       "oneOf": [
         {
-          "description": "A child turn is about to start. Every event between this and the\nmatching `Finished` with the same `agent_id` belongs to the child,\nnot the parent — this bracket IS the attribution mechanism, which is\nwhy no per-event agent field was added to the rest of the event vocabulary.",
+          "description": "A child turn is about to start. Every event between this and the\nmatching `Finished` with the same `agent_id` belongs to the child,\nnot the parent — this bracket is the attribution mechanism for every\nevent except the two metering records, which carry their own\n`sub_agent_id` (#4383).\n\nThey have to, and the reason is what bounds this bracket's reach: the\nengine dispatches independent delegates **concurrently**, so several\nchildren's events interleave here and \"between `Started` and\n`Finished`\" no longer names one child's work. For a `Stage` or a\n`ToolStart` that costs a reader a little context; for a `StepUsage` it\ncost the whole cost census, which read a five-way parallel fan-out as\nninety of the lead's own calls.",
           "properties": {
             "agent_id": {
               "description": "Stable id for this child, unique within the parent turn.",

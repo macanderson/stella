@@ -88,6 +88,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + typed-errors
                          #   + dead-code-allows
                          #   + diagnostic-codes
+                         #   + consumer-sites (Behavioral 'site' strings point at live code)
                          #   + bench-suites
                          #   + wire-paths (the hook derives wire-schema.yml's filter)
                          #   + tokens (hue clamp + no retired hex)

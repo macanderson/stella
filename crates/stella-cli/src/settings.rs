@@ -402,20 +402,38 @@ pub enum CandidateIsolation {
     CopyTree,
 }
 
+impl CandidateIsolation {
+    /// Read one written token — the settings value, or the environment
+    /// override that reaches a host no settings file can (#4510).
+    ///
+    /// One parse for both because they are one setting spelled twice, and a
+    /// second `match` over the same two words is how `"copytree"` ends up
+    /// accepted on one surface and refused on the other.
+    ///
+    /// # Errors
+    ///
+    /// The clause a surface appends to its own prefix, naming the token it was
+    /// given and the two it accepts.
+    pub fn from_token(raw: &str) -> Result<Self, String> {
+        match raw.trim() {
+            "" | "worktree" => Ok(Self::Worktree),
+            "copy-tree" => Ok(Self::CopyTree),
+            other => Err(format!(
+                "{other:?} is not one of \"worktree\", \"copy-tree\" \
+                 (empty or absent means \"worktree\")"
+            )),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for CandidateIsolation {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         // Through `Option<String>` so an explicit `null` lands here rather than
         // being rejected before this function sees it — `create_worktrees`'
         // shape, for its reason.
         let raw = Option::<String>::deserialize(deserializer)?;
-        match raw.as_deref().map(str::trim).unwrap_or("") {
-            "" | "worktree" => Ok(Self::Worktree),
-            "copy-tree" => Ok(Self::CopyTree),
-            other => Err(serde::de::Error::custom(format!(
-                "\"candidate_isolation\": {other:?} is not one of \"worktree\", \"copy-tree\" \
-                 (empty or absent means \"worktree\")"
-            ))),
-        }
+        Self::from_token(raw.as_deref().unwrap_or(""))
+            .map_err(|why| serde::de::Error::custom(format!("\"candidate_isolation\": {why}")))
     }
 }
 
@@ -863,6 +881,24 @@ struct ProjectTrust {
     credentials: bool,
 }
 
+impl ProjectTrust {
+    /// Whether this process trusts the project to run code it configures —
+    /// the same verdict [`project_code_execution_trusted`] answers with, for
+    /// a caller that already computed the pair.
+    ///
+    /// The accessor exists so that **one grep enumerates the boundary**.
+    /// `project_code_execution_trusted`'s doc comment is the normative list
+    /// of gated surfaces, and two of the five used to reach the verdict by
+    /// reading `trust.hooks` — a field whose name says *hooks* and whose
+    /// meaning is *code execution* — so no search could confirm the list was
+    /// complete and the doc could drift unnoticed (#4426).
+    /// `every_code_execution_gate_is_reachable_by_one_grep`, in this module's
+    /// tests, holds it there.
+    fn code_execution_trusted(self) -> bool {
+        self.hooks
+    }
+}
+
 pub(crate) fn env_flag(name: &str) -> bool {
     std::env::var_os(name).is_some_and(|v| truthy_flag(&v))
 }
@@ -929,7 +965,7 @@ fn project_trust() -> ProjectTrust {
 /// have their API key re-pointed. Reading this predicate as "the project trust
 /// flag" would grade those as trusted one flag too early.
 pub(crate) fn project_code_execution_trusted() -> bool {
-    project_trust().hooks
+    project_trust().code_execution_trusted()
 }
 
 // `cfg(doc)` keeps this module visible to `cargo doc`: merge.rs and
