@@ -39,9 +39,9 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    dead-code-allows diagnostic-codes bench-suites tokens \
-                    hue-separation transcript-surfaces prose deck-fit-all-test \
-                    deck-paths css-vars reserved-paths
+                    dead-code-allows diagnostic-codes bench-suites wire-paths \
+                    tokens hue-separation transcript-surfaces prose \
+                    deck-fit-all-test deck-paths css-vars reserved-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -60,6 +60,28 @@ GATE_NO_BUILD := lockfile-sync format-check
 # added here and the prose kept the old count (#1437).
 GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings lint test tool-docs \
                self-driving-test
+
+# The hermetic guard self-tests — `scripts/test-*.sh` — that deliberately run
+# in NO workflow, and why each one does not. Every other suite runs server-side
+# (guard-self-tests.yml, plus file-size.yml, duplicate-claims.yml and ci.yml),
+# and scripts/check-gate-parity.sh fails when a suite appears in neither this
+# list nor a workflow, so an omission cannot pass for a decision (#3820, #4427).
+# They stay out of `make gate` for the separate reason that they build
+# throwaway git repositories; that exclusion is not what this variable records.
+#
+#   test-main-canary.sh   — its cases run the canary against the LIVE tree and
+#                           expect it green, so it reports whatever `main` is
+#                           red on rather than the canary's own capability —
+#                           which is main-canary.yml's job, after the merge.
+#                           It also pays a `cargo check --workspace`.
+#   test-guard-sigpipe.sh — same shape: every case asserts a real guard exits 0
+#                           on this tree with its reader gone, so a genuinely
+#                           red guard fails it for the wrong reason, and
+#                           check-wire-schema.sh inside it builds the workspace.
+#   test-dev-env.sh       — 14 of its 38 cases fail outside a Linux dev box
+#                           (#4443). Wiring it before that is triaged would
+#                           land a workflow that is red on arrival.
+UNHOSTED_SELF_TESTS := test-main-canary.sh test-guard-sigpipe.sh test-dev-env.sh
 
 .PHONY: help
 help: ## Show this help
@@ -174,7 +196,7 @@ record-demo: ## Record a terminal timelapse (LIMIT=mins TARGET=secs CMD="..."; d
 record-demo-video: ## Re-cut docs/demo/stella-deck.mp4 from the command deck (FILM=path to keep the intermediate)
 	cargo run -q --release -p stella-tui --example deck_film > $(FILM)
 	./scripts/render-deck-film.py $(FILM) -o docs/demo/stella-deck.mp4 \
-		--poster docs/demo/stella-deck-poster.png --poster-frame 1100
+		--poster docs/demo/stella-deck-poster.png --poster-frame 807
 	@echo "Re-cut. Watch it before committing — the shot list frames rows the"
 	@echo "deck's own layout decides, so a layout change can move content out"
 	@echo "of shot without failing anything."
@@ -299,8 +321,16 @@ wire-schema: ## Assert docs/wire/ still describes the AgentEvent wire format (#9
 wire-schema-update: ## Regenerate docs/wire/ after an AgentEvent change (commit the diff!)
 	@./scripts/export-agentevent-schema.sh
 
+.PHONY: wire-paths
+wire-paths: ## Assert .githooks/pre-push derives its wire filter from wire-schema.yml (#3836)
+	@./scripts/check-wire-paths.sh
+
+.PHONY: wire-paths-test
+wire-paths-test: ## Test the wire-path guard's failure directions (hermetic; not part of `gate`)
+	@./scripts/test-wire-paths.sh
+
 .PHONY: file-size
-file-size: ## Assert no new Rust or Python file exceeds the 1500-line ratchet (#629, #825)
+file-size: ## Assert no new source file exceeds the 1500-line ratchet (#629, #825, #1563, #3811)
 	@./scripts/check-file-size.sh
 
 .PHONY: file-size-update
@@ -501,9 +531,18 @@ gate: $(GATE_STEPS) ## Full CI gate: guards + rustdoc + fmt-check + clippy + tes
 print-gate-steps:
 	@echo $(GATE_STEPS)
 
+# Consumed by the same guard, for the same reason.
+.PHONY: print-unhosted-self-tests
+print-unhosted-self-tests:
+	@echo $(UNHOSTED_SELF_TESTS)
+
 .PHONY: gate-parity
 gate-parity: ## Assert AGENTS.md and CONTRIBUTING.md list the real gate steps (#1437)
 	@./scripts/check-gate-parity.sh
+
+.PHONY: gate-parity-test
+gate-parity-test: ## Test the gate-parity guard's failure directions (hermetic; not part of `gate`)
+	@./scripts/test-gate-parity.sh
 
 .PHONY: bench-suites
 bench-suites: ## Assert `make bench-test` runs every suite bench.yml runs, by derivation (#2847)

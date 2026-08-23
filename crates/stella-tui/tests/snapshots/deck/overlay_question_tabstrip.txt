@@ -22,17 +22,17 @@
  │ ⊙ apps/app/automations/page.tsx
  │ ⎿ 312 lines                                                                                                                               42ms
 
-☰  plan  5/7  ·  Workflows canvas
-
-⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
-                                          ┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐
-                                          │from the `research-child` sub-agent                                       │
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations(┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐
+ │     11 +  const [q, setQ] = useState(""│from the `research-child` sub-agent                                       │
+ │     12 +  const filtered = filter(items│                                                                          │
+ │     13 +  const onNew = () => open()   │● Auth method  ○ Rollout                                                  │
                                           │                                                                          │
-                                          │● Auth method  ○ Rollout                                                  │
-                                          │                                                                          │
-                                          │[2/2] Which environments should it reach first?                           │
+☰  plan  5/7  ·  Workflows canvas         │[2/2] Which environments should it reach first?                           │
                                           │several answers may be chosen                                             │
-                                          │                                                                          │
+⏸ plan  Refactor the automations store int│                                                                          │
                                           │▸ [ ] staging — the usual soak                                            │
                                           │  [ ] canary                                                              │
                                           │  [ ] Type your own answer                                                │
