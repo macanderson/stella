@@ -25,7 +25,8 @@
 #   1. Every step in `GATE_STEPS` is named in AGENTS.md's gate block.
 #   2. Every step is named in CONTRIBUTING.md's gate fence, via the alias table
 #      below (that fence lists raw commands, on purpose — its reader wants to
-#      run them without make).
+#      run them without make; `shellcheck` is the one exception, and the alias
+#      table says why).
 #   3. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
 #      gate step — which is how a removed guard leaves a ghost behind. Only
 #      that fence is checked this way: it is a delimited list of commands,
@@ -98,7 +99,10 @@ number_word() {
   26) echo twenty-six ;; 27) echo twenty-seven ;; 28) echo twenty-eight ;;
   29) echo twenty-nine ;; 30) echo thirty ;; 31) echo thirty-one ;;
   32) echo thirty-two ;; 33) echo thirty-three ;; 34) echo thirty-four ;;
-  35) echo thirty-five ;; 36) echo thirty-six ;;
+  35) echo thirty-five ;; 36) echo thirty-six ;; 37) echo thirty-seven ;;
+  38) echo thirty-eight ;; 39) echo thirty-nine ;; 40) echo forty ;;
+  41) echo forty-one ;; 42) echo forty-two ;; 43) echo forty-three ;;
+  44) echo forty-four ;; 45) echo forty-five ;;
   *) echo "" ;;
   esac
 }
@@ -117,8 +121,12 @@ fi
 # that two spellings mean the same step.
 contributing_alias() {
   case "$1" in
-  shellcheck) echo 'shellcheck ' ;;
-  # Eight Python guards, so the `.sh` default below does not fit them.
+  # The one step the fence spells as a make target. Its argument list — which
+  # files get linted — is the Makefile recipe's and nowhere else's, after a
+  # hand-copied second list in ci.yml and a third here drifted from it (#3375).
+  # A raw command in this fence would be a fourth.
+  shellcheck) echo 'make shellcheck' ;;
+  # The Python guards, whose scripts the `.sh` default below does not fit.
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
   typed-errors) echo 'check-typed-errors' ;;
@@ -127,13 +135,16 @@ contributing_alias() {
   hue-separation) echo 'check-hue-separation' ;;
   transcript-surfaces) echo 'check-transcript-surfaces' ;;
   prose) echo 'check-prose' ;;
+  deck-paths) echo 'check-deck-paths' ;;
+  css-vars) echo 'check-css-vars' ;;
   doc-warnings) echo 'cargo doc' ;;
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;
   test) echo 'cargo test' ;;
-  # The one guard whose script is not check-*.sh: it is a test harness, not a
-  # tree guard, so it is named for what it tests.
+  # The two guards whose script is not check-*.sh: they are test harnesses, not
+  # tree guards, so each is named for what it tests.
   self-driving-test) echo 'test-self-driving.sh' ;;
+  deck-fit-all-test) echo 'test-deck-fit-all.sh' ;;
   *) echo "check-$1.sh" ;;
   esac
 }

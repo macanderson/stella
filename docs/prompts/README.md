@@ -6,6 +6,33 @@ status: living
 
 # The effective prompts
 
+## Half of this set is history
+
+**Every page here that names a staged-pipeline role transcribes a subsystem
+this workspace no longer contains.** `stella-pipeline` was deleted in #3865, so
+the `crates/stella-pipeline/…` symbols cited throughout this document and its
+pages resolve to nothing, and the roles those pages describe — `triage`,
+`research`, `plan`, `plan_repair`, `witness_author`, `witness_repair`,
+`distress_guidance`, `verdict`'s pipeline call, and the `worker`'s pipeline
+persona — dispatch from no code in this tree. They are kept because they are the
+reference a verification-plugin author ports the shape from rather than
+reinventing it: `doc:pipeline-as-plugins` §8 is the plan that does exactly that
+for Vera, Oxagen's private reference verification plugin. Read them as a record
+of what the shape was, never as a description of what this binary does.
+
+The `agents.<kind>.prompt` override doors below are gone with them. #3908
+collapsed the engine settings to one role, `default`; a file still naming
+`worker`, `verifier`, `triage`, `research` or `plan` loads and reports the key
+by name, pointing at the `[seats]` assignment that replaces it.
+
+The rest of the set is current and still dispatches: `agent_author`,
+`skill_author`, `domain_inference`, `reflection` and `summarization` (from
+`crates/stella-cli/src/accounted_call.rs` and
+`crates/stella-core/src/driver/restore.rs`), `verdict` under `stella goal`, and
+the `worker`'s interactive engine turn.
+
+## What each role sends
+
 **What a Stella role actually sends to a provider**, role by role: the exact
 bytes of its instruction block, the template its per-call payload is rendered
 from, where in the tree each half is built, and what an operator can override.
@@ -77,7 +104,7 @@ pub struct ManagementPrompt {
 ```
 
 It goes on the wire as `[system(instructions), user(payload)]`. The
-`&'static str` is load-bearing rather than stylistic — byte-stability across
+`&'static str` is required rather than stylistic — byte-stability across
 calls is the entire point, and a static is the strongest structural guarantee
 the type system offers. An edit that tried to interpolate something volatile
 into the instruction block would have to change the type to do it.
@@ -124,12 +151,19 @@ appear until the next session, because hot-injecting it would invalidate the
 cached prefix on every save. Turn-relevant recall rides as a volatile message
 *after* the prefix, never interleaved into it.
 
-## Where an operator can intervene
+## Where an operator can intervene — pre-#3865
+
+**Only the `default` row of this section still exists.** #3908 removed the other
+five, so five of the six doors below are keys the engine no longer has —
+`AgentEngineAgents` (`crates/stella-cli/src/settings/engine.rs`) carries exactly
+one entry, and a settings file still naming a sibling is reported by name rather
+than silently ignored. The table is kept because it records which role each door
+reached, which is what a plugin author needs when deciding what its own
+participants should let an operator override.
 
 `agent_engine_config.agents.<kind>.prompt` in `.stella/settings.json`, where
-`<kind>` is an `EngineAgentKind` variant
-(`crates/stella-cli/src/settings.rs`): `default`, `worker`, `verifier`,
-`triage`, `research`, `plan`.
+`<kind>` was one of `default`, `worker`, `verifier`, `triage`, `research`,
+`plan`.
 
 The mapping to call roles is not one-to-one, and the gaps are real:
 

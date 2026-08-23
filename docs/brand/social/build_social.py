@@ -44,18 +44,28 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
+sys.path.insert(0, str(HERE.parent))
+
+import cometkit as ck  # noqa: E402  (path shim must precede the import)
 
 # ---------------------------------------------------------------------------
-# brand tokens — docs/brand/css/tokens.css is normative; these mirror it
+# brand tokens and geometry — cometkit holds the only copy
 # ---------------------------------------------------------------------------
-
-BRAND = "#EFC53F"  # gold — the comet, on every ground
-BRAND_DEEP = "#141413"  # small brand *text* on light surfaces only
-INK = "#0A0A0C"
-PAPER = "#F4F1EA"  # cool text on dark
-PAPER_BG = "#FFFFFF"  # light-mode surface
-MUTED_ON_DARK = "#777782"
-MUTED_ON_LIGHT = "#4B4B56"
+#
+# Bound to module names here instead of reached through `ck.` at each use,
+# because this file writes them into SVG f-strings some three dozen times. A
+# binding is not a copy: `docs/brand/css/tokens.css` stays normative for
+# colour, `docs/brand/logo/svg/` for shape, cometkit mirrors both, and a
+# recolour there moves this file with it. The literals these replaced had to
+# be hand-edited for #3658 and again for #3968, which is the failure cometkit's
+# module docstring names.
+BRAND = ck.BRAND
+BRAND_DEEP = ck.BRAND_DEEP
+INK = ck.INK
+PAPER = ck.PAPER
+PAPER_BG = ck.PAPER_BG
+MUTED_ON_DARK = ck.MUTED_ON_DARK
+MUTED_ON_LIGHT = ck.MUTED_ON_LIGHT
 
 # The repo this art advertises, and the one command that installs it.
 REPO_SLUG = "macanderson/stella"
@@ -64,75 +74,25 @@ TAGLINE = "the terminal agent — faster · cheaper · more accurate"
 STAR_CTA = "star the repo"
 
 # JetBrains Mono is monospace: one advance, every glyph, forever.
-ADVANCE = 0.6
+ADVANCE = ck.ADVANCE
 
 # ---------------------------------------------------------------------------
-# geometry — copied from docs/brand/logo/svg/ and website/src/components/brand.tsx
+# geometry — cometkit is the only copy; docs/brand/logo/svg/ is normative
 # ---------------------------------------------------------------------------
+#
+# `build_marks.check_svg_parity` measures cometkit's star path and trail rects
+# against `logo/svg/logomark-color.svg`, so binding them here puts the banners
+# under that check as well. The wordmark and the GitHub mark have no such
+# check on either side of the binding.
 
-# The comet star in its own 96-unit box. Its ink spans (42,26)–(86,70): a
-# 44-unit square centred on (64,48). Every star on every canvas is this path.
-STAR_PATH = (
-    "M64 26 C65.65 39.2 72.8 46.35 86 48 C72.8 49.65 65.65 56.8 64 70 "
-    "C62.35 56.8 55.2 49.65 42 48 C55.2 46.35 62.35 39.2 64 26 Z"
-)
-STAR_BOX = 44.0
-STAR_CX, STAR_CY = 64.0, 48.0
-
-# The trail: three round-capped strokes, flattened to rects so the same numbers
-# serve renderers with no stroke support. A 7-unit round-capped stroke x1→x2 is
-# a rect from x1−3.5 to x2+3.5, 7 tall, rx 3.5.
-TRAIL_RECTS = [
-    (6.5, 44.5, 27.0, 7.0),
-    (14.5, 30.5, 19.0, 7.0),
-    (14.5, 58.5, 19.0, 7.0),
-]
-
-# "stella" outlined — no font needed, so the name never falls back to a
-# substitute face. docs/brand/logo/svg/lockup-color-dark.svg, letters only.
-WORDMARK_PATH = (
-    "M122.62 70.5Q118.54 70.5 115.48 69.21Q112.42 67.92 110.71 65.64Q109.0 63.36 109.0 60.3H118.0"
-    "Q118.0 61.74 119.29 62.61Q120.58 63.48 122.62 63.48H125.26Q127.72 63.48 129.01 62.58"
-    "Q130.3 61.68 130.3 60.06Q130.3 58.56 129.16 57.75Q128.02 56.94 125.62 56.64L121.78 56.16"
-    "Q115.6 55.38 112.78 53.16Q109.96 50.94 109.96 46.38Q109.96 41.58 113.26 38.94"
-    "Q116.56 36.3 122.92 36.3H125.2Q131.26 36.3 134.86 38.94Q138.46 41.58 138.46 46.02H129.46"
-    "Q129.46 44.82 128.29 44.07Q127.12 43.32 125.2 43.32H122.92Q120.7 43.32 119.68 44.07"
-    "Q118.66 44.82 118.66 46.32Q118.66 47.7 119.59 48.42Q120.52 49.14 122.56 49.44L126.7 49.98"
-    "Q132.94 50.76 135.97 53.1Q139.0 55.44 139.0 60.06Q139.0 65.1 135.52 67.8Q132.04 70.5 125.26 70.5Z "
-    "M163.6 69.9Q158.56 69.9 155.68 67.02Q152.8 64.14 152.8 59.1V45.0H144.1V36.9H152.8V27.6H161.8V36.9"
-    "H174.1V45.0H161.8V59.1Q161.8 61.8 164.5 61.8H173.5V69.9Z "
-    "M196.06 70.5Q191.68 70.5 188.41 68.85Q185.14 67.2 183.37 64.23Q181.6 61.26 181.6 57.3V49.5"
-    "Q181.6 45.54 183.37 42.57Q185.14 39.6 188.41 37.95Q191.68 36.3 196.06 36.3Q200.44 36.3 203.65 37.95"
-    "Q206.86 39.6 208.63 42.57Q210.4 45.54 210.4 49.5V55.5H190.18V57.3Q190.18 60.42 191.68 62.01"
-    "Q193.18 63.6 196.18 63.6Q198.28 63.6 199.57 62.88Q200.86 62.16 201.28 60.9H210.1"
-    "Q209.02 65.22 205.21 67.86Q201.4 70.5 196.06 70.5ZM201.82 50.88V49.38Q201.82 46.32 200.41 44.7"
-    "Q199.0 43.08 196.06 43.08Q193.12 43.08 191.65 44.76Q190.18 46.44 190.18 49.5V50.4L202.42 50.28Z "
-    "M237.4 69.9Q233.92 69.9 231.28 68.43Q228.64 66.96 227.17 64.32Q225.7 61.68 225.7 58.2V34.2H215.5"
-    "V26.1H234.7V58.2Q234.7 59.82 235.69 60.81Q236.68 61.8 238.3 61.8H247.9V69.9Z "
-    "M273.4 69.9Q269.92 69.9 267.28 68.43Q264.64 66.96 263.17 64.32Q261.7 61.68 261.7 58.2V34.2H251.5"
-    "V26.1H270.7V58.2Q270.7 59.82 271.69 60.81Q272.68 61.8 274.3 61.8H283.9V69.9Z "
-    "M299.74 70.5Q294.76 70.5 291.85 67.8Q288.94 65.1 288.94 60.48Q288.94 55.5 292.39 52.83"
-    "Q295.84 50.16 302.32 50.16H309.16V47.7Q309.16 45.78 307.81 44.64Q306.46 43.5 304.18 43.5"
-    "Q302.08 43.5 300.7 44.46Q299.32 45.42 299.02 47.1H290.32Q290.86 42.12 294.67 39.21"
-    "Q298.48 36.3 304.48 36.3Q310.78 36.3 314.47 39.39Q318.16 42.48 318.16 47.7V69.9H309.46V64.5H308.02"
-    "L309.52 62.4Q309.52 66.12 306.85 68.31Q304.18 70.5 299.74 70.5ZM303.1 63.9Q305.74 63.9 307.45 62.49"
-    "Q309.16 61.08 309.16 58.8V55.26H302.5Q300.46 55.26 299.2 56.43Q297.94 57.6 297.94 59.52"
-    "Q297.94 61.56 299.32 62.73Q300.7 63.9 303.1 63.9Z"
-)
-LOCKUP_W, LOCKUP_H = 326.0, 96.0
-
-# The GitHub mark, same path the site's nav and doc footers use.
-GITHUB_PATH = (
-    "M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 "
-    "0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7"
-    "c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998"
-    ".108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22"
-    "-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405"
-    " 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 "
-    "5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57"
-    "C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"
-)
-GITHUB_BOX = 24.0
+STAR_PATH = ck.STAR_PATH
+STAR_BOX = ck.STAR_BOX
+STAR_CX, STAR_CY = ck.STAR_CX, ck.STAR_CY
+TRAIL_RECTS = ck.TRAIL_RECTS
+WORDMARK_PATH = ck.WORDMARK_PATH
+LOCKUP_W, LOCKUP_H = ck.LOCKUP_W, ck.LOCKUP_H
+GITHUB_PATH = ck.GITHUB_PATH
+GITHUB_BOX = ck.GITHUB_BOX
 
 
 # ---------------------------------------------------------------------------
@@ -144,19 +104,28 @@ GITHUB_BOX = 24.0
 class Theme:
     """One ground and everything that has to change with it.
 
-    Note what does *not* change: the comet stays #EFC53F on both grounds.
+    Note what does *not* change: the comet stays `BRAND` on both grounds.
     Only brand-coloured *lettering* drops, and only on light.
 
-    That carve-out is inherited, and its stated reason never held. The kit's
-    light-mark rule (tokens.css `--stella-mark-shape`, cometkit's
-    `BRAND_ON_LIGHT`) exists *because* the mark sits on paper, so "a social
-    canvas paints its own ground, and this one is #FFFFFF" is the condition
-    that triggers the rule rather than one that exempts it. Measured on
-    #FFFFFF: ion was 1.83:1, gold is 2.63:1, brand-700 is 4.99:1 — v4.0's
-    return to gold improves the number without reaching the 3:1 graphical
-    floor. Which stop the social mark takes is a brand decision, not a
-    follow-on edit to a recolour, so it is left as it was and tracked in
-    #3973.
+    That is the kit's rule now, and no longer a carve-out this file makes.
+    v5.0 retired the darker light-mark stop v3.0 introduced and v4.0 kept:
+    gold, `text` and `ink` are the only three mark colours the system defines,
+    so there is no fourth stop for the mark to step down to — `BRAND_ON_LIGHT`
+    in cometkit is `BRAND`, and `--stella-mark-shape` in
+    `docs/brand/css/tokens.css` is `--stella-brand`. What licenses the gold on
+    paper is the logotype exemption rather than the ratio: WCAG 1.4.3 and
+    1.4.11 both carve out logos and brand marks by name, and a banner is an
+    image in a feed rather than an operable control.
+    `tokens.css` is where that reasoning is normative;
+    `scripts/check-contrast.py` carries the same pairing on the token
+    system's warm `paper` (#FFFCF5, 1.61:1) and prints the measurement with
+    the verdict `exempt`, so the number is on the record beside the reason it
+    does not fail.
+
+    Lettering is the other role and gets no exemption. Gold on this canvas's
+    #FFFFFF measures 1.65:1 against a 4.5:1 body-text floor, so `brand_text`
+    is `BRAND_DEEP` — ink, 18.4:1 — on the light ground, and `BRAND` only on
+    the dark one.
     """
 
     name: str
@@ -509,7 +478,7 @@ def starfield(lo: Layout, th: Theme, keep_out: tuple[float, float, float, float]
         if kx - pad < x < kx + kw + pad and ky - pad < y < ky + kh + pad:
             continue
         warm = rng.random() < 0.42
-        fill = BRAND if warm else (PAPER if th.is_dark else "#4B4B56")
+        fill = BRAND if warm else (PAPER if th.is_dark else MUTED_ON_LIGHT)
         # Gold reads quieter than paper on ink, so it carries the higher cap;
         # a paper speck at full strength competes with the wordmark.
         top = 0.42 if warm else 0.26

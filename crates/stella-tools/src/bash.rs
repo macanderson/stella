@@ -46,15 +46,17 @@
 //! escape it would have caught. Confinement is *enforced* in the file tools,
 //! which resolve a path and hold a descriptor.
 //!
-//! **There is still no session-wide OS sandbox here.** `STELLA_BASH_SANDBOX`,
-//! the opt-in Seatbelt/`bwrap` wrapper, was removed in #1300 for claiming a
-//! session-wide bound it never had — it wrapped this one tool while every
-//! other spawn path ran around it. The `confine`/`contain` pair that replaced
-//! it put a kernel-level write ban on a graded tree, but was armed only by the
-//! candidate-workspace registry this crate no longer builds; restoring it
-//! without a caller would be unwired code, so it is tracked in #3468 rather
-//! than shipped dark. Session isolation belongs to the container the whole
-//! Stella process runs in (`docs/spec/remote-sandboxes.md` §2).
+//! **The per-command boundary is that audit; there is no OS sandbox here.**
+//! `STELLA_BASH_SANDBOX`, the opt-in Seatbelt/`bwrap` wrapper, was removed in
+//! #1300 for claiming a session-wide bound it never had — it wrapped this one
+//! tool while every other spawn path ran around it. The `confine`/`contain`
+//! pair that replaced it put a kernel-level write ban on a graded tree, and it
+//! is not coming back: it was armed by the candidate-workspace registry alone,
+//! which this crate no longer builds. That costs a real guarantee — a computed
+//! path (`chr(47)`) walks past any audit of the command text, and the kernel
+//! write ban is what used to refuse it anyway. The decision and its price are
+//! in `doc:remote-sandboxes` §2.5. Session isolation belongs to the container
+//! the whole Stella process runs in (`doc:remote-sandboxes` §2).
 
 use std::path::Path;
 use std::time::Duration;

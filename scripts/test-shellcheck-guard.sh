@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Tests for the `shellcheck` gate step's PRESENCE GUARD (#3615).
+# Tests for the `shellcheck` gate step: its PRESENCE GUARD (#3615), and that
+# its argument list has one home (#3375).
 #
 #   ./scripts/test-shellcheck-guard.sh
 #
@@ -154,6 +155,35 @@ case "$out" in
   *)
     pass=$((pass + 1)); echo "ok   B4 the bare 'shellcheck: not found' shell error is gone" ;;
 esac
+
+# ── C: the argument list has exactly one home ────────────────────────────────
+#
+# The recipe's last line names which files get linted, and CI must reach it by
+# calling the target. It used to spell the list out itself, under a comment
+# asking the next author to keep the two copies matching; #3353 changed one and
+# not the other, and the step was red on every PR until #3372 (#3375). Nothing
+# checked the pair, because check-gate-parity.sh reads GATE_STEPS and never
+# opens a workflow.
+
+ci="$repo_root/.github/workflows/ci.yml"
+if grep -qE '^ *run: make shellcheck *$' "$ci"; then
+  pass=$((pass + 1)); echo "ok   C1 ci.yml's gate job calls the target"
+else
+  fail=$((fail + 1))
+  echo "FAIL C1 ci.yml's shellcheck step does not run \`make shellcheck\`:"
+  grep -n 'shellcheck' "$ci" || echo "(no shellcheck step at all)"
+fi
+
+# The direction that actually bit: a second copy of the argv, anywhere in the
+# workflow. `make shellcheck` is the only spelling allowed to name the tool
+# alongside a file argument.
+if grep -nE 'shellcheck +[^ ]*\.(sh|githooks)|shellcheck +install\.sh' "$ci" >/dev/null; then
+  fail=$((fail + 1))
+  echo "FAIL C2 ci.yml spells the lint argument list itself — the Makefile owns it:"
+  grep -nE 'shellcheck +[^ ]*\.(sh|githooks)|shellcheck +install\.sh' "$ci"
+else
+  pass=$((pass + 1)); echo "ok   C2 ci.yml carries no second copy of the argument list"
+fi
 
 echo
 echo "passed $pass, failed $fail"

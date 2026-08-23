@@ -342,6 +342,30 @@ jobs:
           python3 ./scripts/gen-tokens.py --check
           python3 ./scripts/check-tokens.py
 
+      # A sibling question the check above cannot answer: it reasons about hex
+      # literals, and an unresolvable var() is not a parse error. A token sheet
+      # can name a stop deleted two releases ago, every page still renders off
+      # the consumer's fallback, and the sheet goes on stating a rule the tree
+      # does not apply (#4122).
+      - name: every var() in a token sheet resolves
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-css-vars.py
+
+      # The two deck guards, whose subject is `website/public/presentations/`
+      # but whose failing DIFF is usually a Rust one. deck-fit.yml runs
+      # check-deck-paths on the other direction — an edit to a deck — and
+      # triggers on the deck paths alone; this job is what sees the direction
+      # that actually strands a citation, which is a module moving in
+      # `crates/`. Neither needs a browser, so neither belongs in that
+      # workflow's browser job (#3404, #3573).
+      - name: the deck enumeration still walks recursively
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/test-deck-fit-all.sh
+
+      - name: every path the decks cite still resolves
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-deck-paths.py
+
       - name: no library crate returns Result<_, String>
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-typed-errors.py
@@ -365,11 +389,16 @@ jobs:
       # them fails open (#916).
       - name: shellcheck
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
-        # scripts/lib/*.sh must be inputs too: the help-header helper is
-        # sourced by most scripts (#3353), and shellcheck only follows a
-        # sourced file it was handed — otherwise every sourcing script
-        # trips SC1091. Keep this glob list matching the Makefile target.
-        run: shellcheck install.sh scripts/*.sh scripts/lib/*.sh .githooks/*
+        # The file list lives in the Makefile target and nowhere else. It used
+        # to be spelled out here as well, with a comment asking the next author
+        # to keep the two copies matching — and they diverged anyway: #3353
+        # taught the Makefile the `scripts/lib/*.sh` glob (shellcheck only
+        # follows a sourced file it was handed, so without it every script
+        # sourcing the help-header helper trips SC1091), this copy kept the old
+        # list, and the step was red on every PR until #3372 repaired it.
+        # `make` is available on ubuntu-latest and the target shells out to
+        # shellcheck directly, so this step stays toolchain-free (#3375).
+        run: make shellcheck
 
       # NOTE: despite the action's name, this job does not build on `stable`.
       # rust-toolchain.toml pins the repo to a concrete toolchain (1.97.0), and

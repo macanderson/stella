@@ -40,7 +40,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
                     dead-code-allows diagnostic-codes bench-suites tokens \
-                    hue-separation transcript-surfaces prose
+                    hue-separation transcript-surfaces prose deck-fit-all-test \
+                    deck-paths css-vars
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -352,6 +353,29 @@ prose-update: ## Retighten the prose ratchet (run after deleting some)
 prose-test: ## Test the prose ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-prose-guard.sh
 
+# A gate step, unlike deck-fit.yml itself: the measurement needs a browser, the
+# ENUMERATION does not, and the enumeration is what has broken twice (#2425,
+# #3376). The stub-node fixture costs about a second and compiles nothing.
+.PHONY: deck-fit-all-test
+deck-fit-all-test: ## Test the deck enumeration and its skip/fail accounting (#3404)
+	@./scripts/test-deck-fit-all.sh
+
+.PHONY: deck-fit-all
+deck-fit-all: ## Measure every deck under website/public/presentations/ (needs node + a browser)
+	./scripts/deck-fit-all.sh
+
+.PHONY: deck-paths
+deck-paths: ## Assert every repository path a deck cites still resolves (#3573)
+	@python3 ./scripts/check-deck-paths.py
+
+.PHONY: deck-paths-test
+deck-paths-test: ## Test the deck path guard's directions (hermetic; not part of `gate`)
+	./scripts/test-deck-paths.sh
+
+.PHONY: css-vars
+css-vars: ## Assert every var() in a token sheet resolves inside it (#4122)
+	@python3 ./scripts/check-css-vars.py
+
 .PHONY: dead-code-allows
 dead-code-allows: ## Assert every #[allow(dead_code)] says why, and that the count only shrinks (#3949)
 	@python3 ./scripts/check-dead-code-allows.py
@@ -395,6 +419,12 @@ doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included 
 # Covered by scripts/test-shellcheck-guard.sh (`make shellcheck-guard-test`),
 # which pins both halves: the notice on an absent binary, and that a present
 # one is still invoked with its argv intact and its findings still fatal.
+#
+# The argument list on the last line is the only one in the tree. ci.yml's gate
+# job and CONTRIBUTING.md's fence both call this target rather than restating
+# it: the two lists diverged the moment there were two, and cost a red CI step
+# on every PR plus two repair PRs to notice (#3353, #3372, #3375). The same
+# test suite pins that ci.yml still calls the target.
 .PHONY: shellcheck
 shellcheck: ## Lint install.sh, scripts/*.sh, and .githooks/* (#916)
 	@command -v shellcheck >/dev/null 2>&1 || { \
@@ -580,6 +610,10 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 .PHONY: file-size-test
 file-size-test: ## Test the file-size ratchet's language coverage and its change-relative judgement (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
+
+.PHONY: no-scratch-test
+no-scratch-test: ## Test the session-scratch boundary: the ignore rules and the guard together (#2888; hermetic; not part of `gate`)
+	./scripts/test-no-scratch.sh
 
 .PHONY: action-pins-test
 action-pins-test: ## Test that the action-pins guard covers composite actions too (#4288; hermetic; not part of `gate`)

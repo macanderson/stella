@@ -93,6 +93,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + hue-separation (30° OKLCH, web tokens)
                          #   + transcript-surfaces
                          #   + prose (no content-free constructions added)
+                         #   + deck-fit-all-test (the deck enumeration)
+                         #   + deck-paths (the decks' code-map citations)
+                         #   + css-vars (every var() in a token sheet resolves)
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
@@ -130,14 +133,24 @@ green (#3888); and
 because a PR that hand-edits a generated schema and nothing else starts neither
 of the other two (#1439).
 
-A fourth workflow, `deck-fit.yml`, runs no gate step at all: it measures every
-slide of every deck under `website/public/presentations/` against the fixed
-1600x900 canvas the decks are authored in (`scripts/deck-fit.mjs`). It needs a
-browser, which is why it is not in `make gate`, and it has its own file rather
-than a job in `docs-guards.yml` because that workflow triggers on `**/*.rs` and
-would launch a browser on nearly every PR — the same disjoint-paths reasoning
-that gave `wire-schema.yml` its own file. It is deliberately not a required
-check yet (#2425).
+A fourth workflow, `deck-fit.yml`, owns the decks under
+`website/public/presentations/`. Its measurement — every slide against the
+fixed 1600x900 canvas the decks are authored in (`scripts/deck-fit.mjs`) —
+needs a browser, which is why that half is not in `make gate`, and it has its
+own file rather than a job in `docs-guards.yml` because that workflow triggers
+on `**/*.rs` and would launch a browser on nearly every PR — the same
+disjoint-paths reasoning that gave `wire-schema.yml` its own file. It is
+deliberately not a required check yet (#2425).
+
+The browser is what is expensive, not the deck directory, so the two checks
+over these files that need no browser are gate steps and run here as well:
+`deck-fit-all-test` covers the enumeration the workflow drives
+(`scripts/deck-fit-all.sh` — inline in the `run:` block until #3404, which is
+why the enumeration bug #3376 had no regression test), and `deck-paths` holds
+the decks' code-map citations to files that still exist. `deck-paths` runs in
+this workflow rather than only in the gate because `ci.yml`'s required job
+skips its Rust half for a diff confined to `website/**` (#1892), and a diff
+confined to `website/**` is exactly a deck edit (#3573).
 
 A fifth, `main-canary.yml`, is the only one that runs **after** the merge, and
 it exists because some guards cannot be settled before one. A guard enforced
@@ -989,6 +1002,20 @@ seconds; `cargo test --workspace` rebuilds everything.
   merge and files an issue when the answer changed (#3332). The two halves are
   deliberately separate: one stops you shipping a stale lock, the other bounds
   how long `main` stays broken when nobody did.
+- **A grep over cargo's output is not a build result; the exit code is.**
+  Cargo colourises when it thinks it is talking to a terminal, which puts the
+  escape *before* the word — a line that reads
+  `error[E0624]: method is private` on screen is
+  `\x1b[1m\x1b[91merror[E0624]\x1b[0m…`, so `rg '^error'` matches nothing and
+  prints a reassuring blank. That is not "no errors"; it is a filter that
+  cannot see them. In PR #3005 a `cargo build --workspace` was declared clean
+  on exactly that filter while `stella-cli` was failing to compile with six
+  `documentation comments cannot be applied to function parameters` errors, and
+  the mistake survived two more commands before an exit code contradicted it.
+  A pipe compounds it: `$?` becomes the filter's status, so `cargo build … | rg
+  …` reports on `rg`. Redirect to a file and read `$?`; pass `--color=never`
+  (or `CARGO_TERM_COLOR=never`) when you filter deliberately; anchor on
+  `error\[` rather than `^error` if you filter coloured output anyway.
 - **`.cargo/config.toml` is gitignored** — it holds per-developer cargo aliases
   (`tc` = test stella-core, etc.). It's not committed.
 - **Settings 3-scope merge**: user → org-managed (`STELLA_MANAGED_SETTINGS`) →

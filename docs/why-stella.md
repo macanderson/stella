@@ -13,7 +13,7 @@ status: living
 </p>
 
 <p align="center"><strong>Why Stella — a technical overview</strong></p>
-<p align="center"><em>A fast, BYOK, model-agnostic terminal coding agent that proves its own work. Built in Rust.</em></p>
+<p align="center"><em>A fast, BYOK, model-agnostic terminal coding agent with a deterministic definition of done you can opt into. Built in Rust.</em></p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/engine-zero--I%2FO%20core-EFC53F?style=flat-square" alt="Zero-I/O core">
@@ -29,25 +29,31 @@ SaaS, not a swarm, and not another wrapper that declares victory on a green test
 suite. It is a single static Rust binary built around one uncommon idea: **an
 agent should have to prove the change it made is the change that fixed the
 problem** — and everything else in the design exists to make that proof cheap,
-local, and reproducible.
+local, and reproducible when you ask for it.
 
-## The guarantee other agents don't make
+## The definition of done, and who makes it
 
 Most agents decide they are *done* when a test suite passes. That accepts two
 failure modes silently: a suite that was already green, and an edit that doesn't
-actually exercise the fix. Stella rejects both.
+actually exercise the fix.
 
-Opt into the staged pipeline with `stella run --pipeline classic` and it demands
-a **witness test**: one that must **fail on the previous code** and **pass on
-your change**. A green suite alone is never accepted — the fail → pass
-transition *is* the evidence. Hand it your own test with `--test-command`, or
-the pipeline spawns an independent **witness author** that
-writes the failing test, tamper-excluded from the code under change, so the flip
-cannot be gamed. That guarantee is host-run and belongs to the `--pipeline
-classic` path specifically — a wrapper plugin's own verification is
-self-reported evidence Stella evaluates against a declared rule rather than
-re-running itself. Deterministic definition of done, enforced by construction —
-see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline).
+A plain `stella run` claims neither way. It drives one deterministic step loop
+and reports what it changed — the files it touched, what the turn cost, and the
+event journal both came from. Nothing is running over it.
+
+The fail → pass contract belongs to a **verification wrapper plugin**, and
+`stella run --pipeline <plugin-id>` is how you ask for it. That hands the turn
+to an installed plugin whose oracle demands a **witness test**: one that must
+**fail on the previous code** and **pass on your change**. A green suite alone
+is not accepted on that path — the fail → pass transition *is* the evidence.
+What the plugin reports is self-reported evidence: Stella evaluates it against
+the verdict rule that plugin declared at install, and never re-runs or
+re-checks it. The built-in staged pipeline that used to run the check inside
+Stella has been deleted (#3865); `--pipeline classic` is refused outright,
+naming `stella plugin install` as the remedy, and `--keep-witness` /
+`--require-verified` are refused on every path. Oxagen's Vera is the reference
+verification plugin, private and not shipped in this repository — see
+[the plugin socket](https://stella.oxagen.sh/docs/plugins).
 
 ## An engine you can actually reason about
 
@@ -57,7 +63,7 @@ see [the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline).
 routing, retry, and budget are plain **synchronous functions over owned data** —
 so the whole decision core is property-testable with no network and no
 filesystem, and adding a vendor or a tool is an *adapter, never a rewrite*. The
-workspace is fifteen focused crates; `stella-protocol` is a zero-logic stability
+workspace is a set of focused crates; `stella-protocol` is a zero-logic stability
 contract every boundary round-trips through `serde_json` byte-for-byte. There is
 one deterministic step loop — plan, fan tools out in parallel, observe, compact,
 repeat — that you can read top to bottom. No coordinator, no hidden control
@@ -92,9 +98,10 @@ dives: [lifecycle hooks](https://stella.oxagen.sh/docs/agent-tools/hooks),
 Provable, reproducible progress over flashy autonomy. If you want an agent whose
 every decision is a synchronous function you can test, whose Community/default
 telemetry never leaves your disk, whose budget is a hard boundary, and whose
-"done" is a fact you can re-run — Stella is built for you. An explicitly
-enrolled Oxagen Enterprise managed deployment has the single signed operational
-egress exception documented above.
+"done" — once you bind a verification plugin to the run — is a fact you can
+re-run rather than a sentence you take on faith, Stella is built for you. An
+explicitly enrolled Oxagen Enterprise managed deployment has the single signed
+operational egress exception documented above.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/macanderson/stella/main/install.sh | sh

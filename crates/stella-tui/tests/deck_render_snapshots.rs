@@ -706,8 +706,10 @@ fn deck_render_snapshots_pin_the_help_overlay() {
     );
 }
 
-/// SPEC 5 sends five status cells behind `?` **as well as** to the AGENTS tab,
-/// and until #4188 the overlay drew keybindings only.
+/// SPEC 5 sent five status cells behind `?` as well as to the AGENTS tab, and
+/// `?` is the only one of the two left: the overlay drew keybindings only until
+/// #4188, and the AGENTS half went with the executions dashboard #4342 removed.
+/// So this golden is the whole coverage those five cells have.
 ///
 /// A named assertion beside the golden, deliberately. #4186 is the cautionary
 /// tale: a golden pins the whole frame, so a row that quietly stops rendering

@@ -94,11 +94,22 @@ Thumbs.db
 
 # Agent session scratch (#448). These are working artifacts of a session, not
 # repository content: a bug-repro tree from a merged PR, "superpowers" plan and
-# spec files describing already-shipped work, and per-session agent memory.
-# They must never reach the remote — scripts/check-no-scratch.sh enforces it in
-# `make gate`, which the pre-push hook runs.
+# spec files describing already-shipped work, per-session agent memory, and the
+# commit messages and notes a session drops in .scratch/. They must never reach
+# the remote — scripts/check-no-scratch.sh enforces it in `make gate`, which the
+# pre-push hook runs.
+#
+# Listing a path here is what makes that guard able to see it: its invariant is
+# "if a path is ignored, it must not be tracked", so an unignored scratch
+# convention is invisible to it. .scratch/ was exactly that, and on 2026-08-11
+# a `git add -A` swept .scratch/msg.txt into a commit that passed the guard,
+# `make gate` and CI, and reached the remote (#2888). Covered by
+# scripts/test-no-scratch.sh (`make no-scratch-test`).
 /sandbox/
 /docs/superpowers/
+# Unanchored, like .agent/ above: a session writing scratch inside a worktree
+# subdirectory is the same hazard at a different path.
+.scratch/
 
 # Testing
 *.profraw

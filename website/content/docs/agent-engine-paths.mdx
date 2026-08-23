@@ -200,7 +200,7 @@ stella resume
 
 ## One-shot: `stella run`
 
-The scripting workhorse: one prompt in, verified work out, an exit code
+The scripting workhorse: one prompt in, the finished work and an exit code
 back.
 
 **Raw (default).** Plain `stella run "…"` drives one plain step-loop turn —
@@ -350,9 +350,11 @@ differently:
   </OptionCard>
 </CardGrid>
 
-One consequence worth knowing: because the verifier's view keeps only
-`read_only: true` tools, a read-only lookup is never a side effect — the
-verifier can inspect anything it can see, and structurally cannot change it.
+The same `read_only: true` bit fences a sub-agent launched without write
+access: it is offered only the read-only schemas, and the restriction is
+enforced when a call executes rather than by asking the prompt nicely
+(`stella_core::ports::ReadOnlyTools`). A read-only lookup is never a side
+effect.
 
 ## Choosing a path
 

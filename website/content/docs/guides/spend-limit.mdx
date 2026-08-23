@@ -52,14 +52,15 @@ The exit code is `1`, the same as any other failure. If you need to distinguish
 *the spend limit stopped this* from *this failed*, read the JSON:
 
 ```bash
-stella --spend-limit 2.00 run --output-format json "…" | jq '{status, cost_usd, verdict}'
+stella --spend-limit 2.00 run --output-format json "…" | jq '{status, cost_usd, files_touched}'
 ```
 
 <Callout type="info">
 `--spend-limit` is metered against **catalog prices**. Local and air-gapped models
 have no catalog price, so the dollar columns read zero and a spend limit has nothing
-to meter against. Bound those runs with `--test-command` and goal-mode round caps
-instead — see [Local and air-gapped](/docs/examples#local-and-air-gapped).
+to meter against. Bound those runs with a verification plugin's `--test-command`
+oracle and goal-mode round caps instead — see
+[Local and air-gapped](/docs/examples#local-and-air-gapped).
 </Callout>
 
 ## The gate that fires *before* you spend
@@ -125,14 +126,17 @@ Three consequences follow, and they are most of what you need:
 2. **A flagship verifier is cheap insurance.** One verifier call is a few thousand
    input tokens and under a thousand out. Keep it in a *different family* than
    the worker.
-3. **`--test-command` is the strongest cost flag on the CLI.** It arms the
-   deterministic flip oracle, so most runs finish on evidence alone with the
-   **verifier skipped entirely** — and it skips the witness-author call too.
+3. **`--test-command` is the strongest cost flag on a wrapped run.** It arms the
+   bound plugin's deterministic flip oracle, so most runs finish on evidence
+   alone with the **verifier skipped entirely** — and it skips the
+   witness-author call too. It is refused on the raw loop, which spends none of
+   those calls in the first place.
 
 ```bash
-# Cheapest correct shape: deterministic oracle armed, hard ceiling on top.
-stella --spend-limit 1.50 run --test-command "cargo test -p api" \
-  "add cursor pagination to /orders"
+# Cheapest correct shape when the result must carry evidence:
+# the plugin's oracle armed, a hard ceiling on top.
+stella --spend-limit 1.50 run --pipeline my-verifier \
+  --test-command "cargo test -p api" "add cursor pagination to /orders"
 ```
 
 ## The multipliers
