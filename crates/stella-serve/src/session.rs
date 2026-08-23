@@ -712,6 +712,13 @@ fn run_session(
                         Arc::clone(dispatcher),
                         effective.child_steps,
                         Arc::clone(&spend_ledger),
+                        // The same three the remoted executor above was built
+                        // with, so `delegate` — which the engine implements
+                        // and the host never sees — meets the deployment's
+                        // authorization policy on the way out (#4464).
+                        Arc::clone(&authz_gate),
+                        principal.clone(),
+                        bus.clone(),
                     )
                 });
         let tool_view: &dyn stella_core::ports::ToolExecutor = match &delegating {

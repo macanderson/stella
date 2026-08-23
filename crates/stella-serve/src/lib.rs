@@ -67,6 +67,7 @@
 //!   `(provider_id, model)`. See `crate::calibration`.
 
 mod accept;
+mod authz;
 mod backlog;
 mod calibration;
 pub mod checkpoint;
