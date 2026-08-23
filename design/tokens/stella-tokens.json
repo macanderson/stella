@@ -37,7 +37,7 @@
       "predicate": "r > g > b AND 100*g >= 78*r AND 100*b <= 35*r",
       "green_pct": 78,
       "blue_pct": 35,
-      "why": "The green ratio is the load-bearing half: below it the hue is orange, and orange on a near-black ground reads brown on cheap panels."
+      "why": "The green ratio is the decisive half: below it the hue is orange, and orange on a near-black ground reads brown on cheap panels."
     },
     "gold-lift": {
       "predicate": "r > g > b AND 100*g >= 78*r AND hue within 3 deg of `anchor` AND lighter than `anchor`",
