@@ -97,6 +97,45 @@ fn the_consent_text_shows_the_powers_inside_the_turn() {
     assert!(text.contains("killed after 900s"), "{text}");
 }
 
+/// **The half `[loop]` cannot say** (#3729): what this plugin does to the
+/// repository *between* turns. A grade is about a turn; driving is about the
+/// forge, and reading them as one consent is the confusion the separate
+/// paragraph exists to prevent.
+///
+/// The widest grant drives, so the fixture declares all five families and this
+/// test holds the rendering to every one of them plus the ceiling — the
+/// sentences a user weighs before granting a plugin permission to push, merge
+/// and spend on its own.
+#[test]
+fn the_consent_text_shows_the_powers_outside_the_turn() {
+    let manifest = self_driving();
+    let text = consent_text(&manifest);
+    let driver = manifest
+        .driver
+        .as_ref()
+        .expect("the widest grant drives, or this test proves nothing");
+
+    assert!(text.contains("DRIVES Stella"), "{text}");
+    assert_eq!(driver.families().len(), 5, "all five families, or fewer");
+    for family in driver.families() {
+        assert!(
+            text.contains(family.consent_sentence()),
+            "the `{family}` family's sentence is missing:\n{text}"
+        );
+    }
+    for call in &driver.calls {
+        assert!(
+            text.contains(call.as_str()),
+            "`{call}` is declared but never shown:\n{text}"
+        );
+    }
+    assert!(
+        text.contains("asks for up to 64 of those per driver session"),
+        "{text}"
+    );
+    assert!(text.contains("performed BY Stella on request"), "{text}");
+}
+
 /// The consent text tells the user the thing `Principal::Plugin` exists to
 /// make true: this caller is not them. Without that sentence the prompt reads
 /// as "may I do these things on your behalf", which is a different question.

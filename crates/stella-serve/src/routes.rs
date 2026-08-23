@@ -30,8 +30,8 @@ use crate::history::{FrameHistory, Replay};
 use crate::http::{Request, discard_body, write_sse_event, write_sse_frame};
 use crate::observe::event::{ServeEvent, StreamEndReason, TurnRef};
 use crate::observe::record::{RequestRecord, Responder};
-use crate::server::ServerState;
 use crate::session::{Session, SessionSpec};
+use crate::state::ServerState;
 
 mod sessions;
 
@@ -939,7 +939,7 @@ pub(crate) async fn handle_cancel(
 /// being streamed (the session is checked out, so there is nothing to ask);
 /// a control request in that window is accepted and simply arrives too late
 /// to matter, which is inherent to steering a running turn.
-fn known_finished(entry: &crate::server::Entry) -> bool {
+fn known_finished(entry: &crate::state::Entry) -> bool {
     match entry.session.try_lock() {
         Ok(slot) => slot.as_ref().is_some_and(Session::is_finished),
         Err(std::sync::TryLockError::WouldBlock) => false,

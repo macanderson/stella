@@ -37,10 +37,10 @@
 //! **panics** rather than passing, because at that point the absence of a key
 //! is a failure to run what was asked for, not a hermetic default.
 //!
-//! This is not hypothetical. `crates/stella-model/tests/live_smoke.rs` uses
-//! the print-and-return shape today, and a default `cargo test` there reports
-//! nine live-wire-shape assertions as `ok` in 0.01s having contacted nothing —
-//! filed as #3856.
+//! This is not hypothetical. `crates/stella-model/tests/live_smoke.rs` used
+//! the print-and-return shape, and a default `cargo test` there reported nine
+//! live-wire-shape assertions as `ok` in 0.01s having contacted nothing. It
+//! now carries both halves of the discipline above (#3856).
 //!
 //! # The corpus is this repository, indexed into a temporary database
 //!

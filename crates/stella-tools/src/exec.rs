@@ -356,13 +356,20 @@ pub(crate) async fn wait_with_capped_output(
 /// allocates nothing and touches no lock, which is the whole requirement.
 ///
 /// It exists so a spawn site outside this crate can take the policy without
-/// taking a `libc` dependency and a fifth copy of the block — the plugin
-/// transport (`stella_runtime::wrapper::subprocess`) is the first such caller.
-/// The three remaining copies ([`crate::bash`], [`crate::custom`], and
-/// `stella-cli`'s session tools) predate it and are tracked for conversion in
-/// #3549; nothing about them differs. `stella-cli`'s daemon and the TUI's pty
-/// harness are deliberately not in that set — their `pre_exec` closures do
-/// more than this one and check what this one ignores.
+/// taking a `libc` dependency and a copy of the block — the plugin transport
+/// (`stella_runtime::wrapper::subprocess`) is the first such caller. Every
+/// site that wants this policy now calls it: [`crate::bash`],
+/// [`crate::custom`] and [`crate::hook_runner`] here, the plugin transport and
+/// the driver transport in `stella-runtime` (#3549). The guard half was
+/// already shared, and [`GroupKillGuard`]'s own doc says every
+/// `pre_exec(setsid)` site must use *this* guard rather than grow a second
+/// one; the same argument applies verbatim to the call that creates the group
+/// the guard kills.
+///
+/// `stella-cli`'s daemon and the TUI's pty harness are deliberately not in
+/// that set — their `pre_exec` closures do more than this one and check what
+/// this one ignores. Those two and the call below are the whole of the
+/// workspace's `setsid` surface; a fourth means a copy has grown back.
 #[cfg(unix)]
 pub fn detach_into_own_process_group(cmd: &mut Command) {
     // SAFETY: the closure calls one async-signal-safe libc function and

@@ -65,20 +65,13 @@ here at all. In either case the provider's rows in
 invariant #8); "Extending it" below walks the mechanics and names the tests
 that fail until you do.
 
-A new crate instead of a module is almost never the right split from here. The
-workspace-wide rule: a new crate is justified only when functionality (a) sits
-behind a port and would drag heavy new dependencies into a crate that is
-deliberately light — this crate is already the deliberately *heavy* side of the
-`Provider` port (`reqwest`, `tokio`, SigV4 hashing), so a vendor's dependency
-weight lands here by design; (b) needs a dependency direction the current graph
-forbids — also already solved here, since the trait lives in `stella-protocol`
-precisely so nothing but `stella-cli` has to link the adapters; or (c) is a
-genuinely separate deliverable with its own binary and release cadence, which a
-wire adapter never is. Otherwise extend this crate: a new crate costs an
-AGENTS.md workspace-table row, an impacted-crates scope, CI time, and a README,
-and a wrong split is harder to undo than a wrong merge. If one is truly
-justified, AGENTS.md's workspace table and the root `Cargo.toml` members list
-change in the same PR.
+A new crate instead of a module is almost never the right split from here.
+Against the three-case rule in AGENTS.md § "When a new crate is justified", all
+three are already answered: (a) this crate is the deliberately *heavy* side of
+the `Provider` port (`reqwest`, `tokio`, SigV4 hashing), so a vendor's
+dependency weight lands here by design; (b) the trait lives in
+`stella-protocol` precisely so nothing but `stella-cli` has to link the
+adapters; and (c) a wire adapter is never a separate deliverable.
 
 ## God files — do not add lines
 
@@ -219,10 +212,13 @@ Two integration tests in [`tests/`](tests):
 
 - [`tests/live_smoke.rs`](tests/live_smoke.rs) — one minimal *real* call per
   adapter, asserting wire-shape acceptance (200, and stella's own parser
-  reassembles the result), never model quality. A clean skip unless
-  `STELLA_LIVE_SMOKE=1` is set **and** that provider's credential resolves, so
-  `make gate` and CI never make a network call:
-  `STELLA_LIVE_SMOKE=1 ANTHROPIC_API_KEY=sk-… cargo test -p stella-model --test live_smoke`.
+  reassembles the result), never model quality. Every live call is
+  `#[ignore]`d, so `make gate` and CI never make a network call and report
+  them as `ignored` rather than as passes. Running one takes naming it, with
+  `STELLA_LIVE_SMOKE=1` and that provider's credential — and a named smoke
+  whose credential does not resolve **fails**, because at that point the
+  absence of a key is a failure to run what was asked for:
+  `STELLA_LIVE_SMOKE=1 ANTHROPIC_API_KEY=sk-… cargo test -p stella-model --test live_smoke -- --ignored`.
 - [`tests/credential_prompt_degrade.rs`](tests/credential_prompt_degrade.rs) —
   the regression guard for "an interactive prompt that cannot read stdin degrades
   to `NotFound`", never a hang and never a raw `PromptFailed`.
@@ -274,7 +270,9 @@ Adding a provider. **Step 0 is the one most new providers stop at.**
    `VertexAddressing` / `BedrockCredentials` in
    [`src/credential.rs`](src/credential.rs), so a second host of the engine gets
    the same variable names, fallback order, and named errors without copying them.
-5. **Add a gated live-smoke test** to [`tests/live_smoke.rs`](tests/live_smoke.rs).
+5. **Add a live-smoke test** to [`tests/live_smoke.rs`](tests/live_smoke.rs) — a
+   `LIVE_PROVIDERS` row plus a four-line `#[ignore]`d test, which a guard there
+   checks for.
 
 A *new* per-provider divergence (attachment dialects, tool schemas) means a third
 axis in `provider_parity.rs` — record it as a matrix, not as adapter folklore.

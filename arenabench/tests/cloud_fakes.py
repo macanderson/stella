@@ -64,7 +64,9 @@ class FakeS3:
         prefix = str(kwargs.get("Prefix") or "")
         keys = sorted(k for k in self.objects if k.startswith(prefix))
         return {
-            "Contents": [{"Key": k} for k in keys],
+            "Contents": [
+                {"Key": k, "Size": len(self.objects[k])} for k in keys
+            ],
             "IsTruncated": False,
         }
 

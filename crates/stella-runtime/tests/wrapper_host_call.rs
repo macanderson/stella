@@ -164,6 +164,45 @@ printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":
     );
 }
 
+/// **A plugin that asks and then walks away is named as such** (#3794): it was
+/// served, it exited cleanly, and it never answered the point.
+///
+/// The distinction is the whole point of the variant. Silence from a plugin
+/// that asked for nothing is `NoResponse` — a plugin with nothing to say —
+/// and silence from one that was mid-errand names the errand, so its author is
+/// pointed at the call it abandoned rather than at the point in general. The
+/// case was unreachable before this: the loop had already drained every
+/// complete message the framer held by the time stdout ended, so the trailing
+/// parse that raised `UnansweredCall` could only ever see `None`, and this
+/// script was answered `NoResponse`.
+#[tokio::test]
+async fn a_plugin_that_asks_and_then_ends_without_answering_names_what_it_abandoned() {
+    let manifest = manifest(RECALLING_MANIFEST);
+    let gate = gate(manifest.loop_grant.clone(), DEFAULT_HOST_MAX_CALLS);
+    // Asks, and exits without ever reading the answer. Its stdout closes with
+    // the call as the last thing it said.
+    let script = r#"
+read -r request
+printf '%s\n' '{"call":"recall","id":7,"args":{"goal":"retry_budget is not honoured","limit":2}}'
+"#;
+
+    let failed = plugin(script, Arc::clone(&gate), Duration::from_secs(10))
+        .before_turn(before())
+        .await
+        .expect_err("an abandoned point is not a contribution");
+
+    match &failed {
+        WrapperError::UnansweredCall { call, .. } => {
+            assert_eq!(
+                *call,
+                HostCall::Recall,
+                "the errand the plugin walked away from is the one it is named by"
+            );
+        }
+        other => panic!("the failure is named, not collapsed into another one: {other}"),
+    }
+}
+
 /// An undeclared call is refused the way an undeclared hook is never invoked —
 /// and the refusal reaches **both** sides: the plugin, which degrades honestly
 /// rather than dying, and the host's report, because a capability quietly not

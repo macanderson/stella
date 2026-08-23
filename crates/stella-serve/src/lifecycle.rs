@@ -43,7 +43,8 @@ use tokio::net::TcpListener;
 
 use crate::accept::{self, AcceptAction, AcceptBackoff};
 use crate::observe::event::{AcceptKind, ServeEvent, ShutdownReason, millis};
-use crate::server::{ServerState, handle_conn};
+use crate::server::handle_conn;
+use crate::state::ServerState;
 
 /// How often the drain re-checks whether the turn registry has emptied.
 ///

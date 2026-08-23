@@ -68,28 +68,6 @@ pub enum ForeignBreakage {
     Ignore,
 }
 
-/// How to order the queue when several issues are eligible.
-///
-/// A list rather than a single choice, applied in order as tie-breakers, so an
-/// operator expresses "P0 first, then regressions, then oldest" as exactly
-/// that.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum QueueCriterion {
-    /// Priority label rank — `P0` before `P1` before `P2`.
-    Priority,
-    /// Regressions first: a witness that passed and now fails is a fact, where
-    /// an audit finding is a claim needing triage (§4.3).
-    Regression,
-    /// Oldest first. An aged issue is a worse thing to be carrying.
-    Age,
-    /// Smallest first, by whatever size signal the provider carries.
-    ///
-    /// The "keep the loop moving" preference: many small closures beat one
-    /// large one for a system whose value is partly in demonstrating progress.
-    Size,
-}
-
 /// Whether the loop may act on a subject somebody else appears to be on.
 ///
 /// The distinction matters because contention evidence is *heuristic* — a

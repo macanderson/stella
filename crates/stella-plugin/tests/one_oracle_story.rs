@@ -56,17 +56,19 @@ const RETIRED: [&str; 5] = [
 /// The two files where the retired claim legitimately survives, because in
 /// both it is the *subject* rather than the assertion:
 ///
-/// - `manifest.rs` narrates the #3511 decision on [`stella_plugin::Oracle`] —
+/// - `oracle.rs` narrates the #3511 decision on [`stella_plugin::Oracle`] —
 ///   "the manifest stops claiming the oracle is host-run" — which cannot be
-///   said without saying it.
+///   said without saying it. The paragraph lived in `manifest.rs` until the
+///   `[oracle]` block moved to its own module (#3730), and the exemption
+///   followed it rather than being kept for a file that no longer carries it.
 /// - `consent.rs` carries the same history paragraph plus the assertion string
 ///   in `an_oracle_is_disclosed_as_the_plugins_own_report`, the test that
 ///   proves the retired claim reaches no install prompt.
 ///
 /// `manifest.rs`'s `[subloop]` line ("stages the host runs as bounded child
 /// turns") is a different subject and is correct; it matches none of
-/// [`RETIRED`] and would need no exemption of its own.
-const ABOUT_THE_RETIRED_CLAIM: [&str; 2] = ["manifest.rs", "consent.rs"];
+/// [`RETIRED`] and needs no exemption of its own.
+const ABOUT_THE_RETIRED_CLAIM: [&str; 2] = ["oracle.rs", "consent.rs"];
 
 /// One file's text with every run of whitespace collapsed to a single space,
 /// so a claim split across two lines reads as the sentence it is.

@@ -1056,10 +1056,10 @@ class MatchRunner:
                 str(match.spec.setup_timeout_multiplier),
             ]
         if match.spec.agent_timeout_multiplier != 1.0:
-            command += [
-                "--agent-timeout-multiplier",
-                str(match.spec.agent_timeout_multiplier),
-            ]
+            command += ["--agent-timeout-multiplier", str(match.spec.agent_timeout_multiplier)]
+            # Non-comparable to the tbench.ai leaderboard at this setting —
+            # see `preflight.non_stock_timeout_notice` (#3256).
+            run.notes.append(preflight.non_stock_timeout_notice(match.spec.agent_timeout_multiplier))
         if contestant.agent_version:
             # The opponent's `sut_ref`. Harbor's installed-agent base takes a
             # `version` kwarg and hands it to the vendor's installer, so this

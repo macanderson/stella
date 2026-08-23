@@ -29,10 +29,18 @@
 //! last. The clamp also never loosens once set — even after a later call
 //! commits — so a compaction budget configured above what the provider will
 //! actually accept cannot oscillate grow → overflow → recover for the rest of
-//! the turn. When the ladder is spent, the overflow surfaces exactly as an
-//! unrecovered terminal failure does. Error → recover → error can therefore
-//! burn at most `MAX_RECOVERY_RUNGS` extra calls, each of which was already
-//! billed through the ordinary `UsageIncomplete` attempt observer.
+//! the turn. Error → recover → error can therefore burn at most
+//! `MAX_RECOVERY_RUNGS` extra calls, each of which was already billed through
+//! the ordinary `UsageIncomplete` attempt observer.
+//!
+//! A spent ladder is not yet the end. The transcript that no amount of
+//! compaction shrank may simply fit a *different* provider's window, so the
+//! last thing before terminal surfacing is one try at the mid-turn fallback
+//! (`super::model_fallback`, #2770) — bounded by that seam's own set-once
+//! latch rather than a second bound of its own, and terminal the moment the
+//! replacement rejects too, since by then both the ladder and the latch are
+//! spent. Only then does the overflow surface exactly as an unrecovered
+//! terminal failure does.
 //!
 //! # What consumers see
 //!
@@ -145,6 +153,15 @@ pub(crate) enum ModelCallFailure {
         /// payload if this ends up surfacing terminally.
         attempt_reasons: Vec<String>,
     },
+    /// The user asked the turn to stop while it was parked on a
+    /// park-eligible failure, and the park honored the latch (#2743). The
+    /// pending provider error is deliberately discarded: the turn ended
+    /// because a person asked, so it settles as the step-boundary soft stop
+    /// does — no `RetriesExhausted`, no `Error`, every completed step kept.
+    /// The failed attempts that opened the park already reported themselves
+    /// through the per-attempt `UsageIncomplete` observer, so nothing is lost
+    /// from the accounting by dropping the error here.
+    SoftStopped,
     /// The provider refused to fund the requested output ceiling. Withheld
     /// from the terminal channels exactly as the overflow arm is — the
     /// caller decides between a clamp rung
@@ -197,7 +214,12 @@ impl<'a> Engine<'a> {
                 // `true` latched the swap — the step re-runs and the
                 // terminal events stay withheld, exactly as an armed
                 // overflow rung withholds them below.
-                if self.attempt_provider_fallback(&message, state, events) {
+                if self.attempt_provider_fallback(
+                    &message,
+                    super::model_fallback::FallbackCause::RetriesExhausted,
+                    state,
+                    events,
+                ) {
                     return None;
                 }
                 // No fallback: surface the pre-#2679 terminal shape.
@@ -221,6 +243,25 @@ impl<'a> Engine<'a> {
                 message,
                 attempt_reasons,
             } => (message, attempt_reasons),
+            // Settled here rather than in the ladder so every ending of a
+            // model call leaves through one door, and byte-identical to
+            // `super::step_boundary`'s exit: the same reason string, the same
+            // `DeliberateStop`, the same tool-call repair for history a
+            // caller handed in. A park is inside the ladder, so before #2743
+            // this ending wore the parked provider's error and telemetry
+            // recorded a provider failure for a user's decision.
+            ModelCallFailure::SoftStopped => {
+                crate::step::close_open_tool_calls(
+                    &mut state.messages,
+                    super::SOFT_STOP_TOOL_RESULT,
+                    events,
+                );
+                return Some(StepOutcome::Aborted {
+                    reason: super::SOFT_STOP_REASON.to_string(),
+                    kind: AbortKind::DeliberateStop,
+                    cost_usd: state.total_cost_usd,
+                });
+            }
             // The output-side mirror, settled here rather than in a parallel
             // method so both ladders share one "withheld while recovering,
             // terminal when spent" shape — the property that matters to an
@@ -285,7 +326,25 @@ impl<'a> Engine<'a> {
                 state.step += 1;
                 None
             }
-            None => Some(self.surface_unrecovered(message, attempt_reasons, state, events)),
+            // The last rung, and the one the two recovery seams had never
+            // composed (#2770): the compaction ladder is spent, but a
+            // configured fallback may carry a window that accepts this
+            // transcript as it stands. Tried once, behind #2679's set-once
+            // latch — the same bound the exhausted-ladder arm above trusts,
+            // and the reason no window-size field on `ProviderProfile` is
+            // needed to make this safe. A replacement that also rejects finds
+            // the ladder spent and the latch set, so it is terminal.
+            None => {
+                if self.attempt_provider_fallback(
+                    &message,
+                    super::model_fallback::FallbackCause::ContextOverflow,
+                    state,
+                    events,
+                ) {
+                    return None;
+                }
+                Some(self.surface_unrecovered(message, attempt_reasons, state, events))
+            }
         }
     }
 

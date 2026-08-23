@@ -92,16 +92,10 @@ did not produce (the short labeled exception list in
 Do not reach for a new crate. A new tab, card, overlay, or widget is a module
 under [`src/views/`](src/views), not a crate — this crate already absorbs its
 heavy presentation dependencies (`ratatui`, `arboard`, `png`) and one more
-view costs nothing structurally. A new crate is justified only when
-functionality (a) sits behind a port/trait and would otherwise drag new heavy
-dependencies into a crate that is deliberately light, (b) needs a dependency
-direction the current graph forbids — the existing example is `stella-graph`,
-which this crate must not link, so the caller hands over a plain
-`GraphSnapshot` — or (c) is a genuinely separate deliverable with its own
-binary and release cadence. Otherwise extend this crate: a new crate costs a
-workspace-table row, an impacted-crates scope, CI time, and a README, and a
-wrong split is harder to undo than a wrong merge. If you do add one, the same
-PR must update AGENTS.md's workspace table and the root `Cargo.toml` members.
+view costs nothing structurally. Against the three-case rule in
+AGENTS.md § "When a new crate is justified", the only case that has ever applied
+here is (b), and it is already solved: this crate must not link `stella-graph`,
+so the caller hands over a plain `GraphSnapshot`.
 
 ## God files — do not add lines
 

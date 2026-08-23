@@ -218,8 +218,8 @@ silent omissions.
 Ordered by how much they matter to an embedding customer. Each is verified
 against the tree, not aspirational.
 
-**G1 — The split-brain assembly layer.** `stella-runtime` is CLI-only (and
-only its `parts::*`; `RuntimeBuilder` has zero call sites), `stella-engine`
+**G1 — The split-brain assembly layer** (#3731)**.** `stella-runtime` is
+CLI-only (and only its `parts::*`; `RuntimeBuilder` has zero call sites), `stella-engine`
 is serve-only, and the CLI drives `stella-core` directly. Consequence: there
 is no single "construct a Stella" path a Mode-A host can copy, and every
 capability serve lacks (G3–G5) is a re-implementation away rather than a

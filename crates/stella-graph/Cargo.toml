@@ -41,6 +41,11 @@ tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-php = { workspace = true, optional = true }
 toml.workspace = true
+# `workspace_ignore` answers a non-repository workspace by handing `root` to
+# git as the work tree of an empty git dir, which has to live somewhere that
+# is not the workspace. One vetted implementation of "a temporary directory
+# that cleans itself up", rather than a hand-rolled predictable path.
+tempfile.workspace = true
 
 [features]
 # Every grammar, which is what the shipping binary wants: a general-purpose

@@ -120,8 +120,12 @@ CI enforces the same steps split across three workflows:
 and `doc-links`, and adds a `Cargo.lock` sync check, `stella context
 validate`, a release smoke build (thin LTO), and the deleted-test guard
 (`scripts/check-deleted-tests.sh`);
-`docs-guards.yml` runs those two plus a second run of `command-docs`, because
-all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
+`docs-guards.yml` runs those two plus a second run of `command-docs`,
+`brand-case`, `gate-parity`, `god-files` and `design-refs`, because all of them
+trigger on the `docs/**` and `*.md` paths `ci.yml` ignores — `design-refs` was
+the last to join, after a docs-only PR was found able to move a document into
+the `docs/design` scratchpad, invalidate every Rust comment citing it, and land
+green (#3888); and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
 because a PR that hand-edits a generated schema and nothing else starts neither
 of the other two (#1439).
@@ -229,6 +233,16 @@ author's push. It is also the only place some guards run for long stretches:
 artifacts. When Actions is unavailable entirely (an org billing hold has
 happened before — see RELEASING.md's local-release path), it is the only gate
 running at all.
+
+All of which holds only in a clone where `make hooks` has been run, and an
+uninstalled hook announces itself in no way at all: `git push` simply runs
+nothing and says nothing. So every rung of the ladder below ends by checking
+`core.hooksPath` and printing a notice when it is not `.githooks`
+(`scripts/check-hooks-installed.sh`) — silent when installed, and never a
+failure, because it is a fact about the clone rather than about the change.
+That is the cheap half of #3887, whose expensive half — whether an admin merge
+past a red required check is permitted at all — is a repository setting and a
+maintainer's decision, not a file in this tree.
 
 The hook derives `CARGO_SCOPE` from the pushed diff via
 `scripts/impacted-crates.sh`, so a change confined to one crate compiles and
@@ -362,7 +376,7 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    deterministic — prompt-cache hits are a feature, and nondeterminism there
    is a cost regression. Memories are loaded once per session and concatenated
    in sorted filename order; recalled context rides as a volatile message
-   *after* the stable prefix (see `crates/stella-cli/src/agent.rs::build_system_prompt`
+   *after* the stable prefix (see `crates/stella-cli/src/agent/prompt.rs::build_system_prompt`
    and `crates/stella-cli/src/memory.rs` for the L-E8 discipline).
 8. **Provider feature parity is declared, not assumed.** Providers diverge
    in sneaky ways, and this is guarded on **six axes** today in
@@ -635,6 +649,23 @@ the files you must plan around (see below).
 | Share the engine-assembly bottom half (provider, registry, store, budget), or the wrapper socket built on top of it | [`stella-runtime`](crates/stella-runtime/README.md) | `RuntimeSpec` → `RuntimeBuilder` → `SessionRuntime`, construction only. Reads no ambient environment by contract (`tests/no_ambient_reads.rs`). Also owns the wrapper socket — see the dedicated row above. |
 | Declare CLI-vs-API capability parity (witnessed, ratcheted) | [`stella-parity`](crates/stella-parity/README.md) | The cross-surface capability matrix: every engine capability carries a posture + named witness test per surface, so a feature cannot ship on one surface and silently miss the other. |
 | Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) | Split out of this workspace; Stella depends on it as registry crates (`contextgraph-*`) pinned with exact `=` version requirements in the root `[workspace.dependencies]`. Stays dependency-light by contract. |
+
+### When a new crate is justified
+
+**This is the normative statement of the rule.** Six crate READMEs used to
+carry their own paraphrase of it, each worded differently, with nothing for
+them to point at (#3721); they now cite this section and keep only their own
+answer to it. Cite it as *AGENTS.md § "When a new crate is justified"*.
+
+A new crate is warranted only when functionality (a) sits behind a port/trait
+and would otherwise drag heavy dependencies into a crate that is deliberately
+light, (b) needs a dependency direction the current graph forbids, or (c) is a
+genuinely separate deliverable with its own binary and release cadence.
+
+Absent all three, extend an existing crate. A new one costs a row in the table
+above, an impacted-crates scope, CI time and a README, and a wrong split is
+harder to undo than a wrong merge. A justified one updates that table and the
+root `Cargo.toml` members list in the same PR.
 
 ### God files — plan around them, never into them
 

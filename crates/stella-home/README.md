@@ -78,18 +78,10 @@ and which must find the same two-tier roster without depending on the CLI to
 spell `.stella/plugins`. If that driver never lands, these belong back in
 `stella-cli`.
 
-This crate is also the workspace's worked example of when a new crate is
-justified. The rule: a new crate is warranted only when functionality (a) sits
-behind a port/trait and would otherwise drag heavy dependencies into a crate
-that is deliberately light, (b) needs a dependency direction the current graph
-forbids, or (c) is a genuinely separate deliverable with its own binary and
-release cadence. This crate is case (b) — [`stella-store`](../stella-store)
-and [`stella-observatory`](../stella-observatory) must not know each other and
-still needed one shared answer. Absent all three, extend an existing crate: a
-new one costs a workspace-table row, an impacted-crates scope, CI time, and a
-README, and a wrong split is harder to undo than a wrong merge. Adding one
-means updating AGENTS.md's workspace table and the root `Cargo.toml` members
-in the same PR.
+This crate is also the workspace's worked example of the three-case rule in
+AGENTS.md § "When a new crate is justified". It is case (b): [`stella-store`](../stella-store) and
+[`stella-observatory`](../stella-observatory) must not know each other and
+still needed one shared answer.
 
 ## God files — do not add lines
 

@@ -330,6 +330,21 @@ fn contamination_exit(analysis: &Analysis) -> Option<i32> {
     Some(7)
 }
 
+/// The first name in `names` that also appeared earlier in it, or `None` when
+/// every name is distinct.
+///
+/// `--compare` rejects a repeated arm outright, unlike `--tasks` (a repeated
+/// task is harmless and only warns, see [`resolve_tasks`]): a duplicated
+/// config would silently compare an arm against itself, and worse, both
+/// copies would race for the same [`arm_job_name`] job directory.
+fn duplicate_arm(names: &[String]) -> Option<&str> {
+    names
+        .iter()
+        .enumerate()
+        .find(|(index, name)| names[..*index].contains(name))
+        .map(|(_, name)| name.as_str())
+}
+
 /// The `--compare` run (#876): the same task set under each named config, then
 /// one comparison report.
 ///
@@ -343,11 +358,9 @@ fn run_comparison(args: &Args, tasks: &[String]) -> i32 {
         eprintln!("--compare needs at least two configs, e.g. --compare model-a,model-b");
         return 2;
     }
-    for (index, config) in configs.iter().enumerate() {
-        if configs[..index].contains(config) {
-            eprintln!("--compare names `{config}` twice; every arm must be distinct");
-            return 2;
-        }
+    if let Some(dup) = duplicate_arm(configs) {
+        eprintln!("--compare names `{dup}` twice; every arm must be distinct");
+        return 2;
     }
 
     let mut arms: Vec<ArmTrials> = Vec::with_capacity(configs.len());
@@ -624,5 +637,89 @@ fn run_harbor(args: &Args, tasks: &[String], model: &str, job_name: &str) -> Res
         Ok(())
     } else {
         Err(status.code().unwrap_or(1))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the pure helpers in this binary — `arm_job_name`,
+    //! `resolve_tasks`, and the `--compare` duplicate-arm check
+    //! (`duplicate_arm`). Mirrors the shape of `src/tests.rs`, `lib.rs`'s own
+    //! test module, but lives here because these three are private to
+    //! `main.rs` and moving them into the library crate just to reach a test
+    //! module is a bigger call than this issue makes on its own (#3744).
+
+    use super::*;
+
+    fn args_with(tasks: Vec<String>, n: usize) -> Args {
+        Args {
+            n,
+            tasks,
+            model: DEFAULT_MODEL.to_string(),
+            concurrent: 4,
+            dataset: "terminal-bench".to_string(),
+            jobs_dir: "loop-bench-jobs".to_string(),
+            job_name: "loop-bench".to_string(),
+            timeout: 0,
+            stella_binary: None,
+            analyze_only: false,
+            json: false,
+            json_out: None,
+            min_pass: 0,
+            compare: Vec::new(),
+            trials: 1,
+            primary: PrimaryMetric::PassRate,
+            require_winner: false,
+        }
+    }
+
+    /// The doc comment above `arm_job_name` explains that the arm index
+    /// exists specifically to prevent a job-name collision between two
+    /// comparison arms — two distinct model strings can slug to the same
+    /// characters. Prove it: `a/b` and `a-b` both slug to `a-b`, and only the
+    /// index tells the two arms' job names apart.
+    #[test]
+    fn arm_job_name_disambiguates_models_that_slug_identically() {
+        let one = arm_job_name("job", 0, "a/b");
+        let two = arm_job_name("job", 1, "a-b");
+        assert_ne!(one, two, "two arms must never share a job directory name");
+        assert_eq!(one, "job-arm0-a-b");
+        assert_eq!(two, "job-arm1-a-b");
+    }
+
+    /// A task named twice in `--tasks` resolves to one entry, matching
+    /// harbor's own `-i` filter semantics (a name given twice still runs
+    /// once).
+    #[test]
+    fn resolve_tasks_dedupes_a_repeated_task_name() {
+        let args = args_with(vec!["fix-git".to_string(), "fix-git".to_string()], 4);
+        assert_eq!(resolve_tasks(&args), vec!["fix-git".to_string()]);
+    }
+
+    /// With no `--tasks`, the default pool is used and `--n` picks how many.
+    #[test]
+    fn resolve_tasks_falls_back_to_the_default_pool_sized_by_n() {
+        let args = args_with(Vec::new(), 2);
+        assert_eq!(resolve_tasks(&args).len(), 2);
+    }
+
+    /// Every name distinct: no duplicate found.
+    #[test]
+    fn duplicate_arm_is_none_when_every_name_is_distinct() {
+        let names = vec!["model-a".to_string(), "model-b".to_string()];
+        assert_eq!(duplicate_arm(&names), None);
+    }
+
+    /// `--compare` rejects a repeated arm outright — this is the function
+    /// `run_comparison`'s inline check was pulled out into, so it can be
+    /// tested without spawning harbor.
+    #[test]
+    fn duplicate_arm_names_the_repeated_config() {
+        let names = vec![
+            "model-a".to_string(),
+            "model-b".to_string(),
+            "model-a".to_string(),
+        ];
+        assert_eq!(duplicate_arm(&names), Some("model-a"));
     }
 }
