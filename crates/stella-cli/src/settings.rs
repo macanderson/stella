@@ -818,10 +818,35 @@ fn project_trust() -> ProjectTrust {
 }
 
 /// Whether this process trusts the current project to run code it configures.
-/// Governs project-scope lifecycle hooks and the MCP servers declared in
-/// `.stella/mcp.toml` — both spawn processes / open connections that a cloned
-/// repo must not be able to start silently. Same gate as project hooks:
-/// `STELLA_TRUST_PROJECT=1` (or the legacy hooks-only `STELLA_PROJECT_HOOKS=1`).
+///
+/// **The normative enumeration of the code-execution boundary.** Every surface
+/// a cloned repository could use to start a process on the reader's machine is
+/// listed here with the call site that gates it; the README cites this comment
+/// rather than restating the list, so there is one copy to keep correct. A PR
+/// that adds a gated surface adds its row here in the same change.
+///
+/// | Surface | Gated at |
+/// |---|---|
+/// | Project-scope lifecycle hooks — an untrusted scope keeps only what the user/managed scopes declared | `settings::merge::merge_captured_scopes` |
+/// | Project-scope `context_providers` — a stdio entry spawns its `command` at admission, an http entry supplies its own `egress_consent` for a payload carrying workspace content | the same function, immediately below hooks |
+/// | The MCP servers declared in `.stella/mcp.toml` — an arbitrary stdio `command` run at session start, or an attacker-chosen http endpoint | `agent::load_mcp_plan` |
+/// | `<workspace>/.stella/plugins/` — a plugin declares a program the host spawns and can arbitrate the agent loop | `plugin_cmd::roster::read_project_tier` |
+/// | `stella self-driving`'s issue work — refused outright when the workspace declares context records that would not reach the turn, because unsteered work is indistinguishable from steered work in the pull request it produces | `self_driving_cmd::work::refuse_if_unsteered` |
+///
+/// `stella plugin install --scope project` consults it once more, to *warn*
+/// rather than gate: the copy onto disk is the operator's own act, but the
+/// loader will refuse to read the tier back, and "installed and inert" must
+/// not look like "installed and running" (`plugin_cmd::install`).
+///
+/// Opened by `STELLA_TRUST_PROJECT=1`, or by the legacy hooks-only
+/// `STELLA_PROJECT_HOOKS=1`.
+///
+/// **Not this gate:** credential routing (`base_url`, `api_key`,
+/// `api_key_env`, `mcp.registry_url`), project custom tools and project system
+/// prompts ride `ProjectTrust::credentials`, which `STELLA_PROJECT_HOOKS`
+/// deliberately does not open — a user who asked only for hooks did not ask to
+/// have their API key re-pointed. Reading this predicate as "the project trust
+/// flag" would grade those as trusted one flag too early.
 pub(crate) fn project_code_execution_trusted() -> bool {
     project_trust().hooks
 }

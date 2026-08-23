@@ -241,19 +241,24 @@ without a code change, and override built-in defaults, from a `settings.json`:
 Then: `stella --model together/meta-llama/Llama-3.3-70B-Instruct-Turbo run "…"`.
 Prefer `api_key_env` over a literal `api_key` — settings files get committed.
 
-> **Untrusted repos can't redirect your key.** A cloned repo's project-scope
-> `.stella/settings.json` is untrusted: its credential-routing fields
-> (`base_url`, `api_key`, `api_key_env`, and `mcp.registry_url`) are
-> **ignored** unless you opt in with `STELLA_TRUST_PROJECT=1`, so a hostile
-> repo can't silently point your real API key at its own server. Cosmetic
-> fields (`name`, `default_model`, `dialect`) still apply; the user and
-> org-managed scopes are always trusted. Project hooks are gated the same way,
-> via `STELLA_PROJECT_HOOKS`, and so are **project-scope plugins**
-> (`<workspace>/.stella/plugins`): a plugin declares a program Stella spawns
-> and can arbitrate the agent loop, so one that arrived with a `git clone` is
-> not loaded, listed, or dispatched until you set `STELLA_TRUST_PROJECT=1`.
-> Plugins you installed yourself with `stella plugin install --scope user`
-> live in `~/.stella/plugins` and are unaffected.
+> **A repo you just cloned gets nothing until you say so.** Two boundaries,
+> both closed by default and both opened by `STELLA_TRUST_PROJECT=1`.
+> *Credential routing:* a project-scope `.stella/settings.json`'s `base_url`,
+> `api_key`, `api_key_env` and `mcp.registry_url` are ignored, so a hostile
+> repo can't silently point your real API key at its own server — cosmetic
+> fields (`name`, `default_model`, `dialect`) still apply, and the user and
+> org-managed scopes are always trusted. *Code execution:* project hooks,
+> project `context_providers`, the MCP servers in `.stella/mcp.toml`, the
+> plugins in `<workspace>/.stella/plugins`, and `stella self-driving`'s issue
+> work each refuse to start from an untrusted repo. That second list is
+> enumerated once, with the call site gating each surface, on
+> `project_code_execution_trusted` in
+> [`crates/stella-cli/src/settings.rs`](crates/stella-cli/src/settings.rs) —
+> read it there rather than trusting this sentence to stay complete. The
+> legacy `STELLA_PROJECT_HOOKS=1` opens the code-execution half alone and
+> leaves credential routing closed. Plugins you installed yourself with
+> `stella plugin install --scope user` live in `~/.stella/plugins` and are
+> unaffected.
 
 ### Agent engine config (`agent_engine_config`)
 
