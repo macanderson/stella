@@ -48,6 +48,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use stella_tui_theme::oklch;
+
 /// The workspace root, derived from this crate's manifest directory.
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -867,6 +869,19 @@ fn the_transcript_spells_every_rule_colour_as_a_token() {
     );
 }
 
+/// The OKLCH hue distance between two `#RRGGBB` declarations, in degrees.
+///
+/// The shorter way round the wheel: 350deg and 10deg are 20deg apart, not
+/// 340deg. The conversion is [`oklch::hue_deg`] and nothing local -- this file
+/// carried its own transcription of Ottosson's matrices until #4071, which is
+/// how one law came to be measured by two rulers against two floors.
+fn hue_gap(a: &str, b: &str) -> f64 {
+    let parse = |hex: &str| {
+        oklch::channels_of_hex(hex).unwrap_or_else(|| panic!("`{hex}` is not a six-digit hex"))
+    };
+    oklch::separation_deg(parse(a), parse(b))
+}
+
 /// The identity is separated from every semantic state by **hue**, and the
 /// separation is measured rather than asserted in prose.
 ///
@@ -890,37 +905,15 @@ fn the_transcript_spells_every_rule_colour_as_a_token() {
 /// rather than pass silently.
 #[test]
 fn identity_and_states_are_separated_by_hue_not_by_luminance() {
-    /// sRGB hex -> OKLCH hue in degrees, using Ottosson's Oklab matrices
-    /// transcribed rather than approximated.
-    fn oklch_hue(hex: &str) -> f64 {
-        let to_linear = |c: u8| {
-            let c = f64::from(c) / 255.0;
-            if c <= 0.04045 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        let hex = hex.trim_start_matches('#');
-        let channel =
-            |i: usize| to_linear(u8::from_str_radix(&hex[i..i + 2], 16).expect("six hex digits"));
-        let (r, g, b) = (channel(0), channel(2), channel(4));
-        let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
-        let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
-        let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
-        let a = 1.977_998_495_1 * l - 2.428_592_205_0 * m + 0.450_593_709_9 * s;
-        let bb = 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766_0 * s;
-        bb.atan2(a).to_degrees().rem_euclid(360.0)
-    }
-
-    /// The shorter way round the wheel: 350° and 10° are 20° apart, not 340°.
-    fn hue_gap(a: &str, b: &str) -> f64 {
-        let d = (oklch_hue(a) - oklch_hue(b)).abs().rem_euclid(360.0);
-        d.min(360.0 - d)
-    }
-
     /// Below this, two marks read as one colour at a glance.
-    const FLOOR_DEGREES: f64 = 20.0;
+    ///
+    /// Read from the crate that owns the ruler rather than typed here. It was
+    /// typed here, at 20°, while `stella-tui`'s `theme::tests` held the same
+    /// law to 30° — one law with two numbers, so the stricter one was never
+    /// the law and the looser one was never enforced (#4071). Every shipped
+    /// pair clears 30° on both schemes; the tightest is `--warn` to `--bad` at
+    /// 38.9° dark and 37.6° light.
+    const FLOOR_DEGREES: f64 = oklch::SEPARATION_FLOOR_DEG;
 
     let canon = canonical();
     let value = |role: &str| -> (String, String) {
@@ -963,6 +956,69 @@ fn identity_and_states_are_separated_by_hue_not_by_luminance() {
              in OKLCH hue, under the {FLOOR_DEGREES:.0}° floor — \"needs \
              attention\" and \"failed\" are different verdicts and have to \
              look it."
+        );
+    }
+}
+
+/// Every hue angle the Observatory's palette block argues from is the angle the
+/// ruler computes.
+///
+/// The test above enforces the *law* — nothing under the floor. This enforces
+/// the *argument*: `--warn` is derived rather than picked, and the derivation
+/// is carried entirely by figures written in a CSS comment. A figure in a
+/// comment is what goes stale under a recolour, and this is the exact surface
+/// where the collision it reasons about was once diagnosed with the wrong
+/// instrument for two releases (#4071).
+///
+/// Each row is held three ways at once, the shape
+/// `scripts/check-hue-separation.py`'s `CLAIMS` table uses: the number must
+/// equal the computation, the number must appear inside the phrase, and the
+/// phrase must still be in `index.html` verbatim. Recolour and the computation
+/// moves; reword and the phrase is gone; edit this table and it agrees with
+/// neither.
+///
+/// Dark scheme only, because that is the scheme the block quotes angles for.
+/// The light values are measured by the test above and quoted nowhere, which is
+/// a gap in the prose rather than in the enforcement.
+#[test]
+fn every_stated_hue_angle_in_the_observatory_matches_the_computation() {
+    let source = read("crates/stella-observatory/src/assets/index.html");
+    let canon = canonical();
+    let dark = |role: &str| -> String {
+        canon
+            .iter()
+            .find(|(r, _, _)| *r == role)
+            .map(|(_, dark, _)| dark.clone())
+            .unwrap_or_else(|| panic!("no canonical value for {role}"))
+    };
+    let (identity, warn, bad, ok) = (dark("identity"), dark("warn"), dark("bad"), dark("ok"));
+    let hue = |hex: &str| {
+        let (r, g, b) = oklch::channels_of_hex(hex).expect("a six-digit hex");
+        oklch::hue_deg(r, g, b)
+    };
+
+    for (phrase, computed) in [
+        ("--bad sits at 12.8°", hue(&bad)),
+        ("the identity at 90.8°", hue(&identity)),
+        ("39.1° off the identity", hue_gap(&warn, &identity)),
+        ("lands 39.1° from the identity", hue_gap(&warn, &identity)),
+        ("and 38.9° from --bad", hue_gap(&warn, &bad)),
+        ("63.1° and", hue_gap(&ok, &identity)),
+        ("78.0° from the identity", hue_gap(&bad, &identity)),
+    ] {
+        let stated = format!("{computed:.1}");
+        assert!(
+            phrase.contains(&stated),
+            "this table says index.html writes `{phrase}`, but the ruler makes \
+             that angle {stated}° — the row disagrees with the computation, \
+             which means the row is what is wrong"
+        );
+        assert!(
+            source.contains(phrase),
+            "crates/stella-observatory/src/assets/index.html no longer says \
+             `{phrase}`. The angle the palette block argues from has to stay \
+             beside the value it argues about; move the phrase and move this \
+             row with it"
         );
     }
 }
