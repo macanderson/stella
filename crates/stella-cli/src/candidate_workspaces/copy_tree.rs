@@ -76,6 +76,15 @@ use crate::subagent::SessionSubAgents;
 /// module docs.
 const HOST_STATE_DIR: &str = ".stella";
 
+/// Repository plumbing: copied and promoted like everything else, and left out
+/// of the **measurement**.
+///
+/// A candidate that ran `git status` rewrites `.git/index`, and a report that
+/// counted that would tell a plugin the candidate changed a file it never
+/// touched — on the one number a plugin scores. The git substrate excludes it
+/// by construction, because `git diff` has no opinion about `.git` itself.
+const GIT_DIR: &str = ".git";
+
 /// One session's copy-tree substrate over one workspace.
 pub(crate) struct CopyTreeCandidateWorkspaces {
     /// The session's own config — the write-directory grant, the operator's
@@ -339,9 +348,23 @@ fn copy_tree(source: &Path, target: &Path, at_root: bool) -> std::io::Result<()>
         }
         let from = entry.path();
         let to = target.join(&name);
-        let kind = std::fs::symlink_metadata(&from)?;
+        let Ok(kind) = std::fs::symlink_metadata(&from) else {
+            // Gone between the listing and the look. A live tree is not held
+            // still for a snapshot — git's own housekeeping repacks loose
+            // objects out from under a walk, and an editor's save is a rename
+            // over a temporary file — and an entry that no longer exists is
+            // one the snapshot correctly does not contain. Failing the whole
+            // fan-out over it would make best-of-N a coin flip on whatever
+            // else the machine was doing.
+            continue;
+        };
         if kind.is_dir() {
-            copy_tree(&from, &to, false)?;
+            match copy_tree(&from, &to, false) {
+                // A directory that went away under the walk, for the reason
+                // above.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && !from.exists() => {}
+                other => other?,
+            }
             continue;
         }
         // Whatever stands there goes first, and that is not tidiness. Copying
@@ -352,10 +375,25 @@ fn copy_tree(source: &Path, target: &Path, at_root: bool) -> std::io::Result<()>
         if let Ok(there) = std::fs::symlink_metadata(&to) {
             remove_any(&to, &there)?;
         }
-        if kind.is_symlink() {
-            symlink(&std::fs::read_link(&from)?, &to)?;
+        let copied = if kind.is_symlink() {
+            std::fs::read_link(&from).and_then(|link| symlink(&link, &to))
         } else {
-            std::fs::copy(&from, &to)?;
+            std::fs::copy(&from, &to).map(|_| ())
+        };
+        match copied {
+            Ok(()) => {}
+            // The same race as above, caught one syscall later: the entry was
+            // there when it was looked at and gone when it was read.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            // Anything else names the file it happened to, because "the
+            // workspace could not be copied" with no path in it is a sentence
+            // nobody can act on.
+            Err(error) => {
+                return Err(std::io::Error::new(
+                    error.kind(),
+                    format!("{}: {error}", from.display()),
+                ));
+            }
         }
     }
     Ok(())
@@ -383,6 +421,10 @@ fn symlink(link: &Path, at: &Path) -> std::io::Result<()> {
 /// The half of a replacement that a copy cannot do: a file the winner deleted
 /// is answered by its absence, and a promotion that only ever wrote would
 /// leave it standing.
+///
+/// Tolerant of an entry that vanished under the walk, for [`copy_tree`]'s
+/// reason — and here the tolerance is trivially right, since a file this
+/// function's whole job is to delete is one somebody else deleting is help.
 fn remove_absent(source: &Path, target: &Path, at_root: bool) -> std::io::Result<()> {
     for entry in std::fs::read_dir(target)? {
         let entry = entry?;
@@ -392,12 +434,17 @@ fn remove_absent(source: &Path, target: &Path, at_root: bool) -> std::io::Result
         }
         let here = entry.path();
         let there = source.join(&name);
-        let kind = std::fs::symlink_metadata(&here)?;
+        let Ok(kind) = std::fs::symlink_metadata(&here) else {
+            continue;
+        };
         match std::fs::symlink_metadata(&there) {
             // Same name, same kind: recurse into a directory, leave a file for
             // the copy to overwrite.
             Ok(other) if other.is_dir() && kind.is_dir() => {
-                remove_absent(&there, &here, false)?;
+                match remove_absent(&there, &here, false) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    other => other?,
+                }
             }
             Ok(other) if other.is_dir() != kind.is_dir() => {
                 // A directory became a file, or the reverse. `fs::copy` cannot
@@ -411,11 +458,16 @@ fn remove_absent(source: &Path, target: &Path, at_root: bool) -> std::io::Result
     Ok(())
 }
 
+/// Delete whatever `path` is, and count "already gone" as done.
 fn remove_any(path: &Path, kind: &std::fs::Metadata) -> std::io::Result<()> {
-    if kind.is_dir() {
+    let removed = if kind.is_dir() {
         std::fs::remove_dir_all(path)
     } else {
         std::fs::remove_file(path)
+    };
+    match removed {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        other => other,
     }
 }
 
@@ -429,7 +481,7 @@ fn remove_any(path: &Path, kind: &std::fs::Metadata) -> std::io::Result<()> {
 ///
 /// A file whose bytes are not UTF-8 counts as a changed **file** with no
 /// lines, the same honest reading `numstat` gives a binary: its size in lines
-/// is not a number that exists.
+/// is not a number that exists. [`GIT_DIR`] is not counted at all.
 fn tree_delta(source: &Path, candidate: &Path) -> (u32, u32) {
     let before = files_under(source, true);
     let after = files_under(candidate, true);
@@ -459,7 +511,12 @@ fn tree_delta(source: &Path, candidate: &Path) -> (u32, u32) {
     (files, lines)
 }
 
-/// Every file under `root`, as paths relative to it, following no symlink.
+/// Every file under `root` a candidate could be answering with, as paths
+/// relative to it, following no symlink.
+///
+/// The two directories skipped at the top are [`HOST_STATE_DIR`] — which no
+/// candidate ever receives — and [`GIT_DIR`], which every candidate receives
+/// and none is judged on.
 fn files_under(root: &Path, at_root: bool) -> BTreeSet<PathBuf> {
     let mut found = BTreeSet::new();
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -467,7 +524,7 @@ fn files_under(root: &Path, at_root: bool) -> BTreeSet<PathBuf> {
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
-        if at_root && is_host_state(&name) {
+        if at_root && (is_host_state(&name) || name == GIT_DIR) {
             continue;
         }
         let path = entry.path();
@@ -616,6 +673,16 @@ mod tests {
         assert_eq!(lines, 4);
     }
 
+    /// A candidate that ran `git status` rewrote `.git/index`, and reporting
+    /// that as a changed file would inflate the one number a plugin scores.
+    #[test]
+    fn the_delta_does_not_count_repository_plumbing() {
+        let source = tree(&[("a.txt", "one\n"), (".git/index", "before\n")]);
+        let candidate = tree(&[("a.txt", "one\n"), (".git/index", "after\n")]);
+
+        assert_eq!(tree_delta(source.path(), candidate.path()), (0, 0));
+    }
+
     #[test]
     fn a_binary_file_is_a_changed_file_with_no_lines() {
         let source = tree(&[("logo.png", "\u{0}")]);
@@ -625,6 +692,22 @@ mod tests {
         let (files, lines) = tree_delta(source.path(), candidate.path());
         assert_eq!(files, 1);
         assert_eq!(lines, 0, "its size in lines is not a number that exists");
+    }
+
+    /// A live tree is not held still for a snapshot, and both halves of a
+    /// replacement walk `read_dir` before they act — so an entry that is gone
+    /// by the time it is reached must not fail the operation. Measured before
+    /// this was tolerated: the copy-tree promotion test failed 4 times in 24
+    /// runs on `ENOENT`, and 0 times in 25 after.
+    #[test]
+    fn deleting_what_is_already_gone_is_done() {
+        let dir = tempfile::tempdir().unwrap();
+        let standing = dir.path().join("here.txt");
+        std::fs::write(&standing, "x").unwrap();
+        let kind = std::fs::symlink_metadata(&standing).unwrap();
+        std::fs::remove_file(&standing).unwrap();
+
+        remove_any(&standing, &kind).expect("an entry somebody else removed is not a failure");
     }
 
     #[test]
