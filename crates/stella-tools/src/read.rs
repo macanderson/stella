@@ -29,9 +29,10 @@
 //! the sha256 of the bytes that were current at read time. The hash is the
 //! read→edit drift oracle's baseline (#331): `edit_file` compares it against
 //! current disk bytes to attribute a failed match to an out-of-band change
-//! instead of a generic not-found. Reads are keyed by the file's normalized
-//! workspace-relative path (so `src/./a.rs` and `src/a.rs` count as one
-//! file). One ledger lives per registry, shared by `read_file`, `edit_file`,
+//! instead of a generic not-found. Reads are keyed by the absolute path the
+//! file resolves to (so `src/./a.rs` and `src/a.rs` count as one file, while
+//! two `a.rs` under two different allowed roots do not — #3781). One ledger
+//! lives per registry, shared by `read_file`, `edit_file`,
 //! and `write_file` — so the ledger tracks the content the model last *saw*,
 //! whichever surface showed (or produced) it. The audit-grade equivalent (one
 //! `R` event per read) lands in the registry's file-touch ledger.
@@ -192,6 +193,13 @@ struct ReadState {
 /// content it just produced). A mismatch between an entry's hash and current
 /// disk bytes therefore means the file changed out-of-band since the model
 /// last looked — the read→edit drift signal (#331).
+///
+/// Every method takes `(root, path)` and keys on the absolute path the pair
+/// resolves to (see `normalized_key`, which is private so this names it
+/// rather than linking it), so `root` must be the directory
+/// `path` is relative to — the one `ToolCtx::resolve_for_read` or
+/// `resolve_for_write` returned, not the session root, which for a
+/// `--allow-dir` path names a different file.
 #[derive(Default)]
 pub struct ReadLedger {
     states: Mutex<HashMap<String, ReadState>>,
@@ -316,11 +324,33 @@ impl ReadFile {
     }
 }
 
-/// The aggregation key for a read: the same normalized workspace-relative
-/// path the file-touch ledger uses, falling back to the raw spelling when
-/// normalization fails (it can't for a path that resolved and read OK).
+/// The aggregation key for one file: the **absolute** path `path` resolves
+/// to under `root`, not the root-relative remainder.
+///
+/// The remainder was ambiguous the moment a session had more than one
+/// allowed root (#3781). `normalize_workspace_path` strips the canonical
+/// root prefix and returns what is left, so with a `--allow-dir` in the
+/// scope `<session_root>/a.rs` and `<allow_dir>/a.rs` — two different files
+/// — both keyed on `"a.rs"` and shared one entry. The drift oracle (#331)
+/// then compared one file's disk bytes against the other's recorded hash,
+/// and `write_file`'s no-clobber guard (#3738) could be satisfied by a
+/// whole-file read of the other one.
+///
+/// Resolving to an absolute path removes the ambiguity outright, and it is
+/// also what makes the caller's choice of `root` a non-question: any root
+/// that actually contains the path yields the same key. Callers still pass
+/// the root the path is relative to — `write_file` and `edit_file` key with
+/// the `scope_root` `ToolCtx::resolve_for_write` returned rather than the
+/// session root, which is the other half of #3781 — because a *wrong* root
+/// resolves the relative remainder against the wrong directory and so still
+/// names the wrong file.
+///
+/// Falls back to the raw spelling when the path does not resolve, which it
+/// cannot for a path a tool has just read or written.
 fn normalized_key(root: &std::path::Path, path: &str) -> String {
-    crate::normalize_workspace_path(root, path).unwrap_or_else(|| path.to_string())
+    crate::resolve_within_root(root, path)
+        .map(|full| full.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
 }
 
 /// The plural key: several files, or several ranges, in one call.

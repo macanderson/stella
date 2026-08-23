@@ -54,6 +54,22 @@ const SKIPPED_DIRS: &[&str] = &[
     ".cargo",
 ];
 
+/// Subtrees the walk enters despite [`SKIPPED_DIRS`] and the dot rule, named
+/// by their path relative to the scan root.
+///
+/// `.stella/` is another tool's private state and skipped wholesale — except
+/// for `.stella/rules/`, which holds the published **context records**: the
+/// one part of `.stella/` deliberately tracked in Git, precisely because a
+/// record only steers a teammate's session if it travels with the repository
+/// (AGENTS.md § "The `.stella/` directory"). A retrieval tool that cannot see
+/// the repository's own steering policy is the hole #3162 names.
+///
+/// The exclusion of `.stella/private/` — SQLite state, OAuth tokens, mined
+/// reflections — now holds because it is not on this list, rather than as a
+/// side effect of skipping everything above it. That is the difference the
+/// issue asks for: the thing that must stay unsearchable is refused by name.
+const ADMITTED_SUBTREES: &[&str] = &[".stella/rules"];
+
 /// A term found in a path is worth this many found in contents.
 ///
 /// A file *named* for the thing is a stronger signal than a file that
@@ -141,9 +157,41 @@ pub fn scan_hits_bounded(root: &Path, query: &str, limit: usize, max_files: usiz
     }
 }
 
+/// Whether a directory the walk descends into contributes its own files, or
+/// is only being crossed to reach a subtree that does.
+///
+/// The distinction exists because an admitted subtree can sit under a skipped
+/// one: reaching `.stella/rules` means entering `.stella`, and entering
+/// `.stella` must not scan `.stella/settings.json` on the way past.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Admits {
+    /// An ordinary directory: its own files are scanned.
+    Files,
+    /// Crossed only because an [`ADMITTED_SUBTREES`] entry sits underneath.
+    /// Its own files are not scanned, and its other children are refused
+    /// unless they are themselves on the way to — or inside — an admitted
+    /// subtree.
+    Passage,
+}
+
+/// What `rel` is to [`ADMITTED_SUBTREES`]: inside one, on the way to one, or
+/// neither. `None` means the walk has no business there.
+fn admission(rel: &str) -> Option<Admits> {
+    for allowed in ADMITTED_SUBTREES {
+        if rel == *allowed || rel.starts_with(&format!("{allowed}/")) {
+            return Some(Admits::Files);
+        }
+        if allowed.starts_with(&format!("{rel}/")) {
+            return Some(Admits::Passage);
+        }
+    }
+    None
+}
+
 /// Every regular file under `root`, shallowest directories first and sorted
-/// within each, skipping [`SKIPPED_DIRS`] and dotted entries, stopping once
-/// `budget` files have been yielded.
+/// within each, skipping [`SKIPPED_DIRS`] and dotted entries — except for the
+/// [`ADMITTED_SUBTREES`] carve-out — and stopping once `budget` files have
+/// been yielded.
 ///
 /// Breadth-first deliberately, because the order decides **which** files a
 /// capped walk ever sees: a stack here walked the alphabetically *last*
@@ -156,8 +204,11 @@ pub fn scan_hits_bounded(root: &Path, query: &str, limit: usize, max_files: usiz
 /// must cost a bounded walk, never the process's stack.
 fn walk(root: &Path, budget: &mut usize) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    let mut queue = VecDeque::from([root.to_path_buf()]);
-    while let Some(directory) = queue.pop_front() {
+    // The root-relative path rides with each directory because the carve-out
+    // is a fact about a *path* (`.stella/rules`) and the basename alone
+    // cannot tell it from `.stella/private`.
+    let mut queue = VecDeque::from([(root.to_path_buf(), String::new(), Admits::Files)]);
+    while let Some((directory, prefix, admits)) = queue.pop_front() {
         if *budget == 0 {
             break;
         }
@@ -173,6 +224,11 @@ fn walk(root: &Path, budget: &mut usize) -> Vec<PathBuf> {
             let Some(name) = child.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
+            let rel = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{prefix}/{name}")
+            };
             // `symlink_metadata`, not `metadata`: a symlink pointing at a
             // parent directory would otherwise make this walk unbounded, and
             // a symlink out of the workspace would read files the search has
@@ -181,10 +237,15 @@ fn walk(root: &Path, budget: &mut usize) -> Vec<PathBuf> {
                 continue;
             };
             if metadata.is_dir() {
-                if !name.starts_with('.') && !SKIPPED_DIRS.contains(&name) {
-                    queue.push_back(child);
+                let ordinary = admits == Admits::Files
+                    && !name.starts_with('.')
+                    && !SKIPPED_DIRS.contains(&name);
+                if ordinary {
+                    queue.push_back((child, rel, Admits::Files));
+                } else if let Some(carved) = admission(&rel) {
+                    queue.push_back((child, rel, carved));
                 }
-            } else if metadata.is_file() && !name.starts_with('.') {
+            } else if metadata.is_file() && admits == Admits::Files && !name.starts_with('.') {
                 *budget -= 1;
                 found.push(child);
             }

@@ -176,6 +176,7 @@ landing in `registry.rs`.
 | [`src/hook_runner.rs`](src/hook_runner.rs) | The real-I/O half of the hooks framework (`stella-core` owns matching and blocking). |
 | [`src/hook_bridge.rs`](src/hook_bridge.rs) | The shell-hook → approval-flow bridge (#2684): implements the engine's `ApprovalRoute` port over the #2676 `ApprovalBroker`. |
 | [`src/input.rs`](src/input.rs) | Typed reads of a tool's JSON input (#1267) — the "absent" vs "present but wrong type" distinction the dispatch validator and the tools share. |
+| [`src/loop_comparability.rs`](src/loop_comparability.rs) | One row per catalog name declaring how its output relates to loop comparison (#2706), plus the sentinel that drives every non-exempt tool twice through the real registry and compares what came back. The `stella-core` loop detector's input contract, enforced instead of assumed — see the Gotchas entry below. |
 | [`src/agent_use.rs`](src/agent_use.rs) | The per-session agent-invocation ledger. |
 
 ## Key concepts
@@ -257,6 +258,17 @@ tool's own `Internal` defect.
   identical *(name + input + output)* calls and the stagnation rung counts
   byte-identical outputs from one tool — so an elapsed time in a result
   makes both rungs permanently blind for that tool.
+
+  Since #2706 this is a check rather than a sentence.
+  [`src/loop_comparability.rs`](src/loop_comparability.rs) carries one row per
+  catalog name declaring `Deterministic`, `VolatileWithNormalizer` (the
+  `read_file` footer, which names the `stella-core` seam that strips it) or
+  `ExemptWorldState` with a rationale. Totality is enforced against
+  `catalog::ALL_NAMES` from both directions, so a tool added without a row
+  fails the suite; and every non-exempt row is **driven twice through the
+  real registry** against a restored fixture, with the raw bytes compared on
+  the deterministic arm and raw-differ-then-normalized-match on the volatile
+  one. Adding a tool means adding its row and its probe in the same change.
 - **`schemas()` is sorted by name deliberately.** The list is serialized
   verbatim at position 0 of the prompt prefix and `HashMap` iteration order
   is per-process randomized. Prompt caching is a byte-level prefix match, so
@@ -297,11 +309,17 @@ construct through `ToolRegistry::new` in a fresh tempdir, so tool counts
 depend on nothing in the host environment. The suites under [`tests/`](tests/)
 exercise the crate through its public surface only —
 [`tests/approval_witness.rs`](tests/approval_witness.rs) is the #2676 approval
-flow, and [`tests/chunk_retrieval_witnesses.rs`](tests/chunk_retrieval_witnesses.rs)
-is the one suite here that needs a credential. It is `#[ignore]`d until
-`VOYAGE_API_KEY` (or `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`) resolves, so a
-plain `cargo test` reports it as `ignored, <reason>` rather than as a pass it
-never earned; run it with `-- --ignored`. The foundry
+flow. Two suites need a credential:
+[`tests/chunk_retrieval_witnesses.rs`](tests/chunk_retrieval_witnesses.rs) (the
+three #3089 retrieval witnesses) and
+[`tests/relevance_calibration.rs`](tests/relevance_calibration.rs) (the #3096
+score-distribution measurement the three relevance constants are set from —
+run it with `--nocapture`, since its output *is* the result). Both are
+`#[ignore]`d until `VOYAGE_API_KEY` (or `STELLA_EMBED_URL` +
+`STELLA_EMBED_MODEL`) resolves, so a plain `cargo test` reports them as
+`ignored, <reason>` rather than as a pass they never earned, and both panic
+rather than pass when asked for with `-- --ignored` and no backend answers.
+The foundry
 carries property tests (every detector proposal must author and round-trip
 through the real manifest parser), as does the approval precedence ladder.
 

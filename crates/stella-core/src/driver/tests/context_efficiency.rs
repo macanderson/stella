@@ -36,11 +36,17 @@ impl ToolExecutor for BigOutputTools {
 #[tokio::test]
 async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
     // The #1285 step-loop witness. Thirteen tool-bearing steps at ~5 KB each
-    // is ~19k estimated tokens — an eighth of the 150k budget — so before the
-    // retention pass the step loop re-sent every one of those outputs
-    // verbatim on every call to the end of the turn. With the default
-    // horizon (8) the turn must age its older results MID-TURN, report them
-    // in a `Compaction` event, and leave the recent horizon verbatim.
+    // is ~16k estimated tokens, so before the retention pass the step loop
+    // re-sent every one of those outputs verbatim on every call to the end of
+    // the turn. With the default horizon (8) the turn must age its older
+    // results MID-TURN, report them in a `Compaction` event, and leave the
+    // recent horizon verbatim.
+    //
+    // The budget is 20k rather than the default 150k because #4381 gave pass 0
+    // a pressure gate: it fires past half the budget, not at any size. 20k
+    // puts this turn over that half while still leaving it comfortably under
+    // the budget itself, so the aging below is the retention pass's and the
+    // `evicted == 0` assertion still says the budget passes never ran.
     let mut script: Vec<Result<CompletionResultAlias, ProviderError>> = (0..13)
         .map(|i| Ok(tool_call_result(&format!("c{i}"), "bash")))
         .collect();
@@ -54,7 +60,11 @@ async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
         calls: Arc::new(AtomicU32::new(0)),
     };
     let sleeper = NoopSleeper;
-    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper);
+    let config = EngineConfig {
+        compaction_budget_tokens: 20_000,
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
     let mut messages = vec![
         CompletionMessage::system("sys"),
         CompletionMessage::user("the task"),

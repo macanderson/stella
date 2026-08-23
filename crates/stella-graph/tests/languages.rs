@@ -374,6 +374,59 @@ fn c_and_php_literal_includes_resolve_to_the_file_they_name() {
     );
 }
 
+/// #3184 end to end: a C++ fixture indexed through the real walk yields the
+/// class, its method, and the namespaced free function as separate
+/// definitions, each with its own citation keyword. The stopgap this replaces
+/// routed `.cpp` through the C grammar, which sees a class body as an error
+/// node and produced none of the three.
+#[test]
+fn cpp_classes_methods_and_namespaced_functions_are_indexed() {
+    let fx = Fixture::build(&[
+        (
+            "src/kvstore.hpp",
+            "#pragma once\n\
+             namespace store {\n\
+             class KvStore {\n\
+             public:\n\
+                 void put(const char *k);\n\
+             };\n\
+             }\n",
+        ),
+        (
+            "src/kvstore.cpp",
+            "#include \"kvstore.hpp\"\n\
+             namespace store {\n\
+             void KvStore::put(const char *k) { (void)k; }\n\
+             bool healthy() { return true; }\n\
+             }\n",
+        ),
+    ]);
+
+    assert!(has_label_starting(
+        &fx.def_labels("KvStore"),
+        "class KvStore ("
+    ));
+    // Both the header's declaration and the source's out-of-line definition
+    // index under the unqualified name, so a search for `put` finds the file
+    // that defines it and not only the one that declares it.
+    let put = fx.def_labels("put");
+    assert!(has_label_starting(&put, "fn put ("), "{put:?}");
+    assert!(
+        put.iter().any(|l| l.contains("kvstore.cpp")),
+        "the definition, not only the declaration: {put:?}"
+    );
+    assert!(has_label_starting(
+        &fx.def_labels("healthy"),
+        "fn healthy ("
+    ));
+
+    let targets = fx.import_targets("src/kvstore.cpp");
+    assert!(
+        targets.iter().any(|t| t == "src/kvstore.hpp"),
+        "a quoted include resolves in C++ exactly as in C; got {targets:?}"
+    );
+}
+
 #[test]
 fn byte_compat_skip_across_two_index_passes() {
     let ws = TempDir::new().unwrap();

@@ -221,3 +221,74 @@ fn watch_sleeps_with_exit_one_when_nothing_changed() {
     assert_eq!(out.status.code(), Some(1), "SLEEP is exit 1");
     assert!(stdout(&out).contains("SLEEP"));
 }
+
+/// **Witness (#4457).** `stella self-driving stop` writes the flag into the
+/// state root the loop itself resolves, and says where it put it.
+///
+/// The flag had a reader and no writer: #3942 taught the loop to park on the
+/// file's presence, and left `touch` — against a path an operator learns from a
+/// parked run's audit line, which prints only once the loop is already
+/// parked — as the only way to create it. Through the real binary because the
+/// resolution is the half that can drift: a verb writing to a root the loop
+/// does not read would pass every unit test and stop nothing.
+#[test]
+fn stop_writes_the_flag_into_the_loops_own_state_root() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let state = tmp.path().join("state");
+
+    let out = stella(tmp.path(), &state, &["stop"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let flag = state.join("stop");
+    assert!(
+        flag.exists(),
+        "the verb writes the flag the loop polls: {}",
+        flag.display()
+    );
+    let text = stdout(&out);
+    assert!(
+        text.contains(&flag.display().to_string()),
+        "and names the path, so an operator can drop it again:\n{text}"
+    );
+
+    // Idempotent, and it says which case it was — a supervisor re-issuing the
+    // stop must not read a successful stop as a failure.
+    let again = stella(tmp.path(), &state, &["stop"]);
+    assert!(again.status.success());
+    assert!(
+        stdout(&again).contains("already"),
+        "asking a stopping loop to stop reports that it was already asked:\n{}",
+        stdout(&again)
+    );
+}
+
+/// `--root` stops a loop rooted somewhere other than this workspace's own.
+#[test]
+fn stop_root_targets_another_loops_state_directory() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mine = tmp.path().join("state");
+    let theirs = tmp.path().join("other-clone");
+
+    let out = stella(
+        tmp.path(),
+        &mine,
+        &["stop", "--root", &theirs.display().to_string()],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        theirs.join("stop").exists(),
+        "the named root is the one that stops"
+    );
+    assert!(
+        !mine.join("stop").exists(),
+        "and this workspace's own loop keeps working"
+    );
+}
