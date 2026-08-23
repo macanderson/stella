@@ -33,9 +33,11 @@
 //! same data text can refuse a read the shell never performs (#3618).
 //!
 //! Command position is read from the word *before* the `cd`, so it is only as
-//! good as the splitter's word boundaries: `(` and `)` are ordinary word
-//! characters there, which is why the glued `(cd /outside; ls)` is still
-//! missed (#3619). Every miss here is silence, never a wrong note.
+//! good as the splitter's word boundaries. `(`, `)` and `$(` became words of
+//! their own in #3619, which is what lets the glued `(cd /outside; ls)` read
+//! the same as the spaced `( cd /outside )`. A backtick substitution
+//! (`` `cd /outside` ``) is still one word and still missed. Every miss here
+//! is silence, never a wrong note.
 
 use std::path::Path;
 
@@ -280,10 +282,14 @@ fn next_word_is_a_command(word: &str, word_is_a_command: bool) -> bool {
 /// `for`, `select`, `case` and `in` are absent on purpose: what follows them
 /// is a name or a word list, not a command, and the command only starts at
 /// the `do`/`)` that closes the header.
+///
+/// `$(` is here beside `(` because a command substitution runs its body the
+/// same way a subshell does — `out=$(cd /outside && pwd)` really does leave
+/// the session root.
 fn introduces_a_command(word: &str) -> bool {
     matches!(
         word,
-        "if" | "then" | "elif" | "else" | "while" | "until" | "do" | "{" | "(" | "!"
+        "if" | "then" | "elif" | "else" | "while" | "until" | "do" | "{" | "(" | "$(" | "!"
     )
 }
 
@@ -495,6 +501,51 @@ mod tests {
                 cd_escape_target(command, &root).as_deref(),
                 Some("/outside"),
                 "{command} escapes the root and must still warn"
+            );
+        }
+    }
+
+    /// The glued spelling of the subshell, which the spaced `( cd /outside )`
+    /// above had covered since #2301 while `(cd /outside; ls)` said nothing:
+    /// the splitter kept the paren attached to the word, so no word ever
+    /// equalled `cd` and the detector had nothing to look at (#3619).
+    #[test]
+    fn a_cd_glued_to_a_subshell_paren_is_still_an_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        assert_eq!(cd_escape_target("(cd /; ls)", &root).as_deref(), Some("/"));
+        for command in [
+            "(cd /outside; ls)",
+            "(cd /outside && make)",
+            "$(cd /outside && pwd)",
+            "out=$(cd /outside && pwd)",
+        ] {
+            assert_eq!(
+                cd_escape_target(command, &root).as_deref(),
+                Some("/outside"),
+                "{command} escapes the root and must still warn"
+            );
+        }
+        // The in-root glued form stays silent, and names no `/outside;`.
+        assert_eq!(cd_escape_target("(cd .; ls)", &root), None);
+    }
+
+    /// The over-suppression counterpart of the glued form: a paren that is
+    /// *data* still promotes nothing, so a quoted or echoed `(cd` is silent.
+    #[test]
+    fn a_paren_in_data_does_not_promote_a_cd() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for command in [
+            "echo \"(cd /outside)\"",
+            "echo '(cd /outside)'",
+            "echo (cd /outside",
+            "echo $(cd /outside",
+        ] {
+            assert_eq!(
+                cd_escape_target(command, &root),
+                None,
+                "{command} runs no cd and must stay silent"
             );
         }
     }
