@@ -36,8 +36,8 @@ use crate::config::Config;
 /// up, rather than an `#[allow]` asserting the lint was wrong.
 pub(super) struct InteractiveTurn<'a> {
     /// The session history so far, of which [`Self::turn_start`] onward is this
-    /// turn. Both halves are needed: the caller has one `Vec` and the boundary
-    /// is an index into it.
+    /// turn. The caller holds one `Vec` and the boundary is an index into it,
+    /// so the pair travels rather than a slice.
     pub(super) messages: &'a [CompletionMessage],
     /// Where this turn's own work starts in `messages` — the gate and the
     /// evidence both read only that slice, so a conversational turn spends no

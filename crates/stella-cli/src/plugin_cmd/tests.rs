@@ -545,9 +545,9 @@ fn list_names_every_key_a_package_configured_and_what_it_replaced() {
 /// resolve one directory, so a unit test can reach neither the developer's own
 /// `~/.stella/plugins` nor a tier the loader would decline to read.
 ///
-/// Both halves are asserted because either alone passes on the defect: with a
-/// home installed the two accessors agree anyway, and without one only
-/// `tier_dir` used to answer at all.
+/// Either case alone passes on the defect: with a home installed the two
+/// accessors agree anyway, and without one only `tier_dir` used to answer at
+/// all. So both are asserted.
 #[test]
 fn the_user_tier_installs_where_the_loader_reads_and_nowhere_else() {
     let root = temp_root("user-tier-accessor");

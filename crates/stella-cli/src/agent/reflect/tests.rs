@@ -13,9 +13,10 @@ const EARLIER_TURN: &str = "swapped db() for withTenantDb in the tenant loader";
 /// **Witness (#4382).** A turn's reflection sees that turn, not the session it
 /// happened in.
 ///
-/// Both halves are asserted from one `InteractiveTurn`, because the defect was
-/// that they disagreed: the gate read `messages[turn_start..]` and the evidence
-/// read `messages`. So a `status` turn with one `task_list` call was mined for
+/// The gate and the evidence are asserted from one `InteractiveTurn`, because
+/// the defect was that they disagreed: the gate read `messages[turn_start..]`
+/// and the evidence read `messages`. So a `status` turn with one `task_list`
+/// call was mined for
 /// the *previous* turn's lessons, and a `thank you` turn was self-rated on a
 /// sub-agent failure six executions earlier — both rows keyed to an
 /// `execution_id` whose work they did not describe.
