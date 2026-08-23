@@ -342,6 +342,15 @@ jobs:
           python3 ./scripts/gen-tokens.py --check
           python3 ./scripts/check-tokens.py
 
+      # A sibling question the check above cannot answer: it reasons about hex
+      # literals, and an unresolvable var() is not a parse error. A token sheet
+      # can name a stop deleted two releases ago, every page still renders off
+      # the consumer's fallback, and the sheet goes on stating a rule the tree
+      # does not apply (#4122).
+      - name: every var() in a token sheet resolves
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-css-vars.py
+
       - name: no library crate returns Result<_, String>
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-typed-errors.py

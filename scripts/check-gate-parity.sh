@@ -136,6 +136,7 @@ contributing_alias() {
   transcript-surfaces) echo 'check-transcript-surfaces' ;;
   prose) echo 'check-prose' ;;
   deck-paths) echo 'check-deck-paths' ;;
+  css-vars) echo 'check-css-vars' ;;
   doc-warnings) echo 'cargo doc' ;;
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;

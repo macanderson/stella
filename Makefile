@@ -41,7 +41,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     role-names stat-portability module-reachability typed-errors \
                     dead-code-allows diagnostic-codes bench-suites tokens \
                     hue-separation transcript-surfaces prose deck-fit-all-test \
-                    deck-paths
+                    deck-paths css-vars
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -371,6 +371,10 @@ deck-paths: ## Assert every repository path a deck cites still resolves (#3573)
 .PHONY: deck-paths-test
 deck-paths-test: ## Test the deck path guard's directions (hermetic; not part of `gate`)
 	./scripts/test-deck-paths.sh
+
+.PHONY: css-vars
+css-vars: ## Assert every var() in a token sheet resolves inside it (#4122)
+	@python3 ./scripts/check-css-vars.py
 
 .PHONY: dead-code-allows
 dead-code-allows: ## Assert every #[allow(dead_code)] says why, and that the count only shrinks (#3949)
