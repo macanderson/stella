@@ -45,6 +45,9 @@
 //!   - `stella-tui` `model::Model::apply`
 //!   - `stella-tui` `textline::event_line`
 //!   - `stella-tui` `deck::trace_of`
+//!   - `stella-cli` `diag_bridge::DomainBridge::observe` — a record, a tally,
+//!     or deliberately nothing. Listed since #3616, which found it by being
+//!     stopped by the compiler rather than by reading this list.
 //!
 //! **Silent** — wildcard / `matches!` arms the compiler CANNOT catch, so a new
 //! variant falls through to a default and is wrong only at runtime. These are
