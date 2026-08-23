@@ -1177,6 +1177,18 @@ pub enum AgentEvent {
     /// was ever created. It is a per-run temporary directory, so it is a
     /// run-to-run artifact and no golden comparison may key on its value.
     ///
+    /// **Nothing in this workspace emits it.** Its sole producer was
+    /// `Pipeline::deliver_winner` in `crates/stella-pipeline`, deleted in
+    /// #3865, and the raw step-loop that remains has no candidates to choose
+    /// between. #3881's decision is to keep it, for two reasons that are
+    /// independent of each other: recorded journals and `stella-events.jsonl`
+    /// files already carry the tag and stay readable, and best-of-N delivery is
+    /// exactly the decision a wrapper plugin reports back over the socket
+    /// (`doc:wrapper-socket`), so the wire shape a re-homed producer would need
+    /// is this one. Its consumers are unaffected either way — see
+    /// `event::tags`'s row, which declares `Surfaced` because the Observatory's
+    /// journal query still selects it.
+    ///
     /// See [`crate::delivery_event`] for why the outcome is a sum type and what
     /// the counts are measured from.
     #[cfg_attr(

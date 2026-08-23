@@ -23,6 +23,9 @@ use crate::credential::ApiKey;
 use crate::http;
 use crate::sse::SseDecoder;
 
+mod stream_error;
+use stream_error::classify_openai_stream_error;
+
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
 pub struct OpenAiProvider {
@@ -395,38 +398,6 @@ struct OpenAiIncompleteDetails {
     reason: Option<String>,
 }
 
-/// Classify an OpenAI Responses-API error (from a `response.failed` error
-/// object or a top-level `error` frame) into a typed `ProviderError`.
-/// Server-side/overload/timeout conditions are **retryable** `Transport`; an
-/// explicit rate limit is `RateLimited`; everything else is `Terminal`.
-fn classify_openai_stream_error(code: Option<&str>, message: &str) -> ProviderError {
-    let haystack = format!("{} {}", code.unwrap_or(""), message).to_lowercase();
-    let detail = match code {
-        Some(c) if !c.is_empty() && !message.is_empty() => {
-            format!("OpenAI stream error [{c}]: {message}")
-        }
-        Some(c) if !c.is_empty() => format!("OpenAI stream error [{c}]"),
-        _ if !message.is_empty() => format!("OpenAI stream error: {message}"),
-        _ => "OpenAI stream error".to_string(),
-    };
-    if haystack.contains("server_error")
-        || haystack.contains("overloaded")
-        || haystack.contains("unavailable")
-        || haystack.contains("timeout")
-    {
-        ProviderError::transport(detail)
-    } else if haystack.contains("rate_limit")
-        || (haystack.contains("rate") && haystack.contains("limit"))
-    {
-        ProviderError::RateLimited {
-            message: detail,
-            retry_after_ms: None,
-        }
-    } else {
-        ProviderError::Terminal(detail)
-    }
-}
-
 #[derive(Deserialize, Debug, Default)]
 struct OpenAiUsage {
     #[serde(default)]
@@ -790,11 +761,23 @@ async fn aggregate_openai_stream(
                 // A mid-stream failure/incompletion/error aborts the turn with
                 // a typed error — never a truncated Ok with the text so far.
                 OpenAiStreamEvent::Failed { response } => {
+                    // A failed response still carries its usage envelope, and
+                    // the provider bills the prompt whether or not it served
+                    // an answer — the same reason `response.incomplete` below
+                    // reads it. Left on the floor, a brownout that parks and
+                    // recovers reports the abandoned attempt as free (#3859).
+                    if let Some(u) = response.usage {
+                        usage.input_tokens = u.input_tokens;
+                        usage.output_tokens = u.output_tokens;
+                        usage.cached_input_tokens =
+                            u.input_tokens_details.map(|d| d.cached_tokens).unwrap_or(0);
+                    }
                     let (code, message) = response
                         .error
                         .map(|e| (e.code, e.message.unwrap_or_default()))
                         .unwrap_or((None, String::new()));
-                    return Err(classify_openai_stream_error(code.as_deref(), &message));
+                    let error = classify_openai_stream_error(code.as_deref(), &message);
+                    return Err(http::attach_partial(error, &usage, &text, pricing));
                 }
                 OpenAiStreamEvent::Incomplete { response } => {
                     // An incomplete response still carries the final usage
@@ -843,10 +826,11 @@ async fn aggregate_openai_stream(
                     )));
                 }
                 OpenAiStreamEvent::Error { code, message } => {
-                    return Err(classify_openai_stream_error(
+                    let error = classify_openai_stream_error(
                         code.as_deref(),
                         message.as_deref().unwrap_or_default(),
-                    ));
+                    );
+                    return Err(http::attach_partial(error, &usage, &text, pricing));
                 }
                 OpenAiStreamEvent::Other => {}
             }

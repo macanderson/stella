@@ -10,9 +10,7 @@
 //!
 //! # Why [`TurnLane`] is open and [`BuiltinLane`] is closed
 //!
-//! Both halves are load-bearing, and this is the one decision in the
-//! programme that is expensive to defer (`doc:turn-lane-assembly` §9.1,
-//! §10.3).
+//! Deferring this one is expensive (`doc:turn-lane-assembly` §9.1, §10.3).
 //!
 //! - **[`BuiltinLane`] is closed** over the seven in-tree sites. That is what
 //!   lets a later slice make "adding a capability without deciding it for
@@ -104,10 +102,23 @@ pub enum BuiltinLane {
     FleetWorker,
     /// A staged-pipeline stage turn. Named for the built-in staged pipeline's
     /// `execute_stage`/`witness_stage` (`crates/stella-pipeline`, deleted in
-    /// #3865); the tag stays on the wire so a recorded lane from a
-    /// pre-removal build still deserializes. **Nothing in this workspace
-    /// stamps this lane today** — retiring it, or re-homing a producer onto a
-    /// wrapper plugin's declared stages, is #3881.
+    /// #3865).
+    ///
+    /// **Nothing in this workspace stamps this lane, and nothing will.** It is
+    /// kept for reading, not writing — #3881's decision, and the reason is
+    /// structural rather than a deferral. A verification plugin's stage turn is
+    /// a *plugin* lane: it arrives as [`TurnLane::Plugin`] carrying the
+    /// [`LaneId`] the manifest declared, which is the arm that exists precisely
+    /// because an out-of-tree lane cannot be a compile-time variant. So there
+    /// is no producer to re-home onto this variant; a wrapper plugin that
+    /// stages its turns names its own lane.
+    ///
+    /// Deleting it instead would be worse than the usual wire retirement.
+    /// [`TurnLane`] is externally tagged over a closed [`BuiltinLane`] with no
+    /// `serde(other)`, so a recorded `{"builtin":"pipeline_stage"}` from a
+    /// pre-removal build would fail to deserialize outright and take its whole
+    /// enclosing record with it — not the graceful demotion
+    /// [`crate::event::AgentEvent::Unknown`] gives an unrecognised event.
     PipelineStage,
     /// A turn driven by a remote host over the wire (`stella-serve`'s
     /// `session`).
@@ -266,6 +277,19 @@ mod tests {
         seen.sort();
         seen.dedup();
         assert_eq!(seen.len(), BuiltinLane::ALL.len(), "ALL has a duplicate");
+    }
+
+    /// `pipeline_stage` has no producer left in this workspace (#3881), and is
+    /// kept so a lane recorded before `stella-pipeline` was deleted (#3865)
+    /// still reads back. This is what that decision costs if it is reversed:
+    /// [`BuiltinLane`] is closed with no `serde(other)`, so removing the
+    /// variant does not demote the tag — it fails the record outright.
+    #[test]
+    fn a_lane_recorded_before_the_pipeline_was_deleted_still_deserializes() {
+        let recorded: TurnLane =
+            serde_json::from_str(r#"{"builtin":"pipeline_stage"}"#).expect("a pre-#3865 recording");
+        assert_eq!(recorded, TurnLane::Builtin(BuiltinLane::PipelineStage));
+        assert_eq!(recorded.to_string(), "pipeline_stage");
     }
 
     /// `as_str` is hand-written; this is what stops it drifting from serde.

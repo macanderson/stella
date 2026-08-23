@@ -346,9 +346,13 @@ pub(super) async fn aggregate_zai_stream(
                 }
             };
             // A mid-stream error frame aborts the turn with a typed error —
-            // never a truncated Ok with the partial text seen so far.
+            // never a truncated Ok with the partial text seen so far. It is a
+            // loss site like the hang above and carries the same salvage: a
+            // usage frame that already arrived is what the provider bills,
+            // whether or not the stream then died (#3859).
             if let Some(err) = &parsed.error {
-                return Err(classify_zai_stream_error(err, label).into());
+                let error = classify_zai_stream_error(err, label);
+                return Err(http::attach_partial(error, &usage, &text, pricing).into());
             }
             if let Some(u) = parsed.usage {
                 usage_seen = true;
