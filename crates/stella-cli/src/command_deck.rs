@@ -458,7 +458,7 @@ pub async fn run_deck_session(
     // personas on a mere resume would breach invariant #7. Chosen ONCE, byte-
     // stable (L-E8): see `session_persist::initial_pipeline_persona`.
     let pipeline_persona = crate::session_persist::initial_pipeline_persona(resume_state.as_ref());
-    let system_prompt = agent::with_session_hook_context(
+    let mut system_prompt = agent::with_session_hook_context(
         if pipeline_persona {
             // Assembled once per session, before any turn resolves wiring: no
             // model line rather than a possibly-false one (#2721).
@@ -469,6 +469,9 @@ pub async fn run_deck_session(
         cfg,
     )
     .await;
+    // The persona-free prompt an assumed agent's block is appended to
+    // (`WorkspaceInput::AgentAssume`), so assuming twice never stacks.
+    let base_system_prompt = system_prompt.clone();
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     if let Some(rs) = &mut resume_state {
         messages = crate::session_persist::restore_messages(
@@ -1037,6 +1040,35 @@ pub async fn run_deck_session(
                     }
                     // LLM-assisted agent creation needs the provider, which is
                     // free here (no turn in flight) — draft, install, refresh.
+                    // The lead assumes an installed agent's identity: the
+                    // system prompt grows the agent's persona block and the
+                    // seeded system message follows it, so the next turn
+                    // runs as that agent. Between turns only — the prompt
+                    // is byte-stable across a turn (invariant #7).
+                    Some(WorkspaceInput::AgentAssume { name, scope }) => {
+                        match assumed_persona(&cfg.workspace_root, &name, scope) {
+                            Ok(persona) => {
+                                system_prompt = format!("{base_system_prompt}\n\n{persona}");
+                                if let Some(first) = messages.first_mut()
+                                    && first.role == stella_protocol::MessageRole::System
+                                {
+                                    first.content = system_prompt.clone();
+                                }
+                                let _ = in_tx.send(Inbound::AgentAssumed {
+                                    name: Some(name.clone()),
+                                });
+                                let _ = in_tx.send(chrome_note(format!(
+                                    "the lead is now {name} — from the next turn on"
+                                )));
+                            }
+                            Err(error) => {
+                                let _ = in_tx.send(Inbound::AgentAssumed { name: None });
+                                let _ = in_tx
+                                    .send(chrome_note(format!("cannot assume {name}: {error}")));
+                            }
+                        }
+                        continue 'session;
+                    }
                     Some(WorkspaceInput::AgentCreate { description, scope }) => {
                         handle_agent_create(
                             &description,
@@ -1796,7 +1828,8 @@ pub async fn run_deck_session(
                         Some(
                             input @ (WorkspaceInput::AgentsRefresh
                             | WorkspaceInput::AgentSave { .. }
-                            | WorkspaceInput::AgentPin { .. }),
+                            | WorkspaceInput::AgentPin { .. }
+                            | WorkspaceInput::AgentDelete { .. }),
                         ) => {
                             handle_agents_input(&input, cfg, &in_tx);
                         }
@@ -1919,6 +1952,11 @@ pub async fn run_deck_session(
                         // Navigation waits for the road to clear: switching
                         // sessions mid-turn would tear down live work, so the
                         // deck is told how to proceed instead.
+                        Some(WorkspaceInput::AgentAssume { name, .. }) => {
+                            let _ = deck_tx.send(chrome_note(format!(
+                                "a turn is running — press a on {name} again once it settles"
+                            )));
+                        }
                         Some(WorkspaceInput::SessionResume { .. } | WorkspaceInput::SessionNew) => {
                             let _ = deck_tx.send(chrome_note(
                                 "a turn is running — esc stops it (esc esc holds the queue \
@@ -3397,8 +3435,68 @@ fn handle_agents_input(
             let _ = in_tx.send(agents_list_inbound(root, Some(status)));
             true
         }
+        WorkspaceInput::AgentDelete { name, scope } => {
+            let status = delete_agent(root, name, *scope);
+            let _ = in_tx.send(agents_list_inbound(root, Some(status)));
+            true
+        }
         _ => false,
     }
+}
+
+/// The delete path: the canonical definition and every archived version go
+/// (`agents_installed::remove_agent`). Returns the pane's status line.
+fn delete_agent(root: &std::path::Path, name: &str, scope: AgentScope) -> String {
+    let dir = match crate::agents_installed::agents_dir_for(scope, root) {
+        Ok(dir) => dir,
+        Err(e) => return format!("delete failed: {e}"),
+    };
+    let Some(slug) = crate::agents_installed::find_slug(&dir, name) else {
+        return format!(
+            "no installed agent named {name} at the {} scope",
+            scope.label()
+        );
+    };
+    match crate::agents_installed::remove_agent(&dir, &slug) {
+        Ok(true) => format!("deleted {name} ({} scope) and its versions", scope.label()),
+        Ok(false) => format!("{name} was already gone"),
+        Err(e) => format!("delete failed: {e}"),
+    }
+}
+
+/// The persona block an assumed agent contributes to the system prompt: the
+/// same words a `/name task` invocation opens with, minus the task.
+fn assumed_persona(
+    root: &std::path::Path,
+    name: &str,
+    scope: AgentScope,
+) -> Result<String, String> {
+    let dir = crate::agents_installed::agents_dir_for(scope, root)?;
+    let entry = crate::agents_installed::discover(
+        crate::agents_installed::user_agents_dir().as_deref(),
+        &crate::agents_installed::project_agents_dir(root),
+    )
+    .into_iter()
+    .find(|e| e.name == name && e.scope == scope)
+    .ok_or_else(|| format!("no installed agent named {name} in {}", dir.display()))?;
+    let body = entry
+        .content
+        .splitn(3, "---")
+        .nth(2)
+        .unwrap_or(&entry.content)
+        .trim()
+        .to_string();
+    let mut out = format!(
+        "You are acting as the following agent for this whole session.\n\n# Agent: {}\n{}\n\n{body}",
+        entry.name, entry.description
+    );
+    if let Some(tools) = &entry.tools {
+        out.push_str(&format!(
+            "\n\nThis agent's toolbelt is restricted to: {}.",
+            tools.join(", ")
+        ));
+    }
+    Ok(out)
 }
 
 /// The edit-save path: archive-then-write a NEW version and pin it (see

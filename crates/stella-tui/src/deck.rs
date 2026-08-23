@@ -745,6 +745,7 @@ impl WorkspaceModel {
             | Inbound::IndexReadiness(_)
             | Inbound::SlashCommands(_)
             | Inbound::AgentsList { .. }
+            | Inbound::AgentAssumed { .. }
             | Inbound::Skills(_)
             | Inbound::SkillSearch { .. }
             | Inbound::SkillPreview { .. }

@@ -252,6 +252,10 @@ pub enum Inbound {
     /// asks ([`WorkspaceInput::AgentsRefresh`]) and after every save / pin /
     /// create so the list stays live. `status`, when set, replaces the
     /// pane's hint line (op outcomes, errors).
+    /// Which installed agent the lead is running as, after a
+    /// [`WorkspaceInput::AgentAssume`] — `None` drops back to the plain
+    /// persona. The list marks the row.
+    AgentAssumed { name: Option<String> },
     AgentsList {
         entries: Vec<InstalledAgentEntry>,
         status: Option<String>,
@@ -810,6 +814,16 @@ pub enum WorkspaceInput {
         scope: AgentScope,
         version: u32,
     },
+    /// INSTALLED AGENTS `x x`: delete the definition — its canonical file
+    /// and its archived versions. Answered with a fresh
+    /// [`Inbound::AgentsList`].
+    AgentDelete { name: String, scope: AgentScope },
+    /// INSTALLED AGENTS `a`: the lead assumes this agent's identity for the
+    /// rest of the session — its definition becomes the persona the system
+    /// prompt carries, from the next turn on. Between turns only; mid-turn
+    /// the driver answers with a transcript notice. Answered with
+    /// [`Inbound::AgentAssumed`].
+    AgentAssume { name: String, scope: AgentScope },
     /// Create a new agent from a short description with LLM assistance: the
     /// driver drafts the definition through the session's provider, installs
     /// it at `scope`, and answers with a fresh [`Inbound::AgentsList`].

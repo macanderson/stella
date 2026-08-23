@@ -38,7 +38,6 @@ pub(super) fn deck_local_command(text: &str, ui: &mut DeckUi) -> Option<DeckActi
         // definitions on disk, for a fresh list.
         "/agents" => {
             ui.set_tab(DeckTab::Agents);
-            ui.agents_pane = AgentsPane::Installed;
             ui.installed.busy = true;
             DeckAction::Send(WorkspaceInput::AgentsRefresh)
         }

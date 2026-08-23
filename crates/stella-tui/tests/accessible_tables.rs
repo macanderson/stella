@@ -21,7 +21,6 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
 use stella_protocol::{AgentEvent, StageKind};
-use stella_tui::deck_ui::AgentsPane;
 use stella_tui::{
     AgentMeta, AgentScope, DeckTab, DeckUi, Inbound, InstalledAgentEntry, IssueRow, SettingsPane,
     ToolPolicyState, ToolRow, WorkspaceModel, ingest_inbound, render_deck,
@@ -80,50 +79,12 @@ fn assert_labelled(row: &str, labels: &[&str]) {
     );
 }
 
-// ────────────────────────── AGENTS · EXECUTIONS ──────────────────────────
-
-#[test]
-fn the_executions_dashboard_reads_as_labelled_records() {
-    let mut model = WorkspaceModel::new();
-    model.apply_inbound(&Inbound::Register(AgentMeta::new(
-        "lead",
-        "refactor the automations store",
-        0,
-    )));
-    model.apply_inbound(&Inbound::Event {
-        agent: "lead".into(),
-        event: AgentEvent::Stage {
-            name: StageKind::Execute.into(),
-            scope: stella_protocol::StageScope::Run,
-        },
-    });
-    let mut ui = accessible_ui(DeckTab::Agents);
-    ui.agents_pane = AgentsPane::Executions;
-
-    let row = record_row(&frame(&model, &mut ui), "refactor the automations store");
-    assert_labelled(
-        &row,
-        &[
-            "status",
-            "goal",
-            "ctx",
-            "cost",
-            "$/hr",
-            "elapsed",
-            "cpu",
-            "mem",
-            "tokens in/out",
-        ],
-    );
-}
-
 // ─────────────────────── AGENTS · INSTALLED AGENTS ───────────────────────
 
 #[test]
 fn the_installed_agents_list_reads_as_labelled_records() {
     let mut model = WorkspaceModel::new();
     let mut ui = accessible_ui(DeckTab::Agents);
-    ui.agents_pane = AgentsPane::Installed;
     ingest_inbound(
         &Inbound::AgentsList {
             entries: vec![InstalledAgentEntry {

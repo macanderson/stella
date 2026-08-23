@@ -166,10 +166,9 @@ fn switching_focus_drops_the_session_selection() {
     handle_deck_key(key(KeyCode::Up), &model, &mut ui);
     assert!(ui.session_selected.is_some());
 
-    // Focus another agent from the Agents tab: the selection indexes the
-    // *previous* agent's transcript and must not carry across.
-    ui.tab = DeckTab::Agents;
-    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    // Focus another agent: the selection indexes the *previous* agent's
+    // transcript and must not carry across.
+    ui.focus_agent(1);
     assert_eq!(ui.focused, 1);
     assert_eq!(
         ui.session_selected, None,

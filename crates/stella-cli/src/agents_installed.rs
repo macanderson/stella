@@ -333,6 +333,31 @@ pub fn save_new_version(agents_dir: &Path, slug: &str, content: &str) -> Result<
     Ok(next)
 }
 
+/// Delete `slug` outright: its canonical definition (a real file or
+/// directory; a symlink is unlinked, never followed) and its archived
+/// versions. Returns whether anything existed to delete.
+pub fn remove_agent(agents_dir: &Path, slug: &str) -> Result<bool, String> {
+    let mut removed = false;
+    if let Some((canonical, entry)) = canonical_of(agents_dir, slug) {
+        let is_link = entry
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink());
+        let result = if is_link || entry.is_file() {
+            std::fs::remove_file(&entry)
+        } else {
+            std::fs::remove_dir_all(&entry)
+        };
+        result.map_err(|e| format!("{}: {e}", canonical.display()))?;
+        removed = true;
+    }
+    let vdir = versions_dir(agents_dir, slug);
+    if vdir.is_dir() {
+        std::fs::remove_dir_all(&vdir).map_err(|e| format!("{}: {e}", vdir.display()))?;
+        removed = true;
+    }
+    Ok(removed)
+}
+
 /// Re-pin `slug` to an EXISTING `version` (the pin-set path): the canonical
 /// file is rewritten from that version's archive and `PINNED` updated.
 /// Never creates a version — pinning is not an edit.

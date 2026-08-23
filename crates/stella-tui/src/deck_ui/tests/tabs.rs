@@ -15,40 +15,6 @@ fn ctrl_c_quits_from_any_tab() {
 }
 
 #[test]
-fn agents_tab_controls_fire_only_when_composer_empty() {
-    let model = model_with(&["lead", "sub"]);
-    let mut ui = ready_ui();
-    ui.tab = DeckTab::Agents;
-    ui.focused = 1;
-    // 's' with empty composer → Stop control for the focused agent.
-    assert_eq!(
-        handle_deck_key(ch('s'), &model, &mut ui),
-        DeckAction::Send(WorkspaceInput::Control {
-            agent: "sub".into(),
-            control: AgentControl::Stop,
-        })
-    );
-    // With text typed, 's' types instead.
-    handle_deck_key(ch('h'), &model, &mut ui);
-    handle_deck_key(ch('s'), &model, &mut ui);
-    assert_eq!(ui.composer.buffer(), "hs");
-}
-
-#[test]
-fn agents_updown_moves_focus_and_enter_opens_session() {
-    let model = model_with(&["a", "b", "c"]);
-    let mut ui = ready_ui();
-    ui.tab = DeckTab::Agents;
-    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
-    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
-    assert_eq!(ui.focused, 2);
-    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
-    assert_eq!(ui.focused, 1);
-    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
-    assert_eq!(ui.tab, DeckTab::Session);
-}
-
-#[test]
 fn tab_and_backtab_walk_the_tab_bar() {
     let model = model_with(&["lead"]);
     let mut ui = ready_ui();

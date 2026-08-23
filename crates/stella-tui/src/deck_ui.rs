@@ -68,20 +68,6 @@ pub struct DeckMetrics {
     pub help_total: usize,
 }
 
-/// Which pane the AGENTS tab shows — its secondary nav, switched with ←/→
-/// (from a blank composer, exactly like the other blank-gated tab keys).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AgentsPane {
-    /// The `htop`-style dashboard of currently ACTIVE agents (the
-    /// pre-existing Agents view).
-    #[default]
-    Executions,
-    /// The agents INSTALLED at the user / project level: inspect
-    /// name/description/toolbelt, edit (a save is a NEW pinned version),
-    /// re-pin an older version, create one from a prompt.
-    Installed,
-}
-
 /// The INSTALLED AGENTS pane's interaction mode. `Browse` is plain tab
 /// state (the composer stays live, like every other tab); every other mode
 /// is modal — it owns the keyboard while open, exactly like the queue
@@ -112,10 +98,8 @@ pub enum InstalledMode {
     PickVersion,
 }
 
-/// The INSTALLED AGENTS pane's view state. The list itself is driven
-/// entirely by [`Inbound::AgentsList`] snapshots the driver sends — the
-/// panel owns only selection, the modal sub-states, and their input
-/// buffers, exactly like the queue editor owns only `queue_sel`.
+/// The AGENTS tab's state: the installed definitions and the modal sub-views
+/// over them (editor, create flow, version picker).
 #[derive(Debug, Clone)]
 pub struct InstalledPanel {
     /// Newest driver snapshot of the installed agents.
@@ -152,6 +136,12 @@ pub struct InstalledPanel {
     pub created_scroll: u16,
     /// Selected row in the version picker.
     pub version_sel: usize,
+    /// The agent `x` was pressed on once; a second `x` on the same row
+    /// deletes it, any other key disarms.
+    pub delete_armed: Option<String>,
+    /// The installed agent the lead is running as
+    /// ([`Inbound::AgentAssumed`]).
+    pub assumed: Option<String>,
 }
 
 impl Default for InstalledPanel {
@@ -171,6 +161,8 @@ impl Default for InstalledPanel {
             create_error: None,
             created_scroll: 0,
             version_sel: 0,
+            delete_armed: None,
+            assumed: None,
         }
     }
 }
@@ -570,8 +562,6 @@ pub(crate) fn typeahead_after_edit(panel: &mut IssuesPanel) -> Option<WorkspaceI
 #[derive(Debug, Clone)]
 pub struct DeckUi {
     pub tab: DeckTab,
-    /// The AGENTS tab's secondary nav: EXECUTIONS | INSTALLED AGENTS.
-    pub agents_pane: AgentsPane,
     /// The SETTINGS tab's secondary nav: AGENTS | TOOLS. Which editor the tab
     /// renders full-width, and which one `e` focuses.
     pub settings_pane: crate::views::settings::SettingsPane,
@@ -823,7 +813,6 @@ impl Default for DeckUi {
     fn default() -> Self {
         Self {
             tab: DeckTab::Session,
-            agents_pane: AgentsPane::default(),
             settings_pane: crate::views::settings::SettingsPane::default(),
             installed: InstalledPanel::default(),
             skills: SkillsPanel::default(),
@@ -1116,6 +1105,14 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // The installed-agents list is out-of-band view state too — the driver
     // owns the definitions on disk and pushes fresh snapshots here; the
     // model fold ignores them.
+    if let Inbound::AgentAssumed { name } = inbound {
+        ui.installed.assumed = name.clone();
+        ui.installed.status = Some(match name {
+            Some(name) => format!("the lead is now {name} — from the next turn on"),
+            None => "the lead is back to the plain persona".to_string(),
+        });
+        return;
+    }
     if let Inbound::AgentsList {
         entries,
         status,
@@ -1939,7 +1936,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
 
     // Per-tab navigation for non-typing keys…
     if let Some(action) = match ui.tab {
-        DeckTab::Agents => handle_agents_key(key, model, ui, composer_empty),
+        DeckTab::Agents => handle_agents_key(key, ui, composer_empty),
         DeckTab::Traces => handle_traces_key(key, model, ui, composer_empty),
         DeckTab::Graph => handle_graph_key(key, ui, composer_empty),
         DeckTab::Files => handle_files_key(key, model, ui, composer_empty),
@@ -3225,82 +3222,8 @@ fn handle_settings_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> 
     crate::views::settings::handle_key(key, ui, composer_empty)
 }
 
-fn handle_agents_key(
-    key: KeyEvent,
-    model: &WorkspaceModel,
-    ui: &mut DeckUi,
-    composer_empty: bool,
-) -> Option<DeckAction> {
-    // The secondary nav: ←/→ switch EXECUTIONS ↔ INSTALLED AGENTS. These
-    // only arrive here with a blank composer (a composer holding text claims
-    // ←/→ for cursor motion first), same gate as every other tab key.
-    match key.code {
-        KeyCode::Left if ui.agents_pane == AgentsPane::Installed => {
-            ui.agents_pane = AgentsPane::Executions;
-            return Some(DeckAction::Handled);
-        }
-        KeyCode::Right if ui.agents_pane == AgentsPane::Executions => {
-            ui.agents_pane = AgentsPane::Installed;
-            // First visit loads the list; after that the driver keeps it
-            // fresh after every op, so no re-fetch on every switch.
-            if !ui.installed.loaded && !ui.installed.busy {
-                ui.installed.busy = true;
-                return Some(DeckAction::Send(WorkspaceInput::AgentsRefresh));
-            }
-            return Some(DeckAction::Handled);
-        }
-        _ => {}
-    }
-    if ui.agents_pane == AgentsPane::Installed {
-        return handle_installed_browse_key(key, ui, composer_empty);
-    }
-
-    let count = model.agents.len();
-    match key.code {
-        KeyCode::Up => {
-            ui.focus_agent(ui.focused.saturating_sub(1));
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.focus_agent((ui.focused + 1).min(count - 1));
-            }
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Enter if composer_empty && key.modifiers.is_empty() => {
-            ui.set_tab(DeckTab::Session);
-            Some(DeckAction::Handled)
-        }
-        // Agent controls — only when the composer is empty (else they type).
-        // `s` stop · `p` pause/resume toggle (by the row's current status) ·
-        // `r` restart. `s` and `p` work on every lane — pause parks the turn at
-        // its next step boundary, never mid-tool, sub-agents included (#1219).
-        // `r` respawns a worker from its retained spec; on the lead it is a
-        // no-op, since restarting it is just re-submitting the prompt.
-        KeyCode::Char('s') if composer_empty => model.agents.get(ui.focused).map(|entry| {
-            DeckAction::Send(WorkspaceInput::Control {
-                agent: entry.meta.id.clone(),
-                control: AgentControl::Stop,
-            })
-        }),
-        KeyCode::Char('p') if composer_empty => model.agents.get(ui.focused).map(|entry| {
-            DeckAction::Send(WorkspaceInput::Control {
-                agent: entry.meta.id.clone(),
-                control: if entry.status == AgentStatus::Paused {
-                    AgentControl::Resume
-                } else {
-                    AgentControl::Pause
-                },
-            })
-        }),
-        KeyCode::Char('r') if composer_empty => model.agents.get(ui.focused).map(|entry| {
-            DeckAction::Send(WorkspaceInput::Control {
-                agent: entry.meta.id.clone(),
-                control: AgentControl::Restart,
-            })
-        }),
-        _ => None,
-    }
+fn handle_agents_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
+    handle_installed_browse_key(key, ui, composer_empty)
 }
 
 /// The INSTALLED AGENTS pane's browse keys (non-modal — the composer stays
@@ -3313,7 +3236,38 @@ fn handle_installed_browse_key(
     composer_empty: bool,
 ) -> Option<DeckAction> {
     let count = ui.installed.entries.len();
+    // A delete is two presses of `x` on the same row; anything else disarms.
+    let armed = ui.installed.delete_armed.take();
     match key.code {
+        KeyCode::Char('x') if composer_empty => {
+            let Some(entry) = ui.installed.selected().cloned() else {
+                return Some(DeckAction::Handled);
+            };
+            if armed.as_deref() == Some(entry.name.as_str()) {
+                ui.installed.busy = true;
+                ui.installed.status = Some(format!("deleting {}…", entry.name));
+                return Some(DeckAction::Send(WorkspaceInput::AgentDelete {
+                    name: entry.name,
+                    scope: entry.scope,
+                }));
+            }
+            ui.installed.status = Some(format!(
+                "x again deletes {} ({} scope, every version)",
+                entry.name,
+                entry.scope.label()
+            ));
+            ui.installed.delete_armed = Some(entry.name);
+            Some(DeckAction::Handled)
+        }
+        // `a`: the lead assumes the selected agent's identity.
+        KeyCode::Char('a') if composer_empty => {
+            let entry = ui.installed.selected().cloned()?;
+            ui.installed.status = Some(format!("assuming {}…", entry.name));
+            Some(DeckAction::Send(WorkspaceInput::AgentAssume {
+                name: entry.name,
+                scope: entry.scope,
+            }))
+        }
         KeyCode::Up => {
             ui.installed.sel = ui.installed.sel.saturating_sub(1);
             Some(DeckAction::Handled)
