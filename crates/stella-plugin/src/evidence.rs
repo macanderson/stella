@@ -121,9 +121,14 @@ impl OracleCheck {
                     .join(", ")
             ))
         })?;
-        let value = value
-            .parse::<u64>()
-            .map_err(|_| unparsable(format!("\"{value}\" is not a non-negative whole number")))?;
+        let value = value.parse::<u64>().map_err(|_| {
+            unparsable(format!(
+                "\"{value}\" is not a non-negative whole number. Budgets are whole numbers by \
+                 design (#3488): express a fractional or signed quantity in an integer unit your \
+                 own oracle chooses and reports, the way the reference fixture reports percent of \
+                 baseline — 105 is five percent slower, 97 is three percent faster"
+            ))
+        })?;
         Ok(MeasurementRule {
             measurement: (*measurement).to_string(),
             op,
@@ -134,12 +139,28 @@ impl OracleCheck {
 
 /// A parsed check — one measurement, one comparison, one literal.
 ///
+/// # The literal is a whole number, and that is the ruling rather than a gap
+///
 /// The numbers are non-negative integers, the same literal type the wrapper
 /// grammar compares against. A plugin whose quantity is fractional or signed
-/// declares it in an integer unit it chooses (the reference fixture reports
-/// "percent of baseline", so `105` is five percent slower and an improvement
-/// is below `100`) — see #3488 for why a float was not admitted into a
-/// completion gate.
+/// **declares it in an integer unit its own oracle chooses and reports** — the
+/// reference fixture reports "percent of baseline", so `105` is five percent
+/// slower and `97` is three percent faster. That unit is the plugin's choice
+/// by design, exactly as the measurement *namespace* is: the host cannot
+/// enumerate every benchmark anyone will budget, and it cannot enumerate their
+/// units either.
+///
+/// A float was weighed and refused (#3488, `doc:pipeline-as-plugins` §6.1).
+/// `NaN` makes every comparison false, so a broken oracle reporting one would
+/// silently *satisfy* a `<=` budget — in the one code path that decides
+/// whether a turn may end. `-0.0` and rounding equality are the same hazard in
+/// smaller print. The falsifier that produced this grammar did not need
+/// fractions, and CLAUDE.md's rule is to widen only what the falsifier needed.
+///
+/// So an author writing `<= 0.5` is refused, and
+/// [`ManifestError::UnparsableCheck`] names the remedy rather than only the
+/// rejection — the cost of the ruling is one sentence per author, paid once,
+/// at load, in a message they read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MeasurementRule {
     /// The measurement read. Declared in the same `[oracle]` block.
@@ -424,6 +445,34 @@ mod tests {
             matches!(dupe, ManifestError::DuplicateMeasurement { ref measurement } if measurement == "p50"),
             "got {dupe:?}"
         );
+    }
+
+    /// The ruling #3488 settled, asserted where an author meets it: a
+    /// fractional budget is refused, and the refusal says what to write
+    /// instead. "Not a non-negative whole number" alone tells an author their
+    /// syntax is wrong and leaves them to invent a unit — which is the
+    /// interoperability tax the issue was filed about, since each author
+    /// invents a different one.
+    #[test]
+    fn a_fractional_budget_is_refused_with_the_remedy_named() {
+        let check = "[[oracle.checks]]\nrequirement = \"within-budget\"\ncheck = \"p50 <= 0.5\"";
+        let err = parse("\"p50\"", check, "not-applicable").unwrap_err();
+        let ManifestError::UnparsableCheck { reason, .. } = &err else {
+            panic!("a fractional budget must not parse, got {err:?}");
+        };
+        assert!(
+            reason.contains("integer unit your own oracle chooses"),
+            "the refusal must name the remedy, got {reason:?}"
+        );
+        assert!(
+            reason.contains("percent of baseline"),
+            "the refusal must name the worked example the fixture ships, got {reason:?}"
+        );
+
+        // The same budget expressed in the unit the message names loads, which
+        // is what makes the remedy a remedy rather than an apology.
+        let scaled = "[[oracle.checks]]\nrequirement = \"within-budget\"\ncheck = \"p50 <= 1005\"";
+        assert!(parse("\"p50\"", scaled, "not-applicable").is_ok());
     }
 
     #[test]

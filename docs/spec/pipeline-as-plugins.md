@@ -662,12 +662,26 @@ anyone will ever budget. What stays closed is what matters — the comparison
 vocabulary, the shape of a rule, and the requirement that every name a rule
 reads was declared in the same manifest a human consented to.
 
-**Left as friction, not widened.** The literals are non-negative integers, so a
-fractional or signed budget must be declared in an integer unit (the fixture
-reports *percent of baseline*, which costs sub-percent resolution). A float in
-a completion gate brings `NaN` — under which every comparison is false and a
-broken oracle silently *passes* a `<=` budget — so the widening was not made on
-the falsifier's say-so; #3488 carries the decision. Also unstated: the
+**Decided: the literal is a whole number and the unit is the plugin's** (#3488,
+settled as that issue's option 3). A budget literal is a non-negative integer,
+and an oracle whose quantity is fractional or signed states it in an integer
+unit **it chooses and reports** — the fixture reports *percent of baseline*, so
+`105` is five percent slower and `97` is three percent faster; a microbenchmark
+wanting finer resolution reports per-mille or basis points. The unit is the
+plugin's for the same reason the measurement namespace above is: the host
+cannot enumerate every benchmark anyone will budget, so it cannot enumerate
+their units either.
+
+A float was weighed and refused rather than deferred. `NaN` makes every
+comparison false, so a broken oracle reporting one would silently *satisfy* a
+`<=` budget in the one code path that decides whether a turn may end; `-0.0`
+and rounding equality are the same hazard in smaller print. The cost of the
+ruling is that each author picks a unit, and it is paid once, at load, in a
+message they read: `ManifestError::UnparsableCheck` names the remedy and the
+worked example, so `<= 0.5` is answered with what to write instead of only
+with what is wrong.
+
+Also unstated: the
 provenance of a baseline (that it is the one from the merge base, not merely
 unmodified since), and any quantifier over a set the host does not know, such
 as "no changed file is at zero coverage". The general shape of that second
