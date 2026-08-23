@@ -918,6 +918,7 @@ impl WorkspaceModel {
                     cached_input_tokens,
                     cache_write_tokens,
                     model,
+                    role,
                     cost_usd,
                     ..
                 } => {
@@ -945,7 +946,14 @@ impl WorkspaceModel {
                     entry.last_provider_call_ms = Some(now);
                     // Occupancy is the LATEST call's prompt size, not the sum.
                     entry.context_tokens = *input_tokens;
-                    entry.meta.model = Some(model.clone());
+                    // The row's model comes from the call answering the turn
+                    // and from no other (#4307). The tokens and the cost above
+                    // deliberately still come from every call — spend is spend,
+                    // whoever spent it — but a label is a claim about what the
+                    // agent is running, and an overflow summarizer is not it.
+                    if crate::model::role_supplies_the_turns_model(*role) {
+                        entry.meta.model = Some(model.clone());
+                    }
                     // Fallback accounting: a stream that never emits
                     // `BudgetTick` (scenario feeds, minimal drivers) still
                     // shows real spend. Once a tick has been seen it owns
@@ -1052,7 +1060,16 @@ impl WorkspaceModel {
             ..
         } = event
         {
-            self.routes.record(now, agent.clone(), model.clone());
+            // Only the call answering the turn names the agent's model. An
+            // overflow summarizer or a reflection rides the same agent and
+            // would otherwise relabel its row with a model the agent is not
+            // running (#4307) — the same defect #4183 fixed on the opening
+            // rule, and the predicate is that one rather than a second copy.
+            // `StepUsage` carries no `call_seq`, so the role condition is the
+            // whole of what this fold can ask.
+            if crate::model::role_supplies_the_turns_model(*role) {
+                self.routes.record(now, agent.clone(), model.clone());
+            }
             // `StepUsage` already carries the provider that actually served
             // the call and the role it served — the route log kept only the
             // model, which is why the statline could name one model and never
