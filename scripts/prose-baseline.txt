@@ -163,7 +163,6 @@ crates/stella-plugin/src/driver.rs 1
 crates/stella-plugin/src/error.rs 1
 crates/stella-plugin/tests/non_witness_done.rs 1
 crates/stella-protocol/src/candidate.rs 1
-crates/stella-protocol/src/context_event.rs 1
 crates/stella-protocol/src/event.rs 1
 crates/stella-protocol/src/issue.rs 2
 crates/stella-protocol/src/stage.rs 1
