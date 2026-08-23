@@ -19,7 +19,9 @@
 //! Bedrock has a durable home for all four instead of only working when the
 //! standard AWS variables happen to be exported.
 
-mod aux;
+// Not `aux`: that spelling made the repository un-checkoutable on Windows.
+// `scripts/check-reserved-paths.sh` is what stops it coming back.
+mod aux_credentials;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -29,7 +31,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use zeroize::{Zeroize, Zeroizing};
 
-pub use aux::AuxCredentials;
+pub use aux_credentials::AuxCredentials;
 
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum CredentialError {

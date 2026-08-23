@@ -214,7 +214,7 @@ pub static PROVIDERS: &[ProviderConfig] = &[
         // The access key id. Its companions — AWS_SECRET_ACCESS_KEY, the
         // optional AWS_SESSION_TOKEN, and AWS_REGION — travel beside it as
         // `AuxCredentials`, resolved through the same chain by
-        // `config::aux::provider_aux` (which also documents the AWS credential
+        // `config::aux_credentials::provider_aux` (which also documents the AWS credential
         // sources that are deliberately NOT supported). Last in preference
         // order on purpose — see the doc comment above; auto-detection
         // additionally requires the secret, so an unrelated AWS_ACCESS_KEY_ID

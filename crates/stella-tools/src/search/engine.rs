@@ -53,7 +53,16 @@ mod tests;
 /// It stays as a ceiling only because ranking is a full scan over every stored
 /// vector, and a pathological query against a monorepo should not materialise
 /// a hundred thousand scored rows to then throw nearly all of them away.
-/// Reaching it is reported, never silent.
+///
+/// **It cannot cost a better answer.** `stella_embed::rank::top_k` scores
+/// every stored vector, sorts the whole set, and truncates last — so the rows
+/// past this ceiling are by construction the ones that scored below every row
+/// inside it, not the ones a first-N fill happened to reach first. That is
+/// what makes it a memory bound rather than a shape.
+///
+/// Reaching it is reported only when it *bound the answer* — see
+/// [`ceiling_note`] and #4385, where a banner that fired on 60 of 61 calls
+/// taught one session's model to route around the tool entirely.
 const RANK_CEILING: usize = 200;
 
 /// The most hits the two index-free strategies return. They have no score to
@@ -604,34 +613,58 @@ async fn semantic_hits(
         .rank_files_by_vector(&fingerprint, &query_vector, floor, RANK_CEILING)
         .map_err(|error| format!("the vector index could not be read: {error}"))?;
 
+    let (hits, boundary_ran_to_the_end) = merge_rungs(&chunks, &files);
     let note = merge_notes(
         coverage_note(graph, &fingerprint),
-        ceiling_note(chunks.len(), files.len()),
+        ceiling_note(chunks.len(), files.len(), boundary_ran_to_the_end),
     );
-    Ok((merge_rungs(&chunks, &files), note))
+    Ok((hits, note))
 }
 
-/// The disclosure [`RANK_CEILING`]'s doc promises: a scored list that filled
-/// its memory guard may have dropped better-than-nothing candidates past it,
-/// and a caller reading a miss as absence must be told so.
-fn ceiling_note(chunks: usize, files: usize) -> Option<String> {
-    (chunks >= RANK_CEILING || files >= RANK_CEILING).then(|| {
+/// The disclosure [`RANK_CEILING`] promises, on the only occasion it means
+/// anything.
+///
+/// The note used to fire whenever either rung came back full, and said
+/// *"lower-scoring files beyond it were never considered"*. Those files
+/// **were** considered — `top_k` scores the whole corpus before it truncates
+/// — and on a workspace with more than 200 files above the admission floor
+/// the condition it fired on is simply always true: one session
+/// carried the banner on 60 of 61 `search` calls, and the model mined a
+/// lesson telling itself to use `rg` instead (#4385). A caveat that fires on
+/// every answer is not a caveat, it is the tool arguing against itself.
+///
+/// The ceiling can only cost an answer when the relevance boundary
+/// (`stella_embed::rank::relevant_prefix`) found no edge and ran to the end
+/// of the truncated list: only then would a 201st row have been rendered had
+/// it existed. When the boundary cuts earlier — which is the ordinary case,
+/// and the case where the tool is working — the ceiling changed nothing and
+/// there is nothing to disclose.
+fn ceiling_note(chunks: usize, files: usize, boundary_ran_to_the_end: bool) -> Option<String> {
+    let filled = chunks >= RANK_CEILING || files >= RANK_CEILING;
+    (filled && boundary_ran_to_the_end).then(|| {
         format!(
-            "RANK CEILING — the candidate list filled its {RANK_CEILING}-row guard, so \
-             lower-scoring files beyond it were never considered; narrow the query if the file \
-             you expected is missing"
+            "RANK CEILING — the ranking returned its {RANK_CEILING}-row guard and every one of \
+             those rows was relevant enough to keep, so files scoring below the last one shown \
+             were not ranked into this answer; narrow the query if the file you expected is \
+             missing"
         )
     })
 }
 
-/// One ordering over both rungs, best first, one hit per file.
+/// One ordering over both rungs, best first, one hit per file — and whether
+/// the relevance boundary ran to the end of the merged list.
+///
+/// That second answer is what [`ceiling_note`] needs: the ranking's memory
+/// guard can only have cost an answer when the boundary kept everything it
+/// was given, because that is the only case in which a row past the guard
+/// would have been rendered.
 ///
 /// See [`semantic_hits`] for why merging is sound: one embedder, one
 /// fingerprint, one vector space.
 fn merge_rungs(
     chunks: &[stella_graph::ScoredChunk],
     files: &[stella_embed::rank::Scored],
-) -> Vec<Hit> {
+) -> (Vec<Hit>, bool) {
     let mut scored: Vec<(f32, String, String, Option<String>)> = chunks
         .iter()
         .map(|chunk| {
@@ -684,6 +717,11 @@ fn merge_rungs(
         stella_embed::rank::DEFAULT_MIN_BOUNDARY_GAP,
     );
 
+    // Asked before `scored` is consumed. An empty ranking counts as "ran to
+    // the end" only trivially, and `ceiling_note` never fires on one anyway:
+    // an empty list cannot have filled the guard.
+    let boundary_ran_to_the_end = cut >= scored.len();
+
     let mut seen: Vec<String> = Vec::new();
     let mut hits = Vec::new();
     for (_, path, why, focus) in scored.into_iter().take(cut) {
@@ -693,7 +731,7 @@ fn merge_rungs(
         seen.push(path.clone());
         hits.push(Hit { path, why, focus });
     }
-    hits
+    (hits, boundary_ran_to_the_end)
 }
 
 /// How much of the workspace this ranking could actually see, when that is

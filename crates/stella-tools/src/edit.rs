@@ -367,7 +367,7 @@ impl EditFile {
             // different recoveries — a generic not-found forces the model to
             // guess which one it is.
             let current_sha = crate::staleness::hex_sha256(content.as_bytes());
-            return match self.ledger.last_seen_sha(root, path) {
+            return match self.ledger.last_seen_sha(&scope_root, path) {
                 Some(seen) if seen != current_sha => {
                     // Drift: the file changed after the model last saw it.
                     // Echo the fresh content so the model can re-issue the
@@ -377,7 +377,7 @@ impl EditFile {
                     // The echo is capped, so the recorded hash may cover
                     // more than was shown; the unchanged-file message below
                     // still steers a confused model back to read_file.
-                    self.ledger.record_known(root, path, &content);
+                    self.ledger.record_known(&scope_root, path, &content);
                     ToolOutput::error(format!(
                         "old_string not found in `{path}` — the file CHANGED after you last \
                              read it (out-of-band modification); the copy in your context is \
@@ -433,7 +433,7 @@ impl EditFile {
             Ok(()) => {
                 // The model knows the bytes it just produced — record them so
                 // its own edit is never later misattributed as drift.
-                self.ledger.record_known(root, path, &new_content);
+                self.ledger.record_known(&scope_root, path, &new_content);
                 let replaced = if replace_all { count } else { 1 };
                 // The offset and digest are the edit's identity (#3176): the
                 // stagnation detector keys on byte-identical tool output, so
@@ -550,7 +550,7 @@ impl EditFile {
 
             let current = &pending[slot].content;
             if !current.contains(old_string) {
-                return ToolOutput::error(self.batch_miss(root, &pending[slot], index, old_string));
+                return ToolOutput::error(self.batch_miss(&pending[slot], index, old_string));
             }
             let count = current.matches(old_string).count();
             if count > 1 && !target.replace_all {
@@ -589,7 +589,8 @@ impl EditFile {
             }
             // The model knows the bytes it just produced — record them so its
             // own edit is never later misattributed as drift.
-            self.ledger.record_known(root, &file.path, &file.content);
+            self.ledger
+                .record_known(&file.scope_root, &file.path, &file.content);
             report.push(format!(
                 "{} — {} edit(s), file sha256/8 {}",
                 file.path,
@@ -623,13 +624,7 @@ impl EditFile {
     /// batch has edited a file, the composed content no longer matches what the
     /// ledger last saw, and reporting that as an out-of-band modification would
     /// send the model hunting for a second writer that is itself.
-    fn batch_miss(
-        &self,
-        root: &std::path::Path,
-        file: &Pending,
-        index: usize,
-        old_string: &str,
-    ) -> String {
+    fn batch_miss(&self, file: &Pending, index: usize, old_string: &str) -> String {
         let path = &file.path;
         let head = format!("`{EDITS_KEY}`[{index}]: old_string not found in `{path}`");
         if let Some(actual) = indentation_only_match(&file.content, old_string) {
@@ -648,7 +643,7 @@ impl EditFile {
             String::new()
         };
         let current_sha = crate::staleness::hex_sha256(file.content.as_bytes());
-        match self.ledger.last_seen_sha(root, path) {
+        match self.ledger.last_seen_sha(&file.scope_root, path) {
             // Only meaningful before this batch touched the file.
             Some(seen) if seen != current_sha && file.edits == 0 => format!(
                 "{head} — the file CHANGED after you last read it (out-of-band modification); \

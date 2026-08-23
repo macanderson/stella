@@ -1,0 +1,93 @@
+name: windows-check
+
+# The only compiler in this project that ever looks at a `#[cfg(windows)]` arm.
+#
+# Nothing else here builds for Windows. `ci.yml` runs on `ubuntu-latest`, and
+# `release.yml`'s matrix is four targets — two Apple, two Linux — so a Windows
+# arm shipped without this workflow is code no toolchain in the repository or
+# in CI ever parses. `rootfd.rs` and `durable_write.rs` have carried
+# `#[cfg(not(unix))]` bodies for as long as they have existed, and #3550 added
+# the Job Object half of `exec::GroupKillGuard` beside them; "it compiles" was
+# a claim nobody could check for any of them.
+#
+# So this compiles the two crates that carry a platform split — `stella-tools`
+# owns `rootfd`, `durable_write` and `exec`; `stella-runtime`'s two wrapper
+# transports arm that guard — on a real MSVC runner.
+#
+# Its reach is wider than those two names: `-D warnings` travels to every
+# workspace crate they pull in, which is how it found a `cfg(unix)`-only
+# parameter left unread in `stella-store`. That is the job working, not a
+# scope error — a platform arm nobody compiles is the same defect wherever it
+# sits, and these two crates are simply the entry point that reaches the ones
+# holding the splits.
+#
+# `cargo clippy`, and deliberately **not** `--all-targets`. The shipping code
+# is what carries the platform split, and it is what this can honestly claim
+# today: `--all-targets` pulls in `#[cfg(test)]` bodies that import
+# `std::os::unix::fs::PermissionsExt` unconditionally
+# (`stella-tools/src/validate.rs`, `src/custom/tests.rs`), so it fails on the
+# test fixtures rather than on anything #3550 changed. Those fixtures are
+# #3497's subject — tests that are `#[cfg(unix)]`, or assume unix, and so
+# prove nothing on Windows — and widening this job to `--all-targets` is the
+# check that lands with that work, not before it.
+#
+# Clippy rather than `check` so the Windows arm is held to `-D warnings` like
+# the rest of the tree. It does not run the tests: Stella ships no Windows
+# binary and the suite has never run there, so a green compile is the claim,
+# and a test run is #3497's decision to make.
+#
+# Its own file rather than a job in ci.yml for the reason wire-schema.yml has
+# one: ci.yml's required job is what every PR waits on, and a Windows runner is
+# minutes of wall clock that a diff touching neither crate has no use for.
+# Path-triggered, and not a required check.
+on:
+  pull_request:
+    paths:
+      - "crates/stella-tools/**"
+      - "crates/stella-runtime/**"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/windows-check.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/stella-tools/**"
+      - "crates/stella-runtime/**"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/windows-check.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    name: the platform split still compiles on Windows
+    runs-on: windows-latest
+    # The bundled C in the dependency graph (rusqlite's SQLite, the
+    # tree-sitter grammars) is the expensive part on a cold cache.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Despite the action's name this does not build on `stable`:
+      # rust-toolchain.toml pins the repo to a concrete toolchain and rustup
+      # honors it for every cargo invocation inside the checkout. This step
+      # exists to put *a* rustup on PATH.
+      - name: Install Rust (rustup; the build uses the rust-toolchain.toml pin)
+        id: rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          components: clippy
+
+      - if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+
+      - name: clippy on the crates that carry a platform split
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: cargo clippy -p stella-tools -p stella-runtime -- -D warnings

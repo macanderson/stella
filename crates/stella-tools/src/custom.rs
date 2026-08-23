@@ -826,8 +826,8 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     cmd.stderr(std::process::Stdio::piped());
     // Reap the direct child if the driving future is dropped (tokio keeps it
     // running by default). A backstop only — it does NOT reach whatever the
-    // script itself spawned; the unix `GroupKillGuard` below covers those,
-    // and this is what covers the non-unix build, where it does not exist.
+    // script itself spawned; the `GroupKillGuard` below is what covers those,
+    // on every platform since #3550.
     cmd.kill_on_drop(true);
 
     // Manifest env (workspace-trusted) first …
@@ -857,7 +857,6 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     }
 
     // New process group so a timeout kills the whole child tree.
-    #[cfg(unix)]
     crate::exec::detach_into_own_process_group(&mut cmd);
 
     let mut child = match spawn_retrying_etxtbsy(&mut cmd).await {
@@ -872,11 +871,9 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
         }
     };
 
-    #[cfg(unix)]
     let pid = child.id().unwrap_or(0) as i32;
     // Cancellation backstop: a dropped future (Esc, the engine's tool
-    // timeout, a fleet stop) must not leave the setsid'd group running.
-    #[cfg(unix)]
+    // timeout, a fleet stop) must not leave the detached group running.
     let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
     // Deliver the input as one JSON document on stdin, concurrently with
@@ -902,7 +899,6 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
     .await
     {
         Ok(Ok(output)) => {
-            #[cfg(unix)]
             guard.disarm();
             output
         }
@@ -912,7 +908,6 @@ async fn run_custom(tool: &CustomTool, input: &Value, workspace_root: &Path) -> 
             return ToolOutput::error(format!("custom tool `{}` failed: {e}", tool.name));
         }
         Err(_) => {
-            #[cfg(unix)]
             guard.kill_now();
             return ToolOutput::error(format!(
                 "custom tool `{}` timed out after {}ms",

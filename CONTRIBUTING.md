@@ -97,6 +97,7 @@ python3 ./scripts/check-prose.py
 ./scripts/test-deck-fit-all.sh
 python3 ./scripts/check-deck-paths.py
 python3 ./scripts/check-css-vars.py
+./scripts/check-reserved-paths.sh
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check
@@ -205,7 +206,7 @@ chasing the citations in the same PR.
 
 ## Where does my change go? — a workspace tour
 
-Twenty-six crates — all under the `crates/` directory — sounds like a lot; the
+Twenty-five crates — all under the `crates/` directory — sounds like a lot; the
 rule of thumb is one sentence each:
 
 | You want to… | Go to |
@@ -222,7 +223,6 @@ rule of thumb is one sentence each:
 | Retrieval: graph, embeddings, episodic memory | `stella-context` |
 | Tree-sitter code indexing | `stella-graph` |
 | MCP client (external tool servers) | `stella-mcp` |
-| Multimodal generation | `stella-media` |
 | Multi-agent fan-out, worktree isolation | `stella-fleet` |
 | The Observatory telemetry dashboard (`stella observe`) | `stella-observatory` |
 | The headless engine server a host process drives over the wire | `stella-serve` (its own binary, not linked into the CLI) |
