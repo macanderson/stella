@@ -52,6 +52,13 @@ description = "Asks the host for one bounded planner-role child turn, at the pla
 participation = "steering"
 # `before_turn` only: there is nothing to say about a turn already run.
 points = ["before_turn"]
+# The stages it answers at, exhaustively (#3543). `main.py` refuses every
+# stage but `plan`, and the eight-stage order below is the pipeline it wants
+# *run*, not the set of stages it has anything to say at — without this line
+# the host started `python3` eight times a round to hear
+# `{"protocol_version": 1}` seven times. Every name here must appear in
+# `[[wrapper.stages]]` below, or the manifest does not load.
+before_turn_stages = ["plan"]
 # The one host capability this plugin may ask for, exhaustively
 # (`doc:wrapper-socket` §6b). `child_turn` is the mechanism
 # `doc:turn-loop-wrappers` §9.3 names for "a wrapper needs one bounded model

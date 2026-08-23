@@ -173,7 +173,6 @@ its output, and the same is true of `stella-research`'s.
 | No `--revise` wire representation, so a rejected plan's revision note cannot reach a re-plan | #3562 (item 3) |
 | The parsed plan rides as prose, not the typed `Vec<PlanStep>` the built-in's per-step engine-turn walk needs | #3562 (item 4) |
 | `stella run`'s driver installs the `ChildTurns` plane but does not yet fold its spend back into the receipt or surface it beside `HostCallGate::refusals()` | #3576 (open items) |
-| It is spawned once per declared stage and contributes at exactly one of them | #3543 |
 | Nobody has benchmarked it against the built-in stage | (none yet — parallel to #3544 for `stella-research`) |
 | The goldens have no `BLESS=1` regeneration path | #3548 |
 | `plan-v1` runs on every door that takes `--pipeline` now (`stella run`, `stella goal` per round, `stella fleet` per worker attempt, #3695) — but only `stella run`'s door installs a `ChildTurns` plane, so the planner role intent it asks for is answered `Unavailable` on the other two | #3833 (goal), #3882 (fleet) |

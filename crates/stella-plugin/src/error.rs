@@ -413,6 +413,20 @@ pub enum ManifestError {
     #[error("[subloop] stages contains an empty stage name")]
     EmptyStageName,
 
+    /// A `[loop] before_turn_stages` entry names a stage this manifest's
+    /// `[wrapper]` does not order, so nothing would ever dispatch it. A
+    /// narrowing that narrows to nothing is worse than no narrowing: the
+    /// plugin loads, contributes at no stage, and its author has no signal
+    /// (#3543).
+    #[error(
+        "[loop] before_turn_stages names \"{stage}\", which this manifest's [wrapper] does not \
+         order — so the host would never ask this plugin at it"
+    )]
+    UndispatchableStage {
+        /// The stage named by the grant and ordered by no `[[wrapper.stages]]`.
+        stage: String,
+    },
+
     /// `[roles]` was declared with nothing that could ever resolve a role —
     /// neither `[subloop]` nor `[wrapper]`. A role intent exists to be
     /// resolved; with nothing to resolve it for, it is dead config, and dead

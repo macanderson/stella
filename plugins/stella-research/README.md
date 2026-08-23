@@ -178,6 +178,5 @@ repository's `.gitignore` would drop.
 | It cannot cause a model call, so the sub-agent fan-out did not come with it | #3541 |
 | It publishes no signals: `StageName::Research.publishes()` is empty, so there is none it could honestly publish | #3542 |
 | Its `[wrapper]` stage order over-declares, because the condition grammar has no conjunction | #3538 |
-| It is spawned once per declared stage and contributes at two of them | #3543 |
 | Nobody has benchmarked it against the built-in stage | #3544 |
 | The goldens have no `BLESS=1` regeneration path, so the fixture is defined twice the moment one changes | #3548 |
