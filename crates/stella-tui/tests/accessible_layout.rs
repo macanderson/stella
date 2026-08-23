@@ -92,10 +92,11 @@ fn one_agent() -> WorkspaceModel {
 // ───────────────────────────────── GRAPH ─────────────────────────────────
 
 /// The node list's block title, and the detail panel's — one per pane, and
-/// both on their pane's top border row, so a two-column layout puts them on
-/// the same terminal row and a stacked one cannot.
-const GRAPH_LIST: &str = " nodes · ";
-const GRAPH_DETAIL: &str = "engine step driver";
+/// both on their pane's last interior row — the list's legend and the
+/// coupling panel's caption — so a two-column layout puts them on the same
+/// terminal row and a stacked one cannot.
+const GRAPH_LIST: &str = "right column = edge count";
+const GRAPH_DETAIL: &str = "high coupling = blast radius";
 
 fn graph_ui(accessible: bool) -> DeckUi {
     let mut ui = deck_ui(DeckTab::Graph, accessible);
@@ -126,8 +127,8 @@ fn the_graph_tab_still_splits_side_by_side_by_default() {
 
 // ───────────────────────────────── SKILLS ────────────────────────────────
 
-const SKILLS_INSTALLED: &str = " Installed — ";
-const SKILLS_SEARCH: &str = " Registry search ";
+const SKILLS_INSTALLED: &str = " installed ·";
+const SKILLS_SEARCH: &str = " registry ·";
 
 fn skills_ui(accessible: bool) -> DeckUi {
     let mut ui = deck_ui(DeckTab::Skills, accessible);
@@ -156,17 +157,15 @@ fn the_skills_tab_stacks_its_panes_in_accessible_mode() {
     assert_linear(&frame, SKILLS_INSTALLED, SKILLS_SEARCH);
 }
 
+/// SPEC 9.2 stacks the two sources under one search box on every frame, so
+/// the ordinary deck already reads linearly and accessible mode changes
+/// nothing here.
 #[test]
-fn the_skills_tab_still_splits_side_by_side_by_default() {
+fn the_skills_tab_is_stacked_by_default_too() {
     let model = one_agent();
     let mut ui = skills_ui(false);
     let frame = rows(&model, &mut ui, W, H);
-    assert_both_present(&frame, SKILLS_INSTALLED, SKILLS_SEARCH);
-    assert!(
-        shares_a_row(&frame, SKILLS_INSTALLED, SKILLS_SEARCH),
-        "an ordinary session keeps the two-column skills manager:\n{}",
-        frame.join("\n")
-    );
+    assert_linear(&frame, SKILLS_INSTALLED, SKILLS_SEARCH);
 }
 
 // ────────────────────────────── SESSION RAIL ─────────────────────────────
@@ -199,50 +198,22 @@ fn scoped_session(accessible: bool) -> (WorkspaceModel, DeckUi) {
     (model, deck_ui(DeckTab::Session, accessible))
 }
 
-/// The rail's own block title. Deliberately not the step counts — the stacked
-/// fallback accessible mode takes carries those too.
-const RAIL_PLAN: &str = " PLAN ";
-/// The transcript pane's block title, which sits on the same row as the rail's
-/// when the two are side by side.
-const TRANSCRIPT_TITLE: &str = " transcript · ";
 const TRANSCRIPT_BODY: &str = "the transcript body";
 
+/// The transcript is full-width on both frames (SPEC 5): nothing sits beside
+/// it, so accessible mode has no column to stack and the body reaches the
+/// frame unchanged.
 #[test]
-fn the_session_tab_drops_the_side_rail_in_accessible_mode() {
-    let (model, mut ui) = scoped_session(true);
-    let frame = rows(&model, &mut ui, W, H);
-    assert!(
-        frame.iter().any(|r| r.contains(TRANSCRIPT_BODY)),
-        "the transcript still renders:\n{}",
-        frame.join("\n")
-    );
-    // The PANEL is still there — accessible mode stacks it — but it must never
-    // share a terminal row with the transcript, because read aloud that is one
-    // interleaved line.
-    assert!(
-        frame.iter().any(|r| r.contains(RAIL_PLAN)),
-        "the plan is stacked, not dropped — a surface that disappears in \
-         accessible mode is a surface screen-reader users do not have:\n{}",
-        frame.join("\n")
-    );
-    assert!(
-        !shares_a_row(&frame, TRANSCRIPT_TITLE, RAIL_PLAN),
-        "the rail is a column beside the transcript, so every row it occupies \
-         carries two panes; accessible mode stacks them into full-width bands \
-         instead:\n{}",
-        frame.join("\n")
-    );
-}
-
-#[test]
-fn the_session_tab_still_raises_the_side_rail_on_a_wide_frame_by_default() {
-    let (model, mut ui) = scoped_session(false);
-    let frame = rows(&model, &mut ui, W, H);
-    assert!(
-        shares_a_row(&frame, TRANSCRIPT_TITLE, RAIL_PLAN),
-        "an ordinary wide session keeps the rail beside the transcript:\n{}",
-        frame.join("\n")
-    );
+fn the_session_transcript_is_full_width_in_both_modes() {
+    for accessible in [false, true] {
+        let (model, mut ui) = scoped_session(accessible);
+        let frame = rows(&model, &mut ui, W, H);
+        assert!(
+            frame.iter().any(|r| r.contains(TRANSCRIPT_BODY)),
+            "the transcript renders (accessible={accessible}):\n{}",
+            frame.join("\n")
+        );
+    }
 }
 
 // ─────────────────────────── SCROLLBACK vs THE PANE ──────────────────────

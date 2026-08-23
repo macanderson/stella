@@ -137,11 +137,21 @@ fn push_body_line(
 /// gold end to end.
 pub(super) fn argument_rows(metal: Color, raw: &str, width: usize, out: &mut Vec<Line<'static>>) {
     let margin = block_margin(Style::new().fg(metal));
-    let pretty = serde_json::from_str::<serde_json::Value>(raw)
-        .and_then(|v| serde_json::to_string_pretty(&v))
-        .unwrap_or_else(|_| raw.to_owned());
-    for l in pretty.lines() {
-        push_body_line(&margin, l, BodyPaint::json(), width, out);
+    // Read as fields, never printed as JSON (`crate::v2::fields`). `raw` is
+    // capped to a char budget at fold time, so an over-budget argument may not
+    // re-parse; it is then lexed and wrapped rather than clipped at the pane
+    // edge, since it is capped JSON and not some other format.
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(value) => {
+            for line in crate::v2::fields::rows(&value) {
+                push_detail_spans(&margin, line.spans, width, out);
+            }
+        }
+        Err(_) => {
+            for l in raw.lines() {
+                push_body_line(&margin, l, BodyPaint::json(), width, out);
+            }
+        }
     }
 }
 
@@ -207,7 +217,16 @@ pub(super) fn result_body(
     // result has, which is the drift #3644 closed once already.
     let reindented = stella_transcript::syntax::reindent_json_body(full);
     let full: &str = reindented.as_deref().unwrap_or(full);
-    let total = full.lines().count();
+    // A result that *is* a JSON document — a `get_state` read, an MCP
+    // server's answer, a REST tool's body — is read as fields
+    // (`crate::v2::fields`), one per row, and never painted as JSON. The
+    // reindented text above still decides the line count the fold states,
+    // so the deck and the export agree about how much there is (#3644);
+    // only the rows drawn differ.
+    let table = crate::v2::fields::parse_document(full).map(|doc| crate::v2::fields::rows(&doc));
+    let total = table
+        .as_ref()
+        .map_or_else(|| full.lines().count(), Vec::len);
     // ⚡ marks a speculated result: the duration overlapped the
     // model's own streaming instead of following it.
     let dur = if speculated {
@@ -277,9 +296,38 @@ pub(super) fn result_body(
             width,
             out,
         );
-        let paint = body_paint(path, full);
-        for l in full.lines() {
-            push_body_line(&margin, l, paint, width, out);
+        if let Some(table) = table {
+            for line in table {
+                push_detail_spans(&margin, line.spans, width, out);
+            }
+        } else {
+            let paint = body_paint(path, full);
+            for l in full.lines() {
+                push_body_line(&margin, l, paint, width, out);
+            }
+        }
+    } else if let Some(table) = table {
+        // The field table's preview: the metric row, then the first
+        // `OK_PREVIEW` fields, then the count of the rest behind `ctrl+o`.
+        push_row(
+            rail,
+            justify(vec![], metric, width, rail.indent()),
+            width,
+            out,
+        );
+        let budget = if ok { OK_PREVIEW } else { FAIL_PREVIEW };
+        let shown = table.len().min(budget);
+        for line in table.into_iter().take(shown) {
+            push_detail_spans(&margin, line.spans, width, out);
+        }
+        let hidden = total.saturating_sub(shown);
+        if hidden > 0 {
+            push_detail_line(
+                &margin,
+                &format!("⋯ {} · ctrl+o", plural_fields(hidden)),
+                width,
+                out,
+            );
         }
     } else {
         // With a diff below, a prose summary ("Applied edit to
@@ -455,5 +503,14 @@ pub(super) fn result_body(
                 out,
             );
         }
+    }
+}
+
+/// `1 more field` / `3 more fields` — the hidden count under a folded table.
+fn plural_fields(n: usize) -> String {
+    if n == 1 {
+        "1 more field".to_string()
+    } else {
+        format!("{n} more fields")
     }
 }

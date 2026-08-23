@@ -357,23 +357,15 @@ fn entry_body(
         // turn is claimed by the v2 router above, which draws SPEC 6.1's
         // labelled rule instead.
         TranscriptEntry::Stage { name, .. } => {
-            // A section rule, not a row — see `push_rule`. The word "stage" is
-            // dropped with it: the label *is* the stage, and prefixing every
-            // one with its own type name was three columns spent restating
-            // what the divider already says.
-            //
-            // Hued by stage, not neutral. A rule may recede, but a stage
-            // boundary is the transcript's coarsest structure — the thing a
-            // reader scrolling back is looking *for* — and at
-            // `TEXT_SECONDARY` on a hairline it was the dimmest text on
-            // screen. `theme::stage_color` is the same mapping the statline's
-            // stage dot already uses, so the rule and the dot agree about
-            // which phase this is.
+            // A section rule, not a row — see `push_rule`. Quiet, in the rule
+            // tone with a muted lowercase word: SPEC 6.1 makes the *turn* the
+            // transcript's rhythm, and its opening rule (drawn by the v2
+            // router above) already names the stage the turn opened in. A
+            // later stage of the same turn is a sub-heading, and a bold
+            // uppercase one outshouted the turn rules it sits between.
             push_rule(
-                stage_label(name),
-                Style::new()
-                    .fg(theme::stage_rule_color(name))
-                    .add_modifier(Modifier::BOLD),
+                &stage_label(name).to_lowercase(),
+                Style::new().fg(stella_tui_theme::token::MUTED),
                 width,
                 out,
             );

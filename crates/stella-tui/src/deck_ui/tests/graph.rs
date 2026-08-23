@@ -46,7 +46,6 @@ fn installed_entry(name: &str, version: u32) -> InstalledAgentEntry {
 fn installed_ui(entries: Vec<InstalledAgentEntry>) -> DeckUi {
     let mut ui = ready_ui();
     ui.tab = DeckTab::Agents;
-    ui.agents_pane = AgentsPane::Installed;
     ui.installed.entries = entries;
     ui.installed.loaded = true;
     ui
@@ -65,27 +64,6 @@ fn slash_opens_the_picker_defaulting_to_the_current_focus() {
     assert!(
         ui.composer.buffer().is_empty(),
         "/ did not leak into the prompt"
-    );
-}
-
-#[test]
-fn agents_pane_arrows_switch_and_first_visit_asks_for_the_list() {
-    let model = model_with(&["lead"]);
-    let mut ui = ready_ui();
-    ui.tab = DeckTab::Agents;
-    assert_eq!(ui.agents_pane, AgentsPane::Executions, "executions first");
-    // → switches to INSTALLED AGENTS; the unloaded list triggers one
-    // refresh request.
-    let action = handle_deck_key(key(KeyCode::Right), &model, &mut ui);
-    assert_eq!(ui.agents_pane, AgentsPane::Installed);
-    assert_eq!(action, DeckAction::Send(WorkspaceInput::AgentsRefresh));
-    // ← switches back; → again does NOT re-fetch (busy flag pending).
-    handle_deck_key(key(KeyCode::Left), &model, &mut ui);
-    assert_eq!(ui.agents_pane, AgentsPane::Executions);
-    assert_eq!(
-        handle_deck_key(key(KeyCode::Right), &model, &mut ui),
-        DeckAction::Handled,
-        "no duplicate refresh while one is in flight"
     );
 }
 
@@ -211,7 +189,6 @@ fn slash_agents_opens_the_tab_on_the_installed_pane() {
     }
     let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
     assert_eq!(ui.tab, DeckTab::Agents, "/agents opens the Agents tab");
-    assert_eq!(ui.agents_pane, AgentsPane::Installed);
     assert_eq!(action, DeckAction::Send(WorkspaceInput::AgentsRefresh));
     assert!(ui.composer.buffer().is_empty(), "the composer cleared");
 }
@@ -545,4 +522,42 @@ fn installed_browse_letter_verbs_type_when_the_composer_has_text() {
         "a typed `n` is prompt text, not the create verb"
     );
     assert_eq!(ui.composer.buffer(), "hn");
+}
+
+/// `x` arms, a second `x` on the same row deletes; `a` hands the lead the
+/// agent's identity.
+#[test]
+fn installed_x_twice_deletes_and_a_assumes() {
+    let model = model_with(&["lead"]);
+    let mut ui = installed_ui(vec![
+        installed_entry("reviewer", 1),
+        installed_entry("tester", 1),
+    ]);
+    ui.installed.sel = 1;
+    assert_eq!(
+        handle_deck_key(ch('x'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert_eq!(ui.installed.delete_armed.as_deref(), Some("tester"));
+    // Any other key disarms.
+    handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    assert!(ui.installed.delete_armed.is_none());
+    assert_eq!(
+        handle_deck_key(ch('x'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    assert_eq!(
+        handle_deck_key(ch('x'), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::AgentDelete {
+            name: "reviewer".into(),
+            scope: AgentScope::Project,
+        })
+    );
+    assert_eq!(
+        handle_deck_key(ch('a'), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::AgentAssume {
+            name: "reviewer".into(),
+            scope: AgentScope::Project,
+        })
+    );
 }

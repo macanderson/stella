@@ -77,7 +77,6 @@ pub mod markdown;
 pub mod notice;
 pub mod palette;
 pub mod plan;
-pub mod progress;
 pub mod resource;
 pub mod scenario;
 pub mod splash;

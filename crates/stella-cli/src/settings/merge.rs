@@ -117,6 +117,23 @@ impl Settings {
         Ok(loaded.settings)
     }
 
+    /// The user scope alone, unmerged — what `~/.stella/stella.toml` (or the
+    /// JSON it shadows) says and nothing else. A writer that edits one field
+    /// of a user-scope section reads through this first, so it rewrites the
+    /// section it found rather than a fresh one that drops every sibling key
+    /// (`/theme` and `ui.mid_turn_prompt` share `[ui]`).
+    pub(crate) fn load_user_scope(notices: &mut Vec<String>) -> Result<Self, String> {
+        Ok(
+            match (user_settings_path(), toml_config::user_toml_path()) {
+                (Some(json), Some(toml)) => {
+                    Self::load_scope_dual(&toml, &json, ConfigScope::User, notices)?
+                }
+                (Some(json), None) => Self::load_scope(&json)?,
+                (None, _) => Self::default(),
+            },
+        )
+    }
+
     /// The managed tier's dual read.
     ///
     /// Differs from the other two scopes in one way that matters: when
@@ -446,13 +463,7 @@ impl Settings {
 
         let mut notices: Vec<String> = Vec::new();
 
-        let user = match (user_settings_path(), toml_config::user_toml_path()) {
-            (Some(json), Some(toml)) => {
-                Self::load_scope_dual(&toml, &json, ConfigScope::User, &mut notices)?
-            }
-            (Some(json), None) => Self::load_scope(&json)?,
-            (None, _) => Self::default(),
-        };
+        let user = Self::load_user_scope(&mut notices)?;
         let (_managed_path, managed) = Self::load_managed_scope_dual(&mut notices)?;
         let project_json = project_settings_path(workspace_root);
         let project_toml = toml_config::project_toml_path(workspace_root);

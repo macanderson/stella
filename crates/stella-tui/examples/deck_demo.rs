@@ -83,9 +83,12 @@ async fn main() -> std::io::Result<()> {
         while let Some(input) = sub_rx.recv().await {
             match input {
                 // The demo has no real dispatch queue, so a front-insert
-                // (the first submission after a double-Esc hold) starts a
-                // scripted run just like a plain enqueue.
-                WorkspaceInput::Enqueue { text } | WorkspaceInput::EnqueueFront { text } => {
+                // (the first submission after a double-Esc hold) and a
+                // wait-your-turn queue both start a scripted run just like a
+                // plain enqueue.
+                WorkspaceInput::Enqueue { text }
+                | WorkspaceInput::EnqueueFront { text }
+                | WorkspaceInput::EnqueueNext { text } => {
                     n += 1;
                     let id = format!("you:{n}");
                     let _ = react_tx.send(Inbound::Register(
@@ -247,7 +250,9 @@ async fn main() -> std::io::Result<()> {
                 WorkspaceInput::AgentsRefresh
                 | WorkspaceInput::AgentSave { .. }
                 | WorkspaceInput::AgentPin { .. }
-                | WorkspaceInput::AgentCreate { .. } => {
+                | WorkspaceInput::AgentCreate { .. }
+                | WorkspaceInput::AgentDelete { .. }
+                | WorkspaceInput::AgentAssume { .. } => {
                     let _ = react_tx.send(Inbound::AgentsList {
                         entries: vec![],
                         status: Some("the demo has no agents on disk".to_string()),
@@ -297,7 +302,8 @@ async fn main() -> std::io::Result<()> {
                 WorkspaceInput::SessionsRefresh
                 | WorkspaceInput::SessionArchive { .. }
                 | WorkspaceInput::SessionDelete { .. }
-                | WorkspaceInput::SessionResume { .. } => {
+                | WorkspaceInput::SessionResume { .. }
+                | WorkspaceInput::SessionNew => {
                     let _ = react_tx.send(Inbound::Sessions(vec![]));
                 }
                 // Replay needs the real driver's store; the demo has nothing

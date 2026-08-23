@@ -302,14 +302,18 @@ fn ctrl_o_on_a_call_reveals_its_arguments() {
          proves nothing:\n{collapsed:#?}"
     );
     assert!(
-        expanded.iter().any(|r| r.contains("\"old_string\"")),
+        expanded.iter().any(|r| r.contains("old_string alpha")),
         "ctrl+o revealed nothing — the argument object is unreachable:\n{expanded:#?}"
     );
-    // Pretty-printed, not the compact one-liner it arrived as: a flat object
-    // has no shape for a key hue to mark, which is the whole reason to expand.
+    // One field per row (`v2::fields`), not the compact one-liner it arrived
+    // as — three fields, three rows under the head.
     assert!(
-        expanded.len() > collapsed.len() + 3,
-        "the arguments were shown, but on one line:\n{expanded:#?}"
+        expanded.len() >= collapsed.len() + 3,
+        "the arguments were shown, but not one per row:\n{expanded:#?}"
+    );
+    assert!(
+        !expanded.iter().any(|r| r.contains('{') || r.contains('"')),
+        "JSON punctuation reached the pane:\n{expanded:#?}"
     );
 }
 

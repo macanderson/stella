@@ -41,10 +41,10 @@ use crate::deck_ui::{DeckAction, DeckUi};
 use crate::theme;
 
 /// Which pane this tab shows — its secondary nav, switched with ←/→ exactly
-/// like [`crate::deck_ui::AgentsPane`]. Each pane is one config editor
+/// like the SKILLS tab's panes. Each pane is one config editor
 /// rendered full-width; `e` hands it the keyboard.
 ///
-/// It lives here rather than beside `AgentsPane` for the same reason
+/// It lives here rather than in `deck_ui` for the same reason
 /// `ToolsOverlay`/`EngineOverlay` do: the view that draws a piece of state
 /// owns it, and `deck_ui.rs` is the tree's most oversized module.
 ///

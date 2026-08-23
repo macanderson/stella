@@ -193,8 +193,11 @@ pub(super) fn format_tool_input(input: &serde_json::Value) -> String {
     if input.as_object().is_some_and(serde_json::Map::is_empty) || input.is_null() {
         return String::new();
     }
-    // Fallback: compact JSON, summarized.
-    summarize(&compact_json(input))
+    // Anything else is read as fields, never printed as JSON: a `task_create`
+    // head names its tasks, a `save_state` head names its key. The wire's
+    // braces and quotes are what the transport needed, not what a reader
+    // does — `v2::fields` carries the vocabulary.
+    summarize(&crate::v2::fields::headline(input))
 }
 
 /// Truncate a field value to `max` chars with an ellipsis. Cuts *before*

@@ -160,12 +160,12 @@ fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
             ),
         ],
         DeckTab::Agents => &[
-            ("← →", "switch panes — executions / installed"),
-            ("↑ ↓", "select an agent"),
-            ("⏎", "open the selected agent's session"),
-            ("s / p / r", "stop · pause · restart the selected agent"),
-            ("⏎", "installed pane: edit · v versions · r reload"),
+            ("↑ ↓", "select an installed agent"),
+            ("⏎", "edit the definition — a save is a new pinned version"),
+            ("a", "assume its identity: the lead runs as this agent"),
             ("n", "new agent — drafted by the LLM"),
+            ("x x", "delete the agent, every version"),
+            ("v / r", "versions · reload"),
         ],
         DeckTab::Traces => &[
             ("↑ ↓ ⇞ ⇟", "scroll the event log"),

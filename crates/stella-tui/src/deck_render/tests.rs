@@ -1,6 +1,5 @@
 #![allow(clippy::field_reassign_with_default)]
 
-use super::footer::render_composer_footer;
 use super::*;
 use crate::envelope::{AgentMeta, Inbound};
 use ratatui::Terminal;
@@ -43,13 +42,12 @@ fn full_deck_frame_composes_every_band_at_80_cols() {
             eprintln!("\n──── deck @ {w}×{h} ────\n{text}\n");
         }
         for needle in [
-            ">>>",      // accent prompt prefix (§4)
-            "add nav",  // typed prompt text
-            "new line", // composer footer affordance (§4)
-            "queue",    // footer / queue status
-            "plan",     // progress stage labels (§3)
-            "execute", "verify", // progress stage labels (§3)
-            "? help", // the status bar's right-pinned affordance (SPEC 5)
+            ">>>",     // accent prompt prefix (§4)
+            "add nav", // typed prompt text
+            "queue",   // the hint row's `⏎ queue` (SPEC 5)
+            "execute", // the status bar's stage cell
+            "? help",  // the status bar's right-pinned affordance (SPEC 5)
+            "stella*", // the wordmark on the tab row (SPEC 3.3)
         ] {
             assert!(
                 text.contains(needle),
@@ -158,38 +156,6 @@ fn full_deck_frame_grows_a_second_status_band_row_for_a_diagnosed_agent() {
             && !healthy_text.contains("prompt prefix is unstable"),
         "a healthy session must not show a diagnosis:\n{healthy_text}"
     );
-}
-
-#[test]
-fn trace_strip_shows_a_rule_and_the_newest_trace_entry() {
-    let mut model = running_model_with_queue();
-    model.apply_inbound(&Inbound::Event {
-        agent: "lead".into(),
-        event: AgentEvent::Text {
-            text: "Found the root cause.".into(),
-        },
-    });
-    let area = Rect::new(0, 0, 60, 2);
-    let mut buf = Buffer::empty(area);
-    render_trace_strip(&model, area, &mut buf);
-    let text = buffer_text(&buf);
-    let rows: Vec<&str> = text.lines().collect();
-    assert!(
-        rows[0].starts_with("──"),
-        "hairline rule on top: {:?}",
-        rows[0]
-    );
-    assert!(rows[1].contains("text"), "kind label shown:\n{text}");
-    assert!(
-        rows[1].contains("Found the root cause."),
-        "newest entry summarized:\n{text}"
-    );
-
-    // No trace yet → a quiet idle line, never a panic.
-    let empty = WorkspaceModel::new();
-    let mut buf = Buffer::empty(area);
-    render_trace_strip(&empty, area, &mut buf);
-    assert!(buffer_text(&buf).contains("no activity yet"));
 }
 
 fn running_model_with_queue() -> WorkspaceModel {
@@ -404,132 +370,6 @@ fn render_deck_hides_the_hardware_cursor_under_a_modal_overlay() {
 /// hint outranks `queue (never blocks)` and takes its columns — which used to
 /// look like both being present only because the row was clipped mid-word.
 #[test]
-fn composer_footer_shows_keys_line_counter_and_queue_status() {
-    let model = running_model_with_queue();
-    let ui = DeckUi::default();
-    let layout = crate::composer::layout(&ui.composer, 40);
-    let area = Rect::new(0, 0, 140, 1);
-    let mut buf = Buffer::empty(area);
-    render_composer_footer(&model, &ui, &layout, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(text.contains("new line"), "newline affordance:\n{text}");
-    assert!(
-        text.contains("queue (never blocks)"),
-        "queue affordance:\n{text}"
-    );
-    assert!(text.contains("1 line"), "live line counter:\n{text}");
-    assert!(
-        text.contains("2 queued"),
-        "queue status on the right:\n{text}"
-    );
-}
-
-#[test]
-fn composer_footer_reports_a_held_queue() {
-    let model = running_model_with_queue();
-    let mut ui = DeckUi::default();
-    ui.dispatch_held = true;
-    let layout = crate::composer::layout(&ui.composer, 40);
-    let area = Rect::new(0, 0, 100, 1);
-    let mut buf = Buffer::empty(area);
-    render_composer_footer(&model, &ui, &layout, area, &mut buf);
-    assert!(buffer_text(&buf).contains("2 held"), "held status shown");
-}
-
-/// `>` is how a user redirects a turn that is going the wrong way, and it was
-/// advertised nowhere — the footer offered only "queue (never blocks)", which
-/// describes what happens to a prompt typed mid-turn without saying that the
-/// alternative exists. It appears while the focused agent is running.
-#[test]
-fn the_footer_advertises_the_steer_marker_while_a_turn_runs() {
-    let model = running_model_with_queue();
-    let ui = DeckUi::default();
-    let layout = crate::composer::layout(&ui.composer, 40);
-    let area = Rect::new(0, 0, 100, 1);
-    let mut buf = Buffer::empty(area);
-    render_composer_footer(&model, &ui, &layout, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(
-        text.contains("steer this turn"),
-        "steer affordance:\n{text}"
-    );
-}
-
-/// Every hint on the footer's left run is drawn whole, or not drawn at all.
-///
-/// The row is two groups sharing one line, and the left one is clipped to
-/// whatever the right-aligned readout leaves. Before #3591 the steer hint was
-/// pushed without consulting that budget, so a narrow row cut it mid-word and
-/// landed the remainder directly against the readout —
-/// `esc / > steer thturn $0.0390`, which reads as a typo in the product.
-///
-/// This pins the invariant rather than a column count, because a count goes
-/// stale the moment someone edits a label: strip the readout, and whatever is
-/// left must be a `·`-separated run of **complete** hints, with at least one
-/// blank column before the readout begins.
-#[test]
-fn the_footer_never_clips_a_hint_into_the_counter_at_any_width() {
-    /// Every affordance the left run can carry, exactly as it composes.
-    const HINTS: [&str; 5] = [
-        "⌘⏎ new line",
-        "⏎ queue (never blocks)",
-        "esc / > steer this turn",
-        "! shell",
-        "/ commands",
-    ];
-    let model = running_model_with_queue();
-    let ui = DeckUi::default();
-    let layout = crate::composer::layout(&ui.composer, 40);
-    for width in 60u16..=160 {
-        let area = Rect::new(0, 0, width, 1);
-        let mut buf = Buffer::empty(area);
-        render_composer_footer(&model, &ui, &layout, area, &mut buf);
-        let text = buffer_text(&buf);
-        let readout = text
-            .rfind("turn $")
-            .unwrap_or_else(|| panic!("the right readout is drawn at width {width}:\n{text}"));
-        assert!(
-            text[..readout].ends_with(' '),
-            "the left run abuts the readout at width {width}:\n{text}"
-        );
-        let left = text[..readout].trim();
-        if left.is_empty() {
-            continue; // a row too narrow for even one hint is a clean drop
-        }
-        for part in left.split('·') {
-            let part = part.trim();
-            assert!(
-                HINTS.contains(&part),
-                "width {width} drew a partial hint {part:?}:\n{text}"
-            );
-        }
-    }
-}
-
-/// …and only then. At an idle agent a leading `>` is not a steer marker, it
-/// is the first character of the next prompt, so advertising it there would
-/// be a lie that costs the row width the counter needs.
-#[test]
-fn the_footer_hides_the_steer_marker_when_nothing_is_running() {
-    let mut model = WorkspaceModel::new();
-    model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
-    model.apply_inbound(&Inbound::Status {
-        agent: "lead".into(),
-        status: crate::AgentStatus::WaitingInput,
-    });
-    let ui = DeckUi::default();
-    let layout = crate::composer::layout(&ui.composer, 40);
-    let area = Rect::new(0, 0, 100, 1);
-    let mut buf = Buffer::empty(area);
-    render_composer_footer(&model, &ui, &layout, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(
-        !text.contains("steer"),
-        "no steer affordance at rest:\n{text}"
-    );
-}
-
-#[test]
 fn queue_popup_lists_prompts_and_arms_the_clear_confirm() {
     let model = running_model_with_queue();
     let mut ui = DeckUi::default();
@@ -672,51 +512,6 @@ fn inspect_overlay_scroll_saturates_past_u16_instead_of_wrapping() {
     );
 }
 
-#[test]
-fn sessions_overlay_repeats_the_heading_when_scrolled_into_a_group_midway() {
-    // Selection deep inside a long group: the group's first rows are above
-    // the window, but the heading must still render above the visible rows —
-    // without it the phase of what's on screen is unreadable.
-    fn session(i: usize, phase: crate::envelope::SessionPhase) -> crate::envelope::SessionInfo {
-        crate::envelope::SessionInfo {
-            id: format!("ses-{i}"),
-            title: format!("session {i:02}"),
-            summary: String::new(),
-            workspace: "/tmp/w".into(),
-            phase,
-            started_ms: 0,
-            updated_ms: 0,
-            mine: false,
-            resumable: false,
-        }
-    }
-    let model = WorkspaceModel::new();
-    let mut ui = DeckUi::default();
-    ui.sessions_open = true;
-    ui.sessions = (0..5)
-        .map(|i| session(i, crate::envelope::SessionPhase::InProgress))
-        .chain((5..30).map(|i| session(i, crate::envelope::SessionPhase::Complete)))
-        .collect();
-    ui.sessions_sel = 20; // mid-Complete: the group starts at flat index 5
-
-    let area = Rect::new(0, 0, 100, 30);
-    let mut buf = Buffer::empty(area);
-    render_sessions_overlay(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(
-        text.contains("COMPLETE (25)"),
-        "the heading repeats for a group entered mid-way:\n{text}"
-    );
-    assert!(
-        !text.contains("IN PROGRESS"),
-        "a group scrolled fully out keeps no stray heading:\n{text}"
-    );
-    assert!(
-        text.contains("session 20"),
-        "the selected row is in the window:\n{text}"
-    );
-}
-
 /// L-T7 for the deck (#933): a panic inside one band renders an error card in
 /// that band, every other band still draws, and the next frame is the real
 /// view again — the `DeckUi` came through the caught panic intact.
@@ -760,7 +555,7 @@ fn a_panicking_deck_view_renders_an_error_card_and_the_session_survives() {
     );
     // `ctx ` is the status bar band (SPEC 5), which replaced the statline's
     // `MODEL` micro-label — the marker this used to look for.
-    for surviving in [">>>", "ctx ", "AGENTS"] {
+    for surviving in [">>>", "ctx ", "stella*"] {
         assert!(
             text.contains(surviving),
             "the surviving bands still rendered ({surviving:?} missing):\n{text}"

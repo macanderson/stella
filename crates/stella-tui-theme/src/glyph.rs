@@ -2,7 +2,7 @@
 //! plugin-drawn UI.
 //!
 //! Glyphs exist so colour is never the only carrier of state (SPEC 2, SPEC
-//! 13). That makes them load-bearing under `NO_COLOR`, on a 16-color
+//! 13). They are the only carrier under `NO_COLOR`, on a 16-color
 //! terminal where the metals collapse toward each other, and for red/green
 //! colour blindness — which is why they live beside the palette rather than
 //! inside whichever widget first needed one.
@@ -22,10 +22,10 @@
 //! `BLOCK_EIGHTHS[8]`. [`width`] answers one for all of them, because that is
 //! what every non-CJK configuration draws and what the layout budgets.
 //!
-//! The hazard is named rather than silently inherited, and it predates the
-//! tool-class rows below: six of those seven shipped before them. It is not
-//! guarded, because nothing here knows the terminal's ambiguous-width setting
-//! — a real fix means asking the terminal, not asserting a number.
+//! The hazard predates the tool-class rows below: six of those seven shipped
+//! before them. It is not guarded, because nothing here knows the terminal's
+//! ambiguous-width setting — a real fix means asking the terminal, not
+//! asserting a number.
 
 /// Done, pass. Green.
 pub const DONE: char = '✓';

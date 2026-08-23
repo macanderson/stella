@@ -163,6 +163,7 @@ pub mod notify;
 pub mod prune;
 pub mod reflection;
 pub mod scoreboard;
+pub mod session_stats;
 pub mod sessions;
 pub mod task_board;
 pub mod turn_diffs;
@@ -193,6 +194,7 @@ pub use export::ExportExclusions;
 pub use forget::{ContextSurface, SurfaceSuppression, is_restatement, is_suppressed};
 pub use foundry::{AdoptedTool, FoundryReuse};
 pub use integrity::{IntegrityDepth, IntegrityReport, StoreQuarantine};
+pub use session_stats::{PROMPT_SAMPLE, SessionStats};
 // The sidecar journal's writer is deliberately NOT re-exported at the top
 // level: `SessionJournal` here names the DB read-model reassembled by
 // [`Store::session_events`] (read-only replay), while

@@ -15,6 +15,10 @@ fn session_info(id: &str) -> crate::envelope::SessionInfo {
         updated_ms: 0,
         mine: false,
         resumable: false,
+        description: None,
+        turns: 0,
+        spend_micros: 0,
+        model: None,
     }
 }
 
@@ -152,6 +156,10 @@ fn session_row(
         updated_ms: 0,
         mine,
         resumable,
+        description: None,
+        turns: 0,
+        spend_micros: 0,
+        model: None,
     }
 }
 
@@ -167,7 +175,7 @@ fn sessions_overlay_enter_resumes_resumable_rows_and_opens_the_rest() {
         session_row("ses-foreign", SessionPhase::Complete, false, false),
     ];
 
-    // Grouped order: InProgress (mine) · Paused (resumable) · Complete.
+    // Order: live first (mine, then the paused one), then Complete.
     // ⏎ on the resumable row navigates into it LIVE: the overlay closes
     // and the driver is told to resume exactly that session.
     ui.sessions_sel = 1;
@@ -193,17 +201,11 @@ fn sessions_overlay_enter_resumes_resumable_rows_and_opens_the_rest() {
 }
 
 #[test]
-fn paused_sessions_group_between_needs_input_and_cancelled() {
-    use crate::envelope::SessionPhase;
-    let mut ui = DeckUi::default();
-    ui.sessions = vec![
-        session_row("c", SessionPhase::Cancelled, false, true),
-        session_row("p", SessionPhase::Paused, false, true),
-        session_row("n", SessionPhase::NeedsInput, false, false),
-    ];
-    let order: Vec<&str> = grouped_session_rows(&ui)
-        .iter()
-        .map(|s| s.id.as_str())
-        .collect();
-    assert_eq!(order, ["n", "p", "c"]);
+fn sessions_overlay_n_asks_for_a_new_session_and_closes() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.sessions_open = true;
+    let action = handle_deck_key(key(KeyCode::Char('n')), &model, &mut ui);
+    assert_eq!(action, DeckAction::Send(WorkspaceInput::SessionNew));
+    assert!(!ui.sessions_open, "the overlay closes on hand-over");
 }

@@ -68,20 +68,6 @@ pub struct DeckMetrics {
     pub help_total: usize,
 }
 
-/// Which pane the AGENTS tab shows — its secondary nav, switched with ←/→
-/// (from a blank composer, exactly like the other blank-gated tab keys).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AgentsPane {
-    /// The `htop`-style dashboard of currently ACTIVE agents (the
-    /// pre-existing Agents view).
-    #[default]
-    Executions,
-    /// The agents INSTALLED at the user / project level: inspect
-    /// name/description/toolbelt, edit (a save is a NEW pinned version),
-    /// re-pin an older version, create one from a prompt.
-    Installed,
-}
-
 /// The INSTALLED AGENTS pane's interaction mode. `Browse` is plain tab
 /// state (the composer stays live, like every other tab); every other mode
 /// is modal — it owns the keyboard while open, exactly like the queue
@@ -112,10 +98,8 @@ pub enum InstalledMode {
     PickVersion,
 }
 
-/// The INSTALLED AGENTS pane's view state. The list itself is driven
-/// entirely by [`Inbound::AgentsList`] snapshots the driver sends — the
-/// panel owns only selection, the modal sub-states, and their input
-/// buffers, exactly like the queue editor owns only `queue_sel`.
+/// The AGENTS tab's state: the installed definitions and the modal sub-views
+/// over them (editor, create flow, version picker).
 #[derive(Debug, Clone)]
 pub struct InstalledPanel {
     /// Newest driver snapshot of the installed agents.
@@ -152,6 +136,12 @@ pub struct InstalledPanel {
     pub created_scroll: u16,
     /// Selected row in the version picker.
     pub version_sel: usize,
+    /// The agent `x` was pressed on once; a second `x` on the same row
+    /// deletes it, any other key disarms.
+    pub delete_armed: Option<String>,
+    /// The installed agent the lead is running as
+    /// ([`Inbound::AgentAssumed`]).
+    pub assumed: Option<String>,
 }
 
 impl Default for InstalledPanel {
@@ -171,6 +161,8 @@ impl Default for InstalledPanel {
             create_error: None,
             created_scroll: 0,
             version_sel: 0,
+            delete_armed: None,
+            assumed: None,
         }
     }
 }
@@ -570,8 +562,6 @@ pub(crate) fn typeahead_after_edit(panel: &mut IssuesPanel) -> Option<WorkspaceI
 #[derive(Debug, Clone)]
 pub struct DeckUi {
     pub tab: DeckTab,
-    /// The AGENTS tab's secondary nav: EXECUTIONS | INSTALLED AGENTS.
-    pub agents_pane: AgentsPane,
     /// The SETTINGS tab's secondary nav: AGENTS | TOOLS. Which editor the tab
     /// renders full-width, and which one `e` focuses.
     pub settings_pane: crate::views::settings::SettingsPane,
@@ -587,8 +577,8 @@ pub struct DeckUi {
     /// to say whether it steers the running turn, continues the thread, or
     /// forks a sidecar. See [`dispatch`].
     pub pending_dispatch: Option<PendingDispatch>,
-    /// Whether that card is raised at all (default: yes).
-    pub ask_before_spawn: AskBeforeSpawn,
+    /// What a plain mid-turn prompt does (`ui.mid_turn_prompt`); see [`dispatch`].
+    pub mid_turn_prompt: MidTurnPrompt,
     pub splash: SplashState,
     /// Startup system notifications, shown as a transient dialog rather than
     /// as transcript rows (see [`crate::notice`]).
@@ -747,8 +737,11 @@ pub struct DeckUi {
     /// The machine-wide session registry snapshot ([`Inbound::Sessions`]),
     /// pre-sorted by the driver; the overlay groups it by phase.
     pub sessions: Vec<crate::envelope::SessionInfo>,
-    /// Selected row in the overlay's flattened (grouped) row list.
+    /// Selected row in the overlay's row list.
     pub sessions_sel: usize,
+    /// `h` in the overlay: list every session on the machine rather than
+    /// this workspace's recent ones and the live ones (see `sessions`).
+    pub sessions_show_all: bool,
     /// Whether the CONTEXT overlay is open (empty-prompt `→` on the Session
     /// tab, or `/context`): active skills + MCP servers for THIS session,
     /// rendered from the already-live `skills`/`mcp` snapshots.
@@ -820,14 +813,13 @@ impl Default for DeckUi {
     fn default() -> Self {
         Self {
             tab: DeckTab::Session,
-            agents_pane: AgentsPane::default(),
             settings_pane: crate::views::settings::SettingsPane::default(),
             installed: InstalledPanel::default(),
             skills: SkillsPanel::default(),
             issues: IssuesPanel::default(),
             composer: Composer::with_paste_threshold(crate::composer::DECK_PASTE_LINE_THRESHOLD),
             pending_dispatch: None,
-            ask_before_spawn: AskBeforeSpawn::default(),
+            mid_turn_prompt: MidTurnPrompt::default(),
             splash: SplashState::new(),
             notice: NoticeState::new(),
             index_readiness: IndexReadiness::unknown(),
@@ -876,6 +868,7 @@ impl Default for DeckUi {
             accessible: false,
             scrollback: crate::accessible::Scrollback::default(),
             sessions_open: false,
+            sessions_show_all: false,
             sessions: Vec::new(),
             sessions_sel: 0,
             context_open: false,
@@ -1112,6 +1105,14 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // The installed-agents list is out-of-band view state too — the driver
     // owns the definitions on disk and pushes fresh snapshots here; the
     // model fold ignores them.
+    if let Inbound::AgentAssumed { name } = inbound {
+        ui.installed.assumed = name.clone();
+        ui.installed.status = Some(match name {
+            Some(name) => format!("the lead is now {name} — from the next turn on"),
+            None => "the lead is back to the plain persona".to_string(),
+        });
+        return;
+    }
     if let Inbound::AgentsList {
         entries,
         status,
@@ -1545,13 +1546,15 @@ pub mod cards;
 mod create;
 pub mod dispatch;
 mod gates;
+mod local;
 mod parked;
+pub mod sessions;
 /// Esc-with-something-to-say — see [`steer`].
 mod steer;
 pub use gates::HunkMarks;
 mod nav;
 mod queue_editor;
-pub use dispatch::{AskBeforeSpawn, DispatchRoute, PendingDispatch};
+pub use dispatch::{DispatchRoute, MidTurnPrompt, PendingDispatch};
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
 use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
@@ -1786,7 +1789,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // The SESSIONS / INBOX / CONTEXT overlays are modal exactly like the
     // queue editor while open: they own the keyboard until dismissed.
     if ui.sessions_open {
-        return handle_sessions_key(key, ui);
+        return sessions::handle_sessions_key(key, model.now_ms, ui);
     }
     if ui.inbox_open {
         return handle_inbox_key(key, ui);
@@ -1933,7 +1936,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
 
     // Per-tab navigation for non-typing keys…
     if let Some(action) = match ui.tab {
-        DeckTab::Agents => handle_agents_key(key, model, ui, composer_empty),
+        DeckTab::Agents => handle_agents_key(key, ui, composer_empty),
         DeckTab::Traces => handle_traces_key(key, model, ui, composer_empty),
         DeckTab::Graph => handle_graph_key(key, ui, composer_empty),
         DeckTab::Files => handle_files_key(key, model, ui, composer_empty),
@@ -2034,6 +2037,11 @@ fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
 /// where it belongs. A held dispatch skips the card: the double-Esc already
 /// *was* the user saying "run mine next".
 fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckAction {
+    // A deck-local command acts on the view whether it arrived from the
+    // slash popup or was typed out and submitted — see `local`.
+    if let Some(action) = local::deck_local_command(text.trim(), ui) {
+        return action;
+    }
     // `/clear` never queues — not behind a running turn, not behind a held
     // dispatch. It leaves as [`WorkspaceInput::SessionClear`], which resets
     // the session NOW (the driver cancels an in-flight turn first); watching
@@ -2075,88 +2083,7 @@ fn handle_slash_key(
 ) -> Option<DeckAction> {
     match handle_slash_popup_key(key, matches, &mut ui.composer, &mut ui.slash_selected)? {
         SlashPopupOutcome::Handled => Some(DeckAction::Handled),
-        SlashPopupOutcome::Submit(text) => Some(match text.as_str() {
-            // Only the tab-switch commands are deck-local (they change view
-            // state the driver has no say over). `/diff` opens the diff
-            // viewer; `/files` shows the file tree, so it must also *close* a
-            // diff left open from a prior view.
-            "/files" | "/diff" => {
-                ui.set_tab(DeckTab::Files);
-                ui.files_diff_open = text == "/diff";
-                DeckAction::Handled
-            }
-            "/graph" => {
-                ui.set_tab(DeckTab::Graph);
-                DeckAction::Handled
-            }
-            // `/agents` opens the AGENTS tab directly, on the INSTALLED
-            // AGENTS pane (the configured-on-disk view the command has
-            // always been about) — and asks the driver, which owns the
-            // definitions on disk, for a fresh list.
-            "/agents" => {
-                ui.set_tab(DeckTab::Agents);
-                ui.agents_pane = AgentsPane::Installed;
-                ui.installed.busy = true;
-                DeckAction::Send(WorkspaceInput::AgentsRefresh)
-            }
-            // `/skills` opens the SKILLS tab directly and asks the driver —
-            // which owns the skills on disk — for a fresh installed list.
-            "/skills" => {
-                ui.set_tab(DeckTab::Skills);
-                ui.skills.status = Some("loading skills…".to_string());
-                DeckAction::Send(WorkspaceInput::Skill(SkillOp::List))
-            }
-            "/mcp" => {
-                ui.set_tab(DeckTab::Mcp);
-                DeckAction::Handled
-            }
-            // `/settings` opens the SETTINGS tab — the home of all config
-            // (deck-local view state, like the tab switches above).
-            "/settings" => {
-                ui.set_tab(DeckTab::Settings);
-                DeckAction::Handled
-            }
-            // The three transcript-page overlays are deck-local view state,
-            // exactly like the tab switches above (their keyboard shortcuts:
-            // empty-prompt `←` / `→`, and the footer's ✉ badge for the inbox).
-            "/sessions" => open_sessions_overlay(ui),
-            "/context" => open_context_overlay(ui),
-            "/inspect" => open_inspect_overlay(ui),
-            "/inbox" => open_inbox_overlay(ui),
-            // `/mcp-search` jumps straight into the MCP tab's registry
-            // search — THE way to begin looking for a server from anywhere
-            // (the old `/`-on-the-MCP-tab trigger collided with the command
-            // menu and is gone; `s` on the tab is the local equivalent).
-            "/mcp-search" => {
-                ui.set_tab(DeckTab::Mcp);
-                ui.mcp.mode = McpMode::Search;
-                ui.mcp.status = None;
-                DeckAction::Handled
-            }
-            // The floating cards: pure view state, so the driver has no say.
-            // `/budget` only *renders* locally — the edit it takes leaves as
-            // `WorkspaceInput::SetBudget` from the card's own key handler.
-            // `/plan` is one card where `/tasks`, `/scope` and `/witness`
-            // used to be three. The old names still route here rather than
-            // erroring: a user who learned them should land on the surface
-            // that answers what they were asking, not on "unknown command".
-            "/plan" | "/tasks" | "/scope" | "/witness" => {
-                ui.cards.raise(cards::Card::Plan);
-                DeckAction::Handled
-            }
-            "/models" => {
-                ui.cards.raise(cards::Card::Models);
-                DeckAction::Handled
-            }
-            "/budget" => {
-                ui.cards.raise(cards::Card::Budget);
-                DeckAction::Handled
-            }
-            // Everything else — including `/help` — is enqueued for the
-            // driver, which owns the session vocabulary and answers into the
-            // transcript (a transient overlay would leave no record).
-            _ => submit_prompt(ui, model, text),
-        }),
+        SlashPopupOutcome::Submit(text) => Some(submit_prompt(ui, model, text)),
     }
 }
 
@@ -2200,85 +2127,6 @@ pub(crate) fn open_inbox_overlay(ui: &mut DeckUi) -> DeckAction {
     ui.inbox_open = true;
     ui.inbox_sel = 0;
     DeckAction::Handled
-}
-
-/// The SESSIONS overlay's rows in display order: grouped by phase (the
-/// [`crate::envelope::SessionPhase::ALL`] order), newest-started first within
-/// a group — the flat list `sessions_sel` indexes and render walks.
-pub fn grouped_session_rows(ui: &DeckUi) -> Vec<&crate::envelope::SessionInfo> {
-    let mut rows = Vec::with_capacity(ui.sessions.len());
-    for phase in crate::envelope::SessionPhase::ALL {
-        // `Inbound::Sessions` arrives newest-started first from the driver,
-        // so a stable filter keeps that order within each group.
-        rows.extend(ui.sessions.iter().filter(|s| s.phase == phase));
-    }
-    rows
-}
-
-/// The SESSIONS overlay key map: ↑/↓ select, `⏎` resume the selected session
-/// when its row is resumable (the durable-state sessions of THIS workspace
-/// with no live owner) or open it read-only (replay) otherwise, `a` archive,
-/// `x` delete (another session's record only — never this session's own),
-/// `r` refresh, Esc/`←`/`q` close. Modal: everything else is swallowed.
-fn handle_sessions_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    let count = grouped_session_rows(ui).len();
-    ui.sessions_sel = ui.sessions_sel.min(count.saturating_sub(1));
-    match key.code {
-        KeyCode::Esc | KeyCode::Left | KeyCode::Char('q') => {
-            ui.sessions_open = false;
-            DeckAction::Handled
-        }
-        KeyCode::Up => {
-            ui.sessions_sel = ui.sessions_sel.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.sessions_sel = (ui.sessions_sel + 1).min(count - 1);
-            }
-            DeckAction::Handled
-        }
-        KeyCode::Enter => {
-            match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
-                // Navigate INTO the chosen session live: close the overlay
-                // and hand over to the driver, which adopts the durable
-                // state and continues the session in this deck (see
-                // [`WorkspaceInput::SessionResume`]).
-                Some(row) if row.resumable && !row.mine => {
-                    let id = row.id.clone();
-                    ui.sessions_open = false;
-                    DeckAction::Send(WorkspaceInput::SessionResume { id })
-                }
-                // Every other row opens read-only: the driver registers a
-                // `replay:<id>` lane and streams the persisted events (see
-                // [`WorkspaceInput::SessionOpen`] — replay IS the fold). The
-                // overlay closes so the replayed lane is immediately visible.
-                Some(row) => {
-                    let id = row.id.clone();
-                    ui.sessions_open = false;
-                    DeckAction::Send(WorkspaceInput::SessionOpen { id })
-                }
-                None => DeckAction::Handled,
-            }
-        }
-        KeyCode::Char('r') => DeckAction::Send(WorkspaceInput::SessionsRefresh),
-        KeyCode::Char('a') => match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
-            Some(row) => DeckAction::Send(WorkspaceInput::SessionArchive { id: row.id.clone() }),
-            None => DeckAction::Handled,
-        },
-        KeyCode::Char('x') => {
-            match grouped_session_rows(ui).get(ui.sessions_sel).copied() {
-                // This deck's own record is written by this process — deleting
-                // it out from under the writer would just resurrect on the
-                // next transition, so the key refuses.
-                Some(row) if !row.mine => {
-                    DeckAction::Send(WorkspaceInput::SessionDelete { id: row.id.clone() })
-                }
-                _ => DeckAction::Handled,
-            }
-        }
-        _ => DeckAction::Handled,
-    }
 }
 
 /// The INBOX overlay key map: ↑/↓ select, `⏎` on a session-linked
@@ -3374,82 +3222,8 @@ fn handle_settings_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> 
     crate::views::settings::handle_key(key, ui, composer_empty)
 }
 
-fn handle_agents_key(
-    key: KeyEvent,
-    model: &WorkspaceModel,
-    ui: &mut DeckUi,
-    composer_empty: bool,
-) -> Option<DeckAction> {
-    // The secondary nav: ←/→ switch EXECUTIONS ↔ INSTALLED AGENTS. These
-    // only arrive here with a blank composer (a composer holding text claims
-    // ←/→ for cursor motion first), same gate as every other tab key.
-    match key.code {
-        KeyCode::Left if ui.agents_pane == AgentsPane::Installed => {
-            ui.agents_pane = AgentsPane::Executions;
-            return Some(DeckAction::Handled);
-        }
-        KeyCode::Right if ui.agents_pane == AgentsPane::Executions => {
-            ui.agents_pane = AgentsPane::Installed;
-            // First visit loads the list; after that the driver keeps it
-            // fresh after every op, so no re-fetch on every switch.
-            if !ui.installed.loaded && !ui.installed.busy {
-                ui.installed.busy = true;
-                return Some(DeckAction::Send(WorkspaceInput::AgentsRefresh));
-            }
-            return Some(DeckAction::Handled);
-        }
-        _ => {}
-    }
-    if ui.agents_pane == AgentsPane::Installed {
-        return handle_installed_browse_key(key, ui, composer_empty);
-    }
-
-    let count = model.agents.len();
-    match key.code {
-        KeyCode::Up => {
-            ui.focus_agent(ui.focused.saturating_sub(1));
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.focus_agent((ui.focused + 1).min(count - 1));
-            }
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Enter if composer_empty && key.modifiers.is_empty() => {
-            ui.set_tab(DeckTab::Session);
-            Some(DeckAction::Handled)
-        }
-        // Agent controls — only when the composer is empty (else they type).
-        // `s` stop · `p` pause/resume toggle (by the row's current status) ·
-        // `r` restart. `s` and `p` work on every lane — pause parks the turn at
-        // its next step boundary, never mid-tool, sub-agents included (#1219).
-        // `r` respawns a worker from its retained spec; on the lead it is a
-        // no-op, since restarting it is just re-submitting the prompt.
-        KeyCode::Char('s') if composer_empty => model.agents.get(ui.focused).map(|entry| {
-            DeckAction::Send(WorkspaceInput::Control {
-                agent: entry.meta.id.clone(),
-                control: AgentControl::Stop,
-            })
-        }),
-        KeyCode::Char('p') if composer_empty => model.agents.get(ui.focused).map(|entry| {
-            DeckAction::Send(WorkspaceInput::Control {
-                agent: entry.meta.id.clone(),
-                control: if entry.status == AgentStatus::Paused {
-                    AgentControl::Resume
-                } else {
-                    AgentControl::Pause
-                },
-            })
-        }),
-        KeyCode::Char('r') if composer_empty => model.agents.get(ui.focused).map(|entry| {
-            DeckAction::Send(WorkspaceInput::Control {
-                agent: entry.meta.id.clone(),
-                control: AgentControl::Restart,
-            })
-        }),
-        _ => None,
-    }
+fn handle_agents_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
+    handle_installed_browse_key(key, ui, composer_empty)
 }
 
 /// The INSTALLED AGENTS pane's browse keys (non-modal — the composer stays
@@ -3462,7 +3236,38 @@ fn handle_installed_browse_key(
     composer_empty: bool,
 ) -> Option<DeckAction> {
     let count = ui.installed.entries.len();
+    // A delete is two presses of `x` on the same row; anything else disarms.
+    let armed = ui.installed.delete_armed.take();
     match key.code {
+        KeyCode::Char('x') if composer_empty => {
+            let Some(entry) = ui.installed.selected().cloned() else {
+                return Some(DeckAction::Handled);
+            };
+            if armed.as_deref() == Some(entry.name.as_str()) {
+                ui.installed.busy = true;
+                ui.installed.status = Some(format!("deleting {}…", entry.name));
+                return Some(DeckAction::Send(WorkspaceInput::AgentDelete {
+                    name: entry.name,
+                    scope: entry.scope,
+                }));
+            }
+            ui.installed.status = Some(format!(
+                "x again deletes {} ({} scope, every version)",
+                entry.name,
+                entry.scope.label()
+            ));
+            ui.installed.delete_armed = Some(entry.name);
+            Some(DeckAction::Handled)
+        }
+        // `a`: the lead assumes the selected agent's identity.
+        KeyCode::Char('a') if composer_empty => {
+            let entry = ui.installed.selected().cloned()?;
+            ui.installed.status = Some(format!("assuming {}…", entry.name));
+            Some(DeckAction::Send(WorkspaceInput::AgentAssume {
+                name: entry.name,
+                scope: entry.scope,
+            }))
+        }
         KeyCode::Up => {
             ui.installed.sel = ui.installed.sel.saturating_sub(1);
             Some(DeckAction::Handled)

@@ -1,12 +1,15 @@
-//! The AGENTS tab's INSTALLED AGENTS pane: the agents configured on disk at
-//! the user (`~/.stella/agents`) and project (`.stella/agents`)
-//! levels — name, description, and toolbelt per row — plus the pane's modal
-//! sub-views (the definition editor, the create-from-prompt flow, and the
-//! version picker).
+//! The AGENTS tab: the agents configured on disk at the user
+//! (`~/.stella/agents`) and project (`.stella/agents`) levels — name, scope,
+//! version, description and toolbelt per row — plus the tab's modal sub-views
+//! (the definition editor, the create-from-prompt flow, and the version
+//! picker).
 //!
-//! Every color comes from [`crate::theme`]; the list content comes verbatim
-//! from the driver's [`crate::envelope::Inbound::AgentsList`] snapshot held
-//! on [`crate::deck_ui::InstalledPanel`] (no shadow state).
+//! The list draws in the v2 vocabulary ([`stella_tui_theme::token`]): the
+//! assumed agent wears the skill glyph in gold, the selected row the
+//! highlight ground. The sub-views still draw in [`crate::theme`] until their
+//! own restyle. The list content comes verbatim from the driver's
+//! [`crate::envelope::Inbound::AgentsList`] snapshot held on
+//! [`crate::deck_ui::InstalledPanel`] (no shadow state).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -19,9 +22,7 @@ use crate::deck_ui::{DeckUi, InstalledMode, InstalledPanel};
 use crate::envelope::InstalledAgentEntry;
 use crate::syntax::{self, HighlightSpans as _};
 use crate::theme;
-
-/// Column headers for the browse list, matching `widths` in [`render_list`].
-const HEADERS: [&str; 5] = ["Agent", "Scope", "Ver", "Description", "Toolbelt"];
+use stella_tui_theme::{glyph, token};
 
 pub fn render(ui: &mut DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
@@ -49,71 +50,95 @@ pub fn toolbelt_label(tools: &Option<Vec<String>>) -> String {
 }
 
 fn render_list(panel: &InstalledPanel, accessible: bool, area: Rect, buf: &mut Buffer) {
-    let title = format!(" Installed Agents — {} on disk ", panel.entries.len());
-    let block = Block::default().borders(Borders::ALL).title(title);
+    let bands = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(area);
+    let (head_area, gap, list_area, foot_area) = (bands[0], bands[1], bands[2], bands[3]);
+    let _ = gap;
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
 
-    let bands = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
-    let (list_area, foot_area) = (bands[0], bands[1]);
+    let mut head = vec![
+        Span::raw(" "),
+        Span::styled("agents", text),
+        Span::styled(format!(" · {} installed", panel.entries.len()), muted),
+    ];
+    if let Some(assumed) = &panel.assumed {
+        head.push(Span::styled(" · lead is ", muted));
+        head.push(Span::styled(assumed.clone(), Style::new().fg(token::GOLD)));
+    }
+    Paragraph::new(Line::from(head)).render(head_area, buf);
 
     if panel.entries.is_empty() {
-        let inner = block.inner(list_area);
-        block.render(list_area, buf);
         let hint = if panel.busy {
             "loading installed agents…"
         } else if panel.loaded {
-            "no agents installed — press n to create one from a prompt"
+            "no agents installed — n creates one from a prompt"
         } else {
-            "press r to load the installed agents"
+            "r loads the installed agents"
         };
-        if inner.height > 0 {
-            let y = inner.y + inner.height.saturating_sub(1) / 2;
+        if list_area.height > 0 {
+            let y = list_area.y + list_area.height.saturating_sub(1) / 2;
             Paragraph::new(hint)
-                .style(theme::muted())
+                .style(muted)
                 .alignment(Alignment::Center)
-                .render(Rect::new(inner.x, y, inner.width, 1), buf);
+                .render(Rect::new(list_area.x, y, list_area.width, 1), buf);
         }
         render_footer(panel, foot_area, buf);
         return;
     }
 
     // Accessible mode: the same five fields, labelled, one row per agent. The
-    // grid's `Agent | Scope | Ver | Description | Toolbelt` header is a legend
-    // for columns, and columns are whitespace to a reader.
+    // grid's column heads are a legend for columns, and columns are
+    // whitespace to a reader.
     if accessible {
-        let inner = block.inner(list_area);
-        block.render(list_area, buf);
-        if inner.height > 0 && inner.width > 0 {
-            let width = inner.width as usize;
+        if list_area.height > 0 && list_area.width > 0 {
+            let width = list_area.width as usize;
             let lines: Vec<Line<'static>> = panel
                 .entries
                 .iter()
                 .enumerate()
-                .take(inner.height as usize)
+                .take(list_area.height as usize)
                 .map(|(i, entry)| agent_record(entry, i == panel.sel, width))
                 .collect();
-            Paragraph::new(lines).render(inner, buf);
+            Paragraph::new(lines).render(list_area, buf);
         }
         render_footer(panel, foot_area, buf);
         return;
     }
 
-    let header = Row::new(HEADERS.iter().copied().map(Cell::from)).style(theme::accent());
+    let header = Row::new(
+        ["", "agent", "scope", "ver", "description", "toolbelt"]
+            .into_iter()
+            .map(|h| Cell::from(h).style(dim)),
+    );
     let rows: Vec<Row> = panel
         .entries
         .iter()
         .enumerate()
-        .map(|(i, entry)| agent_row(entry, i == panel.sel))
+        .map(|(i, entry)| {
+            agent_row(
+                entry,
+                i == panel.sel,
+                panel.assumed.as_deref() == Some(entry.name.as_str()),
+            )
+        })
         .collect();
     let widths = [
-        Constraint::Length(20), // Agent
-        Constraint::Length(8),  // Scope
-        Constraint::Length(5),  // Ver
-        Constraint::Fill(3),    // Description
-        Constraint::Fill(2),    // Toolbelt
+        Constraint::Length(2),  // mark
+        Constraint::Length(20), // agent
+        Constraint::Length(8),  // scope
+        Constraint::Length(5),  // ver
+        Constraint::Fill(3),    // description
+        Constraint::Fill(2),    // toolbelt
     ];
     Table::new(rows, widths)
         .header(header)
-        .block(block)
         .column_spacing(1)
         .render(list_area, buf);
 
@@ -135,23 +160,34 @@ fn agent_record(entry: &InstalledAgentEntry, is_selected: bool, width: usize) ->
     )
 }
 
-fn agent_row(entry: &InstalledAgentEntry, is_selected: bool) -> Row<'static> {
-    let caret = if is_selected {
-        Span::styled("> ", Style::default().fg(theme::ACCENT))
+fn agent_row(entry: &InstalledAgentEntry, is_selected: bool, assumed: bool) -> Row<'static> {
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+    let mark = if assumed {
+        Span::styled(glyph::SKILL.to_string(), Style::new().fg(token::GOLD))
+    } else if is_selected {
+        Span::styled(glyph::COLLAPSED.to_string(), Style::new().fg(token::GOLD))
     } else {
-        Span::raw("  ")
+        Span::raw(" ")
     };
-    let name_cell = Cell::from(Line::from(vec![
-        caret,
-        Span::styled(entry.name.clone(), Style::default().fg(theme::ACCENT)),
-    ]));
-    let scope_cell = Cell::from(entry.scope.label()).style(theme::muted());
-    let ver_cell = Cell::from(format!("v{}", entry.version)).style(theme::body());
-    let desc_cell = Cell::from(entry.description.clone()).style(theme::body());
-    let tools_cell = Cell::from(toolbelt_label(&entry.tools)).style(theme::muted());
-    let mut row = Row::new(vec![name_cell, scope_cell, ver_cell, desc_cell, tools_cell]);
+    let name = Span::styled(
+        entry.name.clone(),
+        if assumed {
+            Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD)
+        } else {
+            text
+        },
+    );
+    let mut row = Row::new(vec![
+        Cell::from(Line::from(mark)),
+        Cell::from(Line::from(name)),
+        Cell::from(entry.scope.label()).style(muted),
+        Cell::from(format!("v{}", entry.version)).style(muted),
+        Cell::from(entry.description.clone()).style(text),
+        Cell::from(toolbelt_label(&entry.tools)).style(muted),
+    ]);
     if is_selected {
-        row = row.style(Style::default().add_modifier(Modifier::REVERSED));
+        row = row.style(Style::new().bg(token::HL));
     }
     row
 }
@@ -161,13 +197,33 @@ fn render_footer(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
     if area.height == 0 {
         return;
     }
-    let text = match &panel.status {
-        Some(status) => status.clone(),
-        None => "↑/↓ select · ⏎ edit (new pinned version) · v versions · n new from prompt · \
-                 r reload · ←/→ panes"
-            .to_string(),
+    let dim = Style::new().fg(token::DIM);
+    let key = Style::new().fg(token::MUTED);
+    let line = match &panel.status {
+        Some(status) => Line::from(Span::styled(format!(" {status}"), key)),
+        None => {
+            let mut spans = vec![Span::raw(" ")];
+            for (i, (k, label)) in [
+                ("↵", " edit"),
+                ("a", " assume"),
+                ("n", " new"),
+                ("x x", " delete"),
+                ("v", " versions"),
+                ("r", " reload"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if i > 0 {
+                    spans.push(Span::styled(" · ", dim));
+                }
+                spans.push(Span::styled(k, key));
+                spans.push(Span::styled(label, dim));
+            }
+            Line::from(spans)
+        }
     };
-    Paragraph::new(text).style(theme::muted()).render(area, buf);
+    Paragraph::new(line).render(area, buf);
 }
 
 /// The definition editor: the pinned version's full content in a textarea.
@@ -582,10 +638,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(&mut ui, 0, area, &mut buf);
         let text = buffer_text(&buf);
-        assert!(
-            text.contains("press n to create one from a prompt"),
-            "{text}"
-        );
+        assert!(text.contains("n creates one from a prompt"), "{text}");
     }
 
     #[test]

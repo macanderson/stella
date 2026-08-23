@@ -20,6 +20,7 @@
 
 use super::*;
 use crate::v2::transcript_source as v2;
+use ratatui::style::Color;
 use stella_tui_theme::token;
 
 const WIDTH: usize = 100;
