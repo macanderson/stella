@@ -187,8 +187,8 @@ impl UsageStore {
             "INSERT OR REPLACE INTO execution_rollup \
              (project_id, execution_id, kind, prompt_digest, prompt_preview, model, provider, \
               outcome, cost_usd, input_tokens, output_tokens, duration_ms, tool_calls, \
-              files_written, produced_output, self_rating, started_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              files_written, produced_output, self_rating, started_at, usage_complete) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 r.project_id,
                 r.execution_id,
@@ -207,6 +207,7 @@ impl UsageStore {
                 r.produced_output as i64,
                 r.self_rating,
                 r.started_at,
+                r.usage_complete as i64,
             ],
         )?;
         if first_fold {
@@ -354,16 +355,37 @@ impl UsageStore {
     /// cross-project dashboard or `stella usage` renders. `org` filters to
     /// one org id; `None` reports everything (NULL-org rows group as
     /// unregistered/local).
+    ///
+    /// # Why the `execution_rollup` join
+    ///
+    /// [`GlobalTelemetryRow::floor_executions`] cannot come from `telemetry`
+    /// alone, and #4171 says why: a call whose usage envelope never landed
+    /// wrote **no row**, so no sum over `telemetry` can tell "complete" from
+    /// "missing a row". `telemetry.usage_complete` is a per-*call* flag and
+    /// answers a different question. The per-execution verdict lives on
+    /// `executions.usage_complete` in the project store and reaches the hub on
+    /// the rollup row, so that is what the count reads.
+    ///
+    /// A telemetry row whose rollup `prune` has already deleted reads as
+    /// complete (`COALESCE(…, 1)`). That is the pre-existing shape of hub
+    /// pruning rather than a new gap — the rollup and the replica are pruned on
+    /// predicates they do not share — and it costs a *marking*, never a
+    /// figure: the spend is summed from `telemetry` either way.
     pub fn global_telemetry_totals(&self, org: Option<&str>) -> Result<Vec<GlobalTelemetryRow>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT org_id, provider, model, COUNT(*), SUM(input_tokens), SUM(output_tokens), \
-                    SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(cost_usd), \
-                    COUNT(DISTINCT project_id) \
-             FROM telemetry \
-             WHERE (?1 IS NULL OR org_id = ?1) \
-             GROUP BY org_id, provider, model \
-             ORDER BY SUM(cost_usd) DESC, provider, model",
+            "SELECT t.org_id, t.provider, t.model, COUNT(*), SUM(t.input_tokens), \
+                    SUM(t.output_tokens), SUM(t.cache_read_tokens), \
+                    SUM(t.cache_write_tokens), SUM(t.cost_usd), \
+                    COUNT(DISTINCT t.project_id), \
+                    COUNT(DISTINCT CASE WHEN COALESCE(r.usage_complete, 1) = 0 \
+                                        THEN t.project_id || ':' || t.execution_id END) \
+             FROM telemetry t \
+             LEFT JOIN execution_rollup r \
+               ON r.project_id = t.project_id AND r.execution_id = t.execution_id \
+             WHERE (?1 IS NULL OR t.org_id = ?1) \
+             GROUP BY t.org_id, t.provider, t.model \
+             ORDER BY SUM(t.cost_usd) DESC, t.provider, t.model",
         )?;
         let rows = stmt.query_map(params![org], |r| {
             Ok(GlobalTelemetryRow {
@@ -377,6 +399,7 @@ impl UsageStore {
                 cache_write_tokens: r.get(7)?,
                 cost_usd: r.get(8)?,
                 projects: r.get(9)?,
+                floor_executions: r.get(10)?,
             })
         })?;
         let mut out = Vec::new();
@@ -922,6 +945,15 @@ pub struct GlobalTelemetryRow {
     pub cache_write_tokens: i64,
     pub cost_usd: f64,
     pub projects: i64,
+    /// How many of the executions behind this line are **floors** — a turn
+    /// finished with at least one paid call whose usage envelope never landed,
+    /// so its receipts prove a lower bound and not the total (#4171).
+    ///
+    /// Non-zero makes `cost_usd` an "at least" figure. It is deliberately a
+    /// count of executions rather than of calls: the flag is per-execution, and
+    /// "3 of 210 executions are floors" is the sentence a user checking a
+    /// provider bill can act on.
+    pub floor_executions: i64,
 }
 
 /// One org-scoped hub row awaiting cloud acknowledgement.

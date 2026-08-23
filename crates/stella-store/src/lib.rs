@@ -1146,8 +1146,22 @@ impl Store {
 
     /// Assemble the user-tier [`usage::ExecutionRollupRow`] for one execution
     /// from this project store (executions + telemetry + tool_calls +
-    /// files_touched). Returns `None` if the execution id is unknown. Reads
-    /// only — safe for both live finalize and `stella usage sync` backfill.
+    /// files_touched). Returns `None` if the execution id is unknown or the
+    /// turn has not finished. Reads only — safe for both live finalize and
+    /// `stella usage sync` backfill.
+    ///
+    /// **An incomplete execution rolls up as a floor, not as nothing** (#4171).
+    /// This used to also require `usage_complete = 1 AND usage_status =
+    /// 'complete'`, so a turn with sixty-eight accounted calls and one attempt
+    /// that reported no usage contributed `$0.00` to every project total
+    /// instead of "at least $2.40". `cost_usd` is already the lower bound —
+    /// `finish_execution_accounted` stores `MAX(reported, RECEIPTS_TOTAL_USD)`
+    /// — so the number was there the whole time and only the gate withheld it.
+    /// [`usage::ExecutionRollupRow::usage_complete`] carries the verdict out
+    /// with the row instead — the conjunction the WHERE used to be, so `true`
+    /// still means exactly what it meant before. That is the same bargain
+    /// `stella-cli`'s `persistence` already strikes one level down: a flagged
+    /// lower bound is recoverable information, silence is not.
     pub fn execution_rollup(
         &self,
         execution_id: i64,
@@ -1157,9 +1171,8 @@ impl Store {
         let base = conn
             .query_row(
                 "SELECT kind, prompt, provider, model, COALESCE(outcome, ''), cost_usd, started_at, \
-                        usage_complete \
-                 FROM executions WHERE id = ?1 AND finished_at IS NOT NULL \
-                   AND usage_complete = 1 AND usage_status = 'complete'",
+                        usage_complete AND usage_status = 'complete' \
+                 FROM executions WHERE id = ?1 AND finished_at IS NOT NULL",
                 params![execution_id],
                 |r| {
                     Ok((
@@ -1266,7 +1279,12 @@ impl Store {
     }
 
     /// Roll one execution up into the user-tier aggregate. Best-effort: a
-    /// missing execution returns `Ok(false)` and never fails a turn.
+    /// missing or unfinished execution returns `Ok(false)` and never fails a
+    /// turn.
+    ///
+    /// An execution whose accounting is short still syncs, carrying its
+    /// `usage_complete` flag so the hub knows the figure is a floor — see
+    /// [`Store::execution_rollup`] for why a lower bound beats silence.
     pub fn sync_to_usage(
         &self,
         execution_id: i64,
@@ -1278,11 +1296,11 @@ impl Store {
         // healed by this turn. Best-effort — the rollup below still runs.
         let _ = self.replicate_telemetry_to_usage(usage, workspace_root);
         match self.execution_rollup(execution_id, workspace_root)? {
-            Some(rollup) if rollup.usage_complete => {
+            Some(rollup) => {
                 usage.sync_execution(&rollup)?;
                 Ok(true)
             }
-            Some(_) | None => Ok(false),
+            None => Ok(false),
         }
     }
 
