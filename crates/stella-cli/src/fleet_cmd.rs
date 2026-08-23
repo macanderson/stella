@@ -906,6 +906,7 @@ async fn run_task(
             root,
             variant,
             &task.id,
+            task.test_command.as_deref(),
         )?),
         None => None,
     };

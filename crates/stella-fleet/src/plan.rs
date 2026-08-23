@@ -81,6 +81,23 @@ pub struct Task {
     /// task claims nothing.
     #[serde(default)]
     pub claims: Vec<String>,
+    /// The command that decides whether this task's work is done — the oracle a
+    /// wrapper plugin runs to observe red-before/green-after on this attempt
+    /// (`stella fleet --pipeline <variant>`, #3884).
+    ///
+    /// Per task rather than per run because two tasks touching different
+    /// subsystems have different oracles: `cargo test -p stella-core loop_detect`
+    /// proves nothing about a task in `stella-tui`. Interpreted by nothing in
+    /// this crate — the fleet driver parses it through the host's closed runner
+    /// vocabulary before it reaches a plugin, and a command that vocabulary
+    /// refuses fails that task's dispatch by name.
+    ///
+    /// `None` (the default, and what [`Task::new`] and every positional
+    /// `stella fleet "…"` prompt build) means a witness-flavoured plugin has no
+    /// flip to observe on this task and reports `Undecided` rather than
+    /// crediting one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_command: Option<String>,
 }
 
 impl Task {
@@ -94,6 +111,7 @@ impl Task {
             depends_on: Vec::new(),
             isolation: Isolation::SharedTree,
             claims: Vec::new(),
+            test_command: None,
         }
     }
 
@@ -109,6 +127,14 @@ impl Task {
     #[must_use]
     pub fn claims(mut self, paths: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.claims.extend(paths.into_iter().map(Into::into));
+        self
+    }
+
+    /// Declare the command that decides this task (builder style) — the oracle
+    /// a wrapper plugin observes the flip with. See [`Task::test_command`].
+    #[must_use]
+    pub fn test_command(mut self, command: impl Into<String>) -> Self {
+        self.test_command = Some(command.into());
         self
     }
 
@@ -531,6 +557,32 @@ mod tests {
         let back: Task = serde_json::from_str(&serde_json::to_string(&shared).unwrap()).unwrap();
         assert_eq!(back.isolation, Isolation::SharedTree);
         assert_eq!(back.claims, vec!["src/a.rs".to_string()]);
+    }
+
+    /// **Witness (#3884).** A plan file can declare the oracle that decides a
+    /// task, every plan file written before the field existed still loads, and
+    /// a task that declares none serializes without the key — so an existing
+    /// plan round-trips byte-for-byte rather than growing a `null`.
+    #[test]
+    fn a_task_can_declare_the_test_command_that_decides_it() {
+        let legacy = r#"{"tasks":[{"id":"a","title":"t","prompt":"p"}]}"#;
+        let plan: Plan = serde_json::from_str(legacy).unwrap();
+        assert_eq!(
+            plan.tasks[0].test_command, None,
+            "a plan written before the field existed declares no oracle"
+        );
+        let reserialized = serde_json::to_string(&plan).unwrap();
+        assert!(
+            !reserialized.contains("test_command"),
+            "a task with no oracle serializes without the key rather than a null: {reserialized}"
+        );
+
+        let declared = Task::new("b", "t", "p").test_command("cargo test -p stella-core");
+        let back: Task = serde_json::from_str(&serde_json::to_string(&declared).unwrap()).unwrap();
+        assert_eq!(
+            back.test_command.as_deref(),
+            Some("cargo test -p stella-core")
+        );
     }
 
     // Properties
