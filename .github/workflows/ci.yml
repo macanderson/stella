@@ -342,6 +342,26 @@ jobs:
           python3 ./scripts/gen-tokens.py --check
           python3 ./scripts/check-tokens.py
 
+      # The second colour ruler: the step above asks what kind of colour each
+      # value is, one at a time; this asks whether any two of them can be told
+      # apart. It was in `GATE_GUARDS_FAST` and in no workflow — the same gap
+      # #4089 found for five other guards, and it went unnoticed here because
+      # `gate-parity` above holds the *prose* to `GATE_STEPS` and says nothing
+      # about whether anything server-side runs a step (#4071).
+      - name: no two web semantic roles sit within 30° of each other
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-hue-separation.py
+
+      # The third colour ruler, and the one that says whether a value can be
+      # read at all. It existed in the tree for two releases with no make target
+      # and no workflow step, exiting 1 by hand on four palette pairings while
+      # two brand documents quoted figures it disagreed with (#4423). The four
+      # are held at their exact measured ratio by a down-only ratchet, so this
+      # is red the moment one of them gets darker.
+      - name: every licensed colour pairing is readable on its ground
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-contrast.py
+
       # A sibling question the check above cannot answer: it reasons about hex
       # literals, and an unresolvable var() is not a parse error. A token sheet
       # can name a stop deleted two releases ago, every page still renders off

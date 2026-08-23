@@ -4,6 +4,7 @@
 //! (#629). Pure relocation: no test was changed, added, or removed.
 
 use super::*;
+use stella_tui_theme::oklch;
 
 #[test]
 fn agent_color_is_stable_across_calls() {
@@ -270,63 +271,94 @@ fn gold_never_carries_a_verdict() {
     }
 }
 
-/// Hue angle in degrees `[0, 360)`, for the separation law below — **OKLCH
-/// hue**, not sRGB's.
+/// OKLCH hue angle for a palette token, via the crate every surface shares.
 ///
-/// The metric has moved twice, each time because the previous one stopped
-/// measuring the thing the law is about. It was squared euclidean RGB
-/// distance, which worked while the brand was green and every categorical
-/// hue was far from it in all three channels, and broke against a blue brand:
-/// a violet and a blue can be 40° apart — plainly different colours in a
-/// terminal cell — and still sit within 0x30 per channel, because blue is
-/// pinned at 0xFF in both. It became sRGB (HSV) hue, which fixed that.
-///
-/// sRGB hue in turn breaks against a *yellow* brand, because sRGB's hue
-/// circle is badly non-uniform through the warm quadrant. Measured on this
-/// palette's own values: the accent and the success green are 94.8° apart in
-/// sRGB but 63.1° in OKLCH, while the accent and the danger rose are 54.7°
-/// in sRGB but 78.0° in OKLCH — sRGB stretches yellow→green and compresses
-/// yellow→red by roughly 30° each. The consequence is not academic. It makes
-/// the 54.7° sRGB arc between the accent and danger too narrow to hold a
-/// warning at 30° from both, so the metric would have rejected the one hue
-/// that is *actually* 39.1° from each — an unbuildable law, not a strict one.
-///
-/// OKLCH is perceptually uniform by construction and is already the metric
-/// the Observatory reasons in (see its `--warn` derivation in
-/// `crates/stella-observatory/src/assets/index.html`), so this also puts the
-/// two surfaces on one ruler instead of two. Conversion is sRGB → linear →
-/// LMS → Oklab → hue, following Björn Ottosson's published matrices.
+/// The conversion itself lived here as a private `hue_deg` and was transcribed
+/// a second time into `stella-cli`'s `design_token_parity`, which then held one
+/// law to a 20 degree floor while this file held it to 30 (#4071). Both copies
+/// are gone: [`stella_tui_theme::oklch`] is the Rust answer, and its module doc
+/// carries the metric's `RGB distance -> sRGB hue -> OKLCH` chain.
 fn hue_deg(color: Color) -> f64 {
     let Color::Rgb(r, g, b) = color else {
         panic!("{color:?} must be a truecolor token");
     };
-    // sRGB → linear light.
-    let lin = |c: u8| {
-        let c = f64::from(c) / 255.0;
-        if c <= 0.040_45 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    let (r, g, b) = (lin(r), lin(g), lin(b));
-    // Linear sRGB → LMS, then the cube root that makes the space uniform.
-    let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
-    let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
-    let s = (0.088_302_461_9 * r + 0.281_718_837_6 * g + 0.629_978_700_5 * b).cbrt();
-    // LMS → Oklab's two chromatic axes; the hue is their angle.
-    let a_axis = 1.977_998_495_1 * l - 2.428_592_205_0 * m + 0.450_593_709_9 * s;
-    let b_axis = 0.025_904_037_1 * l + 0.782_771_766_2 * m - 0.808_675_766_0 * s;
-    if a_axis.hypot(b_axis) < 1e-6 {
-        return 0.0;
-    }
-    b_axis.atan2(a_axis).to_degrees().rem_euclid(360.0)
+    oklch::hue_deg(r, g, b)
 }
 
 /// The shortest angular distance between two hues, in degrees.
 fn hue_separation(a: Color, b: Color) -> f64 {
-    let d = (hue_deg(a) - hue_deg(b)).abs();
-    d.min(360.0 - d)
+    oklch::separation(hue_deg(a), hue_deg(b))
+}
+
+/// Every hue angle `palette.rs` argues from is the angle the ruler computes.
+///
+/// The palette's doc comments are where the separation law is *reasoned*: the
+/// warning's hue was derived by maximising the smaller of two gaps, the orchid
+/// was moved because one of its gaps measured under the floor, and each of
+/// those arguments is carried by a figure written in prose. A figure in a
+/// comment is the thing that goes stale under a recolour, and one already had
+/// — `BRAND_INK` claimed 0.2° from `BRAND` where it measures 0.1° (#4071).
+///
+/// Each row is held three ways at once, the shape
+/// `scripts/check-hue-separation.py`'s `CLAIMS` table uses: the number must
+/// equal the computation, the number must appear inside the phrase, and the
+/// phrase must still be in `palette.rs` verbatim. Recolour and the computation
+/// moves; reword and the phrase is gone; edit this table and it agrees with
+/// neither.
+///
+/// Angles the palette states about *retired* values (the amber that sat 5.5°
+/// from the previous gold) are deliberately absent: nothing here can compute a
+/// colour the palette no longer carries, and a row that cannot fail is worse
+/// than no row.
+#[test]
+fn every_stated_hue_angle_matches_the_computation() {
+    use palette::{
+        BRAND, BRAND_INK, BRAND_LIVE, DANGER, DATA_1, DATA_2, DATA_3, DATA_4, DATA_5, SUCCESS,
+        WARNING,
+    };
+
+    let source = include_str!("../palette.rs");
+    let sep = hue_separation;
+    let hue = hue_deg;
+
+    for (phrase, computed) in [
+        ("OKLCH hue 90.8", hue(BRAND)),
+        ("3.5 deg from [`BRAND`] in hue", sep(BRAND_LIVE, BRAND)),
+        ("(0.1 deg from [`BRAND`])", sep(BRAND_INK, BRAND)),
+        ("OKLCH hue 153.9", hue(SUCCESS)),
+        ("(63.1 deg from", sep(SUCCESS, BRAND)),
+        ("OKLCH hue 51.7", hue(WARNING)),
+        ("lands 39.1 deg from gold", sep(WARNING, BRAND)),
+        ("and 38.9 deg from danger", sep(WARNING, DANGER)),
+        ("OKLCH hue 12.8", hue(DANGER)),
+        ("(78.0 deg from", sep(DANGER, BRAND)),
+        ("OKLCH hue 292.6", hue(DATA_1)),
+        ("(158.2 deg from gold)", sep(DATA_1, BRAND)),
+        ("hue 355.6", hue(DATA_2)),
+        ("(95.2 deg from gold)", sep(DATA_2, BRAND)),
+        ("hue 186.6", hue(DATA_3)),
+        ("(95.9 deg from gold)", sep(DATA_3, BRAND)),
+        ("hue 126.2", hue(DATA_4)),
+        ("(35.4 deg from gold", sep(DATA_4, BRAND)),
+        ("hue 324.4", hue(DATA_5)),
+        ("126.3 deg from", sep(DATA_5, BRAND)),
+        ("31.8 deg from the violet", sep(DATA_5, DATA_1)),
+        ("31.1 deg from the rose", sep(DATA_5, DATA_2)),
+    ] {
+        let stated = format!("{computed:.1}");
+        assert!(
+            phrase.contains(&stated),
+            "this table says palette.rs writes `{phrase}`, but the ruler makes \
+             that angle {stated}° — the row disagrees with the computation, \
+             which means the row is what is wrong"
+        );
+        assert!(
+            source.contains(phrase),
+            "palette.rs no longer says `{phrase}`. The angle it argues from \
+             has to stay readable beside the value; move the phrase and move \
+             this row with it"
+        );
+    }
 }
 
 /// The palette law, in the form a future edit would actually break.
@@ -662,9 +694,10 @@ fn palette_law_gold_is_the_brand() {
         assert_ne!(role, ACCENT, "{name} must not be the reserved gold");
         let sep = hue_separation(role, ACCENT);
         assert!(
-            sep >= 30.0,
-            "{name} ({role:?}) is {sep:.1}° from the gold accent; \
-             30° is the floor for two hues to be told apart in a cell"
+            sep >= oklch::SEPARATION_FLOOR_DEG,
+            "{name} ({role:?}) is {sep:.1}° from the gold accent; {:.0}° is \
+             the floor for two hues to be told apart in a cell",
+            oklch::SEPARATION_FLOOR_DEG
         );
     }
     // The warning is the clause's own regression test. It sat 4.0° from the
@@ -675,8 +708,9 @@ fn palette_law_gold_is_the_brand() {
     // good rule — it is simply no longer the only thing keeping a warning
     // and the mark apart.
     assert!(
-        hue_separation(WARN, ACCENT) >= 30.0,
-        "warning must clear the same 30° floor as every other chromatic role"
+        hue_separation(WARN, ACCENT) >= oklch::SEPARATION_FLOOR_DEG,
+        "warning must clear the same {:.0}° floor as every other chromatic role",
+        oklch::SEPARATION_FLOOR_DEG
     );
 
     // 6. There are exactly two golds, they are one hue, and nothing else is
@@ -711,7 +745,7 @@ fn palette_law_gold_is_the_brand() {
         }
         let sep = hue_separation(value, ACCENT);
         assert!(
-            sep >= 30.0,
+            sep >= oklch::SEPARATION_FLOOR_DEG,
             "palette token `{name}` ({value:?}) sits {sep:.1}° from the gold \
              accent — this palette ships two golds and no third"
         );
@@ -1036,7 +1070,7 @@ fn every_tool_class_is_categorical_and_distinct() {
         );
         let sep = hue_separation(color, ACCENT);
         assert!(
-            sep >= 30.0,
+            sep >= oklch::SEPARATION_FLOOR_DEG,
             "{} ({color:?}) is {sep:.1}° from the gold accent",
             class.label()
         );
@@ -1045,11 +1079,12 @@ fn every_tool_class_is_categorical_and_distinct() {
         for b in &ToolClass::ALL[..i] {
             let sep = hue_separation(a.color(), b.color());
             assert!(
-                sep >= 30.0,
-                "the `{}` and `{}` classes are {sep:.1}° apart; 30° is the floor \
-                 for two hues to be told apart in a terminal cell",
+                sep >= oklch::SEPARATION_FLOOR_DEG,
+                "the `{}` and `{}` classes are {sep:.1}° apart; {:.0}° is the \
+                 floor for two hues to be told apart in a terminal cell",
                 a.label(),
-                b.label()
+                b.label(),
+                oklch::SEPARATION_FLOOR_DEG
             );
         }
     }

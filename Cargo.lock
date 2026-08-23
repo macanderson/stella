@@ -2952,6 +2952,7 @@ dependencies = [
  "stella-transcript",
  "stella-tty",
  "stella-tui",
+ "stella-tui-theme",
  "tempfile",
  "tokio",
  "toml",
