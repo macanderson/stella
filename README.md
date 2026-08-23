@@ -54,7 +54,7 @@ a default install. Built in Rust as a workspace of focused crates.
 - **Prompt-cache-native memory** — Lessons in `.stella/memories/` load once at
   session start into a byte-stable system prompt (~0.1× input cost).
 - **Code graph** — A tree-sitter symbol/import index (Rust, TS/TSX/JS, Python,
-  Go, Java, C, PHP, SQL) queried by `stella search` instead of grepping.
+  Go, Java, C, C++, PHP, SQL) queried by `stella search` instead of grepping.
 - **Local-first telemetry** — Executions, events, token/cost telemetry, and
   the files-touched ledger stay canonical in `.stella/private/store.db`.
   Community/default sends none of it anywhere. Only enrolled Oxagen Enterprise

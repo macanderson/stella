@@ -40,6 +40,7 @@ pub(crate) struct Grammars {
     go: Option<LangPack>,
     java: Option<LangPack>,
     c: Option<LangPack>,
+    cpp: Option<LangPack>,
     php: Option<LangPack>,
 }
 
@@ -93,6 +94,7 @@ impl Grammars {
             go: LangPack::load(Language::Go)?,
             java: LangPack::load(Language::Java)?,
             c: LangPack::load(Language::C)?,
+            cpp: LangPack::load(Language::Cpp)?,
             php: LangPack::load(Language::Php)?,
             typescript: LangPack::load(Language::TypeScript)?,
             tsx: LangPack::load(Language::Tsx)?,
@@ -114,6 +116,7 @@ impl Grammars {
             Language::Go => self.go.as_ref(),
             Language::Java => self.java.as_ref(),
             Language::C => self.c.as_ref(),
+            Language::Cpp => self.cpp.as_ref(),
             Language::Php => self.php.as_ref(),
             // Markdown is read by `crate::markdown`, not by a grammar, and
             // `parse_file` answers it before it reaches here.
@@ -198,7 +201,9 @@ pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> O
         Language::Markdown => Vec::new(),
         Language::Go => extract_go_imports(&pack.imports, root, src),
         Language::Java => extract_java_imports(&pack.imports, root, src),
-        Language::C => extract_c_imports(&pack.imports, root, src),
+        // C++ shares C's reader: `#include` is the same preprocessor
+        // directive in both, quoted and angled forms included (#3184).
+        Language::C | Language::Cpp => extract_c_imports(&pack.imports, root, src),
         Language::Php => extract_php_imports(&pack.imports, root, src),
     };
     let calls = extract_calls(&pack.calls, root, src);
@@ -1250,245 +1255,4 @@ fn each_import_node(
 }
 
 #[cfg(test)]
-mod added_language_tests {
-    use super::*;
-
-    fn parse(lang: Language, src: &str) -> Parsed {
-        let grammars = Grammars::load().expect("grammars load");
-        parse_file(&grammars, lang, src).expect("source parses")
-    }
-
-    fn names(parsed: &Parsed) -> Vec<&str> {
-        parsed.symbols.iter().map(|s| s.name.as_str()).collect()
-    }
-
-    fn specifiers(parsed: &Parsed) -> Vec<String> {
-        parsed
-            .imports
-            .iter()
-            .map(|spec| match spec {
-                ImportSpec::Bare { specifier }
-                | ImportSpec::PathRelative { specifier }
-                | ImportSpec::MarkdownLink { specifier }
-                | ImportSpec::TsRelative { specifier }
-                | ImportSpec::PyAbsolute { specifier }
-                | ImportSpec::RustUse { specifier } => specifier.clone(),
-                ImportSpec::PyRelative { text, .. } => text.clone(),
-                ImportSpec::RustMod { name } => format!("mod {name}"),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn go_symbols_and_grouped_imports() {
-        let parsed = parse(
-            Language::Go,
-            r#"
-package main
-
-import (
-    "fmt"
-    "github.com/pkg/errors"
-)
-
-type Scheduler struct{ n int }
-
-type Runner interface{ Run() error }
-
-func New() *Scheduler { return &Scheduler{} }
-
-func (s *Scheduler) Run() error { fmt.Println(s.n); return nil }
-"#,
-        );
-        let names = names(&parsed);
-        assert!(names.contains(&"Scheduler"), "struct type: {names:?}");
-        assert!(names.contains(&"New"), "func: {names:?}");
-        assert!(names.contains(&"Run"), "method: {names:?}");
-        assert!(names.contains(&"Runner"), "interface type: {names:?}");
-        // Every path in the grouped block, not just the first.
-        let specs = specifiers(&parsed);
-        assert!(specs.contains(&"fmt".to_string()), "{specs:?}");
-        assert!(
-            specs.contains(&"github.com/pkg/errors".to_string()),
-            "{specs:?}"
-        );
-    }
-
-    #[test]
-    fn java_symbols_and_imports() {
-        let parsed = parse(
-            Language::Java,
-            r#"
-package com.example.app;
-
-import java.util.List;
-import static java.util.Objects.requireNonNull;
-
-public interface Store { void put(String k); }
-
-public class KvStore implements Store {
-    public void put(String k) {}
-}
-
-enum Mode { FAST, SAFE }
-"#,
-        );
-        let names = names(&parsed);
-        for expected in ["Store", "KvStore", "put", "Mode"] {
-            assert!(names.contains(&expected), "missing {expected}: {names:?}");
-        }
-        let specs = specifiers(&parsed);
-        assert!(specs.contains(&"java.util.List".to_string()), "{specs:?}");
-        // `import static` keeps its path, minus the modifier.
-        assert!(
-            specs.contains(&"java.util.Objects.requireNonNull".to_string()),
-            "{specs:?}"
-        );
-    }
-
-    #[test]
-    fn c_symbols_and_both_include_forms() {
-        let parsed = parse(
-            Language::C,
-            r#"
-#include <stdio.h>
-#include "kvstore.h"
-
-struct Entry { int key; };
-
-typedef struct Entry Entry;
-
-int put(const char *k) { return 0; }
-"#,
-        );
-        let names = names(&parsed);
-        assert!(names.contains(&"Entry"), "struct: {names:?}");
-        assert!(names.contains(&"put"), "function: {names:?}");
-        // The quoted include resolves against the tree; the angled one is a
-        // system header and must stay unresolved rather than be guessed.
-        let quoted = parsed.imports.iter().any(
-            |s| matches!(s, ImportSpec::PathRelative { specifier } if specifier == "kvstore.h"),
-        );
-        let angled = parsed
-            .imports
-            .iter()
-            .any(|s| matches!(s, ImportSpec::Bare { specifier } if specifier == "stdio.h"));
-        assert!(
-            quoted,
-            "quoted include is path-relative: {:?}",
-            parsed.imports
-        );
-        assert!(
-            angled,
-            "angled include stays unresolved: {:?}",
-            parsed.imports
-        );
-    }
-
-    #[test]
-    fn php_symbols_and_the_two_import_mechanisms() {
-        let parsed = parse(
-            Language::Php,
-            r#"<?php
-namespace App;
-
-use App\Contracts\StoreInterface;
-
-require 'bootstrap.php';
-
-interface StoreInterface { public function put($k); }
-
-trait Loggable { public function log($m) {} }
-
-class KvStore implements StoreInterface {
-    public function put($k) {}
-}
-
-function boot() {}
-"#,
-        );
-        let names = names(&parsed);
-        for expected in ["StoreInterface", "Loggable", "KvStore", "put", "boot"] {
-            assert!(names.contains(&expected), "missing {expected}: {names:?}");
-        }
-        // `require` names a file and resolves; `use` names a namespace and
-        // cannot without composer's PSR-4 map.
-        let required = parsed.imports.iter().any(
-            |s| matches!(s, ImportSpec::PathRelative { specifier } if specifier == "bootstrap.php"),
-        );
-        let used = parsed.imports.iter().any(
-            |s| matches!(s, ImportSpec::Bare { specifier } if specifier.contains("StoreInterface")),
-        );
-        assert!(required, "require resolves as a path: {:?}", parsed.imports);
-        assert!(used, "use is captured unresolved: {:?}", parsed.imports);
-    }
-
-    /// PHP files routinely wrap markup, which the PHP-only grammar cannot
-    /// parse — the reason `LANGUAGE_PHP` is the one wired in.
-    #[test]
-    fn php_with_embedded_html_still_yields_symbols() {
-        let parsed = parse(
-            Language::Php,
-            "<html><body><?php class Page { public function render() {} } ?></body></html>",
-        );
-        let names = names(&parsed);
-        assert!(names.contains(&"Page"), "{names:?}");
-        assert!(names.contains(&"render"), "{names:?}");
-    }
-
-    #[test]
-    fn go_java_c_and_php_call_sites_extract_their_callee_names() {
-        let go = parse(
-            Language::Go,
-            "package main\nfunc run() {\n\thelper()\n\tfmt.Println(\"x\")\n}\n",
-        );
-        let go_names: Vec<&str> = go.calls.iter().map(|c| c.callee.as_str()).collect();
-        assert!(go_names.contains(&"helper"), "{go_names:?}");
-        assert!(go_names.contains(&"Println"), "{go_names:?}");
-
-        let java = parse(
-            Language::Java,
-            "class A { void run() { helper(); store.put(\"k\"); } }\n",
-        );
-        let java_names: Vec<&str> = java.calls.iter().map(|c| c.callee.as_str()).collect();
-        assert!(java_names.contains(&"helper"), "{java_names:?}");
-        assert!(java_names.contains(&"put"), "{java_names:?}");
-
-        let c = parse(
-            Language::C,
-            "int run(void) { helper(); ops->handler(); return 0; }\n",
-        );
-        let c_names: Vec<&str> = c.calls.iter().map(|call| call.callee.as_str()).collect();
-        assert!(c_names.contains(&"helper"), "{c_names:?}");
-        assert!(c_names.contains(&"handler"), "{c_names:?}");
-
-        let php = parse(
-            Language::Php,
-            "<?php function run() { helper(); $s->put('k'); Cache::flush(); }\n",
-        );
-        let php_names: Vec<&str> = php.calls.iter().map(|c| c.callee.as_str()).collect();
-        for expected in ["helper", "put", "flush"] {
-            assert!(
-                php_names.contains(&expected),
-                "missing {expected}: {php_names:?}"
-            );
-        }
-
-        // SQL models no call graph; its empty query yields no rows.
-        let sql = parse(Language::Sql, "CREATE TABLE t (id INT);\n");
-        assert!(sql.calls.is_empty());
-    }
-
-    #[test]
-    fn new_extensions_classify() {
-        use std::path::Path;
-        assert_eq!(Language::from_path(Path::new("m.go")), Some(Language::Go));
-        assert_eq!(
-            Language::from_path(Path::new("A.java")),
-            Some(Language::Java)
-        );
-        assert_eq!(Language::from_path(Path::new("k.c")), Some(Language::C));
-        assert_eq!(Language::from_path(Path::new("k.h")), Some(Language::C));
-        assert_eq!(Language::from_path(Path::new("i.php")), Some(Language::Php));
-    }
-}
+mod added_language_tests;

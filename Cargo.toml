@@ -176,6 +176,7 @@ tree-sitter-sequel = "0.3"
 tree-sitter-go = "0.25"
 tree-sitter-java = "0.23"
 tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
 tree-sitter-php = "0.24"
 
 # stella-tui reads process stats and nothing else (`Pid`, `ProcessRefreshKind`,

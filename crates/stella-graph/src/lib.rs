@@ -13,7 +13,7 @@
 //! # What it does
 //!
 //! - **Indexes** Rust, TypeScript, TSX, JavaScript, Python, SQL, Go, Java, C,
-//!   and PHP (see [`Language`]): symbols (functions, methods,
+//!   C++, and PHP (see [`Language`]): symbols (functions, methods,
 //!   structs/classes/enums/traits/interfaces; for SQL, tables/views/schema
 //!   enums — the rows the schema gate reads), import edges
 //!   (`file → module/file`), and **unresolved call sites** (#335 B1: the
