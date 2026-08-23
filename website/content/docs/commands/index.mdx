@@ -162,7 +162,7 @@ here and the index your terminal shows can never drift apart.
 
 Each command page in this section documents its usage synopsis, behavior, relevant flags, and realistic examples.
 
-Three tests in `stella-cli` keep this page honest. `every_subcommand_has_a_reference_page` diffs the live clap command tree against this section's `meta.json`, so a new subcommand cannot land undocumented. `the_docs_nav_mirrors_these_groups` fails if the sidebar grouping drifts from the one `--help` renders, and `the_docs_index_summaries_are_the_clis_own` fails if any summary above differs from the CLI's own string.
+Four tests in `stella-cli` keep this page honest. `every_subcommand_has_a_reference_page` diffs the live clap command tree against this section's `meta.json`, so a new subcommand cannot land undocumented. `the_docs_nav_mirrors_these_groups` fails if the sidebar grouping drifts from the one `--help` renders, `the_docs_index_summaries_are_the_clis_own` fails if any summary above differs from the CLI's own string, and `every_global_flag_has_a_card_on_the_index` fails if a session-wide flag ships without a card in the grid below.
 
 Two of them are specialized rather than day-to-day. `stella arena` is a benchmark-harness adapter for measuring stella, not for doing work with it; `stella telemetry` operates the managed enterprise spool and is disabled without a signed org-managed enrollment.
 
@@ -191,6 +191,14 @@ The cards below are in `stella --help`'s own order, for the same reason the subc
     Pin a **gateway** to these upstreams, in order, and refuse any fallback. Repeatable or
     comma-separated. Inert on a direct endpoint. Env `STELLA_UPSTREAM_PIN`. See
     [below](#--upstream-pin-holding-the-vendor-fixed).
+  </OptionCard>
+  <OptionCard name="--allow-dir <path>" defaultValue="the workspace root only">
+    Extra directory a write tool may touch, outside the workspace root. Repeatable or
+    comma-separated; a relative path resolves against the workspace root, so it means the
+    same directory however the run was launched. **Additive** to `stella.toml`'s
+    `[workspace] allowed_dirs` — it widens the project's list for one invocation and never
+    replaces it, so reaching for one directory cannot silently revoke the rest. Env
+    `STELLA_ALLOW_DIR`.
   </OptionCard>
   <OptionCard name="--spend-limit <usd>" defaultValue="none (observed)">
     Hard USD spend cap for the whole run or session. Must be positive and finite. Env

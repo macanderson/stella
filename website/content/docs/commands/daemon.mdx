@@ -127,7 +127,13 @@ Detaching again — `Ctrl-C` — leaves the run alone. `stella daemon stop` is w
 
 ## `logs`
 
-The tail of a finished or running console, without following it. `-n` sets how many lines back to start (default 40).
+The tail of a finished or running console, without following it.
+
+<CardGrid size="md">
+  <OptionCard name="-n / --lines <N>" defaultValue="40">
+    How many lines back to start from.
+  </OptionCard>
+</CardGrid>
 
 stdout and stderr are kept in two files and replayed onto the two streams they were written from, so `stella run --output-format json` stays parseable through a supervisor. The console carries a small write index beside it, and `logs` uses it to replay the two streams **in the order they were written** rather than as two blocks. Only sessions recorded before the index existed fall back to the old shape — stdout tail, then stderr tail — because raw byte files carry no ordering to reconstruct.
 

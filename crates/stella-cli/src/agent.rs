@@ -1243,7 +1243,7 @@ pub(crate) async fn run_turn(
     // `crate::turn_files::close_turn_boundary` for the ordering, for why the
     // tree is measured rather than inferred from tool inputs, and for the deck
     // defect that made the two one call.
-    crate::turn_files::close_turn_boundary(cfg, &tx, execution.as_ref(), &outcome);
+    crate::turn_files::close_turn_boundary(cfg, registry, &tx, execution.as_ref(), &outcome);
     // The re-query adapter holds an `EventSender` clone of this run's channel
     // (#3366 telemetry), so it must be released here too — otherwise it keeps
     // the channel open and the renderer's `recv()` loop never ends (#2290).

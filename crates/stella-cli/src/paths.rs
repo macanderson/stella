@@ -610,6 +610,83 @@ mod tests {
         );
     }
 
+    /// The write-side twin of the fence above, and the guard #3996's
+    /// definition of done asks for.
+    ///
+    /// The read fence says production code must not resolve a home out of the
+    /// environment. It deliberately says nothing about *writes*, and tests are
+    /// where the writes are — which left the other half of the same property
+    /// unguarded: a test that sets `HOME` and stops there still resolves the
+    /// user tier through whatever `STELLA_HOME` the developer's shell exports.
+    /// Two of them did, and one of those (`tool_switches`' settings
+    /// round-trip) wrote into the real `~/.stella/settings.json`.
+    ///
+    /// So: point the home through `crate::test_env` — [`home_sandbox`] for a
+    /// test that redirects only the home, [`point_home_at`] for one already
+    /// holding an `EnvRestore` — and never by hand. Both clear every
+    /// [`stella_home::OVERRIDE_ENV_VARS`] entry by iterating the const, so an
+    /// override added later cannot be forgotten at 40 call sites.
+    ///
+    /// [`home_sandbox`]: crate::test_env::home_sandbox
+    /// [`point_home_at`]: crate::test_env::point_home_at
+    ///
+    /// # The two exempt files
+    ///
+    /// `test_env.rs` is the seam itself. `paths.rs` is this module, whose
+    /// `from_environment` tests set all four anchors together on purpose —
+    /// that is the behaviour under test, not a sandbox.
+    #[test]
+    fn no_test_in_this_crate_points_the_home_by_hand() {
+        // Built rather than written out, so this file is not its own match.
+        let forbidden: [String; 2] = [
+            format!("set_{}(\"{}\"", "var", stella_home::HOME_ENV),
+            format!("set_{}(stella_home::HOME_ENV", "var"),
+        ];
+        const EXEMPT: [&str; 2] = ["paths.rs", "test_env.rs"];
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+        let mut dirs = vec![src.clone()];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()))
+                .flatten()
+            {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "rs")
+                    || path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| EXEMPT.contains(&name))
+                {
+                    continue;
+                }
+                let body = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+                for pattern in &forbidden {
+                    for line in reading_lines(&body, pattern) {
+                        let relative = path.strip_prefix(&src).unwrap_or(&path);
+                        offenders.push(format!("{}:{line}", relative.display()));
+                    }
+                }
+            }
+        }
+        offenders.sort();
+        assert!(
+            offenders.is_empty(),
+            "these point `HOME` at a fixture by hand, which leaves `STELLA_HOME` \
+             and `STELLA_DATA_DIR` pointing wherever the developer's shell put \
+             them — the test then samples the machine instead of its fixture, and \
+             a test that writes the user tier writes into the real one (#3996). \
+             Use `crate::test_env::home_sandbox` (or `point_home_at` when you \
+             already hold an `EnvRestore`):\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
     /// The 1-based lines of `body` on which `pattern` appears as **code**.
     ///
     /// Splitting this out of the sweep above is what makes the rule testable

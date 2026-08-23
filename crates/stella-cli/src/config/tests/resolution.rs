@@ -259,7 +259,7 @@ fn cache_ttl_pin_resolves_and_the_interactive_default_never_overrides_it() {
 #[test]
 fn benchmark_mode_skips_malformed_filesystem_credentials_but_keeps_engine_override() {
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&["HOME", TRUSTED_ENGINE_CONFIG_ENV]);
+    let _restore = crate::test_env::EnvRestore::capture(&[TRUSTED_ENGINE_CONFIG_ENV]);
     let dir = tempfile::tempdir().unwrap();
     let credential_dir = dir.path().join(".stella");
     std::fs::create_dir_all(&credential_dir).unwrap();
@@ -279,8 +279,8 @@ fn benchmark_mode_skips_malformed_filesystem_credentials_but_keeps_engine_overri
     // SAFETY: the binary-wide environment lock covers mutation, resolution,
     // and restoration. STELLA_NO_SETTINGS is the adapter-pinned benchmark
     // isolation mode; the trusted engine JSON remains a later explicit seam.
+    let _home = crate::test_env::home_sandbox(dir.path());
     unsafe {
-        std::env::set_var("HOME", dir.path());
         std::env::set_var(TRUSTED_ENGINE_CONFIG_ENV, trusted);
     }
     let _isolation = crate::paths::test_filesystem_isolation(true);
