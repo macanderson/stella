@@ -813,53 +813,60 @@ pub(crate) fn persist_event_detailed(
         // rendered sentence tell those apart instead of reassuring the user
         // about a call that produced nothing (#4147).
         died = Some(*reason);
-        // A failed attempt that salvaged accounting gets a real telemetry row,
-        // flagged `usage_complete = false`. Before this the row was simply not
+        // A dead attempt gets a telemetry row either way, flagged
+        // `usage_complete = false`. Before this the row was simply not
         // written: `stella stats` showed the turn as though the dead attempt
         // had never been dispatched, so a session with repeated drops
         // under-reported its own token use with no trace that anything was
         // missing. A flagged lower bound is recoverable information; silence
         // is not.
         //
+        // With no `partial` the row is all zeros, and that is the case the
+        // argument above was written for and did not reach (#4383). A
+        // sub-agent model call still open when the `delegate` tool hit its
+        // 900 s ceiling wrote NOTHING: the execution came out flagged
+        // `usage_complete = 0` with no row anywhere saying which call did it,
+        // which is a hole a reader cannot even see. A zero-usage row is not a
+        // claim that the call cost nothing — the flag says the envelope never
+        // landed — it is the record that the call happened.
+        //
         // `cost_usd` here is catalog-priced, never provider-attested — the
         // `usage_complete = false` flag is what tells a reader which kind of
         // number they are looking at.
-        if let Some(partial) = partial {
-            let actual_provider = if provider.is_empty() {
-                legacy_provider_id
-            } else {
-                provider
-            };
-            telemetry_ok = store
-                .record_telemetry(
-                    execution_id,
-                    &TelemetryRow {
-                        step: seq,
-                        provider: actual_provider.to_string(),
-                        call_role: enum_tag(role),
-                        model: model.clone(),
-                        input_tokens: partial.usage.input_tokens,
-                        // No pre-dispatch estimate reaches this event, and
-                        // claiming one we do not have would be worse than
-                        // reporting the observed figure twice over.
-                        estimated_input_tokens: partial.usage.input_tokens,
-                        output_tokens: partial.usage.output_tokens,
-                        cache_read_tokens: partial.usage.cached_input_tokens,
-                        cache_miss_tokens: partial
-                            .usage
-                            .input_tokens
-                            .saturating_sub(partial.usage.cached_input_tokens),
-                        cache_write_tokens: partial.usage.cache_write_tokens,
-                        cost_usd: partial.cost_usd,
-                        duration_ms: *duration_ms,
-                        retries: retries.unwrap_or(0),
-                        // The attempt died before any tool call could settle.
-                        tool_calls: 0,
-                        usage_complete: false,
-                    },
-                )
-                .is_ok();
-        }
+        let salvaged = partial.as_ref();
+        let actual_provider = if provider.is_empty() {
+            legacy_provider_id
+        } else {
+            provider
+        };
+        let input_tokens = salvaged.map_or(0, |p| p.usage.input_tokens);
+        telemetry_ok = store
+            .record_telemetry(
+                execution_id,
+                &TelemetryRow {
+                    step: seq,
+                    provider: actual_provider.to_string(),
+                    call_role: enum_tag(role),
+                    model: model.clone(),
+                    input_tokens,
+                    // No pre-dispatch estimate reaches this event, and
+                    // claiming one we do not have would be worse than
+                    // reporting the observed figure twice over.
+                    estimated_input_tokens: input_tokens,
+                    output_tokens: salvaged.map_or(0, |p| p.usage.output_tokens),
+                    cache_read_tokens: salvaged.map_or(0, |p| p.usage.cached_input_tokens),
+                    cache_miss_tokens: input_tokens
+                        .saturating_sub(salvaged.map_or(0, |p| p.usage.cached_input_tokens)),
+                    cache_write_tokens: salvaged.map_or(0, |p| p.usage.cache_write_tokens),
+                    cost_usd: salvaged.map_or(0.0, |p| p.cost_usd),
+                    duration_ms: *duration_ms,
+                    retries: retries.unwrap_or(0),
+                    // The attempt died before any tool call could settle.
+                    tool_calls: 0,
+                    usage_complete: false,
+                },
+            )
+            .is_ok();
     } else if let AgentEvent::BlockRegistered {
         block_id,
         kind,
@@ -1104,6 +1111,88 @@ mod usage_recovery_tests {
         ));
     }
 
+    /// **The #4383 witness.** An attempt that salvaged *nothing* still leaves
+    /// a row.
+    ///
+    /// The telemetry write used to sit inside `if let Some(partial)`, so this
+    /// case wrote nothing at all: a sub-agent model call still open when the
+    /// `delegate` tool hit its 900 s ceiling left the execution flagged
+    /// `usage_complete = 0` with no row anywhere naming the call that did it.
+    /// Session `ses-1787465453163-60967` has a nine-minute window with no
+    /// telemetry row and no tool call over a second, and a sub-agent alive
+    /// through all of it.
+    ///
+    /// A zero-usage row is not a claim the call was free — the flag says the
+    /// envelope never landed. It is the record that the call happened.
+    ///
+    /// This replaces `an_attempt_that_recovered_nothing_writes_no_row`, which
+    /// asserted the opposite and gave its reason: a zeroed row "reads as a
+    /// real, free call". #4383 is the counter-evidence, and the flag is why —
+    /// `usage_complete = false` is exactly what separates zero-because-free
+    /// from zero-because-unknown, no reader that sums cost is moved by adding
+    /// 0.0, and the `(role, model)` census AGENTS.md tells a bench reader to
+    /// run gains a call it could not see at all. That test's other assertion —
+    /// a dead attempt carries its `died` reason (#4147) — is kept below.
+    #[test]
+    fn an_abandoned_attempt_with_nothing_to_salvage_still_lands_a_flagged_row() {
+        let store = stella_store::Store::in_memory().expect("store");
+        let execution_id = store
+            .begin_execution("cli", "prompt", "anthropic", "claude-opus-5")
+            .expect("begin");
+
+        let outcome = persist_event_detailed(
+            &store,
+            execution_id,
+            7,
+            &incomplete_because(stella_protocol::UsageIncompleteReason::Timeout, None),
+            "anthropic",
+        );
+
+        let rows = store.telemetry_rows_after(0, 10).expect("rows");
+        assert_eq!(
+            rows.len(),
+            1,
+            "an abandoned call must be visible, not a hole in the count"
+        );
+        let row = &rows[0].telemetry;
+        assert_eq!(row.step, 7, "the row names the call that died");
+        assert_eq!(row.model, "claude-opus-5");
+        assert_eq!(row.input_tokens, 0);
+        assert_eq!(row.output_tokens, 0);
+        assert!(row.cost_usd.abs() < f64::EPSILON);
+        assert_eq!(row.duration_ms, 4_200, "how long it was in flight");
+        assert!(
+            !row.usage_complete,
+            "zero here means unknown, and the flag is what says so"
+        );
+        assert!(!store.execution_usage_complete(execution_id).unwrap());
+        assert!(matches!(
+            outcome,
+            PersistOutcome::UsageIncomplete {
+                partial: None,
+                died: Some(stella_protocol::UsageIncompleteReason::Timeout),
+            }
+        ));
+
+        // A dead attempt carries its own reason, whichever one killed it —
+        // this is the case the rendered sentence must NOT call unaffected
+        // (#4147).
+        let provider_error =
+            persist_event_detailed(&store, execution_id, 8, &incomplete(None), "anthropic");
+        assert!(matches!(
+            provider_error,
+            PersistOutcome::UsageIncomplete {
+                partial: None,
+                died: Some(stella_protocol::UsageIncompleteReason::ProviderError),
+            }
+        ));
+        assert_eq!(
+            store.telemetry_rows_after(0, 10).expect("rows").len(),
+            2,
+            "each dead attempt is its own row"
+        );
+    }
+
     /// A lossy EVENT LOG must not disqualify the COST ROLLUP.
     ///
     /// The witness for the defect found in session `ses-1787342320630-36613`:
@@ -1164,31 +1253,6 @@ mod usage_recovery_tests {
             .finish_execution_accounted(execution_id, "completed", 1.25, true)
             .expect("finish");
         assert!(!store.execution_usage_complete(execution_id).unwrap());
-    }
-
-    /// A failure that learned nothing writes no telemetry row. Recording a
-    /// zeroed one would be worse than silence: it reads as a real, free call.
-    #[test]
-    fn an_attempt_that_recovered_nothing_writes_no_row() {
-        let store = stella_store::Store::in_memory().expect("store");
-        let execution_id = store
-            .begin_execution("cli", "prompt", "anthropic", "claude-opus-5")
-            .expect("begin");
-
-        let outcome =
-            persist_event_detailed(&store, execution_id, 0, &incomplete(None), "anthropic");
-
-        assert!(store.telemetry_rows_after(0, 10).expect("rows").is_empty());
-        assert!(!store.execution_usage_complete(execution_id).unwrap());
-        // A dead attempt, so the reason rides along: this is the case the
-        // rendered sentence must NOT call unaffected (#4147).
-        assert!(matches!(
-            outcome,
-            PersistOutcome::UsageIncomplete {
-                partial: None,
-                died: Some(stella_protocol::UsageIncompleteReason::ProviderError),
-            }
-        ));
     }
 
     /// The wording defect from the report: one retried call must not be
