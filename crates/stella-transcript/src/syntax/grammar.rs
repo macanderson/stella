@@ -14,8 +14,6 @@
 //!
 //! ## Why tree-sitter and not syntect
 //!
-//! Two reasons, and the second is the one that settles it:
-//!
 //! - **It is already resident.** The root `[workspace.dependencies]` carries
 //!   `tree-sitter` and all eight grammar crates used here, because
 //!   `stella-graph` indexes the code graph with them — every one is a default
@@ -156,7 +154,7 @@ thread_local! {
 /// `None` when the grammar will not install — a version skew between
 /// `tree-sitter` and a grammar crate is the only way that happens, and it is a
 /// build-time fact rather than a runtime one, so the caller renders the line
-/// plain rather than treating it as an error worth naming.
+/// plain rather than treating it as an error.
 fn with_parser<T>(g: Grammar, f: impl FnOnce(&mut Parser) -> T) -> Option<T> {
     PARSERS.with(|cell| {
         let mut slots = cell.borrow_mut();
