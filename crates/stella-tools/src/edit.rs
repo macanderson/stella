@@ -230,6 +230,9 @@ fn edit_target(value: &Value) -> Result<EditTarget, crate::input::InputError> {
 struct Pending {
     scope_root: std::path::PathBuf,
     path: String,
+    /// The bytes on disk when the batch first loaded this file — the old side
+    /// of the change the batch reports once it lands.
+    original: String,
     content: String,
     edits: usize,
 }
@@ -439,10 +442,18 @@ impl EditFile {
                 // deterministic — never a timestamp, which broke the detector
                 // in the opposite direction once.
                 let digest = crate::staleness::sha256_8(new_content.as_bytes());
-                ToolOutput::ok(format!(
-                    "replaced {replaced} occurrence(s) in {path} at byte {offset} \
-                     (file sha256/8 {digest})"
-                ))
+                let change = crate::own_change::own_change(
+                    &crate::own_change::workspace_path(root, &scope_root, path),
+                    Some(&content),
+                    &new_content,
+                );
+                crate::own_change::attach(
+                    ToolOutput::ok(format!(
+                        "replaced {replaced} occurrence(s) in {path} at byte {offset} \
+                         (file sha256/8 {digest})"
+                    )),
+                    &[change],
+                )
             }
             Err(e) => ToolOutput::error(format!("failed to write `{path}`: {e}")),
         }
@@ -517,6 +528,7 @@ impl EditFile {
                     pending.push(Pending {
                         scope_root,
                         path,
+                        original: content.clone(),
                         content,
                         edits: 0,
                     });
@@ -559,6 +571,7 @@ impl EditFile {
         // Every edit validated against the composed content. Only now does
         // anything reach the disk.
         let mut report = Vec::with_capacity(pending.len());
+        let mut changes = Vec::with_capacity(pending.len());
         for file in &pending {
             let handle = match crate::rootfd::RootHandle::open(&file.scope_root) {
                 Ok(handle) => Arc::new(handle),
@@ -583,17 +596,25 @@ impl EditFile {
                 file.edits,
                 crate::staleness::sha256_8(file.content.as_bytes())
             ));
+            changes.push(crate::own_change::own_change(
+                &crate::own_change::workspace_path(root, &file.scope_root, &file.path),
+                Some(&file.original),
+                &file.content,
+            ));
         }
         // The per-file digests are the batch's identity stamp, for the same
         // reason the single form carries one (#3176): N distinct batches must
         // not produce byte-identical output, or the stagnation detector reads
         // correct work as a stuck loop.
-        ToolOutput::ok(format!(
-            "applied {} edit(s) across {} file(s), all or nothing:\n{}",
-            targets.len(),
-            pending.len(),
-            report.join("\n")
-        ))
+        crate::own_change::attach(
+            ToolOutput::ok(format!(
+                "applied {} edit(s) across {} file(s), all or nothing:\n{}",
+                targets.len(),
+                pending.len(),
+                report.join("\n")
+            )),
+            &changes,
+        )
     }
 
     /// Attribute a miss inside a batch, in the vocabulary the single form uses.

@@ -25,6 +25,11 @@ stella-graph = { path = "../stella-graph" }
 # crate is where the network is allowed to live: `stella-graph` stores vectors
 # and ranks them, and never learns what produced them (invariant 1).
 stella-embed = { path = "../stella-embed", features = ["http"] }
+# The differ `write_file` and `edit_file` run over the bytes they read and the
+# bytes they wrote (`own_change`), so a mutation the work-tree measurement
+# cannot see — a gitignored path, a workspace with no journal — still renders
+# its diff. A leaf with no dependencies, so linking it costs nothing (#1511).
+stella-diff = { path = "../stella-diff" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -106,6 +106,23 @@ fn write_target(value: &Value) -> Result<WriteTarget, crate::input::InputError> 
     })
 }
 
+/// What is at `path` before this call replaces it — `None` when nothing is.
+///
+/// Read through the descriptor the write is about to walk (#938), so the old
+/// side of the diff and the file being overwritten are one file. The bytes are
+/// decoded lossily: the new side is a `String` by construction, and a diff
+/// over a lossy old side still states every line that changed, where refusing
+/// to diff would state nothing.
+fn before(handle: &crate::rootfd::RootHandle, path: &str) -> Option<String> {
+    if handle.stat(path).is_err() {
+        return None;
+    }
+    handle
+        .read(path)
+        .ok()
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
 impl WriteFile {
     /// Write several files as one change.
     ///
@@ -145,12 +162,14 @@ impl WriteFile {
                      `edit_file` to change part of it in place. Nothing was written."
                 ));
             }
-            planned.push((handle, path, target.content.as_str()));
+            planned.push((handle, scope_root, path, target.content.as_str()));
         }
 
         // Pass two: every check passed, so commit.
         let mut report = Vec::with_capacity(planned.len());
-        for (handle, path, content) in planned {
+        let mut changes = Vec::with_capacity(planned.len());
+        for (handle, scope_root, path, content) in planned {
+            let previous = before(&handle, &path);
             match crate::durable_write::write_file_durably_at(
                 handle,
                 path.clone(),
@@ -163,15 +182,23 @@ impl WriteFile {
                     self.ledger.record_known(root, &path, content);
                     self.ledger.record_coverage(root, &path, true);
                     report.push(format!("{path} — {} bytes", content.len()));
+                    changes.push(crate::own_change::own_change(
+                        &crate::own_change::workspace_path(root, &scope_root, &path),
+                        previous.as_deref(),
+                        content,
+                    ));
                 }
                 Err(e) => return ToolOutput::error(format!("failed to write `{path}`: {e}")),
             }
         }
-        ToolOutput::ok(format!(
-            "wrote {} file(s):\n{}",
-            report.len(),
-            report.join("\n")
-        ))
+        crate::own_change::attach(
+            ToolOutput::ok(format!(
+                "wrote {} file(s):\n{}",
+                report.len(),
+                report.join("\n")
+            )),
+            &changes,
+        )
     }
 
     async fn write_one(&self, input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
@@ -226,6 +253,7 @@ impl WriteFile {
             ));
         }
 
+        let previous = before(&handle, path);
         match crate::durable_write::write_file_durably_at(
             handle,
             path.to_string(),
@@ -242,7 +270,15 @@ impl WriteFile {
                 // what the content is, this says the model has seen all of it.
                 self.ledger.record_coverage(root, path, true);
                 let bytes = content.len();
-                ToolOutput::ok(format!("wrote {bytes} bytes to {path}"))
+                let change = crate::own_change::own_change(
+                    &crate::own_change::workspace_path(root, &scope_root, path),
+                    previous.as_deref(),
+                    content,
+                );
+                crate::own_change::attach(
+                    ToolOutput::ok(format!("wrote {bytes} bytes to {path}")),
+                    &[change],
+                )
             }
             Err(e) if e.is_escape() => {
                 ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"))
