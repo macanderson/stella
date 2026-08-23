@@ -612,6 +612,12 @@ impl Settings {
         // about printing one line per process and not about what this load
         // resolved — the chain is loaded several times per launch and every
         // one of them must hand back the same verdict.
+        //
+        // So the survey now runs on each of those loads rather than only the
+        // announcing one. It is bounded and it is the shape `rules_peek` was
+        // built for (#3617): five `read_dir`s and two `stat`s, skipped
+        // entirely the moment `withholder` says nothing was withheld, which
+        // is every trusted checkout.
         merged.authority_policy.withheld = withheld;
         Ok(merged)
     }
