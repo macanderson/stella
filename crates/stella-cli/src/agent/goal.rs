@@ -793,6 +793,14 @@ pub(crate) async fn run_goal_turn(
     };
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let events = stella_core::EventSender::new(tx.clone());
+    // The registry's own streams and this turn's per-call work-tree
+    // measurement, through the one seam (#4507). This door opened its channel
+    // and attached NOTHING to it: `stella goal` rendered no task board, no
+    // sub-agent lifecycle, and no diff under any mutating call for the whole
+    // of a run — the #4175 silence, on the one door where the loop can run
+    // dozens of rounds before a human sees the result.
+    persistence::attach_run_streams(registry, cfg, &events, execution.as_ref());
     let renderer = spawn_renderer(
         rx,
         OutputFormat::Text,
@@ -851,8 +859,11 @@ pub(crate) async fn run_goal_turn(
     // execution record, not by withholding the terminator.
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
+    // The canonical teardown (#960): the registry now holds sender clones of
+    // this channel, so it is detached before the renderer is awaited or the
+    // run hangs on a channel that never closes.
     drop(tx);
-    let rendered = renderer.await.unwrap_or_default();
+    let rendered = persistence::close_event_stream(registry, events, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     // The arc's friction, folded from the journal the renderer just finished
     // draining — split at each round's own `GoalVerdict` so no round is
