@@ -430,7 +430,9 @@ pub enum AgentEvent {
     /// tool's real I/O still ran — this is the event-log's record of that
     /// work, so call counts reconcile with what actually executed rather
     /// than silently diverging. `reason` is a short stable token
-    /// (`"attempt_failed"`, `"harvest_mismatch"`). Additive to the wire
+    /// (`"attempt_failed"`, `"harvest_mismatch"`, `"budget_abort"` — the
+    /// budget guard ending the turn with a pool still in flight is the third
+    /// producer, and went unlisted here until #3156). Additive to the wire
     /// contract: consumers recorded before speculation existed never see it.
     SpeculationDiscarded {
         call_id: String,

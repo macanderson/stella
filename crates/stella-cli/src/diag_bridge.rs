@@ -96,6 +96,41 @@ impl ToolName {
     }
 }
 
+log_enum! {
+    /// Why a speculatively-executed call's result never reached the
+    /// transcript.
+    ///
+    /// A closed vocabulary over the stable tokens
+    /// `AgentEvent::SpeculationDiscarded::reason` carries, for the reason
+    /// [`ToolName`] is one: the token is produced by the engine and is not
+    /// model output today, but a `String` on a record is a channel that only
+    /// has to be widened once. [`Self::Other`] is the arm for a token this
+    /// build does not know — a newer engine's, or an event replayed from a
+    /// recorded stream.
+    pub enum SpeculationDiscardReason {
+        /// The stream attempt failed and the pool was dropped before harvest.
+        AttemptFailed => "attempt_failed",
+        /// The committed call diverged from what the stream announced, so the
+        /// pooled result was rejected at harvest.
+        HarvestMismatch => "harvest_mismatch",
+        /// The budget guard ended the turn while a pool was still in flight.
+        BudgetAbort => "budget_abort",
+        /// A token this build does not recognize.
+        Other => "other",
+    }
+}
+
+impl SpeculationDiscardReason {
+    fn classify(reason: &str) -> Self {
+        match reason {
+            "attempt_failed" => Self::AttemptFailed,
+            "harvest_mismatch" => Self::HarvestMismatch,
+            "budget_abort" => Self::BudgetAbort,
+            _ => Self::Other,
+        }
+    }
+}
+
 /// The bounded tally §3.8 asks for, in place of per-token records.
 ///
 /// A 10k-token turn produces ten thousand `TextDelta`s. Recording each would
@@ -402,14 +437,22 @@ impl DomainBridge {
                         .with("output_bytes", bytes),
                 );
             }
-            AgentEvent::SpeculationDiscarded { call_id, .. } => {
+            AgentEvent::SpeculationDiscarded {
+                call_id, reason, ..
+            } => {
                 // A discarded speculation is a call whose result will never
-                // arrive, so its retention entry drains here.
-                let _ = self.take_in_flight(call_id);
+                // arrive, so its retention entry drains here — and the entry
+                // is exactly what the record's own documented purpose needs:
+                // "a high rate means speculation is mispredicting" is not
+                // answerable without knowing which tool it mispredicts on
+                // (#3156).
+                let tool = self.take_in_flight(call_id);
                 self.emit(
                     Level::Debug,
                     "agent.tool.speculation_discarded",
-                    self.at_seq(),
+                    self.at_seq()
+                        .with("tool", tool)
+                        .with("reason", SpeculationDiscardReason::classify(reason)),
                 );
             }
 
@@ -1048,6 +1091,60 @@ mod tests {
         });
         let json = serde_json::to_string(&records.records()[0]).expect("serialize");
         assert!(json.contains(r#""tool":"other""#), "{json}");
+    }
+
+    /// **Witness (#3156).** A discarded speculation names the tool it
+    /// mispredicted on, and why, in the closed vocabulary.
+    ///
+    /// The record's documented purpose is "a high rate means speculation is
+    /// mispredicting", which no reader can act on without knowing *what* it
+    /// mispredicts on — and the bridge is holding that call's `ToolName` at
+    /// the exact line it drains the retention entry. Fails on the base
+    /// commit: the record carries only `seq`.
+    #[test]
+    fn a_discarded_speculation_names_its_tool_and_reason() {
+        let (mut bridge, records) = bridge();
+        bridge.observe(&tool_call("delegate", serde_json::json!({})));
+        bridge.observe(&AgentEvent::SpeculationDiscarded {
+            call_id: "call-1".into(),
+            name: "delegate".into(),
+            reason: "harvest_mismatch".into(),
+        });
+
+        let record = records
+            .find("agent.tool.speculation_discarded")
+            .expect("a record");
+        let json = serde_json::to_string(&record).expect("serialize");
+        assert!(
+            json.contains(r#""tool":"delegate""#),
+            "the discard must name the tool it mispredicted on: {json}"
+        );
+        assert!(
+            json.contains(r#""reason":"harvest_mismatch""#),
+            "and why, in the closed vocabulary: {json}"
+        );
+    }
+
+    /// A reason token this build does not know still records — as the closed
+    /// fallback, never as the raw string.
+    #[test]
+    fn an_unknown_discard_reason_classifies_as_other() {
+        let (mut bridge, records) = bridge();
+        bridge.observe(&AgentEvent::SpeculationDiscarded {
+            call_id: "call-never-seen".into(),
+            name: "read_file".into(),
+            reason: "a_token_from_a_newer_engine".into(),
+        });
+        let json = serde_json::to_string(&records.records()[0]).expect("serialize");
+        assert!(json.contains(r#""reason":"other""#), "{json}");
+        assert!(
+            !json.contains("a_token_from_a_newer_engine"),
+            "no unclassified token may reach a record: {json}"
+        );
+        assert!(
+            json.contains(r#""tool":"other""#),
+            "and a discard whose call the bridge never saw still carries the field: {json}"
+        );
     }
 
     /// The retention map is bounded: a result, a discarded speculation, and
