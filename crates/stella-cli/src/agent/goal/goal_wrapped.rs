@@ -197,7 +197,7 @@ pub(crate) async fn run_goal_wrapped_turn(
         Principal::User,
         registry.hook_bus(),
     );
-    let hook_runner = ShellHookRunner;
+    let hook_runner = HostHookRunner;
     let mut engine = Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
         .with_calibration(calibration);
     if let Some(hooks) = &cfg.hooks {

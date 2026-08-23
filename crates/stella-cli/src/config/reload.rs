@@ -60,11 +60,10 @@ impl Config {
         let ignore_gitignore = settings.ignore_gitignore();
         let reward_policy = settings.reward_policy()?;
         let create_worktrees = settings.create_worktrees();
-        let hooks = if crate::enterprise_telemetry::process_free_authority_active() {
-            None
-        } else {
-            settings.hooks.clone()
-        };
+        // Re-read through the same fold `load_with_settings` uses, so a
+        // `/reload` after `stella plugin install` picks the new routes up —
+        // and one after `stella plugin remove` drops them.
+        let hooks = crate::plugin_hooks::session_hook_plane(&self.workspace_root, &settings);
 
         // Phase 2 — commit. Infallible from here down.
         self.engine_settings = engine_settings;

@@ -284,7 +284,7 @@ pub(crate) fn engine_config_for_kind(cfg: &Config, kind: &str) -> EngineConfig {
 pub(crate) async fn session_start_hook_context(cfg: &Config) -> Option<String> {
     let hooks = cfg.hooks.as_ref()?;
     let outcome = stella_core::hooks::run_hooks(
-        &ShellHookRunner,
+        &HostHookRunner,
         Some(hooks),
         &stella_core::hooks::HookPayload::session_start(cfg.workspace_root.display().to_string()),
     )

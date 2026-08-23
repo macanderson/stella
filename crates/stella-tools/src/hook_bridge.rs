@@ -22,7 +22,7 @@
 //! The decision fold itself (stdout JSON → [`stella_core::bus::HookDecision`]
 //! → `resolve_precedence`) is pure and lives engine-side
 //! (`stella_core::hooks::decision`); this crate contributes only the two
-//! I/O halves — spawning the hook ([`crate::hook_runner::ShellHookRunner`])
+//! I/O halves — spawning the hook ([`crate::hook_runner::HostHookRunner`])
 //! and asking the human (here).
 
 use async_trait::async_trait;
@@ -292,7 +292,7 @@ mod tests {
     }
 
     /// **Witness (c), #2684 — end to end on the real runner.** A hook that
-    /// exits non-zero under the production [`ShellHookRunner`] is an
+    /// exits non-zero under the production [`HostHookRunner`] is an
     /// evaluation failure, and [`resolve_precedence`] denies it for every
     /// value of the enforcement-softening flag (OXA-2056).
     #[tokio::test]
@@ -312,7 +312,7 @@ mod tests {
             false,
         );
         let run =
-            run_decision_hooks(&crate::hook_runner::ShellHookRunner, Some(&hooks), &payload).await;
+            run_decision_hooks(&crate::hook_runner::HostHookRunner, Some(&hooks), &payload).await;
         assert!(
             run.evaluation.is_err(),
             "non-zero exit fails the evaluation"
@@ -349,7 +349,7 @@ mod tests {
             false,
         );
         let run =
-            run_decision_hooks(&crate::hook_runner::ShellHookRunner, Some(&hooks), &payload).await;
+            run_decision_hooks(&crate::hook_runner::HostHookRunner, Some(&hooks), &payload).await;
         assert_eq!(
             run.evaluation,
             Ok(stella_core::bus::HookDecision::Allow),
@@ -391,7 +391,7 @@ mod tests {
             false,
         );
         let run =
-            run_decision_hooks(&crate::hook_runner::ShellHookRunner, Some(&hooks), &payload).await;
+            run_decision_hooks(&crate::hook_runner::HostHookRunner, Some(&hooks), &payload).await;
         assert_eq!(
             run.rewritten_input,
             Some(serde_json::json!({"cmd": "echo safe"})),

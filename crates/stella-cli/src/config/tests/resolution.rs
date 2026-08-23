@@ -783,3 +783,48 @@ fn the_upstream_pin_flag_parses_an_order() {
     let bare = crate::cli::Cli::parse_from(["stella", "models"]);
     assert!(bare.globals.upstream_pin.is_empty());
 }
+
+/// **The wiring witness for #4417.** An installed plugin's declared `Stop`
+/// hook reaches the *resolved config* — the object every door reads its hook
+/// plane from — and not merely the function that folds it.
+///
+/// This is the assertion that fails on a build where `crate::plugin_hooks`
+/// exists and `load_with_settings` still stamps `settings.hooks.clone()`: a
+/// fold nothing calls is the same unwired code the issue is about, one layer
+/// up. It lives here rather than beside the fold because `load_with_settings`
+/// is private to `config`.
+#[test]
+fn an_installed_plugins_hook_route_reaches_the_resolved_config() {
+    use crate::plugin_hooks::tests::{plant, stop_actions, temp_root};
+
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("resolved-config");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let cfg = Config::load_with_settings(
+        Some("local/test-model"),
+        None,
+        Some("http://localhost:11434/v1"),
+        &crate::settings::Settings::default(),
+        root.clone(),
+    )
+    .expect("an offline local-provider config");
+    let plane = cfg
+        .hooks
+        .as_ref()
+        .expect("the plugin plane reached the config");
+    assert_eq!(
+        stop_actions(plane)
+            .iter()
+            .filter_map(|action| action.plugin.as_ref().map(|origin| origin.plugin.clone()))
+            .collect::<Vec<_>>(),
+        vec!["vera".to_string()],
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}

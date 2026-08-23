@@ -71,7 +71,7 @@ use stella_fleet::{
 };
 use stella_protocol::{AgentEvent, CompletionMessage, PrStatus};
 use stella_tools::ToolRegistry;
-use stella_tools::hook_runner::ShellHookRunner;
+use stella_tools::hook_runner::HostHookRunner;
 use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
 use tokio::sync::{mpsc, oneshot, watch};
 
@@ -1086,7 +1086,7 @@ async fn run_task(
         let _controls = registry
             .attach_turn_controls(stella_core::ports::TurnControls::none().with_gate(gate.clone()));
         let raced: Raced<Result<TurnOutcome, String>> = {
-            let hook_runner = ShellHookRunner;
+            let hook_runner = HostHookRunner;
             let mut engine = Engine::with_sleeper(
                 &*provider,
                 &permitted,
