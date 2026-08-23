@@ -22,6 +22,9 @@ use stella_protocol::{
 };
 use stella_store::Store;
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// A snapshot that observed no corroboration at all: no achieved flip, no green
 /// touched test, no `verify_done` confirmation. `verifier_independent` is
 /// recorded so the grader partition (#1865) has a fact to sort on.
@@ -146,6 +149,7 @@ fn seeded_workspace() -> (tempfile::TempDir, tempfile::TempDir) {
 
 fn calibration(dir: &tempfile::TempDir, home: &tempfile::TempDir, args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .arg("calibration")
         .args(args)
         .current_dir(dir.path())

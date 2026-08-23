@@ -108,6 +108,40 @@ const KNOWN_DIMS: &[(&str, usize)] = &[
     ("bge-m3", 1024),
 ];
 
+/// `STELLA_EMBED_URL` — the base URL.
+const VAR_URL: &str = "STELLA_EMBED_URL";
+/// `STELLA_EMBED_MODEL` — the model id.
+const VAR_MODEL: &str = "STELLA_EMBED_MODEL";
+/// `STELLA_EMBED_API_KEY` — the bearer token for that base URL.
+const VAR_API_KEY: &str = "STELLA_EMBED_API_KEY";
+/// `STELLA_EMBED_DIMS` — the vector width.
+const VAR_DIMS: &str = "STELLA_EMBED_DIMS";
+/// `STELLA_EMBED_FLOOR` — the admission floor.
+const VAR_FLOOR: &str = "STELLA_EMBED_FLOOR";
+/// `VOYAGE_API_KEY` — the Voyage shortcut.
+const VAR_VOYAGE_API_KEY: &str = "VOYAGE_API_KEY";
+/// `OPENAI_API_KEY` — the OpenAI shortcut.
+const VAR_OPENAI_API_KEY: &str = "OPENAI_API_KEY";
+
+/// Every process-environment variable [`EmbedderEnv::from_process`] reads, so
+/// a caller that has to *neutralize* this crate's configuration surface — a
+/// test spawning a binary it must not let reach a billed backend, a sandbox
+/// building a child environment — enumerates it instead of transcribing a
+/// list that then drifts (#4542).
+///
+/// A shortcut key is enough on its own to resolve a hosted backend, and
+/// `STELLA_EMBED_URL` redirects one, so the whole table is the credential
+/// surface rather than the three fields whose names say `KEY`.
+pub const ENV_VARS: &[&str] = &[
+    VAR_URL,
+    VAR_MODEL,
+    VAR_API_KEY,
+    VAR_DIMS,
+    VAR_FLOOR,
+    VAR_VOYAGE_API_KEY,
+    VAR_OPENAI_API_KEY,
+];
+
 /// The environment [`resolve`] reads, captured as data so resolution is a pure
 /// function and its table of precedences is testable.
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -130,21 +164,32 @@ pub struct EmbedderEnv {
 
 impl EmbedderEnv {
     /// Read the real process environment. The only impure part of resolution.
+    ///
+    /// Every name it reads is a constant listed in [`ENV_VARS`], which is what
+    /// makes that list the environment surface rather than a description of
+    /// it — proven in both directions by
+    /// `from_lookup_reads_exactly_the_listed_variables`.
     pub fn from_process() -> Self {
-        let read = |name: &str| {
-            std::env::var(name)
-                .ok()
+        Self::from_lookup(|name| std::env::var(name).ok())
+    }
+
+    /// [`Self::from_process`] over an arbitrary lookup, so the set of names it asks
+    /// for is observable without mutating the process environment under a
+    /// parallel suite.
+    fn from_lookup(mut get: impl FnMut(&str) -> Option<String>) -> Self {
+        let mut read = |name: &str| {
+            get(name)
                 .map(|value| value.trim().to_string())
                 .filter(|value| !value.is_empty())
         };
         Self {
-            url: read("STELLA_EMBED_URL"),
-            model: read("STELLA_EMBED_MODEL"),
-            api_key: read("STELLA_EMBED_API_KEY"),
-            dims: read("STELLA_EMBED_DIMS"),
-            floor: read("STELLA_EMBED_FLOOR"),
-            voyage_api_key: read("VOYAGE_API_KEY"),
-            openai_api_key: read("OPENAI_API_KEY"),
+            url: read(VAR_URL),
+            model: read(VAR_MODEL),
+            api_key: read(VAR_API_KEY),
+            dims: read(VAR_DIMS),
+            floor: read(VAR_FLOOR),
+            voyage_api_key: read(VAR_VOYAGE_API_KEY),
+            openai_api_key: read(VAR_OPENAI_API_KEY),
         }
     }
 }
@@ -527,21 +572,41 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn env_with(pairs: &[(&str, &str)]) -> EmbedderEnv {
-        let mut env = EmbedderEnv::default();
-        for (key, value) in pairs {
-            let slot = match *key {
-                "STELLA_EMBED_URL" => &mut env.url,
-                "STELLA_EMBED_MODEL" => &mut env.model,
-                "STELLA_EMBED_API_KEY" => &mut env.api_key,
-                "STELLA_EMBED_DIMS" => &mut env.dims,
-                "STELLA_EMBED_FLOOR" => &mut env.floor,
-                "VOYAGE_API_KEY" => &mut env.voyage_api_key,
-                "OPENAI_API_KEY" => &mut env.openai_api_key,
-                other => panic!("unknown variable {other}"),
-            };
-            *slot = Some((*value).to_string());
+        for (key, _) in pairs {
+            assert!(ENV_VARS.contains(key), "unknown variable {key}");
         }
-        env
+        EmbedderEnv::from_lookup(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_string())
+        })
+    }
+
+    /// [`ENV_VARS`] is the whole environment surface, in both directions: a
+    /// name read but unlisted would leave a variable a sandbox cannot know to
+    /// clear, and a name listed but unread would have a caller stripping
+    /// something that does nothing.
+    #[test]
+    fn from_lookup_reads_exactly_the_listed_variables() {
+        let mut asked = Vec::new();
+        let _ = EmbedderEnv::from_lookup(|name| {
+            asked.push(name.to_string());
+            None
+        });
+        assert_eq!(asked, ENV_VARS);
+    }
+
+    #[test]
+    fn every_listed_variable_populates_a_field() {
+        for name in ENV_VARS {
+            let env = EmbedderEnv::from_lookup(|asked| (asked == *name).then(|| "set".to_string()));
+            assert_ne!(
+                env,
+                EmbedderEnv::default(),
+                "{name} is listed in ENV_VARS but populates no field"
+            );
+        }
     }
 
     #[test]
