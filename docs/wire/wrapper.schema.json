@@ -252,71 +252,6 @@
         }
       ]
     },
-    "HostStage": {
-      "description": "A stage boundary **this host itself** emits.\n\nClosed by design, and the claim it makes is deliberately smaller than it\nused to be: this is not the stage vocabulary any more (that is\n[`StageName`], which is open), it is the set of boundaries the host knows\nhow to name on its own. The names and their order were taken from\n`stage_rank` in the staged pipeline's `replay.rs` (`crates/stella-pipeline`,\ndeleted in #3865), which was the canonical ordering then — and\n[`HostStage::kind`] makes the correspondence mechanical rather than a\nclaim, since it is one-to-one onto [`StageKind`]'s twelve. With that crate\ngone, this enum *is* the ordering of the host's own stages.\n\n**A name here is not a promise that every host runs it.** The vocabulary\nmirrors [`StageKind`] because a wrapper that cannot spell a boundary\ncannot describe the run it wraps; which hosts emit which boundary today\ndiffers per stage, and each variant below says so rather than leaving a\nmanifest author to discover it from a run that quietly did nothing.",
-      "oneOf": [
-        {
-          "const": "triage",
-          "description": "Classify the task and name what must be researched.",
-          "type": "string"
-        },
-        {
-          "const": "recall",
-          "description": "Pull prior context for the goal.",
-          "type": "string"
-        },
-        {
-          "const": "research",
-          "description": "Answer triage's questions with read-only sub-agents.",
-          "type": "string"
-        },
-        {
-          "const": "plan",
-          "description": "Turn the goal into steps.",
-          "type": "string"
-        },
-        {
-          "const": "scope",
-          "description": "Review the plan's scope before spending on it.",
-          "type": "string"
-        },
-        {
-          "const": "execute",
-          "description": "Run the turn.",
-          "type": "string"
-        },
-        {
-          "const": "witness",
-          "description": "Author the failing test that will measure the turn.",
-          "type": "string"
-        },
-        {
-          "const": "verify",
-          "description": "Turn evidence into a verdict.",
-          "type": "string"
-        },
-        {
-          "const": "verdict",
-          "description": "The verdict boundary — and **the staged pipeline does not dispatch\nit**, which is the one thing a manifest author has to know before\nwriting the name down.\n\nThe staged pipeline emitted no [`StageKind::Verdict`] at all: its\nverify stage emitted the `Verdict` *event* directly from\n`ladder_decision`, and its own `pipeline/tests.rs` asserted the stage\nnever appeared in that stream (`crates/stella-pipeline`, deleted in\n#3865). The hosts that do emit the boundary are the\ngoal loops — `crates/stella-cli/src/agent/goal.rs` and\n`crates/stella-serve/src/goal.rs` run-scoped,\n`crates/stella-core/src/goal.rs` turn-scoped — so a wrapper naming\n`verdict` describes a goal-loop run and not a staged one.",
-          "type": "string"
-        },
-        {
-          "const": "reflect",
-          "description": "Post-verdict self-reflection: mine the finished turn for lessons and\nrecord them for later recall.\n\nEmitted run-scoped today by `crates/stella-cli/src/agent.rs`, gated\nthere on the turn having done real work — the branch\n[`Signal::MutatingActions`] transcribes.",
-          "type": "string"
-        },
-        {
-          "const": "contextwrite",
-          "description": "Context write-back: episode summaries and fact upserts landing in the\ncontext plane.\n\nA **declared gap**: the work happens (`crates/stella-cli/src/agent.rs`\nrecords the episode under the same \"did real work\" gate as reflection)\nbut no host emits this boundary today, so nothing yet reports it.\nDeclarable so a wrapper can order the write-back it will drive once\nthe socket exists (#3380), and named as a gap here rather than\ndiscovered as a silence.",
-          "type": "string"
-        },
-        {
-          "const": "complete",
-          "description": "The run is done — the last boundary a run emits.\n\nEmitted run-scoped today by `stella-core`'s\n`EventSender::pairing_stage_complete` and by `stella-cli`'s command-deck\nforwarder.",
-          "type": "string"
-        }
-      ]
-    },
     "ObservedEvidence": {
       "additionalProperties": false,
       "description": "The evidence a wrapper gathered — the plugin-owned half of an\n[`EvidenceSet`].\n\nEvery field here is something a plugin's own process can honestly observe:\nit ran the witness and watched it flip, or it ran a benchmark and counted.\nNothing here is a verdict, and nothing here is a fact only the host holds.",
@@ -480,35 +415,8 @@
       ]
     },
     "StageName": {
-      "description": "The name of a stage a wrapper declares: one of the host's own, or a word\nthis manifest contributed (#3963).\n\n# Why this is open, and what still refuses to load\n\nA closed vocabulary capped the set of turn shapes a plugin could express at\nthe set the host anticipated, which is the exact shape `doc:roleless-core`\nexists to remove. What it bought — that a manifest cannot declare a stage\nnothing will dispatch — is kept, and by a stronger route than a closed enum:\nthe dispatcher iterates whatever the resolved program holds, so a\ncontributed stage dispatches *because* it was declared, and\nloading still refuses the names that could not be dispatched, rendered, or\ntold apart from a host boundary.\n\n# Normalization is what keeps one word one stage\n\n[`StageName::new`] resolves a name [`HostStage`] knows into\n[`StageName::Host`], so [`StageName::Contributed`] never holds a word the\nhost already answers to — the same discipline, and the same reason, as\n`stella_protocol::StageName`: a value that does not survive its own round\ntrip is what invariant 4 forbids.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "A boundary this host emits.",
-          "properties": {
-            "Host": {
-              "$ref": "#/$defs/HostStage"
-            }
-          },
-          "required": [
-            "Host"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "A stage the manifest contributed, under its own word. Never one of the host's own boundary names, and checked at manifest load for being dispatchable, renderable, and distinguishable from them.",
-          "properties": {
-            "Contributed": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "Contributed"
-          ],
-          "type": "object"
-        }
-      ]
+      "description": "The name of a stage, as one plain string. One of the host's own boundary names, or a word the plugin's manifest contributed; a reader tells them apart by whether the host answers to it, and every string is a legal value here.",
+      "type": "string"
     },
     "TestBaseline": {
       "description": "What a [`TestPlan`]'s invocation reported before the turn ran.\n\nFour answers rather than an exit code, and the fourth is why: a run that\ntimed out or could not find its toolchain never observed an assertion, and\nscoring its non-zero exit as \"red\" is exactly the bug `CmdOutcome`'s\n`assertion_result` exists to close (#860) — an infra failure would satisfy\na flip's precondition and the next clean run would be credited as a fix.",

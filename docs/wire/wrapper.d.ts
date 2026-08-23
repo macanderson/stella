@@ -231,27 +231,6 @@ export type CandidateHandle = string;
 export type FlipObservation = "not-attempted" | "achieved" | "not-achieved" | "unsatisfiable" | "unobservable";
 
 /**
- * A stage boundary **this host itself** emits.
- *
- * Closed by design, and the claim it makes is deliberately smaller than it
- * used to be: this is not the stage vocabulary any more (that is
- * [`StageName`], which is open), it is the set of boundaries the host knows
- * how to name on its own. The names and their order were taken from
- * `stage_rank` in the staged pipeline's `replay.rs` (`crates/stella-pipeline`,
- * deleted in #3865), which was the canonical ordering then — and
- * [`HostStage::kind`] makes the correspondence mechanical rather than a
- * claim, since it is one-to-one onto [`StageKind`]'s twelve. With that crate
- * gone, this enum *is* the ordering of the host's own stages.
- *
- * **A name here is not a promise that every host runs it.** The vocabulary
- * mirrors [`StageKind`] because a wrapper that cannot spell a boundary
- * cannot describe the run it wraps; which hosts emit which boundary today
- * differs per stage, and each variant below says so rather than leaving a
- * manifest author to discover it from a run that quietly did nothing.
- */
-export type HostStage = "triage" | "recall" | "research" | "plan" | "scope" | "execute" | "witness" | "verify" | "verdict" | "reflect" | "contextwrite" | "complete";
-
-/**
  * The evidence a wrapper gathered — the plugin-owned half of an
  * [`EvidenceSet`].
  *
@@ -368,33 +347,9 @@ export type SignalValue = {
 };
 
 /**
- * The name of a stage a wrapper declares: one of the host's own, or a word
- * this manifest contributed (#3963).
- *
- * # Why this is open, and what still refuses to load
- *
- * A closed vocabulary capped the set of turn shapes a plugin could express at
- * the set the host anticipated, which is the exact shape `doc:roleless-core`
- * exists to remove. What it bought — that a manifest cannot declare a stage
- * nothing will dispatch — is kept, and by a stronger route than a closed enum:
- * the dispatcher iterates whatever the resolved program holds, so a
- * contributed stage dispatches *because* it was declared, and
- * loading still refuses the names that could not be dispatched, rendered, or
- * told apart from a host boundary.
- *
- * # Normalization is what keeps one word one stage
- *
- * [`StageName::new`] resolves a name [`HostStage`] knows into
- * [`StageName::Host`], so [`StageName::Contributed`] never holds a word the
- * host already answers to — the same discipline, and the same reason, as
- * `stella_protocol::StageName`: a value that does not survive its own round
- * trip is what invariant 4 forbids.
+ * The name of a stage, as one plain string. One of the host's own boundary names, or a word the plugin's manifest contributed; a reader tells them apart by whether the host answers to it, and every string is a legal value here.
  */
-export type StageName = {
-  Host: HostStage;
-} | {
-  Contributed: string;
-};
+export type StageName = string;
 
 /**
  * What a [`TestPlan`]'s invocation reported before the turn ran.
