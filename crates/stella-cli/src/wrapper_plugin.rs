@@ -143,7 +143,7 @@ use stella_core::router::Router;
 use stella_core::subagent::SubAgentDispatcher;
 use stella_model::provider::Provider;
 use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
-use stella_protocol::{AgentEvent, CompletionMessage};
+use stella_protocol::CompletionMessage;
 use stella_runtime::wrapper::{
     CandidateFanoutSpend, CandidateFanouts, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS,
     DEFAULT_HOST_MAX_CHILD_TURNS, DEFAULT_HOST_MAX_HOLDS, DispatchReport, DrivenTurn, HostCallGate,
@@ -1196,10 +1196,12 @@ pub(crate) struct RawTurnDriver<'a> {
     pub(crate) session: &'a str,
     /// The variant id recorded on every execution row this driver opens.
     pub(crate) variant: &'a str,
-    /// This turn's `ContextRecall`, spent on the first round only — recall runs
-    /// once per session, and re-emitting its event on a held-open round would
-    /// claim a retrieval that never happened.
-    pub(crate) recall_event: Option<AgentEvent>,
+    /// This turn's opening recall: the `ContextRecall` event, spent on the
+    /// first round only — recall runs once per session, and re-emitting it on
+    /// a held-open round would claim a retrieval that never happened — and the
+    /// opening block's produced handles, which seed EVERY round's re-query
+    /// (#4498): the block is in `messages` for every round alike.
+    pub(crate) recall: crate::memory::OpeningRecall,
     /// The session memory, for the execution stamp and skill-usage record.
     pub(crate) memory: Option<&'a mut SessionMemory>,
     /// The artifacts this host pinned before the run, and the finding it
@@ -1277,7 +1279,10 @@ impl TurnDriver for RawTurnDriver<'_> {
                 .reporting_to(facts.clone()),
             self.prompt,
             Some(self.session),
-            self.recall_event.take(),
+            crate::memory::OpeningRecall {
+                event: self.recall.event.take(),
+                produced: self.recall.produced.clone(),
+            },
             self.memory.as_deref_mut(),
             // The host folds what it does see (#3976). This driver runs the
             // turn through the same `run_turn` every raw door uses, so its

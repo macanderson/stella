@@ -152,7 +152,7 @@ async fn a_drifted_turn_recalls_the_skill_its_prompt_could_not() {
         "phase 1: the prompt anchors nowhere near the skill's domain"
     );
 
-    let requery = crate::memory::SessionRequery::new(&memory, &[]);
+    let requery = crate::memory::SessionRequery::new(&memory, &[], Default::default());
     let touched = vec!["crates/stella-model/anthropic.rs".to_string()];
     let drifted = stella_core::steering::TurnSignal {
         prompt,
@@ -231,8 +231,9 @@ async fn an_answered_requery_emits_one_context_recall() {
     // Through the seam both drivers take, so the witness covers the wiring
     // and not just the adapter's ability to send.
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let requery = crate::memory::requery_for_turn(Some(&memory), &[], tx.into())
-        .expect("a session with memory has a re-query adapter");
+    let requery =
+        crate::memory::requery_for_turn(Some(&memory), &[], tx.into(), Default::default())
+            .expect("a session with memory has a re-query adapter");
 
     let touched = vec!["crates/stella-model/anthropic.rs".to_string()];
     let drifted = stella_core::steering::TurnSignal {
@@ -479,7 +480,7 @@ async fn a_second_requery_renders_only_the_frames_the_first_did_not() {
         .await
         .expect("store a recallable lesson");
 
-    let requery = crate::memory::SessionRequery::new(&memory, &[]);
+    let requery = crate::memory::SessionRequery::new(&memory, &[], Default::default());
     let first_touched = vec!["crates/stella-model/anthropic.rs".to_string()];
     let then_touched = vec![
         "crates/stella-model/anthropic.rs".to_string(),
@@ -519,6 +520,164 @@ async fn a_second_requery_renders_only_the_frames_the_first_did_not() {
     assert!(
         !second.contains("adapter-notes"),
         "a skill already in front of the model is not re-injected: {second}"
+    );
+}
+
+/// A registry of two records for the dedup witnesses below: one unscoped —
+/// it applies to every turn — and one that applies only when the turn names
+/// `deny.toml`.
+fn two_record_registry() -> stella_core::records::Registry {
+    let records = r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.acme.web.staging-url"
+kind = "preference"
+statement = "The staging deploy answers on port 8788."
+
+[record.steering]
+force = "info"
+
+[[record]]
+lineage_id = "ctx.acme.web.license-allowlist"
+kind = "preference"
+statement = "New dependencies must clear the deny.toml allowlist."
+
+[record.steering]
+force = "may"
+applies_to = { paths = ["deny.toml"] }
+"#;
+    stella_core::records::registry::load(
+        &[],
+        &[stella_core::rules::RuleFile {
+            path: ".stella/rules/acme.web.toml".to_string(),
+            contents: records.to_string(),
+        }],
+        &stella_core::records::Facts {
+            now: "2026-07-20T00:00:00Z",
+            ..Default::default()
+        },
+    )
+}
+
+/// **Witness (#4498, the record half).** A second re-query renders only the
+/// record the drift added — a record already in front of the model is left
+/// out, exactly as a frame or a skill is.
+///
+/// Fails on base, where [`ProducedSteering`] carried no record handles and
+/// the volatile channel had no exclusion door: the channel renders as one
+/// budgeted block, so the re-query that surfaced the scoped record re-rendered
+/// the unscoped one beside it, whole, into the permanent paid prefix.
+#[tokio::test]
+async fn a_second_requery_renders_only_the_records_the_first_did_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut memory = session(dir.path());
+    memory.set_record_registry(two_record_registry());
+
+    fn signal<'a>(touched: &'a [String]) -> stella_core::steering::TurnSignal<'a> {
+        stella_core::steering::TurnSignal {
+            prompt: "keep the service healthy",
+            touched_paths: touched,
+            since_last_query: 5,
+            ..Default::default()
+        }
+    }
+
+    let first = memory
+        .signal_recall_block(
+            &signal(&[]),
+            &crate::memory::steering::ProducedSteering::default(),
+        )
+        .await;
+    let first_text = first.text.expect("the unscoped record renders a block");
+    assert!(
+        first_text.contains("port 8788") && !first_text.contains("deny.toml"),
+        "the control: the first block carries the unscoped record alone: {first_text}"
+    );
+
+    let touched = vec!["deny.toml".to_string()];
+    let second = memory
+        .signal_recall_block(&signal(&touched), &first.produced)
+        .await;
+    let second_text = second
+        .text
+        .expect("the drift makes the scoped record apply");
+    assert!(
+        second_text.contains("deny.toml allowlist"),
+        "the second block carries what the drift added: {second_text}"
+    );
+    assert!(
+        !second_text.contains("port 8788"),
+        "a record already in front of the model is not re-injected: {second_text}"
+    );
+}
+
+/// **Witness (#4498, the seed half).** The turn-opening block's own handles
+/// seed the re-query adapter, so the FIRST answered re-query already leaves
+/// out what the opening block rendered — frames and records alike.
+///
+/// Fails on base structurally: [`SessionRequery::new`] took no seed at all
+/// (the handle set started empty, a bound its doc named), so nothing could
+/// carry the opening block's `produced` into the adapter and the first
+/// answered re-query repeated the opening block's frames once.
+#[tokio::test]
+async fn the_first_requery_leaves_out_what_the_opening_block_rendered() {
+    use stella_core::ports::SteeringRequery as _;
+
+    let dir = workspace_two_domains();
+    let lesson = "the deploy script must run migrations before restarting the api";
+    let mut memory = session(dir.path());
+    memory.set_record_registry(two_record_registry());
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![MemoryInput::reflection(lesson, Vec::<String>::new())],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("store a recallable lesson");
+
+    let opening = memory.recall_block_reported(lesson, &[]).await;
+    let mut messages = Vec::new();
+    let opening = crate::memory::inject_opening_recall(&mut messages, opening);
+    let opening_text = &messages
+        .first()
+        .expect("the opening recall injects a block")
+        .content;
+    assert!(
+        opening_text.contains(lesson) && opening_text.contains("port 8788"),
+        "the control: the opening block carries the frame and the unscoped \
+         record, or the assertions below pass for the wrong reason: {opening_text}"
+    );
+
+    let requery = crate::memory::SessionRequery::new(&memory, &messages, opening.produced);
+    let touched = vec!["crates/stella-model/anthropic.rs".to_string()];
+    let answer = requery
+        .requery(&stella_core::steering::TurnSignal {
+            prompt: lesson,
+            touched_paths: &touched,
+            since_last_query: 5,
+            ..Default::default()
+        })
+        .await
+        .expect("the drift surfaces the domain's skill, which the opening block did not carry");
+    assert!(
+        answer.contains("adapter-notes"),
+        "the first re-query carries what is new: {answer}"
+    );
+    assert!(
+        !answer.contains(lesson),
+        "a frame the opening block rendered is not repeated by the FIRST \
+         re-query: {answer}"
+    );
+    assert!(
+        !answer.contains("port 8788"),
+        "a record the opening block rendered is not repeated either: {answer}"
     );
 }
 
