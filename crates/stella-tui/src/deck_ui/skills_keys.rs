@@ -5,7 +5,7 @@
 //! about to produce gets written, project or user.
 //!
 //! Split from `deck_ui.rs` (#629's 1500-line ratchet) when the picker's
-//! movement was routed through [`list_nav`](super::list_nav), the way
+//! movement was routed through [`list_nav`](crate::deck_ui::list_nav), the way
 //! `mcp_keys` and `issues_keys` were split before it.
 //!
 //! Two options, and the picker draws them **side by side**, which is why it
