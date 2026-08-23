@@ -47,7 +47,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Widget};
 use stella_tools::policy::WILDCARD;
 
 use crate::deck::DeckTab;
-use crate::deck_ui::{DeckAction, DeckUi};
+use crate::deck_ui::{DeckAction, DeckUi, list_nav};
 use crate::envelope::{AgentScope, ToolPolicyState, ToolRow, ToolScope, WorkspaceInput};
 use crate::render::scroll_window_start;
 use crate::theme;
@@ -244,20 +244,17 @@ pub fn handle_tools_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let plain = !key
         .modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META);
+    // Row movement is the deck's one vocabulary, not this panel's: `↑`/`↓`,
+    // `j`/`k`, `⇞`/`⇟` and `Home`/`End` all move the selection. `letters` is
+    // true because the panel is modal while focused — nothing here is
+    // composing a prompt for `j` to join (#4370).
+    let count = ui.tools.rows().len();
+    if list_nav::select(key, &mut ui.tools.row, count, true) {
+        return DeckAction::Handled;
+    }
     match key.code {
         KeyCode::Esc => {
             ui.tools.focused = false;
-            DeckAction::Handled
-        }
-        KeyCode::Up => {
-            ui.tools.row = ui.tools.row.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            let count = ui.tools.rows().len();
-            if count > 0 {
-                ui.tools.row = (ui.tools.row + 1).min(count - 1);
-            }
             DeckAction::Handled
         }
         KeyCode::Enter => toggle_row(ui),
