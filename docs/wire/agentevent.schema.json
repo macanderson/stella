@@ -2418,18 +2418,18 @@
           "type": "string"
         },
         "kind": {
-          "description": "`\"exact_repeat\"` | `\"short_cycle\"` | `\"stagnation\"` — mirrors\n`stella-core::loop_detect::LoopVerdict` (kept as a string here so\n`stella-protocol` never depends on `stella-core`).",
+          "description": "`\"exact_repeat\"` | `\"short_cycle\"` | `\"stagnation\"` |\n`\"interleaved_repeat\"` | `\"monotonic_sweep\"` — mirrors\n`stella-core::loop_detect::LoopVerdict` (kept as a string here so\n`stella-protocol` never depends on `stella-core`).",
           "type": "string"
         },
         "pattern": {
-          "description": "Tool names of the repeated signature, in cycle order (one entry\nfor an exact repeat or a stagnating tool).",
+          "description": "Tool names of the repeated signature, in cycle order (one entry\nfor an exact repeat, a stagnating tool, an interleaved repeat, or\na monotonic sweep).",
           "items": {
             "type": "string"
           },
           "type": "array"
         },
         "repeats": {
-          "description": "Consecutive identical calls (exact repeat), full cycles (short\ncycle), or consecutive no-progress calls (stagnation) observed.",
+          "description": "Consecutive identical calls (exact repeat), full cycles (short\ncycle), consecutive no-progress calls (stagnation), occurrences\nanywhere in the window (interleaved repeat), or times the sweep\nwrapped back to its start (monotonic sweep) observed.",
           "format": "uint",
           "minimum": 0,
           "type": "integer"
