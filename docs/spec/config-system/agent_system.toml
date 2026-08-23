@@ -1,12 +1,33 @@
 # =============================================================================
-# agent_system.toml
-# Example config for a multi-agent system with:
-#   - per-agent configs (triage / worker / verifier)
-#   - a pipeline object controlling which agents are active
-#   - multiple API providers, including providers that serve the same model
-#   - "track latest" model aliasing (e.g. auto-upgrades opus-4.5 -> opus-5)
-#   - local OpenAI-compatible model servers (Ollama, vLLM, LM Studio, etc.)
-#   - a toggleable registry of 30 tools
+# agent_system.toml  ── HISTORICAL. DO NOT COPY THIS FILE INTO A PROJECT.
+#
+# The original sketch the config-system design responds to (DESIGN.md, under
+# "Companion files"), kept as the artifact that was argued with rather than as
+# guidance. No block below describes a shape stella reads.
+#
+# It sketched: per-agent configs (triage / worker / verifier); a pipeline object
+# controlling which agents are active; multiple API providers, including
+# providers that serve the same model; "track latest" model aliasing; local
+# OpenAI-compatible model servers; and a toggleable registry of 30 tools.
+#
+# Three of those were settled against it:
+#
+#   - `[agents.triage]`, `[agents.worker]` and `[agents.verifier]` split one
+#     engine across three roles. The staged pipeline those roles served was
+#     deleted in #3865, and #3908 collapsed the engine settings to one role —
+#     `[agents.default]`. A participant an installed plugin declares gets its
+#     model from `[seats]`, keyed `<plugin-id>/<role>`, so the role word
+#     belongs to the plugin rather than to core. See `stella.today.toml` and
+#     `doc:roleless-core`.
+#   - `[[providers]]` as an array of tables became `[providers.<id>]`, so a
+#     scope can override one provider without restating the list.
+#   - the `[pipeline]` object never shipped. A wrapper plugin orders its own
+#     stages in its manifest — `doc:pipeline-as-plugins`.
+#
+# What to read instead: `stella.example.toml` at the repository root is the
+# copy-paste reference and is gate-checked against the loader;
+# `stella.today.toml` renders what stella reads today in the TOML shape;
+# `stella.next.toml` renders the shape after DESIGN.md's remaining phases.
 # =============================================================================
 
 [meta]
@@ -156,7 +177,9 @@ pinned_version = "llama3.1:70b"
 
 
 # -----------------------------------------------------------------------------
-# AGENTS
+# AGENTS  ── PRE-#3865. The three roles below are the sketch's, not stella's;
+# the header at the top of this file says what replaced them.
+#
 # Each agent picks a logical model and a provider preference order (first
 # enabled provider in the list that serves that model wins; falls through on
 # error/rate-limit). `tools` is a list of tool ids from [tools.*] the agent is

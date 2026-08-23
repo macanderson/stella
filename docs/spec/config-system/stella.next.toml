@@ -139,8 +139,14 @@ track_latest = ["anthropic/claude-opus"]
 # =============================================================================
 # AGENTS  ── RESHAPED (closed set -> open set) + EXTENDED
 # =============================================================================
-# Today the agent set is CLOSED: struct fields — default, worker, verifier,
-# triage, research, plan. A misspelled agent key in JSON is silently ignored.
+# Today the agent set is CLOSED and holds exactly one name: `default`, a struct
+# field rather than a map key. A misspelled agent key in JSON is silently
+# ignored.
+#
+# It held six — default, worker, verifier, triage, research, plan — until #3908
+# collapsed the engine to one role, after #3865 deleted the staged pipeline the
+# other five served. Everything below that still names one of those five is
+# marked as pre-#3865 history where it stands.
 #
 # Opening it is what makes the `delegate` tool configurable. That tool exists and
 # is merged (#922 -> #976/#983), but it dispatches to ONE hard-coded read-only
@@ -155,12 +161,16 @@ track_latest = ["anthropic/claude-opus"]
 
 [agents]
 default_model           = "anthropic/claude-fable-5"
-pipeline_worker_model   = "zai/glm-5.2"
-pipeline_verifier_model = "anthropic/claude-opus-5"
-pipeline_triage_model   = "deepseek/deepseek-chat"
-# Unset, research and plan ride the WORKER rather than `default_model`.
-pipeline_research_model = "deepseek/deepseek-chat"
-pipeline_plan_model     = "zai/glm-5.2"
+# PRE-#3865 HISTORY. Five more keys stood here — `pipeline_worker_model`,
+# `pipeline_verifier_model`, `pipeline_triage_model`, `pipeline_research_model`
+# and `pipeline_plan_model`. They pinned a model per staged-pipeline role, that
+# pipeline was deleted in #3865, and by then four of the five were read by
+# nothing at all. #3908 removed them; a file that still carries one loads fine
+# and is told so by name on every run.
+#
+# `[seats]` is what replaces them — see stella.today.toml. A seat key is
+# `<plugin-id>/<role>`, so the role word belongs to the plugin that declared it
+# rather than to core, which is the whole point of `doc:roleless-core`.
 auto_mode               = "off"
 effort_auto             = "on"
 reasoning_auto          = "on"
@@ -177,8 +187,13 @@ hunk_review             = "off"
 # `allowed_models` MOVED to [models].allowed. §6.1 migrates it and warns on
 # the old location for one release.
 
-# ── EXTENDED: a built-in agent gains provider fallback and a tool scope ──
-[agents.verifier]
+# ── EXTENDED: the built-in agent gains provider fallback ──
+#
+# This block was written against `[agents.verifier]`, one of the five roles
+# #3865 and #3908 removed. `default` is the built-in agent that survives, and
+# provider fallback is a property of whichever agent issues the call, so the
+# proposal transfers unchanged.
+[agents.default]
 model  = "anthropic/claude-opus-5"
 effort = "high"
 
@@ -194,24 +209,30 @@ effort = "high"
 #     attribution and receipts stay honest across a switch
 #   - `on_exhausted` decides what happens when every provider fails
 provider_preference = ["anthropic", "openrouter"]
-on_exhausted        = "fail"   # fail | degrade  (degrade = fall back to the
-                               # default agent's model rather than ending the
-                               # turn; opt-in, because a silent capability
-                               # drop in a verifier is worse than a clean
-                               # failure)
+on_exhausted        = "fail"   # fail | degrade  (degrade = fall back to
+                               # `default_model` rather than ending the turn;
+                               # opt-in, because a silent capability drop is
+                               # worse than a clean failure)
 
-# NEW — per-agent tool scope. Uses the EXACT SAME grammar as the root
-# [tools] block (name > group > "*"), because a second tool-permission
-# language is how permission bugs happen.
+# ── OPEN QUESTION: where a tool scope narrower than root `[tools]` attaches ──
 #
-# Composition: root [tools] is the workspace floor, this narrows it further,
-# and the managed authority ceiling clamps both. An agent can never GRANT a
-# tool the root block or the ceiling denied — narrowing only.
-[agents.verifier.tools]
-"*"       = "off"
-read_file = "on"
-grep      = "on"
-glob      = "on"
+# A `[agents.verifier.tools]` block stood here, granting the verifier role
+# read-only tools under the composition rules the named-agent scope below still
+# describes.
+#
+# The role it named is gone (#3865, #3908), and the concept it carried does not
+# obviously go with it: a verification plugin's participant is exactly the thing
+# that wants read-only tools. So it either becomes a per-SEAT grant, or it is
+# dropped and root `[tools]` plus the named-agent scope below are the whole
+# story.
+#
+# NOT DECIDED HERE, because a seat today is a flat model string —
+# `"vera/verifier" = "anthropic/claude-opus-5"` (`doc:roleless-core` §8.4) — so
+# hanging a tools key off one means reshaping `[seats]` into tables, and that
+# is a maintainer's call rather than a rename. Refs #3941.
+#
+# The per-agent tool scope on a custom NAMED agent, below, is unaffected: it
+# never referred to a pipeline role.
 
 # ── NEW: a custom named agent, selectable by the `delegate` tool ──
 [agents.security-reviewer]
@@ -228,6 +249,13 @@ reasoning   = "on"
 # workspace root with symlinks refused. See DESIGN.md §4.3.
 prompt_file = ".stella/prompts/security-reviewer.md"
 
+  # NEW — per-agent tool scope. Uses the EXACT SAME grammar as the root
+  # [tools] block (name > group > "*"), because a second tool-permission
+  # language is how permission bugs happen.
+  #
+  # Composition: root [tools] is the workspace floor, this narrows it further,
+  # and the managed authority ceiling clamps both. An agent can never GRANT a
+  # tool the root block or the ceiling denied — narrowing only.
   [agents.security-reviewer.tools]
   "*"    = "off"
   file   = "on"    # a whole group
@@ -384,8 +412,8 @@ process = "off"
 
 # ── NEW: binding a tool to an integration ──
 # A tool that needs credentials names an integration instead of embedding a
-# key. This is what makes the integration block load-bearing rather than
-# decorative.
+# key. This is what the integration block is for: without a tool naming one,
+# nothing reads it.
 [tools.jira_search]
 integration = "jira-prod"
 
