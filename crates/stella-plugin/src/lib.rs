@@ -146,7 +146,7 @@ pub use host_call::{
     AdoptCandidateArgs, AdoptCandidateResult, CandidateFanoutArgs, CandidateFanoutResult,
     ChildTurnArgs, ChildTurnResult, FanoutCandidate, HostCall, HostCallArgs, HostCallFailure,
     HostCallOk, HostCallOutcome, HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage,
-    RecallArgs, RecallFrame, RecallResult, RunTestArgs,
+    RecallArgs, RecallFrame, RecallResult, RunTestArgs, TestRunResult,
 };
 pub use manifest::{HookEvent, LoopGrant, Participation, PluginManifest, Role, Subloop};
 pub use observed::ObservedEvidence;

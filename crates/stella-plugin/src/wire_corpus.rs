@@ -85,8 +85,8 @@ use crate::{
     HostCall, HostCallArgs, HostCallFailure, HostCallOk, HostCallRefusal, HostCallRequest,
     HostCallResponse, HostStage, ObservedEvidence, PROTOCOL_VERSION, PublishedSignal, RecallArgs,
     RecallFrame, RecallResult, RunTestArgs, Signal, SignalKind, SignalValue, StageName,
-    TestBaseline, TestPlan, TurnOutcome, VolatileContext, WrapperPoint, WrapperRequest,
-    WrapperResponse,
+    TestBaseline, TestPlan, TestRunResult, TurnOutcome, VolatileContext, WrapperPoint,
+    WrapperRequest, WrapperResponse,
 };
 
 /// The committed artifact's filename.
@@ -145,6 +145,20 @@ pub fn corpus() -> Result<Value, serde_json::Error> {
 /// One labelled case: the name a diff reads, and the bytes it is about.
 fn case<T: Serialize>(name: &'static str, message: &T) -> Result<Value, serde_json::Error> {
     Ok(json!({ "case": name, "message": serde_json::to_value(message)? }))
+}
+
+/// One successful host-call answer, named by [`ok_case`] rather than by hand.
+///
+/// The naming is the point: it routes every published answer through the
+/// `match` that makes [`HostCallOk`] total here, so a new variant cannot reach
+/// this list unnamed. `suffix` distinguishes the `full`/`minimal` pair for the
+/// one variant that has an omissible member.
+fn ok_result(id: u32, ok: HostCallOk, suffix: &str) -> Result<Value, serde_json::Error> {
+    let name = format!("{}{suffix}", ok_case(&ok));
+    Ok(json!({
+        "case": name,
+        "message": serde_json::to_value(HostCallResponse::ok(id, ok))?,
+    }))
 }
 
 fn requests() -> Result<Value, serde_json::Error> {
@@ -213,26 +227,27 @@ fn host_calls() -> Result<Value, serde_json::Error> {
 /// The host's answers to those calls.
 fn host_results() -> Result<Value, serde_json::Error> {
     Ok(Value::Array(vec![
-        case(
-            "recall/full",
-            &HostCallResponse::ok(1, HostCallOk::Recall(recall_result_full())),
-        )?,
-        case(
-            "recall/minimal",
-            &HostCallResponse::ok(1, HostCallOk::Recall(RecallResult::default())),
-        )?,
+        ok_result(1, HostCallOk::Recall(recall_result_full()), "/full")?,
+        ok_result(1, HostCallOk::Recall(RecallResult::default()), "/minimal")?,
         // [`HostCallOk`] is untagged, so the `ok` table is the only thing that
         // tells a plugin which result it is holding. Publishing it is therefore
         // publishing the *discriminator*: a key renamed here does not merely
         // change a field, it makes a `child_turn` answer decode as the `recall`
         // variant tried before it. No optional member, so no pair.
-        case(
-            "child_turn",
-            &HostCallResponse::ok(4, HostCallOk::ChildTurn(child_turn_result())),
+        ok_result(4, HostCallOk::ChildTurn(child_turn_result()), "")?,
+        // The one result with an omissible member, so it appears twice: a
+        // `run_test` that observed nothing prints no `output` key at all, and a
+        // reader that started requiring it would show up here.
+        ok_result(3, HostCallOk::RunTest(test_run_result_full()), "/full")?,
+        ok_result(
+            3,
+            HostCallOk::RunTest(test_run_result_minimal()),
+            "/minimal",
         )?,
-        case(
-            "candidate_fanout",
-            &HostCallResponse::ok(5, HostCallOk::CandidateFanout(candidate_fanout_result())),
+        ok_result(
+            5,
+            HostCallOk::CandidateFanout(candidate_fanout_result()),
+            "",
         )?,
         // Both its members are required, which is exactly what keeps it out of
         // the `recall` variant tried before it: `RecallResult`'s only field
@@ -240,10 +255,7 @@ fn host_results() -> Result<Value, serde_json::Error> {
         // the adoption answer beside it makes the same point once more — the
         // two tables share no key at all, and this file is where a change to
         // that becomes a diff.
-        case(
-            "adopt_candidate",
-            &HostCallResponse::ok(6, HostCallOk::AdoptCandidate(adopt_candidate_result())),
-        )?,
+        ok_result(6, HostCallOk::AdoptCandidate(adopt_candidate_result()), "")?,
         case(
             "err/full",
             &HostCallResponse::err(
@@ -817,6 +829,41 @@ fn adopt_candidate_result() -> AdoptCandidateResult {
     AdoptCandidateResult {
         adopted: CandidateHandle::new("candidate-1"),
         discarded: vec![CandidateHandle::new("candidate-2")],
+    }
+}
+
+fn test_run_result_full() -> TestRunResult {
+    TestRunResult {
+        candidate: CandidateHandle::new("candidate-1"),
+        assertions: TestBaseline::Passed,
+        output: "test tests::flip ... ok".to_string(),
+    }
+}
+
+fn test_run_result_minimal() -> TestRunResult {
+    TestRunResult {
+        candidate: CandidateHandle::new("candidate-1"),
+        assertions: TestBaseline::Unobserved,
+        output: String::new(),
+    }
+}
+
+/// Totality for [`HostCallOk`], whose arms carry payloads and so cannot be
+/// walked by the fieldless successor the closed enums above use.
+///
+/// A `match` with no wildcard is still the compiler's check, which is the
+/// property this file is built on: adding a variant to that union is an `E0004`
+/// **here**, in the file that publishes it, rather than a silent omission from
+/// the one artifact a plugin author reads to learn what the discriminator is.
+/// It was a hand-written list until `run_test` was added (#3580) and nothing
+/// would have noticed the omission.
+fn ok_case(ok: &HostCallOk) -> &'static str {
+    match ok {
+        HostCallOk::Recall(_) => "recall",
+        HostCallOk::ChildTurn(_) => "child_turn",
+        HostCallOk::RunTest(_) => "run_test",
+        HostCallOk::CandidateFanout(_) => "candidate_fanout",
+        HostCallOk::AdoptCandidate(_) => "adopt_candidate",
     }
 }
 

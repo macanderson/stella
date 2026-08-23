@@ -89,6 +89,7 @@ mod framing;
 mod host_call;
 mod in_process;
 mod subprocess;
+mod test_run;
 mod verdict;
 
 use async_trait::async_trait;
@@ -122,6 +123,10 @@ pub use in_process::{InProcessWrapper, WrapperHandler};
 pub use subprocess::{
     AdmittedWrapper, DEFAULT_WRAPPER_TIMEOUT, MAX_WRAPPER_TIMEOUT, SubprocessWrapper,
     refuses_env_name,
+};
+pub use test_run::{
+    DEFAULT_HOST_MAX_TEST_RUNS, DEFAULT_TEST_OUTPUT_CHARS, TestObservation, TestRunDenial,
+    TestRunHost, TestRunPlane, TestRunRecord, TestRuns,
 };
 pub use verdict::{again, judge};
 

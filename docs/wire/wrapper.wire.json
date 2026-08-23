@@ -178,6 +178,27 @@
       }
     },
     {
+      "case": "run_test/full",
+      "message": {
+        "ok": {
+          "assertions": "passed",
+          "candidate": "candidate-1",
+          "output": "test tests::flip ... ok"
+        },
+        "result": 3
+      }
+    },
+    {
+      "case": "run_test/minimal",
+      "message": {
+        "ok": {
+          "assertions": "unobserved",
+          "candidate": "candidate-1"
+        },
+        "result": 3
+      }
+    },
+    {
       "case": "candidate_fanout",
       "message": {
         "ok": {

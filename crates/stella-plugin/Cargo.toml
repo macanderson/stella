@@ -42,8 +42,8 @@ serde.workspace = true
 # allow-list are unchanged by the move.
 serde_json.workspace = true
 # The second workspace edge this manifest's own comment asked to be argued
-# again rather than to cite the first one (#3532). Three things make it a
-# different kind of edge from stella-protocol's:
+# again rather than to cite the first one (#3532). It is a different kind of
+# edge from stella-protocol's:
 #
 #   * it is **optional and off by default**, so no build of the shipping binary
 #     compiles it — `[[bin]] required-features` keeps the only consumer behind

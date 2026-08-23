@@ -926,8 +926,12 @@ pub enum EvidenceProvenance {
     /// The host itself established this evidence.
     ///
     /// Today the only producer is [`EvidenceSet::unobserved`]: no host in this
-    /// tree can observe a flip for itself, because the one host call that
-    /// would run a check answers `Unsupported` (#3580).
+    /// tree observes a flip for itself. The host call that would run the check
+    /// is performed now (`stella_runtime::wrapper::TestRuns`, #3580), but what
+    /// it answers is a *plugin's* ask — the plugin reads it and reports the
+    /// flip, so the evidence stays `PluginReported`. A host that ran the check
+    /// on its own account and built evidence from it would be the producer this
+    /// variant is waiting for.
     HostObserved,
 }
 

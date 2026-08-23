@@ -31,8 +31,8 @@ use stella_plugin::{
     FanoutCandidate, FlipObservation, HostCall, HostCallOk, HostCallResponse, HostStage,
     ObservedEvidence, Outcome, PROTOCOL_VERSION, PluginManifest, PublishedSignal, RecallResult,
     RoundState, Signal, SignalValue, StageName, StopReason, TamperFinding, TestBaseline, TestPlan,
-    TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule,
-    VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
+    TestRunResult, TurnOutcome, UndecidedReason, UnmetBecause, UnmetRequirement, Verdict,
+    VerdictRule, VolatileContext, WrapperPoint, WrapperRequest, WrapperResponse,
 };
 use stella_protocol::CandidateHandle;
 
@@ -785,6 +785,17 @@ fn every_host_call_result_decodes_as_the_variant_it_was_encoded_as() {
         HostCallOk::AdoptCandidate(AdoptCandidateResult {
             adopted: CandidateHandle::new("candidate-1"),
             discarded: Vec::new(),
+        }),
+        // #3580's addition, and the near miss: this and the adoption answer
+        // both carry one handle, and they stay disjoint because the *key*
+        // differs — `candidate` here, `adopted` there. Its
+        // emptiest form is the interesting one, since `output` may be omitted:
+        // `{"candidate": …, "assertions": …}`, which shares no required key
+        // with any arm above.
+        HostCallOk::RunTest(TestRunResult {
+            candidate: CandidateHandle::new("candidate-1"),
+            assertions: TestBaseline::Unobserved,
+            output: String::new(),
         }),
     ];
     for answer in answers {
