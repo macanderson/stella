@@ -39,6 +39,9 @@ use std::process::{Command, Stdio};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// The `[wrapper] id` the fixture declares, and what must land in
 /// `executions.pipeline_variant`.
 const VARIANT: &str = "fleet-fixture-v1";
@@ -187,6 +190,7 @@ async fn run_fleet(
     fleet_args: &[&str],
 ) -> std::process::Output {
     let child = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args([
             "--model",
             "zai/glm-5.2",

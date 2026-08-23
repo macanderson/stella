@@ -1,6 +1,6 @@
 """The credential-absence refusal must name the variable holding the secret.
 
-The guard itself is correct and load-bearing: it is what stops a provider key
+The guard itself is correct and required: it is what stops a provider key
 reaching a task container's ``/proc/<pid>/environ``. What it did not do was say
 *which* host variable carried the credential, so every occurrence cost an
 operator a manual hunt through the environment — and the shape it actually

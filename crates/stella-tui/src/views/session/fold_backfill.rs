@@ -13,8 +13,8 @@
 //! which moves when a `FileChange` lands and drops the whole prefix.
 //!
 //! That is an argument, and this file is the evidence for it. It lives beside
-//! `views/session.rs` rather than inside it because that file is a
-//! grandfathered god file and closed to growth; being a *child* module is what
+//! `views/session.rs` rather than inside it because that file stays under the
+//! 1500-line ratchet by growing sideways; being a *child* module is what
 //! lets it reach `SessionFold::refresh`, which is private to the parent.
 
 use std::collections::HashSet;

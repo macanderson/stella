@@ -129,7 +129,7 @@ def test_a_healthy_run_is_clear(tmp_path):
 
 
 def test_a_run_firing_only_report_only_detectors_is_clear(tmp_path):
-    """The load-bearing case: real detectors fire and the run still proceeds.
+    """The decisive case: real detectors fire and the run still proceeds.
 
     `tool-error-envelope` fires on 40% of the healthy `post1` run and
     `repeated-identical-tool-call` is a band metric. A gate that aborted on

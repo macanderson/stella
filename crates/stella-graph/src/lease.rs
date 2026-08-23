@@ -24,7 +24,7 @@
 //!
 //! **Scoped passes are deliberately unguarded.** The watcher's `apply_changes`
 //! batches and the reconcile's committed change set are bounded, cheap, and —
-//! this is the load-bearing part — *not covered by whatever else holds the
+//! this is the part that matters — *not covered by whatever else holds the
 //! lease*. A concurrent scoped pass indexes different files. Skipping one
 //! because someone else is busy would silently drop an update, which is a
 //! correctness loss traded for a performance win nobody asked for. A lease is

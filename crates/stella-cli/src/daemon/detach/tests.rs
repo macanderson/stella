@@ -158,7 +158,8 @@ fn detach_forces_supervision_where_a_bare_run_would_decline_it() {
     assert_eq!(posture(false, false, false, false), Posture::Foreground);
 }
 
-/// The two ways `--detach` must lose, and the second one is load-bearing.
+/// The two ways `--detach` must lose, and the second one is what stops the
+/// recursion.
 ///
 /// A supervised child re-parses its parent's argv verbatim, `--detach`
 /// included, and is told to do the work through `STELLA_FOREGROUND=1`. If

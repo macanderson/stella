@@ -15,7 +15,7 @@
 //! dialog that closed on dispatch left the reader with no idea whether
 //! anything happened. That is the usability bug this module exists to fix.
 //!
-//! Two consequences worth stating, since both are load-bearing:
+//! Two consequences worth stating, since both are required:
 //!
 //! - **The completion signal is a driver snapshot, not the keypress.** The
 //!   in-flight states ([`InstalledMode::Creating`](crate::deck_ui::InstalledMode::Creating),

@@ -401,7 +401,7 @@ pub(crate) async fn run_goal_wrapped_turn(
             // `crate::wrapper_plugin::reject_arbiter_wrapper_on_goal` before
             // `run_goal_cmd` ever calls into this loop (#3832), so this arm
             // is unreachable for any wrapper actually bound here today. Kept
-            // as a named, load-bearing assertion rather than deleted: it is
+            // as a named, required assertion rather than deleted: it is
             // what turns a future hole in that pre-flight check (a grade
             // change, a bypassed call site) into a refused round instead of a
             // silent `turn_instance` collision.

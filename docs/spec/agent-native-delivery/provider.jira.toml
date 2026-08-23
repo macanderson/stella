@@ -136,7 +136,7 @@ spec_ref     = { custom_field = "customfield_10044" }
 # demand fields Stella has no opinion about and cannot infer. Rather than fail
 # every `create` call, the customer states the constant once.
 #
-# These values are passed through verbatim and are NEVER load-bearing for
+# These values are passed through verbatim and are NEVER required for
 # control flow (§3): if Stella branched on it, it would belong in the `Issue`
 # struct instead.
 [fields.required_on_create]

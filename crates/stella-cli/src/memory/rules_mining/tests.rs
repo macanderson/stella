@@ -1,6 +1,6 @@
 //! Tests for the wired rules miner.
 //!
-//! The load-bearing one is `an_inferred_rule_is_never_blocking`: a rule
+//! The decisive one is `an_inferred_rule_is_never_blocking`: a rule
 //! carrying a `RuleGuard` is Tier 2, and `evaluate_guards` denies the tool call.
 //! Minting one from inference is precisely what the gate criterion "no inferred
 //! directive reaches blocking by any path" forbids, and it is the thing wiring

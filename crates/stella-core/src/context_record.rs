@@ -12,8 +12,10 @@
 //! [`Scope`]/[`SharingScope`], the temporal primitives and canonical [`hash`]ing
 //! (installment 1); the [`context_use`] efficacy web (2); [`contract`] +
 //! [`outcome`] (3); [`representation`] content fidelity (4); and the internal
-//! replay-safe events, which live in `stella-protocol::context_event` so the
-//! protocol crate stays free of a `stella-core` dependency (5).
+//! replay-safe events (5), which lived in `stella-protocol::context_event` so
+//! the protocol crate stays free of a `stella-core` dependency — since trimmed
+//! to the one type production constructs, `CompiledContextFrameBuilt`, when
+//! #3135 deleted the never-wired `LifecycleEventEnvelope` channel.
 //!
 //! Two Phase 1 line items are deliberately **not** here, because they cannot be:
 //! the ingestion-boundary compatibility adapters (legacy `recorded_at` →

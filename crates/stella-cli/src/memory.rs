@@ -131,7 +131,7 @@ pub use stella_core::receipts::RECALL_MARKER;
 /// the one place every surface's episode is written — because attribution that
 /// each driver has to remember is attribution that a new driver silently drops.
 /// There is no reporting command yet: the comparison is a query over episode
-/// summaries, which is what makes the exact spelling load-bearing.
+/// summaries, which is what makes the exact spelling essential.
 pub(crate) const AB_CONTROL_TAG: &str = " [ab-control]";
 
 /// One reflection lesson as the model returns it and as persisted to the

@@ -17,7 +17,7 @@ Claude Code installed and logged in gets a working seat from the same match
 template, because the token comes from *their* login, not from a value someone
 else exported.
 
-Two hard rules, both load-bearing:
+Two hard rules, both required:
 
 - **The token is read only for a seat that declared it.** A template saying
   ``required = ["CLAUDE_CODE_OAUTH_TOKEN"]`` is the committed, reviewed

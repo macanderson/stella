@@ -1,6 +1,6 @@
 //! The record-taxonomy enums. Every variant's canonical wire form is the
 //! lowercase `snake_case` token asserted by the tests at the bottom of this
-//! file — those strings are load-bearing (they enter `record_hash` preimages),
+//! file — those strings are required (they enter `record_hash` preimages),
 //! so `as_str()` and the serde form are pinned to each other.
 
 use serde::{Deserialize, Serialize};

@@ -705,7 +705,7 @@ impl Provider for WedgedProvider {
 /// reqwest deadline the adapter carried, and on Bedrock that was 600s of
 /// *retryable* `Transport`, i.e. four of them.
 ///
-/// The call count is the load-bearing assertion. A deadline that tripped as
+/// The call count is the required assertion. A deadline that tripped as
 /// `Transport` would be retried and this would read 4, multiplying the very
 /// window the deadline exists to close.
 #[tokio::test]

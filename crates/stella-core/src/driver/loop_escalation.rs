@@ -571,7 +571,7 @@ fn turn_stall_seconds(records: &[CallRecord<'_>]) -> u64 {
 /// and `0` disables the rung outright — the same convention every threshold
 /// beside it honours.
 ///
-/// **The scan is bounded by [`turn_start_index`], and that is load-bearing.**
+/// **The scan is bounded by [`turn_start_index`], and that bound is required.**
 /// A transcript is session-scoped — `run_turn` is handed the same `Vec` every
 /// turn, with each new user prompt appended and nothing trimmed — while the
 /// seconds this gates come from `super::loop_evidence::recent_call_records`,

@@ -331,8 +331,8 @@ pub(super) fn result_body(
         }
     } else {
         // With a diff below, a prose summary ("Applied edit to
-        // src/agent.rs") would restate the call row above it and the
-        // diff under it in the same breath. The row carries only its
+        // src/agent.rs") would restate both the call row above it and the
+        // diff under it. The row carries only its
         // metrics and gets out of the way.
         let paint = body_paint(path, full);
         // A file tool's own prose is never a transcript body.

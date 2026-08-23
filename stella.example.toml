@@ -510,7 +510,7 @@ issue_comment = "created by stella*"
 branch_prefix = "stella/"
 # Prefixes the PR TITLE, so an autonomous PR is distinguishable in the list,
 # where a maintainer actually triages. Deliberately NOT applied to commit
-# messages: those follow Conventional Commits, the scope is load-bearing, and a
+# messages: those follow Conventional Commits, the scope is required, and a
 # prefix in front of it would break the convention.
 title_prefix = "stella self-driving:"
 

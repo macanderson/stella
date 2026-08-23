@@ -195,7 +195,7 @@ Consequences:
   verifier-ablation incident (#2569/#2570) already demonstrated.
 - Skills are advice by design ("never enforced — selected and injected as
   volatile context", AGENTS.md), which is what keeps a bad auto-promoted
-  skill from breaking the agent. Making them load-bearing removes that
+  skill from breaking the agent. Making them required removes that
   safety property.
 - Cache economics: the system prompt is byte-stable (invariant #7); skills
   ride the volatile suffix. Moving orchestration into skill text moves

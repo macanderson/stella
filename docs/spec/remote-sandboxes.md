@@ -519,7 +519,7 @@ tree traversals per session, each thousands of round trips. As the
 happens where the files are.
 
 There is no version of this design that works without that verb. It is
-listed here rather than in §4 because it is the load-bearing one.
+listed here rather than in §4 because it is the one the design requires.
 
 ### 6.3 Index builders — accepted cost, measured before optimized
 
@@ -596,7 +596,7 @@ dependency.
 - **`local`** — your tree, your privileges. The default, and the only one
   that is not really a provider.
 - **`docker`** (also `podman`) — drives the CLI by argv, never a crate.
-  **This one is load-bearing**, because it is what makes deleting
+  **This one is required**, because it is what makes deleting
   `sandbox.rs` (§2) a net improvement rather than a net loss: it is the
   offline, free, no-account answer to "I want isolation on my own
   machine," and it is a real kernel boundary rather than a filesystem

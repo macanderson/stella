@@ -241,7 +241,7 @@ event's block ids against the manifests that carried them, *not* by the registry
 
 ## 5. Per-step request manifest — the receipt (#364 item 2)
 
-The manifest is the single most load-bearing addition: the ordered list of blocks
+The manifest is the single most essential addition: the ordered list of blocks
 the model actually saw on step *N*. It makes "re-run `compact()` over journal
 replay" a faithful audit and turns every subsequent attribution into a join.
 
@@ -966,7 +966,7 @@ After Tier A has run over real sessions, decide with data, not a hunch. Proceed
 to Tier B only where the receipts show the inferred layer would change a decision:
 
 - **Waste headroom.** Is a material fraction of token spend `WastedEvicted`
-  (say ≥ ~20%)? If most context is provably load-bearing and cache hits are
+  (say ≥ ~20%)? If most context is provably required and cache hits are
   healthy, the inferred layer is solving a problem you do not have — stop here.
 - **Label signal.** Do the provable signals leave enough unexplained useful
   context that an inferred `ReferencedDownstream` detector would add real

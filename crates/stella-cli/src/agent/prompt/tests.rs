@@ -168,7 +168,7 @@ fn both_prompts_void_measurements_whose_producing_command_errored() {
 /// prohibition with no cheaper rung to fall to, which is how a
 /// proportionality rule turns into a reason to verify nothing.
 ///
-/// The visibility claim is the load-bearing one: proportionality that may
+/// The visibility claim is the decisive one: proportionality that may
 /// be taken silently is just "skip verification" with a nicer name, and a
 /// verification plugin can only judge the checks the agent told it about.
 #[test]

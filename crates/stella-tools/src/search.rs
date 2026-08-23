@@ -106,7 +106,7 @@ pub const SEMANTIC_DESCRIPTION: &str = "Find code. This is the ONLY search you n
 /// The description advertised when no embedder resolved — what the name and
 /// file-scan rungs can actually keep.
 ///
-/// Every clause is load-bearing, and both failure directions are real:
+/// Every clause is required, and both failure directions are real:
 ///
 /// - **`WORDS` … `literally`** takes the emphasis slot the other variant
 ///   spends on `MEANING`, so the caps land on the mechanism instead of on a

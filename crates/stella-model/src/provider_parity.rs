@@ -191,7 +191,16 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
                         over one 17-minute session it held for the last 17 calls and not \
                         the first 32, leaving 20 of 69 calls reading zero cached tokens \
                         for 54% of the spend. Only a non-empty upstream_pin \
-                        (provider.order + allow_fallbacks:false) actually fixes the route",
+                        (provider.order + allow_fallbacks:false) actually fixes the route. \
+                        The gateway honours the root-level placement for Anthropic routes, \
+                        verified from recorded field usage rather than a live probe \
+                        (#1854): of 1,684 anthropic/* calls this adapter made between \
+                        2026-07-26 and 2026-08-16, 1,373 read cached tokens (95.8M of \
+                        107.5M input, 89%) and 1,557 recorded cache writes — and the \
+                        adapter has only ever sent the root-level form, never per-part \
+                        markers, so with Anthropic caching being explicit opt-in through \
+                        the gateway those reads could not occur if the root field were \
+                        dropped",
             witness: "openrouter_identity_sends_root_level_cache_control",
         },
     ),

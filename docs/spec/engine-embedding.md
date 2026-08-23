@@ -35,7 +35,7 @@ honest, and the gaps between today's tree and the embedding story.
 
 ## 1. The machine: one engine, layered ports, two front doors
 
-Every arrow points at a dependency. The load-bearing property (AGENTS.md
+Every arrow points at a dependency. The essential property (AGENTS.md
 invariant 1) is that arrows only ever point *down*: the decision core is
 plain synchronous logic over owned data, and everything that touches the
 world — models, processes, files, sockets — arrives through a port trait

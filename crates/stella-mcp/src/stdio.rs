@@ -1,7 +1,7 @@
 //! stdio transport: spawn an MCP server as a child process and speak
 //! newline-delimited JSON-RPC over its stdin/stdout.
 //!
-//! Two properties are load-bearing:
+//! Two properties are required:
 //!
 //! 1. **Explicit environment.** The child is spawned
 //!    with [`Command::env_clear`] and receives only keys explicitly listed in
@@ -112,7 +112,7 @@ const MAX_LINE_BYTES: u64 = 8 * 1024 * 1024;
 
 /// The in-flight request table: response id → the waiter's `oneshot` sender.
 ///
-/// The lock is a **`std::sync::Mutex`**, not tokio's, and that is load-bearing
+/// The lock is a **`std::sync::Mutex`**, not tokio's, and that is required
 /// (#613). A dropped `request` future — a caller-side timeout, Ctrl-C, a
 /// `select!` losing the race — must reclaim its slot, and reclamation can only
 /// happen in `Drop`, which cannot `await`. The two shapes that a tokio mutex

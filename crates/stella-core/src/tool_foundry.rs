@@ -209,7 +209,7 @@ pub struct GapDetectionConfig {
     /// Matching invocations required before a shape is worth proposing. `0`
     /// or `1` disable detection — a shape used once is not a pattern.
     pub min_occurrences: usize,
-    /// Distinct argument sets required. `2` is the load-bearing default: it is
+    /// Distinct argument sets required. `2` is the decisive default: it is
     /// what separates a *reusable, parameterized shape* (the foundry's job)
     /// from an *exact repeat* (loop detection's job). `min_distinct_arguments`
     /// of `2` also guarantees a proposal always has at least one parameter —
@@ -871,7 +871,7 @@ mod tests {
     fn the_motivating_jq_case_is_proposed() {
         // The issue's own example: `extract_json_path`-shaped hand-work — three
         // extractions, each reconstructed by hand three times over. The repeats
-        // are the load-bearing part: a *reusable* shape is one whose arguments
+        // are the essential part: a *reusable* shape is one whose arguments
         // recur, not merely one whose program name does.
         let history = each_repeated(
             &[

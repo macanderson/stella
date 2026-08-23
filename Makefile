@@ -40,7 +40,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
                     tool-error-class \
-                    dead-code-allows diagnostic-codes consumer-sites bench-suites wire-paths \
+                    dead-code-allows measured-constants diagnostic-codes consumer-sites \
+                    bench-suites wire-paths \
                     tokens hue-separation contrast transcript-surfaces prose \
                     deck-fit-all-test deck-paths css-vars reserved-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
@@ -304,6 +305,10 @@ command-docs: ## Assert every stella subcommand has a listed reference page (#99
 brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
 	@./scripts/check-brand-case.sh
 
+.PHONY: brand-sync
+brand-sync: ## Mirror docs/brand/ outputs into website/ — the copy brand-parity.test.ts checks (#3983)
+	@python3 docs/brand/sync_site.py
+
 # The generated per-tool reference. Deliberately NOT scoped by CARGO_SCOPE:
 # the artifact is derived from stella-tools' catalog and stella-cli's session
 # layers at once, so a push narrowed to either crate must still re-derive the
@@ -460,6 +465,14 @@ dead-code-allows-update: ## Retighten the dead-code-suppression ratchet (run aft
 .PHONY: dead-code-allows-test
 dead-code-allows-test: ## Test the dead-code ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-dead-code-allows.sh
+
+.PHONY: measured-constants
+measured-constants: ## Assert every constant marked `MEASURED:` is named by a test (#2495)
+	@./scripts/check-measured-constants.sh
+
+.PHONY: measured-constants-test
+measured-constants-test: ## Test the measured-constants guard's directions (hermetic; not part of `gate`)
+	./scripts/test-measured-constants.sh
 
 .PHONY: shellcheck-guard-test
 shellcheck-guard-test: ## Test the shellcheck step's presence guard (hermetic; not part of `gate`)

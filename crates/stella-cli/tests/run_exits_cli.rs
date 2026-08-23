@@ -24,6 +24,9 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// Generous on purpose. The property under test is the difference between
 /// "finishes" and "never finishes", not a latency budget — a bound tight
 /// enough to be a performance assertion would be a flake on loaded CI.
@@ -37,6 +40,7 @@ const POLL: Duration = Duration::from_millis(100);
 fn time_to_exit(workspace: &Path, data: &Path, format: &str) -> Duration {
     let started = Instant::now();
     let mut child = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args([
             "--model",
             "openrouter/z-ai/glm-5.1",

@@ -276,7 +276,7 @@ pub(crate) fn representative_text<T>(cluster: &[T], text: impl Fn(&T) -> &str) -
     let mut best_count = 0usize;
     for (candidate, count) in &counts {
         // Most-frequent, then longest, then lexically smallest. The final
-        // lexical tiebreak is load-bearing: without it, two equal-count,
+        // lexical tiebreak is required: without it, two equal-count,
         // equal-length texts resolve in HashMap iteration order (randomized
         // per process), so re-mining the same observations could pick a
         // different representative and mint a duplicate `<slug>-<hash>` file.

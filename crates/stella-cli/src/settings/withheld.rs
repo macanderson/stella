@@ -178,7 +178,7 @@ fn part(count: usize, one: &str, many: &str) -> Option<String> {
 
 /// What a checkout whose steering was withheld is owed, or `None`.
 ///
-/// `None` on two arms, and both are load-bearing: a workspace whose steering
+/// `None` on two arms, and both are required: a workspace whose steering
 /// **was loaded** (`withheld_by` is `None`) has nothing to be told, and one with
 /// **nothing to withhold** must not warn about a suppression that cost it
 /// nothing — a notice printed in every repository is one nobody reads.

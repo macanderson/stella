@@ -275,7 +275,7 @@ _HOST_ONLY_STELLA_ENV = frozenset(
         # author: read here, expressed only inside the hashed posture, never
         # forwarded into the container. Unpacked from the tuple `posture.py`
         # defines beside the selectors themselves, because registering them is
-        # load-bearing rather than tidy — the ambient check fails closed, and an
+        # required rather than tidy — the ambient check fails closed, and an
         # unlisted `STELLA_TURN_TIMEOUT` killed all ten trials of a run. A
         # hand-kept second copy of this list is how a new selector (#1211 §6.2,
         # §6.7, §6.8; the read-only roles of #2549) arrives unregistered.

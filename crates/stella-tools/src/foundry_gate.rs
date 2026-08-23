@@ -30,7 +30,7 @@
 //!
 //! # Why a byte check and not just a flag
 //!
-//! Point 3 is the load-bearing one, and it is borrowed wholesale from the
+//! Point 3 is the decisive one, and it is borrowed wholesale from the
 //! pipeline's witness protocol. A witness test is deliberately *visible* to
 //! the worker that must satisfy it, and its integrity comes from tamper
 //! exclusion rather than secrecy: the filesystem identity of the artifact is

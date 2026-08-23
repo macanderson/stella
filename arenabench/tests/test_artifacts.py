@@ -2,7 +2,7 @@
 # Copyright (c) 2026 the ArenaBench authors
 """Browsing a trial, and deciding a recording is watchable.
 
-Two things are load-bearing here. The containment rules decide whether a local
+Two things matter here. The containment rules decide whether a local
 web server hands out files it should not, and the MP4 check decides whether the
 UI offers a player for something no player can open.
 """

@@ -321,7 +321,7 @@ class TestRoleResolutionMirrorsTheEngine:
 
 
 class TestTheOffReasonIsTrue:
-    """Reason strings are load-bearing for bench forensics."""
+    """Reason strings are required for bench forensics."""
 
     def test_the_off_reason_names_the_predicate_that_actually_failed(self) -> None:
         posture = _roles_posture(pipeline_verifier_model=_WORKER)

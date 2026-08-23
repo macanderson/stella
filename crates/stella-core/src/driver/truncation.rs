@@ -74,6 +74,10 @@ use super::CompletionMessage;
 /// allowance falls through to the truncation warning with the verification
 /// ladder's no-op rung behind it — a model truncating a fifth time is saying
 /// the effort tier is mispriced for the task, not that it needs one more retry.
+///
+/// MEASURED: a ten-task adversarial Terminal-Bench 2.1 set at effort `xhigh`
+/// (see the paragraphs above for the per-task detail). Two was one short of
+/// the worst observed case, which is what moved this off two.
 pub(super) const MAX_LENGTH_CONTINUATIONS: u32 = 4;
 
 /// Prefix of the engine-injected output-limit continuation nudge.

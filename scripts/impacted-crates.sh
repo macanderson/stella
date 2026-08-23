@@ -246,7 +246,7 @@ normalize() {
 	printf '%s\n' "${out#/}"
 }
 
-# The explicit `.` and `</dev/null` are both load-bearing. Given no path
+# The explicit `.` and `</dev/null` are both required. Given no path
 # argument and a non-TTY stdin, ripgrep searches STDIN rather than the working
 # directory — and this script's stdin is a pipe that `cat` has already drained,
 # so the scan would match nothing, exit 0, and silently drop every escape edge.

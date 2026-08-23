@@ -3,10 +3,10 @@ set_id = "macanderson.stella"
 
 [[record]]
 lineage_id = "ctx.macanderson.stella.scaffolding-needs-wiring-issue"
-record_id = "rec_macanderson_stella_scaffolding_needs_wiring_issue_69bddc3070a5"
-record_hash = "sha256:3b2d14604b95cdd65b973add57e2eab998af39c9049649c0733b01e7dae39609"
+record_id = "rec_macanderson_stella_scaffolding_needs_wiring_issue_129729a9bd4f"
+record_hash = "sha256:2f47f8687708042eccb40a46134fe7a656b8e3e0cbb689a9abef3ed5091ba408"
 kind = "rule"
-statement = "If a change ships scaffolding that something else must later wire up, the wiring issue is filed in the same breath as the PR, because unwired code with no tracking issue is the failure mode this rule prevents."
+statement = "If a change ships scaffolding that something else must later wire up, the wiring issue is filed in the same PR, because unwired code with no tracking issue is the failure mode this rule prevents."
 origin = "imported"
 sharing_scope = "repository"
 status = "active"

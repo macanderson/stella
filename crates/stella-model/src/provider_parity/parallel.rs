@@ -43,18 +43,20 @@
 //!
 //! It is settled, and it went the other way. Grouping `tool_start` events by
 //! the `step_manifest` that precedes them — one `step_manifest` is one model
-//! call, so one group is one assistant message — over this repository's own
-//! `.stella/private/store.db`:
+//! call, so one group is one assistant message — over the `store.db` of a
+//! workspace that ran the route:
 //!
 //! | route | tool-bearing messages | tool calls | messages with 2+ | most in one |
 //! |---|---|---|---|---|
 //! | `openrouter` / `moonshotai/kimi-k3` (executions 140–177) | 648 | 891 | 92 | 9 |
 //! | `zai` / `glm-5.2` (all executions) | 382 | 496 | 79 | 5 |
+//! | `anthropic` / `claude-fable-5` (executions 25–33) | 132 | 199 | 60 | 3 |
 //!
-//! Both routes emit parallel tool calls in volume, and neither has ever been
-//! sent an opt-in — `parallel_tool_calls` appears nowhere in this tree. So
-//! **no request field is added by this axis**, on either of the two ids where
-//! the question is answered. Adding one would change the wire bytes of every
+//! All three routes emit parallel tool calls in volume, and none has ever been
+//! sent an opt-in — `parallel_tool_calls` appears nowhere in this tree, and
+//! Anthropic's control is an opt-*out* this adapter never sends. So **no
+//! request field is added by this axis**, on any of the three ids where the
+//! question is answered. Adding one would change the wire bytes of every
 //! request on the shared adapter, risk a 400 on the local servers that
 //! reject unknown keys, and buy a capability the measurement says is already
 //! there.
@@ -64,15 +66,18 @@
 //! #4151, a model routing 24 of 26 reads through `sed` — but the cause is not
 //! a missing request field.
 //!
-//! Two honest limits on that census. It covers the executions that read
-//! cleanly: `store.db` has genuine page corruption (`pragma quick_check`
-//! reports `btreeInitPage` errors on trees 45 and 46), which is why the
-//! `openrouter` row cites an execution range rather than the whole table, and
-//! why execution 178 itself could not be re-counted this way. And it is
-//! evidence about *routes actually run here* — it says those two ids admit
-//! parallel calls without being asked, and says nothing about the other
-//! eight, which is why they are [`ParallelAdmission::Undetermined`] rather
-//! than assumed to match.
+//! Three honest limits on that census. It covers the executions that read
+//! cleanly: this repository's own `store.db` has genuine page corruption
+//! (`pragma quick_check` reports `btreeInitPage` errors on trees 45 and 46),
+//! which is why the `openrouter` row cites an execution range rather than the
+//! whole table, and why execution 178 itself could not be re-counted this way.
+//! The `anthropic` row is counted in a **different workspace's** store, named
+//! in the row, because the two anthropic-direct executions in this repository's
+//! own store record no tool use at all — a row's evidence names the store it
+//! was read from for exactly that reason. And it is evidence about *routes
+//! actually run* — it says those three ids admit parallel calls without being
+//! asked, and says nothing about the other seven, which is why they are
+//! [`ParallelAdmission::Undetermined`] rather than assumed to match.
 
 /// How a provider's *request* admits more than one tool call per assistant
 /// message — the half of this axis that is a fact about a vendor's live API
@@ -220,13 +225,17 @@ pub static PARALLEL_TOOL_CALL_POSTURE: &[(&str, ParallelToolCallPosture)] = &[
     (
         "anthropic",
         ParallelToolCallPosture {
-            admission: ParallelAdmission::Undetermined {
-                note: "the Messages dialect carries tool_use blocks that this adapter fans \
-                       in, and the two anthropic-direct executions in this repository's \
-                       store record no tool use to count. Note the request-side control \
-                       here is an opt-*out* (tool_choice.disable_parallel_tool_use), which \
-                       this adapter never sends — so an OptIn row would be the wrong shape \
-                       for anthropic even once it is measured",
+            admission: ParallelAdmission::DefaultOn {
+                evidence: "same census, counted in the store of a workspace that ran the \
+                           route (~/Projects/oxagen-platform/.stella/private/store.db, \
+                           pragma quick_check ok) rather than this repository's own, whose \
+                           two anthropic-direct executions record no tool use at all: \
+                           claude-fable-5 over executions 25–33 gives 199 tool calls across \
+                           132 tool-bearing messages, 60 carrying two or more, most-in-one \
+                           three, every step_manifest declaring provider anthropic and role \
+                           worker. The request-side control here is an opt-*out* \
+                           (tool_choice.disable_parallel_tool_use) which this adapter never \
+                           sends, so nothing was asked for and nothing needs adding",
             },
             fan_in_witness: "several_tool_use_blocks_fan_in_as_several_calls",
         },
@@ -327,6 +336,23 @@ mod tests {
                  sources: {witness}"
             );
         }
+    }
+
+    /// **Witness for #4197's third settled id.** `anthropic` is the row the
+    /// issue singled out as unanswerable from this repository's own store —
+    /// its two anthropic-direct executions record no tool use — and it is
+    /// answered now, from a workspace that ran the route. Pinned because a
+    /// measurement that lives only in a prose field is a measurement a clean
+    /// merge can drop in silence (#2495, and #2462 is where that happened).
+    #[test]
+    fn anthropic_admits_parallel_tool_calls_by_default() {
+        let posture = parallel_tool_call_posture("anthropic").expect("anthropic has a row");
+        assert!(
+            matches!(posture.admission, ParallelAdmission::DefaultOn { .. }),
+            "anthropic was measured emitting up to three tool calls per assistant \
+             message with nothing sent to ask for it; the row must say so: {:?}",
+            posture.admission
+        );
     }
 
     #[test]

@@ -485,7 +485,14 @@ pub(crate) const HTTP_OVERLOADED: u16 = 529;
 ///   retryable `RateLimited`; a bare out-of-credit body is non-retryable
 ///   `Terminal`, called out explicitly as a billing failure (some gateways
 ///   use Payment Required for out-of-credits rather than folding it into a
-///   403).
+///   403). For the in-flight deferral this classification and its witnesses
+///   (`classify_http_status_402_naming_in_flight_requests_is_retryable`, plus
+///   the wiremock round-trip in `zai/tests/error_classify.rs`) are the whole
+///   contract — decided in #4414: no parity-axis row is owed, because the
+///   refusal is one gateway's transient account state, not a per-provider
+///   feature divergence, and a seventh axis would oblige every other provider
+///   to declare an evidence-free row for a behavior only OpenRouter has ever
+///   exhibited.
 /// - 429 → retryable `RateLimited` carrying the Retry-After hint.
 /// - 529 → retryable `Overloaded` carrying the Retry-After hint. Anthropic
 ///   and Z.ai return this non-standard status to shed load, and it is the

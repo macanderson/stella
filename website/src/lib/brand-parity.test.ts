@@ -405,7 +405,7 @@ test("the site's logo SVGs are byte-identical to the kit's", () => {
       read(join(siteDir, name)),
       read(join(kitDir, name)),
       `public/brand/${name} has drifted from docs/brand/logo/svg/${name} — ` +
-        `re-copy it rather than editing either side`,
+        `run \`make brand-sync\` rather than editing either side`,
     );
   }
 });
@@ -420,6 +420,8 @@ test("the app icon is the kit's logomark", () => {
 
 test("the PWA icons are byte-identical to the kit's", () => {
   // The site renames the kit's two maskables; every other file keeps its name.
+  // `docs/brand/sync_site.py` performs this exact mapping; this table is the
+  // check on its work.
   const PAIRS: Array<[site: string, kit: string]> = [
     ["favicon-16.png", "favicon-16.png"],
     ["favicon-32.png", "favicon-32.png"],
@@ -437,7 +439,7 @@ test("the PWA icons are byte-identical to the kit's", () => {
     assert.ok(
       mine.equals(theirs),
       `public/icons/${siteName} has drifted from docs/brand/pwa/${kitName} — ` +
-        `re-copy it when the kit regenerates`,
+        `run \`make brand-sync\` when the kit regenerates`,
     );
   }
 });
@@ -502,8 +504,8 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
     assert.ok(
       mine.pixels.equals(theirs.pixels),
       `favicon.ico entry ${i} (${mine.width}×${mine.height}) does not carry ` +
-        `the kit's art — re-run docs/brand/build_marks.py and re-encode ` +
-        `docs/brand/pwa/favicon.ico to RGBA`,
+        `the kit's art — re-run docs/brand/build_marks.py, then ` +
+        `\`make brand-sync\` (the RGBA re-encode lives in the sync)`,
     );
   }
 });

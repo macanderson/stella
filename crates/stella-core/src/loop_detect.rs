@@ -466,7 +466,7 @@ impl LoopIdentity {
     /// on one step and `edit, test, read` on the next — the same loop, seen
     /// one call later. Positional equality called those two different loops,
     /// which was invisible while every re-detection aborted anyway and
-    /// became load-bearing the moment a different loop bought another
+    /// became decisive the moment a different loop bought another
     /// steering warning (#1743): a cycle could earn a fresh warning every
     /// time the window shifted. Tools and arguments rotate together by the
     /// same shift, so `[A, B]` with `[x, y]` is still a different loop from

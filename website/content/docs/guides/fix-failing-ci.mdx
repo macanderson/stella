@@ -80,7 +80,7 @@ use it.
 
 **Inside each round**, an installed [verification plugin](/docs/plugins) can run
 the deterministic evidence ladder before any model is asked for an opinion. The
-load-bearing rung is the **flip oracle**: the relevant test must have *failed
+required rung is the **flip oracle**: the relevant test must have *failed
 before* the change and *passed after* it. A suite that was already green proves
 nothing about the fix, so it cannot be used to claim one. That structurally
 excludes the failure mode you actually fear — a change that makes the red go

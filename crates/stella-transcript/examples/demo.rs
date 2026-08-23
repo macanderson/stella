@@ -206,6 +206,7 @@ fn fixture() -> Run {
             summary: "execute".to_string(),
             detail: Vec::new(),
             before_step: 0,
+            inspect: None,
         }],
         status: Status::Ok,
         duration_ms: 9_000,
@@ -234,12 +235,14 @@ fn fixture() -> Run {
                     "symbol  fn find — stella-core/src/tasks.rs · 118 tok".to_string(),
                 ],
                 before_step: 0,
+                inspect: None,
             },
             Note {
                 kind: NoteKind::Verdict,
                 summary: "witness flip confirmed — overfull_hbox_absent".to_string(),
                 detail: Vec::new(),
                 before_step: 6,
+                inspect: None,
             },
         ],
         steps: vec![

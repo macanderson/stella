@@ -7,7 +7,7 @@
 //! The dispatch scheduler groups consecutive *read-only* calls and makes
 //! every other call its own barrier — which silently serialized sibling
 //! `delegate` calls, because the spawn tool is honestly not `read_only` (the
-//! flag is load-bearing for the child nesting fence). The CLI dispatcher
+//! flag is required for the child nesting fence). The CLI dispatcher
 //! was built for concurrent siblings (thread per child, snapshot-carve,
 //! delta settle), so the concurrency it protected was unreachable from the
 //! model's side: three independent research questions paid the sum of
