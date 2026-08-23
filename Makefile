@@ -578,6 +578,10 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 file-size-test: ## Test the file-size ratchet's language coverage and its change-relative judgement (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
 
+.PHONY: no-scratch-test
+no-scratch-test: ## Test the session-scratch boundary: the ignore rules and the guard together (#2888; hermetic; not part of `gate`)
+	./scripts/test-no-scratch.sh
+
 .PHONY: guard-sigpipe-test
 guard-sigpipe-test: ## Test that the gate guards survive a reader that closes their pipe early (#1815; hermetic; not part of `gate`)
 	./scripts/test-guard-sigpipe.sh
