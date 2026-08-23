@@ -92,6 +92,7 @@ python3 ./scripts/gen-tokens.py --check
 python3 ./scripts/check-tokens.py
 python3 ./scripts/check-hue-separation.py
 python3 ./scripts/check-transcript-surfaces.py
+python3 ./scripts/check-prose.py
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check
@@ -242,7 +243,7 @@ break them will be asked to restructure, no matter how good the feature is.
 That list is the single source, and its numbering is part of the contract:
 Rust doc comments and crate READMEs cite invariants by number (`content_free.rs`
 cites "AGENTS.md invariant #3", `crates/stella-model/README.md` cites #8), so the
-numbers are addresses, not decoration. This file used to carry a second, silently
+numbers are addresses. This file used to carry a second, silently
 abridged copy — seven of the eight, with #8 missing entirely and #3 shorn of the
 half that says how it is enforced. Two copies of a normative rule is not
 redundancy; it is a coin flip over which one a reader obeys, and nothing tells

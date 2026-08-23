@@ -287,7 +287,7 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             (TraceKind::Other, format!("fallback {from}→{to}"))
         }
         AgentEvent::Retry { attempt, .. } => (TraceKind::Other, format!("retry #{attempt}")),
-        AgentEvent::Steered { text } => (
+        AgentEvent::Steered { text, .. } => (
             TraceKind::Other,
             format!("steer: {}", text.chars().take(40).collect::<String>()),
         ),

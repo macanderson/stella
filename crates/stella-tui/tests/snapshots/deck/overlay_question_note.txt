@@ -29,7 +29,7 @@
 │                                         ┌ question ───────────────────────────────────── ⏎ save note · esc discard ┐ ││                                      │
 │── EXECUTE ──────────────────────────────│from the `research-child` sub-agent                                       │─││                                      │
 │                                         │                                                                          │ ││                                      │
-│ │ ● apps/app/automations/page.tsx       │Which auth should the new endpoint use?                                   │ ││                                      │
+│ │ ⊙ apps/app/automations/page.tsx       │Which auth should the new endpoint use?                                   │ ││                                      │
 │ │ ⎿ 312 lines                           │                                                                          │s││                                      │
 │                                         │  [ ] Session cookie — Matches the rest of the app                        │ ││                                      │
 │☰  plan  5/7  ·  Workflows canvas        │  [x] Bearer token                                                        │ ││                                      │

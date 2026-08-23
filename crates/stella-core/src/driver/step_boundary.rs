@@ -13,7 +13,7 @@
 //! a user steer landed this step is part of what the next query answers to
 //! rather than something it races.
 
-use stella_protocol::{AgentEvent, CompletionMessage};
+use stella_protocol::{AgentEvent, CompletionMessage, SteerCause};
 
 use crate::event_sender::EventSender;
 use crate::step::{StepOutcome, TurnState};
@@ -32,7 +32,15 @@ pub(super) async fn consult_hosts(
 ) -> Option<StepOutcome> {
     if let Some(steering) = steering {
         for text in steering.drain_steering() {
-            let _ = events.send(AgentEvent::Steered { text: text.clone() });
+            // The port's queue is fed by a host on a person's behalf — the
+            // deck's `>` steer, `stella-serve`'s control channel — and by
+            // nothing else. The engine's own two rungs push their text
+            // straight onto `messages` in `loop_escalation`, so this is the
+            // one site that may claim `User`.
+            let _ = events.send(AgentEvent::Steered {
+                text: text.clone(),
+                cause: SteerCause::User,
+            });
             state.messages.push(CompletionMessage::user(text));
         }
         if steering.soft_stop_requested() {

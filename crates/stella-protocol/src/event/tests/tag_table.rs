@@ -35,7 +35,10 @@ fn type_tag_matches_the_serde_type_wire_tag() {
             attempt: 1,
             reason: "x".into(),
         },
-        AgentEvent::Steered { text: "s".into() },
+        AgentEvent::Steered {
+            text: "s".into(),
+            cause: SteerCause::Loop,
+        },
         AgentEvent::TurnParked {
             description: "CI settles".into(),
             poll_interval_secs: 5,

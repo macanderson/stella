@@ -118,7 +118,7 @@ fi
 contributing_alias() {
   case "$1" in
   shellcheck) echo 'shellcheck ' ;;
-  # Seven Python guards, so the `.sh` default below does not fit them.
+  # Eight Python guards, so the `.sh` default below does not fit them.
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
   typed-errors) echo 'check-typed-errors' ;;
@@ -126,6 +126,7 @@ contributing_alias() {
   tokens) echo 'check-tokens' ;;
   hue-separation) echo 'check-hue-separation' ;;
   transcript-surfaces) echo 'check-transcript-surfaces' ;;
+  prose) echo 'check-prose' ;;
   doc-warnings) echo 'cargo doc' ;;
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;

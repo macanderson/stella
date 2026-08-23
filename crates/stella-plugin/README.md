@@ -23,7 +23,7 @@ inherits).
 `[runtime]` (#3380, `doc:pipeline-as-plugins` §A5) is the process half: the
 `argv` the host starts, the `timeout_secs` it enforces, and an environment
 allowlist that is **default-deny** — the child inherits exactly the names
-declared and nothing else. Two decisions are load-bearing. There is no
+declared and nothing else. Two decisions are deliberate. There is no
 `language` field, because `["python3", …]` and `["node", …]` already
 distinguish two plugins without stella learning what a language is (and three
 plugins differing only in `argv` are what make the language-neutrality claim a
@@ -48,7 +48,7 @@ it a gate rather than documentation:
   because that stage produces nothing on the turns it is skipped. A
   hand-written variant fails with a reason instead of wedging mid-run.
 
-`Wrapper::resolve` is the reader that makes those rules load-bearing: the host
+`Wrapper::resolve` is the reader that enforces those rules: the host
 fills in `SignalValues` — one field per published signal, no `Default`, so an
 unpublished signal is not representable, let alone silently `false` — and gets
 back the ordered `StageProgram` that turn runs. The pair of graph rules above
@@ -118,7 +118,7 @@ Stella's shape is one turn loop with a plugin architecture around it, embeddable
 in any application through the Rust ports or the HTTP surface. This crate holds
 the contract that makes "plugin" mean something enforceable rather than
 aspirational: a declaration a host can check *before* anything runs, written by
-someone who does not get to see the engine. Two things follow from that.
+someone who does not get to see the engine.
 
 **The first plugin is Stella's own verification.** The built-in staged pipeline
 (`crates/stella-pipeline`) was the wrapper the `[wrapper]` block was designed

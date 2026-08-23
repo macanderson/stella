@@ -29,7 +29,7 @@
 │                                                                                                                      ││                                      │
 │── EXECUTE ──────────────────────────────┌ approval ──────────────────────────── ⏎ deny with these words · esc back ┐─││                                      │
 │                                         │bash  mutating                                                            │ ││                                      │
-│ │ ● apps/app/automations/page.tsx       │  rm -rf build/                                                           │ ││                                      │
+│ │ ⊙ apps/app/automations/page.tsx       │  rm -rf build/                                                           │ ││                                      │
 │ │ ⎿ 312 lines                           │                                                                          │s││                                      │
 │                                         │gate    command.started                                                   │ ││                                      │
 │☰  plan  5/7  ·  Workflows canvas        │reason  matched rule no-destructive-shell                                 │ ││                                      │

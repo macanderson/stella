@@ -52,7 +52,7 @@ new dependency.
 This crate owns what a terminal shows and what a keypress means, and nothing
 upstream of that.
 
-**One exception is worth stating, because it points the other way:** a policy
+**One exception points the other way:** a policy
 that *every* transcript surface must answer identically — how much of a tool
 result a collapsed fold shows, how a JSON body is lexed for colouring — lives
 in [`stella-transcript`](../stella-transcript/README.md), which this crate
@@ -174,7 +174,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 
 ## Key concepts
 
-**"Pure fold" is a code-level split, not a slogan.** Verify it in two places:
+**"Pure fold" is a code-level split.** Verify it in two places:
 `SessionModel` has exactly one mutator, `apply` ([`src/model.rs`](src/model.rs)),
 and `replay` ([`src/model.rs`](src/model.rs)) is just `apply` in a loop. The
 panels in [`src/render.rs`](src/render.rs) take `&SessionModel` — the model is

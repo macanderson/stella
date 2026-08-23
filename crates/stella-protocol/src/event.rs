@@ -252,9 +252,11 @@ pub enum PolicyKind {
 mod call_role;
 pub mod consumers;
 mod payload;
+mod steer_cause;
 mod tags;
 
 pub use call_role::ModelCallRole;
+pub use steer_cause::SteerCause;
 // Re-exported so `KNOWN_TYPE_TAGS` keeps its path through this module and
 // `crate::KNOWN_TYPE_TAGS`: the table moved to a submodule (#2730), the
 // public name did not.
@@ -445,10 +447,21 @@ pub enum AgentEvent {
         attempt: u32,
         reason: String,
     },
-    /// A user message queued mid-turn was injected at a step boundary
-    /// (`stella-core` steering) — the transcript's record that the model
-    /// was steered, and when.
-    Steered { text: String },
+    /// A message was injected into the turn at a step boundary — the
+    /// transcript's record that the model was steered, and when.
+    ///
+    /// Three rungs emit this and `cause` is what tells them apart: a person's
+    /// mid-turn message, the stuck-loop nudge, and the stalled-turn nudge.
+    /// Before it, a consumer could only match the English prose (#3622).
+    Steered {
+        text: String,
+        /// Who or what steered. `serde(default)` so streams recorded before
+        /// this field parse — as [`SteerCause::Unknown`], never as
+        /// [`SteerCause::User`], which would relabel the whole recorded
+        /// history as human input.
+        #[serde(default)]
+        cause: SteerCause,
+    },
     /// The turn parked on an engine-side wait (#1471, #1857): a tool
     /// deposited a wait request and the engine is now probing on its own
     /// clock — zero model calls until the watched state changes or the

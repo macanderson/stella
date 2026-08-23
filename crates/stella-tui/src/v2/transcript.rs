@@ -35,6 +35,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use stella_tui_theme::{glyph, token};
 
+use crate::tool_class::ToolClass;
+
 /// Cells the coloured rail occupies at the head of every event row (SPEC 6.2).
 pub const RAIL_W: usize = 2;
 
@@ -144,8 +146,19 @@ pub enum EventKind {
         evicted: u32,
         deduped: u32,
     },
-    /// Anything this renderer has not been taught.
-    Other,
+    /// Anything this renderer has not been taught — an MCP server's tool, a
+    /// workspace custom tool, a built-in with no verb of its own.
+    ///
+    /// The `class` is the only thing that distinguishes one such row from
+    /// another, and it is carried as a **glyph**, never as a hue. Every
+    /// `Other` rails gold because every one of them is *stella acting*
+    /// ([`EventKind::metal`]), which under v1's class-coloured names left
+    /// `get_state`, `mcp__github__create_pull_request` and `delegate`
+    /// rendering identically — one `●` on one gold rail, the confusion #4125
+    /// was filed about. Restoring the distinction as a third colour channel
+    /// would erode SPEC 2's two-metal rule; restoring it as shape does not,
+    /// which is what SPEC 2's "never colour alone" already asks for.
+    Other { class: ToolClass },
 }
 
 impl EventKind {
@@ -167,13 +180,17 @@ impl EventKind {
             // bookkeeping tier and belongs to compaction alone: a call the
             // renderer has not been taught is not thereby less of an action,
             // and dimming it would hide exactly the rows a user added.
-            EventKind::Other => token::GOLD,
+            EventKind::Other { .. } => token::GOLD,
             EventKind::Compaction { .. } => token::DIM,
         }
     }
 
     /// The head glyph (SPEC 4). A collapsed event takes `▸` regardless of kind
     /// — the toggle state outranks the kind on the one cell that shows it.
+    ///
+    /// [`EventKind::Other`] is the one arm that reads a second field: every
+    /// such row rails gold, so the glyph is the only cell left that can say
+    /// which of them this is (#4125).
     #[must_use]
     pub fn head_glyph(&self, collapsed: bool) -> char {
         if collapsed {
@@ -187,6 +204,12 @@ impl EventKind {
             EventKind::Gate { .. } => glyph::GATE,
             EventKind::Model { .. } => glyph::RUNNING,
             EventKind::Compaction { .. } => '↓',
+            EventKind::Other { class } => match class {
+                ToolClass::Inspect => glyph::TOOL_INSPECT,
+                ToolClass::Mutate => glyph::TOOL_MUTATE,
+                ToolClass::Execute => glyph::TOOL_EXECUTE,
+                ToolClass::Delegate => glyph::TOOL_DELEGATE,
+            },
             _ => '●',
         }
     }
@@ -205,7 +228,7 @@ impl EventKind {
             EventKind::Gate { .. } => "gate",
             EventKind::Model { .. } => "model",
             EventKind::Compaction { .. } => "compacted",
-            EventKind::Other => "",
+            EventKind::Other { .. } => "",
         }
     }
 

@@ -103,7 +103,11 @@ async fn main() -> std::io::Result<()> {
                     for text in texts {
                         let _ = react_tx.send(Inbound::Event {
                             agent: agent.clone(),
-                            event: stella_protocol::AgentEvent::Steered { text },
+                            event: stella_protocol::AgentEvent::Steered {
+                                text,
+                                // The demo shell's `>` steer is a person's.
+                                cause: stella_protocol::SteerCause::User,
+                            },
                         });
                     }
                 }

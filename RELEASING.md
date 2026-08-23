@@ -48,8 +48,6 @@ Manual version bumps are therefore only needed for the hand-cut flows below.
 
 ## What records a change
 
-Two things, and they are not the same thing:
-
 - **[`CHANGELOG.md`](CHANGELOG.md)** — the durable curated record, **one
   section per minor line**, and **CI writes it, not PRs.** When a minor or
   major release is cut, `auto-tag.yml` drafts the section from the whole
@@ -151,9 +149,9 @@ as before this workflow existed.
    (`doc:deck-film`), so it goes stale exactly when the deck changes: a tab
    added, a panel moved, a status field renamed. Shipping a demo of a UI the
    download no longer has is a claim this project does not make. It needs no API
-   key and takes about fifteen minutes. Watching it is the part that matters —
-   the shot list frames rows the deck's own layout decides, so a layout change
-   can move content out of shot without failing any check.
+   key and takes about fifteen minutes. Watch it: the shot list frames rows the
+   deck's own layout decides, so a layout change can move content out of shot
+   without failing any check.
 
 2. Bump the version if needed — `version` in `[workspace.package]` of the root
    `Cargo.toml` (all crates inherit it) — and commit.
@@ -189,7 +187,7 @@ the outcome — the version-sync PR opened and auto-merged, `CHANGELOG.md` rolle
 and every manifest was stamped. Only the last two jobs of `release.yml` skipped.
 Every surface a maintainer glances at said "released" (#1464).
 
-Two things now catch it, and they catch different failures:
+Two checks now catch it, each on a different failure:
 
 - **`smoke`** (in `release.yml`) unpacks the artifact and runs it before
   anything is published, so a release that *builds* but does not *work* cannot
@@ -242,7 +240,7 @@ grep "stella-<version>-x86_64-unknown-linux-gnu" SHA256SUMS.bin
 ```
 
 The last line of `repro-build.sh` and the matching line of `SHA256SUMS.bin` must
-be identical. Three things to know before you file a mismatch:
+be identical. Before you file a mismatch:
 
 - **Use `scripts/repro-build.sh`, not `cargo build --release`.** The remapping
   that removes your `$CARGO_HOME` and rustup sysroot from the binary lives in

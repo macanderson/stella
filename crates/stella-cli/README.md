@@ -93,7 +93,7 @@ Specific changes this crate is the far end of:
   (#3892): one `git worktree` per candidate under
   `.stella/private/candidates/`, one **writing** worker turn rooted in each,
   and an adoption that is `git diff` in the candidate and `git apply` on the
-  real tree. Three things a reader should not have to derive. It applies a
+  real tree. It applies a
   *patch* rather than committing or merging, so an adopted candidate leaves
   exactly what the user's own turn leaves and best-of-N can never write
   someone's history for them. Its turns go through the session's **one**
@@ -249,8 +249,8 @@ appends, in fixed order, the session-environment block, the workspace
 memories, and the rendered rules section. Everything appended must be
 deterministic for a given workspace state:
 that prefix is what the provider's prompt cache keys on, so nondeterminism here
-is a re-billing regression, not a cosmetic one. Two consequences the code
-enforces on purpose:
+is a re-billing regression, not a cosmetic one. The code enforces two rules on
+purpose:
 
 - `append_workspace_memories` reads `.stella/memories/*.md`, `files.sort()`s by
   filename, and concatenates under a 16,000-char budget (`MEMORY_PROMPT_BUDGET_CHARS`);
@@ -319,7 +319,7 @@ execution on the first subprocess (#553). `STELLA_NO_ENV_FILE=1` disables it all
 - **`main` resets SIGPIPE to `SIG_DFL`.** Rust masks it at startup, so
   `stella tools | head` surfaces EPIPE as a `println!` panic — a SIGABRT and a
   panic dump on a routine pipe. Don't tidy away the `unsafe` block.
-- **Startup order in `main` is load-bearing**: legacy `~/.stella` migration →
+- **Startup order in `main` is fixed**: legacy `~/.stella` migration →
   managed telemetry snapshot + `StartupAuthoritySnapshot::capture` →
   `credential_handoff::consume_at_startup` (before any repo-controlled process
   can read the FD) → `env_files::maybe_load` → `restore_after_project_env` →

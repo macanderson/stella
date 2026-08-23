@@ -87,6 +87,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + tokens (hue clamp + no retired hex)
                          #   + hue-separation (30° OKLCH, web tokens)
                          #   + transcript-surfaces
+                         #   + prose (no content-free constructions added)
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
@@ -277,7 +278,7 @@ regardless of how good the feature is.
 **This is the normative home.** The invariants are stated here and nowhere else;
 `CONTRIBUTING.md` and `README.md` point at this section rather than restating it
 (they used to carry their own copies, which had already drifted — one dropped
-#8 entirely). **The numbering is an address, not decoration:** Rust doc
+#8 entirely). **The numbering is an address:** Rust doc
 comments, runtime error strings, and crate READMEs cite these by number, so
 inserting or reordering an entry silently repoints every one of those citations.
 Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
@@ -563,9 +564,9 @@ deleted.
   and did not fix, a defect you worked around, a missing test, an idea worth
   keeping, dead or unwired code you noticed, and the logical next step of the
   work you just completed. If your change ships scaffolding that something else
-  must later wire up, file the issue for that wiring in the same breath as the
-  PR — unwired code with no tracking issue is exactly the failure mode this
-  rule exists to prevent.
+  must later wire up, file the issue for that wiring in the same PR — unwired
+  code with no tracking issue is exactly the failure mode this rule exists to
+  prevent.
 - **Write every issue as a handoff.** Assume the reader is a fresh agent with
   none of your session's context: state the problem, the files involved (paths,
   not descriptions), how to reproduce or verify, the constraints you already
@@ -792,7 +793,7 @@ this before assuming two of them mean the same thing:
 | **turn** | `turn_instance` | `crates/stella-protocol/src/event.rs` | One `run_turn` — a prompt through the model/tool loop to an answer. Monotonic per session; groups the steps of that turn in `step_manifest`/`step_receipt`. In the store one turn is one execution. |
 | **step** | `(step, call_seq)` | `crates/stella-protocol/src/event.rs` | One iteration inside a turn: one model call plus the tools it requested. `call_seq` disambiguates the several calls that can share a `(turn_instance, step)` — the engine's worker call is 0, the overflow summarizer and the pipeline's triage/research/plan/witness-author roles take 1, 2, … |
 | **fleet run** | `run_id` | `crates/stella-fleet/src/ledger.rs` | One multi-agent fan-out, top of the fleet hierarchy: run → task → attempt → commits/spend. **Not** an `execution_id` and **not** a session. |
-| **task** | `TaskId` / `tasks` row | `crates/stella-fleet/src/plan.rs`, [`stella-store`](crates/stella-store/README.md) | Two things that share a word: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
+| **task** | `TaskId` / `tasks` row | `crates/stella-fleet/src/plan.rs`, [`stella-store`](crates/stella-store/README.md) | One word, two entities: in the fleet ledger, one unit of work dispatched to a worker within a run; in the store, one row of the agent's own task-board snapshot, keyed `(session, task id)` and mirrored from `TaskUpdate` events. |
 
 ---
 
@@ -807,7 +808,7 @@ this before assuming two of them mean the same thing:
   `scripts/check-dead-code-allows.py` (`make dead-code-allows`). Clippy cannot
   check it — silencing clippy is the attribute's whole job — so nothing in the
   gate could tell one of these from any other line, and the tree reached zero
-  suppressions twice and drifted back both times (#3949). Two halves:
+  suppressions twice and drifted back both times (#3949).
 
   - **A floor.** Every suppression in production source carries an in-band
     `reason = "..."` or a comment line directly above it. Absolute, not

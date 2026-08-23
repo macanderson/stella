@@ -470,6 +470,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
         ("BudgetScope", all_budget_scopes().len()),
         ("PolicyKind", all_policy_kinds().len()),
         ("ModelCallRole", all_model_call_roles().len()),
+        ("SteerCause", all_steer_causes().len()),
         (
             "UsageIncompleteReason",
             all_usage_incomplete_reasons().len(),
@@ -524,6 +525,7 @@ fn every_nested_vocabulary_is_fully_sampled() {
         "BudgetScope",
         "PolicyKind",
         "ModelCallRole",
+        "SteerCause",
         "UsageIncompleteReason",
         "FinishReason",
         "FileChangeKind",

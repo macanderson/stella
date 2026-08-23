@@ -390,7 +390,7 @@ impl<'a> Fold<'a> {
                 let prose = self.clean(reason);
                 self.note_row("err", "RETRY", &format!("attempt {attempt}"), Some(&prose));
             }
-            AgentEvent::Steered { text } => {
+            AgentEvent::Steered { text, .. } => {
                 let prose = self.clean(text);
                 self.prose_row("user", "STEER", &prose);
             }
