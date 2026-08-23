@@ -26,9 +26,16 @@
 //! no ignore file would have said anything about. Two filters, two jobs — the
 //! rules say what this repository does not track, the deny-list says what is
 //! never worth parsing.
+//!
+//! One subtree is carved out of the hidden-directory rule: `.stella/rules/`,
+//! the published context records, which are the one part of `.stella/`
+//! tracked in Git (#4492). [`crate::admitted`] owns that list and the search
+//! tool's index-free scan reads the same one, so `.stella/private/` is
+//! refused by name in a single place rather than by two walks that must agree.
 
 use std::path::{Path, PathBuf};
 
+use crate::admitted::{Admits, admission};
 use crate::lang::Language;
 use crate::workspace_ignore::WorkspaceIgnore;
 
@@ -55,8 +62,22 @@ const DENY_DIRS: &[&str] = &[
 
 /// Whether a directory should be skipped: hidden (leading `.`) or on the
 /// build/vendor deny-list.
+///
+/// Answered from the basename alone, which is why it cannot express the
+/// `.stella/rules` carve-out — `.stella/private` has the same shape and must
+/// stay refused. That carve-out is a fact about a *path*, and
+/// [`crate::admitted`] owns it.
 fn is_denied_dir(name: &str) -> bool {
     name.starts_with('.') || DENY_DIRS.contains(&name)
+}
+
+/// Whether a walk-relative path is carved out of the hidden/deny rules above
+/// — inside `.stella/rules`, where the published context records live.
+///
+/// `rel` is normalised to `/` separators so one policy answers on every
+/// platform, matching how [`crate::admitted::ADMITTED_SUBTREES`] is written.
+fn admitted_rel(rel: &std::path::Path) -> Option<Admits> {
+    admission(&rel.to_str()?.replace('\\', "/"))
 }
 
 /// Whether `dir` is a checkout of its own — a nested repository, a submodule,
@@ -103,13 +124,20 @@ pub(crate) fn rel_is_ignored(root: &Path, path: &Path, ignore: &WorkspaceIgnore)
     {
         return true;
     }
-    if rel.components().any(|component| match component {
-        std::path::Component::Normal(name) => {
-            let name = name.to_string_lossy();
-            name.starts_with('.') || DENY_DIRS.contains(&name.as_ref())
-        }
-        _ => false,
-    }) {
+    // A published context record lives under `.stella/rules`, which the
+    // component rule below would refuse for its leading dot. The carve-out is
+    // consulted first, and only for a path *inside* the admitted subtree — a
+    // `Passage` answer means the walk merely crosses this directory, so
+    // `.stella/settings.json` stays as unindexable as it was (#4492).
+    if admitted_rel(rel) != Some(Admits::Files)
+        && rel.components().any(|component| match component {
+            std::path::Component::Normal(name) => {
+                let name = name.to_string_lossy();
+                name.starts_with('.') || DENY_DIRS.contains(&name.as_ref())
+            }
+            _ => false,
+        })
+    {
         return true;
     }
     // Reject a path that lives inside a nested checkout — a linked worktree,
@@ -154,9 +182,14 @@ pub(crate) fn walk_indexable(root: &Path) -> Vec<PathBuf> {
 /// tests use to walk a fixture under explicit rules without a repository.
 fn walk_indexable_with(root: &Path, ignore: &WorkspaceIgnore) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let mut stack = vec![(root.to_path_buf(), String::new())];
+    // The root-relative path rides with each directory because the carve-out
+    // is a fact about a *path* (`.stella/rules`) and the basename alone cannot
+    // tell it from `.stella/private`; the [`Admits`] rides with it because an
+    // admitted subtree sits under a skipped one, and crossing `.stella` must
+    // not index what else is in there.
+    let mut stack = vec![(root.to_path_buf(), String::new(), Admits::Files)];
 
-    while let Some((dir, rel)) = stack.pop() {
+    while let Some((dir, rel, admits)) = stack.pop() {
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(_) => continue,
@@ -177,14 +210,21 @@ fn walk_indexable_with(root: &Path, ignore: &WorkspaceIgnore) -> Vec<PathBuf> {
             // ignored — no symlink-cycle risk, no double-indexing.
             if file_type.is_dir() {
                 let child = entry.path();
-                if !is_denied_dir(&name)
+                let ordinary = admits == Admits::Files && !is_denied_dir(&name);
+                // Only a skipped directory pays for the carve-out lookup, so
+                // an ordinary walk costs exactly what it did before.
+                let carved = (!ordinary).then(|| admission(&rel_child)).flatten();
+                // The repository's own rules still win over the carve-out: a
+                // project that gitignores `.stella/` has no records travelling
+                // with it, and there is nothing to publish.
+                if (ordinary || carved.is_some())
                     && !ignore.excludes_dir(&rel_child)
                     && !is_other_checkout(&child)
                 {
-                    stack.push((child, rel_child));
+                    stack.push((child, rel_child, carved.unwrap_or(Admits::Files)));
                 }
             } else if file_type.is_file() {
-                if ignore.excludes(&rel_child) {
+                if admits == Admits::Passage || ignore.excludes(&rel_child) {
                     continue;
                 }
                 let path = entry.path();
@@ -443,6 +483,108 @@ mod tests {
         // The parent checkout's own `.git` at `root` must not exclude its
         // own source.
         assert!(!rel_is_ignored(root, &root.join("src/main.rs"), &ignore));
+    }
+
+    /// **The carve-out witness (#4492).** A published context record reaches
+    /// the indexable set, and everything else under `.stella/` — private
+    /// state, the memories the prompt already carries, a settings file — does
+    /// not. `Cargo.toml` is planted beside them because it shares the record's
+    /// extension: an index that holds it holds a dependency version table
+    /// instead of a steering policy.
+    ///
+    /// Two-sided by construction, the way `visibility.rs` argues for: a walk
+    /// that stopped excluding anything would fail the second half, and one
+    /// that never entered `.stella` would fail the first.
+    #[test]
+    fn context_records_are_walked_and_the_rest_of_stella_is_not() {
+        let ws = TempDir::new().unwrap();
+        let root = ws.path();
+        fs::create_dir_all(root.join(".stella/rules")).unwrap();
+        fs::create_dir_all(root.join(".stella/private")).unwrap();
+        fs::create_dir_all(root.join(".stella/memories")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join(".stella/rules/ctx.demo.toml"),
+            "[[record]]\nstatement = \"ports, not direct dependencies\"\n",
+        )
+        .unwrap();
+        fs::write(root.join(".stella/private/leaked.toml"), "x = 1\n").unwrap();
+        fs::write(root.join(".stella/settings.json"), "{}\n").unwrap();
+        fs::write(root.join(".stella/memories/lesson.md"), "# Lesson\n").unwrap();
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        let mut files: Vec<String> = walk_indexable_with(root, &WorkspaceIgnore::none())
+            .iter()
+            .map(|path| {
+                path.strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        files.sort();
+        assert_eq!(
+            files,
+            vec![
+                ".stella/rules/ctx.demo.toml".to_string(),
+                "src/main.rs".to_string()
+            ],
+            "only the records are carved out of `.stella`, and no manifest joins them"
+        );
+    }
+
+    /// The watcher counterpart: a save into a record must be re-indexed, and a
+    /// save anywhere else under `.stella/` must not.
+    #[test]
+    fn a_watcher_event_for_a_context_record_is_relevant_and_private_state_is_not() {
+        let ws = TempDir::new().unwrap();
+        let root = ws.path();
+        let ignore = WorkspaceIgnore::none();
+        assert!(!rel_is_ignored(
+            root,
+            &root.join(".stella/rules/ctx.demo.toml"),
+            &ignore
+        ));
+        for refused in [
+            ".stella/private/store.db",
+            ".stella/settings.json",
+            ".stella/memories/lesson.md",
+        ] {
+            assert!(
+                rel_is_ignored(root, &root.join(refused), &ignore),
+                "`{refused}` must stay out of the index"
+            );
+        }
+    }
+
+    /// The repository's own rules still win: a project that gitignores
+    /// `.stella/` publishes no records, so there is nothing for the carve-out
+    /// to admit.
+    #[test]
+    fn a_gitignored_stella_directory_publishes_no_records() {
+        let ws = TempDir::new().unwrap();
+        let root = ws.path();
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["init", "--quiet"])
+            .status()
+            .expect("git must be runnable in the test environment");
+        assert!(status.success(), "git init failed");
+        fs::write(root.join(".gitignore"), ".stella/\n").unwrap();
+        fs::create_dir_all(root.join(".stella/rules")).unwrap();
+        fs::write(
+            root.join(".stella/rules/ctx.demo.toml"),
+            "[[record]]\nstatement = \"x\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        let files = walk_indexable(root);
+        assert_eq!(files.len(), 1, "{files:?}");
+        assert!(files[0].ends_with("src/main.rs"));
     }
 
     #[test]
