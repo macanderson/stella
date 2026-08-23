@@ -27,7 +27,7 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
 
 ## Flags
 
-`stella run` adds two command-specific flags on top of the [global flags](/docs/commands):
+`stella run` adds four command-specific flags on top of the [global flags](/docs/commands). Two of them are refused outright; they are carded here because a flag that still parses and then refuses owes the reader a reason.
 
 <CardGrid size="md">
   <OptionCard name="--pipeline <VARIANT>">
@@ -43,6 +43,18 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
     deterministically — e.g. `"cargo test -p my-crate"`. Refused on the raw loop
     (no plugin named); passes through to a named `--pipeline <variant>` plugin's own
     oracle when one is installed.
+  </OptionCard>
+  <OptionCard name="--keep-witness">
+    **Refused on every resolution.** It promoted the staged pipeline's authored witness
+    test out of the candidate workspace and into your tree; #3865 deleted that pipeline,
+    so nothing authors a witness for it to keep. A verification plugin owns its own
+    witness files — install one (`stella plugin install`) and ask it.
+  </OptionCard>
+  <OptionCard name="--require-verified">
+    **Refused on every resolution.** It turned "completed but unproven" into a non-zero
+    exit, reading verdicts only the built-in staged pipeline reached; the raw loop
+    reaches neither (see the statuses below). A delivery gate that must not ship
+    unproven work wants a verification plugin and `--pipeline <variant>` naming it.
   </OptionCard>
 </CardGrid>
 
