@@ -279,8 +279,10 @@ mod tests {
     fn a_row_carries_description_turns_spend_and_model() {
         let mut model = WorkspaceModel::new();
         model.now_ms = 40 * 24 * 60 * 60 * 1000;
-        let mut ui = DeckUi::default();
-        ui.sessions_open = true;
+        let mut ui = DeckUi {
+            sessions_open: true,
+            ..DeckUi::default()
+        };
         let mut described = row(
             "digest",
             SessionPhase::InProgress,

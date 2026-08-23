@@ -150,6 +150,11 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
             crate::v2::sessions::render(model, ui, area, b)
         });
     }
+    if ui.subagents.open {
+        guarded_overlay(buf, area, "sub-agents", |b| {
+            crate::v2::subagents::render(model, ui, area, b)
+        });
+    }
     if ui.inbox_open {
         guarded_overlay(buf, area, "inbox", |b| {
             render_inbox_overlay(model, ui, area, b)
@@ -215,6 +220,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         || parked::owns_keyboard(ui)
         || ui.queue_open
         || ui.graph_picker_open
+        || ui.subagents.open
         || ui.sessions_open
         || ui.inbox_open
         || ui.context_open

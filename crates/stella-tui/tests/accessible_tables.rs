@@ -20,7 +20,7 @@
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 
-use stella_protocol::{AgentEvent, StageKind};
+use stella_protocol::AgentEvent;
 use stella_tui::{
     AgentMeta, AgentScope, DeckTab, DeckUi, Inbound, InstalledAgentEntry, IssueRow, SettingsPane,
     ToolPolicyState, ToolRow, WorkspaceModel, ingest_inbound, render_deck,

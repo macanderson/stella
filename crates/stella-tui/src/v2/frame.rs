@@ -259,8 +259,10 @@ mod tests {
     #[test]
     fn the_session_tab_row_is_the_plan_breadcrumb() {
         let model = planned_model();
-        let mut ui = DeckUi::default();
-        ui.tab = DeckTab::Session;
+        let ui = DeckUi {
+            tab: DeckTab::Session,
+            ..DeckUi::default()
+        };
         let area = Rect::new(0, 0, 100, 1);
         let mut buf = Buffer::empty(area);
         render_tab_row(&model, &ui, area, &mut buf);
@@ -275,8 +277,10 @@ mod tests {
     #[test]
     fn another_tab_draws_the_list_with_the_active_tab_lit() {
         let model = WorkspaceModel::new();
-        let mut ui = DeckUi::default();
-        ui.tab = DeckTab::Graph;
+        let ui = DeckUi {
+            tab: DeckTab::Graph,
+            ..DeckUi::default()
+        };
         let area = Rect::new(0, 0, 100, 1);
         let mut buf = Buffer::empty(area);
         render_tab_row(&model, &ui, area, &mut buf);
@@ -285,7 +289,7 @@ mod tests {
         assert!(row.trim_end().ends_with("stella*"), "{row}");
         let x = row.find("GRAPH").expect("active tab drawn");
         assert_eq!(
-            buf.cell((x as u16, 0)).and_then(|c| Some(c.fg)),
+            buf.cell((x as u16, 0)).map(|c| c.fg),
             Some(token::GOLD),
             "the active tab is gold"
         );

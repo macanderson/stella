@@ -2467,6 +2467,10 @@ pub(crate) fn prompt_line(prompt: &str, max_chars: usize) -> String {
 /// Service a session-registry / inbox verb from the deck. Returns `true` if
 /// `input` was one (so the caller skips its own dispatch). All of these are
 /// cheap local file ops, serviced identically idle or mid-turn.
+// Every argument is a distinct handle the verbs need (registry, store, config,
+// budget, the two identities, the channel) — bundling them into a struct would
+// move the same list one hop away from the one call site.
+#[allow(clippy::too_many_arguments)]
 fn service_registry_action(
     input: &WorkspaceInput,
     registry: &stella_store::SessionRegistry,
@@ -3558,7 +3562,7 @@ async fn run_deck_command(
         // but a queued one reaches here — accept it as handled (a no-op)
         // rather than calling it "unknown".
         "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" | "/mcp-search"
-        | "/settings" | "/sessions" | "/context" | "/inspect" | "/inbox" => {}
+        | "/settings" | "/sessions" | "/subagents" | "/context" | "/inspect" | "/inbox" => {}
         _ => {
             if let Some(reply) = add_dir::handle(trimmed, cfg, registry) {
                 say(reply);

@@ -173,6 +173,7 @@ impl SubSessions {
             SubSessionSpec {
                 lane: lane.to_string(),
                 title: lane.to_string(),
+                purpose: String::new(),
                 prompt: String::new(),
                 notify_title: String::new(),
             },
@@ -448,6 +449,10 @@ pub(crate) struct SubSessionSpec {
     pub lane: String,
     /// Dashboard row title.
     pub title: String,
+    /// One sentence on what the lane is for, in the words it was handed —
+    /// the task's description or subject for an assigned task, the prompt's
+    /// first line for a dispatched one. The SUB-AGENTS overlay's second row.
+    pub purpose: String,
     /// The full prompt the worker's model receives.
     pub prompt: String,
     /// Notification title on completion (the body is the outcome).
@@ -473,6 +478,61 @@ pub(crate) fn task_prompt(req: &SpawnRequest) -> String {
         req.briefing
     ));
     prompt
+}
+
+/// The sentence the SUB-AGENTS overlay shows for an assigned task: the
+/// description's first sentence when the lead wrote one, the subject
+/// otherwise. The briefing is deliberately not used — it is instructions to
+/// the worker, and a row is about what the task *is*.
+pub(crate) fn task_purpose(req: &SpawnRequest) -> String {
+    req.description
+        .as_deref()
+        .map(first_sentence)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| first_sentence(&req.subject))
+}
+
+/// Most characters a purpose sentence spends.
+const PURPOSE_CAP: usize = 160;
+
+/// The first sentence of `text`, on one line: cut at the first sentence
+/// break or newline, whitespace collapsed, capped at [`PURPOSE_CAP`].
+pub(crate) fn first_sentence(text: &str) -> String {
+    let first_line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let mut sentence = first_line;
+    // `. ` rather than `.`, so `docs/spec.md` does not end the sentence.
+    for mark in [". ", "! ", "? "] {
+        if let Some(i) = sentence.find(mark) {
+            sentence = &sentence[..i + 1];
+        }
+    }
+    let joined = sentence.split_whitespace().collect::<Vec<_>>().join(" ");
+    if joined.chars().count() <= PURPOSE_CAP {
+        joined
+    } else {
+        let head: String = joined.chars().take(PURPOSE_CAP - 1).collect();
+        format!("{head}…")
+    }
+}
+
+/// The reasoning effort a worker's calls are pinned to, as the word the
+/// settings spell it — resolved through `engine_config::tuning_for`, the same
+/// helper the engine builder applies (`agent::engine`), with the builder's
+/// capability clamp: a catalog-confirmed non-reasoning model carries no
+/// effort, so none is shown. `None` when nothing pins one. A provider that
+/// ignores the pin still receives it and says so at boot (AGENTS.md
+/// invariant 8's `ReasoningPosture`), so the word here is what the request
+/// carries, not a promise the model honours it.
+pub(crate) fn pinned_effort(cfg: &Config) -> Option<&'static str> {
+    if crate::engine_config::model_supports_reasoning(cfg.provider.id, &cfg.model_id)
+        == Some(false)
+    {
+        return None;
+    }
+    cfg.engine_settings
+        .as_ref()
+        .and_then(|engine| crate::engine_config::tuning_for(engine).effort)
+        .map(crate::engine_config::effort_to_str)
 }
 
 /// The panic text a caught worker payload carries (`panic!("…")` is a
@@ -534,8 +594,10 @@ pub(crate) fn spawn(
 ) {
     let mut meta = AgentMeta::new(spec.lane.clone(), spec.title.clone(), now_ms())
         .with_role("subagent")
-        .with_pid(std::process::id());
+        .with_pid(std::process::id())
+        .with_purpose(spec.purpose.clone());
     meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
+    meta.effort = pinned_effort(cfg).map(str::to_string);
     let _ = in_tx.send(Inbound::Register(meta));
     let _ = in_tx.send(Inbound::Status {
         agent: spec.lane.clone(),
@@ -871,6 +933,7 @@ pub(crate) fn drain_queue(
         let spec = SubSessionSpec {
             lane: lane.clone(),
             title: prompt_line(&text, 48),
+            purpose: first_sentence(&text),
             notify_title: format!("reply ready — {}", prompt_line(&text, 40)),
             prompt: text,
         };
@@ -970,6 +1033,7 @@ pub(crate) fn spawn_task_worker(
     let spec = SubSessionSpec {
         lane: lane.clone(),
         title: format!("task #{}: {}", req.task_id, prompt_line(&req.subject, 40)),
+        purpose: task_purpose(req),
         prompt: task_prompt(req),
         notify_title: format!(
             "task #{} done — {}",
@@ -1082,6 +1146,7 @@ mod tests {
         SubSessionSpec {
             lane: lane.to_string(),
             title: "t".into(),
+            purpose: String::new(),
             prompt: "p".into(),
             notify_title: "n".into(),
         }
@@ -1406,6 +1471,33 @@ mod tests {
         assert_eq!(
             route_mid_turn(">  narrow it down".into(), true),
             MidTurnRoute::NextTurn("narrow it down".into()),
+        );
+    }
+
+    /// The overlay's purpose row is the task's own description, one sentence,
+    /// never the briefing — and the subject when there is no description.
+    #[test]
+    fn task_purpose_is_the_descriptions_first_sentence_or_the_subject() {
+        let mut req = SpawnRequest {
+            task_id: "3".into(),
+            subject: "Fix the redirect loop".into(),
+            description: Some(
+                "Token refresh races the redirect in auth/login.rs. Repro: log in twice.\n\
+                 Then read the trace."
+                    .into(),
+            ),
+            briefing: "Start from the failing test.".into(),
+        };
+        assert_eq!(
+            task_purpose(&req),
+            "Token refresh races the redirect in auth/login.rs."
+        );
+        req.description = None;
+        assert_eq!(task_purpose(&req), "Fix the redirect loop");
+        assert_eq!(
+            first_sentence("  \n\nSimplify   docs/spec.md so it reads plainly\nmore"),
+            "Simplify docs/spec.md so it reads plainly",
+            "a dotted path is not a sentence break; the newline is"
         );
     }
 

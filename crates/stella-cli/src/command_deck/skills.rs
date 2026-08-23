@@ -65,6 +65,10 @@ pub(super) const DECK_BUILTINS: &[(&str, &str)] = &[
         "this session's active skills + MCP servers (also: → on an empty prompt)",
     ),
     (
+        "/subagents",
+        "every dispatched sub-agent: purpose, where it is, stop · pause · restart (also: ctrl-a)",
+    ),
+    (
         "/plan",
         "the plan — every step, with where it may write and spend",
     ),
