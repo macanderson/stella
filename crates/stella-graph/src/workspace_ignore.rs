@@ -12,7 +12,12 @@
 //! to keep correct forever, and the failure mode of a subtly-wrong one is
 //! silent: a file quietly indexed, or quietly not.
 //!
-//! That holds for a workspace that is **not** a repository too. An extracted
+//! It holds for a workspace **inside** a repository — `myrepo/crates/foo`,
+//! where the rules live at the top and apply all the way down. Git answers
+//! from there directly; the judgement this module adds is *when to believe
+//! the answer*, which `WorkspaceIgnore::from_the_owning_repository` states.
+//!
+//! And it holds for a workspace that is **not** a repository. An extracted
 //! tarball or a bench container's `/app` can carry a `.gitignore` and no
 //! `.git`, and it means what it says — but `git ls-files` needs a repository
 //! to answer at all. So the answer stays git's: an empty git dir in a
@@ -52,16 +57,19 @@ impl WorkspaceIgnore {
     /// Ask what the workspace at `root` declares uninteresting.
     ///
     /// One `git ls-files` per call (~30ms on a 20k-entry tree, preceded by a
-    /// `git init` into a temporary directory in the second shape below),
-    /// reading only what `root` **itself** declares. That is correctness,
-    /// not economy:
-    /// a workspace that merely sits *under* someone else's repository — a
-    /// scratch directory beneath a `$HOME` dotfiles repo whose `.gitignore`
-    /// says `*` — must not inherit rules nobody wrote for it, or the caller
-    /// goes silently blind.
+    /// `rev-parse` probe or a `git init` into a temporary directory in the
+    /// shapes below), reading what applies to `root` **itself**. That is
+    /// correctness, not economy: a workspace that merely sits *under* someone
+    /// else's repository — a scratch directory beneath a `$HOME` dotfiles repo
+    /// whose `.gitignore` says `*` — must not inherit rules nobody wrote for
+    /// it, or the caller goes silently blind.
     ///
-    /// Two shapes qualify, and nothing else is asked at all:
+    /// Three shapes qualify, tried in this order, and nothing else is asked
+    /// at all:
     /// - `root` hosts the repository (`root/.git`) — the ordinary case.
+    /// - `root` sits inside a repository's working tree, which owns it. See
+    ///   `Self::from_the_owning_repository` for the two conditions and for
+    ///   what this deliberately does not fix.
     /// - `root` is no repository but carries its own `root/.gitignore` — an
     ///   extracted tarball, a bench container's `/app`. Answered through a
     ///   temporary empty git dir with `root` as the work tree, which is what
@@ -75,6 +83,9 @@ impl WorkspaceIgnore {
     pub fn resolve(root: &Path) -> Self {
         if root.join(".git").exists() {
             return Self::ask_git(root, None);
+        }
+        if let Some(owned) = Self::from_the_owning_repository(root) {
+            return owned;
         }
         if !root.join(".gitignore").exists() {
             return Self::none();
@@ -99,6 +110,62 @@ impl WorkspaceIgnore {
             return Self::none();
         }
         Self::ask_git(root, Some(&git_dir))
+    }
+
+    /// The rules of the repository that owns `root`, when one does — the case
+    /// of running `stella` from `myrepo/crates/foo`, which is an ordinary
+    /// thing to do and which used to consult no rules at all (#4050). `None`
+    /// means "not this shape, keep looking", never "ignore nothing".
+    ///
+    /// Two conditions, and the second is the whole design:
+    ///
+    /// 1. **`root` is genuinely inside a working tree.** `rev-parse
+    ///    --show-toplevel` succeeds and names a strict ancestor of `root`.
+    ///    That alone is not enough — a scratch directory under a `$HOME`
+    ///    dotfiles repo satisfies it, and inheriting `*` from that repo would
+    ///    blind the walk completely. So:
+    /// 2. **The repository must not ignore the workspace wholesale.** Asked
+    ///    from inside a directory it excludes, `ls-files --directory` answers
+    ///    `./` — one entry standing for everything — and that is the answer
+    ///    declined. A repository that ignores `root` entirely is not
+    ///    describing the workspace, it is declining to know about it, and its
+    ///    rules are not the workspace's own. `resolve` then falls through to
+    ///    the `root/.gitignore` shape, which is what the workspace does say
+    ///    about itself.
+    ///
+    /// What this does **not** fix: a scratch directory under a repository that
+    /// ignores only *part* of its tree, where that part happens to cover the
+    /// scratch directory's contents but not the directory itself. Those rules
+    /// still reach inside. The wholesale case is the one that was reported and
+    /// the one whose failure is total; a partial one costs some coverage, and
+    /// resolving it needs a signal this module does not have — whether the
+    /// user meant this directory as a workspace of its own.
+    fn from_the_owning_repository(root: &Path) -> Option<Self> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let toplevel = Path::new(String::from_utf8_lossy(&output.stdout).trim()).to_path_buf();
+        // Compare resolved paths: `/tmp` is a symlink to `/private/tmp` on
+        // macOS, and git answers with the resolved form while `root` arrives
+        // as the caller spelled it.
+        let real_root = std::fs::canonicalize(root).ok()?;
+        let real_toplevel = std::fs::canonicalize(&toplevel).ok()?;
+        if real_toplevel == real_root || !real_root.starts_with(&real_toplevel) {
+            return None;
+        }
+        let resolved = Self::ask_git(root, None);
+        // `./` is git's answer for "the directory you asked from is itself
+        // ignored" — see condition 2 above.
+        if resolved.ignored.contains("./") {
+            return None;
+        }
+        Some(resolved)
     }
 
     /// The one `ls-files` invocation, against either the repository at
@@ -226,11 +293,46 @@ mod tests {
         assert!(!ignore.excludes("main.rs"), "source is not excluded");
     }
 
-    /// The gate that keeps an ancestor's rules from blinding a workspace that
-    /// is not itself a repository — a scratch dir under a `$HOME` dotfiles
-    /// repo ignoring `*` must still be walked in full.
+    /// #4050: `stella` launched from `myrepo/crates/foo` — an ordinary thing
+    /// to do — must honour the rules that actually apply there. Before this,
+    /// the subdirectory hosted no `.git`, so nothing was asked at all and the
+    /// walk fell back to the hardcoded deny-list, which knows `target/` and
+    /// `node_modules/` but nothing a project declared for itself.
     #[test]
-    fn a_non_repository_ignores_nothing_even_inside_a_repository() {
+    fn a_subdirectory_of_a_repository_honours_that_repositorys_rules() {
+        let repo = tempfile::tempdir().unwrap();
+        git_init(repo.path());
+        std::fs::write(repo.path().join(".gitignore"), "generated/\n*.log\n").unwrap();
+        let workspace = repo.path().join("crates/foo");
+        std::fs::create_dir_all(workspace.join("generated")).unwrap();
+        std::fs::write(workspace.join("generated/gen.py"), "x = 1\n").unwrap();
+        std::fs::write(workspace.join("run.log"), "noise\n").unwrap();
+        std::fs::write(workspace.join("main.rs"), "fn main() {}\n").unwrap();
+
+        let ignore = WorkspaceIgnore::resolve(&workspace);
+        assert!(
+            ignore.excludes_dir("generated"),
+            "the repository's own rule reaches the subdirectory it owns"
+        );
+        assert!(
+            ignore.excludes("generated/gen.py"),
+            "and the collapsed entry covers what is under it"
+        );
+        assert!(ignore.excludes("run.log"));
+        assert!(
+            !ignore.excludes("main.rs"),
+            "source in the subdirectory is not excluded"
+        );
+    }
+
+    /// The hazard the subdirectory rule must not reintroduce, named: a
+    /// scratch directory under a `$HOME` dotfiles repo whose `.gitignore`
+    /// says `*` **is** inside that repository's working tree, so asking git
+    /// from it succeeds — and answers that everything is ignored. That answer
+    /// is declined rather than believed, because a repository that ignores a
+    /// directory wholesale is declining to know about it, not describing it.
+    #[test]
+    fn a_workspace_its_repository_ignores_wholesale_is_still_walked_in_full() {
         let outer = tempfile::tempdir().unwrap();
         git_init(outer.path());
         std::fs::write(outer.path().join(".gitignore"), "*\n").unwrap();
@@ -238,8 +340,20 @@ mod tests {
         std::fs::create_dir_all(&inner).unwrap();
         std::fs::write(inner.join("main.rs"), "fn main() {}\n").unwrap();
 
+        // Not vacuous: the repository is reachable from `inner` and really
+        // does answer "everything here is ignored". That entry is what the
+        // decline is keyed on, so pin it rather than infer it.
+        let raw = WorkspaceIgnore::ask_git(&inner, None);
+        assert!(
+            raw.ignored.contains("./"),
+            "git's wholesale answer is the input to the rule under test: {raw:?}"
+        );
+
         let ignore = WorkspaceIgnore::resolve(&inner);
-        assert!(ignore.is_empty(), "an ancestor's rules are not inherited");
+        assert!(
+            ignore.is_empty(),
+            "a wholesale ignore is not a description of this workspace"
+        );
         assert!(!ignore.excludes("main.rs"));
     }
 
