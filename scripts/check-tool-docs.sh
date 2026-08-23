@@ -39,6 +39,22 @@ if [ ! -d docs/tools ]; then
   exit 1
 fi
 
+# Compile first, and say so when that is what failed. `stella-cli` sits on top
+# of most of the workspace, so a syntax error in any crate beneath it makes the
+# derivation exit non-zero — and a guard that reports the exit code as "the
+# pages drifted" names a cause it has not established (#4267). On 2026-08-22 a
+# broken `crates/stella-tui/src/diff.rs` (#4256) produced exactly that message
+# on a PR that had also edited `crates/stella-tools/src/catalog.rs`, which made
+# the false reading the plausible one.
+if ! build_log="$(cargo test --quiet --no-run -p stella-cli --bin stella 2>&1)"; then
+  echo "check-tool-docs: SKIPPED — stella-cli does not build; fix that first." >&2
+  echo "" >&2
+  printf '%s\n' "$build_log" >&2
+  echo "" >&2
+  echo "     docs/tools/ is not implicated: the derivation never ran." >&2
+  exit 1
+fi
+
 # Build noise goes to a buffer and is only shown on failure — a green gate
 # should say one line.
 if ! log="$(cargo test --quiet -p stella-cli --bin stella tool_docs 2>&1)"; then
