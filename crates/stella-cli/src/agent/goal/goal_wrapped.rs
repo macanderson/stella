@@ -234,7 +234,17 @@ pub(crate) async fn run_goal_wrapped_turn(
                 // No candidate grant for a goal-wrapped round yet (#3835).
                 candidate: None,
             };
-            let report = match bound.dispatch.run(input, &mut driver).await {
+            let dispatched = bound.dispatch.run(input, &mut driver).await;
+            // Read out before the settlement below, because the driver holds
+            // this round's borrow of `budget` until its last use.
+            let driven = driver.driven;
+            // Whatever this round's `after_turn` spent on a child turn has no
+            // next engine turn to fold it in until the *next* round runs, and
+            // the last round has none at all — so every round settles its own
+            // residual here, before the cost reads below (#3833). Draining is
+            // destructive, so this takes only what no turn already took.
+            crate::wrapper_plugin::settle_plugin_child_spend(registry, &mut *budget);
+            let report = match dispatched {
                 Ok(report) => report,
                 Err(error) => {
                     break 'rounds GoalOutcome::Unmet {
@@ -275,7 +285,7 @@ pub(crate) async fn run_goal_wrapped_turn(
             }
             last_report = Some(report);
 
-            let Some(turn_outcome) = driver.driven else {
+            let Some(turn_outcome) = driven else {
                 break 'rounds GoalOutcome::Unmet {
                     rounds: round,
                     reason: format!("wrapper \"{}\" drove a round with no turn", bound.variant()),

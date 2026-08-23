@@ -501,15 +501,22 @@ pub async fn run_goal_cmd(
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
 
-    crate::subagent::install_for_session(cfg, &registry)?;
-    // The goal door's host serves `recall` only — no `child_turn` plane; see
-    // `crate::wrapper_plugin`'s module doc for why a fixed slot is unsafe
-    // across a goal loop's own even/odd round math.
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
+    // The goal door serves `recall` and `child_turn` (#3833). The plane is
+    // built here rather than beside `resolve` above for the ordering
+    // `run_raw_one_shot` documents: a `--pipeline` naming nothing installed
+    // must fail as a typo before a paid call, while a child-turn plane needs
+    // this session's dispatcher, which needs the provider built above. It
+    // allocates its receipt slots through `stella_core::turn_slots`, whose
+    // lanes are what let a plane counting its own calls run beside a goal
+    // round's own worker/verifier pair without overwriting either.
     let bound = match resolved {
         Some(resolved) => {
-            let host = crate::wrapper_plugin::WrapperHost::recalling(Box::new(
-                crate::wrapper_recall::SessionRecallHost::open(&cfg.workspace_root),
-            ));
+            let host = crate::wrapper_plugin::round_driver_host(
+                &cfg.workspace_root,
+                resolved.manifest(),
+                sub_agents,
+            );
             Some(
                 resolved
                     .serving(host)

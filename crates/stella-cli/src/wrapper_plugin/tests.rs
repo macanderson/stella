@@ -22,6 +22,7 @@ use super::*;
 use crate::plugin_cmd::roster::{InstalledPlugin, PluginScope};
 
 mod report;
+mod round_driver;
 
 const WRAPPER_MANIFEST: &str = r#"
 name = "budget-keeper"
@@ -649,7 +650,8 @@ async fn a_declared_child_turn_runs_on_this_hosts_dispatcher() {
         "a plugin's child turn gathers evidence; it does not get a write arm"
     );
     assert_eq!(
-        specs[0].turn_instance, PLUGIN_CHILD_TURN_SLOT,
+        stella_core::turn_slots::lane_of(specs[0].turn_instance),
+        stella_core::turn_slots::CHILD_TURN_LANE,
         "not the parent's receipt slot"
     );
 
