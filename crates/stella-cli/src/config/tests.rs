@@ -7,7 +7,10 @@ use super::providers::COMMON_KEY_ENV_VARS;
 mod credential;
 mod docs_sync;
 mod parity;
-mod resolution;
+// `pub(in crate::config)` rather than private: `reload::completeness`'s ledger
+// drives a real reload against this module's `reload_fixture`, and it is a
+// sibling of `tests`, not a descendant.
+pub(in crate::config) mod resolution;
 mod trusted_engine;
 
 /// Helper: a Settings value parsed from JSON, as the scope-merge would

@@ -19,6 +19,12 @@ impl Config {
     /// re-derived from whatever is on disk *now* instead of what it was at
     /// session start.
     ///
+    /// Which fields those are is not a matter of reading this body: the
+    /// ledger in `reload::completeness` declares a posture for **every** field of
+    /// [`Config`], exhaustively, so a field added to `Config::load` and
+    /// forgotten here stops that module compiling instead of reading as its
+    /// startup value for the rest of the session (#3895).
+    ///
     /// Settings unreadable (malformed JSON/TOML) is reported rather than
     /// silently keeping the stale in-memory values — the whole point of a
     /// manual reload is that it either worked or you were told why not.
@@ -51,6 +57,7 @@ impl Config {
             )
         };
         let tool_policy = settings.tool_policy();
+        let ignore_gitignore = settings.ignore_gitignore();
         let reward_policy = settings.reward_policy()?;
         let create_worktrees = settings.create_worktrees();
         let hooks = if crate::enterprise_telemetry::process_free_authority_active() {
@@ -64,9 +71,13 @@ impl Config {
         self.engine_settings_trusted = engine_is_trusted;
         self.authority = settings.authority_policy;
         self.tool_policy = tool_policy;
+        self.ignore_gitignore = ignore_gitignore;
         self.reward_policy = reward_policy;
         self.create_worktrees = create_worktrees;
         self.hooks = hooks;
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod completeness;
