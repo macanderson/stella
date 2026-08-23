@@ -749,6 +749,31 @@ pub async fn run_goal_cmd(
     outcome
 }
 
+/// Put this session's withheld-steering notice on a goal run's stream, if
+/// there is one and no other door has already spent it (#4500).
+///
+/// `stella goal` reaches neither of the two openers that carry this —
+/// `agent::output::open_raw_turn` (the raw door) and
+/// `command_deck::steering::announce_withheld` (the deck's boot) — because it
+/// drives `Engine::run_goal` itself rather than `agent::run_turn`. So an
+/// untrusted checkout running `stella goal` had the refusal on stderr and on
+/// no event stream: nothing in the journal, nothing in `stella export`,
+/// nothing a harness could read.
+///
+/// Both arms call it, so a goal run announces once whichever pipeline it took,
+/// and it is claimed through the session latch rather than a local flag: a
+/// goal run is one process today, but a latch that is the same latch cannot
+/// disagree with the other doors about whether the session has been told.
+pub(super) fn announce_withheld_steering(tx: &mpsc::UnboundedSender<AgentEvent>, cfg: &Config) {
+    let Some(withheld) = cfg.authority.withheld.as_ref() else {
+        return;
+    };
+    if !crate::agent::claim_withheld_announcement() {
+        return;
+    }
+    let _ = tx.send(withheld.event());
+}
+
 /// Run one goal loop through `stella_core::Engine::run_goal`: working turns
 /// interleaved with verifier assessments until the verifier passes it (or a
 /// backstop — rounds, budget, abort — ends it with a named reason). The
@@ -820,6 +845,14 @@ pub(crate) async fn run_goal_turn(
     };
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let events = stella_core::EventSender::new(tx.clone());
+    // The registry's own streams and this turn's per-call work-tree
+    // measurement, through the one seam (#4507). This door opened its channel
+    // and attached NOTHING to it: `stella goal` rendered no task board, no
+    // sub-agent lifecycle, and no diff under any mutating call for the whole
+    // of a run — the #4175 silence, on the one door where the loop can run
+    // dozens of rounds before a human sees the result.
+    persistence::attach_run_streams(registry, cfg, &events, execution.as_ref());
     let renderer = spawn_renderer(
         rx,
         OutputFormat::Text,
@@ -828,7 +861,12 @@ pub(crate) async fn run_goal_turn(
         false,
         Some(goal.to_string()),
     );
-    // First event of the turn: what recall put in front of the model.
+    // What this workspace's trust gate withheld, then what recall put in
+    // front of the model — the ordering `output::open_raw_turn` argues for on
+    // the raw door, and the door parity #4500 asks for: `stella goal` reached
+    // neither opener, so an untrusted checkout's refusal was on stderr and on
+    // no event stream at all.
+    announce_withheld_steering(&tx, cfg);
     if let Some(event) = recall_event {
         let _ = tx.send(event);
     }
@@ -878,8 +916,11 @@ pub(crate) async fn run_goal_turn(
     // execution record, not by withholding the terminator.
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
+    // The canonical teardown (#960): the registry now holds sender clones of
+    // this channel, so it is detached before the renderer is awaited or the
+    // run hangs on a channel that never closes.
     drop(tx);
-    let rendered = renderer.await.unwrap_or_default();
+    let rendered = persistence::close_event_stream(registry, events, renderer).await;
     let persistence_complete = rendered.persistence_complete;
     // The arc's friction, folded from the journal the renderer just finished
     // draining — split at each round's own `GoalVerdict` so no round is
