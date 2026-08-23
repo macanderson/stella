@@ -101,6 +101,7 @@ mod session_clear;
 mod sessions_view;
 mod settings_io;
 mod settle;
+mod slash_pump;
 mod task_tap;
 mod theme_cmd;
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
@@ -1407,6 +1408,9 @@ pub async fn run_deck_session(
         // Session-level slash commands are the driver's, never the model's —
         // the deck's popup enqueues them like any prompt (tab switches and
         // the help overlay were already handled TUI-side and never reach us).
+        // Awaited through the pump, not directly: a command that raises a
+        // question (`/init`) is answered on `sub_rx`, and nothing else reads
+        // that channel until the command returns (#4357).
         let command = run_deck_command(
             &prompt,
             &in_tx,
@@ -1419,8 +1423,18 @@ pub async fn run_deck_session(
             agent::remaining_budget(&budget),
             &session_record.id,
             &ask_io,
+        );
+        let command = match slash_pump::await_answerable(
+            command,
+            &mut sub_rx,
+            &ask_tx,
+            &mut deferred,
         )
-        .await;
+        .await
+        {
+            slash_pump::CommandWake::Finished(command) => command,
+            slash_pump::CommandWake::Quit => break 'session,
+        };
         if matches!(command, DeckCommand::Handled | DeckCommand::InitCompleted) {
             // A handled command emits its answer as `Text`, which flips the
             // lead to `Running` in the deck's fold — but no turn is in flight.
