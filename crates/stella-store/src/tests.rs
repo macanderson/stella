@@ -1040,8 +1040,12 @@ fn skill_usage_records_per_execution_version_rows() {
     //       the old key collapsed. v29 `tasks.contract` (#4238): what a task
     //       promised, not only what became of it — nullable with no backfill,
     //       because NULL (no contract recorded) and a stored `read_only` are
-    //       different facts and a default would invent the second.
-    assert_eq!(SCHEMA_VERSION, 29);
+    //       different facts and a default would invent the second. v30
+    //       `step_receipt.stall_seconds_requested` (#3621): the number the
+    //       stall rung decides on, which nothing persisted — nullable for the
+    //       same reason, since NULL is "not classified" and 0 is "looked and
+    //       found none".
+    assert_eq!(SCHEMA_VERSION, 30);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

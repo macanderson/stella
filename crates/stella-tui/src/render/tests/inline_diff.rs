@@ -43,7 +43,6 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
     let files = vec![FileState {
         path: "src/x.rs".into(),
         kind: FileChangeKind::Modified,
-        latest_diff: Some(diff_text.clone()),
         added,
         removed,
         recent_diffs: [crate::model::RememberedDiff {
@@ -211,12 +210,12 @@ fn expanded_tool_result_shows_the_full_inline_diff() {
 #[test]
 fn a_stale_or_unresolvable_diff_ref_renders_no_inline_diff() {
     let (entry, mut files) = mutation_entry_and_files();
-    // The path went on mutating until this call's diff aged out of the
-    // bounded history — exactly the state `DIFF_HISTORY` evictions leave
-    // behind. No remembered diff belongs to this result any more, and
-    // showing the newest one instead would attribute a change the call
-    // never made, so the row degrades to naming its result.
-    files[0].changes = crate::model::DIFF_HISTORY as u32 + 1;
+    // The path went on mutating and this call's own mutation is no longer
+    // remembered — the state a path evicted at `MAX_TRACKED_FILES` and then
+    // re-admitted leaves behind. No remembered diff belongs to this result any
+    // more, and showing the newest one instead would attribute a change the
+    // call never made, so the row degrades to naming its result.
+    files[0].changes = 9;
     files[0].recent_diffs = (2..=files[0].changes)
         .map(|seq| crate::model::RememberedDiff {
             seq,

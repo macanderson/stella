@@ -447,3 +447,85 @@ async fn a_risk_ceiling_authorizes_from_wire_contract_metadata() {
     assert!(out.is_error(), "a Medium ceiling must refuse High: {out:?}");
     assert!(rx.try_recv().is_err(), "and the host is never asked");
 }
+
+/// A tool port whose deployment installed one blocking policy: `refused` is
+/// denied, everything else allowed. The frame sink is dead, as in
+/// [`disconnected_port`] — the gate is asked before any frame is built, so a
+/// live host is not what these assertions are about.
+fn policed_port(refused: &'static str) -> RemoteToolExecutor {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(rx);
+    let sink = crate::backlog::FrameSink::new(
+        tx,
+        crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+    );
+    let pending = Pending::new(
+        crate::observe::null_observer(),
+        TurnRef::new("turn-policedtest"),
+    );
+    let bus = HookBus::new("turn-policedtest");
+    bus.on_blocking(hook_names::TOOL_CALL_REQUESTED, move |event| {
+        if event.payload["tool"].as_str() == Some(refused) {
+            return stella_core::bus::HookDecision::Deny(
+                format!("`{refused}` is not permitted on this deployment").into(),
+            );
+        }
+        stella_core::bus::HookDecision::Allow
+    })
+    .detach();
+    RemoteToolExecutor::new(
+        Vec::new(),
+        std::sync::Arc::new(stella_core::ports::NoAuthz),
+        stella_core::ports::Principal::Host("test".to_string()),
+        sink,
+        pending,
+        Duration::from_millis(50),
+        Some(bus),
+    )
+}
+
+/// **Witness (#3843).** The served surface's blocking policy chain is
+/// reachable through the [`stella_core::ports::DispatchGate`] port, which is
+/// what lets a decorator that dispatches a name of its own — serve has one,
+/// `DelegatingTools` and its engine-side `delegate` — run the same chain a
+/// remoted call passes through. Before this change `RemoteToolExecutor` kept
+/// the trait's `None` default and there was no way to ask it.
+#[tokio::test]
+async fn the_remote_executor_offers_its_policy_chain_as_a_dispatch_gate() {
+    let port = policed_port("delegate");
+    let gate = port
+        .dispatch_gate()
+        .expect("the executor that owns the chain is the surface's dispatch gate");
+
+    let refusal = gate
+        .admit(
+            "delegate",
+            &serde_json::json!({ "prompt": "read the code" }),
+        )
+        .await;
+    let stella_core::ports::DispatchAdmission::Refuse(output) = refusal else {
+        panic!("a denied name must be refused, not admitted: {refusal:?}");
+    };
+    // Classified, not a bare error string: the CLI's `ToolRegistry` answers
+    // one `Deny` with `RefusedByPolicy`, and this file had drifted to
+    // `ToolOutput::error` on both refusal arms.
+    assert!(
+        matches!(
+            &output,
+            ToolOutput::Error {
+                class: Some(stella_protocol::ErrorClass::RefusedByPolicy),
+                ..
+            }
+        ),
+        "a policy refusal must carry its class: {output:?}"
+    );
+
+    assert!(
+        matches!(
+            gate.admit("echo", &serde_json::json!({ "text": "hi" }))
+                .await,
+            stella_core::ports::DispatchAdmission::Admit
+        ),
+        "a name the policy allows is admitted unchanged"
+    );
+}

@@ -73,6 +73,11 @@ pub(crate) fn all_steer_causes() -> Vec<SteerCause> {
     vec![Unknown, User, Loop, Stall]
 }
 
+pub(crate) fn all_withholders() -> Vec<stella_protocol::Withholder> {
+    use stella_protocol::Withholder::*;
+    vec![ProjectUntrusted, ManagedCeiling]
+}
+
 pub(crate) fn all_policy_kinds() -> Vec<PolicyKind> {
     use PolicyKind::*;
     vec![Evaluated, Blocked, ApprovalRequested, SecretDetected]
@@ -468,6 +473,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             effective_budget_tokens: 120_000,
             calibration_factor: 1.0,
             estimated_input_tokens: 900,
+            stall_seconds_requested: Some(900),
             compiled_frame: Some(CompiledContextFrameBuilt {
                 compiled_frame_id: "cfr_1".into(),
                 frame_hash: "sha256:cc".into(),
@@ -484,6 +490,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             effective_budget_tokens: 0,
             calibration_factor: 0.0,
             estimated_input_tokens: 0,
+            stall_seconds_requested: Some(900),
             compiled_frame: None,
         },
         AgentEvent::Verdict {
@@ -687,6 +694,16 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             model: "opus".into(),
             cost_usd: 1.37,
         },
+        // Counts and an authority, and nothing a repository authored — the
+        // whole point of the variant (#3616).
+        AgentEvent::SteeringWithheld {
+            withheld_by: stella_protocol::Withholder::ProjectUntrusted,
+            memories: 3,
+            records: 2,
+            skills: 1,
+            commands: 0,
+            agents: 0,
+        },
     ];
 
     // One event per arm of every nested vocabulary.
@@ -783,6 +800,18 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 kind,
                 subject: "run_command".into(),
                 outcome: "deny".into(),
+            }),
+    );
+    events.extend(
+        all_withholders()
+            .into_iter()
+            .map(|withheld_by| AgentEvent::SteeringWithheld {
+                withheld_by,
+                memories: 1,
+                records: 1,
+                skills: 1,
+                commands: 1,
+                agents: 1,
             }),
     );
     events.extend(all_model_call_roles().into_iter().flat_map(|role| {
@@ -975,6 +1004,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 effective_budget_tokens: 1,
                 calibration_factor: 1.0,
                 estimated_input_tokens: 10,
+                stall_seconds_requested: Some(900),
                 compiled_frame: None,
             }),
     );
