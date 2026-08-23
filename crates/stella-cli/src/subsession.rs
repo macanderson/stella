@@ -95,6 +95,15 @@ pub(crate) struct SubSessions {
     /// Live workers' pause switches (watch: `true` = parked at the next
     /// step boundary).
     pauses: HashMap<String, watch::Sender<bool>>,
+    /// Live workers' steering taps — the driver's half of each lane's
+    /// [`SteeringTap`], so a steer aimed at a lane lands at that lane's next
+    /// step boundary (#2899). Removed with the stop sender: a winding-down
+    /// worker has no boundary left to inject at.
+    taps: HashMap<String, Arc<SteeringTap>>,
+    /// Lanes `/clear` stopped whose `Ended` has not arrived. Their deck rows
+    /// come down when it does — never before, because the worker's terminal
+    /// status would re-register a row removed ahead of it.
+    cleared: std::collections::HashSet<String>,
     /// Lanes whose stop signal was sent but whose `Ended` has not arrived —
     /// the worker thread is still winding down (forwarder drain, store
     /// closeout). These still count as live: the slot is not free, and a
@@ -114,6 +123,8 @@ impl SubSessions {
             board_epoch: 0,
             stops: HashMap::new(),
             pauses: HashMap::new(),
+            taps: HashMap::new(),
+            cleared: std::collections::HashSet::new(),
             winding_down: HashMap::new(),
             specs: HashMap::new(),
         }
@@ -124,21 +135,75 @@ impl SubSessions {
     }
 
     /// Register a spawned worker; returns its generation, which travels
-    /// through [`spawn`] into the worker's `Ended` message.
+    /// through [`spawn`] into the worker's `Ended` message, and the steering
+    /// tap the worker's engine drains — minted here so the driver keeps the
+    /// other handle.
     fn started(
         &mut self,
         lane: &str,
         stop: oneshot::Sender<()>,
         pause: watch::Sender<bool>,
         spec: SubSessionSpec,
-    ) -> u64 {
+    ) -> (u64, Arc<SteeringTap>) {
         let generation = self.next_generation;
         self.next_generation += 1;
         self.active += 1;
+        let tap: Arc<SteeringTap> = Arc::default();
         self.stops.insert(lane.to_string(), (generation, stop));
         self.pauses.insert(lane.to_string(), pause);
+        self.taps.insert(lane.to_string(), tap.clone());
+        // A lane respawned after `/clear` is a new row, not a cleared one.
+        self.cleared.remove(lane);
         self.specs.insert(lane.to_string(), spec);
-        generation
+        (generation, tap)
+    }
+
+    /// Inject `text` at `lane`'s next step boundary. `false` when no worker
+    /// is live there, or the one that is has made its last model call and
+    /// is only closing out ([`SteeringTap::is_settling`]) — either way there
+    /// is no boundary left, and the caller keeps the words somewhere else.
+    pub(crate) fn steer(&self, lane: &str, text: String) -> bool {
+        match self.taps.get(lane) {
+            Some(tap) if !tap.is_settling() => {
+                tap.push(text);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Stop every live worker for `/clear` and remember each one, so its row
+    /// comes down when its `Ended` arrives ([`Self::finish_cleared`]). Lanes
+    /// with no worker behind them are dropped now — spec included, so a
+    /// Restart cannot revive a lane the user just cleared — and returned for
+    /// the caller to deregister immediately.
+    pub(crate) fn clear_lanes(&mut self) -> Vec<String> {
+        let live = self.live_lanes();
+        self.stop_all();
+        let mut ended: Vec<String> = self
+            .specs
+            .keys()
+            .filter(|lane| !live.contains(lane))
+            .cloned()
+            .collect();
+        ended.sort();
+        for lane in &ended {
+            self.specs.remove(lane);
+        }
+        self.cleared.extend(live);
+        ended
+    }
+
+    /// Whether `lane` was stopped by `/clear` and has now ended: `true` once,
+    /// with the lane's spec dropped, so the caller deregisters its row.
+    /// `false` while the worker is still live — its terminal status is still
+    /// to come, and a row removed ahead of it would be re-registered.
+    pub(crate) fn finish_cleared(&mut self, lane: &str) -> bool {
+        if self.is_live(lane) || !self.cleared.remove(lane) {
+            return false;
+        }
+        self.specs.remove(lane);
+        true
     }
 
     /// Supersede the task board: every worker alive right now belongs to the
@@ -178,6 +243,14 @@ impl SubSessions {
                 notify_title: String::new(),
             },
         )
+        .0
+    }
+
+    /// The driver's handle on `lane`'s steering tap, for tests that check
+    /// what a steer delivered.
+    #[cfg(test)]
+    pub(crate) fn tap_for_test(&self, lane: &str) -> Option<Arc<SteeringTap>> {
+        self.taps.get(lane).cloned()
     }
 
     /// Whether `generation` was spawned before the last
@@ -200,6 +273,7 @@ impl SubSessions {
         if self.stops.get(lane).is_some_and(|(g, _)| *g == generation) {
             self.stops.remove(lane);
             self.pauses.remove(lane);
+            self.taps.remove(lane);
             self.active = self.active.saturating_sub(1);
             return true;
         }
@@ -236,17 +310,18 @@ impl SubSessions {
         match self.stops.remove(lane) {
             Some((generation, tx)) => {
                 self.winding_down.insert(lane.to_string(), generation);
-                // A winding-down worker cannot be paused; dropping the
-                // sender also releases a currently-parked gate.
+                // A winding-down worker cannot be paused or steered; dropping
+                // the pause sender also releases a currently-parked gate.
                 self.pauses.remove(lane);
+                self.taps.remove(lane);
                 tx.send(()).is_ok()
             }
             None => false,
         }
     }
 
-    /// Signal every live worker to stop (session teardown). Each lane winds
-    /// down until its `Ended` arrives, exactly like a single stop.
+    /// Signal every live worker to stop (session teardown, `/clear`). Each
+    /// lane winds down until its `Ended` arrives, exactly like a single stop.
     pub(crate) fn stop_all(&mut self) {
         let lanes: Vec<String> = self.stops.keys().cloned().collect();
         for lane in lanes {
@@ -304,9 +379,10 @@ impl SubSessions {
 /// input loop feeds (`>` steers) and an engine drains at each step boundary.
 /// Interior mutability because the turn future and the input arms share it
 /// immutably. Shared by reference for the lead turn (a per-turn stack local)
-/// and by `Arc` for each worker lane (the deck feeds the worker's tap while
-/// the worker task drains it). `soft_stop` is latched only for the lead; a
-/// worker's stop stays the immediate hard cancel (`SubSessions::stop`).
+/// and by `Arc` for each worker lane ([`SubSessions::steer`] feeds the
+/// worker's tap from the driver thread while the worker's engine drains it
+/// on its own). `soft_stop` is latched only for the lead; a worker's stop
+/// stays the immediate hard cancel (`SubSessions::stop`).
 ///
 /// It also carries `settling`, which is not steering at all but belongs to the
 /// same object for the same reason: it is the one piece of turn state the
@@ -591,11 +667,16 @@ pub(crate) fn spawn(
     sup_tx: UnboundedSender<SupervisorMsg>,
     stop_rx: oneshot::Receiver<()>,
     pause_rx: watch::Receiver<bool>,
+    tap: Arc<SteeringTap>,
 ) {
+    // Delegation runs from the lead session only (see the stranded
+    // `task_assign` note in `run_worker`), so the lead is every lane's
+    // dispatcher — stated on the row rather than assumed by the deck.
     let mut meta = AgentMeta::new(spec.lane.clone(), spec.title.clone(), now_ms())
         .with_role("subagent")
         .with_pid(std::process::id())
-        .with_purpose(spec.purpose.clone());
+        .with_purpose(spec.purpose.clone())
+        .with_parent(crate::command_deck::LEAD);
     meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
     meta.effort = pinned_effort(cfg).map(str::to_string);
     let _ = in_tx.send(Inbound::Register(meta));
@@ -620,6 +701,7 @@ pub(crate) fn spawn(
                     &in_tx,
                     stop_rx,
                     pause_rx,
+                    tap,
                 )),
                 Err(e) => (
                     None,
@@ -694,7 +776,8 @@ pub(crate) fn spawn(
 /// registry + budget, its own execution row linked to the deck session, the
 /// shared persist-and-forward event path, one raw engine turn raced against
 /// the driver's stop signal (the same clean drop-at-await cancel the lead
-/// uses). Returns `(execution_id, cost_usd, end)`.
+/// uses) and steered through `tap` at each step boundary. Returns
+/// `(execution_id, cost_usd, end)`.
 #[allow(clippy::too_many_arguments)]
 async fn run_worker(
     cfg: &Config,
@@ -704,6 +787,7 @@ async fn run_worker(
     in_tx: &UnboundedSender<Inbound>,
     stop_rx: oneshot::Receiver<()>,
     pause_rx: watch::Receiver<bool>,
+    tap: Arc<SteeringTap>,
 ) -> (Option<i64>, f64, WorkerEnd) {
     let provider = match agent::build_provider(cfg) {
         Ok(p) => p,
@@ -801,8 +885,13 @@ async fn run_worker(
     // sub-agent it dispatched, and this lane has a dispatcher (installed
     // above) for that to reach.
     let gate: Arc<WatchGate> = Arc::new(WatchGate(pause_rx));
-    let _controls = registry
-        .attach_turn_controls(stella_core::ports::TurnControls::none().with_gate(gate.clone()));
+    // The tap rides beside the gate for the same reason: a steer at a lane
+    // reaches the sub-agents that lane dispatched, as the lead's does.
+    let _controls = registry.attach_turn_controls(
+        stella_core::ports::TurnControls::none()
+            .with_gate(gate.clone())
+            .with_steering(tap.clone()),
+    );
     let raced = {
         let engine = Engine::with_sleeper(
             &*provider,
@@ -815,7 +904,8 @@ async fn run_worker(
             &TokioSleeper,
         )
         .with_calibration(&calibration)
-        .with_gate(gate.as_ref());
+        .with_gate(gate.as_ref())
+        .with_steering(tap.as_ref());
         // The run-terminal `Complete` this lane's deck row settles on is
         // synthesized by its forwarder when the stream closes (#3379), so the
         // turn is driven on the plain sender exactly as before.
@@ -833,6 +923,9 @@ async fn run_worker(
             _ = stop_wait => RacedTurn::Stopped,
         }
     };
+    // No boundary is left to steer at: a steer from here on is refused by
+    // `SubSessions::steer` and re-parked, the same latch the lead sets.
+    tap.mark_settling();
     let persistence_complete = close_turn_stream(&registry, tx, forwarder)
         .await
         .persistence_complete;
@@ -937,7 +1030,7 @@ pub(crate) fn drain_queue(
             notify_title: format!("reply ready — {}", prompt_line(&text, 40)),
             prompt: text,
         };
-        let generation = subs.started(&lane, stop_tx, pause_tx, spec.clone());
+        let (generation, tap) = subs.started(&lane, stop_tx, pause_tx, spec.clone());
         spawn(
             cfg,
             spec,
@@ -949,6 +1042,7 @@ pub(crate) fn drain_queue(
             sup_tx.clone(),
             stop_rx,
             pause_rx,
+            tap,
         );
     }
 }
@@ -965,8 +1059,8 @@ pub(crate) fn spawn_notice(lane: &str, prompt: &str) -> String {
     format!(
         "▸ {lane} started in parallel — {}\n  \
          This turn keeps running; {lane} does not block it.\n  \
-         Open it: AGENTS tab (tab) → ↑↓ select {lane} → ⏎.  \
-         Back here: AGENTS → select {LEAD} → ⏎.\n",
+         Open it: ↓ on an empty prompt (or ctrl-a) → ↑↓ select {lane} → ⏎.  \
+         Back here: ↓ → l ({LEAD}).\n",
         prompt_line(prompt, 56),
     )
 }
@@ -992,7 +1086,7 @@ pub(crate) fn respawn(
     };
     let (stop_tx, stop_rx) = oneshot::channel();
     let (pause_tx, pause_rx) = watch::channel(false);
-    let generation = subs.started(lane, stop_tx, pause_tx, spec.clone());
+    let (generation, tap) = subs.started(lane, stop_tx, pause_tx, spec.clone());
     spawn(
         cfg,
         spec,
@@ -1004,6 +1098,7 @@ pub(crate) fn respawn(
         sup_tx.clone(),
         stop_rx,
         pause_rx,
+        tap,
     );
     true
 }
@@ -1041,7 +1136,7 @@ pub(crate) fn spawn_task_worker(
             prompt_line(&req.subject, 40)
         ),
     };
-    let generation = subs.started(&lane, stop_tx, pause_tx, spec.clone());
+    let (generation, tap) = subs.started(&lane, stop_tx, pause_tx, spec.clone());
     spawn(
         cfg,
         spec,
@@ -1053,6 +1148,7 @@ pub(crate) fn spawn_task_worker(
         sup_tx.clone(),
         stop_rx,
         pause_rx,
+        tap,
     );
 }
 

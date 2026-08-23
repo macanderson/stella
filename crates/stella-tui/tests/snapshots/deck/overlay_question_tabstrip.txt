@@ -4,14 +4,6 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-└─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
-     model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
-     ⚒ search_code trigger
-     returns: wire automations triggers API → lead inbox
-└─ ◆ sub:ci  subagent · running                                                                                                                             5:12
-     model glm-5.2-air · ctx 3.0k/200k · spend $0.00
-     ⚒ no tool calls yet
-     returns: watch CI + open PR → lead inbox
 ── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 ◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
@@ -25,14 +17,22 @@
 
 ☰  plan  4/7  ·  Wire the triggers API
 
-── EXECUTE ───────────────────────────────┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐──────────────────────────────────────────
+── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ │ ⊙ apps/app/automations/page.tsx
+ │ ⎿ 312 lines                                                                                                                               42ms
+
+☰  plan  5/7  ·  Workflows canvas
+
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
+                                          ┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐
                                           │from the `research-child` sub-agent                                       │
- │ ⊙ apps/app/automations/page.tsx        │                                                                          │
- │ ⎿ 312 lines                            │● Auth method  ○ Rollout                                                  │                       42ms
                                           │                                                                          │
-☰  plan  5/7  ·  Workflows canvas         │[2/2] Which environments should it reach first?                           │
+                                          │● Auth method  ○ Rollout                                                  │
+                                          │                                                                          │
+                                          │[2/2] Which environments should it reach first?                           │
                                           │several answers may be chosen                                             │
-⏸ plan  Refactor the automations store int│                                                                          │
+                                          │                                                                          │
                                           │▸ [ ] staging — the usual soak                                            │
                                           │  [ ] canary                                                              │
                                           │  [ ] Type your own answer                                                │
@@ -41,5 +41,5 @@
 
 
 >>>
- ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

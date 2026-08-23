@@ -673,7 +673,7 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 12] {
+    fn cli_sources() -> [&'static str; 13] {
         [
             include_str!("../../stella-cli/src/agent/tests.rs"),
             // Home of `a_piped_stdin_text_run_denies_every_consumer_of_the_human_present_fact`
@@ -698,6 +698,7 @@ mod tests {
             include_str!("../../stella-cli/src/subagent/tests.rs"),
             // `subsession.rs` crossed the ratchet with #4334 and its tests
             // moved out the same way — the `turn.steer` witness lives here.
+            include_str!("../../stella-cli/src/subsession.rs"),
             include_str!("../../stella-cli/src/subsession/tests.rs"),
             include_str!("../../stella-cli/src/command_deck/tests.rs"),
             include_str!("../../stella-cli/src/session_persist.rs"),

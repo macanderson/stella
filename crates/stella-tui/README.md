@@ -167,7 +167,9 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/v2/status_source.rs`](src/v2/status_source.rs) | `WorkspaceModel` → the v2 status bar's input struct. The **one** projection of SPEC 5's six values, since #4187 deleted the second one — which was the one that drew, and which printed the wire string `context_recall` where SPEC 5 says `context recall`. |
 | [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the unified stage stepper + progress row, the cache formatters behind the status bar's `saved` cell / context overlay, and the launch mark held over session init. |
 | [`src/views/cards.rs`](src/views/cards.rs) + [`plan_card`](src/views/plan_card.rs) · [`models_card`](src/views/models_card.rs) · [`budget_card`](src/views/budget_card.rs) | The three floating cards over one shared chrome; their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). |
-| [`src/views/subagents.rs`](src/views/subagents.rs) | The SESSION tab's nested `└─ ◆` subagent blocks under the lead's header. |
+| [`src/v2/subagents.rs`](src/v2/subagents.rs) | The SUB-AGENTS overlay (`↓` from an empty prompt, `ctrl-a`, `/subagents`): every dispatched lane and every `delegate` child with its vitals (quiet time first), purpose and place, and the controls — `→`/`⏎` open, `n` nudge, `f` flag to the dispatcher, `ctrl-x ctrl-x` kill, `p` pause/resume, `r` restart, `l` back to the lead. `lifecycle.rs` is the place sentence the pulse row shares; `rows.rs` is the row model and the two messages. The one place the sub-agents are drawn; the SESSION tab stacks nothing above the transcript for them. |
+| [`src/v2/pulse.rs`](src/v2/pulse.rs) | The pulse row: the live agent's status, quiet time, place and last words, drawn in the air row above the composer on every tab but SESSION (and at an opened lane, where it is the lead). |
+| [`src/keymap.rs`](src/keymap.rs) | The one keymap table. The `?` sheet and the hint row render it; a row is a claim the witness tests under `src/deck_ui/tests/` establish. |
 | [`src/scroll.rs`](src/scroll.rs), [`src/input.rs`](src/input.rs), [`src/graph.rs`](src/graph.rs), [`src/resource.rs`](src/resource.rs), [`src/attach.rs`](src/attach.rs), [`src/clipboard.rs`](src/clipboard.rs) | Small leaf modules: line-exact viewport math, the outbound message enum, the graph snapshot types, CPU/MEM sampling, pasted-path detection, `⌃V` clipboard capture. |
 | [`src/fleet_dashboard.rs`](src/fleet_dashboard.rs) | A separate full-screen surface for `stella fleet` — its own fold (`FleetMsg`), its own `run`, monotonic `Instant` clocks only. |
 | [`src/scenario.rs`](src/scenario.rs) | A deterministic scripted multi-agent scenario, driving both `examples/deck_demo.rs` and the snapshot test. |
@@ -202,10 +204,32 @@ shell was deleted in #936 — see [`src/lib.rs`](src/lib.rs)'s module header.
 ([`src/deck_ui.rs`](src/deck_ui.rs)) runs modal contexts first (splash,
 help, installed-agent editors, issues forms, queue editor, graph picker, engine
 panel, overlays), then tab navigation, then focused-agent gates, then composer
-editing, then per-tab keys, then Esc. Two rules hold throughout: bare-letter
-hotkeys (`s`/`p`/`r` on AGENTS, `?` for help) only fire from an **empty
-composer**, so they never eat a keystroke meant for a prompt; and the composer
-never claims Esc, so a typed draft survives an interrupt.
+editing, then per-tab keys, then the focus tree, then Esc. Two rules hold
+throughout: bare-letter hotkeys (`s`/`p`/`r` on AGENTS, `?` for help) only
+fire from an **empty composer**, so they never eat a keystroke meant for a
+prompt; and the composer never claims Esc, so a typed draft survives an
+interrupt.
+
+**One navigation vocabulary, at every level** ([`src/deck_ui/focus.rs`](src/deck_ui/focus.rs)).
+From an empty composer `←`/`→` move to the sibling — the pane beside this
+one, or, when the tab has none that way, the tab beside it: a key the active
+tab declines *bubbles* to the tab strip, the DOM's model, so no tab spells
+its own arrows. `↑`/`↓` (and `j`/`k`) walk the list under the cursor, `⏎`
+opens what is under it, and `⌫` backs up one level and never reaches a
+running turn — Esc keeps its peel-then-interrupt chain, `⌫` is the half of it
+that cannot also mean *stop*. Every list and scrolling body takes the same
+keys through [`src/deck_ui/list_nav.rs`](src/deck_ui/list_nav.rs), and every
+overlay closes on `q` or Esc. The table every help surface renders is
+[`src/keymap.rs`](src/keymap.rs): the `?` sheet and the hint row under the
+composer both read it, so neither can drift from the other.
+
+**Sub-agents are a tree.** `AgentMeta::parent` names the agent that
+dispatched each lane; the SESSION breadcrumb prints the path
+(`lead ▸ sub:2`), `⌫` walks back up it, and the SUB-AGENTS overlay's `f`
+flags a lane to whoever dispatched it. Off the SESSION tab the one row of
+air above the composer is the **pulse row**
+([`src/v2/pulse.rs`](src/v2/pulse.rs)): the live agent's status, quiet time,
+place and last words, so no tab is blind to the turn.
 
 **Slash commands are an input, not a hard-coded set.** The vocabulary arrives
 as `RunOptions::slash_commands` / `DeckOptions::slash_commands`, so the CLI owns
@@ -247,9 +271,9 @@ every panic on every thread, including panel panics the session survives.
   being true.
 - **Digits never switch tabs, deliberately.** They quick-pick answers on a
   pending question card and must stay typeable as a prompt's first character,
-  so `Tab` / `Shift-Tab` are the only tab navigation
-  ([`src/deck_ui.rs`](src/deck_ui.rs)). Adding a digit hotkey would eat a
-  keystroke meant for the composer.
+  so `←`/`→` (empty composer) and `Tab` / `Shift-Tab` are the only tab
+  navigation ([`src/deck_ui/focus.rs`](src/deck_ui/focus.rs)). Adding a digit
+  hotkey would eat a keystroke meant for the composer.
 - Mouse capture is off by default in both `RunOptions` and `DeckOptions` so
   native terminal selection and copy keep working. The deck's event loop
   discards mouse events entirely today — turning the flag on currently costs

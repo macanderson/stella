@@ -22,6 +22,7 @@ pub mod fields;
 pub mod frame;
 pub mod graph;
 pub mod graph_tab;
+pub mod pulse;
 pub mod sessions;
 pub mod status_bar;
 pub mod status_source;

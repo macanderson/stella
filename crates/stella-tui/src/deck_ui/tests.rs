@@ -12,6 +12,7 @@ use stella_protocol::AgentEvent;
 
 mod composer;
 mod esc;
+mod focus;
 mod gates;
 mod graph;
 mod help;

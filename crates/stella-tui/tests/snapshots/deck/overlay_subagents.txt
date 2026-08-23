@@ -4,23 +4,15 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-└─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
-     model glm-5.2 · ctx ╭ sub-agents · 1 running ────────────────────────────────────────────────────────────────────────────────────╮
-     ⚒ search_code trigge│▸ ◆ sub:auth  needs input · 5:12 · glm-5.2 · effort high · $0.01                                            │
-     returns: wire automa│     Wire the automations triggers API to the new router.                                                   │
-└─ ◆ sub:ci  subagent · r│     waiting on an answer from you                                                                          │                     5:12
-     model glm-5.2-air · │                                                                                                            │
-     ⚒ no tool calls yet │  ◆ sub:ci  running · 5:12 · glm-5.2-air · $0.00                                                            │
-     returns: watch CI + │     watch CI + open PR                                                                                     │
-── turn 1 triage ────────│     starting: no model call yet                                                                            │─────────────────────────
-                         │                                                                                                            │
-◉ recalled  2 frames · 21│                                                                                                            │
-    symbol  engine step-d│                                                                                                            │  120 tok
-    memory  event-log REP│                                                                                                            │   90 tok
+── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                         ╭ sub-agents · 1 running ────────────────────────────────────────────────────────────────────────────────────╮
+◉ recalled  2 frames · 21│▸ ◆ sub:auth  needs input · quiet 0:00 · 5:12 · glm-5.2 · effort high · $0.01                               │
+    symbol  engine step-d│     Wire the automations triggers API to the new router.                                                   │  120 tok
+    memory  event-log REP│     waiting on an answer from you                                                                          │   90 tok
     ⋯ ctrl+o for provenan│                                                                                                            │
-                         │                                                                                                            │
-── PLAN ─────────────────│                                                                                                            │─────────────────────────
-                         │                                                                                                            │
+                         │  ◆ sub:ci  running · quiet 0:00 · 5:12 · glm-5.2-air · $0.00                                               │
+── PLAN ─────────────────│     watch CI + open PR                                                                                     │─────────────────────────
+                         │     starting: no model call yet                                                                            │
   Planning the automation│                                                                                                            │
                          │                                                                                                            │
 ☰  plan  4/7  ·  Wire the│                                                                                                            │
@@ -40,6 +32,14 @@
                          │                                                                                                            │
                          │                                                                                                            │
                          │                                                                                                            │
->>>                      ╰─────────────────────────────────────────── ↑↓ select · ↵ focus · s stop · p pause/resume · r restart · esc ╯
- ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+>>>                      ╰─────────────────── ↑↓ · →↵ open · n nudge · f flag · l lead · ^x^x kill · p pause/resume · r restart · esc ╯
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

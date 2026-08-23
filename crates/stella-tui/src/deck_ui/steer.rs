@@ -48,20 +48,32 @@ pub(super) fn first_esc(ui: &mut DeckUi, model: &WorkspaceModel, agent: AgentId)
 ///
 /// A `>`-prefixed draft is stripped of its marker: it already says "steer",
 /// and this whole path is steering.
+///
+/// The backlog is the LEAD's: it was queued for the conversation, and Esc at
+/// a sub-agent lane the user opened from the overlay must not pour it into
+/// that lane. There only the draft travels.
 fn steering_texts(ui: &mut DeckUi, model: &WorkspaceModel) -> Vec<String> {
-    let mut texts: Vec<String> = model
-        .queue
-        .items
-        .iter()
-        .map(|p| {
-            p.text
-                .trim_start()
-                .trim_start_matches('>')
-                .trim()
-                .to_string()
-        })
-        .filter(|t| !t.is_empty())
-        .collect();
+    let at_lane = model
+        .agents
+        .get(ui.focused)
+        .is_some_and(|a| a.is_subagent());
+    let mut texts: Vec<String> = if at_lane {
+        Vec::new()
+    } else {
+        model
+            .queue
+            .items
+            .iter()
+            .map(|p| {
+                p.text
+                    .trim_start()
+                    .trim_start_matches('>')
+                    .trim()
+                    .to_string()
+            })
+            .filter(|t| !t.is_empty())
+            .collect()
+    };
     if !ui.composer.is_blank() {
         let draft = ui.composer.buffer().trim().to_string();
         let draft = draft.trim_start_matches('>').trim().to_string();

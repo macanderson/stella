@@ -33,15 +33,10 @@ pub(super) fn handle_queue_key(
         }
         _ => ui.queue_confirm_clear = false,
     }
+    if super::list_nav::select(key, &mut ui.queue_sel, count, true) {
+        return DeckAction::Handled;
+    }
     match key.code {
-        KeyCode::Up => {
-            ui.queue_sel = ui.queue_sel.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            ui.queue_sel = (ui.queue_sel + 1).min(count - 1);
-            DeckAction::Handled
-        }
         KeyCode::Char('x') if ctrl => DeckAction::Send(WorkspaceInput::QueueRemove {
             index: ui.queue_sel,
         }),
@@ -55,7 +50,7 @@ pub(super) fn handle_queue_key(
             ui.queue_open = false;
             DeckAction::Send(WorkspaceInput::QueueRemove { index })
         }
-        KeyCode::Esc => {
+        KeyCode::Esc | KeyCode::Char('q') => {
             ui.queue_open = false;
             DeckAction::Handled
         }

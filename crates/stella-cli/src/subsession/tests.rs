@@ -28,8 +28,8 @@ fn the_spawn_notice_names_the_lane_and_the_keys_in_and_out() {
          whole point of dispatching to a worker: {notice}"
     );
     assert!(
-        notice.contains("AGENTS"),
-        "the notice must name the tab that reaches the lane: {notice}"
+        notice.contains("ctrl-a"),
+        "the notice must name the key that reaches the lane: {notice}"
     );
     assert!(
         notice.contains(LEAD),
@@ -99,7 +99,7 @@ fn pause_resume_flips_the_watch_and_restart_needs_a_dead_lane() {
     let mut subs = SubSessions::new();
     let (stop_tx, _stop_rx) = oneshot::channel();
     let (pause_tx, pause_rx) = watch::channel(false);
-    let generation = subs.started("req:1", stop_tx, pause_tx, dummy_spec("req:1"));
+    let (generation, _) = subs.started("req:1", stop_tx, pause_tx, dummy_spec("req:1"));
     assert!(subs.set_paused("req:1", true));
     assert!(*pause_rx.borrow());
     assert!(subs.set_paused("req:1", false));
@@ -120,12 +120,13 @@ fn slot_bookkeeping_caps_and_recovers() {
         assert!(subs.has_slot());
         let (stop_tx, _stop_rx) = oneshot::channel();
         let (pause_tx, _pause_rx) = watch::channel(false);
-        generations.push(subs.started(
+        let (generation, _) = subs.started(
             &format!("req:{i}"),
             stop_tx,
             pause_tx,
             dummy_spec(&format!("req:{i}")),
-        ));
+        );
+        generations.push(generation);
     }
     assert!(!subs.has_slot());
     assert!(subs.ended("req:0", generations[0]));
@@ -134,6 +135,69 @@ fn slot_bookkeeping_caps_and_recovers() {
     let mut fresh = SubSessions::new();
     assert!(!fresh.ended("req:none", 0));
     assert!(fresh.has_slot());
+}
+
+/// **The witness for #2899.** A steer at a lane reaches the tap its
+/// worker's engine drains — the driver kept the other handle at spawn —
+/// and stops reaching it the moment the lane is stopped, because a
+/// winding-down worker has no boundary left to inject at.
+#[test]
+fn a_steer_at_a_live_lane_lands_on_its_tap_and_a_stopped_lane_refuses() {
+    use stella_core::ports::TurnSteering;
+
+    let mut subs = SubSessions::new();
+    let (stop_tx, _stop_rx) = oneshot::channel();
+    let (pause_tx, _pause_rx) = watch::channel(false);
+    let (_, tap) = subs.started("req:1", stop_tx, pause_tx, dummy_spec("req:1"));
+    assert!(subs.steer("req:1", "narrow it to the parser".into()));
+    assert_eq!(
+        tap.drain_steering(),
+        vec!["narrow it to the parser".to_string()],
+        "the worker's engine drains what the driver pushed"
+    );
+    assert!(!subs.steer("req:404", "x".into()), "unknown lane refuses");
+    tap.mark_settling();
+    assert!(
+        !subs.steer("req:1", "past the last step".into()),
+        "a settling worker has no boundary left, so the caller keeps the words"
+    );
+    assert!(tap.drain_steering().is_empty());
+    assert!(subs.stop("req:1"));
+    assert!(
+        !subs.steer("req:1", "too late".into()),
+        "a winding-down lane refuses, so the caller keeps the words"
+    );
+    assert!(tap.drain_steering().is_empty());
+}
+
+/// `/clear` stops every live lane and remembers it; the lane's row comes
+/// down only when its `Ended` arrives. A lane with no worker behind it is
+/// dropped at once — spec included, so Restart cannot revive it — and a
+/// lane respawned afterwards is a fresh row, not a cleared one.
+#[test]
+fn clear_lanes_stops_the_live_and_drops_the_ended() {
+    let mut subs = SubSessions::new();
+    let live_gen = subs.started_for_test("req:1");
+    let ended_gen = subs.started_for_test("sub:7");
+    assert!(subs.ended("sub:7", ended_gen));
+
+    assert_eq!(subs.clear_lanes(), vec!["sub:7".to_string()]);
+    assert!(subs.spec("sub:7").is_none(), "an ended lane loses its spec");
+    assert!(subs.is_live("req:1"), "the live lane is winding down");
+    assert!(
+        !subs.finish_cleared("req:1"),
+        "…and is not finished until its Ended arrives"
+    );
+    assert!(subs.ended("req:1", live_gen));
+    assert!(subs.finish_cleared("req:1"), "now its row comes down");
+    assert!(subs.spec("req:1").is_none());
+    assert!(!subs.finish_cleared("req:1"), "exactly once");
+
+    subs.started_for_test("req:1");
+    assert!(
+        !subs.finish_cleared("req:1"),
+        "a respawned lane is not a cleared one"
+    );
 }
 
 #[test]
@@ -157,7 +221,7 @@ fn a_stopped_lane_winds_down_until_its_ended_arrives() {
     let mut subs = SubSessions::new();
     let (stop_tx, _stop_rx) = oneshot::channel();
     let (pause_tx, _pause_rx) = watch::channel(false);
-    let generation = subs.started("req:1", stop_tx, pause_tx, dummy_spec("req:1"));
+    let (generation, _) = subs.started("req:1", stop_tx, pause_tx, dummy_spec("req:1"));
     assert!(subs.stop("req:1"));
     assert!(subs.is_live("req:1"), "winding down still counts as live");
     assert_eq!(subs.live(), 1, "the slot is not free until Ended");
@@ -170,17 +234,16 @@ fn a_stopped_lane_winds_down_until_its_ended_arrives() {
     assert_eq!(subs.live(), 0);
 }
 
-/// `/clear` (#1631) reports the lanes it left running, and this is what
-/// it reports: running workers and winding-down ones, never a lane whose
-/// worker has already ended. A retained spec is a Restart target, not
-/// something the user needs warning about — so `live_lanes` and `lanes`
-/// must diverge the moment a worker settles.
+/// `/clear` names the lanes it stopped, and this is what it names: running
+/// workers and winding-down ones, never a lane whose worker had already
+/// ended — so `live_lanes` and `lanes` must diverge the moment a worker
+/// settles.
 #[test]
 fn live_lanes_are_the_running_and_winding_down_ones_only() {
     let mut subs = SubSessions::new();
     let (stop_a, _rx_a) = oneshot::channel();
     let (pause_a, _p_a) = watch::channel(false);
-    let gen_a = subs.started("req:1", stop_a, pause_a, dummy_spec("req:1"));
+    let (gen_a, _) = subs.started("req:1", stop_a, pause_a, dummy_spec("req:1"));
     let (stop_b, _rx_b) = oneshot::channel();
     let (pause_b, _p_b) = watch::channel(false);
     subs.started("req:2", stop_b, pause_b, dummy_spec("req:2"));
@@ -211,13 +274,13 @@ fn stop_then_restart_leaves_one_worker_with_working_channels() {
     let mut subs = SubSessions::new();
     let (stop_tx, _stop_rx) = oneshot::channel();
     let (pause_tx, _pause_rx) = watch::channel(false);
-    let old = subs.started("req:1", stop_tx, pause_tx, dummy_spec("req:1"));
+    let (old, _) = subs.started("req:1", stop_tx, pause_tx, dummy_spec("req:1"));
     subs.stop("req:1");
     assert!(subs.ended("req:1", old));
     // The respawn (what pending_restarts triggers on the Ended).
     let (stop_tx2, mut stop_rx2) = oneshot::channel();
     let (pause_tx2, pause_rx2) = watch::channel(false);
-    let new = subs.started("req:1", stop_tx2, pause_tx2, dummy_spec("req:1"));
+    let (new, _) = subs.started("req:1", stop_tx2, pause_tx2, dummy_spec("req:1"));
     assert_ne!(old, new, "each spawn gets its own generation");
     assert_eq!(subs.live(), 1);
     // A late Ended from the replaced worker frees nothing.
@@ -269,7 +332,7 @@ async fn quit_shutdown_stops_workers_and_reaps_their_endings() {
     for lane in ["req:1", "sub:9"] {
         let (stop_tx, stop_rx) = oneshot::channel();
         let (pause_tx, _pause_rx) = watch::channel(false);
-        let generation = subs.started(lane, stop_tx, pause_tx, dummy_spec(lane));
+        let (generation, _) = subs.started(lane, stop_tx, pause_tx, dummy_spec(lane));
         let sup = sup_tx.clone();
         let lane = lane.to_string();
         // A worker's whole quit obligation: see the stop, close out,
@@ -327,7 +390,7 @@ fn lanes_names_every_worker_ever_started_live_or_ended() {
         let (pause_tx, _pause_rx) = watch::channel(false);
         generations.insert(
             lane,
-            subs.started(lane, stop_tx, pause_tx, dummy_spec(lane)),
+            subs.started(lane, stop_tx, pause_tx, dummy_spec(lane)).0,
         );
     }
     assert!(subs.ended("req:1", generations["req:1"]));

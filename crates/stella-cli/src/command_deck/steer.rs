@@ -13,7 +13,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::config::Config;
 use crate::session_persist::DurableQueue;
-use crate::subsession::SteeringTap;
+use crate::subsession::{SteeringTap, SubSessions};
 use stella_tui::Inbound;
 
 /// The persisted `ui.mid_turn_prompt` policy, or the deck's default (`queue`)
@@ -139,23 +139,58 @@ pub(super) fn stop_steers_backlog(
     true
 }
 
-/// Deliver a steer aimed at a WORKER lane.
+/// Deliver a steer aimed at a WORKER lane: each text lands at that lane's
+/// next step boundary through the tap the driver kept when it spawned the
+/// worker ([`SubSessions::steer`], #2899).
 ///
-/// A worker has a steering tap of its own, but the driver holds no handle to
-/// it — `SubSessions` tracks stop and pause channels and nothing else — so
-/// there is no way to inject at that lane's boundary today (#2899).
-///
-/// The words are not dropped for it: they go to the backlog, which is where a
-/// prompt typed at a busy lane already goes. That is a weaker answer than the
-/// lead gets, and it is the honest one — silently discarding a correction
-/// would be the failure this whole change exists to fix, in a quieter costume.
-pub(super) fn steer_worker(queue: &mut DurableQueue, texts: Vec<String>) {
+/// A lane with no live worker — finished, stopped, or winding down past its
+/// last boundary — cannot take the words, and they are not dropped for it:
+/// they go to the backlog, where a prompt typed at a busy lane already goes,
+/// and the deck is told so. Silently discarding a correction would be the
+/// failure this path exists to end, in a quieter costume.
+pub(super) fn steer_worker(
+    subs: &SubSessions,
+    queue: &mut DurableQueue,
+    lane: &str,
+    texts: Vec<String>,
+    in_tx: &UnboundedSender<Inbound>,
+) {
+    let mut parked = 0usize;
     for text in texts {
-        // Claim before re-parking, or a held backlog handed back here lands on
-        // top of the copy it was handed from and dispatches twice (#4026).
+        let text = unmarked(&text).to_string();
+        // Claim before delivering or re-parking, or a held backlog handed
+        // back here lands on top of the copy it was handed from and
+        // dispatches twice (#4026).
         claim(queue, &text);
-        queue.push_back(text);
+        if !subs.steer(lane, text.clone()) {
+            queue.push_back(text);
+            parked += 1;
+        }
     }
+    if parked > 0 {
+        let _ = in_tx.send(super::chrome_note(format!(
+            "{lane} is not running — {parked} prompt{} queued for the lead instead",
+            if parked == 1 { "" } else { "s" }
+        )));
+    }
+}
+
+/// A steer that reached the idle arm: aimed at a worker it is delivered to
+/// that lane and the lead stays idle (`None`); aimed at the lead, whose turn
+/// ended before the arm read it, the first text runs NOW and the rest keep
+/// their order behind it ([`steer_at_rest`]).
+pub(super) fn steer_idle(
+    agent: &str,
+    subs: &SubSessions,
+    queue: &mut DurableQueue,
+    texts: Vec<String>,
+    in_tx: &UnboundedSender<Inbound>,
+) -> Option<String> {
+    if agent != super::LEAD {
+        steer_worker(subs, queue, agent, texts, in_tx);
+        return None;
+    }
+    steer_at_rest(queue, texts)
 }
 
 /// A steer whose turn ended before the idle arm read it: the first text runs

@@ -151,6 +151,12 @@ pub fn replay_inbound(record: JournalRecord, started_ms: u64) -> Option<Inbound>
         } => {
             let mut meta = AgentMeta::new(agent, title, started_ms).with_role(role);
             meta.model = model;
+            // The journal's `Register` record carries no dispatcher; every
+            // lane this driver has ever spawned was the lead's
+            // (`subsession::spawn`), so the replayed row says the same.
+            if meta.role == "subagent" {
+                meta = meta.with_parent(crate::command_deck::LEAD);
+            }
             Some(Inbound::Register(meta))
         }
         JournalRecord::Event { agent, event } => Some(Inbound::Event { agent, event }),
