@@ -2868,7 +2868,7 @@
           "type": "integer"
         },
         "sub_agent_id": {
-          "description": "Which sub-agent spent this call, when a sub-agent did (#4383).\n\n`None` is the lead's own call. It is stamped at the sub-agent\nboundary (`stella_core::subagent`'s `child_sender`), so a nested\nchild names *itself* rather than its parent — the innermost spender\nis the one a cost question is about.\n\nThe bracket in [`crate::subagent_event::SubAgentPhase`] was meant to\nbe the whole attribution mechanism, and it is enough for everything\nit was designed for. It is not enough for **this**: the engine\ndispatches independent delegates concurrently, so several children's\nevents interleave on one stream and no `Started`/`Finished` pair\nbrackets any particular call. Session `ses-1787465453163-60967` has\nfive delegates completing within one second of each other; its\nninety telemetry rows all read `worker`, and no join over the\nbracket can undo that.\n\nContent-free like the rest of this event: an opaque handle\n(`plugin:vera/worker#0`), never instruction text.",
+          "description": "Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text.",
           "type": [
             "string",
             "null"
@@ -2953,7 +2953,7 @@
           "$ref": "#/$defs/ModelCallRole"
         },
         "sub_agent_id": {
-          "description": "Which sub-agent's call died, when a sub-agent's did (#4383). Same\ncontract as [`AgentEvent::StepUsage`]'s field of this name, and here\nfor the same reason it is there: a delegate abandoned at the\nengine's dispatch ceiling lands one flagged row, and a row nobody\ncan attribute explains an execution's `usage_complete = 0` without\nsaying whose call it was.",
+          "description": "Which sub-agent's call died. Absent means the lead's own. Same contract as a `step_usage` event's field of this name: an abandoned delegate lands one flagged row, and a row nobody can attribute explains an execution's incomplete usage without saying whose call it was.",
           "type": [
             "string",
             "null"

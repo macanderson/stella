@@ -833,6 +833,12 @@ pub enum AgentEvent {
         /// Content-free like the rest of this event: an opaque handle
         /// (`plugin:vera/worker#0`), never instruction text.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text."
+            )
+        )]
         sub_agent_id: Option<String>,
     },
     /// A provider call failed or timed out after dispatch, so local accounting
@@ -884,6 +890,12 @@ pub enum AgentEvent {
         /// can attribute explains an execution's `usage_complete = 0` without
         /// saying whose call it was.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which sub-agent's call died. Absent means the lead's own. Same contract as a `step_usage` event's field of this name: an abandoned delegate lands one flagged row, and a row nobody can attribute explains an execution's incomplete usage without saying whose call it was."
+            )
+        )]
         sub_agent_id: Option<String>,
     },
     /// A verifier model's assessment of a goal-driven loop after one working
