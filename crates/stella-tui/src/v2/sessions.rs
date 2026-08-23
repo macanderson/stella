@@ -29,7 +29,7 @@ use stella_tui_theme::{glyph, token};
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
 use crate::deck_ui::sessions::{hidden_session_rows, is_live, visible_session_rows};
-use crate::envelope::{SessionInfo, SessionPhase};
+use crate::envelope::SessionPhase;
 
 /// Rows one session spends.
 const ROWS_PER_SESSION: usize = 3;
@@ -240,6 +240,7 @@ fn fmt_age(delta_ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::envelope::SessionInfo;
 
     fn text(buf: &Buffer) -> String {
         let area = *buf.area();
