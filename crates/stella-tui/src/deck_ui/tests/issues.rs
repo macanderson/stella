@@ -66,8 +66,78 @@ fn issues_first_tab_visit_queues_a_refresh() {
 }
 
 #[test]
-fn issues_browse_keys_refresh_and_start_work() {
+fn p_opens_a_confirmation_and_enter_submits_and_forwards_to_the_transcript() {
     let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7"), a_issue("#8")];
+    ui.issues.loaded = true;
+    // Pick both rows with space, then hit p.
+    handle_deck_key(key(KeyCode::Char(' ')), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Char(' ')), &model, &mut ui);
+    let action = handle_deck_key(ch('p'), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled, "p only opens the popup");
+    assert_eq!(ui.issues.mode, IssuesMode::ConfirmSend);
+    assert_eq!(ui.tab, DeckTab::Issues, "still on the issues tab");
+
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(ui.issues.mode, IssuesMode::Browse, "the popup closed");
+    assert_eq!(
+        ui.tab,
+        DeckTab::Session,
+        "enter forwards to the transcript tab"
+    );
+    assert!(ui.issues.picked.is_empty(), "the picks were consumed");
+    let text = match action {
+        DeckAction::Send(WorkspaceInput::Enqueue { text }) => text,
+        other => panic!("expected Enqueue, got {other:?}"),
+    };
+    for needle in [
+        "#7",
+        "#8",
+        "title of #7",
+        "https://github.com/o/r/issues/#7",
+        "Labels: bug",
+        "Source: stella command deck ISSUES tab",
+        "Read the ENTIRE issue body and EVERY comment",
+        "definition of done",
+    ] {
+        assert!(text.contains(needle), "prompt is missing {needle:?}:\n{text}");
+    }
+}
+
+#[test]
+fn p_confirmation_esc_cancels_without_submitting() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.rows = vec![a_issue("#7")];
+    ui.issues.loaded = true;
+    handle_deck_key(key(KeyCode::Char(' ')), &model, &mut ui);
+    handle_deck_key(ch('p'), &model, &mut ui);
+    assert_eq!(ui.issues.mode, IssuesMode::ConfirmSend);
+    let action = handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert_eq!(ui.issues.mode, IssuesMode::Browse);
+    assert_eq!(ui.tab, DeckTab::Issues, "esc stays on the issues tab");
+    assert!(
+        !ui.issues.picked.is_empty(),
+        "esc keeps the picks — cancelling is not discarding"
+    );
+}
+
+#[test]
+fn p_with_no_rows_notifies_instead_of_opening_the_popup() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    ui.issues.loaded = true;
+    let action = handle_deck_key(ch('p'), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert_eq!(ui.issues.mode, IssuesMode::Browse, "no popup without rows");
+    assert!(ui.issues.notice.is_some());
+}
+
+#[test]
+fn issues_browse_keys_refresh_and_start_work() {    let model = WorkspaceModel::new();
     let mut ui = issues_ui();
     ui.issues.rows = vec![a_issue("#7")];
     ui.issues.loaded = true;
@@ -514,13 +584,17 @@ fn issues_p_submits_the_picked_issues_as_a_prompt() {
     ui.issues.picked.insert("#7".into());
     ui.issues.picked.insert("#8".into());
 
-    let action = handle_deck_key(ch('p'), &model, &mut ui);
+    // p opens the confirmation; ⏎ submits.
+    handle_deck_key(ch('p'), &model, &mut ui);
+    assert_eq!(ui.issues.mode, IssuesMode::ConfirmSend);
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
     match action {
         DeckAction::Send(WorkspaceInput::Enqueue { text }) => {
-            // Exact, not `contains`: the row key already carries its `#`, so a
-            // `#{key}` in the prompt builder would produce "##7 title of #7"
-            // — which a `contains("#7 title of #7")` still matches.
-            assert_eq!(text, "#7 title of #7\n#8 title of #8", "{text}");
+            // Exact keys, not `contains`: the row key already carries its
+            // `#`, so a `#{key}` in the prompt builder would produce "##7".
+            assert!(text.contains("Issue #7\n"), "{text}");
+            assert!(text.contains("Issue #8\n"), "{text}");
+            assert!(text.contains("title of #7"), "{text}");
         }
         other => panic!("expected an enqueued prompt, got {other:?}"),
     }
@@ -534,10 +608,13 @@ fn issues_p_with_no_picks_submits_the_cursor_row() {
     ui.issues.rows = vec![a_issue("#7")];
     ui.issues.loaded = true;
 
-    let action = handle_deck_key(ch('p'), &model, &mut ui);
+    // No picks: p stages the cursor row, ⏎ submits it.
+    handle_deck_key(ch('p'), &model, &mut ui);
+    assert_eq!(ui.issues.mode, IssuesMode::ConfirmSend);
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
     match action {
         DeckAction::Send(WorkspaceInput::Enqueue { text }) => {
-            assert!(text.contains("#7"), "{text}");
+            assert!(text.contains("Issue #7\n"), "{text}");
         }
         other => panic!("expected an enqueued prompt, got {other:?}"),
     }
