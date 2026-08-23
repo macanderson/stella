@@ -96,6 +96,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + deck-fit-all-test (the deck enumeration)
                          #   + deck-paths (the decks' code-map citations)
                          #   + css-vars (every var() in a token sheet resolves)
+                         #   + reserved-paths (no Windows device name in a path)
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
