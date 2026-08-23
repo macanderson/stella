@@ -16,16 +16,21 @@
 //! ## Why the overlay carries numbers as well as keys
 //!
 //! SPEC 5 re-homes five status cells — MODEL detail, CPU, MEM, WARMTH and
-//! ENGINE — to **two** places: "behind `?` *and* the AGENTS tab". The AGENTS
-//! half shipped in `views::agents`; this is the other half, which did not, so
-//! `?` was a keybinding sheet against a spec that called it "help, full metric
-//! detail" (#4188).
+//! ENGINE — to **two** places: "behind `?` *and* the AGENTS tab". Only one of
+//! the two holds them today. The `?` half arrived late (#4188 — until then
+//! the overlay drew keybindings against a spec that called it "help, full
+//! metric detail"), and the AGENTS half left with the executions dashboard
+//! #4342 removed: `views::agents::render` now forwards to `views::installed`,
+//! the installed-agents list, which draws no per-lane numbers and no per-row
+//! model column. So `?` is the surviving surface for all five, `metric_rows`
+//! below is where they render, and
+//! `the_help_overlay_carries_the_metrics_spec_5_sends_behind_it`
+//! (`tests/deck_render_snapshots.rs`) names each one beside the golden, so a
+//! row that stops rendering fails an assertion instead of shifting a frame.
 //!
-//! It matters most for **MODEL detail**. The status bar names one slug —
-//! whichever pin is answering — and "which pin serves each role" had no
-//! surface left at all: the AGENTS tab's per-row model column answers a
-//! different question (which model is this *lane* on), not which model each
-//! *role* is pinned to.
+//! MODEL detail has no second surface at all. The status bar names one slug —
+//! whichever pin is answering — so with the AGENTS tab's per-row model column
+//! gone, "which pin serves each role" is answered here or nowhere.
 
 use super::*;
 use crate::keymap::{self, Scope};
@@ -57,17 +62,18 @@ fn role_word(role: crate::deck::PipelineRole) -> &'static str {
 /// #2290 and #4150 each cost a real defect to learn. A value with no source
 /// renders no row at all.
 ///
-/// The numbers are the AGENTS tab's own, read the same way from the same
-/// fields (`views::agents`), because SPEC 5 sends these to two surfaces and two
-/// surfaces disagreeing about one number is worse than one surface missing it.
+/// The numbers are read from the same `AgentEntry` fields the lane views read,
+/// and `humanize_bytes` is `views::agents`'s own: two surfaces disagreeing
+/// about one number is worse than one surface missing it, and that stays true
+/// now that the AGENTS tab draws no numbers of its own (#4342).
 fn metric_rows(model: &WorkspaceModel) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let now_ms = model.now_ms;
 
     // MODEL detail: which pin serves *each* role. This is the row the status
-    // bar cannot carry — that names one slug, whichever pin is answering, and
-    // the AGENTS tab's per-row model column answers "which model is this lane
-    // on", a different question.
+    // bar cannot carry — that names one slug, whichever pin is answering — and
+    // no other surface carries it either, since the AGENTS tab's per-row model
+    // column went with the executions dashboard (#4342).
     if !model.role_pins.is_empty() {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled("  model", theme::heading())));
