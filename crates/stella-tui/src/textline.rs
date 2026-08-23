@@ -27,7 +27,7 @@
 
 use stella_protocol::{
     AgentEvent, BudgetMode, CiStatus, FileChangeKind, MediaJobState, MediaKind, PrStatus,
-    ProviderShare, StageKind, StageName, TaskItem, TaskStatus,
+    ProviderShare, StageKind, StageName, TaskItem, TaskStatus, Withholder,
 };
 
 /// Semantic weight of an annotation line. Each surface owns the mapping to
@@ -190,6 +190,38 @@ pub fn budget_tick(spent_usd: f64, limit_usd: Option<f64>) -> EventLine {
         strong: false,
         body: format!("spend: {}", spend_amount(spent_usd, limit_usd)),
         detail: None,
+    }
+}
+
+/// What the trust gate held back (#2302, #3616). Counts and a remedy, never a
+/// filename or a body: the withheld text is repository-controlled, and the
+/// event carries none of it to render.
+///
+/// The remedy differs by authority and that is the whole reason the event
+/// carries one: `STELLA_TRUST_PROJECT=1` printed against an org-managed
+/// ceiling tells a user who has already set that flag to set it again.
+pub fn steering_withheld(withheld_by: Withholder, counts: &[(usize, &str, &str)]) -> EventLine {
+    let parts: Vec<String> = counts
+        .iter()
+        .filter(|(count, _, _)| *count > 0)
+        .map(|(count, one, many)| format!("{count} {}", if *count == 1 { one } else { many }))
+        .collect();
+    EventLine {
+        glyph: "⚠",
+        tone: Tone::Warn,
+        strong: true,
+        body: format!("project steering not loaded ({}):", parts.join(", ")),
+        detail: Some(
+            match withheld_by {
+                Withholder::ProjectUntrusted => {
+                    "set STELLA_TRUST_PROJECT=1 to let this repo steer the session"
+                }
+                Withholder::ManagedCeiling => {
+                    "your org's managed settings forbid it; STELLA_TRUST_PROJECT does not lift it"
+                }
+            }
+            .to_string(),
+        ),
     }
 }
 
@@ -759,6 +791,23 @@ pub fn event_line(event: &AgentEvent) -> Option<EventLine> {
         AgentEvent::Error { message, retryable } => Some(error(message, *retryable)),
         AgentEvent::TurnComplete { model, cost_usd } => Some(complete(model, *cost_usd)),
         AgentEvent::RunComplete { model, cost_usd } => Some(complete(model, *cost_usd)),
+        AgentEvent::SteeringWithheld {
+            withheld_by,
+            memories,
+            records,
+            skills,
+            commands,
+            agents,
+        } => Some(steering_withheld(
+            *withheld_by,
+            &[
+                (*memories, "memory", "memories"),
+                (*records, "context record", "context records"),
+                (*skills, "skill", "skills"),
+                (*commands, "command", "commands"),
+                (*agents, "agent", "agents"),
+            ],
+        )),
     }
 }
 

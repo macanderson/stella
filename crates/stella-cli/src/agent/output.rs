@@ -160,16 +160,34 @@ pub(super) fn event_sender_for_run(
     (EventSender::new(sender), false)
 }
 
-/// Open a raw (non-staged) run's turn on `events`: this turn's `ContextRecall`,
-/// if recall ran, and then the run owner's own `Stage(Execute)`.
+/// Open a raw (non-staged) run's turn on `events`: what this workspace's trust
+/// gate withheld, then this turn's `ContextRecall` if recall ran, and then the
+/// run owner's own `Stage(Execute)`.
 ///
-/// Both halves are ordered deliberately. Recall goes first because the context
-/// was assembled *before* the turn began, and a receipt that ordered it after
-/// the first stage would misdescribe when it entered. The stage boundary is
-/// here at all because the engine emits none — `StageKind` is the run owner's
-/// vocabulary, not the loop's (#3416) — and it lives in this module rather than
-/// at the call site because `agent.rs` is a god file closed to growth.
-pub(super) fn open_raw_turn(events: &EventSender, recall_event: Option<AgentEvent>) {
+/// All three are ordered deliberately. The withheld-steering notice goes first
+/// because it is a fact about the *session* rather than about this turn: it
+/// was established while settings loaded, before any of this existed, and a
+/// harness reading the stream should learn that the repository did not steer
+/// this run before it reads a single thing the run did (#3616). Recall goes
+/// next because the context was assembled before the turn began, and a receipt
+/// that ordered it after the first stage would misdescribe when it entered.
+/// The stage boundary is here at all because the engine emits none —
+/// `StageKind` is the run owner's vocabulary, not the loop's (#3416) — and it
+/// lives in this module rather than at the call site because `agent.rs` is a
+/// god file closed to growth.
+///
+/// `withheld` is carried in rather than surveyed here for the same reason
+/// `recall_event` is: the answer exists long before this channel does, and
+/// re-deriving it could announce something the session did not actually run
+/// under.
+pub(super) fn open_raw_turn(
+    events: &EventSender,
+    recall_event: Option<AgentEvent>,
+    withheld: Option<&crate::settings::WithheldNotice>,
+) {
+    if let Some(withheld) = withheld {
+        let _ = events.send(withheld.event());
+    }
     if let Some(event) = recall_event {
         let _ = events.send(event);
     }

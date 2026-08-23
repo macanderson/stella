@@ -92,6 +92,11 @@ pub struct StepManifestRow {
     /// `sha256:<64 hex>` over the frame's canonical body. Travels with
     /// `compiled_frame_id`; the two are always both present or both absent.
     pub frame_hash: Option<String>,
+    /// The pure-`sleep` seconds this turn had asked for as of this step — the
+    /// number the stall rung decides on (#3621). `None` is "this emitter did
+    /// not classify", which is what the replay path reports and what every
+    /// receipt written before v30 holds; it is never zero seconds observed.
+    pub stall_seconds_requested: Option<u64>,
     pub blocks: Vec<ManifestBlockRow>,
 }
 
@@ -135,6 +140,10 @@ impl Store {
         let turn = i64::from(row.turn_instance);
         let budget = sqlite_i64("manifest effective budget", row.effective_budget_tokens)?;
         let estimated = sqlite_i64("manifest estimated input", row.estimated_input_tokens)?;
+        let stall = row
+            .stall_seconds_requested
+            .map(|secs| sqlite_i64("manifest stall seconds", secs))
+            .transpose()?;
         let mut conn = self.lock();
         let tx = conn.transaction()?;
         let call_seq = sqlite_i64("manifest call seq", row.call_seq)?;
@@ -142,8 +151,8 @@ impl Store {
             "INSERT OR REPLACE INTO step_receipt
                (execution_id, turn_instance, step, call_seq, provider, model, call_role,
                 effective_budget_tokens, calibration_factor, estimated_input_tokens,
-                compiled_frame_id, frame_hash)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                compiled_frame_id, frame_hash, stall_seconds_requested)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 execution_id,
                 turn,
@@ -157,6 +166,7 @@ impl Store {
                 estimated,
                 row.compiled_frame_id,
                 row.frame_hash,
+                stall,
             ],
         )?;
         // Clear any prior ordinals for this call before rewriting, so a
@@ -414,7 +424,8 @@ impl Store {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT turn_instance, step, call_seq, call_role, provider, model,
-                    estimated_input_tokens, compiled_frame_id, frame_hash
+                    estimated_input_tokens, compiled_frame_id, frame_hash,
+                    stall_seconds_requested
              FROM step_receipt WHERE execution_id = ?
              ORDER BY turn_instance, step, call_seq",
         )?;
@@ -430,6 +441,7 @@ impl Store {
                     estimated_input_tokens: r.get::<_, i64>(6)? as u64,
                     compiled_frame_id: r.get(7)?,
                     frame_hash: r.get(8)?,
+                    stall_seconds_requested: r.get::<_, Option<i64>>(9)?.map(|s| s as u64),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -481,6 +493,11 @@ pub struct RecordedCall {
     /// calls saw byte-identical context, and what a replay re-derives to prove
     /// a stored receipt has not drifted.
     pub frame_hash: Option<String>,
+    /// The pure-`sleep` seconds the turn had asked for as of this call — read
+    /// straight off the durable receipt, which is the whole point of #3621: a
+    /// trial that slept away its allowance is countable without re-parsing the
+    /// event stream. `None` is "not classified", never zero.
+    pub stall_seconds_requested: Option<u64>,
 }
 
 #[cfg(test)]
@@ -632,6 +649,7 @@ mod tests {
             effective_budget_tokens: 136_363,
             calibration_factor: 1.1,
             estimated_input_tokens: 203,
+            stall_seconds_requested: None,
             compiled_frame_id: None,
             frame_hash: None,
             blocks: vec![
@@ -666,6 +684,55 @@ mod tests {
         assert_eq!(back[1].token_cost, Some(103));
     }
 
+    /// **Witness (#3621).** The stall rung's number survives to the durable
+    /// artifact and is readable from it — the whole point: a trial that slept
+    /// away its allowance is countable from `store.db` without re-parsing
+    /// `stella-events.jsonl` and re-running the classifier by hand. Before
+    /// this change no field and no column carried it.
+    ///
+    /// The second receipt is the distinction the column exists for: `None`
+    /// reads back as `None`, not as zero. A replayed receipt did not look, and
+    /// a reader must not count it as a turn that was looked at and found
+    /// blameless.
+    #[test]
+    fn a_receipts_stall_seconds_are_readable_without_the_event_stream() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("run", "p", "anthropic", "opus")
+            .unwrap();
+        let mut classified = StepManifestRow {
+            turn_instance: 0,
+            step: 0,
+            call_seq: 0,
+            provider: "anthropic".into(),
+            model: "opus".into(),
+            call_role: "worker".into(),
+            effective_budget_tokens: 100,
+            calibration_factor: 1.0,
+            estimated_input_tokens: 10,
+            stall_seconds_requested: Some(900),
+            compiled_frame_id: None,
+            frame_hash: None,
+            blocks: Vec::new(),
+        };
+        store.record_step_manifest(id, &classified).unwrap();
+        classified.step = 1;
+        classified.stall_seconds_requested = None;
+        store.record_step_manifest(id, &classified).unwrap();
+
+        let calls = store.recorded_calls(id).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[0].stall_seconds_requested,
+            Some(900),
+            "the seconds the rung decided on are on the receipt"
+        );
+        assert_eq!(
+            calls[1].stall_seconds_requested, None,
+            "an emitter that did not classify says so, rather than claiming zero"
+        );
+    }
+
     #[test]
     fn re_emitting_a_shorter_manifest_leaves_no_stale_tail_rows() {
         let store = Store::in_memory().unwrap();
@@ -682,6 +749,7 @@ mod tests {
             effective_budget_tokens: 100,
             calibration_factor: 1.0,
             estimated_input_tokens: 3,
+            stall_seconds_requested: None,
             compiled_frame_id: None,
             frame_hash: None,
             blocks: (0..3)

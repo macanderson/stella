@@ -559,6 +559,26 @@ export type AgentEvent = {
   model: string;
   provider: string;
   role: ModelCallRole;
+  /**
+   * The pure-`sleep` seconds this turn has **asked for** across the
+   * detector's window, as of this step — the number the stall rung
+   * (`stella_core::driver::loop_escalation`) decides on, recorded
+   * rather than thrown away once it has decided (#3621).
+   *
+   * Requested, never executed: it is read off the calls' own text so
+   * the same transcript classifies the same way every step, which is
+   * what keeps the rung deterministic (invariant #2). A call killed by
+   * the shell's own timeout still contributes its full request, so
+   * this is an upper bound on wall clock. Executed seconds are already
+   * derivable from `ToolResult.duration_ms`, and the gap between the
+   * two is the signal — see #3624.
+   *
+   * `None` is "this emitter did not classify", not "zero seconds": the
+   * replay/reconstruction path rebuilds a receipt from stored messages
+   * with no detector window around it, and a reader must not count that
+   * as a turn that slept for nothing.
+   */
+  stall_seconds_requested?: number | null;
   step: number;
   /**
    * Monotonic per session — groups the steps of one `run_turn`.
@@ -645,6 +665,14 @@ export type AgentEvent = {
   cost_usd: number;
   model: string;
   type: "run_complete";
+} | {
+  agents: number;
+  commands: number;
+  memories: number;
+  records: number;
+  skills: number;
+  type: "steering_withheld";
+  withheld_by: Withholder;
 };
 
 /**
@@ -2201,6 +2229,17 @@ export interface VerdictEvidence {
    */
   summary: string;
 }
+
+/**
+ * Which authority held a workspace's steering back
+ * ([`AgentEvent::SteeringWithheld`], #2302/#3616).
+ *
+ * Two causes resolve one refusal, and they are not interchangeable: they have
+ * different remedies, and one of them the user cannot lift at all. A harness
+ * that folded them together would tell an operator to set a flag they have
+ * already set.
+ */
+export type Withholder = "project_untrusted" | "managed_ceiling";
 
 /**
  * One frame emitted by the engine toward the host over the outbound stream.
