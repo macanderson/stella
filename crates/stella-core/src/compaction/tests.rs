@@ -316,6 +316,42 @@ fn retention_is_idempotent_between_batches() {
     assert_eq!(snapshot, after, "no bytes may move between batches");
 }
 
+/// The pressure gate's divisor is a measurement, and this is what stops a
+/// merge reverting it in silence (#2495).
+///
+/// The two tests either side of this one pin the *behaviour* at half the
+/// budget and at a quarter, with the ratios hand-rolled — so a divisor of 3
+/// would leave both of them passing while suppressing 41.8% of the firings the
+/// census counted. Naming the constant is the difference between "half is a
+/// sensible-looking trigger" and "half is the number 330 firings across 93
+/// journals produced".
+#[test]
+fn the_retention_pressure_gate_stays_at_the_divisor_the_census_produced() {
+    assert_eq!(
+        RETENTION_TRIGGER_BUDGET_DIVISOR, 2,
+        "the trigger is half the budget until #4452's replay says otherwise; \
+         a divisor of 3 suppresses 41.8% of the measured firings and 4 suppresses 23.6%"
+    );
+    // And the gate is actually derived from it, so the assertion above is not
+    // pinning a constant nothing consults.
+    let mut messages = long_turn(12, 5_000);
+    let tokens = estimate_conversation_tokens(&messages);
+    let policy = Some(RetentionPolicy {
+        keep_recent_steps: 4,
+    });
+    let at_the_gate = tokens * RETENTION_TRIGGER_BUDGET_DIVISOR;
+    let (_, report) = compact_measured(&mut messages.clone(), at_the_gate, policy);
+    assert!(
+        report.is_none(),
+        "exactly at the gate the transcript must not move: {report:?}"
+    );
+    let (_, report) = compact_measured(&mut messages, at_the_gate - 1, policy);
+    assert!(
+        report.is_some(),
+        "one token past the gate retention must engage"
+    );
+}
+
 /// **Witness (#4381).** The measured shape: a conversation at a quarter of its
 /// budget with well over [`RETENTION_MIN_RECLAIM_CHARS`] reclaimable past the
 /// horizon. Pass 0 used to rewrite mid-history there on an absolute trigger,

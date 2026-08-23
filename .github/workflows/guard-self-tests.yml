@@ -162,6 +162,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-red-hold.sh
 
+      - name: measured-constants guard failure directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-measured-constants.sh
+
       - name: the module-reachability walker
         if: ${{ !cancelled() }}
         run: ./scripts/test-module-reachability.sh

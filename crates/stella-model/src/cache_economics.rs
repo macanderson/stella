@@ -305,6 +305,10 @@ pub fn route_cache_is_opt_in(provider: &str, model: &str) -> bool {
 /// alone instead put a 4543-token prompt in the "under 1024" bucket — it
 /// reported `input_tokens: 2` and 4541 write tokens — and that single
 /// mis-bucketed row was enough to make this floor look refuted.
+///
+/// MEASURED: 1303 opt-in calls in a real store, bucketed by full prompt —
+/// 1274 at or over the floor of which 1240 wrote, 29 under it of which zero
+/// wrote and zero read.
 pub const MIN_CACHEABLE_PROMPT_TOKENS: u64 = 1024;
 
 /// The route a diagnosis is about, plus the one size fact it needs. Grouped
