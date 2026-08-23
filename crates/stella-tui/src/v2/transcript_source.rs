@@ -31,13 +31,16 @@ use ratatui::text::Line;
 use super::transcript::{
     Event, EventKind, Extent, Receipt, Subject, TurnHead, event_rows, receipt, turn_begin, turn_end,
 };
-use crate::model::{FileState, TranscriptEntry};
+use crate::model::{FileState, ReadSize, TranscriptEntry};
 
 /// The metal-bearing head of a dispatched call (SPEC 6.2).
 ///
 /// `measured` is the `(added, removed)` the emitter reported for this call, or
 /// `None` while it is still in flight — [`measured_delta`] is what resolves it,
-/// and a head row is never asked to guess.
+/// and a head row is never asked to guess. `read` is the line coverage the
+/// tool reported for itself, resolved by [`read_size`] — a separate channel,
+/// because a read's number is a coverage the producer states, never a delta a
+/// mutation stamps.
 ///
 /// Always at least one row: a tool with no recognised verb still names itself,
 /// because a call that rendered nothing would be a call the reader cannot see
@@ -48,9 +51,10 @@ pub fn head_rows(
     path: Option<&str>,
     input: &str,
     measured: Option<(u32, u32)>,
+    read: Option<ReadSize>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let kind = kind_for(name, measured);
+    let kind = kind_for(name, measured, read);
     let mut event = Event::new(kind, subject_for(name, path, input));
     // The head is drawn the moment the call dispatches, so it is never
     // "collapsed" in the fold sense — there is no body under it yet.
@@ -71,7 +75,7 @@ pub fn head_metal(name: &str) -> Color {
     // The metal is a fact about the verb, so the extent is irrelevant here and
     // an unmeasured one is the honest argument rather than a placeholder: a
     // block's rail must not change colour when its size arrives.
-    kind_for(name, None).metal()
+    kind_for(name, None, None).metal()
 }
 
 /// The `(added, removed)` the emitter measured for the call `call_id`
@@ -118,6 +122,36 @@ pub fn measured_delta(
         .and_then(|refs| crate::render::resolve_inline_delta_total(refs, files))
 }
 
+/// The line coverage the call `call_id` reported for itself, or `None` while
+/// nothing has.
+///
+/// The same bounded scan as [`measured_delta`] — the pair by `call_id`, ended
+/// at the turn's closing entry — but a different channel at the join: the
+/// number comes off the entry's own [`ReadSize`] carrier, which the fold fills
+/// from the tool result's structured `data` (`read_file`'s
+/// `lines_shown`/`lines_total`, #4297). Never through an inline-diff
+/// reference: a read stamps none, correctly, because it changes nothing —
+/// which is why the two resolvers are two functions rather than one with a
+/// mode.
+///
+/// `None` covers the honest cases the same way: the call has not returned, it
+/// failed, or its tool predates the payload — and each renders as no column.
+#[must_use]
+pub fn read_size(call_id: &str, following: &[TranscriptEntry]) -> Option<ReadSize> {
+    following
+        .iter()
+        .take_while(|e| !matches!(e, TranscriptEntry::Complete { .. }))
+        .find_map(|e| match e {
+            TranscriptEntry::ToolResult {
+                call_id: cid,
+                read_size,
+                ..
+            } if cid == call_id => Some(*read_size),
+            _ => None,
+        })
+        .flatten()
+}
+
 /// One dim line, no rail (SPEC 6.3).
 #[must_use]
 pub fn compaction_rows(
@@ -158,16 +192,15 @@ pub fn compaction_rows(
 /// Which half of the pair a kind states is a property of the verb, and lives
 /// here so one measurement cannot be read two ways: an edit states both sides
 /// (they are one reading), a write states what it wrote, a deletion what it
-/// removed. A read states **no size**, and [`EventKind::Read`] carries no field
-/// to state one with: only a *mutation* stamps the inline-diff reference
-/// [`measured_delta`] resolves through, so `measured` is `None` for a read on
-/// every live path and always was. The field was removed rather than left
-/// defaulted so that the absence is structural instead of conventional
-/// (#4180); #4297 tracks the wire-level producer that would earn the column
-/// back.
-fn kind_for(name: &str, measured: Option<(u32, u32)>) -> EventKind {
+/// removed. A read states its **coverage**, and it arrives on the separate
+/// `read` channel, never through `measured`: only a *mutation* stamps the
+/// inline-diff reference [`measured_delta`] resolves through, so `measured`
+/// is `None` for a read on every live path and always was. #4180 removed the
+/// `Extent` the read once misfiled its size under; #4297 gave the number a
+/// real producer ([`read_size`]) and the column its own field.
+fn kind_for(name: &str, measured: Option<(u32, u32)>, read: Option<ReadSize>) -> EventKind {
     match name {
-        "read_file" => EventKind::Read,
+        "read_file" => EventKind::Read { lines: read },
         "edit_file" => EventKind::Edit {
             extent: measured.map_or_else(Extent::default, |(added, removed)| {
                 Extent::delta(added, removed)
@@ -340,7 +373,7 @@ mod tests {
     /// tools), and a missing row is the failure this guards against.
     #[test]
     fn an_unrecognised_tool_still_renders_a_head() {
-        let rows = head_rows("mcp__fs__read_file", None, "apps/page.tsx", None, 80);
+        let rows = head_rows("mcp__fs__read_file", None, "apps/page.tsx", None, None, 80);
         assert_eq!(rows.len(), 1);
         let text = text_of(&rows[0]);
         // The tool's own name survives; the routing prefix does not. A reader
@@ -361,6 +394,7 @@ mod tests {
             "read_file",
             Some("src/main.rs"),
             "{\"path\":\"…\"}",
+            None,
             None,
             80,
         );
@@ -389,7 +423,7 @@ mod tests {
             ("write_file", "src/new.rs"),
             ("delete_file", "src/old.rs"),
         ] {
-            let text = text_of_rows(&head_rows(tool, Some(path), "{}", None, 120));
+            let text = text_of_rows(&head_rows(tool, Some(path), "{}", None, None, 120));
             for zero in ["+0", "-0", "0 lines"] {
                 assert!(
                     !text.contains(zero),
@@ -410,6 +444,7 @@ mod tests {
             Some("src/new.rs"),
             "{}",
             Some((42, 0)),
+            None,
             120,
         ));
         assert!(write.contains("new file"), "{write}");
@@ -419,6 +454,7 @@ mod tests {
             Some("src/old.rs"),
             "{}",
             Some((0, 17)),
+            None,
             120,
         ));
         assert!(delete.contains("-17 lines"), "{delete}");
@@ -435,6 +471,7 @@ mod tests {
             Some("src/new.rs"),
             "{}",
             None,
+            None,
             120,
         ));
         assert!(write.contains("new file"), "{write}");
@@ -442,6 +479,7 @@ mod tests {
             "delete_file",
             Some("src/old.rs"),
             "{}",
+            None,
             None,
             120,
         ));
@@ -506,7 +544,15 @@ mod tests {
             panic!("entry {idx} is not a head: {:?}", model.transcript[idx]);
         };
         let measured = measured_delta(call_id, &model.transcript[idx + 1..], &model.files);
-        text_of_rows(&head_rows(name, path.as_deref(), input, measured, 120))
+        let read = read_size(call_id, &model.transcript[idx + 1..]);
+        text_of_rows(&head_rows(
+            name,
+            path.as_deref(),
+            input,
+            measured,
+            read,
+            120,
+        ))
     }
 
     /// The witness for #4154: a head that used to be drawn once at dispatch and
@@ -526,6 +572,67 @@ mod tests {
             head.contains("+3") && head.contains("-1"),
             "the head must state the measured change: {head}"
         );
+    }
+
+    /// The witness for #4297: a returned read head states the line count the
+    /// tool reported — through the structured `data` payload `read_file`
+    /// ships, never by recounting the rendered body, which is capped at
+    /// `OUTPUT_BUDGET` and was #2290's defect for mutation counts. A whole
+    /// read states `n lines`; a truncated one states `n of m lines`, so a
+    /// partial read is visibly partial.
+    #[test]
+    fn a_returned_read_head_states_the_line_count_the_tool_reported() {
+        let read = |data: serde_json::Value| {
+            let mut model = SessionModel::new();
+            model.apply(&AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "c1".into(),
+                    name: "read_file".into(),
+                    input: serde_json::json!({ "path": "crates/stella-core/src/lifecycle.rs" }),
+                },
+            });
+            model.apply(&AgentEvent::ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::ok_with_data("     1\tfn main() {}".to_string(), data),
+                duration_ms: 3,
+                speculated: false,
+            });
+            head_at(&model, 0)
+        };
+
+        let whole = read(serde_json::json!({ "lines_shown": 221, "lines_total": 221 }));
+        assert!(
+            whole.contains("· 221 lines"),
+            "a whole read states its one count: {whole}"
+        );
+        assert!(
+            !whole.contains("of 221"),
+            "equal counts must not render as a truncation: {whole}"
+        );
+
+        let truncated = read(serde_json::json!({ "lines_shown": 200, "lines_total": 500 }));
+        assert!(
+            truncated.contains("· 200 of 500 lines"),
+            "a truncated read is visibly truncated: {truncated}"
+        );
+    }
+
+    /// And the read head stays sizeless until its call returns — the same
+    /// in-flight honesty the edit head keeps below: nothing has reported a
+    /// coverage yet, so there is no column, not a zero.
+    #[test]
+    fn a_read_head_whose_call_has_not_returned_states_no_count() {
+        let mut model = SessionModel::new();
+        model.apply(&AgentEvent::ToolStart {
+            call: ToolCall {
+                call_id: "c1".into(),
+                name: "read_file".into(),
+                input: serde_json::json!({ "path": "src/x.rs" }),
+            },
+        });
+        let head = head_at(&model, 0);
+        assert!(!head.contains("lines"), "{head}");
+        assert!(head.contains("src/x.rs"), "{head}");
     }
 
     /// And it stays silent until then. The in-flight head is the case #4150
@@ -590,7 +697,14 @@ mod tests {
     /// than by the `crates/stella-tui/src/…` prefix every one of them shares.
     #[test]
     fn a_path_subject_splits_dim_directory_from_bright_basename() {
-        let spans = styled_spans(&head_rows("read_file", Some("a/b/c.rs"), "{}", None, 120));
+        let spans = styled_spans(&head_rows(
+            "read_file",
+            Some("a/b/c.rs"),
+            "{}",
+            None,
+            None,
+            120,
+        ));
         let cut = spans
             .iter()
             .position(|(content, _)| content.ends_with("a/b/"))
@@ -613,7 +727,7 @@ mod tests {
     /// from the presence of a separator.
     #[test]
     fn a_command_subject_stays_one_unemphasised_span() {
-        let spans = styled_spans(&head_rows("bash", None, "grep -r foo/ .", None, 120));
+        let spans = styled_spans(&head_rows("bash", None, "grep -r foo/ .", None, None, 120));
         let subject: Vec<_> = spans
             .iter()
             .filter(|(content, _)| content.contains("foo/"))
@@ -672,9 +786,10 @@ mod tests {
             ("write_file", "src/new.rs"),
             ("delete_file", "src/old.rs"),
         ] {
-            let declares_a_size = format!("{:?}", kind_for(tool, None)).contains("Extent");
-            let unmeasured = text_of_rows(&head_rows(tool, Some(path), "{}", None, 120));
-            let measured = text_of_rows(&head_rows(tool, Some(path), "{}", Some((7, 3)), 120));
+            let declares_a_size = format!("{:?}", kind_for(tool, None, None)).contains("Extent");
+            let unmeasured = text_of_rows(&head_rows(tool, Some(path), "{}", None, None, 120));
+            let measured =
+                text_of_rows(&head_rows(tool, Some(path), "{}", Some((7, 3)), None, 120));
             assert_eq!(
                 declares_a_size,
                 measured != unmeasured,
@@ -704,7 +819,7 @@ mod tests {
     /// The glyph cell of a head row: the rail is span 0, the glyph span 1
     /// (`" x "`), which `head_row` composes in that order.
     fn head_glyph_of(name: &str) -> char {
-        let rows = head_rows(name, None, "{}", None, 120);
+        let rows = head_rows(name, None, "{}", None, None, 120);
         let row = rows
             .first()
             .expect("a head always renders at least one row");
@@ -763,7 +878,7 @@ mod tests {
             ("orchid", crate::theme::ORCHID),
         ];
         for (name, _) in CLASS_CASES {
-            let rows = head_rows(name, None, "{}", None, 120);
+            let rows = head_rows(name, None, "{}", None, None, 120);
             let row = rows
                 .first()
                 .expect("a head always renders at least one row");

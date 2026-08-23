@@ -115,6 +115,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             duration_ms: 3,
             speculated: false,
             diff: Vec::new(),
+            read_size: None,
         },
         TranscriptEntry::Retry {
             attempt: 1,

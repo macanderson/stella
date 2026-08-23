@@ -38,7 +38,9 @@ pub use diff_budget::DIFF_TEXT_BUDGET;
 // Re-exported flat, so `crate::model::TranscriptEntry` still resolves and the
 // split moved no call site — same discipline as `file_state` and `turn` below
 // (#4217). `entry`'s module doc carries why the seam is declarations-vs-logic.
-pub use entry::{AskUserPrompt, InlineDiffRef, OpenPark, SubAgentSummary, TranscriptEntry};
+pub use entry::{
+    AskUserPrompt, InlineDiffRef, OpenPark, ReadSize, SubAgentSummary, TranscriptEntry,
+};
 pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
 // The renderer's, not the fold's: the count a multi-path row states is decided
 // where the claims are defined, so the row cannot arrive at a different one
@@ -460,6 +462,18 @@ impl SessionModel {
                 // else: the fold cache would retain them if the renderer
                 // stripped per frame, and ratatui renders everything after
                 // the ESC byte literally (#934).
+                // The tool's own line-coverage report, off the structured
+                // `data` half of the wire (#4297). Read here, before the
+                // prose is capped: `full` is bounded at OUTPUT_BUDGET, so a
+                // consumer recounting the rendered body would measure the
+                // cap, not the read — the substitution #2290 established as
+                // the defect for mutation counts.
+                let read_size = match output {
+                    ToolOutput::Ok {
+                        data: Some(data), ..
+                    } => entry::ReadSize::from_data(data),
+                    _ => None,
+                };
                 let (ok, summary, full) = match output {
                     ToolOutput::Ok { content , .. } => {
                         let content = strip_ansi(content);
@@ -593,6 +607,7 @@ impl SessionModel {
                     duration_ms: *duration_ms,
                     speculated: *speculated,
                     diff,
+                    read_size,
                 });
                 // The answer to an `ask_user` question comes back as this very
                 // tool result (correlated by id) — there is no separate answer

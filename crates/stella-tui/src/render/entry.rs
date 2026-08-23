@@ -216,7 +216,15 @@ fn v2_rows(
             path,
         } => {
             let measured = v2::measured_delta(call_id, view.following, view.files);
-            out.extend(v2::head_rows(name, path.as_deref(), input, measured, width));
+            let read = v2::read_size(call_id, view.following);
+            out.extend(v2::head_rows(
+                name,
+                path.as_deref(),
+                input,
+                measured,
+                read,
+                width,
+            ));
             if expanded {
                 tool::argument_rows(v2::head_metal(name), raw, width, out);
             }

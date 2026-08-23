@@ -35,6 +35,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use stella_tui_theme::{glyph, token};
 
+use crate::model::ReadSize;
 use crate::tool_class::ToolClass;
 
 /// Cells the coloured rail occupies at the head of every event row (SPEC 6.2).
@@ -105,21 +106,21 @@ impl Extent {
 /// as a plain muted row, which is the correct degradation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventKind {
-    /// `▸ read <path>` — folded by default, and deliberately **sizeless**.
+    /// `▸ read <path> · n lines` — folded by default.
     ///
-    /// It carried an [`Extent`] until #4180 and could never fill one: the
-    /// head's measurement resolves through the inline-diff reference only a
-    /// *mutation* stamps, and a read emits no `FileChange` to stamp one from —
-    /// correctly, since it changes nothing. That left a size column that was
-    /// expressible, unreachable on every live path, and reached by nothing but
-    /// a test fixture, which is the "declared but inert" shape this repository
-    /// treats as debt rather than as a feature in waiting. The field is gone
-    /// rather than defaulted, so the column cannot be half-restored by a caller
-    /// that has a number to hand and no producer behind it. Giving a read a
-    /// real line count means giving `read_file` a wire-level producer first —
-    /// which must also settle what a *truncated* read states — and is tracked
-    /// separately (#4297).
-    Read,
+    /// The size is **not** an [`Extent`]: a read measures coverage, not a
+    /// delta, and the number never resolves through the inline-diff reference
+    /// only a *mutation* stamps — a read emits no `FileChange`, correctly,
+    /// since it changes nothing. #4180 removed the `Extent` this variant once
+    /// carried for exactly that reason: the column was expressible,
+    /// unreachable on every live path, and reached by nothing but a fixture.
+    /// #4297 earned it back by giving the number a real producer — `read_file`
+    /// reports `lines_shown`/`lines_total` as structured wire data, and
+    /// [`super::transcript_source::read_size`] resolves it through the call's
+    /// own result. `None` is every head at dispatch, every failed read, and
+    /// every result written before the payload existed; it renders as no
+    /// column at all.
+    Read { lines: Option<ReadSize> },
     /// `● edit <path> +a -b`, both counts or neither — they are one reading.
     /// Absent until the emitter has measured the change (#4154), which is the
     /// turn boundary rather than the moment the call returns.
@@ -167,7 +168,7 @@ impl EventKind {
     #[must_use]
     pub fn metal(&self) -> Color {
         match self {
-            EventKind::Read => token::MUTED,
+            EventKind::Read { .. } => token::MUTED,
             EventKind::Edit { .. }
             | EventKind::Write { .. }
             | EventKind::Run
@@ -212,7 +213,7 @@ impl EventKind {
             },
             // Named rather than a wildcard, so a kind added to the vocabulary
             // is an `E0004` here and has to state its own head (#4320).
-            EventKind::Read | EventKind::Edit { .. } | EventKind::Run => glyph::EVENT,
+            EventKind::Read { .. } | EventKind::Edit { .. } | EventKind::Run => glyph::EVENT,
         }
     }
 
@@ -220,7 +221,7 @@ impl EventKind {
     #[must_use]
     pub fn verb(&self) -> &'static str {
         match self {
-            EventKind::Read => "read",
+            EventKind::Read { .. } => "read",
             EventKind::Edit { .. } => "edit",
             EventKind::Write { .. } => "write",
             EventKind::Delete { .. } => "delete",
@@ -238,7 +239,7 @@ impl EventKind {
     /// expand).
     #[must_use]
     pub fn collapses_by_default(&self) -> bool {
-        matches!(self, EventKind::Read)
+        matches!(self, EventKind::Read { .. })
     }
 }
 
@@ -630,10 +631,19 @@ fn kind_detail(kind: &EventKind) -> Vec<Span<'static>> {
     let dim = Style::new().fg(token::DIM);
     let text = Style::new().fg(token::TEXT);
     match kind {
-        // A read has no size column at all — see [`EventKind::Read`] for why
-        // the field is gone rather than empty (#4180), and #4297 for the
-        // producer that would earn it back.
-        //
+        // `n of m` when the read was truncated, `n lines` when it was whole —
+        // so a partial read is visibly partial rather than silently
+        // understating the file or overstating what entered context. The
+        // number is the producer's own (`read_file`'s structured data,
+        // #4297), and its absence renders as no column at all.
+        EventKind::Read { lines } => match lines {
+            Some(l) if l.shown != l.total => vec![Span::styled(
+                format!(" · {} of {} lines", l.shown, l.total),
+                dim,
+            )],
+            Some(l) => vec![Span::styled(format!(" · {} lines", l.total), dim)],
+            None => Vec::new(),
+        },
         // The separator spaces stay neutral: colour marks the count, not the
         // padding around it, and a red cell is a scarce thing on this screen
         // (prompt.md rule 5) that must not be spent on whitespace.
@@ -696,7 +706,7 @@ fn metrics(event: &Event) -> Vec<Span<'static>> {
     if event.duration_ms > 0 {
         spans.push(Span::styled(format!("⚡{}ms", event.duration_ms), dim));
     }
-    if matches!(event.kind, EventKind::Read) && event.is_collapsed() {
+    if matches!(event.kind, EventKind::Read { .. }) && event.is_collapsed() {
         if !spans.is_empty() {
             spans.push(Span::styled(" · ", dim));
         }
