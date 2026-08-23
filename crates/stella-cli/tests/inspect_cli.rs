@@ -10,6 +10,9 @@ use std::process::Command;
 
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// Digest helper matching `stella-core`'s block identity: the store verifies
 /// journal-resolved blocks against this, and skips the check for gap kinds
 /// (which carry their bytes locally), so a placeholder is fine here.
@@ -215,6 +218,7 @@ fn worker_manifest(step: u64, blocks: Vec<ManifestBlockRow>) -> StepManifestRow 
 
 fn inspect(dir: &tempfile::TempDir, args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .arg("inspect")
         .args(args)
         .current_dir(dir.path())
@@ -491,6 +495,7 @@ fn first_reaches_back_to_the_first_turn_of_the_session() {
 fn diff_without_a_step_says_which_flag_is_missing() {
     let (dir, id) = seeded_workspace();
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args(["inspect", &id.to_string(), "--diff"])
         .current_dir(dir.path())
         .env_remove("CLICOLOR_FORCE")
@@ -509,6 +514,7 @@ fn diff_without_a_step_says_which_flag_is_missing() {
 fn inspect_names_a_missing_receipt_instead_of_printing_an_empty_transcript() {
     let (dir, id) = seeded_workspace();
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args(["inspect", &id.to_string(), "--step", "99"])
         .current_dir(dir.path())
         .output()

@@ -26,6 +26,9 @@
 
 use std::process::{Command, Output};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// A workspace with the given `.stella/settings.json`, plus an empty HOME so
 /// the developer's own user scope cannot contribute keys to the assertions.
 fn workspace(settings: &str) -> (tempfile::TempDir, tempfile::TempDir) {
@@ -59,6 +62,7 @@ fn models_with(
 ) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
+        .without_embedder_backend()
         .arg("models")
         .current_dir(dir.path())
         .env("HOME", home.path())
@@ -296,6 +300,7 @@ fn run_machine_readable(
 ) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
+        .without_embedder_backend()
         .args([
             "--model",
             "openrouter/z-ai/glm-5.1",
@@ -438,6 +443,7 @@ fn a_trusted_checkouts_json_summary_reports_no_withholding() {
 fn goal_run(dir: &tempfile::TempDir, home: &tempfile::TempDir, extra_env: &[(&str, &str)]) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
+        .without_embedder_backend()
         .args([
             "--model",
             "openrouter/z-ai/glm-5.1",
