@@ -69,10 +69,6 @@ pub(super) const DECK_BUILTINS: &[(&str, &str)] = &[
         "every dispatched sub-agent: purpose, where it is, stop · pause · restart (also: ctrl-a)",
     ),
     (
-        "/subagents",
-        "every dispatched sub-agent: purpose, where it is, stop · pause · restart (also: ctrl-a)",
-    ),
-    (
         "/plan",
         "the plan — every step, with where it may write and spend",
     ),
