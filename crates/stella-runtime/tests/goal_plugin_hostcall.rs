@@ -24,17 +24,20 @@
 //! from a [`HostCallResponse`], so a plugin that asked with an argument the
 //! host cannot decode fails **here** rather than in the field.
 //!
-//! The `.expected.json` sibling is compared — and regenerated under `BLESS=1` —
-//! through `common::bless_or_assert`, the same path the four conformance
-//! harnesses take (#3548, #4437, #4475). What is bespoke here is the *vector
-//! loop*: these vectors run through `converse` with a `.calls.json` script
-//! rather than through `SubprocessWrapper`, so this file owns how a response
-//! is produced and nothing about how one is graded.
+//! Goldens are regenerated with `BLESS=1 cargo test -p stella-runtime --test
+//! goal_plugin_hostcall`, through the same [`common::bless_or_assert`] the
+//! three conformance harnesses use (#3548, #4437). This harness drives its
+//! vectors through [`converse`] rather than `SubprocessWrapper`, so what it
+//! shares is the comparison and not the loop — and, as everywhere else,
+//! **read the diff**: a golden blessed without looking is a changelog, not a
+//! test.
 //!
 //! `cfg(unix)` for `wrapper_socket.rs`'s reason, tracked in the same place
 //! (#3497): the child is spawned with a POSIX `PATH` and named `python3`.
 
 #![cfg(unix)]
+
+mod common;
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -44,8 +47,6 @@ use std::process::{Child, Command, Stdio};
 use stella_plugin::{
     HostCallRequest, HostCallResponse, PluginManifest, PluginMessage, WrapperResponse,
 };
-
-mod common;
 
 fn plugin_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -294,9 +295,9 @@ fn every_hostcall_vector_ends_at_its_golden_evidence() {
         let response = held
             .response
             .unwrap_or_else(|| panic!("{name}: the plugin never answered the point"));
-        // Nothing in this plugin's evidence is wall clock — the verdict it
-        // parses out of a child turn's report is the whole of it — so there is
-        // nothing to pin before the comparison.
+        // Nothing in a `child_turn` contribution is wall clock: the host's
+        // scripted answer supplies every number, so `actual` is already
+        // deterministic and there is nothing to pin.
         common::bless_or_assert(&name, &golden_path, &response, |_| {});
 
         let WrapperResponse::AfterTurn(_after) = response else {

@@ -355,6 +355,117 @@ fn an_untrusted_checkouts_withheld_steering_reaches_the_event_stream() {
     );
 }
 
+/// A one-shot `stella goal` in `dir`, against the same closed loopback port
+/// [`run_stream_json`] uses and for the same reason: the notice is emitted
+/// when the run's channel opens, long before a provider is asked for
+/// anything.
+///
+/// `stella goal` takes no `--output-format` (goal and monitor are text-mode
+/// by construction), so the machine carrier to read is the journal the
+/// renderer persists — `<workspace>/.stella/private/store.db`, the `events`
+/// table.
+fn goal_run(dir: &tempfile::TempDir, home: &tempfile::TempDir, extra_env: &[(&str, &str)]) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
+    command
+        .args([
+            "--model",
+            "openrouter/z-ai/glm-5.1",
+            "--api-key",
+            "sk-not-a-real-key",
+            "--base-url",
+            "http://127.0.0.1:1",
+            "--spend-limit",
+            "0.05",
+            "goal",
+            "say hi and stop",
+        ])
+        .current_dir(dir.path())
+        .env("HOME", home.path())
+        .env("STELLA_HOME", home.path())
+        .env("STELLA_DATA_DIR", home.path())
+        .env("NO_COLOR", "1")
+        .env("STELLA_NO_ENV_FILE", "1")
+        .env("STELLA_CATALOG_AUTO_REFRESH", "0")
+        .env(
+            "STELLA_MANAGED_SETTINGS",
+            home.path().join("no-managed.json"),
+        )
+        .env_remove("STELLA_MODEL")
+        .env_remove("STELLA_TRUST_PROJECT")
+        .env_remove("STELLA_PROJECT_HOOKS")
+        .env_remove("OPENROUTER_API_KEY")
+        .env_remove("ANTHROPIC_API_KEY")
+        .env_remove("ZAI_API_KEY")
+        .env_remove("OPENAI_API_KEY");
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    // The run fails — there is nothing on that port — and that is fine: what
+    // is under test is an event sent before the first model call.
+    let _ = command.output().expect("run stella goal");
+}
+
+/// The `steering_withheld` rows this run's journal holds.
+fn withheld_events_in_journal(dir: &tempfile::TempDir) -> Vec<String> {
+    let store = dir.path().join(".stella").join("private").join("store.db");
+    let conn = rusqlite::Connection::open(&store)
+        .unwrap_or_else(|e| panic!("open {}: {e}", store.display()));
+    let mut stmt = conn
+        .prepare("SELECT payload FROM events WHERE event_type = 'steering_withheld'")
+        .expect("prepare");
+    stmt.query_map([], |row| row.get(0))
+        .expect("query")
+        .collect::<Result<_, _>>()
+        .expect("rows")
+}
+
+/// **Witness (#4500).** `stella goal` is a door too: an untrusted checkout's
+/// refusal reaches its event stream, not only its stderr.
+///
+/// The goal loop drives `Engine::run_goal` itself rather than
+/// `agent::run_turn`, so it reached neither of the two openers that carry
+/// this notice — `agent::output::open_raw_turn` and the deck's boot
+/// announcement. The stderr line `Settings::load` prints was the whole of
+/// what a `stella goal` user got; the journal, `stella export` and anything
+/// reading the run's events had nothing.
+#[test]
+fn an_untrusted_checkouts_withheld_steering_reaches_a_goal_runs_journal() {
+    let (dir, home) = steering_workspace();
+    goal_run(&dir, &home, &[]);
+
+    let events = withheld_events_in_journal(&dir);
+    assert_eq!(
+        events.len(),
+        1,
+        "a goal run is owed exactly one withheld-steering event: {events:?}"
+    );
+    let payload = &events[0];
+    assert!(
+        payload.contains("\"withheld_by\":\"project_untrusted\""),
+        "the event must name the authority, because it decides the remedy: {payload}"
+    );
+    assert!(
+        payload.contains("\"memories\":1") && payload.contains("\"records\":1"),
+        "the event must say how much was withheld: {payload}"
+    );
+    assert!(
+        !payload.contains("SECRET-MARKER-BODY") && !payload.contains("00-marker"),
+        "counts, never content or filenames: {payload}"
+    );
+}
+
+/// The silent arm of the goal door: a trusted checkout loaded its steering and
+/// is owed nothing.
+#[test]
+fn a_trusted_checkouts_goal_run_records_no_withheld_notice() {
+    let (dir, home) = steering_workspace();
+    goal_run(&dir, &home, &[("STELLA_TRUST_PROJECT", "1")]);
+    assert!(
+        withheld_events_in_journal(&dir).is_empty(),
+        "a trusted workspace loaded its steering and is owed no event"
+    );
+}
+
 /// The silent arm on the machine channel: a trusted checkout is getting its
 /// steering, so the stream says nothing about a suppression that did not
 /// happen.
