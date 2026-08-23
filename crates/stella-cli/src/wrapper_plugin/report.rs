@@ -119,6 +119,7 @@ impl super::BoundWrapper {
             &self.gates,
             &self.child_spends(),
             &self.fanout_spends(),
+            &self.test_runs(),
         )
     }
 }
