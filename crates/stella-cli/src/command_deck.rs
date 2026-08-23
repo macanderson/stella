@@ -76,7 +76,7 @@ use stella_protocol::{
 use stella_store::Store;
 use stella_tools::ToolRegistry;
 use stella_tools::custom::CustomTool;
-use stella_tools::hook_runner::ShellHookRunner;
+use stella_tools::hook_runner::HostHookRunner;
 use stella_tools::registry::approval::ApprovalResponse;
 use stella_tui::{
     AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityHit, Inbound, SkillOp, SkillScope,
@@ -3739,7 +3739,7 @@ async fn run_lead_turn(
             registry.hook_bus(),
         );
         let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()));
-        let hook_runner = ShellHookRunner;
+        let hook_runner = HostHookRunner;
         let mut engine = Engine::with_sleeper(
             provider,
             &tapped,

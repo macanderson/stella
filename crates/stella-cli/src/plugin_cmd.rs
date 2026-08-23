@@ -428,10 +428,10 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
         }
     }
 
-    // Routes, not grants: what a host would actually dispatch. A plugin whose
-    // grant produces no route (no `[runtime]`) is visible above and absent
-    // here, which is the distinction that answers "I declared Stop and
-    // nothing happens".
+    // Routes, not grants: what a host dispatches, folded into the session's
+    // hook plane by `crate::plugin_hooks`. A plugin whose grant produces no
+    // route (no `[runtime]`) is visible above and absent here, which is the
+    // distinction that answers "I declared Stop and nothing happens".
     let routes = roster.hook_routes();
     if !routes.is_empty() {
         println!("\nhook dispatches:");

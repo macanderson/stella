@@ -21,8 +21,10 @@ use stella_runtime::wrapper::TurnDriver;
 use super::*;
 use crate::plugin_cmd::roster::{InstalledPlugin, PluginScope};
 
+mod composition;
 mod report;
 mod round_driver;
+mod stage_program;
 
 const WRAPPER_MANIFEST: &str = r#"
 name = "budget-keeper"
@@ -107,7 +109,7 @@ fn bound(
     variant: &str,
     warn: &mut dyn FnMut(String),
 ) -> Result<BoundWrapper, String> {
-    bind_installed(roster, variant, warn)?.serving(WrapperHost::recalling(no_recall()))
+    bind_installed(roster, variant, warn)?.serving(|_| WrapperHost::recalling(no_recall()))
 }
 
 /// **Witness (#3381 "Flip the default").** No flag at all used to mean
@@ -439,10 +441,10 @@ async fn a_declared_recall_reaches_this_hosts_context_plane() {
     let roster = roster(vec![installed(RECALLING_MANIFEST, "/plugins/researcher")]);
     let wrapper = bind_installed(&roster, "research-v1", &mut |_| {})
         .expect("the installed plugin declares this variant")
-        .serving(WrapperHost::recalling(Box::new(OneFrame)))
+        .serving(|_| WrapperHost::recalling(Box::new(OneFrame)))
         .expect("a found variant binds");
 
-    let channel = wrapper.gate.open();
+    let channel = wrapper.gate().open();
     let outcome = channel
         .call(HostCallArgs::Recall(RecallArgs {
             goal: "the parser".to_string(),
@@ -457,7 +459,7 @@ async fn a_declared_recall_reaches_this_hosts_context_plane() {
         other => panic!("a declared recall must reach the plane, got {other:?}"),
     }
     assert!(
-        wrapper.gate.refusals().is_empty(),
+        wrapper.gate().refusals().is_empty(),
         "nothing was refused, so nothing is reported"
     );
 }
@@ -474,7 +476,7 @@ async fn a_host_with_no_plane_still_gates_and_reports_what_it_refused() {
     let roster = roster(vec![installed(RECALLING_MANIFEST, "/plugins/researcher")]);
     let wrapper = bound(&roster, "research-v1", &mut |_| {}).expect("it binds");
 
-    let channel = wrapper.gate.open();
+    let channel = wrapper.gate().open();
     let undeclared = channel
         .call(HostCallArgs::ChildTurn(ChildTurnArgs {
             role: "verifier".to_string(),
@@ -489,7 +491,7 @@ async fn a_host_with_no_plane_still_gates_and_reports_what_it_refused() {
         "the manifest declares only recall, got {undeclared:?}"
     );
     assert_eq!(
-        wrapper.gate.refusals().len(),
+        wrapper.gate().refusals().len(),
         1,
         "a refusal only the plugin learns about is half of \"never silent\""
     );
@@ -592,7 +594,7 @@ fn grading_host() -> (BoundWrapper, RecordingDispatcher) {
     ));
     let wrapper = bind_installed(&roster, "grading-v1", &mut |_| {})
         .expect("the installed plugin declares this variant")
-        .serving(WrapperHost::recalling(no_recall()).with_child_turns(plane))
+        .serving(|_| WrapperHost::recalling(no_recall()).with_child_turns(Arc::clone(&plane)))
         .expect("a found variant binds");
     (wrapper, dispatcher)
 }
@@ -620,7 +622,7 @@ async fn a_declared_child_turn_runs_on_this_hosts_dispatcher() {
     use stella_runtime::wrapper::HostCallChannel;
 
     let (wrapper, dispatcher) = grading_host();
-    let outcome = wrapper.gate.open().call(child_turn("reviewer")).await;
+    let outcome = wrapper.gate().open().call(child_turn("reviewer")).await;
     match outcome {
         HostCallOutcome::Ok(HostCallOk::ChildTurn(result)) => {
             assert_eq!(result.role, "reviewer");
@@ -775,15 +777,13 @@ async fn a_stella_run_host_serves_candidate_fanout() {
         CANDIDATES_MANIFEST,
         "/plugins/candidates-wrapper",
     )]);
-    let resolved = bind_installed(&roster, "candidates-v1", &mut |_| {})
-        .expect("the installed plugin declares this variant");
-    let manifest = resolved.manifest().clone();
-    let wrapper = resolved
-        .serving(super::session_host(&cfg, &manifest, sub_agents))
+    let wrapper = bind_installed(&roster, "candidates-v1", &mut |_| {})
+        .expect("the installed plugin declares this variant")
+        .serving(|manifest| super::session_host(&cfg, manifest, Arc::clone(&sub_agents)))
         .expect("a found variant binds");
 
     let outcome = wrapper
-        .gate
+        .gate()
         .open()
         .call(stella_plugin::HostCallArgs::CandidateFanout(
             stella_plugin::CandidateFanoutArgs {
@@ -813,11 +813,11 @@ async fn a_stella_run_host_serves_candidate_fanout() {
     // told `Unavailable`, so the assertion above is about the wiring.
     let bare = bind_installed(&roster, "candidates-v1", &mut |_| {})
         .expect("the installed plugin declares this variant")
-        .serving(WrapperHost::recalling(no_recall()))
+        .serving(|_| WrapperHost::recalling(no_recall()))
         .expect("a found variant binds");
     assert!(
         matches!(
-            bare.gate
+            bare.gate()
                 .open()
                 .call(stella_plugin::HostCallArgs::CandidateFanout(
                     stella_plugin::CandidateFanoutArgs {
@@ -903,7 +903,7 @@ async fn a_role_intent_pointing_at_the_worker_is_still_forbidden() {
     use stella_runtime::wrapper::HostCallChannel;
 
     let (wrapper, dispatcher) = grading_host();
-    let outcome = wrapper.gate.open().call(child_turn("grader")).await;
+    let outcome = wrapper.gate().open().call(child_turn("grader")).await;
     assert!(
         matches!(
             outcome,
@@ -917,7 +917,7 @@ async fn a_role_intent_pointing_at_the_worker_is_still_forbidden() {
         "a refusal costs no model call"
     );
     assert_eq!(
-        wrapper.gate.refusals().len(),
+        wrapper.gate().refusals().len(),
         1,
         "and the user is told, not only the plugin"
     );
@@ -1082,7 +1082,7 @@ async fn a_host_with_no_child_turn_plane_answers_unavailable() {
         "/plugins/grading-wrapper",
     )]);
     let wrapper = bound(&roster, "grading-v1", &mut |_| {}).expect("it binds");
-    let outcome = wrapper.gate.open().call(child_turn("reviewer")).await;
+    let outcome = wrapper.gate().open().call(child_turn("reviewer")).await;
     assert!(
         matches!(
             outcome,
@@ -1171,7 +1171,7 @@ printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":
     )]);
     let wrapper = bind_installed(&roster, "grading-v1", &mut |_| {})
         .expect("the installed plugin declares this variant")
-        .serving(WrapperHost::recalling(no_recall()).with_child_turns(plane))
+        .serving(|_| WrapperHost::recalling(no_recall()).with_child_turns(Arc::clone(&plane)))
         .expect("it binds");
 
     let mut driver = StubTurn::default();
@@ -1331,7 +1331,7 @@ printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":
     )]);
     let wrapper = bind_installed(&roster, "grading-v1", &mut |_| {})
         .expect("the installed plugin declares this variant")
-        .serving(WrapperHost::recalling(no_recall()).with_child_turns(plane))
+        .serving(|_| WrapperHost::recalling(no_recall()).with_child_turns(Arc::clone(&plane)))
         .expect("it binds");
 
     // The turn is stopped before it is driven — the state a user leaves behind

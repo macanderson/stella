@@ -255,6 +255,12 @@ impl PluginRoster {
     /// **This is the authoritative routing filter.** Nothing downstream is
     /// expected to re-check the grant, so nothing here may emit a route the
     /// manifest did not declare.
+    ///
+    /// Consumed by [`crate::plugin_hooks::session_hook_plane`], which folds
+    /// these into the engine's hook plane once per config assembly, and by
+    /// `plugin_cmd::list`, which prints them. Until #4417 the printer was the
+    /// only consumer, so a declared `Stop` hook was advertised by `stella
+    /// plugin list` and never fired.
     pub(crate) fn hook_routes(&self) -> Vec<PluginHookRoute> {
         let mut routes = Vec::new();
         for plugin in &self.plugins {

@@ -16,7 +16,6 @@
 use std::sync::Arc;
 
 use stella_core::subagent::SubAgentDispatcher;
-use stella_plugin::PluginManifest;
 
 use super::*;
 
@@ -42,18 +41,22 @@ async fn a_round_driving_door_serves_child_turns_clear_of_its_own_rounds() {
         GRADING_MANIFEST,
         "/plugins/grading-wrapper",
     )]);
-    let manifest = PluginManifest::from_toml_str(GRADING_MANIFEST).expect("fixture must load");
+    // The manifest reaches the plane through `serving`'s closure, which is
+    // handed each member's own (#4094) — so this test no longer parses one of
+    // its own to pass in.
     let dispatcher = RecordingDispatcher::default();
     let wrapper = bind_installed(&roster, "grading-v1", &mut |_| {})
         .expect("the installed plugin declares this variant")
-        .serving(round_driver_host(
-            workspace.path(),
-            &manifest,
-            Arc::new(dispatcher.clone()) as Arc<dyn SubAgentDispatcher>,
-        ))
+        .serving(|manifest| {
+            round_driver_host(
+                workspace.path(),
+                manifest,
+                Arc::new(dispatcher.clone()) as Arc<dyn SubAgentDispatcher>,
+            )
+        })
         .expect("a found variant binds");
 
-    let channel = wrapper.gate.open();
+    let channel = wrapper.gate().open();
     for _ in 0..2 {
         match channel.call(child_turn("reviewer")).await {
             HostCallOutcome::Ok(HostCallOk::ChildTurn(result)) => assert!(result.completed),

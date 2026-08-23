@@ -45,10 +45,26 @@ fn plugin_dir() -> PathBuf {
         .expect("the first-party plugin ships in this repository at plugins/stella-research")
 }
 
+fn manifest_text() -> String {
+    fs::read_to_string(plugin_dir().join("plugin.toml"))
+        .expect("the manifest file is `plugin.toml`, exactly")
+}
+
 fn manifest() -> PluginManifest {
-    let text = fs::read_to_string(plugin_dir().join("plugin.toml"))
-        .expect("the manifest file is `plugin.toml`, exactly");
-    PluginManifest::from_toml_str(&text).expect("the shipped manifest loads")
+    PluginManifest::from_toml_str(&manifest_text()).expect("the shipped manifest loads")
+}
+
+/// The shipped manifest with one condition put back on its `research` stage.
+///
+/// The stage order under test stays the shipped one — only the condition is
+/// added — so what this grades is the resolver's treatment of a condition,
+/// not a fixture pipeline of its own.
+fn manifest_gated_on(condition: &str) -> PluginManifest {
+    let text = manifest_text().replace(
+        "name = \"research\"\n",
+        &format!("name = \"research\"\nif = \"{condition}\"\n"),
+    );
+    PluginManifest::from_toml_str(&text).expect("a gated stage order loads")
 }
 
 /// The transport the host would build from this manifest: the declared argv
@@ -121,9 +137,15 @@ impl TurnDriver for RecordingDriver {
     }
 }
 
-/// Signals for a turn triage classified as a research-worthy task. Written out
-/// in full because [`SignalValues`] derives no `Default` on purpose — a host
-/// must answer every signal rather than let one read as `false`.
+/// The signals a **shipping** host publishes, which is the only kind there is:
+/// the host facts are real and every triage signal is false or zero, because
+/// no host runs a triage stage
+/// (`crates/stella-cli/src/wrapper_plugin.rs::pre_turn_signals`).
+///
+/// Written out in full because [`SignalValues`] derives no `Default` on
+/// purpose — a host must answer every signal rather than let one read as
+/// `false`. The `questions` parameter is what a triage producer would publish
+/// if one existed; the tests below drive `0`, which is what a real run does.
 fn signals(questions: u64) -> SignalValues {
     SignalValues {
         test_command: false,
@@ -131,8 +153,8 @@ fn signals(questions: u64) -> SignalValues {
         budget_metered: false,
         conversational: false,
         questions,
-        plans: true,
-        verifies: true,
+        plans: false,
+        verifies: false,
         wants_witness: false,
         wants_verifier: false,
         mutating_actions: 0,
@@ -177,6 +199,13 @@ fn dispatch(manifest: PluginManifest) -> WrapperDispatch {
 /// whole sequence runs — the declared stage program, `before_turn` per stage,
 /// the turn, `judge`, `again?` — and what the driver is handed carries this
 /// plugin's findings as user messages.
+///
+/// **Driven on `signals(0)` since #3547**, which is what a real run publishes:
+/// no host performs a triage assessment, so `questions` is zero on every one.
+/// The manifest gated `research` on `questions > 0` until then, so this same
+/// sequence contributed nothing on the only signals that ever reach it — the
+/// plugin was installed, selected, dispatched and useless, and this test
+/// passed anyway because it supplied a count no host produces.
 #[tokio::test]
 async fn the_host_sequence_drives_the_plugin_and_the_turn_gets_its_findings() {
     let workspace = fixture();
@@ -187,7 +216,7 @@ async fn the_host_sequence_drives_the_plugin_and_the_turn_gets_its_findings() {
         .run(
             RoundInput {
                 goal: "retry_budget is not honoured".into(),
-                signals: signals(2),
+                signals: signals(0),
                 candidate: Some(CandidateGrant::new(
                     CandidateHandle::new("candidate-1"),
                     workspace.path().display().to_string(),
@@ -238,19 +267,26 @@ async fn the_host_sequence_drives_the_plugin_and_the_turn_gets_its_findings() {
     );
 }
 
-/// The declared condition is the host's, not the plugin's: with no research
-/// questions the stage does not run, so the plugin is never asked and the turn
+/// The declared condition is the host's, not the plugin's: a stage whose
+/// condition is false does not run, so the plugin is never asked and the turn
 /// is byte-for-byte the one a host without it would have run.
+///
+/// Driven against a manifest patched to gate `research` on a **host** signal
+/// rather than the shipped file, since #3547 took the shipped condition off.
+/// The property is worth keeping and the shipped manifest can no longer
+/// witness it: `test-command` is a fact this host answers for, which is
+/// exactly what `doc:wrapper-socket` §5 now points a manifest author at.
 #[tokio::test]
-async fn a_turn_that_named_no_questions_gets_no_contribution() {
+async fn a_stage_whose_declared_condition_is_false_gets_no_contribution() {
     let workspace = fixture();
-    let dispatch = dispatch(manifest());
+    let dispatch = dispatch(manifest_gated_on("test-command"));
     let mut driver = RecordingDriver::default();
 
     let report = dispatch
         .run(
             RoundInput {
                 goal: "retry_budget is not honoured".into(),
+                // `test_command: false`, so the patched condition is false.
                 signals: signals(0),
                 candidate: Some(CandidateGrant::new(
                     CandidateHandle::new("candidate-1"),

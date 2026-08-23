@@ -25,7 +25,7 @@ use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput,
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool};
-use stella_tools::hook_runner::ShellHookRunner;
+use stella_tools::hook_runner::HostHookRunner;
 use stella_tools::validate;
 use tokio::sync::mpsc;
 
@@ -1217,7 +1217,7 @@ pub(crate) async fn run_turn(
         let bus = registry.hook_bus();
         let tools =
             tool_stack::session_stack(base_tools, custom_tools.to_vec(), cfg, Principal::User, bus);
-        let hook_runner = ShellHookRunner;
+        let hook_runner = HostHookRunner;
         // A PreToolUse hook's `require_approval` parks on the #2676 broker
         // flow (#2684). Snapshotted here, after assembly attached any
         // responder and bus, so the route asks the surface this run has.
