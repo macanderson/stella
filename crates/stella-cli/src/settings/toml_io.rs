@@ -304,6 +304,7 @@ bash = "off"
 
         let ui = UiSettings {
             theme: Some("stella-light".to_string()),
+            ..Default::default()
         };
         save_section(&path, "ui", Some(&ui), false).unwrap();
 
@@ -344,6 +345,7 @@ bash = "off"
         let path = dir.path().join("nested").join("stella.toml");
         let ui = UiSettings {
             theme: Some("stella-light".to_string()),
+            ..Default::default()
         };
         save_section(&path, "ui", Some(&ui), false).unwrap();
         let after = std::fs::read_to_string(&path).unwrap();
@@ -374,6 +376,7 @@ bash = "off"
         std::fs::write(&path, "[ui\ntheme = broken").unwrap();
         let ui = UiSettings {
             theme: Some("stella-light".to_string()),
+            ..Default::default()
         };
         let err = save_section(&path, "ui", Some(&ui), false).unwrap_err();
         assert!(err.contains("invalid config file"), "{err}");

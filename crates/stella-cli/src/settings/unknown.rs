@@ -95,7 +95,7 @@ pub(super) const PROVIDER_FIELDS: &[&str] = &[
 const MCP_FIELDS: &[&str] = &["registry_url"];
 
 /// `ui` — [`super::UiSettings`].
-const UI_FIELDS: &[&str] = &["theme"];
+const UI_FIELDS: &[&str] = &["theme", "mid_turn_prompt"];
 
 /// `reward` — [`super::RewardSettings`]. Closed: a mistyped weight key is the
 /// exact failure this walker exists for, because the typo and the correct key

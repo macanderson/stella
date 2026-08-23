@@ -685,6 +685,7 @@ pub async fn run_deck_session(
         initial_graph: agent::graph_snapshot(&cfg.workspace_root),
         no_anim,
         accessible,
+        mid_turn_prompt: steer::mid_turn_prompt_policy(cfg),
         ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering
@@ -952,10 +953,11 @@ pub async fn run_deck_session(
                     // Any submission releases a hold and runs NOW — ahead of the
                     // parked backlog. `EnqueueFront` is the deck's explicit
                     // front-insert (sent while it knows dispatch is held); a
-                    // plain `Enqueue` behaves identically here because running
-                    // the text immediately IS the front of the queue.
+                    // plain `Enqueue` and an `EnqueueNext` behave identically
+                    // here because running the text immediately IS the front.
                     Some(WorkspaceInput::Enqueue { text })
                     | Some(WorkspaceInput::EnqueueFront { text })
+                    | Some(WorkspaceInput::EnqueueNext { text })
                     | Some(WorkspaceInput::ToAgent {
                         input: UserInput::Prompt { text, .. },
                         ..
@@ -1689,6 +1691,8 @@ pub async fn run_deck_session(
                         // if a turn started before it arrived — the deck's
                         // queue view already shows it first.
                         Some(WorkspaceInput::EnqueueFront { text }) => queue.push_front(text),
+                        // Waits its turn; never drained to a sidecar (see `steer`).
+                        Some(WorkspaceInput::EnqueueNext { text }) => queue.push_back(text),
                         // The deck's queue editor mutates its own view of the
                         // backlog and mirrors each edit here so the dispatch
                         // queue never drifts from what the user is looking at.

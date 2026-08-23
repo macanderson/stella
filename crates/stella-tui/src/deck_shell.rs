@@ -97,6 +97,10 @@ pub struct DeckOptions {
     ///
     /// `--plain` is unaffected and stays what it is: the no-terminal path.
     pub accessible: bool,
+    /// What a plain prompt typed at a running agent does (`ui.mid_turn_prompt`):
+    /// queue for the lead so Esc can steer it (the default), raise the routing
+    /// card, or fork a sidecar. See [`crate::deck_ui::MidTurnPrompt`].
+    pub mid_turn_prompt: crate::deck_ui::MidTurnPrompt,
 }
 
 fn now_ms() -> u64 {
@@ -528,6 +532,7 @@ pub async fn run_deck(
     ui.color_mode = color_mode;
     ui.no_anim = no_anim;
     ui.accessible = opts.accessible;
+    ui.mid_turn_prompt = opts.mid_turn_prompt;
     ui.scrollback.set_live(inline);
     // A degraded accessible session must say so. The whole promise of the mode
     // is that finished messages become durable terminal output; if the inline
@@ -674,7 +679,8 @@ pub async fn run_deck(
                                 // queue is the labeled out-of-band fold of the
                                 // OUTBOUND stream; this is its one mutation site.)
                                 match &input {
-                                    WorkspaceInput::Enqueue { text } => {
+                                    WorkspaceInput::Enqueue { text }
+                                    | WorkspaceInput::EnqueueNext { text } => {
                                         model.queue.enqueue(text.clone(), model.now_ms);
                                     }
                                     // The first submission after a double-Esc
