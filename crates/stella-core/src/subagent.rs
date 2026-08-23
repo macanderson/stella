@@ -89,6 +89,17 @@
 //! it is the metering record, and dropping it is exactly how child cost
 //! would vanish from `stella stats` and quietly falsify `$/resolved task`.
 //!
+//! **The two metering records are the exception, and they earn it** (#4383).
+//! `StepUsage` and `UsageIncomplete` carry a `sub_agent_id`, stamped by
+//! `child_sender`. The bracket cannot answer for them, because independent
+//! delegates are dispatched *concurrently*: several children's events
+//! interleave on the parent's one stream, so no `Started`/`Finished` pair
+//! encloses any particular call. Until the field existed, a turn's whole cost
+//! landed under the lead — ninety telemetry rows all reading `worker` in
+//! session `ses-1787465453163-60967`, five of them a parallel delegate fan-out
+//! completing within one second — and the `(role, model)` census AGENTS.md
+//! tells a bench reader to run could not separate a lead from its delegates.
+//!
 //! The bracket survives cancellation (#1954): a caller that drops the
 //! future mid-flight — a latency ceiling, a hard cancel — still gets a
 //! `Finished` carrying the committed step count and cost (`CancelBracket`),
@@ -818,7 +829,14 @@ impl Engine<'_> {
         messages.push(CompletionMessage::user(spec.instruction.clone()));
         let seeded = messages.len();
 
-        let child_events = child_sender(events.clone(), tally.clone());
+        let child_events = child_sender(events.clone(), spec.agent_id.clone(), tally.clone());
+        // A call may never be granted more than what is left of the ceiling the
+        // whole child runs under (#4488).
+        carve.set_task_deadline(bounded_by_ceiling(
+            carve.task_deadline(),
+            self.config.tool_timeout,
+            std::time::Instant::now(),
+        ));
         // The carve is handed to the turn through a guard that settles it on
         // DROP, not on return (#1850). `settle_child` used to be a statement
         // after the await, so any exit that was not a return skipped it: a
@@ -948,17 +966,81 @@ impl CommittedTally {
     }
 }
 
-/// The child's event sender: drops what must not cross ([`forwards_to_parent`])
-/// and tallies committed model calls — count and cost — on the way past.
+/// What a child must keep in hand after its deadline trips: abort at the step
+/// boundary, assemble the report, close the bracket (#4488).
+///
+/// The number's requirement is only that it be strictly positive and small
+/// against the ceiling, so the child always reaches its own deadline before
+/// the engine's dispatch ceiling reaches the tool. Thirty seconds is generous
+/// for work that is pure local computation with no model call left in it.
+const CEILING_RESERVE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The wall clock this child may spend, given what it inherited and the
+/// dispatch ceiling its whole run sits under.
+///
+/// # The defect this closes (#4488)
+///
+/// The delegate's ceiling is `EngineConfig::tool_timeout` (15 minutes), and
+/// the per-call bound underneath it is `model_timeout` — which measures
+/// **silence**, not elapsed time. So a stream that dribbles a fragment every
+/// few seconds re-arms the idle bound forever, consumes the entire ceiling
+/// with one call, and is abandoned by `execute_with_repair` with nothing
+/// salvaged: the child never got to decide anything, because nothing inside it
+/// knew what its outer ceiling was.
+///
+/// A task deadline is what the engine already bounds a dispatch by
+/// (`step::deadline_bounded_generation`, #2021), and it is a wall clock rather
+/// than an idle gap — so deriving one from the ceiling makes the child see its
+/// own limit first and report the call as timed out. The reserve is what keeps
+/// "first" true rather than a coin flip at the same instant.
+///
+/// The tighter of the two always wins, so a parent already racing a deadline
+/// never hands a child more time than the parent itself has.
+fn bounded_by_ceiling(
+    inherited: Option<std::time::Instant>,
+    ceiling: Option<std::time::Duration>,
+    now: std::time::Instant,
+) -> Option<std::time::Instant> {
+    let from_ceiling = ceiling.map(|ceiling| now + ceiling.saturating_sub(CEILING_RESERVE));
+    match (inherited, from_ceiling) {
+        (Some(inherited), Some(from_ceiling)) => Some(inherited.min(from_ceiling)),
+        (only, None) | (None, only) => only,
+    }
+}
+
+/// The child's event sender: drops what must not cross ([`forwards_to_parent`]),
+/// stamps whose call each metering record was, and tallies committed model
+/// calls — count and cost — on the way past.
 ///
 /// Tallying here rather than from the turn outcome is what makes the numbers
 /// truthful on an abort too — `StepUsage` is emitted per committed call, so a
 /// child that died on step 5 of 16 reports 5. See [`CommittedTally`] for why
 /// it is also the only record that survives a cancel.
-fn child_sender(parent: EventSender, tally: Arc<CommittedTally>) -> EventSender {
-    EventSender::from_fn(move |event| {
+///
+/// # Why the id is stamped here (#4383)
+///
+/// This is the one place that knows *which* child an event belongs to. The
+/// `Started`/`Finished` bracket was designed as the whole attribution
+/// mechanism and is enough for everything else, but the engine dispatches
+/// independent delegates concurrently: several children's events interleave on
+/// the parent's one stream, and no bracket pair encloses any particular call.
+/// So the two metering records carry the id, and every other event keeps the
+/// bracket as its only attribution.
+///
+/// **The innermost sender wins.** A grandchild's event passes this closure
+/// once per level on its way up; the first stamp is the grandchild's own, and
+/// the levels above leave it alone. A cost question is about who spent it, not
+/// about who delegated to whoever spent it.
+fn child_sender(parent: EventSender, agent_id: String, tally: Arc<CommittedTally>) -> EventSender {
+    EventSender::from_fn(move |mut event| {
         if let AgentEvent::StepUsage { cost_usd, .. } = &event {
             tally.observe(*cost_usd);
+        }
+        if let AgentEvent::StepUsage { sub_agent_id, .. }
+        | AgentEvent::UsageIncomplete { sub_agent_id, .. } = &mut event
+            && sub_agent_id.is_none()
+        {
+            *sub_agent_id = Some(agent_id.clone());
         }
         if forwards_to_parent(&event) {
             parent.send(event)

@@ -89,6 +89,7 @@ fn type_tag_matches_the_serde_type_wire_tag() {
             duration_ms: 1,
             retries: None,
             partial: None,
+            sub_agent_id: None,
         },
         AgentEvent::GoalVerdict {
             round: 1,

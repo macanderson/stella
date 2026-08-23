@@ -259,6 +259,61 @@ pub(super) fn last_assistant_text(state: &crate::step::TurnState) -> Option<Stri
         .map(|message| message.content.clone())
 }
 
+/// One committed model call, in the shape the metering record needs.
+///
+/// A struct rather than seven positional parameters: `step`, `duration_ms`
+/// and `retries` are all bare integers, and a caller that transposed two of
+/// them would compile and mis-meter every call.
+pub(super) struct SettledCall<'a> {
+    pub(super) step: usize,
+    pub(super) role: stella_protocol::event::ModelCallRole,
+    /// The provider that actually served the call, never the session default.
+    pub(super) provider: &'a str,
+    pub(super) result: &'a stella_protocol::CompletionResult,
+    pub(super) estimated_input_tokens: u64,
+    pub(super) duration_ms: u64,
+    pub(super) retries: u32,
+}
+
+/// Emit the metering record for one committed call.
+///
+/// Lives here rather than at the call site because `driver.rs` is a
+/// grandfathered god file closed to growth (AGENTS.md § "God files"), and
+/// because this is settlement: the event carries the same figures the budget
+/// settles on, at the same no-await boundary.
+pub(super) fn emit_step_usage(events: &EventSender, call: SettledCall<'_>) {
+    let result = call.result;
+    let _ = events.send(AgentEvent::StepUsage {
+        step: call.step,
+        role: call.role,
+        provider: call.provider.to_string(),
+        upstream_provider: result.upstream_provider.clone(),
+        // The engine's own step already streams its answer as a `Text`
+        // event; duplicating it here would double the transcript.
+        output_text: None,
+        model: result.model.clone(),
+        input_tokens: result.usage.input_tokens,
+        output_tokens: result.usage.output_tokens,
+        cached_input_tokens: result.usage.cached_input_tokens,
+        cache_write_tokens: result.usage.cache_write_tokens,
+        reasoning_tokens: result.usage.reasoning_tokens,
+        estimated_input_tokens: call.estimated_input_tokens,
+        cost_usd: result.cost_usd,
+        duration_ms: call.duration_ms,
+        retries: call.retries,
+        tool_calls: result.tool_calls.len(),
+        complete: result.usage.is_complete(),
+        // The provider's own stop reason, forwarded rather than inferred:
+        // `Length` here is the only truthful "this step hit the output
+        // ceiling" signal any consumer gets.
+        finish_reason: result.finish_reason,
+        // The lead's own call. A delegate's is stamped where the delegate is
+        // known — `subagent::child_sender`, the one place that can say which
+        // of several concurrent children an event belongs to (#4383).
+        sub_agent_id: None,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

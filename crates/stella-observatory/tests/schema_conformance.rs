@@ -278,6 +278,7 @@ fn real_store_workspace() -> tempfile::TempDir {
                 retries: 0,
                 tool_calls: 2,
                 usage_complete: true,
+                sub_agent_id: None,
             },
         )
         .expect("telemetry");
@@ -384,6 +385,7 @@ fn real_store_workspace() -> tempfile::TempDir {
                 produced_output: true,
                 wrote_files: true,
                 truncated: false,
+                partial_run: false,
             },
         )
         .expect("reflection");

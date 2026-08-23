@@ -1351,31 +1351,18 @@ impl<'a> Engine<'a> {
         // Cost and usage settle at one no-await boundary. Speculative tool
         // work may still be draining; cancellation in that interval must not
         // preserve spend while losing its per-call accounting envelope.
-        let _ = events.send(AgentEvent::StepUsage {
-            step,
-            role: self.call_role,
-            provider: self.active_provider().id().to_string(),
-            upstream_provider: result.upstream_provider.clone(),
-            // The engine's own step already streams its answer as a `Text`
-            // event; duplicating it here would double the transcript.
-            output_text: None,
-            model: result.model.clone(),
-            input_tokens: result.usage.input_tokens,
-            output_tokens: result.usage.output_tokens,
-            cached_input_tokens: result.usage.cached_input_tokens,
-            cache_write_tokens: result.usage.cache_write_tokens,
-            reasoning_tokens: result.usage.reasoning_tokens,
-            estimated_input_tokens,
-            cost_usd: result.cost_usd,
-            duration_ms: call_duration_ms,
-            retries: retries.len() as u32,
-            tool_calls: result.tool_calls.len(),
-            complete: result.usage.is_complete(),
-            // The provider's own stop reason, forwarded rather than inferred:
-            // `Length` here is the only truthful "this step hit the output
-            // ceiling" signal any consumer gets.
-            finish_reason: result.finish_reason,
-        });
+        settlement::emit_step_usage(
+            events,
+            settlement::SettledCall {
+                step,
+                role: self.call_role,
+                provider: self.active_provider().id(),
+                result: &result,
+                estimated_input_tokens,
+                duration_ms: call_duration_ms,
+                retries: retries.len() as u32,
+            },
+        );
         let speculation = speculation_future.await;
 
         Ok(CommittedStep {

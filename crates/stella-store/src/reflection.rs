@@ -76,8 +76,9 @@ impl Store {
         self.lock().execute(
             "INSERT OR REPLACE INTO execution_reflection \
              (execution_id, prompt, delivered, self_rating, what_went_well, \
-              what_to_improve, critique, produced_output, wrote_files, truncated) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              what_to_improve, critique, produced_output, wrote_files, truncated, \
+              partial_run) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 execution_id,
                 r.prompt,
@@ -89,6 +90,7 @@ impl Store {
                 r.produced_output as i64,
                 r.wrote_files as i64,
                 r.truncated as i64,
+                r.partial_run as i64,
             ],
         )?;
         Ok(())
@@ -194,22 +196,44 @@ impl Store {
 
     /// Derive and record the objective half of this turn's
     /// `execution_reflection` — prompt, plus `produced_output` / `wrote_files`
-    /// / `truncated` computed from the event and file-touch logs.
+    /// / `truncated` computed from the event and file-touch logs, and
+    /// `partial_run` read off the outcome.
     ///
     /// Leaves the self-review columns exactly as it found them:
     /// [`Store::record_self_review`] has usually already written them by the
     /// time this runs, and the whole-row replace this used to do erased them.
+    ///
+    /// # Why a cancelled run still gets a row (#3808)
+    ///
+    /// Because the work it did is real and is measured here. A cancel lands
+    /// before the reflection model call, so the self-review half stays empty —
+    /// and until `partial_run` existed that empty row was indistinguishable
+    /// from a turn the model looked at and declined to assess, which is the
+    /// reading that made the runs most worth learning from look like the ones
+    /// with nothing to say. Marking the scope is the answer; withholding the
+    /// row would throw away the objective half as well.
+    ///
+    /// Derived here rather than passed in by the caller: the outcome is a
+    /// column this function is already inside a read of, and a parameter would
+    /// be a second copy of it for the caller to get wrong.
+    /// `executions.usage_complete` is untouched and unrelated — that one is
+    /// about the provider's usage envelope, which a cancel genuinely makes
+    /// unknowable.
     pub fn finalize_execution_reflection(&self, execution_id: i64) -> Result<()> {
-        let (prompt, produced_output, wrote_files, truncated) = {
+        let (prompt, partial_run, produced_output, wrote_files, truncated) = {
             let conn = self.lock();
-            let prompt: String = conn
+            let (prompt, outcome): (String, Option<String>) = conn
                 .query_row(
-                    "SELECT prompt FROM executions WHERE id = ?1",
+                    "SELECT prompt, outcome FROM executions WHERE id = ?1",
                     params![execution_id],
-                    |r| r.get(0),
+                    |r| Ok((r.get(0)?, r.get(1)?)),
                 )
                 .optional()?
                 .unwrap_or_default();
+            // The one outcome that stops a turn before it can be assessed.
+            // Matched against the label `record_execution_end` writes, which is
+            // the same string `terminal_usage_known` reads.
+            let partial_run = outcome.as_deref() == Some("cancelled");
             let produced_output: bool = conn.query_row(
                 "SELECT COUNT(*) FROM events \
                  WHERE execution_id = ?1 AND event_type IN ('text', 'tool_start')",
@@ -264,23 +288,25 @@ impl Store {
                 params![execution_id],
                 |r| r.get::<_, i64>(0),
             )? > 0;
-            (prompt, produced_output, wrote_files, truncated)
+            (prompt, partial_run, produced_output, wrote_files, truncated)
         };
         self.lock().execute(
             "INSERT INTO execution_reflection \
-             (execution_id, prompt, produced_output, wrote_files, truncated) \
-             VALUES (?1, ?2, ?3, ?4, ?5) \
+             (execution_id, prompt, produced_output, wrote_files, truncated, partial_run) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
              ON CONFLICT(execution_id) DO UPDATE SET \
                prompt = excluded.prompt, \
                produced_output = excluded.produced_output, \
                wrote_files = excluded.wrote_files, \
-               truncated = excluded.truncated",
+               truncated = excluded.truncated, \
+               partial_run = excluded.partial_run",
             params![
                 execution_id,
                 prompt,
                 produced_output as i64,
                 wrote_files as i64,
                 truncated as i64,
+                partial_run as i64,
             ],
         )?;
         Ok(())
@@ -292,9 +318,19 @@ mod tests {
     use super::*;
 
     fn wrote_files_of(store: &Store, execution_id: i64) -> i64 {
+        column_of(store, execution_id, "wrote_files")
+    }
+
+    fn partial_run_of(store: &Store, execution_id: i64) -> i64 {
+        column_of(store, execution_id, "partial_run")
+    }
+
+    /// One integer column of one reflection row. The column name is a literal
+    /// from this module's own tests, never caller input.
+    fn column_of(store: &Store, execution_id: i64, column: &str) -> i64 {
         let conn = store.lock();
         conn.query_row(
-            "SELECT wrote_files FROM execution_reflection WHERE execution_id = ?1",
+            &format!("SELECT {column} FROM execution_reflection WHERE execution_id = ?1"),
             params![execution_id],
             |r| r.get(0),
         )
@@ -367,6 +403,105 @@ mod tests {
             "a succeeded edit_file is a fact about whether the turn wrote, even when the \
              turn-boundary snapshot saw nothing"
         );
+    }
+
+    /// **#3808's witness.** A cancelled run's reflection used to be a silent
+    /// stub — empty critique, NULL rating, and nothing saying why — so the runs
+    /// most worth learning from read exactly like the ones the model looked at
+    /// and had nothing to say about.
+    ///
+    /// The shape is the audited one (`ses-1787092335250-47513`, execution 157):
+    /// real edits landed, then a human stopped the run. The work is still
+    /// measured, and the row now states the scope that measurement covers.
+    #[test]
+    fn a_cancelled_runs_reflection_says_it_covers_a_partial_run() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("deck", "port the build", "openrouter", "kimi-k3")
+            .unwrap();
+        store
+            .record_event(id, 0, &started("c1", "edit_file"))
+            .unwrap();
+        store
+            .record_event(id, 1, &settled("c1", ok_output("edited")))
+            .unwrap();
+        store.materialize_tool_calls(id).unwrap();
+        // A human stopped it. The label is the one `record_execution_end`
+        // writes, and `finalize_execution_reflection` runs after it on every
+        // path including this one.
+        store
+            .finish_execution_accounted(id, "cancelled", 0.0, false)
+            .unwrap();
+
+        store.finalize_execution_reflection(id).unwrap();
+
+        assert_eq!(
+            partial_run_of(&store, id),
+            1,
+            "a stopped run's reflection must say it is about a stopped run"
+        );
+        assert_eq!(
+            wrote_files_of(&store, id),
+            1,
+            "and must not throw away the half that is still true: the edits happened"
+        );
+    }
+
+    /// The other direction, or the column says nothing: a turn that reached its
+    /// own end is not partial, however it ended.
+    #[test]
+    fn a_run_that_reached_its_own_end_is_not_partial() {
+        let store = Store::in_memory().unwrap();
+        for outcome in ["success", "error", "budget_exhausted"] {
+            let id = store
+                .begin_execution("run", outcome, "openrouter", "kimi-k3")
+                .unwrap();
+            store
+                .finish_execution_accounted(id, outcome, 0.0, true)
+                .unwrap();
+            store.finalize_execution_reflection(id).unwrap();
+            assert_eq!(partial_run_of(&store, id), 0, "{outcome}");
+        }
+    }
+
+    /// The self-review producer writes first in every live path, and finalize
+    /// must add the scope without erasing the assessment — the clobber #2175's
+    /// narrowing already fixed once, now with one more column to lose.
+    #[test]
+    fn finalize_marks_a_partial_run_without_erasing_a_self_review() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("deck", "port the build", "openrouter", "kimi-k3")
+            .unwrap();
+        store
+            .record_self_review(
+                id,
+                &SelfReviewRow {
+                    delivered: Some(false),
+                    self_rating: Some(3),
+                    what_went_well: "the build passed".into(),
+                    what_to_improve: "stopped short".into(),
+                    critique: "half the migration landed".into(),
+                },
+            )
+            .unwrap();
+        store
+            .finish_execution_accounted(id, "cancelled", 0.0, false)
+            .unwrap();
+
+        store.finalize_execution_reflection(id).unwrap();
+
+        assert_eq!(partial_run_of(&store, id), 1);
+        let critique: String = {
+            let conn = store.lock();
+            conn.query_row(
+                "SELECT critique FROM execution_reflection WHERE execution_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(critique, "half the migration landed");
     }
 
     /// The other direction must not drift: a read-only turn still wrote
