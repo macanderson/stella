@@ -22,6 +22,7 @@ use super::*;
 use crate::plugin_cmd::roster::{InstalledPlugin, PluginScope};
 
 mod report;
+mod stage_program;
 
 const WRAPPER_MANIFEST: &str = r#"
 name = "budget-keeper"

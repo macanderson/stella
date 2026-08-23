@@ -82,17 +82,21 @@ max_calls = 1
 tier = "plan"
 
 # The stage order this variant runs, and the id the executions row records
-# (#3388). Transcribed from `stage_rank` in `crates/stella-pipeline/src/replay.rs`,
-# the same source `research-v1` reads from — see that manifest's header
-# comment for why every stage but the ones this plugin actually gates is
-# declared unconditional (the closed condition grammar has no conjunction,
-# #3538).
+# (#3388). The same order `research-v1` declares — see that manifest's header
+# comment for why every stage is unconditional, and why the source it was
+# transcribed from (`crates/stella-pipeline`) is gone.
 #
-# `plan` carries its real gate: the built-in stage's own call site
-# (`Pipeline::plan_stage`) only runs when triage's `Signal::Plans` is true,
-# and `if = "plans"` is that boolean read exactly
-# (`crates/stella-plugin/src/wrapper.rs::Signal::Plans`, "Boolean, triage:
-# this task class plans").
+# `plan` used to carry `if = "plans"`, the built-in stage's own gate on
+# triage's `Signal::Plans`. It came off in #3547 with `research-v1`'s, and for
+# this plugin the consequence was total rather than partial: no shipping host
+# runs a triage stage, so `plans` is published `false` unconditionally and
+# `plan` is the *only* stage this plugin answers at. `plan-v1` was therefore
+# inert end to end — installed, selected, dispatched, and structurally unable
+# to contribute anything.
+#
+# Selecting `--pipeline plan-v1` is now what asks for a planner turn, which is
+# the honest reading: the user named the pipeline, and nothing else on this
+# door has an opinion about whether the task plans.
 [wrapper]
 id = "plan-v1"
 
@@ -104,11 +108,9 @@ name = "recall"
 
 [[wrapper.stages]]
 name = "research"
-if = "questions > 0"
 
 [[wrapper.stages]]
 name = "plan"
-if = "plans"
 
 [[wrapper.stages]]
 name = "scope"

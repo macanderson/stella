@@ -40,10 +40,26 @@ fn plugin_dir() -> PathBuf {
         .expect("the first-party plugin ships in this repository at plugins/stella-plan")
 }
 
+fn manifest_text() -> String {
+    fs::read_to_string(plugin_dir().join("plugin.toml"))
+        .expect("the manifest file is `plugin.toml`, exactly")
+}
+
 fn manifest() -> PluginManifest {
-    let text = fs::read_to_string(plugin_dir().join("plugin.toml"))
-        .expect("the manifest file is `plugin.toml`, exactly");
-    PluginManifest::from_toml_str(&text).expect("the shipped manifest loads")
+    PluginManifest::from_toml_str(&manifest_text()).expect("the shipped manifest loads")
+}
+
+/// The shipped manifest with one condition put back on its `plan` stage.
+///
+/// The stage order under test stays the shipped one — only the condition is
+/// added — so what this grades is the resolver's treatment of a condition,
+/// not a fixture pipeline of its own.
+fn manifest_gated_on(condition: &str) -> PluginManifest {
+    let text = manifest_text().replace(
+        "name = \"plan\"\n",
+        &format!("name = \"plan\"\nif = \"{condition}\"\n"),
+    );
+    PluginManifest::from_toml_str(&text).expect("a gated stage order loads")
 }
 
 fn transport(manifest: &PluginManifest) -> SubprocessWrapper {
@@ -172,7 +188,11 @@ async fn the_host_sequence_drives_the_plugin_and_the_host_runs_its_child_turn() 
         .run(
             RoundInput {
                 goal: "retry_budget is not honoured".into(),
-                signals: signals(true),
+                // What a real run publishes: no host runs a triage stage, so
+                // `plans` is false on every one of them. The manifest gated
+                // `plan` on it until #3547, which made this plugin — whose
+                // only stage is `plan` — inert end to end.
+                signals: signals(false),
                 candidate: None,
             },
             &mut driver,
@@ -241,15 +261,19 @@ async fn the_host_sequence_drives_the_plugin_and_the_host_runs_its_child_turn() 
     );
 }
 
-/// The declared condition is the host's, not the plugin's: with `plans =
-/// false` the stage does not run, so the plugin is never asked and the turn
+/// The declared condition is the host's, not the plugin's: a stage whose
+/// condition is false does not run, so the plugin is never asked and the turn
 /// is byte-for-byte the one a host without it would have run — the same
-/// advisory contract `research_plugin_dispatch.rs`'s sibling test holds for
-/// `questions`.
+/// advisory contract `research_plugin_dispatch.rs`'s sibling test holds.
+///
+/// Driven against a manifest patched to gate `plan` on a **host** signal
+/// rather than the shipped file, since #3547 took the shipped condition off.
+/// `test-command` is a fact this host answers for, which is what
+/// `doc:wrapper-socket` §5 now points a manifest author at.
 #[tokio::test]
-async fn a_turn_that_does_not_plan_gets_no_contribution() {
+async fn a_stage_whose_declared_condition_is_false_gets_no_contribution() {
     let dispatcher = PlannerDispatcher::default();
-    let dispatch = dispatch(manifest(), dispatcher.clone());
+    let dispatch = dispatch(manifest_gated_on("test-command"), dispatcher.clone());
     let mut driver = RecordingDriver::default();
 
     let report = dispatch

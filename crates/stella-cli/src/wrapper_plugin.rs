@@ -964,6 +964,18 @@ pub(crate) fn bind_installed(
 ///   run with no assessment has, and a wrapper whose stage condition reads one
 ///   sees exactly that.
 ///
+///   **The consequence is a manifest author's, and it is not a small one**
+///   (#3547). [`Wrapper::resolve`] drops a stage whose condition is false, so
+///   a manifest gating on a triage signal declares a stage this host will
+///   never ask it to contribute at: installed, selected, dispatched, silently
+///   useless. Both first-party plugins shipped that way — `plan-v1` end to
+///   end, because the gated stage was the only one it answered at — until the
+///   conditions came off. `doc:wrapper-socket` §5 states the rule where a
+///   plugin author meets it. Producing real values here is a paid triage call
+///   on the door whose design point is that the raw loop is the default; that
+///   is a cost decision, not a refactor, and it is why the answer was to stop
+///   transcribing a rule nothing enforces rather than to buy one.
+///
 /// [`Wrapper::resolve`]: stella_plugin::Wrapper::resolve
 pub(crate) fn pre_turn_signals(test_command: bool, budget_metered: bool) -> SignalValues {
     SignalValues {
