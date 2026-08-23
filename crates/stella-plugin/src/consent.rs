@@ -38,15 +38,16 @@
 //! this crate, because the two crates may not depend on each other in either
 //! direction and a hand-kept copy of that string would be the mirror #3310
 //! removed. Binding a declared capability to an `AuthzGate` rule is the
-//! loader's job (`doc:pipeline-as-plugins` §A4).
+//! loader's job (`doc:pipeline-as-plugins` §A4) — `stella-cli`'s
+//! `plugin_authz` does it, and that is where the two vocabularies meet.
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
 use crate::host_call::HostCall;
-use crate::manifest::{Participation, PluginManifest};
+use crate::manifest::{HookEvent, Participation, PluginManifest};
 use crate::oracle::OracleProcessSource;
-use crate::wire::{WIRE_FIELDS, WrapperPoint};
+use crate::wire::{WIRE_FIELDS, WrapperPoint, hook_disclosures_for};
 
 /// How bad one honest call of a tool is — re-exported from
 /// [`stella_protocol`], which is where the vocabulary lives.
@@ -572,7 +573,12 @@ fn data_that_leaves_the_process(manifest: &PluginManifest) -> Vec<String> {
         .filter(|field| manifest.loop_grant.permits_point(field.point))
         .filter_map(|field| field.disclosure.map(|sentence| (field.point, sentence)))
         .collect();
-    if disclosed.is_empty() {
+    // The hook channel is the second pipe into the same process, and it used
+    // to be disclosed nowhere: an observer declaring `hooks` and no wrapper
+    // point rendered "It asks for no tool capabilities." and no data section,
+    // while its process was fed the user's tool arguments (#4310).
+    let hooks = hook_disclosures_for(&manifest.loop_grant.hooks);
+    if disclosed.is_empty() && hooks.is_empty() {
         return Vec::new();
     }
 
@@ -591,6 +597,12 @@ fn data_that_leaves_the_process(manifest: &PluginManifest) -> Vec<String> {
             rendering = Some(point);
         }
         lines.push(format!("      - {sentence}"));
+    }
+    for (event, sentences) in hooks {
+        lines.push(format!("  - {} (`{event}` hook):", hook_moment(event)));
+        for sentence in sentences {
+            lines.push(format!("      - {sentence}"));
+        }
     }
     lines.push(
         "  Once it has been handed over, nothing in Stella bounds what that process does \
@@ -611,12 +623,36 @@ fn point_moment(point: WrapperPoint) -> &'static str {
     }
 }
 
+/// When each hook event fires, on the same terms as [`point_moment`].
+/// Exhaustive by construction: an eighth [`HookEvent`] does not compile until
+/// it has words here.
+fn hook_moment(event: HookEvent) -> &'static str {
+    match event {
+        HookEvent::SessionStart => "when a session starts",
+        HookEvent::PreToolUse => "before every tool call",
+        HookEvent::PostToolUse => "after every tool call",
+        HookEvent::Stop => "when a turn is about to finish",
+        HookEvent::PreCompact => "before the context is compacted",
+        HookEvent::PreIssueWork => "before the self-driving loop works an issue",
+        HookEvent::PostIssueWork => "after the self-driving loop works an issue",
+    }
+}
+
 /// The "what it may reach outside your turn" half — the capability list, its
 /// headline grade, and the one sentence that keeps a self-declared scope from
 /// reading as an enforced one.
 fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
     let capabilities = &manifest.capabilities;
     let Some(worst) = highest_risk(capabilities) else {
+        // "Asks for nothing" was the whole of this arm, and read as a promise
+        // about a plugin whose process is fed the user's tool inputs on the
+        // hook channel (#4310). The data section above now names what crosses;
+        // this sentence stops contradicting it.
+        if !manifest.loop_grant.hooks.is_empty() {
+            return vec![
+                "It asks to call no tool of its own — what it receives is listed above.".into(),
+            ];
+        }
         return vec!["It asks for no tool capabilities.".into()];
     };
 

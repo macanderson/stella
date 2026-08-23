@@ -93,8 +93,7 @@ the CLI), or a CLI session-layer tool. This crate is also where the tool
 *mechanisms* live regardless of which surface a tool arrives on: operator
 tool policy ([`src/policy.rs`](src/policy.rs)), skill `allowed-tools` grants
 ([`src/skill_grant.rs`](src/skill_grant.rs)), the tool-foundry
-authorship/adoption plane ([`src/foundry_author.rs`](src/foundry_author.rs),
-[`src/foundry_gate.rs`](src/foundry_gate.rs),
+adoption plane ([`src/foundry_gate.rs`](src/foundry_gate.rs),
 [`src/foundry_witness.rs`](src/foundry_witness.rs)), the extension hook
 runner and its approval bridge ([`src/hook_runner.rs`](src/hook_runner.rs),
 [`src/hook_bridge.rs`](src/hook_bridge.rs)), and the subprocess hygiene
@@ -170,7 +169,7 @@ landing in `registry.rs`.
 | [`src/policy.rs`](src/policy.rs) | `ToolPolicy` — the operator's `"tools"` switches, resolved exact-name-first, then group, then wildcard; scope composition by union of denials. |
 | [`src/skill_grant.rs`](src/skill_grant.rs) | A skill's `allowed-tools` grant as `ToolPolicy` algebra (#2682): the grant policy, per-name `operator ∧ grant` intersection, and resolution against an advertised surface. |
 | [`src/custom.rs`](src/custom.rs), [`src/validate.rs`](src/validate.rs) | Developer-defined TOML script tools — lenient discovery for a session, strict validation for `stella tools --validate` — and `CustomToolSet`, the decorator that layers them over an inner executor. |
-| [`src/foundry_author.rs`](src/foundry_author.rs), [`src/foundry_gate.rs`](src/foundry_gate.rs), [`src/foundry_witness.rs`](src/foundry_witness.rs) | The tool foundry: authoring a custom-tool manifest from observed shell invocations, the adoption gate that keeps self-authored tools withheld until a human adopts them (re-checked at launch), and the witness run that proves an authored tool works. |
+| [`src/foundry_gate.rs`](src/foundry_gate.rs), [`src/foundry_witness.rs`](src/foundry_witness.rs) | The tool foundry: the adoption gate that keeps a staged tool withheld until a human adopts them (re-checked at launch), and the witness run that proves a staged tool works. Staging the `<name>.toml` + `<name>.sh` pair under `.stella/tools/proposed/` is a hand step — the machine-authoring pass was retired in #3629 for want of a caller. |
 | [`src/exec.rs`](src/exec.rs) | Shared subprocess plumbing for the three spawn paths this crate owns (`bash`, custom tools, shell hooks): the capped two-stream capture, the process-group cancellation backstop (`GroupKillGuard`), and the one model-facing middle-out elision. |
 | [`src/subprocess_env.rs`](src/subprocess_env.rs) | The credential deny-list and env hygiene applied as the last env mutation before any model- or repo-controlled spawn. Downstream crates use this, never a copy. |
 | [`src/hook_runner.rs`](src/hook_runner.rs) | The real-I/O half of the hooks framework (`stella-core` owns matching and blocking). |

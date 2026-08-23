@@ -142,8 +142,13 @@ mod tests {
 
     /// The #1870 witness, end to end on the CLI side: a work journal with two
     /// turn refs where one file changed between them produces a persisted
-    /// diff whose hunks name the changed lines. Fails on main — nothing
-    /// computes or persists a turn diff there.
+    /// diff whose hunks name the changed lines.
+    ///
+    /// The lineage is the **snapshot** one, which is the lineage production
+    /// marks on since #3420 — it used to be built with `WorkJournal::record`,
+    /// which passed here while `session_turn_diffs` was empty in every real
+    /// session, because no production caller had put a workspace path into the
+    /// head lineage since the twelve-tool purge.
     #[test]
     fn a_marked_turn_persists_hunks_naming_the_changed_lines() {
         let guard = tempfile::tempdir().unwrap();
@@ -154,12 +159,16 @@ mod tests {
         let store = Store::open(&ws).unwrap();
 
         std::fs::write(ws.join("a.txt"), "one\ntwo\nthree\n").unwrap();
-        let c1 = journal.record(&["a.txt".into()], &[], "turn 1").unwrap();
-        journal.mark_turn(1, &c1).unwrap();
+        journal.snapshot_worktree().unwrap();
+        journal
+            .mark_turn(1, &journal.snapshot_tip().expect("a baseline"))
+            .unwrap();
 
         std::fs::write(ws.join("a.txt"), "one\nTWO\nthree\n").unwrap();
-        let c2 = journal.record(&["a.txt".into()], &[], "turn 2").unwrap();
-        journal.mark_turn(2, &c2).unwrap();
+        journal.snapshot_worktree().unwrap();
+        journal
+            .mark_turn(2, &journal.snapshot_tip().expect("the turn's tree"))
+            .unwrap();
 
         record_turn_diff(&journal, &store, "ses-witness", Some(41), 2);
 
@@ -201,10 +210,16 @@ mod tests {
         let store = Store::open(&ws).unwrap();
 
         std::fs::write(ws.join("a.txt"), "same\n").unwrap();
-        let c1 = journal.record(&["a.txt".into()], &[], "turn 1").unwrap();
+        journal.snapshot_worktree().unwrap();
+        let c1 = journal.snapshot_tip().expect("a baseline");
         journal.mark_turn(1, &c1).unwrap();
-        // Turn 2 commits nothing new; its mark names the same tree.
-        journal.mark_turn(2, &c1).unwrap();
+        // Turn 2 changed nothing, so the snapshot writes no commit and its tip
+        // still names turn 1's tree — the mark lands on the same object.
+        journal.snapshot_worktree().unwrap();
+        journal
+            .mark_turn(2, &journal.snapshot_tip().expect("still the baseline"))
+            .unwrap();
+        assert_eq!(journal.snapshot_tip().as_deref(), Some(c1.as_str()));
 
         record_turn_diff(&journal, &store, "ses-idle", None, 2);
         assert_eq!(store.session_turn_diff("ses-idle", 2).unwrap(), None);
@@ -221,8 +236,10 @@ mod tests {
         let store = Store::open(&ws).unwrap();
 
         std::fs::write(ws.join("big.txt"), "x".repeat(MAX_FILE_BYTES + 1)).unwrap();
-        let c1 = journal.record(&["big.txt".into()], &[], "turn 1").unwrap();
-        journal.mark_turn(1, &c1).unwrap();
+        journal.snapshot_worktree().unwrap();
+        journal
+            .mark_turn(1, &journal.snapshot_tip().expect("a baseline"))
+            .unwrap();
 
         record_turn_diff(&journal, &store, "ses-big", None, 1);
         let row = store

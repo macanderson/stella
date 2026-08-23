@@ -39,30 +39,48 @@ impl AskUserApprovalResponder {
         Self { io }
     }
 
-    /// The question card for one request: names the tool, the narrower
+    /// The question card for one request: names what is parked, the narrower
     /// subject when the gate had one (a path, a command line), and the
     /// gate's reason — everything the human needs to answer without
     /// digging.
+    ///
+    /// Two shapes because there are two subjects (#3486): a tool call is
+    /// allowed or refused, and a turn's completion is *let stand* or held
+    /// open. Rendering the second as "allow this call" would ask the human
+    /// about a call that does not exist.
     fn question(request: &ApprovalRequest) -> String {
         let subject = request
             .subject
             .as_deref()
             .map(|s| format!(" ({s})"))
             .unwrap_or_default();
-        format!(
-            "`{}`{subject} requires approval: {} — allow this call?",
-            request.tool, request.reason
-        )
+        match request.parked.tool() {
+            Some(tool) => format!(
+                "`{tool}`{subject} requires approval: {} — allow this call?",
+                request.reason
+            ),
+            None => format!(
+                "this turn is about to finish{subject} and a hook asked first: {} — let it \
+                 complete?",
+                request.reason
+            ),
+        }
     }
 }
 
 #[async_trait]
 impl ApprovalResponder for AskUserApprovalResponder {
     async fn respond(&self, request: &ApprovalRequest) -> ApprovalResponse {
-        let options = vec![
-            format!("Yes — allow `{}` this once", request.tool),
-            "No — deny this call".to_string(),
-        ];
+        let options = match request.parked.tool() {
+            Some(tool) => vec![
+                format!("Yes — allow `{tool}` this once"),
+                "No — deny this call".to_string(),
+            ],
+            None => vec![
+                "Yes — let this turn complete".to_string(),
+                "No — hold it open".to_string(),
+            ],
+        };
         match self.io.prompt(&Self::question(request), &options).await {
             // "1"/"yes"/"y" approves; "2"/"no"/"n" (or an empty line) is a
             // bare deny; anything else is a deny carrying the human's own
@@ -151,8 +169,10 @@ mod tests {
 
     fn request() -> ApprovalRequest {
         ApprovalRequest {
-            tool: "delegate".into(),
-            read_only: false,
+            parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+                name: "delegate".into(),
+                read_only: false,
+            },
             reason: "spawns need a human".into(),
             gate: "tool.call.requested".into(),
             subject: Some("delegate: refactor the parser".into()),

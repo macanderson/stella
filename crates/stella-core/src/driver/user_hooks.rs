@@ -65,6 +65,16 @@
 //! declaration a plugin manifest makes (`LoopGrant::max_holds`) is an *ask*
 //! and a manifest must never be able to buy an unbounded loop.
 //!
+//! A `require_approval` decision parks the completion on the same
+//! [`ApprovalRoute`] a `PreToolUse` hook's does, carrying
+//! [`ApprovalSubject::TurnCompletion`] rather than a tool (#3486). Approved,
+//! the completion stands; denied, the refusal becomes the model's next
+//! observation on the `deny` path above and is bounded by the same counter.
+//! **With no route attached it fails open** — the completion stands and the
+//! ask is reported as a diagnostic — for the reason this section already
+//! gives: refusing to complete because nobody was there to answer is the
+//! spiral, not safety.
+//!
 //! # A denial is structured (#3380)
 //!
 //! [`crate::bus::HookDecision::Deny`] carries a [`Denial`], so a verifying
@@ -93,8 +103,8 @@ use super::{Engine, HooksHandle};
 use crate::bus::names as bus_names;
 use crate::event_sender::EventSender;
 use crate::hooks::decision::{
-    ApprovalRoute, ApprovalRouteRequest, ApprovalRouteResolution, GateVerdict, OperatorPosture,
-    run_decision_hooks,
+    ApprovalRoute, ApprovalRouteRequest, ApprovalRouteResolution, ApprovalSubject, GateVerdict,
+    OperatorPosture, run_decision_hooks,
 };
 use crate::hooks::{HookEvent, HookPayload, run_hooks};
 
@@ -268,8 +278,10 @@ impl<'a> Engine<'a> {
                     ));
                 };
                 let request = ApprovalRouteRequest {
-                    tool: call.name.clone(),
-                    read_only,
+                    subject: ApprovalSubject::Tool {
+                        name: call.name.clone(),
+                        read_only,
+                    },
                     reason,
                 };
                 match route.resolve(&request).await {
@@ -375,30 +387,55 @@ impl<'a> Engine<'a> {
                 });
                 Some(reason)
             }
-            Ok(crate::bus::HookDecision::RequireApproval { .. }) => {
-                // Deliberately unanswered, and the reason is structural, not
-                // an oversight: the only route the engine has to a human is
-                // `ApprovalRoute`, whose request is keyed on a tool name and
-                // its `read_only` bit (`hooks::decision::ApprovalRouteRequest`)
-                // and whose broker audit trail is keyed the same way. There is
-                // no tool at a turn boundary, so asking through it would mean
-                // inventing a fake one. Answering "verification budget
-                // exhausted, continue?" properly needs a subject-shaped
-                // request the broker and every asking surface also understand
-                // — bigger than this change, tracked in #3380. Until then the
-                // verb is reported as inapplicable rather than silently
-                // treated as a deny, which would hold the turn open on a
-                // question nobody was asked.
-                self.surface_hook_diagnostics(
-                    "Stop",
-                    &[
-                        "a Stop hook returned `require_approval`, which does not apply at a turn \
-                       boundary; completion allowed"
-                            .to_string(),
-                    ],
-                    events,
-                );
-                None
+            Ok(crate::bus::HookDecision::RequireApproval { reason }) => {
+                // #3486. `ApprovalRouteRequest` used to be keyed on a tool
+                // name and a `read_only` bit, so asking here would have meant
+                // inventing a tool that does not exist and putting it in the
+                // audit trail; the verb was reported as inapplicable instead.
+                // It carries an `ApprovalSubject` now, and a turn boundary has
+                // one of its own.
+                let Some(route) = self.hook_approvals else {
+                    // **Fail open, and the module docs § "The Stop gate" argue
+                    // it.** Failing closed at a turn boundary is not caution:
+                    // it is the compact→error→stop-hook→retry spiral, on a
+                    // question nobody was asked. A headless run completes.
+                    self.surface_hook_diagnostics(
+                        "Stop",
+                        &[format!(
+                            "a Stop hook asked for a human decision ({reason}), and no \
+                             interactive surface is attached to answer it; completion allowed"
+                        )],
+                        events,
+                    );
+                    return None;
+                };
+                let request = ApprovalRouteRequest {
+                    subject: ApprovalSubject::TurnCompletion {
+                        final_text_digest: crate::receipts::sha256_hex_prefixed(final_text),
+                    },
+                    reason,
+                };
+                match route.resolve(&request).await {
+                    // Approved: the completion stands, exactly as an `allow`
+                    // would have left it.
+                    ApprovalRouteResolution::Approved => None,
+                    // Denied: the turn stays open and the refusal is the
+                    // model's next observation — the same tail-message path a
+                    // `deny` takes, and bounded by the same consultation
+                    // allowance, so a surface that keeps refusing cannot loop
+                    // the turn forever.
+                    ApprovalRouteResolution::Denied { reason } => {
+                        let mut reason =
+                            format!("a Stop hook held this turn open for approval: {reason}");
+                        if *stop_consults >= allowance {
+                            reason.push_str(STOP_FINAL_ROUND_NOTE);
+                        }
+                        self.emit_lifecycle(bus_names::HOOK_STOP_BLOCKED, || {
+                            serde_json::json!({ "reason": reason, "evidence": Vec::<String>::new() })
+                        });
+                        Some(reason)
+                    }
+                }
             }
             Ok(_) => None,
             // A broken Stop hook must not wedge the turn into never

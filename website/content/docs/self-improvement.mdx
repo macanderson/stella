@@ -25,9 +25,10 @@ So the pattern repeats. A candidate change is generated cheaply, evaluated again
 
 <CardGrid size="md">
   <SpecCard title="Tool Foundry (#830)">
-    stella authors, tests, and installs its own tools at runtime. When it hits a capability gap
-    — the same shell incantation reconstructed three times — it synthesizes a typed tool, proves
-    it with a witness test, and registers it. Expands the *action space*, not just memory.
+    A capability gap — the same shell incantation reconstructed three times — becomes a typed
+    tool, proved by a witness test and registered only after a human adopts and enables it.
+    Expands the *action space*, not just memory. Today the last two steps ship and the first
+    does not: nothing turns a detected gap into a staged tool, so the pair is written by hand.
   </SpecCard>
   <SpecCard title="Eval-driven self-tuning (#831)">
     A bandit over stella's own prompts, policies, and model routing. Variants run A/B on real
@@ -120,13 +121,14 @@ The load-bearing edge is **dataset → eval**. #836's own stated first slice is 
     / `--require-verdict`, every string through the secret redactor, written owner-only.
   </SpecCard>
   <SpecCard title="Shipped in slices — the Tool Foundry">
-    #830. The capability-gap detector is `stella-core`'s `tool_foundry`; authoring, the witness,
-    and the adoption gate are `stella-tools`' `foundry_author` / `foundry_witness` /
-    `foundry_gate`. The promotion half ships as [`stella tools --adopt`, `--enable`,
-    `--disable` and `--foundry`](/docs/commands/tools), and a proposed tool is inert until it is
-    **both** adopted and enabled. The detection and authoring half has no live caller yet — no
-    command mines proposals from a running session or writes the staged pair, so staging is by
-    hand ([#3629](https://github.com/macanderson/stella/issues/3629)).
+    #830. The capability-gap detector is `stella-core`'s `tool_foundry`; the witness and the
+    adoption gate are `stella-tools`' `foundry_witness` / `foundry_gate`. The promotion half
+    ships as [`stella tools --adopt`, `--enable`, `--disable` and
+    `--foundry`](/docs/commands/tools), and a proposed tool is inert until it is **both**
+    adopted and enabled. The detector's only shipped consumer is the offline
+    `make replay-learning` report — no live session mines proposals — and the pass that used to
+    render one into a staged manifest+script pair was retired for want of a caller
+    ([#3629](https://github.com/macanderson/stella/issues/3629)), so staging is by hand.
   </SpecCard>
 </CardGrid>
 

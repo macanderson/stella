@@ -33,7 +33,7 @@ use stella_core::ports::ToolExecutor;
 use stella_protocol::tool::{ToolOutput, ToolSchema};
 use stella_store::{AdoptedTool, Store};
 use stella_tools::custom::{self, CustomTool, CustomToolSet};
-use stella_tools::foundry_author::PROPOSED_DIR;
+use stella_tools::foundry_gate::PROPOSED_DIR;
 use stella_tools::foundry_witness::{WitnessVerdict, prove};
 
 /// Where an adopted manifest and script live — the directory discovery scans.

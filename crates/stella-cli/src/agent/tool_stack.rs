@@ -24,13 +24,16 @@
 //! role" while the staged pipeline minted candidates; that crate is gone
 //! (#3865) and a candidate is asked for by a plugin now).
 //!
-//! # The gate is `NoAuthz`, and that is written down here
+//! # The gate is an installed plugin's grant, or `NoAuthz` by name
 //!
-//! No shipped configuration attaches an authorization plane yet, so every
-//! stack passes [`NoAuthz`] — **chosen by name** in [`session_gate`], never a
-//! nullable slot defaulting open (#2716's constructor-dependency rule). When a
-//! deployment grows a real gate (an RBAC plugin, a host-supplied policy over
-//! the serve wire), `session_gate` is the one function that changes.
+//! [`session_gate`] is the one function that decides. A workspace where an
+//! installed plugin declared `[[capabilities]]` gets
+//! [`crate::plugin_authz::PluginGates`], the rule that refuses that plugin
+//! anything it was not granted at install (#3482); every other workspace gets
+//! [`NoAuthz`] — **chosen by name**, never a nullable slot defaulting open
+//! (#2716's constructor-dependency rule). A deployment that grows a further
+//! plane (an RBAC plugin, a host-supplied policy over the serve wire) composes
+//! it here and nowhere else.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -48,12 +51,24 @@ use crate::tool_policy::PolicyToolSet;
 
 /// The authorization gate every session stack runs under.
 ///
-/// [`NoAuthz`] by name: this deployment does not authorize tool calls, and
-/// that is a decision typed here where a reviewer can see it — not the
-/// absence of a value. A configured gate replaces this one function, and
-/// every driver picks it up through the assembly below.
-pub(crate) fn session_gate() -> Arc<dyn AuthzGate> {
-    Arc::new(NoAuthz)
+/// Reads the workspace's plugin roster **once, here**, and turns each
+/// installed manifest's accepted `[[capabilities]]` list into a rule
+/// ([`crate::plugin_authz::PluginGates`]). That is the only I/O in the plane:
+/// `AuthzGate::check` is consulted per call and must stay pure over data it
+/// prefetched (invariant 2), so the read happens at construction and the gate
+/// carries the answer.
+///
+/// With nothing installed — or nothing installed that declared a capability —
+/// it is [`NoAuthz`] by name: this deployment does not authorize tool calls,
+/// and that is a decision typed here where a reviewer can see it, not the
+/// absence of a value.
+pub(crate) fn session_gate(workspace_root: &std::path::Path) -> Arc<dyn AuthzGate> {
+    match crate::plugin_authz::PluginGates::from_roster(
+        &crate::plugin_cmd::package::session_roster(workspace_root),
+    ) {
+        Some(gates) => Arc::new(gates),
+        None => Arc::new(NoAuthz),
+    }
 }
 
 /// The full session chain over `base`: custom `.stella/tools/*.toml` tools,
@@ -71,7 +86,7 @@ pub(crate) fn session_stack<'a>(
             custom_tools,
             cfg.workspace_root.clone(),
             session_tool_policy(cfg),
-            session_gate(),
+            session_gate(&cfg.workspace_root),
             principal,
         ),
         bus,
@@ -154,7 +169,12 @@ pub(crate) fn policy_stack<'a>(
     bus: Option<HookBus>,
 ) -> GatedToolSet<'a> {
     with_journal(
-        policy_stack_with(base, session_tool_policy(cfg), principal),
+        policy_stack_with(
+            base,
+            session_tool_policy(cfg),
+            session_gate(&cfg.workspace_root),
+            principal,
+        ),
         bus,
     )
 }
@@ -170,13 +190,20 @@ pub(crate) fn policy_stack<'a>(
 /// would have to be cloned across that boundary to derive a policy the caller
 /// has already derived, and the rooted registry carries no session bus to
 /// journal onto — so both are named here rather than re-derived there.
+///
+/// The gate is passed in for the same reason, and it is the call site that
+/// matters most: this is the one that already carries
+/// [`Principal::Plugin`], so a session
+/// gate that reached every other stack and missed this one would be a rule
+/// that never fires where it is needed (#3482).
 pub(crate) fn policy_stack_with<'a>(
     base: &'a dyn ToolExecutor,
     policy: ToolPolicy,
+    gate: Arc<dyn AuthzGate>,
     principal: Principal,
 ) -> GatedToolSet<'a> {
     let permitted = PolicyToolSet::new(base, policy);
-    GatedToolSet::new_boxed(Box::new(permitted), session_gate(), principal)
+    GatedToolSet::new_boxed(Box::new(permitted), gate, principal)
 }
 
 #[cfg(test)]
@@ -264,7 +291,7 @@ mod tests {
         let leaf = Leaf::new();
         assert!(
             matches!(
-                stack(&leaf, session_gate())
+                stack(&leaf, session_gate(std::path::Path::new(".")))
                     .execute("get_state", &json!({}))
                     .await,
                 ToolOutput::Ok { .. }
@@ -402,7 +429,7 @@ mod tests {
             vec![script_tool(dir.path())],
             dir.path().to_path_buf(),
             ToolPolicy::allow_all(),
-            session_gate(),
+            session_gate(dir.path()),
             Principal::User,
         );
 

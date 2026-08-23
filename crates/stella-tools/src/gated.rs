@@ -381,11 +381,13 @@ impl ToolExecutor for GatedToolSet<'_> {
                     );
                 };
                 let request = ApprovalRouteRequest {
-                    tool: name.to_string(),
-                    // The reviewed contract's claim, not the tool's raw
-                    // advertisement — for an unknown name this is the
-                    // untrusted contract's `false`, the cautious direction.
-                    read_only: contract.schema.read_only,
+                    subject: stella_core::hooks::decision::ApprovalSubject::Tool {
+                        name: name.to_string(),
+                        // The reviewed contract's claim, not the tool's raw
+                        // advertisement — for an unknown name this is the
+                        // untrusted contract's `false`, the cautious direction.
+                        read_only: contract.schema.read_only,
+                    },
                     reason,
                 };
                 match route.resolve(&request).await {
@@ -745,7 +747,7 @@ mod tests {
         assert_eq!(leaf.reached(), vec![SPENDS.to_string()]);
         let asked = route.asked();
         assert_eq!(asked.len(), 1, "exactly one question per call");
-        assert_eq!(asked[0].tool, SPENDS);
+        assert_eq!(asked[0].subject.tool(), Some(SPENDS));
         assert!(
             asked[0].reason.contains(SPENDS),
             "the gate's reason survives to the human verbatim: {}",

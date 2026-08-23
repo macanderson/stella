@@ -377,12 +377,87 @@ pub fn resolve_precedence(
 /// its second feeder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalRouteRequest {
-    /// The tool whose dispatch is parked.
-    pub tool: String,
-    /// The tool's advertised `read_only` bit.
-    pub read_only: bool,
+    /// What is parked, and what a surface needs to render it.
+    pub subject: ApprovalSubject,
     /// The hook's reason, verbatim from its `require_approval` decision.
     pub reason: String,
+}
+
+/// What a parked approval question is *about*.
+///
+/// This type is the whole of #3486. The request used to be
+/// `{ tool, read_only, reason }`, which made a tool name a required field of
+/// every question — so a `Stop` hook returning `require_approval` at a **turn
+/// boundary**, where there is no tool, could only ask by inventing one, and
+/// `driver::user_hooks::stop_hook_feedback` answered it with a diagnostic
+/// saying the verb did not apply rather than putting a lie in the audit trail.
+/// `doc:pipeline-as-plugins` §4 A6 names the use case that blocked: a paid
+/// verification plugin asking *"verification budget exhausted, continue?"* had
+/// no way to get an answer.
+///
+/// Closed and deliberately two. A third arm is a new *kind* of question, which
+/// means a new rendering on every asking surface — the parity the CLI prompt,
+/// the Command Deck's card and `stella-serve` are each held to — so it is a
+/// design change rather than a new value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "subject", rename_all = "snake_case")]
+pub enum ApprovalSubject {
+    /// One tool call, parked before it dispatches.
+    Tool {
+        /// The tool whose dispatch is parked.
+        name: String,
+        /// The tool's advertised `read_only` bit.
+        read_only: bool,
+    },
+    /// The turn itself, parked at the boundary where it would complete.
+    TurnCompletion {
+        /// A digest of the text the turn is about to complete with — never
+        /// the text.
+        ///
+        /// A digest rather than the answer because this rides the
+        /// `approval.*` audit events, and invariant #3 governs what those
+        /// carry: a model's reply is content. It is still worth carrying, and
+        /// is not decoration: a surface can tell two questions about two
+        /// different completions apart, and a resolution can be matched to
+        /// the completion it was given for.
+        final_text_digest: String,
+    },
+}
+
+impl ApprovalSubject {
+    /// The tool this question is about, or `None` at a turn boundary.
+    ///
+    /// The accessor the audit payload's `tool` key is built from, which is why
+    /// it is an `Option` rather than a string with a placeholder: a key that is
+    /// absent says "there was no tool", and a key reading `"<turn>"` says a
+    /// tool by that name was parked.
+    #[must_use]
+    pub fn tool(&self) -> Option<&str> {
+        match self {
+            Self::Tool { name, .. } => Some(name),
+            Self::TurnCompletion { .. } => None,
+        }
+    }
+
+    /// Whether what is parked is advertised read-only. `false` at a turn
+    /// boundary: a completion is not a read.
+    #[must_use]
+    pub fn read_only(&self) -> bool {
+        match self {
+            Self::Tool { read_only, .. } => *read_only,
+            Self::TurnCompletion { .. } => false,
+        }
+    }
+
+    /// A short stable label for an audit line and for a surface with one line
+    /// to spend — never parsed, only displayed.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::Tool { name, .. } => format!("`{name}`"),
+            Self::TurnCompletion { .. } => "this turn's completion".to_string(),
+        }
+    }
 }
 
 /// How a routed approval resolved.
@@ -726,14 +801,25 @@ mod tests {
 
     #[test]
     fn approval_request_and_resolution_round_trip_through_serde_json() {
-        let request = ApprovalRouteRequest {
-            tool: "bash".into(),
-            read_only: false,
-            reason: "hook wants a human".into(),
-        };
-        let json = serde_json::to_string(&request).unwrap();
-        let back: ApprovalRouteRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(request, back);
+        // Both subjects, because the turn-boundary one is the arm #3486 added
+        // and a round trip that only ever sees a tool proves nothing about it.
+        for subject in [
+            ApprovalSubject::Tool {
+                name: "bash".into(),
+                read_only: false,
+            },
+            ApprovalSubject::TurnCompletion {
+                final_text_digest: "sha256:abc".into(),
+            },
+        ] {
+            let request = ApprovalRouteRequest {
+                subject,
+                reason: "hook wants a human".into(),
+            };
+            let json = serde_json::to_string(&request).unwrap();
+            let back: ApprovalRouteRequest = serde_json::from_str(&json).unwrap();
+            assert_eq!(request, back);
+        }
 
         for resolution in [
             ApprovalRouteResolution::Approved,

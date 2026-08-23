@@ -88,8 +88,10 @@ impl BrokerApprovalRoute {
 
     fn approval_request(&self, request: &ApprovalRouteRequest) -> ApprovalRequest {
         ApprovalRequest {
-            tool: request.tool.clone(),
-            read_only: request.read_only,
+            // Carried across whole rather than flattened into a tool name:
+            // that flattening is what left a turn-boundary question with
+            // nowhere to go (#3486).
+            parked: request.subject.clone(),
             reason: request.reason.clone(),
             gate: self.gate.clone(),
             subject: None,
@@ -154,8 +156,10 @@ mod tests {
 
     fn hook_request() -> ApprovalRouteRequest {
         ApprovalRouteRequest {
-            tool: "bash".into(),
-            read_only: false,
+            subject: stella_core::hooks::decision::ApprovalSubject::Tool {
+                name: "bash".into(),
+                read_only: false,
+            },
             reason: "hook wants a human".into(),
         }
     }
