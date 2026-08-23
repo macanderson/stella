@@ -104,6 +104,25 @@ or \"absent\"). NEVER command_succeeds or http_ok. Omit the probe if none of the
 - executable: the verbatim command, ONLY if the source asked to run one
 - compound: true only if the sentence is irreducibly compound";
 
+/// [`SYSTEM_PROMPT`], plus the closed `tasks` vocabulary spelled out.
+///
+/// Appended rather than written into the const so the names come from
+/// [`stella_core::records::KNOWN_TASKS`], the one place they are ratified (ADR
+/// 0012 Decision 5). A hand-written second copy here would drift the day a name
+/// is added, and the extractor would keep inventing the one that was missing.
+///
+/// Deterministic: the vocabulary is a `const` slice, so this is the same bytes
+/// on every run and the prompt cache still hits (invariant #7).
+fn system_prompt() -> String {
+    format!(
+        "{SYSTEM_PROMPT}\n\nThe \"tasks\" array is a CLOSED vocabulary. \
+         The only valid values are: {}. A name outside it selects nothing while \
+         still skewing how the record ranks, so omit \"tasks\" rather than \
+         invent a name for a task kind this list does not have.",
+        stella_core::records::KNOWN_TASKS.join(", ")
+    )
+}
+
 /// One extracted claim as the model returns it. Everything the gate and probes
 /// need is here; identity and provenance are stamped in Rust, never asked of the
 /// model.
@@ -686,7 +705,7 @@ async fn call_model(
         chunk.text
     );
     let mut messages = vec![
-        CompletionMessage::system(SYSTEM_PROMPT),
+        CompletionMessage::system(system_prompt()),
         CompletionMessage::user(&user),
     ];
     let mut total_cost = 0.0;
@@ -887,10 +906,17 @@ fn build_proposal(
 
     // Probe-gating: keep only probes honored on an imported origin. A gated probe
     // (command_succeeds / http_ok) is dropped here and can never run.
-    let honored_probe = claim
+    let gated_probe = claim
         .probe
         .clone()
         .filter(|p| gate::probe_honored(Origin::Imported, p.kind));
+    // And keep only probes that could refute the claim they are attached to. A
+    // `path_exists` on a cardinality claim goes green whatever the count is
+    // (#4262), so it is declined and the claim abstains instead.
+    let honored_probe = gated_probe
+        .clone()
+        .filter(|p| gate::probe_can_discriminate(p.kind, &claim.statement));
+    let declined_as_indiscriminate = gated_probe.is_some() && honored_probe.is_none();
 
     let applies = applies_to(&claim);
     let steering = Steering {
@@ -966,7 +992,12 @@ fn build_proposal(
     // its validation or quarantine finding.
     let refutation = outcome.is_eligible().then(|| match &honored_probe {
         Some(p) => probe::evaluate(root, p, observed_at),
-        None => abstained(observed_at),
+        None if declined_as_indiscriminate => abstained(
+            observed_at,
+            "the claim states a count, and the probe offered for it could not \
+             have come back any other way",
+        ),
+        None => abstained(observed_at, "no probe could judge this claim"),
     });
 
     Proposal {
@@ -986,12 +1017,16 @@ fn build_proposal(
 
 /// The refutation for a claim with no runnable probe: honestly unfalsifiable, so
 /// a reviewer knows its accuracy was never machine-checked.
-fn abstained(checked_at: &str) -> Refutation {
+///
+/// `why` distinguishes the two ways a claim gets here — nothing was offered, or
+/// what was offered could not have refuted it (#4262) — because a reviewer
+/// deciding what to do next needs to know which.
+fn abstained(checked_at: &str, why: &str) -> Refutation {
     Refutation {
         verdict: Verdict::Unfalsifiable,
         checked_at: checked_at.to_string(),
         probe_kind: ProbeKind::None,
-        detail: "no probe could judge this claim; measure compliance instead.".to_string(),
+        detail: format!("{why}; measure compliance instead."),
         recommend: None,
         links: Vec::new(),
     }
@@ -1192,10 +1227,33 @@ fn promotion_tier_for(force: Force, applies_to: Option<&AppliesTo>) -> Promotion
 }
 
 /// The record's scope, or `None` when it applies unconditionally.
+///
+/// `tasks` is filtered to the ratified vocabulary
+/// ([`stella_core::records::KNOWN_TASKS`], ADR 0012 Decision 5). The extractor
+/// is a model call and invented its own names for everything it saw —
+/// `add-provider`, `benchmark`, `bisect`, `pull-request` — none of which any
+/// task ever reports, so the selector matched nothing while still counting
+/// toward relevance (#4263). Dropping the name is strictly better than keeping
+/// it: an omitted selector scopes to everything, an inert one scopes to nothing
+/// and skews the ranking of the record that carries it.
+///
+/// Dropped silently rather than reported, because `stella context validate`
+/// already names an unknown task on the record it reaches — and after this
+/// filter, a record can only carry one if a human wrote it.
+///
+/// A surviving name is written **normalised**. `records::select`'s matcher
+/// tokenizes the turn text and compares whole tokens, so `" test "` matches no
+/// turn ever held — it would pass validation, which trims and case-folds before
+/// it checks membership, and still select nothing.
 fn applies_to(claim: &Claim) -> Option<AppliesTo> {
     let applies = AppliesTo {
         paths: claim.paths.clone(),
-        tasks: claim.tasks.clone(),
+        tasks: claim
+            .tasks
+            .iter()
+            .map(|task| task.trim().to_lowercase())
+            .filter(|task| stella_core::records::KNOWN_TASKS.contains(&task.as_str()))
+            .collect(),
         keywords: claim.keywords.clone(),
     };
     (!applies.is_empty()).then_some(applies)
