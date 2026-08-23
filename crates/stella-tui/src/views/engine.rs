@@ -554,6 +554,7 @@ fn activate_row(ui: &mut DeckUi, via_space: bool) -> DeckAction {
                 GlobalRow::AutoMode => state.auto_mode = !state.auto_mode,
                 GlobalRow::EffortAuto => state.effort_auto = !state.effort_auto,
                 GlobalRow::ReasoningAuto => state.reasoning_auto = !state.reasoning_auto,
+                GlobalRow::MinimalPrompt => state.minimal_prompt = !state.minimal_prompt,
                 GlobalRow::AllowedModels => {
                     if via_space {
                         return DeckAction::Handled;
@@ -684,6 +685,7 @@ fn clear_row(ui: &mut DeckUi) -> DeckAction {
             GlobalRow::AutoMode => state.auto_mode = false,
             GlobalRow::EffortAuto => state.effort_auto = false,
             GlobalRow::ReasoningAuto => state.reasoning_auto = false,
+            GlobalRow::MinimalPrompt => state.minimal_prompt = false,
             GlobalRow::AllowedModels => state.allowed_models.clear(),
         },
         EngineTab::Agent(role) => {
@@ -976,6 +978,7 @@ fn render_row(
                 GlobalRow::AutoMode => Some(on_off(state.auto_mode)),
                 GlobalRow::EffortAuto => Some(on_off(state.effort_auto)),
                 GlobalRow::ReasoningAuto => Some(on_off(state.reasoning_auto)),
+                GlobalRow::MinimalPrompt => Some(on_off(state.minimal_prompt)),
                 GlobalRow::AllowedModels => {
                     if state.allowed_models.is_empty() {
                         None // dimmed placeholder below

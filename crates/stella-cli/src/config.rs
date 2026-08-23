@@ -317,6 +317,12 @@ pub struct Config {
     /// parsed CLI and giving it one for a value it never consults would widen
     /// its signature to carry something straight through.
     pub plan_mode: bool,
+    /// `--minimal`: force the minimal base persona for this invocation.
+    /// Stamped from the flag in `main` like [`Self::plan_mode`]; the settings
+    /// spelling (`agent_engine_config.minimal_prompt` / TOML
+    /// `[agents] minimal_prompt`) rides [`Self::engine_settings`], and
+    /// [`Self::minimal_prompt_enabled`] is the one derivation consumers read.
+    pub minimal_prompt: bool,
     pub workspace_root: std::path::PathBuf,
     /// Where this session's turns write their resume point — the handle every
     /// engine this session builds reads its `checkpoint_sink` from.
@@ -734,6 +740,7 @@ impl Config {
                     turn_timeout: None,
                     max_output_tokens: None,
                     plan_mode: false,
+                    minimal_prompt: false,
                     // Unbound: the session whose sidecar this points at is
                     // resolved by the driver, after config load. See the
                     // field's doc comment.
@@ -948,6 +955,7 @@ impl Config {
             turn_timeout: None,
             max_output_tokens: None,
             plan_mode: false,
+            minimal_prompt: false,
             // Unbound until a driver resolves this run's session record — see
             // the field's doc comment.
             durability: crate::durability::SessionDurability::default(),
@@ -998,6 +1006,19 @@ impl Config {
         if self.cache_ttl.is_none() {
             self.cache_ttl = Some(stella_model::CacheTtl::OneHour);
         }
+    }
+
+    /// Whether this session runs the minimal base persona: the `--minimal`
+    /// flag, or `agent_engine_config.minimal_prompt` (`[agents]
+    /// minimal_prompt` in TOML) resolved `on` through the settings scope
+    /// chain. The flag can only turn the mode ON for one invocation — a
+    /// project that configured it stays minimal with or without the flag.
+    pub fn minimal_prompt_enabled(&self) -> bool {
+        self.minimal_prompt
+            || self
+                .engine_settings
+                .as_ref()
+                .is_some_and(|e| e.minimal_prompt_on())
     }
 }
 
@@ -1116,6 +1137,7 @@ impl Config {
             turn_timeout: None,
             max_output_tokens: None,
             plan_mode: false,
+            minimal_prompt: false,
             model_pinned_by_flag: false,
             durability: Default::default(),
             output_ceilings: Default::default(),

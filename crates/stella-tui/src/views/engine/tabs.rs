@@ -71,13 +71,15 @@ pub(super) enum GlobalRow {
     AutoMode,
     EffortAuto,
     ReasoningAuto,
+    MinimalPrompt,
     AllowedModels,
 }
 
-pub(super) const GLOBAL_ROWS: [GlobalRow; 4] = [
+pub(super) const GLOBAL_ROWS: [GlobalRow; 5] = [
     GlobalRow::AutoMode,
     GlobalRow::EffortAuto,
     GlobalRow::ReasoningAuto,
+    GlobalRow::MinimalPrompt,
     GlobalRow::AllowedModels,
 ];
 
@@ -87,6 +89,7 @@ impl GlobalRow {
             GlobalRow::AutoMode => "auto_mode",
             GlobalRow::EffortAuto => "effort_auto",
             GlobalRow::ReasoningAuto => "reasoning_auto",
+            GlobalRow::MinimalPrompt => "minimal_prompt",
             GlobalRow::AllowedModels => "allowed_models",
         }
     }

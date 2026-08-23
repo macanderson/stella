@@ -521,6 +521,7 @@ fn steered_config(workspace_root: PathBuf) -> Config {
         turn_timeout: None,
         max_output_tokens: None,
         plan_mode: false,
+            minimal_prompt: false,
         model_pinned_by_flag: false,
         durability: Default::default(),
         output_ceilings: Default::default(),

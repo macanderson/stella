@@ -653,6 +653,7 @@ pub fn state_from_settings(
         auto_mode: engine.auto_mode_on(),
         effort_auto: engine.effort_auto_on(),
         reasoning_auto: engine.reasoning_auto_on(),
+        minimal_prompt: engine.minimal_prompt_on(),
         allowed_models: engine.allowed_models().to_vec(),
         providers,
         catalog_models,
@@ -708,6 +709,11 @@ pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
             Toggle::Off
         }),
         reasoning_auto: Some(if state.reasoning_auto {
+            Toggle::On
+        } else {
+            Toggle::Off
+        }),
+        minimal_prompt: Some(if state.minimal_prompt {
             Toggle::On
         } else {
             Toggle::Off

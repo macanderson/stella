@@ -219,6 +219,8 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_auto: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimal_prompt: Option<Toggle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_scope_bypass: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_timeout_secs: Option<u64>,
@@ -824,6 +826,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection, S
         auto_mode: cfg.auto_mode,
         effort_auto: cfg.effort_auto,
         reasoning_auto: cfg.reasoning_auto,
+        minimal_prompt: cfg.minimal_prompt,
         headless_scope_bypass: cfg.headless_scope_bypass,
         model_timeout_secs: cfg.model_timeout_secs,
         compaction_budget_tokens: cfg.compaction_budget_tokens,
@@ -903,6 +906,7 @@ fn lower_agents(
         auto_mode: agents.auto_mode,
         effort_auto: agents.effort_auto,
         reasoning_auto: agents.reasoning_auto,
+        minimal_prompt: agents.minimal_prompt,
         headless_scope_bypass: agents.headless_scope_bypass,
         model_timeout_secs: agents.model_timeout_secs,
         compaction_budget_tokens: agents.compaction_budget_tokens,

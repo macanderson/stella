@@ -350,6 +350,7 @@ pub(crate) const ENGINE_ROOT_FIELDS: &[&str] = &[
     "auto_mode",
     "effort_auto",
     "reasoning_auto",
+    "minimal_prompt",
     "headless_scope_bypass",
     "model_timeout_secs",
     "compaction_budget_tokens",
@@ -515,6 +516,7 @@ pub(super) const TOML_AGENTS_FIELDS: &[&str] = &[
     "auto_mode",
     "effort_auto",
     "reasoning_auto",
+    "minimal_prompt",
     "headless_scope_bypass",
     // The three engine budgets. Present in `ENGINE_ROOT_FIELDS` since they
     // shipped, and absent here until the reference config was written against

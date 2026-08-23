@@ -457,6 +457,10 @@ pub(crate) fn reconstruct(
     let mut unresolved: Vec<String> = Vec::new();
     let mut mismatches: Vec<String> = Vec::new();
     let mut current: Option<i64> = None;
+    // The effective system prompt this call was sent, gathered while folding:
+    // the `system_prefix` blocks' exact bytes in manifest order, sectioned by
+    // provenance for the dashboard's "System prompt" view.
+    let mut system_text: Option<String> = None;
 
     for entry in entries {
         let Some(kind) = entry.kind.as_deref() else {
@@ -470,6 +474,9 @@ pub(crate) fn reconstruct(
             unresolved.push(entry.block_id.clone());
             continue;
         };
+        if kind == "system_prefix" {
+            system_text.get_or_insert_with(String::new).push_str(&content);
+        }
         // Local gap content is stored bytes, so re-hashing it proves nothing;
         // `None` says "not evidence" where `true` would claim it was.
         let digest_verified = match &entry.content {
@@ -529,12 +536,23 @@ pub(crate) fn reconstruct(
     } else {
         "compaction"
     };
+    // The dashboard's "System prompt" view: the exact bytes, sectioned by the
+    // setting surface that produced each span. Absent blocks are reported as
+    // absent, never rendered as an empty prompt.
+    let system_prompt = match system_text {
+        Some(text) => crate::system_prompt::sectioned(&text, full),
+        None => json!({
+            "found": false,
+            "note": "this call's manifest resolved no system_prefix block",
+        }),
+    };
     json!({
         "verified": unresolved.is_empty() && mismatches.is_empty(),
         "unresolved": unresolved,
         "digest_mismatches": mismatches,
         "journal_era": era.tag(),
         "digest_mismatch_severity": severity,
+        "system_prompt": system_prompt,
         "messages": rendered,
     })
 }

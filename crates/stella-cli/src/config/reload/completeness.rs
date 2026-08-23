@@ -69,6 +69,7 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
         turn_timeout,
         max_output_tokens,
         plan_mode,
+        minimal_prompt,
         workspace_root,
         durability: _,
         output_ceilings: _,
@@ -133,6 +134,14 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
             name: "plan_mode",
             posture: Posture::StartupOnly(INVOCATION),
             moved: plan_mode != &before.plan_mode,
+        },
+        Field {
+            name: "minimal_prompt",
+            // Only the FLAG half lives here; the settings spelling rides
+            // `engine_settings`, which does reload — but the assembled prompt
+            // is fixed at session start either way (L-E8).
+            posture: Posture::StartupOnly(INVOCATION),
+            moved: minimal_prompt != &before.minimal_prompt,
         },
         Field {
             name: "workspace_root",
