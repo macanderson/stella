@@ -66,7 +66,7 @@ export interface BlockOrigin {
 export type BudgetMode = "off" | "observed" | "enforced";
 
 /**
- * Which budget limit a [`AgentEvent::BudgetDenied`] tripped — mirrors
+ * Which budget limit a [`super::AgentEvent::BudgetDenied`] tripped — mirrors
  * `stella-core::budget::BudgetAxis` (kept separate so `stella-protocol`
  * never depends on `stella-core`).
  */
@@ -827,7 +827,7 @@ export interface PartialUsage {
 }
 
 /**
- * What kind of policy-plane decision a [`AgentEvent::PolicyDecision`]
+ * What kind of policy-plane decision a [`super::AgentEvent::PolicyDecision`]
  * records (receipts spec §6.4).
  */
 export type PolicyKind = "evaluated" | "blocked" | "approval_requested" | "secret_detected";
@@ -1035,13 +1035,13 @@ export interface ScopeProposal {
 export type StageName = string;
 
 /**
- * Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
+ * Whose stage boundary an [`super::AgentEvent::Stage`] reports (#3398).
  *
  * Deliberately **not** `#[serde(default)]`. A default would silently claim
  * one scope for every historical recording, and half of them are the other
  * one — a decode ambiguity that would live in the fixtures forever. A
  * recording written before this field existed decodes through
- * [`AgentEvent::Unknown`] instead, which says "I do not know what this is"
+ * [`super::AgentEvent::Unknown`] instead, which says "I do not know what this is"
  * rather than guessing wrong.
  */
 export type StageScope = "turn" | "run";
@@ -1313,7 +1313,7 @@ export interface VerdictEvidence {
 
 /**
  * Which authority held a workspace's steering back
- * ([`AgentEvent::SteeringWithheld`], #2302/#3616).
+ * ([`super::AgentEvent::SteeringWithheld`], #2302/#3616).
  *
  * Two causes resolve one refusal, and they are not interchangeable: they have
  * different remedies, and one of them the user cannot lift at all. A harness
@@ -1329,9 +1329,9 @@ export type Withholder = "project_untrusted" | "managed_ceiling";
  *
  * `remote = "Self"` keeps the derived codec as a pair of *inherent*
  * associated functions instead of the trait impls, so the hand-written
- * [`Serialize`]/[`Deserialize`] impls below can delegate to it after routing
- * [`AgentEvent::Unknown`] around it. Without that indirection the forward-
- * compat fallback would mean hand-writing a visitor for every variant.
+ * [`Serialize`]/[`Deserialize`] impls in `event.rs` can delegate to it after
+ * routing [`AgentEvent::Unknown`] around it. Without that indirection the
+ * forward-compat fallback would mean hand-writing a visitor for every variant.
  */
 export type AgentEvent = {
   /**

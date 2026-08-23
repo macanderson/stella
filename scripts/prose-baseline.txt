@@ -120,7 +120,6 @@ crates/stella-cli/src/startup.rs 1
 crates/stella-cli/src/subagent/tests.rs 2
 crates/stella-cli/src/tool_docs.rs 1
 crates/stella-cli/src/tool_foundry/adopt.rs 1
-crates/stella-cli/src/wrapper_candidate.rs 1
 crates/stella-cli/src/wrapper_plugin.rs 3
 crates/stella-context/src/ann.rs 1
 crates/stella-context/src/retrieval/evidence.rs 2
@@ -253,12 +252,8 @@ docs/spec/adaptive-context/context-pr.md 2
 docs/spec/adaptive-context/context-record-examples/05-imported-proposals.toml 1
 docs/spec/adaptive-context/context-record-examples/07-agent-projection.md 1
 docs/spec/adaptive-context/context-record-examples/09-effect-witness.toml 1
-docs/spec/agent-native-delivery.md 5
-docs/spec/backlog-self-driving.md 7
 docs/spec/config-system/DESIGN.md 3
-docs/spec/diagnostics.md 3
 docs/spec/file-budget.md 1
-docs/spec/pipeline-as-plugins.md 8
 docs/spec/plugin-completion-plan.md 1
 docs/spec/plugin-marketplace.md 2
 docs/spec/plugin-transport-spike.md 3
@@ -268,9 +263,7 @@ docs/spec/self-driving-missions.md 1
 docs/spec/serve-observability.md 3
 docs/spec/trace-replay-learning-harness.md 1
 docs/spec/turn-lane-assembly.md 2
-docs/spec/turn-loop-wrappers.md 5
 docs/spec/witness-protocol.md 1
-docs/spec/wrapper-socket.md 4
 plugins/stella-research/main.py 1
 plugins/stella-research/plugin.toml 1
 scripts/arena-run.sh 1

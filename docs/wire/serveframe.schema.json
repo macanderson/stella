@@ -1,7 +1,7 @@
 {
   "$defs": {
     "AgentEvent": {
-      "description": "One event in the turn's stream. Every stage boundary emits an event;\nnothing user-visible is derived from internal state that isn't also in\nthis stream.\n\n`remote = \"Self\"` keeps the derived codec as a pair of *inherent*\nassociated functions instead of the trait impls, so the hand-written\n[`Serialize`]/[`Deserialize`] impls below can delegate to it after routing\n[`AgentEvent::Unknown`] around it. Without that indirection the forward-\ncompat fallback would mean hand-writing a visitor for every variant.",
+      "description": "One event in the turn's stream. Every stage boundary emits an event;\nnothing user-visible is derived from internal state that isn't also in\nthis stream.\n\n`remote = \"Self\"` keeps the derived codec as a pair of *inherent*\nassociated functions instead of the trait impls, so the hand-written\n[`Serialize`]/[`Deserialize`] impls in `event.rs` can delegate to it after\nrouting [`AgentEvent::Unknown`] around it. Without that indirection the\nforward-compat fallback would mean hand-writing a visitor for every variant.",
       "oneOf": [
         {
           "description": "A stage boundary was crossed. `scope` says whose stage it is, and it is not decoration: two disjoint authorities emit stages. The engine emits its own, once per turn, with scope `turn`. A wrapper -- the staged pipeline, a goal loop -- emits its own vocabulary once per run, with scope `run`. A consumer that branches on stage transitions must select on `scope` first, or it will see two interleaved vocabularies as one and read a wrapper's backwards-looking boundary as an engine regression.",
@@ -1656,7 +1656,7 @@
       ]
     },
     "BudgetScope": {
-      "description": "Which budget limit a [`AgentEvent::BudgetDenied`] tripped — mirrors\n`stella-core::budget::BudgetAxis` (kept separate so `stella-protocol`\nnever depends on `stella-core`).",
+      "description": "Which budget limit a [`super::AgentEvent::BudgetDenied`] tripped — mirrors\n`stella-core::budget::BudgetAxis` (kept separate so `stella-protocol`\nnever depends on `stella-core`).",
       "oneOf": [
         {
           "const": "turn",
@@ -2986,7 +2986,7 @@
       "type": "object"
     },
     "PolicyKind": {
-      "description": "What kind of policy-plane decision a [`AgentEvent::PolicyDecision`]\nrecords (receipts spec §6.4).",
+      "description": "What kind of policy-plane decision a [`super::AgentEvent::PolicyDecision`]\nrecords (receipts spec §6.4).",
       "oneOf": [
         {
           "const": "evaluated",
@@ -3248,7 +3248,7 @@
           "type": "object"
         },
         {
-          "description": "This turn's task class came from the deterministic keyword floor\n(`triage::resolve_task_class` with no model answer), because the\ntriage call never produced one.\n\nEmitted for the same reason [`ProofStep::VerdictDegraded`] is, one\nstage earlier. The fallback itself is correct by design and\nload-bearing — triage must never fail a run — but it became the\n*common* case while staying completely invisible: across three\nTerminal-Bench arm runs, 27 of 34 triage calls burned the full 10s\nlatency ceiling and returned nothing, about four and a half minutes of\nwall clock purchasing zero bits, with nothing in the summary layer\nsaying so (#2414). Every downstream decision that reads the class —\nwhether to plan, whether a witness is warranted, whether research\nquestions are even asked — then looks like a decision and is a default.\n\nA bench conclusion must not be drawn from a triage that never ran, and\nthis is the record that makes that checkable.",
+          "description": "This turn's task class came from the deterministic keyword floor\n(`triage::resolve_task_class` with no model answer), because the\ntriage call never produced one.\n\nEmitted for the same reason [`ProofStep::VerdictDegraded`] is, one\nstage earlier. The fallback itself is correct by design and\nrequired — triage must never fail a run — but it became the\n*common* case while staying completely invisible: across three\nTerminal-Bench arm runs, 27 of 34 triage calls burned the full 10s\nlatency ceiling and returned nothing, about four and a half minutes of\nwall clock purchasing zero bits, with nothing in the summary layer\nsaying so (#2414). Every downstream decision that reads the class —\nwhether to plan, whether a witness is warranted, whether research\nquestions are even asked — then looks like a decision and is a default.\n\nA bench conclusion must not be drawn from a triage that never ran, and\nthis is the record that makes that checkable.",
           "properties": {
             "kind": {
               "const": "triage_degraded",
@@ -3479,7 +3479,7 @@
       "type": "string"
     },
     "StageScope": {
-      "description": "Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).\n\nDeliberately **not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
+      "description": "Whose stage boundary an [`super::AgentEvent::Stage`] reports (#3398).\n\nDeliberately **not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`super::AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
       "oneOf": [
         {
           "const": "turn",
@@ -4013,7 +4013,7 @@
       "type": "object"
     },
     "Withholder": {
-      "description": "Which authority held a workspace's steering back\n([`AgentEvent::SteeringWithheld`], #2302/#3616).\n\nTwo causes resolve one refusal, and they are not interchangeable: they have\ndifferent remedies, and one of them the user cannot lift at all. A harness\nthat folded them together would tell an operator to set a flag they have\nalready set.",
+      "description": "Which authority held a workspace's steering back\n([`super::AgentEvent::SteeringWithheld`], #2302/#3616).\n\nTwo causes resolve one refusal, and they are not interchangeable: they have\ndifferent remedies, and one of them the user cannot lift at all. A harness\nthat folded them together would tell an operator to set a flag they have\nalready set.",
       "oneOf": [
         {
           "const": "project_untrusted",
