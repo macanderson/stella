@@ -382,6 +382,7 @@ pub(super) fn drive(
                     },
                 );
 
+                let truncated = matches!(pick, Pick::Truncated);
                 let Pick::Take(key, lease) = pick else {
                     // An empty queue is a state, not an ending.
                     //
@@ -401,13 +402,26 @@ pub(super) fn drive(
                     // exhausted queue and a queue whose every candidate went to
                     // a peer read identically, and the second is the one where
                     // something is happening.
+                    //
+                    // Truncation is said for the same reason one step further
+                    // on: a scan that stopped at its probe budget has not seen
+                    // the rest of the queue, and reporting it as "the queue
+                    // offers nothing" would state something nothing asked
+                    // (#4317).
+                    let why = if truncated {
+                        format!(
+                            "the first {MAX_CONTENTION_PROBES} candidates are all being worked \
+                             elsewhere; the rest of the queue was not examined"
+                        )
+                    } else {
+                        "the queue offers nothing this run has not already taken".to_owned()
+                    };
                     audit::record(
                         durable,
                         Audit::Waited,
                         None,
                         &format!(
-                            "the queue offers nothing this run has not already taken \
-                             ({deferrals} deferred to another actor this pass); \
+                            "{why} ({deferrals} deferred to another actor this pass); \
                              re-asking in {poll_secs}s — a new issue, or an escalation \
                              label removed, is all it takes"
                         ),
@@ -1119,7 +1133,38 @@ enum Pick {
     Take(String, Option<super::claim::Lease>),
     /// Every candidate was taken or deferred.
     Exhausted,
+    /// The probe budget ran out with candidates still unexamined.
+    ///
+    /// Distinct from [`Pick::Exhausted`] because the two want different
+    /// sentences from the caller: an exhausted queue means the loop has looked
+    /// at everything and found nothing, while this means it stopped looking. A
+    /// truncated scan reported as an empty one would tell an operator the rest
+    /// of the backlog was clear when nothing had asked.
+    Truncated,
 }
+
+/// How many contention probes one pass of [`next_claimable`] may spend.
+///
+/// Each probe is one `gh pr list --search` call plus two `git` reads and a
+/// SQLite open ([`super::contention::gather`]), and a deferral deliberately
+/// writes no `spent` entry — a peer finishing must let the loop take the issue
+/// on a later pass — so an uncapped walk re-probes the whole contended prefix
+/// on **every** poll, forever. Fifty contended issues at the top of the queue
+/// was fifty search calls per poll, indefinitely (#4317).
+///
+/// Twenty, from GitHub's search rate limit rather than taste: that endpoint
+/// allows 30 requests per minute, and the default poll interval is 45s, so a
+/// pass may spend about 22 before a sustained walk outruns the limit. Twenty
+/// leaves headroom for the other reads a pass makes and is far deeper than the
+/// case this bound exists for — if the top twenty candidates are all contended,
+/// the queue is saturated and waiting a poll interval is the right move, not a
+/// deeper scan.
+///
+/// The failure it prevents is quiet, which is why it is a cap and not a
+/// warning: a rate-limited `gh` **fails open** here, so contention detection
+/// degrades to nothing at exactly the moment it is most needed rather than
+/// raising an error anyone would see.
+const MAX_CONTENTION_PROBES: u32 = 20;
 
 /// The first issue on the ranked queue this run may actually start.
 ///
@@ -1145,6 +1190,13 @@ enum Pick {
 /// It is also what makes the run *visible* to a peer's `seen`: the claim-time
 /// worktree probe deliberately cannot see a peer under the loop's own root, so
 /// the lease is the only thing left that can say a turn is in flight (#4300).
+///
+/// # The walk is bounded, and says when it stopped early
+///
+/// At most [`MAX_CONTENTION_PROBES`] probes per pass, after which it returns
+/// [`Pick::Truncated`] rather than [`Pick::Exhausted`] — see both for why the
+/// distinction has to reach the audit line. The bound is on probes, not on
+/// candidates: skipping something already taken is free.
 fn next_claimable(
     ranked: impl IntoIterator<Item = String>,
     taken: impl Fn(&str) -> bool,
@@ -1153,10 +1205,19 @@ fn next_claimable(
     claim: impl Fn(&str) -> super::claim::Claim,
     mut deferred: impl FnMut(&str, &[String]),
 ) -> Pick {
+    let mut probes = 0_u32;
     for key in ranked {
         if taken(&key) {
             continue;
         }
+        // Counted here rather than per candidate: a `taken` candidate costs
+        // nothing — no `gh` call, no git read — so spending budget on one
+        // would let a long prefix of issues this run already holds shorten
+        // the walk that matters.
+        if probes >= MAX_CONTENTION_PROBES {
+            return Pick::Truncated;
+        }
+        probes += 1;
         match contention_verdict(policy, &seen(&key)) {
             ContentionVerdict::Proceed => match claim(&key) {
                 super::claim::Claim::Granted(lease) => return Pick::Take(key, Some(lease)),
@@ -1312,6 +1373,87 @@ mod tests {
 
         assert!(matches!(&pick, Pick::Take(key, _) if key == "3691"));
         assert!(skipped_under_proceed.is_empty());
+    }
+
+    /// **Witness (#4317).** The walk stops at its probe budget instead of
+    /// re-probing a contended backlog end to end on every poll.
+    ///
+    /// A deferral deliberately writes no `spent` entry, so an uncapped walk
+    /// re-probes the whole contended prefix forever — and each probe is a `gh`
+    /// search call. `seen` is the closure that costs, so counting its calls is
+    /// counting the rate-limit spend.
+    #[test]
+    fn the_contention_scan_stops_at_its_probe_budget() {
+        let over_budget = MAX_CONTENTION_PROBES + 3;
+        let ranked: Vec<String> = (0..over_budget).map(|n| n.to_string()).collect();
+
+        // `seen` is `Fn` — the production probe has no state — so the tally
+        // borrows through a `RefCell` rather than the signature being widened
+        // to `FnMut` for a test's convenience.
+        let probed: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+        let pick = next_claimable(
+            ranked,
+            |_| false,
+            ContentionPolicy::Defer,
+            |key| {
+                probed.borrow_mut().push(key.to_owned());
+                // Every candidate contended, which is the backlog this bound
+                // exists for: another actor working the queue wholesale.
+                Contention {
+                    local_worktrees: vec![format!("/tmp/wip-{key}")],
+                    ..Contention::default()
+                }
+            },
+            |_| Claim::Unavailable,
+            |_, _| {},
+        );
+        let probed = probed.into_inner();
+
+        assert!(
+            matches!(pick, Pick::Truncated),
+            "a scan that stopped early must say so — reported as Exhausted it \
+             would tell an operator the rest of the queue was clear when \
+             nothing had asked: {pick:?}"
+        );
+        assert_eq!(
+            probed.len(),
+            MAX_CONTENTION_PROBES as usize,
+            "exactly the budget, no more: an uncapped walk probes all {over_budget}"
+        );
+    }
+
+    /// A candidate this run already holds costs no budget.
+    ///
+    /// The bound is on probes, not candidates. Counted per candidate, a long
+    /// prefix of already-taken issues would shorten the walk that matters —
+    /// and `taken` is free: no `gh` call, no git read, no SQLite open.
+    #[test]
+    fn an_already_taken_candidate_does_not_spend_probe_budget() {
+        // Every one of these is skipped for free, so the single claimable
+        // candidate after them is still reached.
+        let taken_count = MAX_CONTENTION_PROBES + 5;
+        let mut ranked: Vec<String> = (0..taken_count).map(|n| format!("taken-{n}")).collect();
+        ranked.push("free".to_owned());
+
+        let probed = std::cell::Cell::new(0_u32);
+        let pick = next_claimable(
+            ranked,
+            |key| key.starts_with("taken-"),
+            ContentionPolicy::Defer,
+            |_| {
+                probed.set(probed.get() + 1);
+                Contention::default()
+            },
+            |_| Claim::Unavailable,
+            |_, _| {},
+        );
+        let probed = probed.get();
+
+        assert!(
+            matches!(&pick, Pick::Take(key, _) if key == "free"),
+            "the claimable candidate must still be reached: {pick:?}"
+        );
+        assert_eq!(probed, 1, "only the candidate that was not already taken");
     }
 
     /// A peer that took the lease *between* the probe and the write is one
