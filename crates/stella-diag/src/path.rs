@@ -115,46 +115,17 @@ impl Extension {
             return Self::None;
         };
         let lowered = ext.to_ascii_lowercase();
-        [
-            Self::Rs,
-            Self::Toml,
-            Self::Md,
-            Self::Json,
-            Self::Yaml,
-            Self::Yml,
-            Self::Lock,
-            Self::Sh,
-            Self::Py,
-            Self::Ts,
-            Self::Tsx,
-            Self::Js,
-            Self::Jsx,
-            Self::Go,
-            Self::C,
-            Self::H,
-            Self::Cpp,
-            Self::Hpp,
-            Self::Java,
-            Self::Rb,
-            Self::Php,
-            Self::Sql,
-            Self::Html,
-            Self::Css,
-            Self::Txt,
-            Self::Log,
-            Self::Jsonl,
-            Self::Db,
-            Self::Csv,
-            Self::Env,
-            Self::Pem,
-            Self::Key,
-            Self::Png,
-            Self::Jpg,
-            Self::Svg,
-        ]
-        .into_iter()
-        .find(|known| known.as_static() == lowered)
-        .unwrap_or(Self::Other)
+        Self::ALL
+            .into_iter()
+            // The two sentinels spell *classifications*, not extensions:
+            // `None` means the path had none, and `Other` means the one it had
+            // is not listed. A file literally named `notes.other` must reach
+            // `Other` by falling through, never by matching the sentinel's own
+            // spelling, or the record would claim a fact about the path that
+            // is not true of it.
+            .filter(|known| !matches!(known, Self::None | Self::Other))
+            .find(|known| known.as_static() == lowered)
+            .unwrap_or(Self::Other)
     }
 }
 
@@ -372,6 +343,45 @@ mod tests {
         );
         assert_eq!(Extension::of(Path::new("/tmp/x/Makefile")), Extension::None);
         assert_eq!(Extension::of(Path::new("/tmp/x/lib.RS")), Extension::Rs);
+    }
+
+    /// **Every declared extension is actually recognised** (#3710).
+    ///
+    /// `Extension::of` used to re-list the variants by hand, with nothing
+    /// connecting the copy to the `log_enum!` block above it: adding `Zig =>
+    /// "zig"` compiled clean, failed no test, and classified every `.zig` file
+    /// as `other`. Walking `Extension::ALL` is what closes that, and this is
+    /// the assertion that would have caught the hand-copy the moment a variant
+    /// outlived it.
+    #[test]
+    fn every_declared_extension_classifies_as_itself() {
+        for declared in Extension::ALL {
+            if matches!(declared, Extension::None | Extension::Other) {
+                continue;
+            }
+            let path = format!("/tmp/x/file.{}", declared.as_static());
+            assert_eq!(
+                Extension::of(Path::new(&path)),
+                declared,
+                "`{path}` must classify as the variant that declares it"
+            );
+        }
+    }
+
+    /// The other half: the two sentinels are classifications, not spellings.
+    /// A file whose extension is literally `none` or `other` has to reach
+    /// `Other` by falling through the vocabulary, or the record would claim
+    /// the path had no extension at all.
+    #[test]
+    fn the_sentinel_spellings_are_not_matchable_extensions() {
+        assert_eq!(
+            Extension::of(Path::new("/tmp/x/notes.none")),
+            Extension::Other
+        );
+        assert_eq!(
+            Extension::of(Path::new("/tmp/x/notes.other")),
+            Extension::Other
+        );
     }
 
     /// macOS puts the per-user temp directory under `$HOME`; a scratch file

@@ -56,7 +56,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
-use crate::manifest::{FlipPolicy, Oracle};
+use crate::oracle::{FlipPolicy, Oracle};
 use crate::wrapper::CompareOp;
 
 /// One `[[oracle.checks]]` entry — the rule that decides one requirement.
