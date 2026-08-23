@@ -23,7 +23,26 @@ import os
 
 import pytest
 
+from stella_harbor.credential_bundle import (
+    EMBEDDING_CREDENTIAL_NAMES,
+    HOST_ONLY_CONTROL_CREDENTIAL_NAMES,
+    PROVIDER_CREDENTIAL_NAMES,
+)
+
 _ENV_PREFIX = "STELLA_"
+
+# Every credential name a resolver in this tree can read straight out of the
+# process environment as a fallback (`provider_credentials_from_environment`,
+# `optional_embedding_credentials` in `credential_bundle.py`). An operator's
+# real key for any of these changes what a test observes exactly the way a
+# stray ``STELLA_*`` knob does above — a two-name
+# ``STELLA_CREDENTIAL_HANDOFF_TARGET`` instead of one, or a live secret
+# rendered into an assertion diff (#3668). Clearing the class, not the two
+# instances that happened to be caught, is what survives the next credential
+# name being added to `credential_bundle.py` without a matching test fix.
+_AMBIENT_CREDENTIAL_NAMES = (
+    PROVIDER_CREDENTIAL_NAMES | EMBEDDING_CREDENTIAL_NAMES | HOST_ONLY_CONTROL_CREDENTIAL_NAMES
+)
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -31,6 +50,20 @@ def _strip_ambient_stella_env():
     """Remove inherited ``STELLA_*`` keys for the duration of the session."""
     patcher = pytest.MonkeyPatch()
     for key in [key for key in os.environ if key.startswith(_ENV_PREFIX)]:
+        patcher.delenv(key, raising=False)
+    yield
+    patcher.undo()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _strip_ambient_provider_credentials():
+    """Remove inherited provider/embedding/control credentials for the session.
+
+    A test that wants one of these values sets it explicitly with
+    ``monkeypatch`` — the only way it should ever get there.
+    """
+    patcher = pytest.MonkeyPatch()
+    for key in _AMBIENT_CREDENTIAL_NAMES:
         patcher.delenv(key, raising=False)
     yield
     patcher.undo()

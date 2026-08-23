@@ -88,3 +88,27 @@ def balance_verdict(
         cost_per_trial_usd,
         balance.Wallet(env_name=env_name, seat_credential=seat_credential),
     )
+
+
+def non_stock_timeout_notice(multiplier: float) -> str | None:
+    """A one-line banner for a non-stock ``agent_timeout_multiplier`` (#3256).
+
+    tbench.ai's Terminal-Bench 2.1 leaderboard rule — "submissions may not
+    modify timeouts or resources" — makes every number a run at this setting
+    produces non-comparable to a published leaderboard row. Every number
+    recorded before 2026-08-14 used ``agent_timeout_multiplier = 2.0`` and
+    carried no such qualifier (`docs/timeout-policy.md`); this is the launch
+    site saying so while the operator is still looking, rather than leaving
+    it to be rediscovered once a number is already quoted.
+
+    ``None`` at the stock ``1.0`` — the overwhelming common case, and the one
+    that must produce no note at all.
+    """
+    if multiplier == 1.0:
+        return None
+    return (
+        f"agent_timeout_multiplier={multiplier} (!= 1.0): this run is "
+        "non-submittable to the tbench.ai leaderboard and must not be "
+        "compared to a published row without that qualifier — see "
+        "docs/timeout-policy.md"
+    )
