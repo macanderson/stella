@@ -280,11 +280,7 @@ pub(super) async fn aggregate_zai_stream(
             }
             http::StreamRead::Idle => {
                 let error = if awaiting_first_chunk {
-                    ProviderError::transport(format!(
-                        "{label} stream hung before its first byte: no data within \
-                         the {}s first-byte deadline",
-                        idle.as_secs()
-                    ))
+                    http::hung_before_first_byte(label, idle)
                 } else {
                     ProviderError::transport(format!(
                         "stream idle timeout: no data for {}s",

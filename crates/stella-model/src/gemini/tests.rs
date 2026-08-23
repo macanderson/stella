@@ -789,3 +789,5 @@ async fn several_function_call_parts_fan_in_as_several_calls() {
          correlate back to the wrong call: {ids:?}"
     );
 }
+
+mod stream_fallback;

@@ -263,32 +263,34 @@ async fn a_connect_failure_stays_retryable_transport() {
 }
 
 #[tokio::test]
-async fn next_with_timeout_maps_a_stalled_stream_to_a_retryable_transport_error() {
-    // A stream that never yields must time out and surface as retryable,
-    // not hang. `pending()` models a connection that opened and then went
-    // silent — the exact failure the idle timeout exists to bound.
+async fn next_stream_read_reports_a_stalled_stream_as_idle_not_a_failure() {
+    // A stream that never yields must time out, not hang — and report the
+    // stall as `Idle`, which is the bit the fallback classifies on: a stall
+    // before the first byte is a broken streaming path, while a transport
+    // failure says nothing about streaming specifically. `pending()` models a
+    // connection that opened and then went silent.
     let mut stalled = futures_util::stream::pending::<reqwest::Result<Vec<u8>>>();
-    let err = next_with_timeout(&mut stalled, Duration::from_millis(20))
-        .await
-        .expect_err("a stalled stream must error, not hang");
+    let read = next_stream_read(&mut stalled, Duration::from_millis(20)).await;
     assert!(
-        err.is_retryable(),
-        "idle timeout must be retryable: {err:?}"
+        matches!(read, StreamRead::Idle),
+        "a stalled stream must report Idle, never Failed"
     );
-    assert!(matches!(err, ProviderError::Transport { .. }));
 }
 
 #[tokio::test]
-async fn next_with_timeout_passes_through_a_ready_item_and_end_of_stream() {
+async fn next_stream_read_passes_through_a_ready_item_and_end_of_stream() {
     let mut ready = futures_util::stream::iter(vec![Ok::<_, reqwest::Error>(vec![1u8, 2, 3])]);
-    let first = next_with_timeout(&mut ready, Duration::from_millis(50))
-        .await
-        .expect("a ready item is not an error");
-    assert_eq!(first, Some(vec![1u8, 2, 3]));
-    let end = next_with_timeout(&mut ready, Duration::from_millis(50))
-        .await
-        .expect("clean end of stream is Ok(None)");
-    assert_eq!(end, None);
+    match next_stream_read(&mut ready, Duration::from_millis(50)).await {
+        StreamRead::Item(item) => assert_eq!(item, vec![1u8, 2, 3]),
+        _ => panic!("a ready item is not an error"),
+    }
+    assert!(
+        matches!(
+            next_stream_read::<_, Vec<u8>>(&mut ready, Duration::from_millis(50)).await,
+            StreamRead::End
+        ),
+        "clean end of stream is End"
+    );
 }
 
 /// The real-world repro (issue #271): OpenRouter answers a doubled/typo'd
