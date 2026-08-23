@@ -858,6 +858,7 @@ fn numstat_totals(numstat: &str) -> (u32, u32) {
 }
 
 mod copy_tree;
+mod isolation;
 mod modes;
 mod record;
 mod ref_guard;

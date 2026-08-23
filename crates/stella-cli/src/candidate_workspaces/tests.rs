@@ -1195,11 +1195,66 @@ async fn a_copy_candidate_is_promoted_by_replacing_the_tree() {
     assert!(!mine.exists(), "removal is the directory's");
 }
 
+/// Serializes the tests that reach `for_session`, which reads
+/// [`isolation::ISOLATION_ENV`] out of the process environment. A variable is
+/// one cell the whole test binary shares, so the pair that cares what it holds
+/// must not run at once.
+static ISOLATION_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Everything a `for_session` call needs, so the two tests below differ in the
+/// one thing under test.
+fn session_substrate(dir: &Path) -> CandidateSubstrate {
+    let mut cfg = Config::for_tests(crate::config::PROVIDERS[0].clone(), "m".to_string());
+    cfg.workspace_root = dir.to_path_buf();
+    CandidateSubstrate::for_session(
+        &cfg,
+        "candidates-plugin",
+        Arc::new(
+            crate::subagent::SessionSubAgents::new(
+                Arc::new(NoTools),
+                &Arc::new(stella_tools::ToolRegistry::new(dir.to_path_buf())),
+                EngineConfig::default(),
+                stella_protocol::BudgetMode::Observed,
+            )
+            .with_pool_limit(None),
+        ),
+    )
+}
+
+/// **#4510's witness, at the call site.** A benchmark launcher sets
+/// `STELLA_NO_SETTINGS=1`, under which no scope answers `candidate_isolation`
+/// at all — and the copy substrate exists for exactly the environment that
+/// launcher runs. This repository has no settings file either, so what
+/// `Settings::load` hands `for_session` here is the same
+/// `CandidateIsolation::default()` the isolated launcher gets; the variable is
+/// then the only thing that can select anything, and it has to arrive at the
+/// call site rather than at a function nothing calls.
+#[tokio::test]
+async fn the_environment_reaches_for_session_where_no_settings_scope_can() {
+    let _serialized = ISOLATION_ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = repo();
+    // SAFETY: the lock above is what makes this sound — no sibling test reads
+    // this variable while it is held, and it is removed before the lock drops.
+    unsafe { std::env::set_var(isolation::ISOLATION_ENV, "copy-tree") };
+    let subject = session_substrate(dir.path());
+    unsafe { std::env::remove_var(isolation::ISOLATION_ENV) };
+
+    assert!(
+        matches!(subject, CandidateSubstrate::CopyTree(_)),
+        "the one environment copy-tree was built for cannot reach it through settings"
+    );
+}
+
 /// The selector is the setting and nothing else — no probe, no detection —
 /// and a workspace that says nothing gets the substrate that cannot overwrite
 /// a tree.
 #[tokio::test]
 async fn the_default_substrate_is_the_one_that_cannot_overwrite_a_tree() {
+    let _serialized = ISOLATION_ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert_eq!(
         crate::settings::Settings::default().candidate_isolation(),
         crate::settings::CandidateIsolation::Worktree,
@@ -1210,25 +1265,11 @@ async fn the_default_substrate_is_the_one_that_cannot_overwrite_a_tree() {
     // gets a candidate under a git branch, which only the worktree substrate
     // mints.
     let dir = repo();
-    let subject = CandidateSubstrate::for_session(
-        &{
-            let mut cfg = Config::for_tests(crate::config::PROVIDERS[0].clone(), "m".to_string());
-            cfg.workspace_root = dir.path().to_path_buf();
-            cfg
-        },
-        "candidates-plugin",
-        Arc::new(
-            crate::subagent::SessionSubAgents::new(
-                Arc::new(NoTools),
-                &Arc::new(stella_tools::ToolRegistry::new(dir.path().to_path_buf())),
-                EngineConfig::default(),
-                stella_protocol::BudgetMode::Observed,
-            )
-            .with_pool_limit(None),
-        ),
-    );
     assert!(
-        matches!(subject, CandidateSubstrate::Worktree(_)),
+        matches!(
+            session_substrate(dir.path()),
+            CandidateSubstrate::Worktree(_)
+        ),
         "an unstated policy must not select the destructive substrate"
     );
 }
