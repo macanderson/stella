@@ -351,6 +351,21 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-css-vars.py
 
+      # The two deck guards, whose subject is `website/public/presentations/`
+      # but whose failing DIFF is usually a Rust one. deck-fit.yml runs
+      # check-deck-paths on the other direction — an edit to a deck — and
+      # triggers on the deck paths alone; this job is what sees the direction
+      # that actually strands a citation, which is a module moving in
+      # `crates/`. Neither needs a browser, so neither belongs in that
+      # workflow's browser job (#3404, #3573).
+      - name: the deck enumeration still walks recursively
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/test-deck-fit-all.sh
+
+      - name: every path the decks cite still resolves
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-deck-paths.py
+
       - name: no library crate returns Result<_, String>
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-typed-errors.py
