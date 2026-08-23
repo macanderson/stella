@@ -59,6 +59,7 @@ pub mod gated;
 pub mod hook_bridge;
 pub mod hook_runner;
 pub mod input;
+pub mod own_change;
 pub mod policy;
 pub mod read;
 pub mod registry;
