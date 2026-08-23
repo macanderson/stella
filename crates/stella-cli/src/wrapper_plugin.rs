@@ -476,8 +476,17 @@ impl BoundWrapper {
     /// caller driving several rounds through this same [`BoundWrapper`] (the
     /// goal loop) must never hold a second reference to it that could drift
     /// from what [`Self::child_spends`] already reports honestly.
-    pub(crate) fn report(&self, format: OutputFormat, report: &DispatchReport) {
+    ///
+    /// `scope` is the lane these lines belong to, `None` on a door where there
+    /// is only one — see [`report_to`].
+    pub(crate) fn report(
+        &self,
+        scope: Option<&str>,
+        format: OutputFormat,
+        report: &DispatchReport,
+    ) {
         report_to(
+            scope,
             format,
             report,
             &self.gate,
@@ -1158,6 +1167,8 @@ pub(crate) async fn run_wrapped(
     match report {
         Ok(report) => {
             report_to(
+                // One wrapper, one lane, one process — nothing to attribute.
+                None,
                 format,
                 &report,
                 &bound.gate,
@@ -1218,28 +1229,60 @@ async fn dispatch_under_turn_controls(
 ///
 /// stderr in every format: stdout may be machine-readable JSON, and a wrapper's
 /// commentary is not part of either summary contract.
+///
+/// `scope` names the lane these lines came from, and is `Some` exactly where
+/// several lanes share one stderr: `stella fleet --max-concurrency > 1` binds
+/// one wrapper per worker attempt, so an unattributed `! wrapper: …` cannot be
+/// told from the next worker's (#3883). `stella run` and `stella goal` are one
+/// wrapper over one lane in one process and pass `None`.
 fn report_to(
+    scope: Option<&str>,
     format: OutputFormat,
     report: &DispatchReport,
     gate: &HostCallGate,
     spends: &[ChildTurnSpend],
     fanouts: &[CandidateFanoutSpend],
 ) {
+    for line in report_lines(scope, format, report, gate, spends, fanouts) {
+        eprintln!("{line}");
+    }
+}
+
+/// The lines [`report_to`] prints, in order — the composition split out from
+/// the printing so the wording, and the attribution on it, is assertable
+/// without capturing stderr.
+///
+/// The marker stays in its own column and the scope follows it, rather than
+/// preceding it: an operator scanning a concurrent run's stderr for `!` is
+/// looking down a column, and a variable-width task id in front of it is what
+/// takes that column away.
+fn report_lines(
+    scope: Option<&str>,
+    format: OutputFormat,
+    report: &DispatchReport,
+    gate: &HostCallGate,
+    spends: &[ChildTurnSpend],
+    fanouts: &[CandidateFanoutSpend],
+) -> Vec<String> {
+    let tag = scope.map_or_else(String::new, |scope| format!("[{scope}] "));
+    let mut lines = Vec::new();
+    let wrapper_line = |what: &dyn std::fmt::Display| format!("  ! {tag}wrapper: {what}");
     for fault in &report.faults {
-        eprintln!("  ! wrapper: {fault}");
+        lines.push(wrapper_line(fault));
     }
     for refused in gate.refusals() {
-        eprintln!("  ! wrapper: {refused}");
+        lines.push(wrapper_line(&refused));
     }
     for line in spend_lines(spends) {
-        eprintln!("  ! wrapper: {line}");
+        lines.push(wrapper_line(&line));
     }
     for line in fanout_spend_lines(fanouts) {
-        eprintln!("  ! wrapper: {line}");
+        lines.push(wrapper_line(&line));
     }
     if format == OutputFormat::Text || !report.met() {
-        eprintln!("  ◇ {}", report.summary());
+        lines.push(format!("  ◇ {tag}{}", report.summary()));
     }
+    lines
 }
 
 /// One line per child turn this host ran for the plugin, naming the seat it

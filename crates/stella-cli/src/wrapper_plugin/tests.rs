@@ -180,6 +180,103 @@ fn the_deprecation_notice_fires_only_when_no_pipeline_was_passed() {
     assert!(notice.contains("--pipeline"), "{notice}");
 }
 
+/// A report with one fault of each kind, so [`report_lines`] has something to
+/// render on every one of its arms.
+fn faulted_report() -> stella_runtime::wrapper::DispatchReport {
+    stella_runtime::wrapper::DispatchReport {
+        variant: "vera".to_string(),
+        rounds: 1,
+        verdict: stella_plugin::Verdict::Undecided {
+            reason: stella_plugin::UndecidedReason::NoOracle,
+        },
+        outcome: stella_plugin::Outcome::Undecided {
+            reason: stella_plugin::UndecidedReason::NoOracle,
+        },
+        faults: vec![stella_runtime::wrapper::WrapperError::EmptyArgv],
+    }
+}
+
+/// **Witness (#3883).** Every line a wrapper's report prints names the lane it
+/// came from, when there is more than one lane to confuse.
+///
+/// `stella fleet --max-concurrency > 1` binds one wrapper per worker attempt
+/// and every one of them prints onto the same stderr, so an operator reading
+/// `! wrapper: …` had no way to tell which task's plugin said it. Asserted
+/// over the pure renderer rather than by capturing stderr, and over *all* the
+/// lines rather than the first, because a partial prefix is the shape that
+/// looks right until two workers disagree.
+#[test]
+fn a_scoped_report_names_its_task_on_every_line() {
+    use stella_protocol::event::ModelCallRole;
+    use stella_runtime::wrapper::{CandidateFanoutSpend, ChildTurnSpend};
+
+    let roster = roster(vec![installed(WRAPPER_MANIFEST, "/tmp/budget-keeper")]);
+    let wrapper = bound(&roster, "budget-v1", &mut |_| {}).expect("the fixture binds");
+    let report = faulted_report();
+    let spends = [ChildTurnSpend {
+        role: "reviewer".to_string(),
+        seat: ModelCallRole::Research,
+        cost_usd: 0.02,
+        steps: 1,
+        completed: true,
+    }];
+    let fanouts = [CandidateFanoutSpend {
+        role: "attempt".to_string(),
+        seat: ModelCallRole::Worker,
+        requested_width: 2,
+        width: 2,
+        cost_usd: 0.1,
+        completed: 2,
+    }];
+
+    let scoped = super::report_lines(
+        Some("build-parser"),
+        OutputFormat::Text,
+        &report,
+        &wrapper.gate,
+        &spends,
+        &fanouts,
+    );
+    assert!(
+        scoped.len() >= 4,
+        "the fault, the two spend lines and the summary: {scoped:#?}"
+    );
+    for line in &scoped {
+        assert!(
+            line.contains("[build-parser]"),
+            "an unattributed line is one an operator cannot place: {line}"
+        );
+    }
+    assert!(
+        scoped.iter().any(|line| line.starts_with("  ! ")),
+        "the marker keeps its column: {scoped:#?}"
+    );
+    assert!(
+        scoped.iter().any(|line| line.starts_with("  ◇ ")),
+        "and so does the summary's: {scoped:#?}"
+    );
+
+    // The doors with one lane are unchanged — the wording is the same
+    // sentence with nothing in front of it.
+    let unscoped = super::report_lines(
+        None,
+        OutputFormat::Text,
+        &report,
+        &wrapper.gate,
+        &spends,
+        &fanouts,
+    );
+    assert_eq!(unscoped.len(), scoped.len());
+    for (bare, tagged) in unscoped.iter().zip(&scoped) {
+        assert!(!bare.contains("[build-parser]"), "{bare}");
+        assert_eq!(
+            tagged.replace("[build-parser] ", ""),
+            *bare,
+            "one renderer, one wording — the scope is the only difference"
+        );
+    }
+}
+
 /// **Witness (#3774).** Which process owes the notice is decided by whether
 /// the child's own copy is relayed back, not by whether there is a child.
 ///

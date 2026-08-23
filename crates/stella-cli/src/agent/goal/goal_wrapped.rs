@@ -341,7 +341,8 @@ pub(crate) async fn run_goal_wrapped_turn(
     };
 
     if let Some(report) = &last_report {
-        bound.report(OutputFormat::Text, report);
+        // One wrapper over one goal in one process — nothing to attribute.
+        bound.report(None, OutputFormat::Text, report);
     }
 
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;

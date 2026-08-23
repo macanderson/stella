@@ -89,6 +89,14 @@ use crate::wrapper_plugin::BoundWrapper;
 pub(super) struct AttemptWrapper {
     bound: BoundWrapper,
     candidate: GrantedCandidate,
+    /// The task this attempt is for, carried so every line the plugin's report
+    /// prints names it (#3883).
+    ///
+    /// Held on the binding rather than passed to [`Self::settle`] because a
+    /// wrapper is bound per attempt and the attempt is the task: an id supplied
+    /// at print time could disagree with the one the binding was made for, and
+    /// a wrong attribution on a concurrent run is worse than none.
+    task: String,
 }
 
 impl AttemptWrapper {
@@ -179,9 +187,11 @@ impl AttemptWrapper {
         // Every fault, every host refusal and every child-turn spend, on
         // stderr — stdout carries the fleet's own machine-readable contract.
         // Text rather than the run's `--output-format` because these lines are
-        // the human's only view of what a plugin concluded about this attempt;
-        // they are not attributed to a task id yet (#3883).
-        self.bound.report(crate::OutputFormat::Text, &report);
+        // the human's only view of what a plugin concluded about this attempt,
+        // and scoped to this attempt's task because `--max-concurrency > 1`
+        // puts N workers' lines on one stream (#3883).
+        self.bound
+            .report(Some(&self.task), crate::OutputFormat::Text, &report);
         driver.driven.ok_or_else(|| {
             format!(
                 "wrapper \"{}\" drove this attempt with no turn",
@@ -278,6 +288,7 @@ pub(super) fn bind_for_attempt(
     invocation_root: &std::path::Path,
     tree: &std::path::Path,
     variant: &str,
+    task: &stella_fleet::TaskId,
 ) -> Result<AttemptWrapper, String> {
     // Silent by design, and this is the one place in the crate where that is
     // not a dropped refusal: `run_fleet`'s pre-flight resolves the SAME
@@ -294,5 +305,9 @@ pub(super) fn bind_for_attempt(
         crate::wrapper_recall::SessionRecallHost::open(invocation_root),
     ));
     let bound = resolved.serving(host)?;
-    Ok(AttemptWrapper { bound, candidate })
+    Ok(AttemptWrapper {
+        bound,
+        candidate,
+        task: task.to_string(),
+    })
 }
