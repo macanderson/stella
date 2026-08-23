@@ -572,6 +572,13 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "witness": {
+              "description": "Workspace-relative paths this wrapper will judge its flip against. The host snapshots their identity before the turn and re-checks after it; the plugin never vouches for its own witness. A path outside the granted root is dropped from the watch, and declaring nothing leaves the tamper finding unchecked, which is not a pass.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             }
           },
           "required": [

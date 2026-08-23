@@ -470,6 +470,45 @@ pub struct BeforeTurnResponse {
     /// path is never itself a permission (`stella_protocol::candidate`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope: Vec<String>,
+    /// Workspace-relative paths this wrapper will judge its flip against. The
+    /// host snapshots their identity before the turn and re-checks after it.
+    ///
+    /// **The host does the comparison; the plugin only says what to watch.** A
+    /// plugin never vouches for its own witness (#3499), so this is a list of
+    /// paths and not a list of findings. Every one crosses the same fence every
+    /// other plugin-supplied path crosses before the filesystem is touched, and
+    /// one that escapes the granted root is dropped from the watch rather than
+    /// followed.
+    ///
+    /// It exists because the host's own derivation stops short of the
+    /// invocations that name no file (#3587). `pytest tests/test_x.py` names
+    /// its artifact in the argv and is watched without anyone declaring
+    /// anything; `cargo test --test flip` names `flip`, whose artifact is
+    /// `tests/flip.rs` **by cargo's convention and by nothing in the
+    /// invocation**, and `dotnet test --filter …` names no file at all.
+    /// Deriving those host-side was rejected on purpose — that is the host
+    /// guessing at a witness rather than watching one — so the plugin that
+    /// knows says so, and the host still does the watching.
+    ///
+    /// Not a trust hole: the plugin is the verifier and the *worker* is the
+    /// untrusted party, which cannot influence this declaration. A plugin that
+    /// declares nothing gets `TamperFinding::NotChecked` — no credit — exactly
+    /// as before.
+    ///
+    /// Additive (`PROTOCOL_VERSION` unchanged): a plugin written before this
+    /// field existed omits it and produces the identical bytes it always did.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "Workspace-relative paths this wrapper will judge its flip against. \
+                           The host snapshots their identity before the turn and re-checks \
+                           after it; the plugin never vouches for its own witness. A path \
+                           outside the granted root is dropped from the watch, and declaring \
+                           nothing leaves the tamper finding unchecked, which is not a pass."
+        )
+    )]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub witness: Vec<String>,
     /// Signals this stage publishes for later stages of the same turn to read.
     ///
     /// The host validates each value ([`PublishedSignal::is_well_typed`]) and

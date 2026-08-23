@@ -610,6 +610,7 @@ fn before_turn_response_full() -> BeforeTurnResponse {
         context: vec![volatile_context()],
         role: Some("verifier".to_string()),
         scope: vec!["crates/stella-plugin/src/wire.rs".to_string()],
+        witness: vec!["tests/flip.rs".to_string()],
         publish: vec![well_typed(Signal::FlipAchieved)],
     }
 }
@@ -620,6 +621,7 @@ fn before_turn_response_minimal() -> BeforeTurnResponse {
         context: Vec::new(),
         role: None,
         scope: Vec::new(),
+        witness: Vec::new(),
         publish: Vec::new(),
     }
 }

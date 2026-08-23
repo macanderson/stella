@@ -80,6 +80,7 @@ fn before_response() -> BeforeTurnResponse {
         context: vec![VolatileContext::new("recall", "the last run failed on I/O")],
         role: Some("triage".into()),
         scope: vec!["crates/stella-core/src/driver.rs".into()],
+        witness: vec!["tests/flip.rs".into()],
         publish: vec![PublishedSignal {
             signal: Signal::Conversational,
             value: SignalValue::Boolean(false),
@@ -341,6 +342,44 @@ fn a_message_without_a_protocol_version_does_not_parse() {
         PROTOCOL_VERSION
     );
     round_trip(&BeforeTurnResponse::empty());
+}
+
+/// **The #3587 wire witness.** A plugin can name the artifacts its flip is
+/// measured against, and the host reads them.
+///
+/// It fails on the old contract for the plainest reason there is:
+/// `BeforeTurnResponse` denies unknown fields, so a plugin that wrote
+/// `"witness": [...]` did not get a narrower answer — it did not parse at all,
+/// and its whole contribution was dropped as a decode fault. Which is why the
+/// host's tamper watch could only ever cover the artifacts a test invocation
+/// spelled out in its argv, and a plugin whose witness is `cargo test --test
+/// flip` reached `TamperFinding::NotChecked` on every run, forever.
+///
+/// Additive: the version does not move, and a plugin that says nothing
+/// produces the identical bytes it always did — the second half below.
+#[test]
+fn a_wrapper_declares_the_artifacts_its_flip_is_measured_against() {
+    let declared: BeforeTurnResponse = serde_json::from_str(
+        r#"{"protocol_version": 1, "witness": ["tests/flip.rs", "tests/second.rs"]}"#,
+    )
+    .expect("a declared witness list is part of the contract");
+    assert_eq!(
+        declared.witness,
+        vec!["tests/flip.rs".to_string(), "tests/second.rs".to_string()]
+    );
+    assert_eq!(declared.protocol_version, PROTOCOL_VERSION);
+    round_trip(&declared);
+
+    // Omissible, and omitted rather than written empty: a plugin built against
+    // the older contract sends the same bytes and reads the same answer.
+    let silent: BeforeTurnResponse =
+        serde_json::from_str(r#"{"protocol_version": 1}"#).expect("declaring nothing is legal");
+    assert!(silent.witness.is_empty());
+    let encoded = serde_json::to_string(&silent).expect("encodes");
+    assert!(
+        !encoded.contains("witness"),
+        "an empty declaration must not appear on the wire: {encoded}"
+    );
 }
 
 /// **The #3498 witness.** Everything a plugin needs to act on the candidate

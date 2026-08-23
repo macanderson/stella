@@ -478,6 +478,9 @@
           "role": "verifier",
           "scope": [
             "crates/stella-plugin/src/wire.rs"
+          ],
+          "witness": [
+            "tests/flip.rs"
           ]
         },
         "point": "before_turn"

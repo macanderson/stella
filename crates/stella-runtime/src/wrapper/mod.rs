@@ -200,6 +200,7 @@ pub struct AdmittedContribution {
     role: Option<String>,
     context: Vec<VolatileContext>,
     scope: Vec<String>,
+    witness: Vec<String>,
     publish: Vec<PublishedSignal>,
 }
 
@@ -216,6 +217,19 @@ impl AdmittedContribution {
     #[must_use]
     pub fn scope(&self) -> &[String] {
         &self.scope
+    }
+
+    /// Workspace-relative paths this wrapper will judge its flip against, for
+    /// the host to snapshot before the turn and re-check after it (#3587).
+    ///
+    /// Unchecked here, deliberately, and it is the same non-check
+    /// [`Self::scope`] gets: a path is neither a permission nor a claim, and
+    /// the only thing that can validate one is the host that holds the granted
+    /// root. It fences each path there — a declaration that escapes the root is
+    /// dropped from the watch rather than followed.
+    #[must_use]
+    pub fn witness(&self) -> &[String] {
+        &self.witness
     }
 
     /// The signals this stage published, already checked against the kind each
@@ -306,6 +320,7 @@ pub fn admissible(
         role: response.role,
         context: response.context,
         scope: response.scope,
+        witness: response.witness,
         publish: response.publish,
     })
 }
