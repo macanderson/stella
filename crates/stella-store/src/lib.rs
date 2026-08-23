@@ -633,16 +633,16 @@ impl Store {
     /// responsible would leave every other one serving a hole.
     ///
     /// It is safe — with one visible wrinkle — to run against a workspace
-    /// another process is actively writing. The sweep re-folds `tool_calls`
-    /// from the `events` log, which is idempotent; it never stamps an
-    /// outcome, so a *live* turn in another process is not declared dead
-    /// (see [`Store::reconcile_interrupted_executions`]). The wrinkle: a call
-    /// announced but not yet returned re-folds as an abandoned error until
-    /// its `tool_result` lands and re-opens it, so another session's
-    /// in-flight call can briefly render as failed. And it costs nothing in
-    /// the overwhelmingly common case: the `executions_unfinished` partial
-    /// index holds only unclosed rows, so "is anything unclosed?" is an empty
-    /// index probe and no write happens at all.
+    /// another process is actively writing. The re-fold of `tool_calls` from
+    /// the `events` log is idempotent, and an outcome is stamped only on an
+    /// execution whose owning session the registry proves is gone, so a
+    /// *live* turn in another process is never declared dead (see
+    /// [`Store::settle_orphaned_executions`]). The wrinkle: a call announced
+    /// but not yet returned re-folds as an abandoned error until its
+    /// `tool_result` lands and re-opens it, so another session's in-flight
+    /// call can briefly render as failed. And it costs nothing in the common
+    /// case: the `executions_unfinished` partial index holds only unclosed
+    /// rows, so "is anything unclosed?" is an empty index probe.
     ///
     /// Failure is swallowed on purpose. Recovery of *observability* must
     /// never be the reason a workspace cannot be opened — the store is
@@ -659,7 +659,7 @@ impl Store {
             Some(workspace_root.to_path_buf()),
             Some(db_path.as_path()),
         )?;
-        let _ = store.reconcile_interrupted_executions();
+        let _ = store.recover_unfinished_at_open();
         Ok(store)
     }
 
