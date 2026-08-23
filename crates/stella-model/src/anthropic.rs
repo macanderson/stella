@@ -3,21 +3,25 @@
 //! dialect from Z.ai's OpenAI-compatible one (`anthropic-tools` vs.
 //! `openai-json`).
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use stella_protocol::{
-    CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason,
-    MessageRole, ProviderError, ToolCall,
+    CompletionMessage, CompletionRequestRef, CompletionResult, FinishReason, MessageRole,
+    ProviderError,
 };
 
 mod context_edit;
+mod stream;
+mod unary;
 
 use crate::cache_economics::CacheTtl;
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
 use crate::provider::{Provider, ToolCallObserver};
-use crate::sse::SseDecoder;
+use crate::stream_recovery::StreamRecovery;
 use context_edit::{CONTEXT_MANAGEMENT_BETA, ContextManagement};
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
@@ -55,6 +59,24 @@ pub struct AnthropicProvider {
     /// session would pay the 2x write premium for a prefix the next turn
     /// re-anchors on the short window anyway.
     cache_ttl: CacheTtl,
+    /// The streaming→non-streaming fallback latch (#2686, extended to this
+    /// dialect by #2746): armed when a stream hangs before its first byte or
+    /// comes back empty, consulted per attempt so the retry of a faulted
+    /// attempt goes out unary. See [`crate::stream_recovery`] for the state
+    /// machine and its bounds.
+    recovery: StreamRecovery,
+    /// The client the unary fallback dispatches through. Separate from
+    /// [`Self::client`] because a non-streaming call has no first token to
+    /// reset the per-read clock: the whole generation must fit inside one
+    /// read, so it needs [`http::unary_client`]'s 600s bound where the
+    /// streaming client's 120s per-chunk bound would fail every completion
+    /// slower than two minutes as retryable Transport (#547's lesson,
+    /// learned on Bedrock).
+    unary_client: reqwest::Client,
+    /// [`http::FIRST_BYTE_TIMEOUT`] in production; a field so the
+    /// hung-stream path is testable in milliseconds (the same reason
+    /// `next_stream_read` takes `idle` as a parameter).
+    first_byte_deadline: Duration,
 }
 
 impl AnthropicProvider {
@@ -84,7 +106,34 @@ impl AnthropicProvider {
             // invalidation and get nothing; the caller who knows the shape of
             // its conversation opts in.
             context_management: None,
+            recovery: StreamRecovery::default(),
+            unary_client: http::unary_client(),
+            first_byte_deadline: http::FIRST_BYTE_TIMEOUT,
         }
+    }
+
+    /// Shrink the first-byte deadline so the hung-stream fallback is
+    /// testable in milliseconds instead of 90 seconds of wall clock.
+    #[cfg(test)]
+    pub(crate) fn with_first_byte_deadline(mut self, deadline: Duration) -> Self {
+        self.first_byte_deadline = deadline;
+        self
+    }
+
+    /// Shrink the unary read bound so the non-streaming path is testable in
+    /// milliseconds instead of ten minutes. Separate from
+    /// [`Self::with_first_byte_deadline`] because the two bounds guard
+    /// different halves of the fallback: that one the stream's first byte,
+    /// this one the whole unary generation — head and body alike, which is
+    /// what lets a test stall the response *body* and reach the
+    /// classification `complete_unary_attempt` applies to `text()`.
+    #[cfg(test)]
+    pub(crate) fn with_unary_read_timeout(mut self, timeout: Duration) -> Self {
+        self.unary_client = reqwest::Client::builder()
+            .read_timeout(timeout)
+            .build()
+            .expect("the test client builds");
+        self
     }
 
     /// Opt this session into server-side context editing.
@@ -137,7 +186,7 @@ struct AnthropicRequest<'a> {
     /// tools+system prefix tier (prompt caching is opt-in per request on the
     /// Messages API).
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<Vec<AnthropicSystemBlock<'a>>>,
+    system: Option<Vec<AnthropicSystemBlock>>,
     messages: Vec<AnthropicMessage>,
     stream: bool,
     /// Sampling temperature, forwarded from `CompletionRequest.temperature`.
@@ -460,10 +509,13 @@ fn stamp_tail_cache_breakpoint(
 }
 
 #[derive(Serialize)]
-struct AnthropicSystemBlock<'a> {
+struct AnthropicSystemBlock {
     #[serde(rename = "type")]
     kind: &'static str,
-    text: &'a str,
+    /// Owned rather than borrowed: the hoisted system prompt is built by
+    /// [`to_anthropic_messages`] inside the body builder, so a borrow here
+    /// would tie the request to a local that dies before it is sent.
+    text: String,
     cache_control: AnthropicCacheControl,
 }
 
@@ -595,7 +647,7 @@ enum AnthropicStreamEvent {
     },
     /// A content block finished streaming. For a `tool_use` block this is
     /// the earliest moment its complete input is known — the hook that lets
-    /// [`aggregate_anthropic_stream`] announce the call to a
+    /// [`stream::aggregate_anthropic_stream`] announce the call to a
     /// [`ToolCallObserver`] while the rest of the message still streams.
     #[serde(rename = "content_block_stop")]
     ContentBlockStop {
@@ -867,15 +919,59 @@ impl Provider for AnthropicProvider {
 }
 
 impl AnthropicProvider {
-    /// The one request/stream/aggregate body behind both `complete_ref` and
+    /// The one request/deliver/assemble body behind both `complete_ref` and
     /// `complete_observed_ref` — the observer is threaded down to the stream
     /// aggregator, which announces each tool call at its
     /// `content_block_stop`.
+    ///
+    /// Streams by default, but consults the fallback latch first: the retry
+    /// of an attempt whose stream hung before its first byte or came back
+    /// empty goes out as a **unary** request for the same payload instead
+    /// (#2686, #2746) — see [`crate::stream_recovery`] for the latch's states
+    /// and bounds, and [`unary`] for that path.
     async fn complete_inner(
         &self,
         req: CompletionRequestRef<'_>,
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
+        if self.recovery.use_unary() {
+            return self.complete_unary_attempt(req).await;
+        }
+        let body = self.build_body(req, true);
+        let response = self.dispatch(&self.client, &body, false).await?;
+        let outcome = stream::aggregate_anthropic_stream(
+            response,
+            observer,
+            self.pricing.as_ref(),
+            self.first_byte_deadline,
+        )
+        .await
+        .map_err(|fault| self.recovery.absorb(fault))?;
+        let cost_usd = self
+            .pricing
+            .map(|p| p.cost_usd(&outcome.usage))
+            .unwrap_or(0.0);
+        Ok(CompletionResult {
+            text: outcome.text,
+            tool_calls: outcome.tool_calls,
+            usage: outcome.usage,
+            model: self.model.clone(),
+            cost_usd,
+            finish_reason: map_stop_reason(outcome.stop_reason.as_deref()),
+            // A direct endpoint: the provider id is already the whole answer
+            // to "who served this?", so there is no upstream to name.
+            upstream_provider: None,
+        })
+    }
+
+    /// The one request body both delivery paths serialize — `stream` is the
+    /// only field on which they differ, so the unary fallback re-issues the
+    /// byte-identical payload minus the stream flag.
+    ///
+    /// Stamping the two cache breakpoints belongs here rather than at the
+    /// send site: the remembered tail is per-request state, and a body built
+    /// without it would silently drop the conversation cache tier.
+    fn build_body(&self, req: CompletionRequestRef<'_>, stream: bool) -> AnthropicRequest<'_> {
         let (system, mut messages) = to_anthropic_messages(req.messages);
         // Two message breakpoints, not one (#1837): the previous request's
         // tail — a position the cache was genuinely written to — and this
@@ -966,10 +1062,10 @@ impl AnthropicProvider {
                 )
             };
 
-        let body = AnthropicRequest {
+        AnthropicRequest {
             model: &self.model,
             max_tokens,
-            system: system.as_deref().map(|text| {
+            system: system.map(|text| {
                 vec![AnthropicSystemBlock {
                     kind: "text",
                     text,
@@ -977,7 +1073,7 @@ impl AnthropicProvider {
                 }]
             }),
             messages,
-            stream: true,
+            stream,
             temperature,
             top_p,
             top_k,
@@ -993,10 +1089,29 @@ impl AnthropicProvider {
                     input_schema: tool.input_schema.clone(),
                 })
                 .collect(),
-        };
+        }
+    }
 
-        let mut request = self
-            .client
+    /// POST `body` to the Messages endpoint and run the shared non-success
+    /// ladder. Returns the successful response for the caller — streaming or
+    /// unary — to consume. The two delivery paths differ in their client's
+    /// read bound AND in what that bound's expiry means, so both ride as
+    /// parameters.
+    ///
+    /// `unary` selects the send-error classification (#547's other half): on
+    /// the unary client the read bound covers the ENTIRE generation, so its
+    /// expiry means the request was too long to serve — Terminal, because
+    /// re-issuing the identical request just waits out the full bound again
+    /// once per retry. On the streaming client the same expiry is only a
+    /// header stall (the first token would have reset the clock), which the
+    /// next attempt may well clear — retryable, as it always was.
+    async fn dispatch(
+        &self,
+        client: &reqwest::Client,
+        body: &AnthropicRequest<'_>,
+        unary: bool,
+    ) -> Result<reqwest::Response, ProviderError> {
+        let mut request = client
             .post(format!("{}/v1/messages", self.base_url))
             .header("x-api-key", self.api_key.reveal())
             .header("anthropic-version", ANTHROPIC_VERSION)
@@ -1018,11 +1133,13 @@ impl AnthropicProvider {
         if !betas.is_empty() {
             request = request.header("anthropic-beta", betas.join(","));
         }
-        let response = request
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ProviderError::transport(e.to_string()))?;
+        let response = request.json(body).send().await.map_err(|e| {
+            if unary {
+                http::classify_unary_dispatch_error("Anthropic", &e)
+            } else {
+                ProviderError::transport(e.to_string())
+            }
+        })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -1036,32 +1153,8 @@ impl AnthropicProvider {
                 &self.model,
             ));
         }
-
-        let (text, tool_calls, usage, stop_reason) =
-            aggregate_anthropic_stream(response, observer, self.pricing.as_ref()).await?;
-        let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
-        let finish_reason = map_stop_reason(stop_reason.as_deref());
-        Ok(CompletionResult {
-            text,
-            tool_calls,
-            usage,
-            model: self.model.clone(),
-            cost_usd,
-            finish_reason,
-            // A direct endpoint: the provider id is already the whole answer
-            // to "who served this?", so there is no upstream to name.
-            upstream_provider: None,
-        })
+        Ok(response)
     }
-}
-
-/// Accumulator for one in-progress `tool_use` block, keyed by its stream
-/// index until the block completes.
-#[derive(Default)]
-struct ToolUseAccumulator {
-    id: String,
-    name: String,
-    input_json: String,
 }
 
 /// Normalize the Messages API's `stop_reason` vocabulary onto the
@@ -1078,275 +1171,9 @@ fn map_stop_reason(stop_reason: Option<&str>) -> Option<FinishReason> {
     }
 }
 
-async fn aggregate_anthropic_stream(
-    response: reqwest::Response,
-    observer: Option<&dyn ToolCallObserver>,
-    pricing: Option<&Pricing>,
-) -> Result<(String, Vec<ToolCall>, CompletionUsage, Option<String>), ProviderError> {
-    use std::collections::BTreeMap;
-
-    let mut decoder = SseDecoder::new();
-    let mut text = String::new();
-    let mut usage = CompletionUsage::default();
-    let mut tool_uses: BTreeMap<usize, ToolUseAccumulator> = BTreeMap::new();
-    // Why generation ended, from the `message_delta` event. `"max_tokens"`
-    // means the stream was cut off at the output-token limit — the signal a
-    // truncated tool-call payload needs to be reported as such rather than
-    // silently nulled.
-    let mut stop_reason: Option<String> = None;
-    // The highest content-block index that started. Blocks stream
-    // sequentially, so only this block can have been cut off by the token
-    // limit — a later block starting proves every earlier one closed.
-    let mut last_block_index: Option<usize> = None;
-    let mut message_stop_seen = false;
-    let mut stream = response.bytes_stream();
-
-    // The stream can die at any chunk, and by then `message_start` has
-    // usually already told us exactly what the prompt cost. Attaching that to
-    // the error is the difference between "this attempt is unaccounted" and a
-    // real floor under the turn's spend.
-    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
-        .await
-        .map_err(|e| http::attach_partial(e, &usage, &text, pricing))?
-    {
-        decoder
-            .push_bytes(&chunk)
-            .map_err(|e| ProviderError::Malformed(e.to_string()))?;
-        for event in decoder.poll() {
-            if event.data.trim() == "[DONE]" || event.data.is_empty() {
-                continue;
-            }
-            let parsed: Result<AnthropicStreamEvent, _> = serde_json::from_str(&event.data);
-            match parsed {
-                Ok(AnthropicStreamEvent::Error { error }) => {
-                    // A mid-stream error aborts the turn with a typed error —
-                    // never a truncated Ok with the text seen so far. It is a
-                    // loss site like the two above, and carries the same
-                    // accounting: `message_start` has usually already reported
-                    // what the prompt cost, and the provider bills it whether
-                    // or not the stream then dies (#3859).
-                    return Err(http::attach_partial(
-                        classify_anthropic_stream_error(&error),
-                        &usage,
-                        &text,
-                        pricing,
-                    ));
-                }
-                Ok(AnthropicStreamEvent::MessageStart { message }) => {
-                    if let Some(u) = message.usage {
-                        usage.input_tokens = u.input_tokens + u.cache_read_input_tokens;
-                        usage.cached_input_tokens = u.cache_read_input_tokens;
-                        usage.cache_write_tokens = u.cache_creation_input_tokens;
-                    }
-                }
-                Ok(AnthropicStreamEvent::ContentBlockStart {
-                    index,
-                    content_block,
-                }) => {
-                    last_block_index = Some(index);
-                    if let AnthropicStartBlock::ToolUse { id, name } = content_block {
-                        tool_uses.insert(
-                            index,
-                            ToolUseAccumulator {
-                                id,
-                                name,
-                                input_json: String::new(),
-                            },
-                        );
-                    }
-                }
-                Ok(AnthropicStreamEvent::ContentBlockDelta { index, delta }) => match delta {
-                    // Answer text and thinking are announced on separate
-                    // observer channels and never merged: `text` remains the
-                    // reply, while thinking renders as its own collapsible
-                    // transcript entry.
-                    AnthropicDelta::TextDelta { text: delta } => {
-                        if let Some(observer) = observer {
-                            observer.text_delta(&delta);
-                        }
-                        text.push_str(&delta);
-                    }
-                    AnthropicDelta::ThinkingDelta { thinking } => {
-                        if let Some(observer) = observer {
-                            observer.reasoning_delta(&thinking);
-                        }
-                    }
-                    AnthropicDelta::InputJsonDelta { partial_json } => {
-                        // Liveness only — the partial JSON itself is never
-                        // announced (tool_call_streamed owns the parsed
-                        // whole). Without this tick a generation that is one
-                        // large tool call streams in total observer silence
-                        // and an idle deadline kills it as stalled.
-                        if let Some(observer) = observer {
-                            observer.tool_input_delta();
-                        }
-                        if let Some(acc) = tool_uses.get_mut(&index) {
-                            acc.input_json.push_str(&partial_json);
-                        }
-                    }
-                    AnthropicDelta::Other => {}
-                },
-                Ok(AnthropicStreamEvent::ContentBlockStop { index }) => {
-                    // The earliest moment a tool call is complete. Announce
-                    // it to the observer ONLY when its input already parses —
-                    // a block whose JSON is broken or truncated must go
-                    // through the end-of-stream repair/truncation logic
-                    // below, never reach speculative execution. The
-                    // accumulator stays in the map: the final assembly below
-                    // remains the single source of truth, and it re-parses
-                    // the same bytes, so an announced call and its committed
-                    // twin are structurally identical.
-                    if let (Some(observer), Some(acc)) = (observer, tool_uses.get(&index)) {
-                        let input = if acc.input_json.is_empty() {
-                            Some(serde_json::json!({}))
-                        } else {
-                            serde_json::from_str(&acc.input_json).ok()
-                        };
-                        if let Some(input) = input
-                            && !acc.id.is_empty()
-                        {
-                            observer.tool_call_streamed(&ToolCall {
-                                call_id: acc.id.clone(),
-                                name: acc.name.clone(),
-                                input,
-                            });
-                        }
-                    }
-                }
-                Ok(AnthropicStreamEvent::MessageDelta { delta, usage: u }) => {
-                    if let Some(reason) = delta.stop_reason {
-                        stop_reason = Some(reason);
-                    }
-                    if let Some(u) = u {
-                        usage.reported = true;
-                        if u.input_tokens > 0 {
-                            // Take the whole input-side picture from ONE
-                            // frame: `input_tokens` and its cache splits
-                            // describe the same request, so under independent
-                            // `> 0` guards a delta that restates
-                            // `input_tokens` without the cache fields (some
-                            // gateways do) kept an earlier frame's
-                            // `cached_input_tokens` — leaving cached > input,
-                            // a 100% "hit rate" on a turn that read nothing,
-                            // and thousands of cache-read tokens off the bill.
-                            usage.input_tokens = u.input_tokens + u.cache_read_input_tokens;
-                            usage.cached_input_tokens = u.cache_read_input_tokens;
-                            usage.cache_write_tokens = u.cache_creation_input_tokens;
-                        } else {
-                            // A cache-only delta (no input restatement) still
-                            // updates the split it actually reports.
-                            if u.cache_read_input_tokens > 0 {
-                                usage.cached_input_tokens = u.cache_read_input_tokens;
-                            }
-                            if u.cache_creation_input_tokens > 0 {
-                                usage.cache_write_tokens = u.cache_creation_input_tokens;
-                            }
-                        }
-                        usage.output_tokens = u.output_tokens;
-                    }
-                }
-                Ok(AnthropicStreamEvent::MessageStop) => {
-                    message_stop_seen = true;
-                }
-                Ok(_) => {}
-                Err(_) => {
-                    // A data line that did not deserialize into
-                    // `AnthropicStreamEvent` at all — malformed or partial
-                    // JSON, or JSON lacking the string `type` this tagged enum
-                    // needs. An event carrying a `type` we simply don't model
-                    // (e.g. `ping`) is NOT here: it deserializes to `Other`
-                    // above via `#[serde(other)]` and lands in `Ok(_)`.
-                    // Tolerated, never fatal: one unparseable frame is dropped
-                    // and the stream continues; a genuinely truncated stream is
-                    // caught by the `message_stop` check below, not here.
-                }
-            }
-        }
-    }
-
-    // EOF without `message_stop` is a disconnect, not a completion — and
-    // nothing accumulated from a cut stream (text, stop_reason, tool
-    // fragments) is trustworthy enough to classify further. Retryable
-    // Transport, upholding the same "never a truncated Ok" promise as the
-    // in-stream error path above.
-    if !message_stop_seen {
-        return Err(http::attach_partial(
-            http::stream_ended_before_terminal("Anthropic", "message_stop"),
-            &usage,
-            &text,
-            pricing,
-        ));
-    }
-
-    // The one content block the token limit could have cut: the last block
-    // started, and only when the stream actually stopped at `max_tokens`.
-    // Pinning truncation to that block keeps the blame on the call that was
-    // cut — an *earlier* call whose JSON is broken is the model's own
-    // malformed output and still gets the repair sentinel below.
-    let truncated_index = if stop_reason.as_deref() == Some("max_tokens") {
-        last_block_index
-    } else {
-        None
-    };
-
-    let mut tool_calls = Vec::with_capacity(tool_uses.len());
-    for (index, acc) in tool_uses {
-        let truncated = Some(index) == truncated_index;
-        let input = if acc.input_json.is_empty() {
-            if truncated {
-                // The limit landed after this call's `content_block_start`
-                // but before its first `input_json_delta`: executing it with
-                // `{}` would fail on missing parameters and re-enter the same
-                // unwinnable retry-retruncate loop as a mid-payload cut.
-                return Err(http::truncated_tool_input_error(
-                    "Anthropic",
-                    &acc.name,
-                    "",
-                    "stop_reason=max_tokens",
-                ));
-            }
-            // A no-argument tool call arrives with no `input_json_delta` at
-            // all: that is an empty object, never null.
-            serde_json::json!({})
-        } else {
-            match serde_json::from_str(&acc.input_json) {
-                Ok(value) => value,
-                // The fragments were concatenated byte-exactly (the SSE
-                // decoder's own tests prove arbitrary chunk boundaries
-                // reassemble losslessly), so an unparseable buffer on the
-                // block the token limit cut means the arguments never
-                // finished streaming. Terminal and turn-aborting — mirroring
-                // openai.rs's `response.incomplete` handling — because
-                // retrying the identical request re-truncates identically:
-                // the old silent `Null` here sent the driver's repair loop
-                // into exactly that "stuck-loop".
-                Err(_) if truncated => {
-                    return Err(http::truncated_tool_input_error(
-                        "Anthropic",
-                        &acc.name,
-                        &acc.input_json,
-                        "stop_reason=max_tokens",
-                    ));
-                }
-                // Broken JSON on a block that *finished* is the model's own
-                // malformed output: fall back to the `Value::Null` sentinel
-                // `driver.rs::execute_with_repair` consumes (the documented
-                // adapter contract), so the repair loop asks the model to
-                // re-emit just this call instead of aborting the turn.
-                Err(_) => serde_json::Value::Null,
-            }
-        };
-        tool_calls.push(ToolCall {
-            call_id: acc.id,
-            name: acc.name,
-            input,
-        });
-    }
-
-    Ok((text, tool_calls, usage, stop_reason))
-}
-
 #[cfg(test)]
 mod parallel_tool_calls;
+#[cfg(test)]
+mod stream_fallback_tests;
 #[cfg(test)]
 mod tests;

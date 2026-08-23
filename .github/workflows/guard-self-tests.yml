@@ -198,6 +198,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-typed-errors.sh
 
+      - name: tool-error-class ratchet direction
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-tool-error-class.sh
+
       - name: wire-path guard failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-wire-paths.sh

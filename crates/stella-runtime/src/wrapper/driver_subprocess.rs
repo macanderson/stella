@@ -203,6 +203,11 @@ impl SubprocessDriver {
     /// business holding one: invariant 3's "every model call is made by the
     /// host" is what `work_start` will be for.
     ///
+    /// The filter here is what a caller can be *told* about; the same
+    /// judgement is asked again at every spawn, so a name registered as a
+    /// credential after this call still never reaches a child
+    /// ([`DriverError::CredentialRegisteredLate`], #3529).
+    ///
     /// # Errors
     ///
     /// [`DriverError::EmptyArgv`] when `argv` names no program, and
@@ -292,6 +297,17 @@ impl SubprocessDriver {
     /// decided nothing, and a caller must not read that as either terminal
     /// answer.
     pub async fn drive(&self, request: DriveRequest) -> Result<DriveResponse, DriverError> {
+        // The credential judgement, asked again at the moment of use rather
+        // than only at declare time — the wrapper socket's #3529 check, and
+        // the same one, because a driver spawns a child from a resolved
+        // environment for exactly the same reasons.
+        let late = super::subprocess::registered_since_declare(&self.env);
+        if !late.is_empty() {
+            return Err(DriverError::CredentialRegisteredLate {
+                program: self.program.clone(),
+                names: late,
+            });
+        }
         let body = serde_json::to_vec(&request).map_err(DriverError::Encode)?;
 
         let mut command = Command::new(&self.program);

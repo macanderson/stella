@@ -261,6 +261,11 @@ pub(super) struct AttemptDriver<'r, 'e> {
 #[async_trait(?Send)]
 impl TurnDriver for AttemptDriver<'_, '_> {
     async fn run_turn(&mut self, prelude: TurnPrelude) -> DrivenTurn {
+        // Pinned before the turn, at the identity the declared artifacts have
+        // now (#3587). Already-pinned ones keep their first baseline, so a
+        // later round's declaration cannot launder an earlier round's rewrite —
+        // see `TamperWatch::pin_declared`.
+        self.watch.pin_declared(prelude.witness());
         // Invariant 7: `into_messages` hands back user messages, appended
         // after the byte-stable system prefix this conversation opens with.
         self.messages.extend(prelude.into_messages());

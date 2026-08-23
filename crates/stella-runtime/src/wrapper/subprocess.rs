@@ -99,6 +99,14 @@
 //!   what its manifest asked for is a bug its author cannot diagnose, and the
 //!   fix they have — declare a `[roles]` tier and let the host make the call —
 //!   is one they can only take if they are told.
+//!
+//!   It is also asked **again at the spawn**, and that is the time-of-check
+//!   half rather than a second belt (#3529). The judgement consults a
+//!   process-global registry trusted settings populate, so declaring a wrapper
+//!   before those settings load and after it are two different answers for one
+//!   manifest — and only the second ask is taken at the moment the child
+//!   actually receives the pair. [`registered_since_declare`] is that ask, and
+//!   a name it names fails the dispatch loudly.
 //! - **It does not interpret a shell string.** argv, always — the #1400 rule
 //!   every other spawned thing in this workspace follows.
 
@@ -157,6 +165,43 @@ pub const MAX_WRAPPER_TIMEOUT: Duration = Duration::from_millis(MAX_HOOK_TIMEOUT
 #[must_use]
 pub fn refuses_env_name(name: &str) -> bool {
     is_sensitive_env_name(name.as_ref())
+}
+
+/// The declared names a spawn must still withhold, asked again at the moment
+/// the child is started (#3529).
+///
+/// [`SubprocessWrapper::declare`] filters once, at construction, and until now
+/// that was the whole of the refusal. The judgement it calls is not a pure
+/// function of its argument: [`refuses_env_name`] also consults
+/// `stella_tools::subprocess_env`'s registry, which trusted provider settings
+/// populate. So one manifest got two different answers depending on the order —
+/// settings registered `CORP_AUTH` first and the pair was refused; the wrapper
+/// was declared first and the transport held the resolved pair and handed it to
+/// every child it spawned, for the life of the process. That the second
+/// ordering does not occur on today's call path is an argument from call order,
+/// and #3512's whole point was that a security property held by one caller's
+/// discipline is not a property.
+///
+/// Asking again here is what makes it a **time-of-use** check. The registry is
+/// monotonic, so a second ask can only ever move a name from admitted to
+/// refused — the direction that cannot widen what a plugin receives — and the
+/// ordinary answer is an empty list, on every spawn, forever.
+///
+/// # Why this is not simply filtered away
+///
+/// Because the report is spent. [`AdmittedWrapper::refused`] was returned to
+/// the caller and printed before any point was dispatched, so a name dropped
+/// *here* reaches nobody: the plugin would run without a variable its manifest
+/// asked for and its author would have no way to find out. That is exactly the
+/// silent-filter failure #3512 existed to close, one layer down. The caller
+/// gets a typed error instead ([`WrapperError::CredentialRegisteredLate`], and
+/// [`DriverError::CredentialRegisteredLate`](super::DriverError) for the driver
+/// channel), which the dispatcher records as a fault on the round.
+pub(super) fn registered_since_declare(env: &[(String, String)]) -> Vec<String> {
+    env.iter()
+        .filter(|(name, _)| refuses_env_name(name))
+        .map(|(name, _)| name.clone())
+        .collect()
 }
 
 /// A wrapper that runs as a child process and speaks the wire contract.
@@ -271,6 +316,12 @@ impl SubprocessWrapper {
     /// install-time correction is a *report* of this decision, not the place
     /// it is made (#3512).
     ///
+    /// The filter here is what a caller can be *told* about, not what makes the
+    /// property hold: the same judgement is asked again at every spawn, so a
+    /// name registered as a credential after this call still never reaches a
+    /// child — it fails the dispatch with
+    /// [`WrapperError::CredentialRegisteredLate`] instead (#3529).
+    ///
     /// # Errors
     ///
     /// [`WrapperError::EmptyArgv`] when `argv` names no program, and
@@ -371,6 +422,17 @@ impl SubprocessWrapper {
     /// deadlock the same way. So stdin belongs to one task that does nothing
     /// else, and this loop only ever reads.
     async fn exchange(&self, request: WrapperRequest) -> Result<WrapperResponse, WrapperError> {
+        // Before anything is encoded, and before the child exists: the
+        // credential judgement is asked again at the moment of use, because
+        // the answer it gave at declare time can only have been taken before a
+        // late registration (#3529 — see `registered_since_declare`).
+        let late = registered_since_declare(&self.env);
+        if !late.is_empty() {
+            return Err(WrapperError::CredentialRegisteredLate {
+                program: self.program.clone(),
+                names: late,
+            });
+        }
         let asked = request.point();
         let body = serde_json::to_vec(&request).map_err(WrapperError::Encode)?;
 

@@ -107,7 +107,13 @@ pub fn with_index_warning(output: ToolOutput, warning: Option<String>) -> ToolOu
             content: format!("({warning})\n{content}"),
             data: None,
         },
-        ToolOutput::Error { message, .. } => ToolOutput::error(format!("{message}\n({warning})")),
+        // The warning is appended to the prose; whatever class the failure
+        // already carried rides along unchanged (#3167) — this wrapper must
+        // not launder a classified failure back to "unaudited".
+        ToolOutput::Error { message, class } => ToolOutput::Error {
+            message: format!("{message}\n({warning})"),
+            class,
+        },
     }
 }
 

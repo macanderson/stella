@@ -132,14 +132,20 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let (scope_root, path) = match ctx.resolve_for_write(target) {
             Ok(resolved) => resolved,
             Err(refusal) => {
-                return ToolOutput::error(format!(
-                    "`{FILES_KEY}`[{index}] (`{target}`): {refusal} — nothing was deleted"
-                ));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::PermissionDenied,
+                    format!("`{FILES_KEY}`[{index}] (`{target}`): {refusal} — nothing was deleted"),
+                );
             }
         };
         let handle = match RootHandle::open(&scope_root) {
             Ok(handle) => std::sync::Arc::new(handle),
-            Err(e) => return ToolOutput::error(format!("cannot open workspace root: {e}")),
+            Err(e) => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("cannot open workspace root: {e}"),
+                );
+            }
         };
         let kind = tokio::task::spawn_blocking({
             let (handle, path) = (std::sync::Arc::clone(&handle), path.clone());
@@ -157,19 +163,41 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
             // single form has always said so. Collapsing them here would tell
             // a model that `sub/..` "is not a file", which is true and useless.
             Ok(Err(e)) if e.is_escape() => {
-                return ToolOutput::error(format!(
-                    "`{FILES_KEY}`[{index}]: path `{path}` escapes the workspace root ({e}) — \
-                     nothing was deleted"
-                ));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::PermissionDenied,
+                    format!(
+                        "`{FILES_KEY}`[{index}]: path `{path}` escapes the workspace root ({e}) — \
+                         nothing was deleted"
+                    ),
+                );
             }
-            Ok(Ok(_)) | Ok(Err(_)) => {
-                return ToolOutput::error(format!(
-                    "`{FILES_KEY}`[{index}]: `{path}` is not a file (directories and missing \
-                     paths are not deletable with this tool) — nothing was deleted"
-                ));
+            // Split from the escape arm above so a genuine mistake ("that's a
+            // directory") and a race ("it's gone already") each carry their
+            // own class, even though both still read as the one message this
+            // tool has always given a caller that named a non-file target.
+            Ok(Ok(_)) => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    format!(
+                        "`{FILES_KEY}`[{index}]: `{path}` is not a file (directories and missing \
+                         paths are not deletable with this tool) — nothing was deleted"
+                    ),
+                );
+            }
+            Ok(Err(_)) => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::NotFound,
+                    format!(
+                        "`{FILES_KEY}`[{index}]: `{path}` is not a file (directories and missing \
+                         paths are not deletable with this tool) — nothing was deleted"
+                    ),
+                );
             }
             Err(e) => {
-                return ToolOutput::error(format!("could not inspect `{path}`: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Internal,
+                    format!("could not inspect `{path}`: {e}"),
+                );
             }
         }
     }
@@ -196,7 +224,7 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         // the unlink itself failed. Nothing can be undone at this point, so
         // the report names exactly what is already gone rather than implying
         // the batch was atomic.
-        let failure = match outcome {
+        let (class, failure) = match outcome {
             Ok(Ok(before)) => {
                 if let Some(before) = before {
                     changes.push(crate::own_change::own_delete(
@@ -207,15 +235,22 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
                 removed.push(path);
                 continue;
             }
-            Ok(Err(e)) => e.to_string(),
-            Err(e) => e.to_string(),
+            // The checks all passed, so a failed unlink here is the
+            // filesystem itself refusing (readonly, immutable, a race) —
+            // distinct from the join failure below, which is our own
+            // runtime, not the filesystem.
+            Ok(Err(e)) => (stella_protocol::ErrorClass::PermissionDenied, e.to_string()),
+            Err(e) => (stella_protocol::ErrorClass::Internal, e.to_string()),
         };
-        return ToolOutput::error(format!(
-            "could not delete `{path}`: {failure} — this batch had already deleted {} file(s): \
-             {}",
-            removed.len(),
-            removed.join(", ")
-        ));
+        return ToolOutput::classified_error(
+            class,
+            format!(
+                "could not delete `{path}`: {failure} — this batch had already deleted {} \
+                 file(s): {}",
+                removed.len(),
+                removed.join(", ")
+            ),
+        );
     }
     crate::own_change::attach(
         ToolOutput::ok(format!(
@@ -238,13 +273,21 @@ async fn delete_one(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
     // scope is consulted before the descriptor walk starts.
     let (scope_root, path) = match ctx.resolve_for_write(path) {
         Ok(resolved) => resolved,
-        Err(refusal) => return ToolOutput::error(refusal.to_string()),
+        Err(refusal) => {
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::PermissionDenied,
+                refusal.to_string(),
+            );
+        }
     };
     let path = path.as_str();
     let handle = match RootHandle::open(&scope_root) {
         Ok(handle) => std::sync::Arc::new(handle),
         Err(e) => {
-            return ToolOutput::error(format!("cannot open workspace root: {e}"));
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
+                format!("cannot open workspace root: {e}"),
+            );
         }
     };
     // Classify, read the link, and unlink on one blocking worker. All three
@@ -289,23 +332,36 @@ async fn delete_one(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
             "deleted symlink {path} — the link only; its target `{}` is untouched",
             target.display()
         )),
-        Ok(Ok(None)) => ToolOutput::error(format!(
-            "`{path}` is not a file (directories and missing paths are not deletable \
+        Ok(Ok(None)) => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::InvalidInput,
+            format!(
+                "`{path}` is not a file (directories and missing paths are not deletable \
                      with this tool)"
-        )),
-        Ok(Err(e)) if e.is_escape() => {
-            ToolOutput::error(format!("path `{path}` escapes the workspace root ({e})"))
-        }
+            ),
+        ),
+        Ok(Err(e)) if e.is_escape() => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::PermissionDenied,
+            format!("path `{path}` escapes the workspace root ({e})"),
+        ),
         // A missing path reaches here as the `stat` failing, and must read
         // as the same refusal a directory gets — this tool deletes files.
         Ok(Err(crate::rootfd::RootError::Io(e))) if e.kind() == std::io::ErrorKind::NotFound => {
-            ToolOutput::error(format!(
-                "`{path}` is not a file (directories and missing paths are not deletable \
+            ToolOutput::classified_error(
+                stella_protocol::ErrorClass::NotFound,
+                format!(
+                    "`{path}` is not a file (directories and missing paths are not deletable \
                          with this tool)"
-            ))
+                ),
+            )
         }
-        Ok(Err(e)) => ToolOutput::error(format!("could not delete `{path}`: {e}")),
-        Err(e) => ToolOutput::error(format!("could not delete `{path}`: {e}")),
+        Ok(Err(e)) => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::PermissionDenied,
+            format!("could not delete `{path}`: {e}"),
+        ),
+        Err(e) => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::Internal,
+            format!("could not delete `{path}`: {e}"),
+        ),
     }
 }
 
@@ -318,6 +374,47 @@ mod tests {
     /// context rather than the bare root path it used to (#3284).
     fn cx(root: impl AsRef<std::path::Path>) -> crate::ctx::ToolCtx {
         crate::ctx::ToolCtx::bare(root.as_ref().to_path_buf())
+    }
+
+    /// The #3167 witness: a directory and a missing path both render the
+    /// exact refusal `delete_file` has always given — the loop detector and
+    /// the prompt cache compare those bytes — but now each carries the
+    /// [`stella_protocol::ErrorClass`] its own cause earns, rather than the
+    /// `class: None` every refusal shared before this sweep classified them.
+    #[tokio::test]
+    async fn a_directory_and_a_missing_path_keep_their_shared_prose_but_split_their_class() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+
+        let on_a_directory = DeleteFile
+            .execute(&serde_json::json!({"path": "sub"}), &cx(dir.path()))
+            .await;
+        match on_a_directory {
+            ToolOutput::Error { message, class } => {
+                assert_eq!(
+                    message,
+                    "`sub` is not a file (directories and missing paths are not deletable \
+                     with this tool)"
+                );
+                assert_eq!(class, Some(stella_protocol::ErrorClass::InvalidInput));
+            }
+            other => panic!("expected an error, got {other:?}"),
+        }
+
+        let on_a_missing_path = DeleteFile
+            .execute(&serde_json::json!({"path": "ghost.txt"}), &cx(dir.path()))
+            .await;
+        match on_a_missing_path {
+            ToolOutput::Error { message, class } => {
+                assert_eq!(
+                    message,
+                    "`ghost.txt` is not a file (directories and missing paths are not \
+                     deletable with this tool)"
+                );
+                assert_eq!(class, Some(stella_protocol::ErrorClass::NotFound));
+            }
+            other => panic!("expected an error, got {other:?}"),
+        }
     }
 
     #[tokio::test]

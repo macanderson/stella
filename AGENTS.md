@@ -86,6 +86,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + typed-errors
+                         #   + tool-error-class (#3167 unclassified-ToolOutput::error ratchet)
                          #   + dead-code-allows
                          #   + diagnostic-codes
                          #   + consumer-sites (Behavioral 'site' strings point at live code)
@@ -441,10 +442,10 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
      effort against one surfaces a one-line boot notice, never a silent drop.
    - **`StreamFallbackPosture`** — how a provider recovers when its
      streaming path is broken (a stream hung before its first byte, or a
-     200 with an empty stream). The shared chat-completions adapter arms a
-     bounded per-session latch and re-issues the retried attempt as a unary
-     request (#2686); the other streaming dialects declare the gap; Bedrock
-     is already unary.
+     200 with an empty stream). Every streaming dialect arms a bounded
+     per-session latch and re-issues the retried attempt as a unary request
+     — the shared chat-completions adapter first (#2686), then Messages,
+     Responses and `generateContent` (#2746); Bedrock is already unary.
    - **`OverflowPosture`** — whether this provider's context-overflow
      rejection is recognised as one, so the engine's reactive recovery
      fires instead of aborting the turn (#2680). `Detected` names the wire

@@ -144,23 +144,34 @@ impl WriteFile {
             let (scope_root, path) = match ctx.resolve_for_write(&target.path) {
                 Ok(resolved) => resolved,
                 Err(refusal) => {
-                    return ToolOutput::error(format!(
-                        "`{FILES_KEY}`[{index}] (`{}`): {refusal} — nothing was written",
-                        target.path
-                    ));
+                    return ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::PermissionDenied,
+                        format!(
+                            "`{FILES_KEY}`[{index}] (`{}`): {refusal} — nothing was written",
+                            target.path
+                        ),
+                    );
                 }
             };
             let handle = match crate::rootfd::RootHandle::open(&scope_root) {
                 Ok(handle) => Arc::new(handle),
-                Err(e) => return ToolOutput::error(format!("cannot open workspace root: {e}")),
+                Err(e) => {
+                    return ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::Environment,
+                        format!("cannot open workspace root: {e}"),
+                    );
+                }
             };
             if handle.stat(&path).is_ok() && !self.ledger.saw_whole_file(&scope_root, &path) {
-                return ToolOutput::error(format!(
-                    "`{FILES_KEY}`[{index}]: refusing to overwrite `{path}`: this session has \
-                     not been shown the whole file, and `write_file` replaces all of it. Read \
-                     it first (`read_file` with no offset/limit), then write — or use \
-                     `edit_file` to change part of it in place. Nothing was written."
-                ));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!(
+                        "`{FILES_KEY}`[{index}]: refusing to overwrite `{path}`: this session has \
+                         not been shown the whole file, and `write_file` replaces all of it. Read \
+                         it first (`read_file` with no offset/limit), then write — or use \
+                         `edit_file` to change part of it in place. Nothing was written."
+                    ),
+                );
             }
             planned.push((handle, scope_root, path, target.content.as_str()));
         }
@@ -188,7 +199,12 @@ impl WriteFile {
                         content,
                     ));
                 }
-                Err(e) => return ToolOutput::error(format!("failed to write `{path}`: {e}")),
+                Err(e) => {
+                    return ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::Environment,
+                        format!("failed to write `{path}`: {e}"),
+                    );
+                }
             }
         }
         crate::own_change::attach(
@@ -221,7 +237,12 @@ impl WriteFile {
         // the bytes are on disk is a report, not a boundary.
         let (scope_root, path) = match ctx.resolve_for_write(path) {
             Ok(resolved) => resolved,
-            Err(refusal) => return ToolOutput::error(refusal.to_string()),
+            Err(refusal) => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::PermissionDenied,
+                    refusal.to_string(),
+                );
+            }
         };
         let path = path.as_str();
 
@@ -233,7 +254,10 @@ impl WriteFile {
         let handle = match crate::rootfd::RootHandle::open(&scope_root) {
             Ok(handle) => Arc::new(handle),
             Err(e) => {
-                return ToolOutput::error(format!("cannot open workspace root: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("cannot open workspace root: {e}"),
+                );
             }
         };
 
@@ -246,11 +270,14 @@ impl WriteFile {
         // something is there to destroy, and the write below answers it
         // properly.
         if handle.stat(path).is_ok() && !self.ledger.saw_whole_file(&scope_root, path) {
-            return ToolOutput::error(format!(
-                "refusing to overwrite `{path}`: this session has not been shown the whole file, \
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                format!(
+                    "refusing to overwrite `{path}`: this session has not been shown the whole file, \
                  and `write_file` replaces all of it. Read it first (`read_file` with no \
                  offset/limit), then write — or use `edit_file` to change part of it in place."
-            ));
+                ),
+            );
         }
 
         let previous = before(&handle, path);
@@ -280,10 +307,14 @@ impl WriteFile {
                     &[change],
                 )
             }
-            Err(e) if e.is_escape() => {
-                ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"))
-            }
-            Err(e) => ToolOutput::error(format!("failed to write `{path}`: {e}")),
+            Err(e) if e.is_escape() => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::PermissionDenied,
+                format!("path `{path}` escapes workspace root ({e})"),
+            ),
+            Err(e) => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
+                format!("failed to write `{path}`: {e}"),
+            ),
         }
     }
 }
@@ -432,6 +463,15 @@ mod tests {
             )
             .await;
         assert!(result.is_error());
+        // The #3167 witness: a workspace-containment refusal is
+        // `PermissionDenied` (the doc comment's own "filesystem permissions,
+        // containment" bucket), never `RefusedByPolicy` — the class reserved
+        // for a working-as-designed policy-plane decision, like the
+        // no-clobber ledger check above.
+        let ToolOutput::Error { class, .. } = result else {
+            unreachable!("checked above");
+        };
+        assert_eq!(class, Some(stella_protocol::ErrorClass::PermissionDenied));
     }
 
     /// A fresh empty directory unique to one test. The no-clobber tests below
@@ -460,7 +500,7 @@ mod tests {
             )
             .await;
 
-        let ToolOutput::Error { message, .. } = result else {
+        let ToolOutput::Error { message, class } = result else {
             panic!("expected the no-clobber refusal");
         };
         assert!(message.contains("refusing to overwrite"), "{message}");
@@ -468,6 +508,11 @@ mod tests {
             message.contains("read_file"),
             "the refusal names the way out: {message}"
         );
+        // The #3167 witness: the no-clobber ledger check is a policy the
+        // tool itself enforces (working as designed, never a tool defect),
+        // never the workspace-containment `PermissionDenied` a `resolve_for_write`
+        // or `is_escape` refusal earns elsewhere in this file.
+        assert_eq!(class, Some(stella_protocol::ErrorClass::RefusedByPolicy));
         // The boundary holds before the bytes move, not after.
         assert_eq!(
             std::fs::read_to_string(dir.join("notes.md")).expect("still there"),

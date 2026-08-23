@@ -320,7 +320,10 @@ impl Tool for Search {
             Err(err) => return ToolOutput::from(err),
         };
         if query.trim().is_empty() {
-            return ToolOutput::error(QUERY_REQUIRED);
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::InvalidInput,
+                QUERY_REQUIRED,
+            );
         }
         // The cache is moved out, used, and put back rather than held across
         // the await: a `MutexGuard` is not `Send`, and holding one over the
