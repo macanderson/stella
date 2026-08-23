@@ -300,7 +300,16 @@ impl<H: TestRunHost> TestRunPlane for TestRuns<H> {
                     // Never `Unsupported`: that word means the host does not
                     // perform `run_test` at all, and once a plane is installed it
                     // does.
+                    //
+                    // Nothing ran on these two arms, so the unit taken above is
+                    // handed back: a plugin probing an unknown handle N times
+                    // must not exhaust an allowance `runs()` says was never
+                    // used. `fetch_sub` on a unit this call took is safe under
+                    // the pipelining rule the `fetch_add` exists for — the unit
+                    // was ours to return. A `Failed` run DID execute the
+                    // invocation and spends its unit like a pass.
                     TestRunDenial::UnknownCandidate | TestRunDenial::NoTestPlan => {
+                        self.spent.fetch_sub(1, Ordering::Relaxed);
                         HostCallRefusal::Unavailable
                     }
                     TestRunDenial::Failed(_) => HostCallRefusal::Failed,
@@ -391,6 +400,37 @@ mod tests {
         RunTestArgs {
             candidate: CandidateHandle::new(handle),
         }
+    }
+
+    /// **The witness for the refund rule.** A plugin probing an unknown handle
+    /// repeatedly must not exhaust an allowance `runs()` says was never used —
+    /// before the refund, one `max_calls = 1` grant was spent by a single typo
+    /// and the later valid ask was refused as `AllowanceSpent`.
+    #[tokio::test]
+    async fn a_refused_probe_does_not_spend_the_allowance_a_real_run_needs() {
+        let host = OneWorkspace::passing();
+        let plane = TestRuns::declare(&manifest("max_calls = 1"), Arc::clone(&host));
+
+        for _ in 0..3 {
+            let err = plane
+                .run_test(ask("no-such-candidate"))
+                .await
+                .expect_err("an unknown handle is refused");
+            assert_eq!(err.refusal, HostCallRefusal::Unavailable);
+        }
+
+        let result = plane
+            .run_test(ask("candidate-1"))
+            .await
+            .expect("three refused probes left the single unit unspent");
+        assert_eq!(result.assertions, TestBaseline::Passed);
+        assert_eq!(plane.runs().len(), 1, "only the real run is recorded");
+
+        let err = plane
+            .run_test(ask("candidate-1"))
+            .await
+            .expect_err("the real run spent the only unit");
+        assert_eq!(err.refusal, HostCallRefusal::AllowanceSpent);
     }
 
     #[tokio::test]
