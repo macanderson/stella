@@ -200,7 +200,7 @@ pub(crate) fn nodes_by_ids(
         .join(",");
     let sql = format!(
         "SELECT n.id, n.public_id, n.kind, n.display_name, n.content, n.content_hash, n.uri,
-                n.valid_from, n.recorded_at, n.recall_tier
+                n.recorded_at, n.recall_tier
          FROM node n WHERE {NODE_AS_OF} AND n.id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;

@@ -63,7 +63,6 @@ fn node_row(id: i64, content: &str) -> NodeRow {
         content: content.into(),
         content_hash: crate::store::sha256_hex(content),
         uri: None,
-        valid_from: None,
         recorded_at: "2026-01-01T00:00:00Z".into(),
         recall_tier: RecallTier::Normal,
     }
@@ -478,7 +477,6 @@ fn missing_citation_is_a_constructor_error() {
         content: "body".into(),
         content_hash: "h".into(),
         uri: None,
-        valid_from: None,
         recorded_at: "2026-01-01T00:00:00Z".into(),
         recall_tier: RecallTier::Normal,
     };
@@ -505,7 +503,6 @@ fn lexical_frames_are_labeled_in_provenance() {
         content: "body".into(),
         content_hash: "h".into(),
         uri: None,
-        valid_from: None,
         recorded_at: "2026-01-01T00:00:00Z".into(),
         recall_tier: RecallTier::Normal,
     };

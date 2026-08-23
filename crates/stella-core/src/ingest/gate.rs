@@ -2,8 +2,8 @@
 //!
 //! Extraction from a document is a model call, and the content is untrusted even
 //! when the source text is an explicit human instruction (`05` header: "the
-//! content may be authoritative; the extraction is always inferred"). Three
-//! rules turn that asymmetry into a mechanism, and all three are deterministic —
+//! content may be authoritative; the extraction is always inferred"). Four
+//! rules turn that asymmetry into a mechanism, and all four are deterministic —
 //! they belong here, in the pure core, not in the extraction prompt:
 //!
 //! 1. **Atomicity.** A record is atomic if it can receive exactly one refutation
@@ -16,6 +16,10 @@
 //! 3. **Probe-gating by origin.** A gated probe (`command_succeeds`, `http_ok`)
 //!    is an exfiltration channel from an untrusted source, so it is never honored
 //!    on an imported or inferred record.
+//! 4. **Probe discrimination.** A probe that cannot refute its claim is worse
+//!    than no probe: it goes green forever, in the same column and colour as one
+//!    that can. A `path_exists` probe on a claim about *how many* of something
+//!    there are is that case, and it is declined here (#4262).
 //!
 //! The model is asked to split atomically and to surface any executable content;
 //! this gate is the backstop that does not depend on the model getting it right.
@@ -40,6 +44,106 @@ pub fn origin_is_untrusted(origin: Origin) -> bool {
 /// tracked tree and execute nothing.
 pub fn probe_honored(origin: Origin, kind: ProbeKind) -> bool {
     !(kind.is_gated() && origin_is_untrusted(origin))
+}
+
+/// Whether a probe of `kind` could distinguish `statement` from its opposite.
+///
+/// A `path_exists` probe answers one question — is this path there — and a
+/// **cardinality** claim is not that question. "Every one of the twenty-one
+/// crates lives under `crates/`" attached to `path_exists crates/stella-core`
+/// goes green on every run, went green through the five crates that arrived
+/// after it was written, and would go green if half of them were deleted.
+/// `crates/stella-core` existing says nothing about how many crates there are.
+/// That is evidence consistent with both answers, which is not evidence — and
+/// it renders in the same column, in the same colour, as a probe that
+/// genuinely refutes (#4262).
+///
+/// So the count claim gets no probe and abstains as `unfalsifiable`, where the
+/// reviewer sees it grouped with the other unjudged claims instead of endorsed.
+/// The alternative — teaching the extractor to emit a *discriminating* probe
+/// for a count — needs a probe kind that can count, which none of the four
+/// ungated kinds is.
+///
+/// Conservative by construction: it fires only on a cardinal that quantifies
+/// something plural, so "a tool does exactly one job" keeps its probe.
+pub fn probe_can_discriminate(kind: ProbeKind, statement: &str) -> bool {
+    match kind {
+        ProbeKind::PathExists | ProbeKind::PathAbsent => !states_a_cardinality(statement),
+        _ => true,
+    }
+}
+
+/// The spelled cardinals a claim of this kind uses. Compounds (`twenty-one`)
+/// are caught because the tokenizer splits on `-`.
+const CARDINAL_WORDS: &[&str] = &[
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+    "twenty",
+    "thirty",
+    "forty",
+    "fifty",
+    "sixty",
+    "seventy",
+    "eighty",
+    "ninety",
+    "hundred",
+    "thousand",
+];
+
+/// How many tokens after a cardinal may intervene before the noun it counts —
+/// enough for `twenty-one Rust crates`, not enough to reach the next clause.
+const CARDINAL_LOOKAHEAD: usize = 2;
+
+/// Whether `statement` asserts *how many* of something there are.
+///
+/// A cardinal — spelled or in digits — quantifying a plural noun. `one` is
+/// deliberately absent from [`CARDINAL_WORDS`]: it is the most common word in
+/// this repository's prose that is not a count ("one of the", "no one", "one
+/// job"), and a claim about exactly one thing existing is the claim
+/// `path_exists` was built for.
+fn states_a_cardinality(statement: &str) -> bool {
+    let lower = statement.to_lowercase();
+    let tokens: Vec<&str> = lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    for (i, token) in tokens.iter().enumerate() {
+        let is_cardinal = CARDINAL_WORDS.contains(token)
+            || (token.len() <= 6 && token.bytes().all(|b| b.is_ascii_digit()));
+        if !is_cardinal {
+            continue;
+        }
+        if tokens[i + 1..]
+            .iter()
+            .take(CARDINAL_LOOKAHEAD)
+            .any(|next| is_plural_noun(next))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// A word that reads as a plural noun. `-ss` is excluded (`across`, `process`),
+/// and so is anything too short to be one.
+fn is_plural_noun(token: &str) -> bool {
+    token.len() > 2 && token.ends_with('s') && !token.ends_with("ss")
 }
 
 /// A conservative structural test for a compound statement.

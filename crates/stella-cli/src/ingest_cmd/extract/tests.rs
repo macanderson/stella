@@ -176,6 +176,132 @@ fn a_gated_probe_is_stripped_and_the_claim_is_unfalsifiable() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// **The witness for #4262.** A `path_exists` probe on a claim about *how many*
+/// of something there are can only ever come back `supported`, whatever the
+/// count is — so it is declined and the claim abstains, where a reviewer sees
+/// it grouped with the other unjudged claims instead of endorsed.
+///
+/// The fixture is the real proposal that filed the issue, and the tree it is
+/// probed against has one more crate than the claim asserts: the probe would
+/// have gone green on a statement that was already false.
+#[test]
+fn a_cardinality_claim_gets_no_path_probe_to_go_green_on() {
+    let root = temp_root("cardinality");
+    for crate_name in ["stella-core", "stella-cli", "stella-tools"] {
+        std::fs::create_dir_all(root.join("crates").join(crate_name)).expect("mkdir");
+    }
+    let proposal = build(
+        &root,
+        serde_json::json!({
+            "lineage_suffix": "crates-directory-layout",
+            "kind": "fact",
+            "statement": "Every one of the two crates lives under the crates/ directory.",
+            "probe": { "kind": "path_exists", "path": "crates/stella-core" }
+        }),
+    );
+
+    // Anti-vacuity: the path really is there, so the probe would have said
+    // `supported` on a claim the tree contradicts.
+    assert!(root.join("crates/stella-core").exists());
+
+    let truth = proposal.record.truth.as_ref().expect("truth");
+    assert!(
+        truth.probe.is_none(),
+        "a probe that cannot refute its claim must not ride on the record"
+    );
+    let refutation = proposal.refutation.as_ref().expect("refutation");
+    assert_eq!(refutation.verdict, Verdict::Unfalsifiable);
+    assert!(
+        refutation.detail.contains("count"),
+        "the reviewer is not told why it abstained: {}",
+        refutation.detail
+    );
+
+    // And the same probe on a claim that is genuinely about a path still runs.
+    let ordinary = build(
+        &root,
+        serde_json::json!({
+            "lineage_suffix": "core-crate",
+            "kind": "fact",
+            "statement": "The engine lives in crates/stella-core.",
+            "probe": { "kind": "path_exists", "path": "crates/stella-core" }
+        }),
+    );
+    assert_eq!(
+        ordinary.refutation.as_ref().expect("refutation").verdict,
+        Verdict::Supported
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The witness for #4263.** The extractor invented a task name for every one
+/// of the 101 proposals it produced from this repository's own CLAUDE.md, and
+/// none of them was in the ratified vocabulary. An invented name selects
+/// nothing while still counting toward relevance, so it is dropped — and when
+/// nothing survives, `tasks` goes with it rather than staying as an empty
+/// selector.
+#[test]
+fn an_invented_task_name_never_reaches_the_record() {
+    let root = temp_root("tasks");
+    let proposal = build(
+        &root,
+        serde_json::json!({
+            "lineage_suffix": "inv8-matrix-same-pr",
+            "kind": "rule",
+            "statement": "A new provider updates the parity matrix in the same PR.",
+            "tasks": ["add-provider", "benchmark", "REVIEW", " test "],
+            "keywords": ["provider"]
+        }),
+    );
+    let applies = proposal
+        .record
+        .steering
+        .as_ref()
+        .expect("steering")
+        .applies_to
+        .as_ref()
+        .expect("the keywords keep the scope alive");
+    assert_eq!(
+        applies.tasks,
+        ["review", "test"],
+        "only ratified names survive, normalised to what the matcher compares"
+    );
+
+    // Nothing ratified, nothing else scoping it: the whole selector goes.
+    let unscoped = build(
+        &root,
+        serde_json::json!({
+            "lineage_suffix": "bench-from-trace",
+            "kind": "rule",
+            "statement": "A bench conclusion comes from the trace.",
+            "tasks": ["benchmark", "investigation"]
+        }),
+    );
+    assert!(
+        unscoped
+            .record
+            .steering
+            .as_ref()
+            .expect("steering")
+            .applies_to
+            .is_none(),
+        "an empty selector is not better than no selector"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The prompt names the ratified vocabulary from the one place it is defined,
+/// so a name added to `KNOWN_TASKS` reaches the extractor without a second
+/// edit — and the extractor stops inventing the name it was missing.
+#[test]
+fn the_prompt_spells_the_ratified_task_vocabulary() {
+    let prompt = system_prompt();
+    for task in stella_core::records::KNOWN_TASKS {
+        assert!(prompt.contains(task), "the prompt omits `{task}`");
+    }
+    assert!(prompt.starts_with(SYSTEM_PROMPT), "the contract is intact");
+}
+
 #[test]
 fn parse_claims_tolerates_prose_and_fences() {
     let text = "Sure:\n```json\n[{\"lineage_suffix\":\"x\",\"kind\":\"fact\",\"statement\":\"y.\"}]\n```\n";

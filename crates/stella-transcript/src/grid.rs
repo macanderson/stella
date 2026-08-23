@@ -18,6 +18,30 @@
 //! ideograph or an emoji occupies two columns and one `char`, so every measure
 //! here goes through [`cells`] — never `chars().count()`, which under-counts
 //! exactly the text a fixed column is least able to absorb (#3740).
+//!
+//! ## The width contract
+//!
+//! [`render`] never returns a row wider than the `width` it was given, for any
+//! [`Run`]. Fixed columns are worth nothing if a row can still run past the
+//! right edge: the terminal then decides what happens to the excess, and it
+//! either soft-wraps — shifting every row below and walking the very columns
+//! this module pads to hold — or truncates, silently. Either way the frame the
+//! rails draw stops being a rectangle.
+//!
+//! Three kinds of row keep it, in this order of preference (`digest.rs`'s rule
+//! that a digest is a summary rather than cut content, applied here):
+//!
+//! - **A digest row elides at a named boundary.** A turn name, a prose head, a
+//!   note summary and a step's object are cut by [`digest::elide`] or by this
+//!   module's own `head_cells` against what the row has left, so the rails and
+//!   chips they sit beside stay where the constants put them.
+//! - **A framed row reserves before it fills.** Every `─` fill is
+//!   `width - used` with no floor: a fill that floors at one cell pushes a row
+//!   that exactly fits one cell past the edge (#3769).
+//! - **A content row is cut by `clamp_line`.** A result body line, a diff row
+//!   or an argument value is as wide as the tool made it, and there is no
+//!   named boundary inside it to prefer. It is cut at a cell boundary, last,
+//!   after every digest row has already fitted itself.
 
 use crate::digest::{self, Chip};
 use crate::file_diff::{FileDiff, RowKind};
@@ -231,6 +255,9 @@ pub fn render(run: &Run, state: &FoldState, width: usize) -> Vec<Line> {
     }
     lines.push(status_line(run, state, width));
     lines
+        .into_iter()
+        .map(|line| clamp_line(line, width))
+        .collect()
 }
 
 /// One turn's frame, top rail to bottom rail, with no whole-run footer.
@@ -259,6 +286,9 @@ pub fn render_turn_lines(run: &Run, state: &FoldState, index: usize, width: usiz
         render_turn(&mut lines, &ctx, turn, index);
     }
     lines
+        .into_iter()
+        .map(|line| clamp_line(line, width))
+        .collect()
 }
 
 fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
@@ -322,9 +352,17 @@ fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
 /// "unknown".
 fn turn_frame_top(turn: &Turn, open: bool, width: usize) -> Line {
     let dig = digest::turn_digest(turn, 40, digest::ChipStyle::Tight);
+    // The `╭─ ` opener, the space after the name, and the ` ─╮` cap are
+    // reserved before anything variable is measured: a top rail that reserves
+    // less than it emits is longer than the bottom one it has to meet, and a
+    // turn name is a branch name or a goal slug — as long as whoever named it
+    // made it.
+    let mut budget = width.saturating_sub(3 + 1 + 3);
+    let (name, name_w) = head_cells(&turn.name, budget);
+    budget -= name_w;
     let mut line = vec![
         Cell::new("╭─ ", Color::Faint),
-        Cell::new(&turn.name, Color::Violet).bold(),
+        Cell::new(name, Color::Violet).bold(),
         Cell::new(" ", Color::Faint),
     ];
     // An expanded turn shows its content in full, so a fold marker on its own
@@ -333,14 +371,13 @@ fn turn_frame_top(turn: &Turn, open: bool, width: usize) -> Line {
     if !open {
         line.push(Cell::new(fold_mark(open), Color::Dim));
         line.push(Cell::new(" ", Color::Faint));
-        line.push(Cell::new(format!("\"{}\" ", dig.prompt_line), Color::Dim));
+        let quoted = format!("\"{}\" ", dig.prompt_line);
+        let (quoted, _) = head_cells(&quoted, budget.saturating_sub(2));
+        line.push(Cell::new(quoted, Color::Dim));
     }
 
-    // The three cells after the fill — the ` ─╮` cap — are reserved here, not
-    // discovered later: a top rail that reserves less than it emits is longer
-    // than the bottom one it has to meet.
     let used = line_width(&line) + 3;
-    let fill = width.saturating_sub(used).max(1);
+    let fill = width.saturating_sub(used);
     line.push(Cell::new("─".repeat(fill), Color::Faint));
     line.push(Cell::new(" ─╮", Color::Faint));
     line
@@ -358,9 +395,15 @@ fn turn_frame_bottom(turn: &Turn, width: usize) -> Line {
         ),
         Cell::new(" ", Color::Faint),
     ];
-    let chips = chips_text(&dig.chips);
-    let used = line_width(&line) + cells(&chips) + 4;
-    let fill = width.saturating_sub(used).max(1);
+    // The chips are cut against what the rail has left, for the same reason the
+    // top rail cuts its name: the ` ─╯` cap has to land on the right edge, and
+    // a turn that spent enough to grow an extra chip must not push it off.
+    let head = line_width(&line);
+    let all_chips = chips_text(&dig.chips);
+    let (chips, chips_w) = head_cells(&all_chips, width.saturating_sub(head + 4));
+    let chips = chips.to_string();
+    let used = head + chips_w + 4;
+    let fill = width.saturating_sub(used);
     line.push(Cell::new("─".repeat(fill), Color::Faint));
     line.push(Cell::new(" ", Color::Faint));
     line.push(Cell::new(chips, Color::Dim));
@@ -414,7 +457,16 @@ fn note_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, note: &crate::model::Note, ti:
             pad(if foldable { fold_mark(open) } else { "" }, MARK_W),
             Color::Dim,
         ),
-        Cell::new(&note.summary, color),
+        // Elided against what the row has left — the spine and the two padded
+        // columns — so a long recall or verdict summary cuts at a named
+        // boundary rather than being cut raw by `clamp_line` (#3769).
+        Cell::new(
+            digest::elide(
+                &note.summary,
+                width.saturating_sub(2 + OFFSET_W + MARK_W).max(5),
+            ),
+            color,
+        ),
     ];
     let used = line_width(&line);
     if used < width {
@@ -461,7 +513,17 @@ fn prose_lines(
         turn: ti,
         prose: pi,
     });
-    let head = digest::first_sentence(&prose.text);
+    // `first_sentence` returns the whole sentence whenever a `.`/`!`/`?`
+    // boundary exists, and only elides — at a hard-coded 96 cells, unrelated to
+    // any caller's width — when there is none. So a prose block opening with a
+    // 300-character sentence rendered a 300-cell row into a 100-cell grid.
+    // Elide it against what this row actually has: the spine, the badge, the
+    // two spaces, the fold marker and the trailing ` …` are 14 cells (#3769).
+    const PROSE_HEAD_FIXED: usize = 14;
+    let head = digest::elide(
+        &digest::first_sentence(&prose.text),
+        width.saturating_sub(PROSE_HEAD_FIXED).max(5),
+    );
     out.push(vec![
         Cell::new("│ ", Color::Faint),
         Cell::new(" agent ", Color::Ink)
@@ -514,7 +576,7 @@ fn step_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, step: &Step, ti: usize, si: us
     }
     let used = line_width(&line) + cells(&chips);
     line.push(Cell::new(
-        " ".repeat(width.saturating_sub(used).max(1)),
+        " ".repeat(width.saturating_sub(used)),
         Color::Faint,
     ));
     line.push(Cell::new(chips, Color::Dim));
@@ -794,6 +856,42 @@ fn head_cells(text: &str, budget: usize) -> (&str, usize) {
         used += w;
     }
     (text, used)
+}
+
+/// Cut `line` to at most `width` display cells.
+///
+/// The backstop under the module doc's width contract, and deliberately not the
+/// mechanism that keeps it. Every framed row fits itself as it is assembled,
+/// because a rail cut here would lose the `─╮` cap that closes it. What
+/// actually reaches this is a **content** row — a result body line, a diff row,
+/// an argument value, a command bar — whose text is as wide as the tool made it
+/// and which holds no named boundary to prefer a cut at.
+///
+/// Cutting beats the alternative because the alternative is not "the reader
+/// sees more": it is the terminal soft-wrapping the excess onto a row of its
+/// own, shifting everything below and walking the fixed columns this module
+/// exists to hold. The cut goes through [`head_cells`], so it lands on a cell
+/// boundary and never straddles a double-width character.
+fn clamp_line(line: Line, width: usize) -> Line {
+    if line_width(&line) <= width {
+        return line;
+    }
+    let mut out = Vec::with_capacity(line.len());
+    let mut used = 0;
+    for cell in line {
+        let w = cell.width();
+        if used + w <= width {
+            used += w;
+            out.push(cell);
+            continue;
+        }
+        let head = head_cells(&cell.text, width - used).0.to_string();
+        if !head.is_empty() {
+            out.push(Cell { text: head, ..cell });
+        }
+        break;
+    }
+    out
 }
 
 /// `text`, in exactly `width` display cells: padded when short, truncated when

@@ -130,6 +130,33 @@ Every block, in the shape the manifest parser accepts:
   </OptionCard>
 </CardGrid>
 
+## What a package ships beside the manifest
+
+`plugin.toml` declares; the directory beside it carries. Three conventions, each handed to the loader that already owns that format:
+
+- `<plugin_dir>/tools/*.toml` — [custom script tools](/docs/agent-tools/custom-tools), advertised to the model beside the built-ins and executed as the plugin, never as you.
+- `<plugin_dir>/skills/<slug>/SKILL.md` — [skills](/docs/agent-tools/skills), selected against the prompt and injected as context. Never enforced.
+- `<plugin_dir>/rules/*.toml` — context records, in the format `.stella/rules/` holds. Advisory only: a plugin's record cannot arm itself to deny a tool call.
+
+Everything under these is named in the install prompt before any of it exists on your machine. A `tools/` entry the manifest does not declare is a load error, in both directions.
+
+### `${plugin_dir}` in a package's tools
+
+A shipped tool does not know where it will be installed, so its manifest writes the same placeholder `[runtime].argv` does, and the host expands it to the package's own directory — in **every** `command` element and **every** `[env]` value:
+
+```toml title="tools/lint-fix.toml"
+name = "lint-fix"
+description = "Run the package's linter over the workspace and apply what it can fix."
+command = ["${plugin_dir}/scripts/lint-fix.sh"]
+
+[env]
+RULESET = "${plugin_dir}/rules/strict.yaml"
+```
+
+Ship `scripts/lint-fix.sh` executable — the host spawns it directly, never through a shell, and never invokes an interpreter you did not name in `command`.
+
+The placeholder is expanded **only** for a manifest read out of a package. Your own `.stella/tools/` and `~/.stella/tools/` manifests are left verbatim, deliberately: no package is in scope there, and quietly expanding `${plugin_dir}/x.sh` to `/x.sh` would run a different file rather than fail with a message naming what the manifest actually asked for.
+
 ## Installing a plugin
 
 ```bash

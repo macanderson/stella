@@ -30,6 +30,14 @@ stella-embed = { path = "../stella-embed", features = ["http"] }
 # cannot see — a gitignored path, a workspace with no journal — still renders
 # its diff. A leaf with no dependencies, so linking it costs nothing (#1511).
 stella-diff = { path = "../stella-diff" }
+# `${plugin_dir}` — the one substitution a package's `tools/*.toml` shares with
+# a plugin's `[runtime].argv`. The convention is specified in `stella-plugin`
+# and carried out by whichever host knows where the package was installed, so
+# the expander belongs there and the literal exists once (#4301). A near-leaf
+# (stella-protocol only) and pure, so this edge costs this crate no behaviour;
+# the engine still never learns plugins exist, because `stella-core` does not
+# take it.
+stella-plugin = { path = "../stella-plugin" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

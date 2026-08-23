@@ -194,6 +194,13 @@ impl NodeInput {
 }
 
 /// A node read back from the store.
+///
+/// Carries no valid time. The `node` table has `valid_from`/`valid_to` columns,
+/// but only edges are versioned (`MIGRATION_V1`) and `upsert_node` never writes
+/// them, so projecting them here would hand every consumer a `None` that reads
+/// as "no valid-time information exists" when it means "nodes are not versioned
+/// yet". The columns stay on disk for a point-in-time node reader to populate;
+/// the projection gains them again on the day one exists (#3136).
 #[derive(Debug, Clone)]
 pub struct NodeRow {
     /// The SQLite rowid. Store-internal: edges, the domain junctions, and the
@@ -220,17 +227,6 @@ pub struct NodeRow {
     /// Source uri when the node has one — carried onto the frame and into its
     /// provenance chain.
     pub uri: Option<String>,
-    /// Valid time: when the fact became true in the world — may precede
-    /// `recorded_at` (observation), never follows it. `None` = unknown,
-    /// treated as valid-since-observation.
-    ///
-    /// **Always `None` today.** Only EDGES are versioned (see `MIGRATION_V1`);
-    /// `upsert_node` never writes `node.valid_from`, so this reads back the
-    /// column's NULL for every row. It is kept because the column exists and a
-    /// point-in-time node reader would populate it — not because anything
-    /// currently sets it. Read it as "not yet wired", never as "unknown".
-    /// Wiring it — or removing it from this projection — is tracked in #3136.
-    pub valid_from: Option<String>,
     /// Transaction time the row was **first** written (RFC-3339). `upsert_node`
     /// updates content in place without touching it, so it is a creation time,
     /// not a modification time — which is exactly what recall's recency
@@ -320,7 +316,6 @@ pub(crate) fn map_node_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<NodeRow>
         content: row.get("content")?,
         content_hash: row.get("content_hash")?,
         uri: row.get("uri")?,
-        valid_from: row.get("valid_from")?,
         recorded_at: row.get("recorded_at")?,
         recall_tier: RecallTier::from_i64(row.get("recall_tier")?),
     })
@@ -346,7 +341,7 @@ pub(crate) fn node_ids_for_uris(
 pub(crate) fn node_by_id(conn: &Connection, id: i64) -> Result<Option<NodeRow>, ContextError> {
     let row = conn
         .query_row(
-            "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at, recall_tier
+            "SELECT id, public_id, kind, display_name, content, content_hash, uri, recorded_at, recall_tier
              FROM node WHERE id = ?1",
             params![id],
             map_node_row,

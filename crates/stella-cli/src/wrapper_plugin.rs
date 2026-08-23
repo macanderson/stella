@@ -886,12 +886,11 @@ pub(crate) fn bind_installed(
 
     // `${plugin_dir}` is the host's substitution — this crate is where the
     // install directory is known, exactly as `PluginRoster::hook_routes` does
-    // it for hooks.
-    let dir = installed.dir.to_string_lossy().into_owned();
+    // it for hooks, and through the same shared expander (#4301).
     let argv: Vec<String> = runtime
         .argv
         .iter()
-        .map(|arg| arg.replace("${plugin_dir}", &dir))
+        .map(|arg| stella_plugin::expand_plugin_dir(arg, &installed.dir))
         .collect();
     // The one ambient read on this path, and it belongs here: `stella-runtime`
     // reads no process environment by contract, so the host resolves the
