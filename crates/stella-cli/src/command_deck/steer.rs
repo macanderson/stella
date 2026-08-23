@@ -9,8 +9,11 @@
 //! whole change is `stella_tui::envelope::steering`; this file is only what
 //! the driver does with the texts once they arrive.
 
+use tokio::sync::mpsc::UnboundedSender;
+
 use crate::session_persist::DurableQueue;
 use crate::subsession::SteeringTap;
+use stella_tui::Inbound;
 
 /// One leading `>` marker off a text, and nothing else.
 ///
@@ -89,6 +92,37 @@ pub(super) fn steer_lead(tap: &SteeringTap, queue: &mut DurableQueue, texts: Vec
             tap.push(text);
         }
     }
+}
+
+/// A plain stop (the first Esc) at a lead with prompts still parked: deliver
+/// the backlog into the running turn and keep it going. `false` when there
+/// was nothing parked, so the caller's soft stop still runs.
+///
+/// The deck already steers when *its* mirror of the queue is non-empty, and
+/// sends a stop only when it believes there is nothing to say. Its mirror is
+/// not the backlog: prompts restored from a previous session, and prompts a
+/// double-Esc hold returned, live in this `DurableQueue` and nowhere the deck
+/// can see. A stop that reached here with those parked soft-stopped the turn,
+/// truncated its messages to the last boundary, and auto-dispatched the first
+/// parked prompt into a model that had just forgotten what it was doing —
+/// which from the chair reads as "Esc blew up my turn". Esc with something
+/// queued means *send it*; the stop is what an empty queue means.
+pub(super) fn stop_steers_backlog(
+    tap: &SteeringTap,
+    queue: &mut DurableQueue,
+    in_tx: &UnboundedSender<Inbound>,
+) -> bool {
+    let parked: Vec<String> = queue.iter().cloned().collect();
+    if parked.is_empty() {
+        return false;
+    }
+    let count = parked.len();
+    steer_lead(tap, queue, parked);
+    let _ = in_tx.send(super::chrome_note(format!(
+        "steering {count} queued prompt{} into the running turn — Esc again to stop",
+        if count == 1 { "" } else { "s" }
+    )));
+    true
 }
 
 /// Deliver a steer aimed at a WORKER lane.

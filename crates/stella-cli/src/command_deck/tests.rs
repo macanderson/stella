@@ -662,6 +662,61 @@ fn steer_lead_pushes_a_running_turn_into_the_tap_in_order() {
     );
 }
 
+/// **The witness for Esc-with-a-backlog.** A plain stop at the lead with
+/// prompts parked in the driver's queue delivers them into the turn — in
+/// order, claimed out of the backlog, and the turn is *not* soft-stopped. The
+/// deck cannot see this backlog (restored or held prompts), so it sends a
+/// stop; before this the stop truncated the turn and auto-dispatched the
+/// first parked prompt into a model that had lost its context.
+#[test]
+fn a_stop_with_prompts_parked_steers_them_instead_of_stopping() {
+    use stella_core::ports::TurnSteering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    queue.push_back("narrow it to the parser".to_string());
+    queue.push_back("> and add a test".to_string());
+    let tap = subsession::SteeringTap::default();
+    let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    assert!(steer::stop_steers_backlog(&tap, &mut queue, &in_tx));
+    assert_eq!(
+        tap.drain_steering(),
+        vec![
+            "narrow it to the parser".to_string(),
+            "and add a test".to_string()
+        ],
+        "the backlog reaches the running turn, in order, markers stripped"
+    );
+    assert!(
+        !tap.soft_stop_requested(),
+        "delivering the backlog must not also stop the turn"
+    );
+    assert!(
+        queue.is_empty(),
+        "delivered prompts leave the backlog (#4026)"
+    );
+    let Some(Inbound::Event {
+        event: AgentEvent::Text { text },
+        ..
+    }) = in_rx.try_recv().ok()
+    else {
+        panic!("the deck is told what the key did");
+    };
+    assert!(text.contains("steering 2 queued prompts"), "{text}");
+}
+
+/// And with nothing parked it is a stop — the caller runs its soft stop.
+#[test]
+fn a_stop_with_an_empty_backlog_is_a_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    let tap = subsession::SteeringTap::default();
+    let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+    assert!(!steer::stop_steers_backlog(&tap, &mut queue, &in_tx));
+    assert!(in_rx.try_recv().is_err(), "nothing to say, nothing said");
+}
+
 /// A settling turn is past its last model step, so it has no boundary left to
 /// inject at. The texts continue the thread as the next turn instead — the one
 /// case `steer_lead` still has to fall back for.

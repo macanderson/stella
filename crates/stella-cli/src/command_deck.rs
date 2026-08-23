@@ -1682,7 +1682,10 @@ pub async fn run_deck_session(
                         | Some(WorkspaceInput::Control {
                             control: stella_tui::AgentControl::Stop, agent,
                         }) => {
-                            if agent == LEAD {
+                            // With prompts parked, the first Esc *delivers*
+                            // them — see `steer::stop_steers_backlog`. Only
+                            // an empty backlog makes it a stop.
+                            if agent == LEAD && !steer::stop_steers_backlog(&steering, &mut queue, &in_tx) {
                                 // First Esc = SOFT stop: end at the next
                                 // boundary keeping completed steps. The
                                 // pair's second press (StopAndHold below)
@@ -1696,7 +1699,7 @@ pub async fn run_deck_session(
                                         text: "\n[stopping at the next step boundary — Esc again to cancel immediately]\n".to_string(),
                                     },
                                 });
-                            } else {
+                            } else if agent != LEAD {
                                 subs.stop(&agent);
                             }
                         }
