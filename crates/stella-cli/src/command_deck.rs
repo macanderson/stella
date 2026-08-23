@@ -3755,7 +3755,7 @@ async fn run_lead_turn(
         }
         engine.run_turn(messages, budget, &tx).await
     };
-    crate::turn_files::close_turn_boundary_raw(cfg, &tx, execution.as_ref(), &outcome);
+    crate::turn_files::close_turn_boundary_raw(cfg, registry, &tx, execution.as_ref(), &outcome);
     // The model is done and the deck already painted "done". Everything below is
     // bookkeeping that can take real time (the forwarder persists every event of the
     // turn) while the driver's `select!` still reads input — so latch the flag that

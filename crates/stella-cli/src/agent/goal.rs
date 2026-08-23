@@ -797,9 +797,18 @@ pub(crate) async fn run_goal_turn(
     // This goal loop owns the stream, so it — not any single round — emits the
     // run's one ending (#3398). A goal that ends unmet still *ended*: the
     // rounds ran, the money was spent, and the outcome is carried by the
-    // execution record, not by withholding the terminator.
+    // execution record, not by withholding the terminator. It owes the
+    // boundary's other half too — what the arc changed in the shared tree
+    // (#3421) — which is why this goes through `turn_files` rather than
+    // straight to the terminator.
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
-    persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
+    crate::turn_files::close_turn_boundary_on_raw(
+        cfg,
+        registry,
+        &tx,
+        execution.as_ref(),
+        *cost_usd,
+    );
     drop(tx);
     let rendered = renderer.await.unwrap_or_default();
     let persistence_complete = rendered.persistence_complete;

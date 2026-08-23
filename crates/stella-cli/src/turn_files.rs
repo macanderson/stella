@@ -249,11 +249,12 @@ pub(crate) fn open_turn_streams_raw(
 /// tree.
 pub(crate) fn close_turn_boundary(
     cfg: &Config,
+    registry: &stella_tools::ToolRegistry,
     tx: &EventSender,
     execution: Option<&(Arc<Store>, i64)>,
     outcome: &TurnOutcome,
 ) {
-    emit_shared_tree_changes(cfg, tx, execution);
+    note_stale_lane(registry, emit_shared_tree_changes(cfg, tx, execution));
     crate::agent::persistence::emit_run_complete_for_turn(tx, &cfg.model_id, outcome);
 }
 
@@ -273,11 +274,123 @@ pub(crate) fn close_turn_boundary(
 /// terminate a turn without also measuring what it changed.
 pub(crate) fn close_turn_boundary_raw(
     cfg: &Config,
+    registry: &stella_tools::ToolRegistry,
     tx: &tokio::sync::mpsc::UnboundedSender<AgentEvent>,
     execution: Option<&(Arc<Store>, i64)>,
     outcome: &TurnOutcome,
 ) {
-    close_turn_boundary(cfg, &EventSender::new(tx.clone()), execution, outcome);
+    close_turn_boundary(
+        cfg,
+        registry,
+        &EventSender::new(tx.clone()),
+        execution,
+        outcome,
+    );
+}
+
+/// [`close_turn_boundary`] for a driver whose ending is a **cost** rather than
+/// a [`TurnOutcome`] — the goal loops, where the thing that ends is the whole
+/// arc and its terminator carries the arc's spend (#3421).
+///
+/// They reached only the terminator half through
+/// `persistence::emit_run_complete_on_raw`, so `stella goal`'s Files tab was
+/// as empty as the deck's had been. Routing them here is what makes the
+/// measurement a debt of *ending a turn* rather than a debt of one outcome
+/// type.
+///
+/// Two drivers are deliberately **not** here. A fleet worker and a deck
+/// sub-session each run against a `Config::clone` of their parent's, which
+/// shares one `SessionDurability` cell — and `snapshot_worktree` consumes its
+/// baseline, so a lane calling it takes the changes out of the lead's reading
+/// rather than adding its own. Giving those lanes a journal of their own is
+/// #3233; until then a call here would move a turn's changes, not measure
+/// them.
+pub(crate) fn close_turn_boundary_on_raw(
+    cfg: &Config,
+    registry: &stella_tools::ToolRegistry,
+    tx: &tokio::sync::mpsc::UnboundedSender<AgentEvent>,
+    execution: Option<&(Arc<Store>, i64)>,
+    cost_usd: f64,
+) {
+    let tx = EventSender::new(tx.clone());
+    note_stale_lane(registry, emit_shared_tree_changes(cfg, &tx, execution));
+    crate::agent::persistence::emit_run_complete(&tx, &cfg.model_id, cost_usd);
+}
+
+/// How many changed files make an untouched board worth a record.
+///
+/// One file is the ordinary shape of a turn that is genuinely still on the
+/// card it says it is on. Three is a guess, and it is meant to be: the point
+/// of the record is to find out what the real distribution looks like before
+/// anything is injected into the model's context.
+const STALE_LANE_FILES: usize = 3;
+
+/// Record a turn that ended with the lead's task lane still occupied while it
+/// changed files (#4153).
+///
+/// # What this does not claim
+///
+/// Not a defect signal. A turn that ends mid-card having edited three files is
+/// the ordinary shape of work in progress, and this fires on it. The thing
+/// worth knowing is the *rate*: #4152 closed the half of the divergence that
+/// has a correction point — `task_start` refuses a second unowned lane — and
+/// left the half that has none, where the agent never calls `task_start` at
+/// all and just starts editing. "These edits belong to a later step" is not
+/// decidable from the board, so the only honest first move is to measure how
+/// often a turn ends in that shape at all. `agent.turn_complete` is emitted
+/// once per turn, so the ratio is a join, not a second counter.
+///
+/// # Why counts only
+///
+/// A task id and a subject are model output, and `stella-diag`'s field types
+/// refuse both — deliberately, and the constraint is right here: a record
+/// naming the card the agent walked past would put model-authored text into
+/// the diagnostic plane for a signal that only needs an integer.
+fn note_stale_lane(registry: &stella_tools::ToolRegistry, files_changed: usize) {
+    let board = registry.task_board();
+    let board = board
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(open_tasks) = stale_lane_open_tasks(&board, files_changed) else {
+        return;
+    };
+    crate::diag_boot::dx().emit(Record::new(
+        Level::Debug,
+        "agent.task.stale_lane",
+        DIAG_TARGET,
+        Cx::EMPTY,
+        Fields::new()
+            .with("files_changed", files_changed as u64)
+            .with("open_tasks", open_tasks as u64)
+            .with("threshold", STALE_LANE_FILES as u64),
+    ));
+}
+
+/// The decision [`note_stale_lane`] makes, as a total function of the board
+/// and the count — `Some(open_tasks)` when the record is owed.
+///
+/// Split out because the emit half needs a `ToolRegistry`, a lock and a
+/// process-wide `Dx`, and none of those is the part that can be wrong. The
+/// part that can be wrong is *which* boards count, and it has two edges a
+/// reader would not guess: a delegated card is owned and does not occupy the
+/// lead's lane, and `open_tasks` counts pending cards too, because a plan the
+/// agent stopped walking is exactly the shape worth telling from a one-card
+/// board.
+fn stale_lane_open_tasks(
+    board: &stella_core::tasks::TaskBoard,
+    files_changed: usize,
+) -> Option<usize> {
+    if files_changed < STALE_LANE_FILES {
+        return None;
+    }
+    board.unowned_in_progress()?;
+    Some(
+        board
+            .items()
+            .iter()
+            .filter(|task| task.status.is_open())
+            .count(),
+    )
 }
 
 /// Measure the shared work tree once, then write both of this turn's file
@@ -298,14 +411,18 @@ pub(crate) fn close_turn_boundary_raw(
 /// ended is not made less ended by an unmeasurable tree. A send failure means
 /// the renderer is already gone, which is not this function's problem to
 /// report.
+///
+/// Returns **how many** files the turn changed. The boundary sweep has no
+/// call's own reading to reconcile against, so it does not need the paths —
+/// but the count is the one number a turn-boundary observation can want
+/// without re-reading the tree, and re-reading is precisely what the
+/// baseline-advancing snapshot above forbids.
 pub(crate) fn emit_shared_tree_changes(
     cfg: &Config,
     tx: &EventSender,
     execution: Option<&(Arc<Store>, i64)>,
-) {
-    // The boundary sweep has no call's own reading to reconcile against, so
-    // the published paths are not needed here.
-    let _ = emit_measured_tree_changes(&cfg.durability, tx, execution);
+) -> usize {
+    emit_measured_tree_changes(&cfg.durability, tx, execution).len()
 }
 
 /// [`emit_shared_tree_changes`] over the durability handle alone.
@@ -466,6 +583,11 @@ mod tests {
             ("agent.rs", "run_turn"),
             // The interactive deck's lead turn — the driver that had the hole.
             ("command_deck.rs", "run_lead_turn"),
+            // The two goal arcs, which reached only the terminator until
+            // #3421: their ending is a cost rather than a `TurnOutcome`, so
+            // they pay it through `close_turn_boundary_on_raw`.
+            ("agent/goal.rs", "run_goal_turn"),
+            ("agent/goal/goal_wrapped.rs", "run_goal_wrapped_turn"),
         ] {
             let body = std::fs::read_to_string(src.join(file))
                 .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
@@ -478,6 +600,62 @@ mod tests {
                  surface while every other surface keeps working."
             );
         }
+    }
+
+    /// **Witness (#4153).** A turn that changed files while the lead's task
+    /// lane sat occupied is recorded, and the three boards that look like it
+    /// but are not are left alone.
+    ///
+    /// The delegated case is the one worth pinning: `task_assign` gives a card
+    /// an owner and deliberately does not route through `set_status`, so a
+    /// session that fanned work out to sub-agents has N in-progress cards and
+    /// is a perfectly honest board. A predicate that counted them would report
+    /// every delegating session and the measurement would be worthless.
+    #[test]
+    fn only_an_unowned_in_progress_card_over_the_file_threshold_is_recorded() {
+        use stella_core::tasks::TaskBoard;
+        use stella_protocol::event::TaskStatus;
+
+        let mut walked_past = TaskBoard::new();
+        walked_past.create("investigate the embedding pass", None, None);
+        walked_past.create("rewrite the chunker", None, None);
+        walked_past.set_status("1", TaskStatus::InProgress).unwrap();
+
+        assert_eq!(
+            stale_lane_open_tasks(&walked_past, STALE_LANE_FILES),
+            Some(2),
+            "an unowned card open across a file-changing turn is the shape #4153 is about"
+        );
+        assert_eq!(
+            stale_lane_open_tasks(&walked_past, STALE_LANE_FILES - 1),
+            None,
+            "under the threshold a turn is ordinary work in progress, not a signal"
+        );
+
+        let mut delegated = TaskBoard::new();
+        delegated.create("run the fan-out", None, None);
+        delegated.assign("1", "sub:worker-a").unwrap();
+        assert_eq!(
+            stale_lane_open_tasks(&delegated, STALE_LANE_FILES * 10),
+            None,
+            "a delegated card carries an owner and does not occupy the lead's lane"
+        );
+
+        let mut finished = TaskBoard::new();
+        finished.create("rewrite the chunker", None, None);
+        finished.set_status("1", TaskStatus::InProgress).unwrap();
+        finished.set_status("1", TaskStatus::Completed).unwrap();
+        assert_eq!(
+            stale_lane_open_tasks(&finished, STALE_LANE_FILES * 10),
+            None,
+            "a board the agent kept current is the whole point and must stay silent"
+        );
+
+        assert_eq!(
+            stale_lane_open_tasks(&TaskBoard::new(), STALE_LANE_FILES * 10),
+            None,
+            "a session with no board at all cannot have walked past a card"
+        );
     }
 
     /// **Witness (#4175).** Every driver that opens a turn's event stream

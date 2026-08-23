@@ -345,8 +345,16 @@ pub(crate) async fn run_goal_wrapped_turn(
         bound.report(None, OutputFormat::Text, report);
     }
 
+    // Both halves of the boundary, in the one order that is correct: what the
+    // arc changed in the shared tree, then the run's terminator (#3421).
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
-    persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
+    crate::turn_files::close_turn_boundary_on_raw(
+        cfg,
+        registry,
+        &tx,
+        execution.as_ref(),
+        *cost_usd,
+    );
     drop(tx);
     let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
 
