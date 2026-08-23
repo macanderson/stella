@@ -22,7 +22,8 @@ name: file-size
 # #1645; `enforce_admins: true` is the broader fix that closes the same hole for
 # every gate step.
 #
-# No paths-ignore, deliberately: the ratchet covers Rust, Python and shell
+# No paths-ignore, deliberately: the ratchet covers Rust, Python, shell,
+# TypeScript and JavaScript
 # across the whole tree, and ci.yml's filters exist to keep prose off the Rust
 # gate — a distinction this job does not need, because it has no Rust gate.
 

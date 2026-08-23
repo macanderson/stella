@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 #
-# Guard: no NEW Rust, Python or shell file may exceed the 1500-line ratchet.
-# See #629 (Rust), #825 (Python — an 8,166-line analysis module had slipped
-# through because the guard only looked at *.rs) and #1563 (shell — the
-# delivery-loop driver reached ~1,900 lines while no gate could see it).
+# Guard: no NEW source file may exceed the 1500-line ratchet, in any of the
+# languages this repository writes. See #629 (Rust), #825 (Python — an
+# 8,166-line analysis module had slipped through because the guard only looked
+# at *.rs), #1563 (shell — the delivery-loop driver reached ~1,900 lines while
+# no gate could see it) and #3811 (TypeScript and JavaScript).
 #
-# The language list has now been widened twice for the same reason, which is
-# the argument for widening it eagerly rather than after the next incident: a
-# limit that watches one language is not a property of the repository, it is a
-# property of that language's files, and the growth simply moves to whatever is
-# unwatched. Shell was the last substantial unwatched surface here.
+# The language list has now been widened three times for the same reason, and
+# the third time proved the argument the second one made: a limit that watches
+# one language is not a property of the repository, it is a property of that
+# language's files, and the growth simply moves to whatever is unwatched. It
+# moved to `arenabench/ui/components/arena/transcript-page.tsx`, which reached
+# 1,571 lines — over the limit AGENTS.md holds the tree to — and was found by
+# a human reading it, because nothing in the gate could say so. So widen
+# eagerly: the day a surface joins is the only day it is free.
 #
 # Three fleet plans asserted this limit as a standard the tree follows
 # (docs/spec/serve-surface.fleet.toml, plus two since-deleted siblings), and
@@ -136,11 +140,35 @@ fi
 # That is the set `make shellcheck` lints, deliberately: this repository
 # already treats everything under `.githooks/` as shell, so a non-shell file
 # appearing there would break that guard first.
-RATCHET_PATHSPECS=('*.rs' '*.py' '*.sh' '.githooks/*')
+#
+# TypeScript and JavaScript joined for the reason the header states and the
+# tree then demonstrated (#3811): `arenabench/ui/components/arena/transcript-page.tsx`
+# reached 1,571 lines — over the limit AGENTS.md holds this repository to, with
+# nothing able to say so — and was split by hand, by someone who happened to
+# look. `*.ts`/`*.tsx` covers the arena UI and the website; `*.mjs`/`*.js`
+# covers the deck and parity scripts and the observatory's assets. Nothing
+# crossed on the day they were added, which is the only day that is true for
+# free.
+#
+# `*.mdx` is deliberately NOT here, and the omission is a judgement rather than
+# an oversight. The website's documentation pages are prose (the longest,
+# `website/content/docs/configuration/settings.mdx`, is 912 lines), and the
+# remedy this guard names — "split them into submodules" — has no meaning for
+# a page a reader reads top to bottom. A ratchet whose failure has no correct
+# fix teaches people to edit the baseline.
+#
+# The one exclusion is generated: `docs/wire/*.d.ts` is written by
+# scripts/export-agentevent-schema.sh and committed so drift is reviewable, and
+# `wire-schema` fails the gate if it differs from what the exporter produces.
+# Splitting it is not something a human may do — the next regeneration would
+# undo it and redden that guard instead.
+RATCHET_PATHSPECS=('*.rs' '*.py' '*.sh' '.githooks/*' '*.ts' '*.tsx' '*.mjs' '*.js'
+  ':(exclude)docs/wire/*.d.ts')
 
 # Emit "<lines> <path>" for every tracked file in scope, NUL-safe on the git
 # side. Python counts (#825): the analyzer under bench/ grew to 8,166 lines
-# while the guard watched only *.rs. Shell counts (#1563) for the same reason.
+# while the guard watched only *.rs. Shell counts (#1563) and TypeScript and
+# JavaScript count (#3811) for the same reason, each after the same incident.
 current_sizes() {
   git ls-files -z "${RATCHET_PATHSPECS[@]}" | while IFS= read -r -d '' f; do
     # A tracked file deleted from the working tree but not yet staged is a
@@ -510,4 +538,4 @@ else
   mode_note=" No base resolved — strict whole-tree check."
 fi
 trap '' PIPE
-echo "check-file-size: OK — $tracked Rust/Python/shell files, $grandfathered grandfathered over $LIMIT lines, and nothing went over by this change.${mode_note}${drift_note}" || true
+echo "check-file-size: OK — $tracked watched files, $grandfathered grandfathered over $LIMIT lines, and nothing went over by this change.${mode_note}${drift_note}" || true

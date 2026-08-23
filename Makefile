@@ -330,7 +330,7 @@ wire-paths-test: ## Test the wire-path guard's failure directions (hermetic; not
 	@./scripts/test-wire-paths.sh
 
 .PHONY: file-size
-file-size: ## Assert no new Rust or Python file exceeds the 1500-line ratchet (#629, #825)
+file-size: ## Assert no new source file exceeds the 1500-line ratchet (#629, #825, #1563, #3811)
 	@./scripts/check-file-size.sh
 
 .PHONY: file-size-update
