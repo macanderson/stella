@@ -36,6 +36,8 @@
 
 #![cfg(unix)]
 
+mod common;
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -152,13 +154,10 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
             .await
             .unwrap_or_else(|e| panic!("{name}: the plugin did not answer: {e}"));
 
-        let golden: WrapperResponse =
-            serde_json::from_str(&fs::read_to_string(&golden_path).expect("a readable golden"))
-                .unwrap_or_else(|e| panic!("{name}'s golden is not a response: {e}"));
-        assert_eq!(
-            WrapperResponse::BeforeTurn(response.clone()),
-            golden,
-            "{name} did not answer with its golden contribution"
+        common::bless_or_assert(
+            &name,
+            &golden_path,
+            &WrapperResponse::BeforeTurn(response.clone()),
         );
 
         assert!(

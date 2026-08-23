@@ -159,10 +159,17 @@ A vector is a request plus exactly one grading sibling — `.expected.json` for
 an answer, `.refusal.txt` for a refusal, never both, exactly as
 `plugins/stella-research`'s vectors are. A host-call vector adds
 `.calls.json` — the conversation its host holds — and an optional
-`.stderr.txt` for what a degraded call reported. There is no `BLESS=1`
-regeneration path for either plugin's goldens yet (#3548); this plugin's
-vectors were produced by running the shipped `main.py` itself and capturing
-its output, and the same is true of `stella-research`'s.
+`.stderr.txt` for what a degraded call reported.
+
+Regenerate the `.expected.json` goldens from the same fixture the assertions
+run against:
+
+```bash
+BLESS=1 cargo test -p stella-runtime --test plan_plugin_conformance
+```
+
+Then **read the diff** — a golden blessed without looking is a changelog, not a
+test. Blessing a vector that carries a `.refusal.txt` sibling is refused.
 
 ## Known gaps, all tracked
 
@@ -174,5 +181,4 @@ its output, and the same is true of `stella-research`'s.
 | The parsed plan rides as prose, not the typed `Vec<PlanStep>` the built-in's per-step engine-turn walk needs | #3562 (item 4) |
 | `stella run`'s driver installs the `ChildTurns` plane but does not yet fold its spend back into the receipt or surface it beside `HostCallGate::refusals()` | #3576 (open items) |
 | Nobody has benchmarked it against the built-in stage | (none yet — parallel to #3544 for `stella-research`) |
-| The goldens have no `BLESS=1` regeneration path | #3548 |
 | `plan-v1` runs on every door that takes `--pipeline` now (`stella run`, `stella goal` per round, `stella fleet` per worker attempt, #3695) — but only `stella run`'s door installs a `ChildTurns` plane, so the planner role intent it asks for is answered `Unavailable` on the other two | #3833 (goal), #3882 (fleet) |

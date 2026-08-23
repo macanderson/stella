@@ -149,6 +149,18 @@ cargo test -p stella-runtime --test research_plugin_recall
 cargo test -p stella-runtime --test research_plugin_dispatch
 ```
 
+Regenerate the `.expected.json` goldens from the same fixture the assertions
+run against, so the fixture has exactly one definition:
+
+```bash
+BLESS=1 cargo test -p stella-runtime --test research_plugin_conformance
+```
+
+Then **read the diff** — a golden blessed without looking is a changelog, not a
+test. Blessing a vector that carries a `.refusal.txt` sibling is refused: a
+refusal is graded by the plugin's stderr and exit status, and a second grading
+file is exactly what `every_vector_is_graded_by_exactly_one_sibling` forbids.
+
 A vector is a request plus exactly one grading sibling — `.expected.json` for
 an answer, `.refusal.txt` for a refusal, never both. The refusal half is not an
 afterthought: `BeforeTurnResponse` has no error variant, so a plugin that
@@ -179,4 +191,3 @@ repository's `.gitignore` would drop.
 | It publishes no signals: `StageName::Research.publishes()` is empty, so there is none it could honestly publish | #3542 |
 | Its `[wrapper]` stage order over-declares, because the condition grammar has no conjunction | #3538 |
 | Nobody has benchmarked it against the built-in stage | #3544 |
-| The goldens have no `BLESS=1` regeneration path, so the fixture is defined twice the moment one changes | #3548 |
