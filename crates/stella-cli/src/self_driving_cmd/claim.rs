@@ -356,8 +356,7 @@ mod tests {
     /// expiry to ~5000ms — and the margin is two *consecutive* missed beats,
     /// which is exactly what a TTL/3 cadence is designed to absorb: even if
     /// only the 1500ms beat had landed the row is still live at 3500ms. A test
-    /// green on a laptop and red on a loaded box is worse than none, so the
-    /// slack is stated rather than assumed.
+    /// green on a laptop and red on a loaded box is worse than none.
     #[test]
     fn the_heartbeat_keeps_a_lease_alive_past_its_own_ttl() {
         // Declared before the lease so it outlives it: dropping a `Lease`
