@@ -16,9 +16,9 @@
 //! - **The git snapshot is a view, not a copy.** `git worktree add` carries
 //!   `HEAD`, and the working-tree delta rides as a patch — so a candidate is
 //!   missing everything in `.gitignore`. In a benchmark container that state is
-//!   routinely load-bearing and installed by task setup (`node_modules/`,
-//!   `.venv/`, a downloaded dataset), so the candidate solves a materially
-//!   different tree than the grader inspects. In an ordinary JS or Python
+//!   installed by task setup and executed by the task's own tests
+//!   (`node_modules/`, `.venv/`, a downloaded dataset), so the candidate solves
+//!   a materially different tree than the grader inspects. In an ordinary JS or Python
 //!   project it means every candidate fails the project's own test command on a
 //!   missing dependency.
 //! - **The patch buys a guarantee already paid for.** "Do not clobber the
@@ -41,14 +41,14 @@
 //!
 //! # What is deliberately not copied
 //!
-//! `.stella/` at the workspace root, whole. Three reasons that all point the
-//! same way: this substrate's own candidate directory lives inside it, so
-//! copying it would recurse into the copy it is making; it holds the session's
-//! live SQLite handles, and a promotion that replaced `store.db` under a
-//! running process would corrupt the telemetry of the run doing the promoting;
-//! and it is host state rather than the user's work, which is what a candidate
-//! is asked to change. A candidate therefore cannot answer *with* a change to
-//! `.stella/`, and that is the intended boundary rather than an omission.
+//! `.stella/` at the workspace root, whole. This substrate's own candidate
+//! directory lives inside it, so copying it would recurse into the copy it is
+//! making. It holds the session's live SQLite handles, and a promotion that
+//! replaced `store.db` under a running process would corrupt the telemetry of
+//! the run doing the promoting. And it is host state rather than the user's
+//! work, which is what a candidate is asked to change. A candidate therefore
+//! cannot answer *with* a change to `.stella/`, and that is the intended
+//! boundary rather than an omission.
 //!
 //! Everything else is copied as it is found, `.git` included — which is what
 //! makes a copy-tree candidate immune to the shared-ref hazard
