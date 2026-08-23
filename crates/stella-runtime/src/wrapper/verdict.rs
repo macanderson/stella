@@ -30,9 +30,18 @@
 //! caller ignore: a measurement the oracle failed to report, a check that does
 //! not parse, a tamper policy with nothing to compare against. Each of those
 //! is a [`UndecidedReason`], not a panic and not a `false`. A missing number
-//! is never read as a satisfied budget — the discipline
-//! `stella_plugin::Oracle::unmet` already holds, restated where the verdict is
-//! actually made.
+//! is never read as a satisfied budget.
+//!
+//! That discipline is not restated here — it is *the same code*.
+//! [`stella_plugin::CheckOutcome`] is the grammar's own per-check evaluator,
+//! total by construction, and both this function and
+//! `stella_plugin::Oracle::unmet` fold it; they differ only in how they
+//! report, which is exactly the difference that has to exist (`unmet` has a
+//! `Result` to return an error through and this does not). Until #3515 they
+//! were two hand-written walks over `oracle.checks` in two crates, and the one
+//! the plugin crate documented as canonical had no production caller at all —
+//! so a change to either was invisible to the other, and #3510 was already a
+//! defect in how *this* copy composed checks with the flip policy.
 //!
 //! The staged pipeline's `ladder_decision` (`crates/stella-pipeline`, deleted
 //! in #3865) was the same shape, which was the reason porting that pipeline
@@ -42,9 +51,9 @@
 use std::fmt::Write as _;
 
 use stella_plugin::{
-    Continuation, Correction, EvidenceSet, FlipObservation, FlipPolicy, LoopGrant, Oracle, Outcome,
-    Participation, RoundState, StopReason, TamperFinding, TamperPolicy, UndecidedReason,
-    UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext,
+    CheckOutcome, Continuation, Correction, EvidenceSet, FlipObservation, FlipPolicy, LoopGrant,
+    Oracle, Outcome, Participation, RoundState, StopReason, TamperFinding, TamperPolicy,
+    UndecidedReason, UnmetBecause, UnmetRequirement, Verdict, VerdictRule, VolatileContext,
 };
 
 /// Turn evidence into a verdict, by the rule the plugin declared.
@@ -119,26 +128,14 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
         let mut decided_by_check = false;
         for check in oracle.checks.iter().filter(|c| &c.requirement == name) {
             decided_by_check = true;
-            let parsed = match check.rule() {
-                Ok(parsed) => parsed,
-                // Rejected at load (`ManifestError::UnparsableCheck`), so this
-                // is reachable only for a rule that did not come from a
-                // validated manifest — which must still not read as "the
-                // budget held".
-                Err(error) => {
-                    abstain(UndecidedReason::UnreadableCheck {
-                        requirement: name.clone(),
-                        reason: error.to_string(),
-                    });
-                    continue;
-                }
-            };
-            match evidence.measurements.get(&parsed.measurement) {
-                None => abstain(UndecidedReason::MeasurementMissing {
-                    requirement: name.clone(),
-                    measurement: parsed.measurement.clone(),
-                }),
-                Some(&reported) if !parsed.holds(reported) => unmet.push(UnmetRequirement {
+            // The grammar's own per-check semantics, evaluated once, in the
+            // crate that owns the grammar (#3515). What is left here is the
+            // half that is genuinely this function's: reporting an outcome as
+            // a verdict rather than as a `Result`. `CheckOutcome` is total, so
+            // every arm below is decided and none of them is "ask someone".
+            match check.outcome(&evidence.measurements) {
+                CheckOutcome::Held => {}
+                CheckOutcome::Failed { reported, .. } => unmet.push(UnmetRequirement {
                     requirement: name.clone(),
                     statement: statement.clone(),
                     because: UnmetBecause::Budget {
@@ -146,7 +143,22 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
                         reported,
                     },
                 }),
-                Some(_) => {}
+                CheckOutcome::MeasurementMissing { measurement } => {
+                    abstain(UndecidedReason::MeasurementMissing {
+                        requirement: name.clone(),
+                        measurement,
+                    });
+                }
+                // Rejected at load (`ManifestError::UnparsableCheck`), so this
+                // is reachable only for a rule that did not come from a
+                // validated manifest — which must still not read as "the
+                // budget held".
+                CheckOutcome::Unreadable { reason } => {
+                    abstain(UndecidedReason::UnreadableCheck {
+                        requirement: name.clone(),
+                        reason,
+                    });
+                }
             }
         }
 

@@ -551,3 +551,114 @@ fn a_manifest_without_a_wrapper_block_is_refused_by_name() {
         "got {error:?}"
     );
 }
+
+/// Three stages resolve under [`signals`] — `research` is conditional on
+/// `questions > 0`, and that snapshot publishes two.
+const COUNTER_ORDER: &str = r#"
+[wrapper]
+id = "counter-v1"
+
+[[wrapper.stages]]
+name = "triage"
+
+[[wrapper.stages]]
+name = "research"
+if = "questions > 0"
+
+[[wrapper.stages]]
+name = "execute"
+"#;
+
+const COUNTER_HEAD: &str = r#"
+name = "stage-counter"
+description = "counts how often the host asks it"
+
+[loop]
+participation = "steering"
+points = ["before_turn"]
+"#;
+
+/// One `before_turn` answer, and one line appended to `path` per process start
+/// — counted by the child itself, because that is the only place the cost is
+/// real.
+fn counting_plugin(path: &str) -> String {
+    format!(
+        "cat >/dev/null\nprintf 'x\\n' >>{path}\n\
+         printf '%s\\n' '{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1}}}}'\n"
+    )
+}
+
+/// Run one round against the counting plugin and answer with how many times it
+/// was started.
+async fn process_starts(manifest: &str, path: &str) -> usize {
+    let dispatch = WrapperDispatch::bind(
+        PluginManifest::from_toml_str(manifest).expect("the counting manifest loads"),
+        plugin(&counting_plugin(path)),
+    )
+    .expect("[wrapper] declared");
+    let mut host = Recorder::new(vec!["done"]);
+    let report = dispatch
+        .run(input("make the parser faster"), &mut host)
+        .await
+        .expect("a validated wrapper resolves");
+    assert!(report.faults.is_empty(), "{:?}", report.faults);
+    std::fs::read_to_string(path).map_or(0, |text| text.lines().count())
+}
+
+/// **The witness for #3543.** A plugin is asked `before_turn` once per stage it
+/// *declared*, not once per stage the resolved program runs.
+///
+/// `SubprocessWrapper::exchange` builds a fresh `Command` and spawns per
+/// exchange, so a plugin contributing at one stage of an eight-stage order paid
+/// eight interpreter starts a round to answer `{"protocol_version":1}` seven
+/// times. `plugins/stella-research` was exactly that shape, and worse than the
+/// arithmetic suggests: the one stage it contributes at is conditional, so it
+/// was skipped there and started everywhere else.
+///
+/// The control is the same manifest with the field absent, which is what makes
+/// the assertion say something — without it the count is the program's length,
+/// with it the count is the declared list's.
+#[tokio::test]
+async fn before_turn_is_dispatched_once_per_declared_stage_not_once_per_program_stage() {
+    let dir = tempfile::TempDir::new().expect("a place to count in");
+    let path = |name: &str| dir.path().join(name).display().to_string();
+
+    let control = process_starts(&format!("{COUNTER_HEAD}{COUNTER_ORDER}"), &path("control")).await;
+    assert_eq!(
+        control, 3,
+        "with no stage list declared, every stage the program runs is asked — which is \
+         what keeps a manifest written before the field existed behaving as it did"
+    );
+
+    let narrowed = process_starts(
+        &format!("{COUNTER_HEAD}before_turn_stages = [\"execute\"]\n{COUNTER_ORDER}"),
+        &path("narrowed"),
+    )
+    .await;
+    assert_eq!(
+        narrowed, 1,
+        "the plugin declared one stage and the program ran three; it must be spawned \
+         once, not three times"
+    );
+}
+
+/// A stage list naming something the `[wrapper]` never orders is refused at
+/// load rather than narrowing silently to nothing — the `UnknownMeasurement`
+/// argument pointed at dispatch. A plugin that loads and then contributes
+/// nowhere is a defect its author has no signal for.
+#[test]
+fn a_stage_list_is_checked_against_the_order_it_narrows() {
+    let error = PluginManifest::from_toml_str(
+        "name = \"counter\"\n[loop]\nparticipation = \"steering\"\n\
+         points = [\"before_turn\"]\nbefore_turn_stages = [\"verify\"]\n\n\
+         [wrapper]\nid = \"counter-v1\"\n\n[[wrapper.stages]]\nname = \"execute\"",
+    )
+    .expect_err("a stage nothing orders would never be dispatched");
+    assert!(
+        matches!(
+            error,
+            stella_plugin::ManifestError::UndispatchableStage { ref stage } if stage == "verify"
+        ),
+        "got {error:?}"
+    );
+}

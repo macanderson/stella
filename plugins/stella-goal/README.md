@@ -152,8 +152,8 @@ stated here rather than discovered by a silent Undecided run.
 | **The host's default ceilings are lower than goal mode's own defaults** | `stella run`'s door never calls `.with_host_max_holds` (default `DEFAULT_HOST_MAX_HOLDS = 2`) or raises `ChildTurns`' ceiling past `DEFAULT_HOST_MAX_CHILD_TURNS = 4`. `plugin.toml` asks for `max_holds = 7` / `max_calls = 8` (mirroring `GoalConfig::default().max_rounds = 8`) honestly, but a host running this plugin today caps it at 3 rounds (1 + 2 holds), not 8. | #3841 |
 | **The verifier's own words never reach the correction** | `ObservedEvidence` (`crates/stella-plugin/src/observed.rs`) has exactly `flip` and `measurements: BTreeMap<String, u64>` — no field for `GoalVerifierVerdict`'s `reasoning`/`feedback` strings. So `again`'s `Correction.guidance` (`crates/stella-runtime/src/wrapper/verdict.rs::correction_text`) is rendered entirely from the static `[requirements]` statement — "an independent verifier turn assessed the goal as accomplished" — never from what the verifier actually wrote. `stella goal`'s own loop does not have this problem: `verifier_feedback_text` carries the verdict's real `feedback` verbatim. This is real fidelity lost against the built-in, not an oversight. | #3840 |
 | **The verifier judges from `TurnOutcome`, not the transcript** | `Engine::assess` renders the whole recent conversation, tail-biased, via `render_transcript_tail`. `AfterTurnRequest.turn` carries exactly `completed`, `answer` (final text only), and `tools`/`changed_files` (each `Option`, absent when the host does not report them). `main.py`'s `verifier_instruction` says so honestly in the text it sends rather than pretending to have seen more. | (documented here; not independently filed — same root as the gap below) |
-| **`[roles]` requires `[subloop]`** even though this plugin uses none of `[subloop]`'s own bounded-child-turn dispatch mechanism — its child turn is spent entirely over the host-call channel. `stages = ["verify"]` is declared only to satisfy the validator. | shared with `plugins/stella-plan` | #3496 |
-| **No `BLESS=1` regeneration path** for either this plugin's goldens or its siblings' — vectors were produced by running the shipped `main.py` and capturing its output. | shared with `plugins/stella-plan`/`plugins/stella-research` | #3548 |
+| ~~**`[roles]` requires `[subloop]`**~~ **CLOSED** | The rule is now "a role intent needs something that could resolve it" — a `[subloop]` **or** a `[wrapper]` (`ManifestError::RolesResolveNowhere`). This plugin declares a `[wrapper]`, so the `[subloop] stages = ["verify"]` it never used is gone from `plugin.toml`; `plugins/stella-plan` and the reference fixture in `crates/stella-runtime/tests/wrapper_socket.rs` shed the same workaround. | #3496 |
+| ~~**No `BLESS=1` regeneration path**~~ **CLOSED** | `BLESS=1 cargo test -p stella-runtime --test goal_plugin_conformance` rewrites the goldens from the same fixture the assertions run against, so the fixture has exactly one definition. Shared with `plugins/stella-plan` and `plugins/stella-research` through `crates/stella-runtime/tests/common/mod.rs`. `plugins/stella-witness` is deliberately not on it — its harness normalises the golden before comparing, so what it would write is not what it reads. | #3548 |
 | **`stella fleet` drives a wrapper per worker attempt now** (#3695, fleet half) and applies no arbiter refusal, so `goal-v1` *can* be named there — but a fleet attempt is one turn with no goal of its own beyond the task prompt, which is not the supervision loop this plugin was written for. `stella run --pipeline goal-v1` remains its designed home. | | (documented here; not a gap to close) |
 | **Nobody has benchmarked it against goal mode's own loop** | Which shape wins on task outcome is an empirical question this README does not settle. | (none yet — parallel to #3544/#3801-adjacent open questions for the sibling plugins) |
 
@@ -193,3 +193,13 @@ an answer, `.refusal.txt` for a refusal, never both — exactly as
 `plugins/stella-plan`'s and `plugins/stella-research`'s vectors are. A
 host-call vector adds `.calls.json` — the conversation its host holds — and
 an optional `.stderr.txt` for what a degraded call reported.
+
+Regenerate the `.expected.json` goldens from the same fixture the assertions
+run against:
+
+```bash
+BLESS=1 cargo test -p stella-runtime --test goal_plugin_conformance
+```
+
+Then **read the diff** — a golden blessed without looking is a changelog, not a
+test. Blessing a vector that carries a `.refusal.txt` sibling is refused.

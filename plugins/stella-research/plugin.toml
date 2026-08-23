@@ -41,6 +41,14 @@ participation = "steering"
 # there is no evidence to gather after a turn that a read-only grounding pass
 # could honestly report.
 points = ["before_turn"]
+# The stages it answers at, exhaustively (#3543). `main.py` contributes at
+# `recall` and `research` and returns `{"protocol_version": 1}` at every other
+# stage of the eight-stage order below — and a fresh `python3` was started to
+# produce each of those empty answers, once per stage per round. Undeclared,
+# the field means "every stage", so this line is the difference between two
+# process starts a round and eight. Every name here must appear in
+# `[[wrapper.stages]]` below, or the manifest does not load.
+before_turn_stages = ["recall", "research"]
 # The host capabilities it may ask for mid-point, exhaustively
 # (`doc:wrapper-socket` §6b). `recall` only, and it is what makes the `recall`
 # stage below more than a slot in an order: the context plane is memories,

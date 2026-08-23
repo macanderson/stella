@@ -229,3 +229,44 @@ fn a_429_reports_under_the_re_identified_provider_never_z_ai() {
     let native = classify_zai_429("Z.ai", "too many requests", None);
     assert!(native.to_string().contains("Z.ai HTTP 429"), "{native}");
 }
+
+/// #3859's witness on this dialect: a `code: 529` frame arriving *inside* an
+/// open stream, after a usage frame already reported what the prompt cost.
+///
+/// Folded into the combined transport arm the brownout could not park, so a
+/// sustained one burned the ~16s inline ladder and aborted a turn with
+/// wall-clock budget left. Classified as an `Overloaded` that carries no
+/// accounting, the input tokens the gateway had already reported died at the
+/// `?`. Which side of the response boundary the gateway shed load on is
+/// invisible to the user and must decide neither, so the test pins both.
+#[tokio::test]
+async fn a_mid_stream_529_frame_parks_and_keeps_the_usage_the_stream_reported() {
+    let server = MockServer::start().await;
+    let sse_body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":61000,\"completion_tokens\":2,\"prompt_tokens_details\":{\"cached_tokens\":58000}}}\n\n",
+        "data: {\"error\":{\"message\":\"Provider is overloaded\",\"code\":529}}\n\n",
+    );
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+        .mount(&server)
+        .await;
+
+    let provider =
+        ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2").with_base_url(server.uri());
+    let err = provider.complete(hi_request()).await.unwrap_err();
+
+    assert!(matches!(err, ProviderError::Overloaded { .. }), "{err:?}");
+    assert!(
+        err.is_park_eligible(),
+        "an in-band brownout is the same condition waiting fixes: {err:?}"
+    );
+
+    let partial = err
+        .partial_usage()
+        .expect("the usage frame that already arrived must survive the error");
+    assert_eq!(partial.usage.input_tokens, 61_000);
+    assert_eq!(partial.usage.cached_input_tokens, 58_000);
+    assert!(partial.input_reported);
+}

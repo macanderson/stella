@@ -257,6 +257,17 @@ fn settled_generated_ignore(path: &Path) -> Result<(Vec<u8>, u32)> {
     })
 }
 
+/// Where this workspace's `.stella` lives, honouring the state-root redirect.
+///
+/// The read probes ask this before they decide there is nothing here. They
+/// used to join `.stella` onto the workspace root directly, which is the same
+/// path the writers take only while no redirect is set: under one, a probe
+/// looked in the throwaway worktree, found nothing, and reported no state to a
+/// caller whose state was sitting in the repository the whole time (#4394).
+fn state_dot_dir(workspace_root: &Path) -> PathBuf {
+    stella_home::workspace_state_root(workspace_root).join(".stella")
+}
+
 pub(crate) fn ensure_workspace_state_dir(workspace_root: &Path) -> Result<(PathBuf, bool)> {
     // The state root, not the working directory.
     //
@@ -472,7 +483,7 @@ pub fn existing_workspace_private_state_path(
     name: &str,
 ) -> Result<Option<PathBuf>> {
     validate_state_name(name)?;
-    let dot = workspace_root.join(".stella");
+    let dot = state_dot_dir(workspace_root);
     if !path_entry_exists(&dot)? {
         return Ok(None);
     }
@@ -501,7 +512,7 @@ pub fn existing_workspace_private_sqlite_path(
     name: &str,
 ) -> Result<Option<PathBuf>> {
     validate_state_name(name)?;
-    let dot = workspace_root.join(".stella");
+    let dot = state_dot_dir(workspace_root);
     if !path_entry_exists(&dot)? {
         return Ok(None);
     }

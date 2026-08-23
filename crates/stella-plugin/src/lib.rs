@@ -134,7 +134,7 @@ pub use driver::{
     DriverMessage, DriverOk,
 };
 pub use error::ManifestError;
-pub use evidence::{MeasurementRule, OracleCheck, UnmetCheck};
+pub use evidence::{CheckOutcome, MeasurementRule, OracleCheck, UnmetCheck};
 pub use host_call::{
     AdoptCandidateArgs, AdoptCandidateResult, CandidateFanoutArgs, CandidateFanoutResult,
     ChildTurnArgs, ChildTurnResult, FanoutCandidate, HostCall, HostCallArgs, HostCallFailure,

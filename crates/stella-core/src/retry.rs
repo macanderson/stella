@@ -1210,10 +1210,10 @@ mod tests {
                 let n = calls.fetch_add(1, Ordering::SeqCst);
                 async move {
                     if n < 5 {
-                        Err(ProviderError::Overloaded {
-                            message: "anthropic HTTP 529 Overloaded: overloaded".into(),
-                            retry_after_ms: None,
-                        })
+                        Err(ProviderError::overloaded(
+                            "anthropic HTTP 529 Overloaded: overloaded",
+                            None,
+                        ))
                     } else {
                         Ok("recovered")
                     }
@@ -1285,11 +1285,11 @@ mod tests {
             || {
                 calls.fetch_add(1, Ordering::SeqCst);
                 async {
-                    Err(ProviderError::Overloaded {
-                        message: "anthropic HTTP 529 Overloaded: overloaded".into(),
+                    Err(ProviderError::overloaded(
+                        "anthropic HTTP 529 Overloaded: overloaded",
                         // A stated wait must not tempt the fast path either.
-                        retry_after_ms: Some(300_000),
-                    })
+                        Some(300_000),
+                    ))
                 }
             },
             |_, _, _| {},

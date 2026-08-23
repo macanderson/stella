@@ -361,6 +361,49 @@ fn step_usage_accumulates_tokens_and_file_change_fills_ledger() {
 }
 
 #[test]
+fn an_auxiliary_call_spends_on_the_row_without_relabelling_its_model() {
+    let usage = |role: stella_protocol::ModelCallRole, model: &str| AgentEvent::StepUsage {
+        upstream_provider: None,
+        output_text: None,
+        step: 1,
+        role,
+        provider: "zai".into(),
+        model: model.into(),
+        input_tokens: 1000,
+        output_tokens: 100,
+        cached_input_tokens: 0,
+        cache_write_tokens: 0,
+        reasoning_tokens: None,
+        estimated_input_tokens: 1000,
+        cost_usd: 0.02,
+        duration_ms: 100,
+        retries: 0,
+        tool_calls: 0,
+        complete: true,
+        finish_reason: None,
+    };
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    w.apply_inbound(&ev(
+        "lead",
+        usage(stella_protocol::ModelCallRole::Worker, "glm-5.2"),
+    ));
+    // The overflow summarizer runs on a small cheap model and is not what this
+    // agent is running.
+    w.apply_inbound(&ev(
+        "lead",
+        usage(stella_protocol::ModelCallRole::Summarization, "glm-4.6-air"),
+    ));
+    let lead = &w.agents[0];
+    assert_eq!(lead.meta.model.as_deref(), Some("glm-5.2"));
+    assert_eq!(w.latest_model(), Some("glm-5.2"));
+    // The spend and the tokens are the summarizer's too — only the label is
+    // the worker's.
+    assert_eq!(lead.tokens_in, 2000);
+    assert!((lead.cost_usd - 0.04).abs() < 1e-9);
+}
+
+#[test]
 fn ledger_counts_reads_without_regressing_the_mutation_badge() {
     let mut w = WorkspaceModel::new();
     w.apply_inbound(&reg("lead"));

@@ -1419,8 +1419,8 @@ async fn complete_returns_err_on_mid_stream_error_event_not_truncated_ok() {
     };
 
     let err = provider.complete(req).await.unwrap_err();
-    // overloaded_error ⇒ retryable Transport.
-    assert!(matches!(err, ProviderError::Transport { .. }));
+    // overloaded_error ⇒ park-eligible Overloaded (#3859).
+    assert!(matches!(err, ProviderError::Overloaded { .. }));
     assert!(err.is_retryable());
 }
 

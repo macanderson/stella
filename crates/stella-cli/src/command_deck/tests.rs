@@ -185,7 +185,7 @@ fn extract_skill_md_unwraps_a_fenced_block_or_frontmatter() {
 
 #[test]
 fn mcp_outcome_report_lists_connected_servers_by_name() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files", "search"], &[], &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files", "search"], &[], &[], &[], &[]);
     assert_eq!(report, "2 MCP server(s) connected: files, search");
 }
 
@@ -195,7 +195,7 @@ fn mcp_outcome_report_names_each_failure_with_its_reason() {
         "slow".to_string(),
         "connect timed out after 10000ms".to_string(),
     )];
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &failed, &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &failed, &[], &[], &[]);
     let lines: Vec<&str> = report.lines().collect();
     assert_eq!(lines[0], "1 MCP server(s) connected: files");
     assert_eq!(
@@ -207,7 +207,7 @@ fn mcp_outcome_report_names_each_failure_with_its_reason() {
 #[test]
 fn mcp_outcome_report_states_total_failure_outright() {
     let failed = vec![("a".to_string(), "spawn failed".to_string())];
-    let report = crate::mcp_cmd::mcp_outcome_report(&[], &failed, &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&[], &failed, &[], &[], &[]);
     assert!(
         report.starts_with("no MCP servers connected"),
         "the degraded mode is stated, not implied: {report}"
@@ -220,7 +220,7 @@ fn mcp_outcome_report_states_total_failure_outright() {
 /// no consumer, so the model silently had fewer tools than the server offered.
 #[test]
 fn mcp_outcome_report_reports_a_truncated_server_as_connected_not_unavailable() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &[], &[("greedy", 12)], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &[], &[("greedy", 12)], &[], &[]);
     let lines: Vec<&str> = report.lines().collect();
     assert_eq!(lines[0], "1 MCP server(s) connected: greedy");
     assert!(
@@ -245,16 +245,66 @@ fn mcp_outcome_report_reports_a_truncated_server_as_connected_not_unavailable() 
 #[test]
 fn mcp_outcome_report_carries_truncation_and_failure_together() {
     let failed = vec![("dead".to_string(), "spawn failed".to_string())];
-    let report = crate::mcp_cmd::mcp_outcome_report(&["greedy"], &failed, &[("greedy", 3)], &[]);
+    let report =
+        crate::mcp_cmd::mcp_outcome_report(&["greedy"], &failed, &[("greedy", 3)], &[], &[]);
     assert!(report.contains("MCP server `dead` unavailable: spawn failed"));
     assert!(report.contains("`greedy` advertised more than"));
+}
+
+/// The witness for #3722: the per-server schema BYTE budget could trim tools
+/// with no operator-visible output at all — `over_budget_servers()` had no
+/// caller outside its own unit test, so a server with a dozen enormous schemas
+/// lost tools in silence while the count cap next to it announced itself.
+#[test]
+fn mcp_outcome_report_reports_a_schema_budget_trim_in_its_own_words() {
+    let budgeted = vec![("verbose".to_string(), 4)];
+    let report = crate::mcp_cmd::mcp_outcome_report(&["verbose"], &[], &[], &budgeted, &[]);
+    let lines: Vec<&str> = report.lines().collect();
+    assert_eq!(lines[0], "1 MCP server(s) connected: verbose");
+    assert!(
+        lines[1].contains("4 tool(s) trimmed"),
+        "the operator is told how much surface was lost: {report}"
+    );
+    assert!(
+        lines[1].contains(&stella_mcp::MAX_SERVER_SCHEMA_BYTES.to_string()),
+        "the notice names the budget it hit rather than hard-coding a number: {report}"
+    );
+    assert!(
+        !report.contains("unavailable"),
+        "a trimmed server is connected and routing: {report}"
+    );
+}
+
+/// The two caps are different walls and must not be read as one. A reader told
+/// only "tools dropped" cannot tell whether to split the server or shrink its
+/// schemas, which is the whole reason `over_budget_servers` is separate from
+/// `over_advertising_servers` in the first place.
+#[test]
+fn mcp_outcome_report_keeps_the_count_cap_and_the_byte_budget_distinct() {
+    let budgeted = vec![("verbose".to_string(), 4)];
+    let report = crate::mcp_cmd::mcp_outcome_report(
+        &["greedy", "verbose"],
+        &[],
+        &[("greedy", 3)],
+        &budgeted,
+        &[],
+    );
+    assert!(report.contains("`greedy` advertised more than"), "{report}");
+    assert!(
+        report.contains("`verbose` advertised more tool schema than"),
+        "{report}"
+    );
+    assert!(
+        report.contains("trimmed to fit"),
+        "the byte budget trims rather than drops past a count: {report}"
+    );
 }
 
 /// A well-behaved session says nothing about the cap. A notice that fires at
 /// zero is noise that trains operators to ignore the real one.
 #[test]
 fn mcp_outcome_report_is_silent_when_nothing_was_truncated() {
-    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &[], &[], &[]);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["files"], &[], &[], &[], &[]);
     assert_eq!(report, "1 MCP server(s) connected: files");
 }
 
@@ -271,7 +321,7 @@ fn mcp_outcome_report_names_every_claimant_of_a_contested_wire_name() {
             ("acme".to_string(), "_status".to_string()),
         ],
     }];
-    let report = crate::mcp_cmd::mcp_outcome_report(&["acme_", "acme"], &[], &[], &collisions);
+    let report = crate::mcp_cmd::mcp_outcome_report(&["acme_", "acme"], &[], &[], &[], &collisions);
     assert!(report.contains("`mcp__acme___status`"), "{report}");
     assert!(report.contains("`acme_` tool `status`"), "{report}");
     assert!(report.contains("`acme` tool `_status`"), "{report}");

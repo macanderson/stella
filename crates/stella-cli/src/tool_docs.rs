@@ -354,25 +354,176 @@ fn rule(title: &str) -> String {
     format!("# ── {title} {}", "─".repeat(width.max(1)))
 }
 
+/// Which census rows describe one tool, once the rename ledger is consulted.
+///
+/// The fixture is keyed by the dispatch name a measured run advertised, so a
+/// tool renamed since the capture has its measurement filed under a key the
+/// catalog no longer holds. [`catalog::FORMER_TOOL_NAMES`] is the reviewed
+/// join between the two, and this type keeps the provenance attached to the
+/// numbers all the way to the page: a reader is always told which name a row
+/// was recorded under.
+enum UsageEvidence<'a> {
+    /// A row filed under the tool's own dispatch name.
+    Current(&'a Usage),
+    /// One row per former name that carries one, in ledger order.
+    ///
+    /// **The rows are reported side by side and never combined into one.**
+    /// `trials_used` counts trials, and two former names' trial sets overlap
+    /// by an amount the census does not record — `grep` (23/408) and `glob`
+    /// (62/408) both fold into `search`, whose true trial count is somewhere
+    /// between 62 and 85 and is not recoverable from these rows.
+    /// `avg_first_step` and `fail_rate` are means over per-call data the
+    /// fixture distilled away, so they cannot be re-weighted either. A total
+    /// would therefore be a figure this generator invented, which is the one
+    /// thing a measurement page may not print.
+    Former(Vec<(&'static str, &'a Usage)>),
+    /// Neither the dispatch name nor any name in the ledger carries a row.
+    Unmeasured,
+}
+
+impl UsageEvidence<'_> {
+    /// Calls recorded across every row this evidence holds, or `None` when
+    /// there is no row to count. `Some(0)` is the measured claim "advertised
+    /// and never chosen"; `None` is "never measured", which is a different
+    /// fact and reads differently on the page.
+    fn calls(&self) -> Option<u64> {
+        match self {
+            UsageEvidence::Current(usage) => Some(usage.calls),
+            UsageEvidence::Former(rows) => Some(rows.iter().map(|(_, u)| u.calls).sum()),
+            UsageEvidence::Unmeasured => None,
+        }
+    }
+}
+
+/// The census rows for `name`, falling back to the names it dispatched under
+/// before.
+///
+/// Deliberately does not resolve *examples* through the ledger, only usage
+/// counts: a payload recorded under a former name was shaped by that tool's
+/// input schema, and a rename can move the schema with the name — `search`
+/// accepts arguments `grep` never had. A call count survives that move with
+/// its provenance stated; a payload rendered under this page's schema block
+/// would be a worked example of a schema the run never saw.
+fn usage_evidence<'a>(name: &str, fixture: &'a Fixture) -> UsageEvidence<'a> {
+    if let Some(usage) = fixture.usage.get(name) {
+        return UsageEvidence::Current(usage);
+    }
+    let former: Vec<(&'static str, &Usage)> = catalog::FORMER_TOOL_NAMES
+        .iter()
+        .filter(|(current, _)| *current == name)
+        .filter_map(|(_, former)| fixture.usage.get(*former).map(|usage| (*former, usage)))
+        .collect();
+    if former.is_empty() {
+        UsageEvidence::Unmeasured
+    } else {
+        UsageEvidence::Former(former)
+    }
+}
+
+/// Whether the rename ledger records an earlier name for `name`.
+///
+/// The absence prose is scoped by this rather than asserting over the ledger
+/// unconditionally: telling a reader that no *former* name of `ask_question`
+/// was advertised either is true, and implies the tool had one.
+fn has_former_names(name: &str) -> bool {
+    catalog::FORMER_TOOL_NAMES
+        .iter()
+        .any(|(current, _)| *current == name)
+}
+
+/// One row of census numbers, verbatim from the fixture.
+fn usage_row(usage: &Usage, trials: u64) -> String {
+    let first = usage
+        .avg_first_step
+        .map(|step| format!("{step:.1}"))
+        .unwrap_or_else(|| "n/a".into());
+    format!(
+        "calls {calls} · trials that used it {trials_used}/{trials} · \
+         calls per model call {per_turn:.4} · mean position of first use {first} · \
+         failures {failures} ({fail_rate:.1}%).",
+        calls = usage.calls,
+        trials_used = usage.trials_used,
+        per_turn = usage.calls_per_turn,
+        failures = usage.failures,
+        fail_rate = usage.fail_rate * 100.0,
+    )
+}
+
 /// The usage paragraph for one tool, or the honest absence.
 ///
 /// Measurements are included, and they are the reason several of these pages
-/// say anything at all: thirty-three declared tools were never called once
-/// across 408 trials, and that is the most useful sentence on those pages.
+/// say anything at all: thirty-three of the seventy-two tools declared at
+/// capture time were never called once across 408 trials, and that is the
+/// most useful sentence on those pages. (Both figures are properties of the
+/// 2026-08-11 capture, not of today's catalog — the surface has been cut
+/// since, and what the current pages count is derived in [`render_index`].)
 /// They are comments rather than fields, and every one of them is
 /// date-stamped, because a measurement ages and a schema does not — a reader
 /// who finds `calls = 0` as a datum a year from now would reasonably read it
 /// as a property of the tool instead of a property of one week in August.
 fn usage_comment(name: &str, fixture: &Fixture) -> String {
     let p = &fixture.provenance;
-    let Some(usage) = fixture.usage.get(name) else {
-        return format!(
-            "No usage measurement. `{name}` carries no row in the {captured} census, \
-             which scanned {trials} trials — the census enumerates the schemas those \
-             runs advertised, and this tool was not among them.",
-            captured = p.captured,
-            trials = p.census_trials_scanned,
-        );
+    let usage = match usage_evidence(name, fixture) {
+        UsageEvidence::Unmeasured => {
+            let (also, subject) = if has_former_names(name) {
+                (
+                    ", and neither does any name it dispatched under before (the rename \
+                     ledger in crates/stella-tools/src/catalog.rs)",
+                    "no name this tool has answered to was",
+                )
+            } else {
+                ("", "this tool was not")
+            };
+            return format!(
+                "No usage measurement. `{name}` carries no row in the {captured} census, \
+                 which scanned {trials} trials{also} — the census enumerates the schemas \
+                 those runs advertised, and {subject} among them.",
+                captured = p.captured,
+                trials = p.census_trials_scanned,
+            );
+        }
+        UsageEvidence::Former(rows) => {
+            let provenance = match rows.as_slice() {
+                [(former, _)] => format!(
+                    ", under this tool's then-name `{former}` — the census records the \
+                     name that was on the wire, and the tool has been renamed since"
+                ),
+                _ => {
+                    let names = rows
+                        .iter()
+                        .map(|(former, _)| format!("`{former}`"))
+                        .collect::<Vec<_>>()
+                        .join(" and ");
+                    format!(
+                        ", under the names {names} that this tool replaced. One row \
+                         each, and no combined row: `trials_used` counts trials, those \
+                         sets overlap by an amount the census does not record, and the \
+                         two rates are means over per-call data the capture distilled \
+                         away"
+                    )
+                }
+            };
+            let body = rows
+                .iter()
+                .map(|(former, usage)| {
+                    format!(
+                        "as `{former}`: {row}",
+                        row = usage_row(usage, p.census_trials_scanned)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            return format!(
+                "Measured {captured} across {trials} trials / {model_calls} model calls\
+                 {provenance}:\n\
+                 {body}\n\
+                 A measurement, not a contract: it ages, the schema above does not.",
+                captured = p.captured,
+                trials = p.census_trials_scanned,
+                model_calls = p.census_model_calls,
+            );
+        }
+        UsageEvidence::Current(usage) => usage,
     };
     if usage.calls == 0 {
         return format!(
@@ -385,24 +536,14 @@ fn usage_comment(name: &str, fixture: &Fixture) -> String {
             captured = p.captured,
         );
     }
-    let first = usage
-        .avg_first_step
-        .map(|step| format!("{step:.1}"))
-        .unwrap_or_else(|| "n/a".into());
     format!(
         "Measured {captured} across {trials} trials / {model_calls} model calls:\n\
-         calls {calls} · trials that used it {trials_used}/{trials} · \
-         calls per model call {per_turn:.4} · mean position of first use {first} · \
-         failures {failures} ({fail_rate:.1}%).\n\
+         {row}\n\
          A measurement, not a contract: it ages, the schema above does not.",
         captured = p.captured,
         trials = p.census_trials_scanned,
         model_calls = p.census_model_calls,
-        calls = usage.calls,
-        trials_used = usage.trials_used,
-        per_turn = usage.calls_per_turn,
-        failures = usage.failures,
-        fail_rate = usage.fail_rate * 100.0,
+        row = usage_row(usage, p.census_trials_scanned),
     )
 }
 
@@ -410,20 +551,53 @@ fn usage_comment(name: &str, fixture: &Fixture) -> String {
 fn example_comment(name: &str, fixture: &Fixture) -> String {
     let p = &fixture.provenance;
     let Some(example) = fixture.examples.get(name) else {
-        let why = match fixture.usage.get(name).map(|usage| usage.calls) {
-            // Absent from the census entirely: these are the tools whose
-            // registration needs a backend the measured runs had none of, so
-            // they were never advertised and never had the chance to be
-            // called. That is a different fact from "offered and refused".
-            None => "no call to record: it was not advertised in the runs the capture \
-                     comes from, so it never had the chance to be called"
-                .to_string(),
-            Some(0) => "no call to record: it was advertised and never called".to_string(),
-            Some(called) => format!(
-                "{called} calls in the wider census, but none in the \
+        let why = match usage_evidence(name, fixture) {
+            // Absent from the census entirely: these are the tools that no
+            // measured run advertised — a later arrival, or one whose
+            // registration needs a backend those runs had none of — so it
+            // never had the chance to be called. That is a different fact
+            // from "offered and refused", and it is a claim about every name
+            // the tool has answered to, not only today's.
+            UsageEvidence::Unmeasured => {
+                let names = if has_former_names(name) {
+                    "neither this name nor any name it dispatched under before was"
+                } else {
+                    "it was not"
+                };
+                format!(
+                    "no call to record: {names} advertised in the runs the capture comes \
+                     from, so it never had the chance to be called"
+                )
+            }
+            UsageEvidence::Current(usage) if usage.calls == 0 => {
+                "no call to record: it was advertised and never called".to_string()
+            }
+            UsageEvidence::Current(usage) => format!(
+                "{calls} calls in the wider census, but none in the \
                  {rows}-row capture the examples are drawn from",
+                calls = usage.calls,
                 rows = p.corpus_rows,
             ),
+            // The census filed these calls under a name this page does not
+            // otherwise mention, and it is reported per name for the same
+            // reason the usage block is: a call count is additive, but
+            // handing the reader one number invites them to read it as a
+            // measurement of a tool that did not exist yet.
+            UsageEvidence::Former(rows) => {
+                let tally = rows
+                    .iter()
+                    .map(|(former, usage)| {
+                        format!("{calls} calls as `{former}`", calls = usage.calls)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "no call in the {rows_scanned}-row capture the examples are drawn from; \
+                     the wider census records {tally}, under the {names} this tool replaced",
+                    rows_scanned = p.corpus_rows,
+                    names = if rows.len() == 1 { "name" } else { "names" },
+                )
+            }
         };
         return wrap(
             &format!(
@@ -545,9 +719,14 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
         .iter()
         .filter(|entry| fixture.examples.contains_key(entry.name))
         .count();
+    // Through the rename ledger, so the count keeps meaning "advertised and
+    // chosen zero times". A tool measured only under a former name is counted
+    // on that measurement — and a tool the census never advertised under any
+    // of its names is not counted at all, because "no row" is not a zero
+    // (#3846).
     let never_called = entries
         .iter()
-        .filter(|entry| fixture.usage.get(entry.name).is_some_and(|u| u.calls == 0))
+        .filter(|entry| usage_evidence(entry.name, fixture).calls() == Some(0))
         .count();
 
     let mut out = String::new();
@@ -778,6 +957,78 @@ fn generated_pages_parse_and_carry_every_promised_field() {
         serde_json::from_str::<Value>(schema)
             .unwrap_or_else(|e| panic!("{name}'s input_schema is not JSON: {e}"));
     }
+}
+
+/// A renamed tool's page reports the census row recorded under its then-name.
+///
+/// The failure this pins is a false statement of fact, not a missing feature:
+/// before the rename ledger, `delegate` took the no-row branch and its page
+/// read *"the census enumerates the schemas those runs advertised, and this
+/// tool was not among them"* — while `usage["task"]` in the very fixture that
+/// sentence is generated from records two calls (#3846). The page now names
+/// the measurement and the name it was filed under, and the assertions below
+/// are on the generated bytes rather than on `usage_comment`, because the
+/// committed page is what a reader is misled by.
+#[test]
+fn a_renamed_tools_page_reports_the_measurement_under_its_former_name() {
+    /// The `── usage ──` block, uncommented and unwrapped onto one line, so
+    /// an assertion tests the sentence rather than the greedy wrap.
+    fn usage_block(page: &str) -> String {
+        let (_, tail) = page
+            .split_once("── usage")
+            .expect("every page carries a usage block");
+        tail.lines()
+            .map(|line| line.trim_start_matches('#').trim())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    let files = generate();
+    let fixture = load_fixture();
+
+    // `task` → `delegate` (#3192): one former name, one row.
+    let delegate = usage_block(&files["delegate.toml"]);
+    let task = &fixture.usage["task"];
+    assert!(
+        delegate.contains("under this tool's then-name `task`"),
+        "delegate.toml does not name the measurement's provenance:\n{delegate}"
+    );
+    assert!(
+        delegate.contains(&format!("as `task`: calls {}", task.calls)),
+        "delegate.toml does not carry the `task` row's call count:\n{delegate}"
+    );
+    assert!(
+        !delegate.contains("No usage measurement"),
+        "delegate.toml still claims no measurement exists, and the fixture \
+         disagrees:\n{delegate}"
+    );
+
+    // `grep` + `glob` → `search` (#3120): two rows, reported separately
+    // because `trials_used` counts trials and the two sets overlap by an
+    // amount the census does not record.
+    let search = usage_block(&files["search.toml"]);
+    for former in ["grep", "glob"] {
+        let row = &fixture.usage[former];
+        assert!(
+            search.contains(&format!("as `{former}`: calls {}", row.calls)),
+            "search.toml does not carry the `{former}` row:\n{search}"
+        );
+    }
+    let summed = fixture.usage["grep"].calls + fixture.usage["glob"].calls;
+    assert!(
+        !search.contains(&format!("calls {summed}")),
+        "search.toml prints a total across two former names; the rows are \
+         reported side by side because no honest total exists:\n{search}"
+    );
+
+    // The fallback survives: a tool the census never advertised under any of
+    // its names still says so. `ask_question` landed after the capture and
+    // holds no ledger row (#4212).
+    let unmeasured = usage_block(&files["ask_question.toml"]);
+    assert!(
+        unmeasured.contains("No usage measurement"),
+        "ask_question.toml carries no row under any name and must say so:\n{unmeasured}"
+    );
 }
 
 /// The catalog and the generated directory describe the same set of tools.

@@ -2429,12 +2429,8 @@ fn spawn_mcp_connect(
                             Some(auth),
                         )
                         .await;
-                        let _ = chrome_tx.send(system_notice(crate::mcp_cmd::mcp_outcome_report(
-                            &set.connected_names(),
-                            set.failed_servers(),
-                            &set.over_advertising_servers(),
-                            set.wire_name_collisions(),
-                        )));
+                        let _ =
+                            chrome_tx.send(system_notice(crate::mcp_cmd::mcp_connect_report(&set)));
                         // `set` is infallible here (the cell is set exactly once,
                         // by this task); an in-flight turn keeps its resolved
                         // executor and the NEXT turn picks the servers up. Arc'd so
@@ -3213,14 +3209,12 @@ pub(super) fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<En
     // Code-graph definitions of the queried name, when an index exists
     // (definitions are an exact-name lookup, so an empty query has nothing
     // to resolve).
-    if !needle.is_empty() {
-        let db = crate::search_cmd::codegraph::graph_db_path(root);
-        if db.exists()
-            && let Ok(graph) = stella_graph::CodeGraph::open(root, &db)
-            && let Ok(frames) = graph.definitions(query.trim())
-        {
-            hits.extend(frames.iter().map(symbol_hit));
-        }
+    if !needle.is_empty()
+        && let Ok(Some(db)) = crate::search_cmd::codegraph::graph_db_path(root)
+        && let Ok(graph) = stella_graph::CodeGraph::open(root, &db)
+        && let Ok(frames) = graph.definitions(query.trim())
+    {
+        hits.extend(frames.iter().map(symbol_hit));
     }
     hits
 }

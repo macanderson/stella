@@ -588,6 +588,7 @@ mod tests {
             participation: Participation::Steering,
             hooks: Vec::new(),
             points: vec![WrapperPoint::BeforeTurn],
+            before_turn_stages: Vec::new(),
             calls,
             max_calls,
             max_fanout_width: None,

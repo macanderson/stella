@@ -21,9 +21,11 @@
 //! on disk the trust gate is holding back, and how much of it?** Counts only.
 //! The notice must never carry a memory body, a record's text, or even a
 //! filename: those are repository-controlled strings, and a refusal that echoed
-//! them would become the exfiltration channel it exists to prevent. Nothing
-//! here opens a file — [`survey`] is `read_dir` plus a name test — so there is
-//! no body to leak by accident.
+//! them would become the exfiltration channel it exists to prevent. [`survey`]
+//! reads no rule text: five of its counts are `read_dir` plus a name test, and
+//! the sixth is a `count(*)` over an immutable connection
+//! (`stella_store::rules_peek`), so no body reaches this module to leak by
+//! accident.
 //!
 //! It answers a second question the first one cannot: **which authority
 //! withheld it**, because that decides the only remedy the line may honestly
@@ -98,21 +100,24 @@ pub(crate) fn withholder(
 
 /// How much project steering the trust gate is holding back, by category.
 ///
-/// Each count is a question about the **workspace's steering directories**, not
-/// a prediction of what the matching loader would have produced. A definition
+/// Each count is a question about the **steering the workspace holds**, not a
+/// prediction of what the matching loader would have produced. A definition
 /// that would have failed to parse was withheld just the same, and re-deriving
 /// each loader's discovery rules here would be a second copy of them, free to
 /// drift from the first.
 ///
-/// **One withheld source is deliberately not counted**: the extension-authored
-/// rules `rules::store_rule_files` reads out of `.stella/private/store.db`, which
-/// the same gate suppresses (`rules::load_workspace_rules`'s `include_project`
-/// arm). Counting them means `stella_store::Store::open`, and that is not a
-/// read — it creates and hardens the state directory, runs migrations, and
-/// writes through `reconcile_interrupted_executions`. None of that may happen as
-/// a side effect of loading settings, which every `stella` invocation does. A
-/// workspace whose *only* steering is store rules therefore stays silent; it
-/// needs a read-only count exposed by the store, tracked in #3617.
+/// The one source that is not a directory is the extension-authored rules the
+/// same gate suppresses out of `.stella/private/store.db`
+/// (`rules::load_workspace_rules`'s `include_project` arm). Counting those used
+/// to mean `stella_store::Store::open`, which is not a read — it creates and
+/// hardens the state directory, runs migrations, and writes through
+/// `reconcile_interrupted_executions` — so a workspace whose *only* steering
+/// was store rules stayed silent, the exact defect #2302 was filed for in a
+/// narrower case. `stella_store::rules_peek` answers it read-only instead
+/// (#3617), and the count folds into [`records`](Self::records) because the
+/// notice names what a reader would look for, and a published rule reads as a
+/// context record wherever it was stored. It is a separate field so the two
+/// sources stay separately assertable.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct WithheldSteering {
     /// `<root>/.stella/memories/*.md`.
@@ -121,6 +126,9 @@ pub(crate) struct WithheldSteering {
     /// — markdown rules and published TOML context records alike, since one
     /// gate withholds both.
     pub(crate) records: usize,
+    /// Extension-authored rules published into `.stella/private/store.db`,
+    /// counted read-only. Rendered as part of the `records` total.
+    pub(crate) store_records: usize,
     /// `<root>/.stella/skills` — a `<slug>.md` file or a `<slug>/SKILL.md`
     /// directory, the two layouts the skill source reads.
     pub(crate) skills: usize,
@@ -148,7 +156,11 @@ impl WithheldSteering {
     fn parts(&self) -> String {
         [
             part(self.memories, "memory", "memories"),
-            part(self.records, "context record", "context records"),
+            part(
+                self.records + self.store_records,
+                "context record",
+                "context records",
+            ),
             part(self.skills, "skill", "skills"),
             part(self.commands, "command", "commands"),
             part(self.agents, "agent", "agents"),
@@ -194,7 +206,9 @@ pub(crate) fn notice(workspace_root: &Path, withheld_by: Option<Withholder>) -> 
     ))
 }
 
-/// Count the project steering present on disk, opening nothing.
+/// Count the project steering present on disk, creating nothing and writing
+/// nothing — this runs on the `Settings::load` path every `stella` invocation
+/// takes, `stella --version` included.
 pub(crate) fn survey(workspace_root: &Path) -> WithheldSteering {
     let stella = workspace_root.join(".stella");
     WithheldSteering {
@@ -204,6 +218,11 @@ pub(crate) fn survey(workspace_root: &Path) -> WithheldSteering {
         // them.
         records: count_in(&workspace_root.join(".claude").join("rules"), is_rule_file)
             + count_in(&stella.join("rules"), is_rule_file),
+        // The one source that is not a directory. Asked of the rules loader's
+        // own module rather than re-derived here, and read-only by
+        // construction — `survey` runs on the `Settings::load` path every
+        // `stella` invocation takes.
+        store_records: crate::rules::store_rule_count(workspace_root),
         skills: count_in(&stella.join("skills"), |path| {
             is_markdown(path) || path.join("SKILL.md").is_file()
         }),

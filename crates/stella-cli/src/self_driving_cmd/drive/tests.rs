@@ -206,3 +206,157 @@ fn a_fully_contended_queue_defers_every_candidate() {
     assert!(matches!(pick, Pick::Exhausted));
     assert_eq!(skipped, vec!["1".to_owned(), "2".to_owned()]);
 }
+
+/// A `LoopState` rooted in a temporary directory, so a test can write the stop
+/// flag and read the journal without touching the operator's real state root.
+fn scratch_loop_state(dir: &std::path::Path) -> Durable {
+    Durable {
+        dir: dir.to_path_buf(),
+        repo_root: dir.to_path_buf(),
+    }
+}
+
+/// **Witness (#3942).** A stop flag under the loop's own state root reaches
+/// the machine, so `BlockReason::OperatorStop` is a decision the driver can
+/// actually be handed — and dropping the flag hands back work.
+///
+/// Fails on the base, where `observe` states `stop_requested: false` as a
+/// literal. Three of `BlockReason`'s four variants had no producer outside
+/// `step`'s own tests, so the machine's stop branches were correct and
+/// unreachable: nothing the host could observe would ever return them.
+///
+/// The whole assertion runs offline. A parked observation is taken before any
+/// forge read precisely so a stopped loop spends nothing, which is what lets
+/// this drive the real `observe` rather than a stand-in for it.
+#[test]
+fn a_stop_flag_parks_the_machine_and_dropping_it_returns_work() {
+    let dir = tempfile::tempdir().expect("state dir");
+    let durable = scratch_loop_state(dir.path());
+    let provider = crate::issue_provider::GhIssueProvider;
+    let state = LoopState {
+        planned: true,
+        batch: 3,
+        ..LoopState::default()
+    };
+    let doctrine = stella_autonomy::Doctrine::default();
+
+    std::fs::write(super::super::stop::stop_file(&durable.dir), "").expect("write the stop flag");
+    let parked = observe(dir.path(), &durable, &provider, "main", 3, 0);
+    assert!(parked.stop_requested, "the flag must reach the observation");
+    assert!(
+        matches!(
+            step(&state, &parked, &doctrine),
+            LoopStep::Blocked {
+                reason: stella_autonomy::BlockReason::OperatorStop,
+                ..
+            }
+        ),
+        "a set stop flag must park the loop, got {:?}",
+        step(&state, &parked, &doctrine)
+    );
+
+    // The other half, and the one the design turns on: nothing latched, so the
+    // block stops being returned on the next poll with no resume input at all.
+    std::fs::remove_file(super::super::stop::stop_file(&durable.dir)).expect("drop the flag");
+    let resumed = observe(dir.path(), &durable, &provider, "main", 3, 0);
+    assert!(
+        !resumed.stop_requested,
+        "dropping the flag must clear the stop with no resume signal"
+    );
+}
+
+/// **Witness (#4361).** A signalled run writes its own ending.
+///
+/// `audit.jsonl` for `oxagen-platform` held twenty `session_started` records
+/// and four `session_stopped` ones, because `drive` wrote a stop line only on
+/// the exits it chose for itself. Fails on the base, where a signal reaches no
+/// code at all and the journal simply goes quiet.
+///
+/// Asserts on the journal rather than on the return value, because the journal
+/// is what a reader — the Observatory, `stella self-driving stats`, a human
+/// reconstructing a run — actually consults.
+#[test]
+fn a_signalled_run_records_why_it_stopped() {
+    let dir = tempfile::tempdir().expect("state dir");
+    let durable = scratch_loop_state(dir.path());
+    let tally = Tally {
+        opened: 2,
+        merged: 1,
+        escalated: 0,
+    };
+
+    let outcome = stopped_by_signal(&durable, &tally, crate::signals::Interrupt::Term);
+    assert_eq!(
+        outcome,
+        Err("terminated".to_owned()),
+        "the shell must be able to tell a stopped run from a finished one"
+    );
+
+    let journal = std::fs::read_to_string(durable.audit_path()).expect("the journal was written");
+    let last: serde_json::Value = journal
+        .lines()
+        .rfind(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("the last line is one JSON object"))
+        .expect("the journal holds a line");
+
+    assert_eq!(last["action"], "session_stopped");
+    assert!(
+        last["outcome"]
+            .as_str()
+            .is_some_and(|outcome| outcome.contains("terminated")),
+        "the record must name the signal, got {}",
+        last["outcome"]
+    );
+}
+
+/// **Witness (#4119).** A merge finishes the issue it carried, and no other
+/// settlement does.
+///
+/// The pure half of the closure decision. Before this, `advance` returned a
+/// `bool` that collapsed *merged* and *escalated* into "stop carrying it", so
+/// the loop passed through the one instant where it knew a fix had shipped
+/// with no way to tell that from handing the pull request to a human.
+///
+/// The negative cases are what make it a decision rather than a lookup: an
+/// escalation must close nothing, and a pull request `resume` re-derived from
+/// the forge carries no issue at all, so closing on it would be closing by
+/// coincidence.
+#[test]
+fn only_a_merge_finishes_the_issue_it_carried() {
+    let pr = PrRef("412".to_owned());
+    let carrying = vec![
+        CarriedPr {
+            pr: pr.clone(),
+            issue: Some(IssueRef("4119".to_owned())),
+            disposition: PrDisposition::Moving,
+        },
+        CarriedPr {
+            pr: PrRef("999".to_owned()),
+            // What `resume` produces: the forge knows the pull request, and
+            // this run does not know what it was for.
+            issue: None,
+            disposition: PrDisposition::Moving,
+        },
+    ];
+
+    assert_eq!(
+        issue_finished_by(Settlement::Merged, &pr, &carrying),
+        Some(IssueRef("4119".to_owned())),
+        "a merge finishes the issue the pull request carried"
+    );
+    assert_eq!(
+        issue_finished_by(Settlement::Otherwise, &pr, &carrying),
+        None,
+        "an escalated or rebased pull request is a human's now — the work is not done"
+    );
+    assert_eq!(
+        issue_finished_by(Settlement::Pending, &pr, &carrying),
+        None,
+        "a pull request still moving has finished nothing"
+    );
+    assert_eq!(
+        issue_finished_by(Settlement::Merged, &PrRef("999".to_owned()), &carrying),
+        None,
+        "a resumed pull request names no issue, and guessing one would close by coincidence"
+    );
+}

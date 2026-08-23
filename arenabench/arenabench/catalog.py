@@ -36,8 +36,12 @@ from .sut import repo_problem, stella_repo
 __all__ = ["models_payload", "parse_catalog"]
 
 #: Repo-relative homes of the two sources. Literals, like the harbor
-#: adapter's `_CATALOG_RS` — if a crate moves, this is the line to fix.
-_CATALOG_REL = Path("crates") / "stella-model" / "src" / "catalog.rs"
+#: adapter's `_CATALOG_SEED_DIR` — if a crate moves, this is the line to fix.
+#:
+#: A directory since #3862 split the seed rows one module per provider.
+#: `catalog.rs` still exists and still holds `Catalog`; it just holds no rows,
+#: so a reader anchored on it parses cleanly and finds nothing.
+_CATALOG_REL = Path("crates") / "stella-model" / "src" / "catalog" / "seed"
 _POSTURE_REL = Path("bench") / "harbor_adapter" / "stella_harbor" / "posture.py"
 
 _ENTRY_HEAD = re.compile(r'\s*"([^"]+)"\s*,\s*"([^"]+)"')
@@ -111,6 +115,36 @@ def _read(repo: Path, relative: Path, what: str) -> str:
         ) from exc
 
 
+def _read_seed_modules(repo: Path) -> list[str]:
+    """Every `catalog/seed/<provider>.rs` source, in a stable order.
+
+    Returned per module rather than concatenated: `parse_catalog` chunks on
+    `CatalogEntry::new(`, so a module whose last row declares no ceiling would
+    adopt the first ceiling of whatever module was pasted after it — the same
+    open-chunk misread the `#[cfg(test)]` boundary already guards against, one
+    seam further out.
+    """
+    seed_dir = repo / _CATALOG_REL
+    try:
+        modules = sorted(seed_dir.glob("*.rs"))
+    except OSError as exc:
+        raise RuntimeError(
+            f"cannot read the model catalog seed at {seed_dir}: "
+            f"{exc.strerror}. The repo-relative path is a literal in "
+            "arenabench/catalog.py — if the crate moved, fix it there."
+        ) from exc
+    if not modules:
+        raise RuntimeError(
+            f"the model catalog seed at {seed_dir} holds no `*.rs` module — "
+            "the repo-relative path is a literal in arenabench/catalog.py and "
+            "no longer names where the seed rows live."
+        )
+    return [
+        _read(repo, module.relative_to(repo), f"the model catalog ({module.name})")
+        for module in modules
+    ]
+
+
 def models_payload() -> dict[str, Any]:
     """The ``/api/models`` body: catalog entries grouped by provider.
 
@@ -123,7 +157,9 @@ def models_payload() -> dict[str, Any]:
         raise RuntimeError(
             f"the model catalog cannot be read: {repo_problem()}"
         )
-    entries = parse_catalog(_read(repo, _CATALOG_REL, "the model catalog"))
+    entries: list[dict[str, Any]] = []
+    for source in _read_seed_modules(repo):
+        entries.extend(parse_catalog(source))
     if not entries:
         raise RuntimeError(
             f"the model catalog at {repo / _CATALOG_REL} parsed to zero "

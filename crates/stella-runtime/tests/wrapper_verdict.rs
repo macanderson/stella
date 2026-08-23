@@ -366,14 +366,30 @@ fn a_rule_that_never_passed_validation_still_cannot_be_silently_met() {
             vec!["p50".into()],
         )),
     };
+    let Verdict::Undecided {
+        reason:
+            UndecidedReason::UnreadableCheck {
+                requirement,
+                reason,
+            },
+    } = judge(&unreadable, &EvidenceSet::unobserved())
+    else {
+        panic!("an unparsable rule must not read as a satisfied one");
+    };
+    assert_eq!(requirement, REQUIREMENT);
+    // The abstention carries the author's diagnosis and nothing else. It used
+    // to carry the whole `ManifestError::UnparsableCheck` rendering, which
+    // repeats the requirement name and the check text the variant already has
+    // its own fields for — `judge` reached that string by calling `rule()` and
+    // stringifying the error, one of the three places it re-implemented the
+    // evaluator that lives in `stella_plugin` (#3515).
     assert!(
-        matches!(
-            judge(&unreadable, &EvidenceSet::unobserved()),
-            Verdict::Undecided {
-                reason: UndecidedReason::UnreadableCheck { .. }
-            }
-        ),
-        "an unparsable rule must not read as a satisfied one"
+        reason.contains("with spaces around the operator"),
+        "the abstention must carry the author's diagnosis, got {reason:?}"
+    );
+    assert!(
+        !reason.contains(REQUIREMENT),
+        "the reason must not repeat the requirement the variant already names, got {reason:?}"
     );
 }
 
@@ -458,6 +474,7 @@ fn the_hold_allowance_is_the_ask_clamped_to_the_hosts_ceiling() {
         participation: Participation::Arbiter,
         hooks: vec![stella_plugin::HookEvent::Stop],
         points: vec![stella_plugin::WrapperPoint::AfterTurn],
+        before_turn_stages: Vec::new(),
         calls: Vec::new(),
         max_calls: None,
         max_fanout_width: None,
@@ -537,6 +554,7 @@ fn an_abstention_does_not_buy_another_turn() {
             participation: Participation::Arbiter,
             hooks: vec![stella_plugin::HookEvent::Stop],
             points: vec![stella_plugin::WrapperPoint::AfterTurn],
+            before_turn_stages: Vec::new(),
             calls: Vec::new(),
             max_calls: None,
             max_fanout_width: None,
@@ -753,6 +771,65 @@ fn any_evidence() -> impl Strategy<Value = EvidenceSet> {
 }
 
 proptest! {
+    /// **The two reporters never disagree about a check** (#3515).
+    ///
+    /// `judge` and `stella_plugin::Oracle::unmet` differ in how they *report*
+    /// — one abstains where the other returns an error, one carries the
+    /// requirement's statement and the other does not — and that is all they
+    /// are allowed to differ in. They were two hand-written walks over
+    /// `oracle.checks` in two crates until the per-check kernel was extracted,
+    /// so this is quantified over every oracle and every report a manifest can
+    /// express rather than over the shape someone thought to write down.
+    #[test]
+    fn judge_and_unmet_agree_on_every_check(
+        checks in prop::collection::vec(any_check(), 0..4),
+        evidence in any_evidence(),
+    ) {
+        let declared: Vec<String> = MEASUREMENTS.iter().map(|m| (*m).to_string()).collect();
+        let rule = VerdictRule {
+            requirements: NAMES
+                .iter()
+                .map(|n| ((*n).to_string(), format!("{n} is established")))
+                .collect(),
+            oracle: Some(oracle(FlipPolicy::NotApplicable, checks, declared)),
+        };
+        let oracle_half = rule.oracle.as_ref().expect("declared just above");
+
+        // What `unmet` says about the same checks and the same numbers. Its
+        // `Err` arms are the two that decide nothing; a determinate answer is
+        // the failing checks in declaration order.
+        let Ok(failing) = oracle_half.unmet(&evidence.measurements) else {
+            // An error here means some check could not be decided, so `judge`
+            // must not have credited anything on the strength of it: with no
+            // flip to decide a requirement, the verdict cannot be `Met`.
+            prop_assert!(
+                !matches!(judge(&rule, &evidence), Verdict::Met { .. }),
+                "unmet could not decide a check and judge called it done"
+            );
+            return Ok(());
+        };
+
+        let budgets: BTreeSet<(String, u64)> = match judge(&rule, &evidence) {
+            Verdict::Unmet { unmet } => unmet
+                .into_iter()
+                .filter_map(|clause| match clause.because {
+                    UnmetBecause::Budget { check, reported } => Some((check, reported)),
+                    _ => None,
+                })
+                .collect(),
+            _ => BTreeSet::new(),
+        };
+        let expected: BTreeSet<(String, u64)> = failing
+            .iter()
+            .map(|check| (check.rule.to_string(), check.reported))
+            .collect();
+        prop_assert_eq!(
+            budgets,
+            expected,
+            "judge and unmet disagreed about which checks failed"
+        );
+    }
+
     /// **A check narrows done; it never widens it.** This is the durable
     /// statement of #3510's invariant, and the reason it is a property rather
     /// than a case: it is quantified over every oracle a manifest can express,
