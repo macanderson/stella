@@ -167,7 +167,8 @@ const CHILD_TABLES: [(&str, &str, &str); 8] = [
     (
         "execution_reflection",
         "SELECT execution_id, prompt, delivered, self_rating, what_went_well, what_to_improve, \
-         critique, produced_output, wrote_files, truncated FROM execution_reflection",
+         critique, produced_output, wrote_files, truncated, partial_run \
+         FROM execution_reflection",
         "ORDER BY execution_id ASC",
     ),
     (

@@ -56,6 +56,7 @@ mod execution_plane;
 mod execution_role;
 mod legacy_rebuild;
 mod live_tool_calls;
+mod partial_reflection;
 mod pipeline_variant;
 pub(crate) mod pragmas;
 mod receipts;
@@ -99,7 +100,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 31] = [
+pub(crate) const MIGRATIONS: [Migration; 32] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -258,6 +259,13 @@ pub(crate) const MIGRATIONS: [Migration; 31] = [
     // fact is known rather than guessed, because the delegation writer (#3821)
     // is younger than every row this step can see. See the module's own doc.
     agent_use_kind::migrate_v30_to_v31,
+    // v31 → v32: `execution_reflection` grows `partial_run` — whether the turn
+    // this row assesses was stopped rather than finished (#3808). Additive,
+    // column-guarded ADD COLUMN, `NOT NULL DEFAULT 0`, and backfilled: unlike
+    // v28 → v29 the historical fact is recorded one join away in
+    // `executions.outcome`, so there is nothing to invent. See the module's own
+    // doc.
+    partial_reflection::migrate_v31_to_v32,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -303,7 +311,8 @@ pub(crate) const MIGRATIONS: [Migration; 31] = [
     //              (#3621).
     //
     //   v30 → v31: CLAIMED above by the `agent_uses.kind` discriminator (#3822).
-    // Nothing is reserved now: take v31 → v32 and add your own line here.
+    //   v31 → v32: CLAIMED above by `execution_reflection.partial_run` (#3808).
+    // Nothing is reserved now: take v32 → v33 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

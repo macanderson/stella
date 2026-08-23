@@ -375,6 +375,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                 produced_output: false,
                 wrote_files: false,
                 truncated: true,
+                partial_run: false,
             },
         )
         .unwrap();
@@ -1049,8 +1050,12 @@ fn skill_usage_records_per_execution_version_rows() {
     //       found none". v31 `agent_uses.kind` (#3822): which of the log's two
     //       writers minted the row's `agent` name, so an installed
     //       definition's repeated invocations stop reading like a pile of
-    //       one-off delegations.
-    assert_eq!(SCHEMA_VERSION, 31);
+    //       one-off delegations. v32 `execution_reflection.partial_run`
+    //       (#3808): whether the turn a reflection row assesses was stopped
+    //       rather than finished — `NOT NULL DEFAULT 0` and backfilled, because
+    //       unlike v29 the historical fact is recorded one join away in
+    //       `executions.outcome` and there is nothing to invent.
+    assert_eq!(SCHEMA_VERSION, 32);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

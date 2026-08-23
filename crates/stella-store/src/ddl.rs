@@ -490,6 +490,14 @@ pub(crate) const TOOL_CALLS_INDEXES: &str = "CREATE INDEX IF NOT EXISTS tool_cal
 /// reflection response the lesson parser could not read. NULL is the normal
 /// case and means "no parse failure recorded" — never "this turn had nothing
 /// to learn", which is the distinction the whole column exists to keep.
+///
+/// `partial_run` says the turn this row assesses was **stopped**, not
+/// finished — so far, a cancel (#3808). It is what turns a stub into a stated
+/// scope: a cancelled turn never reaches the reflection model call, so the
+/// self-review half is empty for a *reason*, and until this column a reader
+/// could not tell that empty row from a turn the model declined to assess.
+/// The objective half is still true of it: the edits happened and were
+/// measured, which is why they are still derived rather than withheld.
 pub(crate) const EXECUTION_REFLECTION_DDL: &str =
     "CREATE TABLE IF NOT EXISTS execution_reflection (
        execution_id INTEGER PRIMARY KEY,
@@ -503,7 +511,8 @@ pub(crate) const EXECUTION_REFLECTION_DDL: &str =
        wrote_files INTEGER NOT NULL DEFAULT 0,
        truncated INTEGER NOT NULL DEFAULT 0,
        recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-       parse_error TEXT
+       parse_error TEXT,
+       partial_run INTEGER NOT NULL DEFAULT 0
      );";
 
 /// `reflections` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the durable, unified home for
