@@ -112,9 +112,9 @@ fn sha256_hex(s: &str) -> String {
     sha256_hex_parts(&[s.as_bytes()])
 }
 
-/// `sha256:<hex>` — the spelling this crate already uses for a
-/// [`Receipt::content_digest`], shared so a second caller does not grow a
-/// second hasher over the same bytes.
+/// `sha256:<hex>` — the spelling this module already writes a block's
+/// `content_digest` in, shared so a second caller does not grow a second
+/// hasher over the same bytes.
 ///
 /// The one caller outside this module is
 /// [`crate::hooks::decision::ApprovalSubject::TurnCompletion`], which carries a
