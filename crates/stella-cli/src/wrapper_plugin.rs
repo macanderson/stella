@@ -1160,8 +1160,10 @@ pub(crate) async fn run_wrapped(
     // behind. Failures are printed rather than raised: the work is done, and
     // turning "a worktree would not go" into the run's exit status would fail
     // a turn that succeeded.
-    for leaked in bound.sweep_candidates().await {
-        eprintln!("  ! wrapper: {leaked}");
+    // One lane on this door, so no scope tag — and rendered by the shared
+    // helper rather than formatted here, so the marker has one producer.
+    for line in sweep_lines(None, &bound.sweep_candidates().await) {
+        eprintln!("{line}");
     }
     match report {
         Ok(report) => {
@@ -1263,25 +1265,48 @@ fn report_lines(
     spends: &[ChildTurnSpend],
     fanouts: &[CandidateFanoutSpend],
 ) -> Vec<String> {
-    let tag = scope.map_or_else(String::new, |scope| format!("[{scope}] "));
     let mut lines = Vec::new();
-    let wrapper_line = |what: &dyn std::fmt::Display| format!("  ! {tag}wrapper: {what}");
     for fault in &report.faults {
-        lines.push(wrapper_line(fault));
+        lines.push(wrapper_line(scope, fault));
     }
     for refused in gate.refusals() {
-        lines.push(wrapper_line(&refused));
+        lines.push(wrapper_line(scope, &refused));
     }
     for line in spend_lines(spends) {
-        lines.push(wrapper_line(&line));
+        lines.push(wrapper_line(scope, &line));
     }
     for line in fanout_spend_lines(fanouts) {
-        lines.push(wrapper_line(&line));
+        lines.push(wrapper_line(scope, &line));
     }
     if format == OutputFormat::Text || !report.met() {
+        let tag = scope.map_or_else(String::new, |scope| format!("[{scope}] "));
         lines.push(format!("  ◇ {tag}{}", report.summary()));
     }
     lines
+}
+
+/// The one rendering of a `! wrapper:` line, marker and scope tag included.
+///
+/// A free function rather than a closure inside [`report_lines`] because it
+/// has a second caller: the end-of-run candidate sweep formatted the same
+/// prefix by hand, which is the copy that drifts the next time the marker or
+/// the tag's position changes (#4418). One lane makes a second producer
+/// harmless and does not make it correct.
+fn wrapper_line(scope: Option<&str>, what: &dyn std::fmt::Display) -> String {
+    let tag = scope.map_or_else(String::new, |scope| format!("[{scope}] "));
+    format!("  ! {tag}wrapper: {what}")
+}
+
+/// One line per candidate workspace the end-of-run sweep could not remove.
+///
+/// Empty for the ordinary run, in which everything went — so a clean run
+/// stays silent, exactly as [`spend_lines`] does for a plugin that spent
+/// nothing.
+fn sweep_lines(scope: Option<&str>, leaked: &[String]) -> Vec<String> {
+    leaked
+        .iter()
+        .map(|leaked| wrapper_line(scope, leaked))
+        .collect()
 }
 
 /// One line per child turn this host ran for the plugin, naming the seat it
