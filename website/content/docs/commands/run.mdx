@@ -54,7 +54,17 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
     **Refused on every resolution.** It turned "completed but unproven" into a non-zero
     exit, reading verdicts only the built-in staged pipeline reached; the raw loop
     reaches neither (see the statuses below). A delivery gate that must not ship
-    unproven work wants a verification plugin and `--pipeline <variant>` naming it.
+    unproven work wants a verification plugin, `--pipeline <variant>` naming it, and
+    `--require-verdict`.
+  </OptionCard>
+  <OptionCard name="--require-verdict">
+    Exit non-zero unless the `--pipeline` wrapper declared its requirements **met**.
+    This is the delivery gate: without it a plugin's refusal is printed to stderr and
+    the run still exits on the turn's own result, so installing somebody's plugin can
+    never fail your build by itself. Anything other than met fails under the flag,
+    including a wrapper that reached no verdict at all — a gate that passes on
+    "undecided" is not a gate. Refused without `--pipeline`, where nothing declares a
+    verdict for it to read.
   </OptionCard>
 </CardGrid>
 
