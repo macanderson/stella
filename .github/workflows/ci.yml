@@ -526,19 +526,32 @@ jobs:
 
       # Two guard self-tests that want the toolchain, so they sit here rather
       # than in guard-self-tests.yml with their twenty toolchain-free siblings
-      # (#3820, #4427). The first is also a `GATE_STEPS` member that ran in no
+      # (#3820, #4427). This one is also a `GATE_STEPS` member that ran in no
       # workflow at all: it drives the real `stella` binary and builds one when
-      # it cannot find it. The second runs `cargo metadata` against a synthetic
-      # workspace a dozen times — with no cargo on PATH the scoper answers
-      # `--workspace` for everything, which is its documented fall-back, so 13
-      # of its 25 cases go red for a reason that is not the scoper's.
+      # it cannot find it.
       - name: the self-driving control logic
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: ./scripts/test-self-driving.sh
 
+      # The other one runs `cargo metadata` against a synthetic workspace a
+      # dozen times, so it wants the toolchain too — and it wants ripgrep,
+      # which ubuntu-latest does not ship. `scripts/impacted-crates.sh` answers
+      # `--workspace` for anything it cannot narrow with confidence, and a
+      # missing `rg` is one of those things, so without it every narrowing case
+      # reads as a failure: 13 of 25 red, each `want=[-p leaf]
+      # got=[--workspace]`, reporting the runner rather than the scoper.
+      #
+      # Installed rather than skipped. A `command -v rg || skip` would leave
+      # this suite reporting green on every run while proving nothing, which is
+      # the exact failure #3820 exists to end.
       - name: gate-scoping picks the right crates
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
-        run: ./scripts/test-impacted-crates.sh
+        run: |
+          command -v rg >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ripgrep
+          }
+          ./scripts/test-impacted-crates.sh
 
       # Last main step in the job, so it runs before rust-cache's post step —
       # which is the whole point (#4149).

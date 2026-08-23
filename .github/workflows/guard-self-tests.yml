@@ -86,9 +86,10 @@ jobs:
       # duplicate-claims.yml, and test-deck-fit-all.sh, test-self-driving.sh
       # and test-impacted-crates.sh in ci.yml. The last two want the toolchain:
       # one builds `stella`, and the other runs `cargo metadata` against a
-      # synthetic workspace a dozen times — with no cargo on PATH the scoper
-      # answers `--workspace` for everything, which is its documented
-      # fall-back, so 13 of its 25 cases went red in this job before they moved.
+      # synthetic workspace a dozen times. That one also wants ripgrep, which
+      # ubuntu-latest does not ship — without it the scoper answers
+      # `--workspace` for everything, which is its documented fall-back, and 13
+      # of its 25 cases went red in this job before it moved.
       #
       # The three DELIBERATELY unhosted ones are named in the Makefile's
       # `UNHOSTED_SELF_TESTS`, with the reason each is excluded;
