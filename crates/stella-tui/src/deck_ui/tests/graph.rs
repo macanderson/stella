@@ -20,6 +20,7 @@ fn ui_with_graph() -> DeckUi {
         }],
         edges: vec![],
         files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
+        query_ms: None,
     });
     ui
 }
@@ -138,6 +139,7 @@ fn a_re_rooted_snapshot_resets_the_node_cursor() {
         }],
         edges: vec![],
         files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
+        query_ms: None,
     };
     ingest_inbound(&Inbound::GraphSnapshot(rerooted), &mut model, &mut ui);
     assert_eq!(ui.graph_cursor, 0, "the cursor lands on the new focus");

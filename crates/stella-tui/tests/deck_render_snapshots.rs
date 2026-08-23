@@ -672,6 +672,35 @@ fn deck_render_snapshots_pin_a_multiline_successful_tool_result() {
     );
 }
 
+/// **The witness (#4335).** The GRAPH query bar reports what the query cost
+/// when the driver measured one.
+///
+/// A second golden rather than a changed `tab_graph`: the demo snapshot is
+/// synthesized and carries no timing, and that is the state the bar must keep
+/// rendering — `0ms` on a query nobody ran would be worse than silence. So
+/// both halves are pinned, the untimed one by `tab_graph` and the timed one
+/// here.
+#[test]
+fn deck_render_snapshots_pin_the_graph_query_time() {
+    let model = fixture_model();
+    let mut ui = ui_for(DeckTab::Graph);
+    if let Some(graph) = ui.graph.as_mut() {
+        graph.query_ms = Some(12);
+    }
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        frame.contains("· 12ms ·"),
+        "the query bar reports the timing:\n{frame}"
+    );
+    assert_golden(
+        "tab_graph_timed",
+        "the GRAPH tab with a measured query time in the query bar",
+        W,
+        H,
+        &frame,
+    );
+}
+
 #[test]
 fn deck_render_snapshots_pin_the_settings_tools_pane() {
     let model = fixture_model();

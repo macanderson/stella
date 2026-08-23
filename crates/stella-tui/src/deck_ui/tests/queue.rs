@@ -520,6 +520,7 @@ fn a_refreshed_graph_snapshot_updates_the_view_out_of_band() {
         }],
         edges: vec![],
         files: vec!["src/lib.rs".into()],
+        query_ms: None,
     };
     ingest_inbound(
         &Inbound::GraphSnapshot(snapshot.clone()),
