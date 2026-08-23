@@ -2448,12 +2448,7 @@ fn handle_issue_confirm_send_key(
             DeckAction::Handled
         }
         KeyCode::Enter => {
-            let rows: Vec<IssueRow> = ui
-                .issues
-                .picked_rows()
-                .into_iter()
-                .cloned()
-                .collect();
+            let rows: Vec<IssueRow> = ui.issues.picked_rows().into_iter().cloned().collect();
             ui.issues.mode = IssuesMode::Browse;
             if rows.is_empty() {
                 // The list refreshed out from under the popup — nothing to

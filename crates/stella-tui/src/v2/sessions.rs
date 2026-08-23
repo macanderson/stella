@@ -269,7 +269,6 @@ mod tests {
             turns: 14,
             spend_micros: 450_000,
             model: Some("glm-5.2".into()),
-            autofix: None,
         }
     }
 

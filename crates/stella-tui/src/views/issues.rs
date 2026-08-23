@@ -154,7 +154,9 @@ fn render_confirm_send(ui: &DeckUi, inner: Rect, buf: &mut Buffer) {
     // +4: title, blank, footer hint, and the border's own two rows are
     // accounted by the block; the content is title + one line per issue.
     let height = (rows.len() as u16 + 4).min(inner.height.saturating_sub(2));
-    let width = (inner.width * 2 / 3).max(40).min(inner.width.saturating_sub(4));
+    let width = (inner.width * 2 / 3)
+        .max(40)
+        .min(inner.width.saturating_sub(4));
     let popup = Rect {
         x: inner.x + (inner.width.saturating_sub(width)) / 2,
         y: inner.y + (inner.height.saturating_sub(height)) / 2,

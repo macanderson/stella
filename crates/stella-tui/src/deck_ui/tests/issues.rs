@@ -102,7 +102,10 @@ fn p_opens_a_confirmation_and_enter_submits_and_forwards_to_the_transcript() {
         "Read the ENTIRE issue body and EVERY comment",
         "definition of done",
     ] {
-        assert!(text.contains(needle), "prompt is missing {needle:?}:\n{text}");
+        assert!(
+            text.contains(needle),
+            "prompt is missing {needle:?}:\n{text}"
+        );
     }
 }
 
@@ -137,7 +140,8 @@ fn p_with_no_rows_notifies_instead_of_opening_the_popup() {
 }
 
 #[test]
-fn issues_browse_keys_refresh_and_start_work() {    let model = WorkspaceModel::new();
+fn issues_browse_keys_refresh_and_start_work() {
+    let model = WorkspaceModel::new();
     let mut ui = issues_ui();
     ui.issues.rows = vec![a_issue("#7")];
     ui.issues.loaded = true;
