@@ -87,6 +87,35 @@ pub(super) fn report_lines(
     lines
 }
 
+impl super::BoundWrapper {
+    /// [`super::BoundWrapper::report`]'s lines, composed but not printed.
+    ///
+    /// For the one door where printing is a decision rather than a default: a
+    /// fleet attempt under the live dashboard must not `eprintln!` onto the
+    /// alternate screen the grid is painting, so it takes the lines and holds
+    /// them until the grid tears down (#3883,
+    /// `crate::fleet_cmd::wrapped::HeldReports`). Composed by [`report_lines`]
+    /// like everything `report` prints, so the held lines and the printed ones
+    /// share one wording. Defined here rather than beside `report` because
+    /// `wrapper_plugin.rs` sits under the 1500-line ratchet — the reason this
+    /// module exists.
+    pub(crate) fn report_lines(
+        &self,
+        scope: Option<&str>,
+        format: OutputFormat,
+        report: &DispatchReport,
+    ) -> Vec<String> {
+        report_lines(
+            scope,
+            format,
+            report,
+            &self.gates,
+            &self.child_spends(),
+            &self.fanout_spends(),
+        )
+    }
+}
+
 /// The one rendering of a `! wrapper:` line, marker and scope tag included.
 ///
 /// A free function rather than a closure inside [`report_lines`] because it
