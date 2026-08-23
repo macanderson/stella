@@ -232,18 +232,38 @@ pub fn render_hint_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mu
             dim,
         ));
     }
-    for (k, label) in [
-        ("^N", " failure"),
-        ("^Z", " fold turn"),
-        ("^O", " expand"),
-        ("!", " shell"),
-        ("/", " commands"),
-    ] {
+    // The rest is the keymap's hinted rows (`crate::keymap::hints`), in the
+    // short form the hint row has room for.
+    for b in crate::keymap::hints(ui.tab) {
+        let (k, label) = short_hint(b);
         spans.push(sep.clone());
         spans.push(Span::styled(k, key));
-        spans.push(Span::styled(label, dim));
+        spans.push(Span::styled(format!(" {label}"), dim));
     }
     Paragraph::new(Line::from(spans)).render(Rect { height: 1, ..area }, buf);
+}
+
+/// A hinted binding in the hint row's shorthand: the chord as `^N`, the
+/// description as a word or two. The sheet has the sentence.
+fn short_hint(b: &crate::keymap::Binding) -> (String, &'static str) {
+    let chord = match b.keys {
+        "!cmd" => "!".to_string(),
+        keys => keys
+            .split(" / ")
+            .next()
+            .unwrap_or(keys)
+            .replace("ctrl-", "^")
+            .to_uppercase(),
+    };
+    let label = match b.keys {
+        "ctrl-n / ctrl-p" => "failure",
+        "ctrl-z" => "fold turn",
+        "ctrl-o" => "expand",
+        "!cmd" => "shell",
+        "/" => "commands",
+        _ => b.does.split([' ', '—', '·']).next().unwrap_or(b.does),
+    };
+    (chord, label)
 }
 
 #[cfg(test)]

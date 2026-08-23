@@ -828,7 +828,11 @@ impl Default for DeckUi {
             notice: NoticeState::new(),
             index_readiness: IndexReadiness::unknown(),
             help_open: false,
-            help_scroll: ScrollState::default(),
+            // A sheet, not a log: it opens at its top, never at its tail.
+            help_scroll: ScrollState {
+                follow: false,
+                ..ScrollState::default()
+            },
             focused: 0,
             session_scroll: ScrollState::default(),
             trace_scroll: ScrollState::default(),
