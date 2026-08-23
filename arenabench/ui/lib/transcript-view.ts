@@ -221,6 +221,147 @@ export function mergeToolRows(entries: readonly TranscriptEntry[]): TranscriptRo
   return rows;
 }
 
+// -- prose and turn folds ---------------------------------------------------
+
+/**
+ * Middle-elide `text` to `width`, mirroring `stella_transcript::digest::elide`.
+ *
+ * Counted in code points where the Rust counts display cells — the honest
+ * cheap mirror, since a browser has no unicode-width table on hand and the
+ * inputs here are model prose, not box drawing. The shape is identical: keep
+ * the head and the tail, drop the middle, mark the cut with ` … `.
+ */
+export function elide(text: string, width: number): string {
+  const chars = [...text];
+  if (chars.length <= width || width < 5) return text;
+  const keep = width - 3;
+  const head = Math.ceil(keep / 2);
+  return (
+    chars.slice(0, head).join("") +
+    " … " +
+    chars.slice(chars.length - (keep - head)).join("")
+  );
+}
+
+/** Sentence-fallback width, `digest::first_sentence`'s own constant. */
+const SENTENCE_ELIDE_WIDTH = 96;
+
+/**
+ * The first sentence of a prose block — what a folded block shows
+ * (transcript-spec addendum §1: "prose folds to its first sentence").
+ *
+ * A port of `stella_transcript::digest::first_sentence`: the boundary is a
+ * `.`, `!` or `?` followed by whitespace or the end of the text, so `v1.2` and
+ * `fold.rs` do not end a sentence mid-token. A wall of text with no boundary
+ * at all falls back to a middle-elision, so the fold never shows nothing.
+ */
+export function firstSentence(text: string): string {
+  const chars = [...text.trim()];
+  for (let i = 0; i < chars.length; i += 1) {
+    const ch = chars[i];
+    if (
+      (ch === "." || ch === "!" || ch === "?") &&
+      (i + 1 >= chars.length || /\s/.test(chars[i + 1]))
+    ) {
+      return chars.slice(0, i + 1).join("");
+    }
+  }
+  return elide(chars.join(""), SENTENCE_ELIDE_WIDTH);
+}
+
+/**
+ * A prose block split for the fold: the summary line and what expanding adds.
+ *
+ * The `rest` rule is `stella-transcript`'s `prose_block`: when `head` found a
+ * real sentence boundary it is a literal prefix and `rest` is what follows;
+ * when it fell back to eliding, `head` is a middle-ellipsis string that is NOT
+ * a prefix, so `rest` is the whole text — expanding must never lose bytes.
+ */
+export function proseFold(text: string): { head: string; rest: string } {
+  const trimmed = text.trim();
+  const head = firstSentence(trimmed);
+  const rest = trimmed.startsWith(head)
+    ? trimmed.slice(head.length).trim()
+    : trimmed;
+  return { head, rest };
+}
+
+/** First non-empty line, trimmed — `digest::first_line`. */
+function firstLine(text: string): string {
+  for (const line of text.trim().split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed) return trimmed;
+  }
+  return "";
+}
+
+/**
+ * What a collapsed turn shows in place of its rows (transcript-spec addendum
+ * §1): prompt digest · answer digest · step count · rollup chips.
+ */
+export type TurnDigest = {
+  /** First line of the prompt, elided. */
+  promptLine: string;
+  /** First line of the answer — empty while the trial is still running,
+   *  because a run's latest prose is not its answer until the run ends. */
+  answerLine: string;
+  /** Model calls, counted from the per-call `usage` entries. */
+  steps: number;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  /** The trial's wall clock: the latest entry's elapsed stamp. */
+  durationSeconds: number;
+};
+
+/** Digest line width, matching the Rust HTML renderer's `turn_digest` call. */
+const DIGEST_WIDTH = 64;
+
+/**
+ * Build the collapsed turn's digest — `stella_transcript::digest::turn_digest`
+ * over the wire's flat stream. An arena trial is one turn (one prompt at seq 0,
+ * one answer at the end, #4039), so the digest summarises the whole entry list.
+ *
+ * Computed over the FULL entry list, never the filtered view: a collapsed turn
+ * claims to summarise the trial, and a digest that changed when the reader
+ * switched a kind group off would be summarising the filter instead.
+ */
+export function turnDigest(
+  entries: readonly TranscriptEntry[],
+  finished: boolean,
+): TurnDigest {
+  let promptLine = "";
+  let answerBody = "";
+  let steps = 0;
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let costUsd = 0;
+  let durationSeconds = 0;
+  for (const entry of entries) {
+    durationSeconds = Math.max(durationSeconds, entry.t);
+    if (entry.kind === "prompt" && !promptLine) {
+      promptLine = firstLine(entry.body || entry.title || "");
+    } else if (entry.kind === "text") {
+      answerBody = entry.body || entry.title || "";
+    } else if (entry.kind === "usage") {
+      steps += 1;
+      const meta = entry.meta ?? {};
+      tokensIn += Number(meta.tokens_in) || 0;
+      tokensOut += Number(meta.tokens_out) || 0;
+      costUsd += Number(meta.cost_usd) || 0;
+    }
+  }
+  return {
+    promptLine: elide(promptLine, DIGEST_WIDTH),
+    answerLine: finished ? elide(firstLine(answerBody), DIGEST_WIDTH) : "",
+    steps,
+    tokensIn,
+    tokensOut,
+    costUsd,
+    durationSeconds,
+  };
+}
+
 /** Index every tool call and result by the `call_id` the two share. */
 export function indexByCallId(
   entries: readonly TranscriptEntry[],
