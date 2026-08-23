@@ -170,7 +170,8 @@
   missing. After opening a PR, and again after every later push to it, read
   that comment (it lands within a few minutes;
   `gh pr view <n> --json comments --jq '.comments[] | select(.author.login == "sourcery-ai") | .body'`)
-  and settle every `❌` row before the session ends:
+  and settle every `❌` row before the session ends; the PR is unmergeable until
+  that comment can be read:
   - **Fix it** when the objective belongs to the PR — push the commits that
     satisfy it, then re-read the table Sourcery posts for the new head.
   - **Answer it** when it does not belong: deliberately out of scope,
