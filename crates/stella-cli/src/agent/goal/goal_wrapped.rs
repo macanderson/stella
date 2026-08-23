@@ -270,6 +270,9 @@ pub(crate) async fn run_goal_wrapped_turn(
         false,
         Some(goal.to_string()),
     );
+    // The session fact before the turn's, exactly as the raw arm opens
+    // (#4500).
+    super::announce_withheld_steering(&tx, cfg);
     if let Some(event) = recall_event {
         let _ = tx.send(event);
     }

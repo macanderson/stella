@@ -71,8 +71,10 @@ pub(crate) use init::{
     InitIo, InitLine, deck_narrator, deck_notice_narrator, deck_readiness_reporter, init_workspace,
 };
 pub(crate) use outcome::settled_cost_since;
-pub(crate) use output::reflection_explicitly_disabled;
+#[cfg(test)]
+pub(crate) use output::latch_for_withheld_test;
 use output::*;
+pub(crate) use output::{claim_withheld_announcement, reflection_explicitly_disabled};
 pub(crate) use persistence::{
     PersistOutcome, ReasoningRun, begin_execution, close_event_stream, flush_reasoning_tail,
     persist_event, persist_owed, record_execution_end, seed_calibration, spawn_renderer,
