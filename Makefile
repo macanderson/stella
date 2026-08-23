@@ -78,10 +78,14 @@ GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings lint test tool-docs \
 #                           on this tree with its reader gone, so a genuinely
 #                           red guard fails it for the wrong reason, and
 #                           check-wire-schema.sh inside it builds the workspace.
-#   test-dev-env.sh       — 14 of its 38 cases fail outside a Linux dev box
-#                           (#4443). Wiring it before that is triaged would
-#                           land a workflow that is red on arrival.
-UNHOSTED_SELF_TESTS := test-main-canary.sh test-guard-sigpipe.sh test-dev-env.sh
+#
+# test-dev-env.sh used to be here too: 14 of its 38 cases failed everywhere
+# (#4443), not just outside a Linux dev box as first suspected — its fixture
+# built a synthetic repo shaped `stella-core/src/`, and setup-dev-env.sh's own
+# workspace-shape check requires `crates/stella-core/`, a mismatch dating to
+# this workspace's move under `crates/` long after the fixture was written.
+# Fixed by reshaping the fixture to match; it now runs in guard-self-tests.yml.
+UNHOSTED_SELF_TESTS := test-main-canary.sh test-guard-sigpipe.sh
 
 .PHONY: help
 help: ## Show this help
