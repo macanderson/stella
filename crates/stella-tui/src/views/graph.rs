@@ -1,6 +1,6 @@
 //! Graph tab — the code-graph neighborhood inspector.
 //!
-//! Renders from [`DeckUi::graph`], the out-of-band [`GraphSnapshot`] (see
+//! Renders from [`DeckUi::graph`], the out-of-band [`crate::graph::GraphSnapshot`] (see
 //! `crate::graph` module docs — it is not folded from the `AgentEvent` log),
 //! plus the focused lane's file ledger for the `● hot` mark. The drawing is
 //! [`crate::v2::graph_tab`] (SPEC 9.1); this module keeps the empty state and

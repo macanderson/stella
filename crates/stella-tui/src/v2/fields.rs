@@ -102,7 +102,7 @@ const INDENT: usize = 2;
 
 /// The one line a head states for `value`.
 ///
-/// An object leads with its most wanted field ([`LEAD_KEYS`]); an array, or
+/// An object leads with its most wanted field (`LEAD_KEYS`); an array, or
 /// an object whose only interesting member is an array, states the count and
 /// the first item's headline (`3 tasks · wire the digest, …`); a scalar is
 /// itself. An empty object is the empty string, so a caller can elide the
