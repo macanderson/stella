@@ -182,39 +182,41 @@ mod tests {
     #[test]
     fn the_default_view_hides_old_and_foreign_history() {
         let now = 30 * DAY;
-        let mut ui = DeckUi::default();
-        ui.sessions = vec![
-            row("mine", SessionPhase::InProgress, "/w", now, true),
-            row(
-                "recent-here",
-                SessionPhase::Complete,
-                "/w",
-                now - DAY,
-                false,
-            ),
-            row(
-                "old-here",
-                SessionPhase::Complete,
-                "/w",
-                now - 20 * DAY,
-                false,
-            ),
-            row(
-                "recent-elsewhere",
-                SessionPhase::Complete,
-                "/other",
-                now - DAY,
-                false,
-            ),
-            row(
-                "live-elsewhere",
-                SessionPhase::Paused,
-                "/other",
-                now - 10 * DAY,
-                false,
-            ),
-            row("archived-here", SessionPhase::Archived, "/w", now, false),
-        ];
+        let mut ui = DeckUi {
+            sessions: vec![
+                row("mine", SessionPhase::InProgress, "/w", now, true),
+                row(
+                    "recent-here",
+                    SessionPhase::Complete,
+                    "/w",
+                    now - DAY,
+                    false,
+                ),
+                row(
+                    "old-here",
+                    SessionPhase::Complete,
+                    "/w",
+                    now - 20 * DAY,
+                    false,
+                ),
+                row(
+                    "recent-elsewhere",
+                    SessionPhase::Complete,
+                    "/other",
+                    now - DAY,
+                    false,
+                ),
+                row(
+                    "live-elsewhere",
+                    SessionPhase::Paused,
+                    "/other",
+                    now - 10 * DAY,
+                    false,
+                ),
+                row("archived-here", SessionPhase::Archived, "/w", now, false),
+            ],
+            ..Default::default()
+        };
         let ids: Vec<&str> = visible_session_rows(&ui, now)
             .iter()
             .map(|s| s.id.as_str())
@@ -231,13 +233,15 @@ mod tests {
     #[test]
     fn live_rows_lead_and_the_rest_sort_by_recency() {
         let now = 30 * DAY;
-        let mut ui = DeckUi::default();
-        ui.sessions = vec![
-            row("mine", SessionPhase::InProgress, "/w", now - 3 * DAY, true),
-            row("a", SessionPhase::Complete, "/w", now - 2 * DAY, false),
-            row("b", SessionPhase::Complete, "/w", now - DAY, false),
-            row("p", SessionPhase::Paused, "/w", now - 5 * DAY, false),
-        ];
+        let ui = DeckUi {
+            sessions: vec![
+                row("mine", SessionPhase::InProgress, "/w", now - 3 * DAY, true),
+                row("a", SessionPhase::Complete, "/w", now - 2 * DAY, false),
+                row("b", SessionPhase::Complete, "/w", now - DAY, false),
+                row("p", SessionPhase::Paused, "/w", now - 5 * DAY, false),
+            ],
+            ..Default::default()
+        };
         let ids: Vec<&str> = visible_session_rows(&ui, now)
             .iter()
             .map(|s| s.id.as_str())
