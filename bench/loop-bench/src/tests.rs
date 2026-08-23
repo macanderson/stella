@@ -615,6 +615,55 @@ fn a_second_run_in_one_job_dir_is_reported_rather_than_absorbed() {
     );
 }
 
+/// #3743: two requested tasks that share their first 32 characters truncate
+/// to the same trial-directory prefix (`TRIAL_DIR_TASK_LIMIT`). When the
+/// trial's `result.json` never landed — so there is no untruncated
+/// `task_name` to break the tie — `Requested::match_dir` cannot tell them
+/// apart and reports the prefix as ambiguous, which is what drives the
+/// process's exit code 7 (`contamination_exit` in `main.rs`).
+#[test]
+fn a_shared_directory_prefix_with_no_result_json_is_reported_ambiguous() {
+    let task_one = format!("{}-one", "a".repeat(32));
+    let task_two = format!("{}-two", "a".repeat(32));
+    let prefix = trial_dir_prefix(&task_one);
+    assert_eq!(
+        prefix,
+        trial_dir_prefix(&task_two),
+        "the two names must collide"
+    );
+
+    let job = tempfile::tempdir().expect("job dir");
+    // No result.json for this trial: task_name is None, so the tie cannot be
+    // broken by harbor's own record.
+    trial_dir(
+        job.path(),
+        &format!("{prefix}__t1"),
+        &[r#"{"type":"tool_start","call":{"name":"save_state"}}"#],
+    );
+
+    let requested = vec![task_one.clone(), task_two.clone()];
+    let analysis = analyze(job.path(), Some(one_trial_each(&requested)));
+    let record = analysis
+        .reconciliation
+        .as_ref()
+        .expect("a requested run reconciles");
+
+    assert_eq!(record.ambiguous, vec![prefix.clone()]);
+    assert!(
+        record.contaminated(),
+        "an ambiguous attribution is a guess, not a verified match"
+    );
+    assert!(
+        record
+            .findings()
+            .iter()
+            .any(|finding| finding.contains(&prefix)
+                && finding.contains("more than one requested task")),
+        "the finding names the ambiguous prefix: {:?}",
+        record.findings()
+    );
+}
+
 /// #1299, hole 2: harbor truncates a task name to 32 characters when it names
 /// the trial directory. Matching on the untruncated name produced *two* wrong
 /// answers at once — every trial skipped as another run's, and the task that
