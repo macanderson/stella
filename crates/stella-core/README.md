@@ -50,7 +50,8 @@ a supervisor:
   smaller for the socket existing.
 
 **This crate never learns a plugin exists, and that part is already true, not
-aspirational.** There is no `Principal::Plugin`, no manifest type, no
+aspirational.** `Principal::Plugin` carries an opaque string and nothing else
+— there is no manifest type, no capability type, no
 `stella-plugin` or `stella-runtime` dependency in this crate's `Cargo.toml` —
 only `stella-protocol` — and there cannot be one without breaking invariant 1:
 a plugin host binds a plugin's declared grants to this crate's *existing*

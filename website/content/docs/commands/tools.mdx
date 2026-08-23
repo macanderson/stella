@@ -89,27 +89,28 @@ stella tools --foundry           # what was adopted, and what it has been worth
 
 A self-authored tool is a manifest + script pair staged under
 `.stella/tools/proposed/`, where tool discovery cannot see it, and promoted from
-there by the `--adopt` → `--enable` sequence above. The generated script expands
-every parameter as a quoted `"$STELLA_INPUT_*"` reference, so parameter values stay
+there by the `--adopt` → `--enable` sequence above. Write the script so every
+parameter is a quoted `"$STELLA_INPUT_*"` reference, so parameter values stay
 data rather than shell syntax.
 
 <Callout type="warn">
-  **Staging is manual today.** The gap detector that mines candidate shapes from
-  recent `bash` receipts ships in `stella-core`, and the authoring pass that turns
-  one candidate into a manifest + script pair ships in `stella-tools` — but nothing
-  in the CLI or the deck calls either one on a live session, so no command lists
-  proposals or writes the staged pair for you. `--adopt` onwards is fully wired and
-  is what the rest of this section describes. Tracked in
-  [#3629](https://github.com/macanderson/stella/issues/3629).
+  **Staging is manual.** The gap detector that mines candidate shapes from recent
+  `bash` receipts ships in `stella-core`, and its only shipped consumer is the
+  offline `make replay-learning` report — no live session mines proposals. A pass
+  that rendered one candidate into a manifest + script pair also shipped, was never
+  called by anything, and was retired in
+  [#3629](https://github.com/macanderson/stella/issues/3629). So you write the pair
+  yourself; `--adopt` onwards is fully wired and is what the rest of this section
+  describes.
 </Callout>
 
-What the detector looks for, when it is wired up, is a shape that is genuinely
-*reused*: it must recur across at least two distinct argument sets, each of them
-retyped about three times over. A command whose arguments are different every single
-time — `sed -n '<expr>' <file>` across a thousand files — is the shell, not a tool.
-Proposals rank most-reused-first, not most-run-first.
+What the detector reports is a shape that is genuinely *reused*: it must recur across
+at least two distinct argument sets, each of them retyped about three times over. A
+command whose arguments are different every single time — `sed -n '<expr>' <file>`
+across a thousand files — is the shell, not a tool. Proposals rank most-reused-first,
+not most-run-first.
 
-An authored tool carries a `[foundry]` table, and a manifest carrying one registers only
+A staged tool carries a `[foundry]` table, and a manifest carrying one registers only
 while **all three** of these hold:
 
 1. it was **adopted** — its capability witness flipped;

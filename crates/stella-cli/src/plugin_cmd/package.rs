@@ -187,7 +187,7 @@ fn reconciles_with_disk(plugin: &InstalledPlugin) -> bool {
 /// `stella plugin list` and the session's own plugin load already print
 /// them, and a malformed package must not make a skill lookup noisy three
 /// times over.
-fn session_roster(workspace_root: &Path) -> PluginRoster {
+pub(crate) fn session_roster(workspace_root: &Path) -> PluginRoster {
     let settings = Settings::load(workspace_root).unwrap_or_default();
     PluginRoster::load(workspace_root, &settings).0
 }

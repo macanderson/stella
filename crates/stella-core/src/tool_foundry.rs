@@ -4,10 +4,13 @@
 //!
 //! This is the first slice of self-improvement issue #830 ("stella authors,
 //! tests, and installs its own tools at runtime"): the **gap detector only**,
-//! which *proposes* a tool spec and installs nothing. Authorship, witness
-//! proofs, and adoption gating are the later slices, and they landed outside
-//! this crate (`stella-tools`' `foundry_author`/`foundry_witness`/
-//! `foundry_gate`, driven by `stella tools --adopt` / `--enable`).
+//! which *proposes* a tool spec and installs nothing. Witness proofs and
+//! adoption gating are the later slices, and they landed outside this crate
+//! (`stella-tools`' `foundry_witness`/`foundry_gate`, driven by
+//! `stella tools --adopt` / `--enable`). The slice between them — turning a
+//! proposal into a staged manifest+script pair — was written, never called,
+//! and retired in #3629; staging is a hand step, and this detector's shipped
+//! consumer remains the offline replay report.
 //!
 //! It is a sibling of [`crate::loop_detect`] and follows the same discipline:
 //! plain synchronous functions over owned data, no I/O, no provider SDK, no

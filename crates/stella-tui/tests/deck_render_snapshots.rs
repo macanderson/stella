@@ -1052,8 +1052,10 @@ fn deck_render_snapshots_pin_the_approval_card() {
         ui.approval.key(KeyEvent::new(code, KeyModifiers::NONE));
     };
     let request = stella_tools::registry::approval::ApprovalRequest {
-        tool: "bash".into(),
-        read_only: false,
+        parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+            name: "bash".into(),
+            read_only: false,
+        },
         reason: "matched rule no-destructive-shell".into(),
         gate: "command.started".into(),
         subject: Some("rm -rf build/".into()),
@@ -1094,8 +1096,10 @@ fn deck_render_snapshots_pin_the_approval_card() {
     let mut ui = ui_for(DeckTab::Session);
     ui.approval
         .open(stella_tools::registry::approval::ApprovalRequest {
-            tool: "read_file".into(),
-            read_only: true,
+            parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+                name: "read_file".into(),
+                read_only: true,
+            },
             reason: "matched rule secrets-are-off-limits".into(),
             gate: "tool.call.requested".into(),
             subject: Some(".stella/private/credentials.toml".into()),

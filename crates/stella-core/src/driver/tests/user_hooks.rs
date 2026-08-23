@@ -628,8 +628,14 @@ async fn a_hook_require_approval_parks_on_the_route_and_the_answer_decides() {
     assert_eq!(route.calls.load(Ordering::SeqCst), 1, "the route was asked");
     assert_eq!(inputs.lock().await.len(), 1, "the approved tool ran");
     let seen = route.seen.lock().await.clone();
-    assert_eq!(seen[0].tool, "bash");
-    assert!(!seen[0].read_only, "bash advertises read_only: false");
+    assert_eq!(
+        seen[0].subject,
+        crate::hooks::decision::ApprovalSubject::Tool {
+            name: "bash".into(),
+            read_only: false,
+        },
+        "a parked tool call names the tool and carries its advertised bit"
+    );
     assert_eq!(seen[0].reason, "mutating call");
 
     // Denying route: the tool never runs and the model reads the reason.
@@ -1045,6 +1051,163 @@ async fn a_failing_stop_hook_never_holds_the_turn_open() {
                 if message.contains("Stop hook problem") && message.contains("exited 3")
         )),
         "the failure surfaces as a diagnostic: {events:?}"
+    );
+}
+
+/// **The #3486 witness.** A Stop hook returning `require_approval` resolves
+/// through the route both ways, and the turn ends differently in each.
+///
+/// Fails on `main` in the denied half: `stop_hook_feedback` matched
+/// `RequireApproval` and answered it with a diagnostic saying the verb did not
+/// apply at a turn boundary, then let the completion stand — because
+/// `ApprovalRouteRequest` was keyed on a tool name and there is no tool here.
+/// The route was never asked at all, so the approved half is anti-vacuity: the
+/// same hook, the same engine, and the answer is what changes the outcome.
+#[tokio::test]
+async fn a_stop_hooks_require_approval_resolves_both_ways() {
+    async fn run(
+        resolution: crate::hooks::decision::ApprovalRouteResolution,
+    ) -> (
+        TurnOutcome,
+        Vec<crate::hooks::decision::ApprovalRouteRequest>,
+        Vec<CompletionMessage>,
+    ) {
+        let provider = ScriptedProvider {
+            id: "scripted".into(),
+            script: TokioMutex::new(vec![
+                Ok(text_result("done")),
+                Ok(text_result("done again")),
+                Ok(text_result("done once more")),
+                Ok(text_result("and again")),
+            ]),
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let tools = CountingTools {
+            calls: Arc::new(AtomicU32::new(0)),
+        };
+        let sleeper = NoopSleeper;
+        let runner = RecordingHookRunner {
+            exit_code: 0,
+            stdout: r#"{"action":"require_approval","reason":"verification budget exhausted, continue?"}"#
+                .into(),
+            stderr: String::new(),
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
+        };
+        let hooks: Hooks =
+            serde_json::from_str(r#"{ "Stop": [ { "hooks": [{ "command": "vera" }] } ] }"#)
+                .unwrap();
+        let route = ScriptedRoute {
+            resolution,
+            calls: Arc::new(AtomicU32::new(0)),
+            seen: Arc::new(TokioMutex::new(Vec::new())),
+        };
+        let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+            .with_hooks(&hooks, &runner)
+            .with_hook_approval_route(&route);
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("hi"),
+        ];
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+        let seen = route.seen.lock().await.clone();
+        (outcome, seen, messages)
+    }
+
+    // Approved: the completion stands, exactly as it would with no hook.
+    let (outcome, seen, _messages) =
+        run(crate::hooks::decision::ApprovalRouteResolution::Approved).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "an approved completion stands: {outcome:?}"
+    );
+    assert_eq!(seen.len(), 1, "the route was asked at the turn boundary");
+    match &seen[0].subject {
+        crate::hooks::decision::ApprovalSubject::TurnCompletion { final_text_digest } => {
+            assert!(
+                final_text_digest.starts_with("sha256:"),
+                "the subject carries a digest of the answer, never the answer: {final_text_digest}"
+            );
+            assert!(
+                !final_text_digest.contains("done"),
+                "and really is a digest: {final_text_digest}"
+            );
+        }
+        other => panic!("a turn boundary has no tool to name, got {other:?}"),
+    }
+    assert_eq!(seen[0].reason, "verification budget exhausted, continue?");
+
+    // Denied: the turn is held open and the refusal is the model's next
+    // observation — the same tail-message path a `deny` takes.
+    let (outcome, seen, messages) = run(crate::hooks::decision::ApprovalRouteResolution::Denied {
+        reason: "top up the budget first".into(),
+    })
+    .await;
+    assert!(
+        !seen.is_empty(),
+        "the route was asked, and asked again on each held-open round"
+    );
+    let held = messages
+        .iter()
+        .any(|m| m.role == MessageRole::User && m.content.contains("top up the budget first"));
+    assert!(
+        held,
+        "the refusal reaches the model as its next observation: {messages:?}"
+    );
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "the turn still ends — the hold is bounded, not a wedge: {outcome:?}"
+    );
+}
+
+/// With no route attached, a Stop hook's `require_approval` **fails open**:
+/// the completion stands and the ask is reported as a diagnostic.
+///
+/// The opposite of `PreToolUse`'s posture and deliberately so — the module
+/// docs' § "The Stop gate" argues it: refusing to complete because nobody was
+/// there to answer is the compact→error→stop-hook→retry spiral, not safety.
+#[tokio::test]
+async fn a_stop_hooks_require_approval_with_no_route_lets_the_turn_complete() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result("done"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let runner = RecordingHookRunner {
+        exit_code: 0,
+        stdout: r#"{"action":"require_approval","reason":"ask a human"}"#.into(),
+        stderr: String::new(),
+        payloads: Arc::new(TokioMutex::new(Vec::new())),
+    };
+    let hooks: Hooks =
+        serde_json::from_str(r#"{ "Stop": [ { "hooks": [{ "command": "vera" }] } ] }"#).unwrap();
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+        .with_hooks(&hooks, &runner);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("hi"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "a headless run completes: {outcome:?}"
+    );
+    let events = drain_events(&mut rx);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::Error { message, .. }
+                if message.contains("no interactive surface is attached")
+        )),
+        "and says why nobody was asked: {events:?}"
     );
 }
 

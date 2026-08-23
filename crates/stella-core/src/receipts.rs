@@ -112,6 +112,18 @@ fn sha256_hex(s: &str) -> String {
     sha256_hex_parts(&[s.as_bytes()])
 }
 
+/// `sha256:<hex>` — the spelling this module already writes a block's
+/// `content_digest` in, shared so a second caller does not grow a second
+/// hasher over the same bytes.
+///
+/// The one caller outside this module is
+/// [`crate::hooks::decision::ApprovalSubject::TurnCompletion`], which carries a
+/// digest of the turn's answer precisely so it does not carry the answer
+/// (invariant #3 governs what an `approval.*` audit event may hold).
+pub(crate) fn sha256_hex_prefixed(s: &str) -> String {
+    format!("sha256:{}", sha256_hex(s))
+}
+
 /// The content-addressed id of a block: `blk_` + the first 24 hex chars of
 /// `sha256(kind_tag \0 content)`. Mirrors the context store's `nod_…` shape.
 /// Byte-identical blocks of the same kind share an id — the property that makes

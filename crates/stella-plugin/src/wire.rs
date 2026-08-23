@@ -59,7 +59,10 @@
 //! rule a reviewer has to remember rather than one the compiler holds. See
 //! that type for the `compile_fail` doctest that now pins it.
 
+mod disclosure;
 mod envelope;
+
+pub use self::disclosure::{HOOK_FIELDS, HookField, WIRE_FIELDS, WireField, hook_disclosures_for};
 
 use std::collections::BTreeMap;
 
@@ -691,140 +694,6 @@ pub struct TurnOutcome {
     pub changed_files: Option<Vec<String>>,
 }
 
-/// One field of a request that crosses to a plugin's own process, and what a
-/// consent prompt tells a human about it.
-///
-/// [`crate::consent_text`] renders [`Self::disclosure`] verbatim (#3514). A
-/// user deciding whether to install a plugin that runs as a process is deciding
-/// what of their work that process gets to see, and the answer is a property of
-/// *this* module: writing the sentences out beside the prompt instead would put
-/// a copy of the request shape in a file that does not change when the request
-/// does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WireField {
-    /// The point whose request carries it.
-    pub point: WrapperPoint,
-    /// The field's path, as serde writes it — dotted for a field of the nested
-    /// [`TurnOutcome`].
-    pub path: &'static str,
-    /// What crosses, in the words a human reads before granting the point, or
-    /// `None` for a field carrying nothing of the user's.
-    ///
-    /// `None` is a **decision, not an omission**: every field of the two
-    /// requests has a row here, so a field that crosses the process boundary
-    /// and is disclosed to nobody is a line somebody wrote rather than one
-    /// nobody noticed.
-    pub disclosure: Option<&'static str>,
-}
-
-/// Every field of the two request messages, and what the consent prompt says
-/// about each.
-///
-/// In wire order, grouped by point, because the prompt renders it in table
-/// order and is showing a reader a message rather than a set.
-///
-/// The leaves stop at [`BeforeTurnRequest`], [`AfterTurnRequest`] and
-/// [`TurnOutcome`] — the three types `every_wire_field_is_in_the_table`
-/// destructures, so a field added to any of them stops that test compiling
-/// until it has a row here. A nested grant is disclosed whole, in one sentence
-/// naming what it carries, rather than expanded field by field.
-pub const WIRE_FIELDS: &[WireField] = &[
-    WireField {
-        point: WrapperPoint::BeforeTurn,
-        path: "protocol_version",
-        disclosure: None,
-    },
-    WireField {
-        point: WrapperPoint::BeforeTurn,
-        path: "wrapper",
-        disclosure: None,
-    },
-    WireField {
-        point: WrapperPoint::BeforeTurn,
-        path: "stage",
-        disclosure: None,
-    },
-    WireField {
-        point: WrapperPoint::BeforeTurn,
-        path: "round",
-        disclosure: None,
-    },
-    WireField {
-        point: WrapperPoint::BeforeTurn,
-        path: "goal",
-        disclosure: Some("the goal you typed for this turn, in full"),
-    },
-    WireField {
-        point: WrapperPoint::BeforeTurn,
-        path: "candidate",
-        disclosure: Some(
-            "when the host has made one, the absolute path of the scratch workspace the turn \
-             will run in, and the test command it would run there",
-        ),
-    },
-    // The plugin's own words handed back: `published` carries what an earlier
-    // stage of this same plugin published this turn, never something the host
-    // measured of the user's.
-    WireField {
-        point: WrapperPoint::BeforeTurn,
-        path: "published",
-        disclosure: None,
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "protocol_version",
-        disclosure: None,
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "wrapper",
-        disclosure: None,
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "stage",
-        disclosure: None,
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "round",
-        disclosure: None,
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "goal",
-        disclosure: Some("the goal you typed for this turn, in full"),
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "candidate",
-        disclosure: Some(
-            "when the host has made one, the absolute path of the scratch workspace the turn \
-             ran in, and the test command it would run there",
-        ),
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "turn.completed",
-        disclosure: Some("whether the turn finished or was aborted"),
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "turn.answer",
-        disclosure: Some("the model's full reply for the turn — the same text you were shown"),
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "turn.tools",
-        disclosure: Some("the name of every tool the turn ran, in call order"),
-    },
-    WireField {
-        point: WrapperPoint::AfterTurn,
-        path: "turn.changed_files",
-        disclosure: Some("the workspace-relative path of every file the turn changed"),
-    },
-];
-
 /// The evidence a wrapper gathered.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1329,13 +1198,13 @@ mod tests {
             .count()
     }
 
-    /// **The anti-drift guard for #3514.** The consent prompt's data
-    /// disclosure is only as complete as [`WIRE_FIELDS`], and a list of
-    /// sentences maintained by hand is complete exactly until the next field
-    /// lands. So the table is checked against the types themselves: adding a
-    /// field to either request — or to [`TurnOutcome`] — stops the patterns
-    /// below compiling (`E0027`), and a row naming a field neither request has
-    /// fails here.
+    /// **The anti-drift guard for #3514, made transitive by #4310.** The
+    /// consent prompt's data disclosure is only as complete as
+    /// [`WIRE_FIELDS`], and a list of sentences maintained by hand is complete
+    /// exactly until the next field lands. So the table is checked against the
+    /// types themselves: adding a field to either request — or to any type
+    /// reachable from one — stops the patterns below compiling (`E0027`), and
+    /// a row naming a field no request has fails here.
     #[test]
     fn every_wire_field_is_in_the_table() {
         let BeforeTurnRequest {
@@ -1352,20 +1221,42 @@ mod tests {
             stage: StageName::Host(HostStage::Execute),
             round: 0,
             goal: "make the failing test pass".to_string(),
-            candidate: Some(CandidateGrant::new(
-                CandidateHandle::new("candidate-1"),
-                "/tmp/candidate-1",
-            )),
-            published: Vec::new(),
+            candidate: Some(
+                CandidateGrant::new(CandidateHandle::new("candidate-1"), "/tmp/candidate-1")
+                    .with_test(TestPlan::new("cargo", vec!["test".to_string()])),
+            ),
+            published: vec![PublishedSignal {
+                signal: Signal::DiffLines,
+                value: SignalValue::Count(0),
+            }],
         };
+        // Neither `candidate` nor `published` is a leaf: every field of both
+        // crosses the same pipe, so each is named on its own and the container
+        // is not (#4310).
+        let CandidateGrant { handle, root, test } =
+            candidate.expect("the literal above carries a grant");
+        let TestPlan {
+            program,
+            args,
+            baseline,
+        } = test.expect("the literal above carries a test plan");
+        let PublishedSignal { signal, value } = published
+            .into_iter()
+            .next()
+            .expect("the literal above carries a published signal");
         let before_paths = [
             named("protocol_version", protocol_version),
             named("wrapper", wrapper),
             named("stage", stage),
             named("round", round),
             named("goal", goal),
-            named("candidate", candidate),
-            named("published", published),
+            named("candidate.handle", handle),
+            named("candidate.root", root),
+            named("candidate.test.program", program),
+            named("candidate.test.args", args),
+            named("candidate.test.baseline", baseline),
+            named("published.signal", signal),
+            named("published.value", value),
         ];
 
         let AfterTurnRequest {
@@ -1382,7 +1273,10 @@ mod tests {
             stage: None,
             round: 0,
             goal: "make the failing test pass".to_string(),
-            candidate: None,
+            candidate: Some(
+                CandidateGrant::new(CandidateHandle::new("candidate-1"), "/tmp/candidate-1")
+                    .with_test(TestPlan::new("cargo", vec!["test".to_string()])),
+            ),
             turn: TurnOutcome::default(),
         };
         // `turn` is not a leaf — its own fields cross the same pipe, so each is
@@ -1393,13 +1287,24 @@ mod tests {
             tools,
             changed_files,
         } = turn;
+        let CandidateGrant { handle, root, test } =
+            candidate.expect("the literal above carries a grant");
+        let TestPlan {
+            program,
+            args,
+            baseline,
+        } = test.expect("the literal above carries a test plan");
         let after_paths = [
             named("protocol_version", protocol_version),
             named("wrapper", wrapper),
             named("stage", stage),
             named("round", round),
             named("goal", goal),
-            named("candidate", candidate),
+            named("candidate.handle", handle),
+            named("candidate.root", root),
+            named("candidate.test.program", program),
+            named("candidate.test.args", args),
+            named("candidate.test.baseline", baseline),
             named("turn.completed", completed),
             named("turn.answer", answer),
             named("turn.tools", tools),
