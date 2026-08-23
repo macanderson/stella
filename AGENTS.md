@@ -89,6 +89,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + dead-code-allows
                          #   + diagnostic-codes
                          #   + bench-suites
+                         #   + wire-paths (the hook derives wire-schema.yml's filter)
                          #   + tokens (hue clamp + no retired hex)
                          #   + hue-separation (30° OKLCH, web tokens)
                          #   + contrast (WCAG, down-only ratchet)
@@ -119,9 +120,10 @@ different guards merge cleanly, while a spelled-out count is one shared cell
 both must write — and two of them collided on it twice in a day, each time
 leaving `main` red for everyone (#1883).
 
-CI enforces the same steps split across three workflows:
-`/.github/workflows/ci.yml`'s required job runs everything except `invariants`
-and `doc-links`, and adds a `Cargo.lock` sync check, `stella context
+CI enforces the same steps split across four workflows:
+`/.github/workflows/ci.yml`'s required job runs everything except `invariants`,
+`doc-links`, `prose`, `hue-separation` and `transcript-surfaces`, and adds a
+`Cargo.lock` sync check, `stella context
 validate`, a release smoke build (thin LTO), and the deleted-test guard
 (`scripts/check-deleted-tests.sh`);
 `docs-guards.yml` runs those two plus a second run of `command-docs`,
@@ -132,9 +134,14 @@ the `docs/design` scratchpad, invalidate every Rust comment citing it, and land
 green (#3888); and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
 because a PR that hand-edits a generated schema and nothing else starts neither
-of the other two (#1439).
+of the other two (#1439); and `guard-self-tests.yml` runs the three steps
+ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
+`prose` exists to judge — alongside the hermetic suites that prove a guard can
+still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
+one does is checked, by `gate-parity` against every `run:` in
+`.github/workflows/`.
 
-A fourth workflow, `deck-fit.yml`, owns the decks under
+A fifth workflow, `deck-fit.yml`, owns the decks under
 `website/public/presentations/`. Its measurement — every slide against the
 fixed 1600x900 canvas the decks are authored in (`scripts/deck-fit.mjs`) —
 needs a browser, which is why that half is not in `make gate`, and it has its
@@ -153,7 +160,7 @@ this workflow rather than only in the gate because `ci.yml`'s required job
 skips its Rust half for a diff confined to `website/**` (#1892), and a diff
 confined to `website/**` is exactly a deck edit (#3573).
 
-A fifth, `main-canary.yml`, is the only one that runs **after** the merge, and
+A sixth, `main-canary.yml`, is the only one that runs **after** the merge, and
 it exists because some guards cannot be settled before one. A guard enforced
 against a *shared cell* — one file every PR of a shape must write, like
 `Cargo.lock` or `scripts/file-size-baseline.txt` — can be satisfied correctly by
@@ -167,7 +174,7 @@ silent failure costs here). `make main-canary` runs the same check locally
 without filing anything; `scripts/main-canary.sh`'s header carries the full
 argument, including why it deliberately does not open a fix PR (#3332).
 
-A sixth, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
+A seventh, `main-red-hold.yml`, is the canary's other half: the canary *detects*,
 and this is what consumes the detection at the point a merge is still a
 decision. It runs on `pull_request`, asks the tracker whether a `main-red`
 issue is open, and fails if one is — naming it. On 2026-08-19 the canary

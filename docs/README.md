@@ -82,14 +82,28 @@ a guess, and gets reported rather than applied — a citation silently repointed
 the wrong document is worse than one that visibly dangles. `make
 doc-links-fix-by-name` applies those after you have read the list.
 
+**A relative link is checked too, and is the shape that used to slip through.**
+Inside `docs/` the prevailing link style is a relative target — `../spec/…md`,
+or a bare sibling filename — and until #3886 the checker looked only for
+repo-rooted `docs/…md` paths. A link whose text is a `doc:` id and whose target
+is a relative path was therefore validated on the id, which cannot break, and
+ignored on the path, which can. Moving one document in #3885 left 13 dangling
+links in a single file while both commands reported success. A relative target
+now resolves against the citing file's own directory and must exist; `make
+doc-links-fix` repoints one across a move it can prove, and `-by-name` covers
+the rest. Links inside a `status: vendored` document are exempt — "do not edit
+here" leaves nothing to repair with.
+
 If a `docs/…md` string in your prose is not a citation — a file you intend to
-*generate*, say — end the line with `<!-- doc-links:ignore -->`.
+*generate*, say — end the line with `<!-- doc-links:ignore -->`. A document's
+`.toml` companions are scanned as well, in their comments only, which is where
+they name the document they belong to.
 
 **Cite anything outside this repository by URL.** An upstream contract or
 another repo's ADR has no `id` here and never will.
-[`design/adaptive-context/context-frame-spec.md`](design/adaptive-context/context-frame-spec.md),
+[`spec/adaptive-context/context-frame-spec.md`](spec/adaptive-context/context-frame-spec.md),
 [`design/directive-schema.md`](design/directive-schema.md) and the vendored
-[`design/adaptive-context/context-reuse.md`](design/adaptive-context/context-reuse.md)
+[`spec/adaptive-context/context-reuse.md`](spec/adaptive-context/context-reuse.md)
 defer to the Context Graph Protocol for their wire semantics instead of
 restating them, and each opens with a URL pointing at the CGP revision it defers
 to. Update that link when the `contextgraph-*` dependency moves.

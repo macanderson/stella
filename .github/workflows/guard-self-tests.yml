@@ -1,0 +1,183 @@
+name: guard-self-tests
+
+# The server-side home for the guards nothing server-side was running (#3820,
+# #4427).
+#
+# Two questions, one workflow, because both are answered by the same
+# toolchain-free runner in seconds.
+#
+# **`gate-steps`** — `prose`, `hue-separation` and `transcript-surfaces` are
+# `GATE_STEPS` members, and `rg 'check-prose|check-hue-separation|check-transcript-surfaces'
+# .github/workflows/` was empty: ci.yml runs the guards individually rather
+# than `make gate`, so those three ran only on a contributor's machine. The
+# pre-push hook is advisory, per-clone and bypassable, and on the maintainer's
+# laptop the gate is not run at all (CLAUDE.md, "CI builds and tests; this
+# laptop does not") — so for these three there was no check to complement.
+# `tokens` sat in the same hole from #4066 until #4086, red on `main` for
+# twenty PRs that were all otherwise green. They live here rather than in
+# ci.yml's guards job because that job is skipped for a prose-only diff, which
+# is exactly the diff `prose` exists to judge.
+#
+# **`self-tests`** — the hermetic suites whose whole job is to prove a guard
+# *can still fail*. file-size.yml states the argument and states it correctly:
+# "A ratchet that has quietly become incapable of failing reports green
+# forever, which is worse than not having one." That reasoning is not specific
+# to the file-size ratchet, but until now only three of the twenty-seven
+# suites ran anywhere automatic (file-size.yml, duplicate-claims.yml, and
+# `test-deck-fit-all.sh` in ci.yml). #3750 is what that costs: the typed-errors
+# writer path grandfathered a brand-new violation, silently and for as long as
+# the guard existed, and nothing was in a position to notice.
+#
+# They stay out of `make gate` — that exclusion is deliberate and stands, since
+# each builds throwaway git repositories and the gate is what a contributor
+# runs before every push.
+#
+# No `paths:` filter, deliberately, and for a different reason than
+# wire-schema.yml and docs-guards.yml have one. Those two narrow to escape a
+# cost — a toolchain, a browser — that this workflow does not pay: every step
+# below is shell or Python over the tree and the whole run is a couple of
+# minutes. Several suites also assert something about the *live* tree
+# (`test-module-reachability.sh`'s R1 is "this repository is clean"), so a
+# filter would make them blind in exactly the direction they exist to watch.
+# file-size.yml made the same call for the same reason.
+
+on:
+  pull_request:
+  merge_group:
+
+# Reads the repository and nothing else.
+permissions:
+  contents: read
+
+concurrency:
+  group: guard-self-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate-steps:
+    name: gate steps no other workflow runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Each step carries `!cancelled()` so a red one reports independently
+      # instead of masking the next — ci.yml's guards job explains the trade at
+      # length, and the three below are verdicts about disjoint subjects.
+      - name: no content-free prose was added
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/check-prose.py
+
+      - name: no two web semantic roles sit within 30° in OKLCH
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/check-hue-separation.py
+
+      - name: every transcript surface declares how it draws
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/check-transcript-surfaces.py
+
+  self-tests:
+    name: guard self-tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The suites missing from this list run elsewhere and are not duplicated
+      # here: test-file-size.sh in file-size.yml, test-duplicate-claims.sh in
+      # duplicate-claims.yml, and test-deck-fit-all.sh, test-self-driving.sh
+      # and test-impacted-crates.sh in ci.yml. The last two want the toolchain:
+      # one builds `stella`, and the other runs `cargo metadata` against a
+      # synthetic workspace a dozen times. That one also wants ripgrep, which
+      # ubuntu-latest does not ship — without it the scoper answers
+      # `--workspace` for everything, which is its documented fall-back, and 13
+      # of its 25 cases went red in this job before it moved.
+      #
+      # The three DELIBERATELY unhosted ones are named in the Makefile's
+      # `UNHOSTED_SELF_TESTS`, with the reason each is excluded;
+      # scripts/check-gate-parity.sh fails when a suite is in neither place.
+      - name: action-pins guard covers composite actions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-action-pins.sh
+
+      - name: arena start/stop/reap/local scripts
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-arena-scripts.sh
+
+      - name: which PR the auto-merge nudge picks
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-automerge-nudge.sh
+
+      - name: CHANGELOG.md still has its 0.8.0 section
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-changelog-0.8.0-section.sh
+
+      - name: which releases get a CHANGELOG.md section
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-changelog-roll.sh
+
+      - name: contrast ratchet direction
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-contrast.sh
+
+      - name: dead-code ratchet direction
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-dead-code-allows.sh
+
+      - name: deck path guard directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-deck-paths.sh
+
+      - name: gate-parity guard failure directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-gate-parity.sh
+
+      - name: the zsh completion installer
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-install-zsh-completions.sh
+
+      - name: lockfile guard against skewed workspaces
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-lockfile-sync.sh
+
+      - name: the red-main hold, blocking branch included
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-main-red-hold.sh
+
+      - name: the module-reachability walker
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-module-reachability.sh
+
+      - name: the session-scratch boundary
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-no-scratch.sh
+
+      - name: prose ratchet direction
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-prose-guard.sh
+
+      - name: a release version stamp leaves Cargo.lock resolvable
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-release-lockfile.sh
+
+      - name: the tag/release reconciliation rule
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-releases-published.sh
+
+      - name: the shellcheck step's presence guard
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-shellcheck-guard.sh
+
+      - name: release-artifact smoke gate against broken artifacts
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-smoke-artifact.sh
+
+      - name: transcript-surface guard failure directions
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/test-transcript-surfaces.py
+
+      - name: typed-errors ratchet direction
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-typed-errors.sh
+
+      - name: wire-path guard failure directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-wire-paths.sh

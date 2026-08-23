@@ -8,9 +8,9 @@ status: superseded
 # Context Pull Requests — Feature Specification
 
 > **Superseded — the canonical Context PR specification is
-> [`docs/spec/adaptive-context/context-pr.md`](../context-pr.md)**, which consolidates this draft and
+> [`docs/spec/adaptive-context/context-pr.md`](context-pr.md)**, which consolidates this draft and
 > wins wherever the two disagree. This document is kept because the ADRs under
-> [`../adr/`](../adr/README.md) cite it by line as the source of vocabulary they
+> [`../../adr/`](../../adr/README.md) cite it by line as the source of vocabulary they
 > ratified or rejected (0007 on enforcement levels, 0008 on the `.yaml` rule
 > surface, 0009 on the enum freeze) — do not implement from it.
 
