@@ -44,7 +44,10 @@ reaches it through the CGP host.
 
 Beside the symbol and import tables sits `code_graph_vectors`: one vector per
 `(file, embedder fingerprint)`, so a semantic code search can answer a
-question phrased in English rather than in identifiers. They live **here**,
+question phrased in English rather than in identifiers.
+[`src/vectors.rs`](src/vectors.rs) implements it, and
+[`src/vectors/chunks.rs`](src/vectors/chunks.rs) the finer index beside it —
+one vector per symbol rather than per file. They live **here**,
 next to the nodes they describe, rather than in `stella-context`'s
 `context.db`, for two reasons that are the same reason: a semantic query then
 reads one database, and the foreign key cascade means a vector cannot outlive
@@ -96,7 +99,7 @@ dependency, a queries pair in [`src/queries.rs`](src/queries.rs), a
 `Language` variant, a `LangPack` — per the six-step recipe under "Extending
 it". Likewise a new storage source is a module under
 [`src/storage/`](src/storage) and a new symbol kind is a variant in
-[`src/symbol.rs`](src/symbol.rs). Ten languages and four storage families
+[`src/symbol.rs`](src/symbol.rs). Eleven languages and four storage families
 already live here without a split; the exhaustive matches in
 [`src/lang.rs`](src/lang.rs) are what keep that scalable.
 
@@ -113,9 +116,11 @@ ratchet (`scripts/check-file-size.sh`), and none may appear — a new file
 crossing the limit fails the gate outright, and
 `scripts/file-size-baseline.txt` accepts no new entries. When a file
 approaches the limit, split it before it crosses — and
-[`src/parse.rs`](src/parse.rs) is approaching it at 1494 lines today, so a
+[`src/parse.rs`](src/parse.rs) is the one approaching it, close enough that a
 new language's decoder arm and tests may be what pushes it over: plan to
 extract per-language decoding into a submodule rather than grow the file.
+`./scripts/check-file-size.sh` reports where it actually stands; a count
+written here would be stale by the next PR.
 
 ## Layout
 
@@ -126,9 +131,15 @@ extract per-language decoding into a submodule rather than grow the file.
 | [`src/lang.rs`](src/lang.rs) | `Language` and the extension → grammar + query mapping. First stop when adding a language. |
 | [`src/queries.rs`](src/queries.rs) | The tree-sitter S-expression queries as `const &str` compile-time data, one symbols/imports pair per language. |
 | [`src/parse.rs`](src/parse.rs) | `Grammars` (compiled once, shared by reference) and `parse_file`: tree → `Symbol`s + raw `ImportSpec`s. Pure and synchronous. |
+| [`src/markdown.rs`](src/markdown.rs) | The grammarless eleventh language: a line scan for markdown's heading hierarchy (the sections the semantic index ranks) and its links (the import edges the graph stores). |
 | [`src/symbol.rs`](src/symbol.rs) / [`src/import.rs`](src/import.rs) | `SymbolKind` (the cross-language superset, including SQL schema objects) and `ImportKind` plus the relative-specifier resolution ladder. |
-| [`src/store.rs`](src/store.rs) | SQLite: the `MIGRATION` DDL, `index_tree`, `apply_changes`, and every read query. The file with the durability contract. |
+| [`src/rust_resolve.rs`](src/rust_resolve.rs) | `use`→file resolution over the workspace's Rust module tree (#443). File-level edges only; external crates stay unresolved. |
+| [`src/store.rs`](src/store.rs) | SQLite: the `MIGRATION` DDL, `index_tree`, `apply_changes`, and every read query. The file with the durability contract. Its tests live in [`src/store/`](src/store). |
+| [`src/reconcile.rs`](src/reconcile.rs) | What changed since the index last saw the repository, asked of `git` on every mount rather than pushed by a hook — a trigger that can be missing is one whose absence is invisible. |
+| [`src/lease.rs`](src/lease.rs) | Single-flight leases over the expensive passes (#3650), so two processes in one workspace do not each walk and hash the whole tree for one result. |
+| [`src/vectors.rs`](src/vectors.rs) / [`src/vectors/chunks.rs`](src/vectors/chunks.rs) | The semantic index: the render that turns a file into embeddable text, the storage that keeps its vector beside the node it describes, and the ranking pass — per file, and per symbol where a file-level vector ties. |
 | [`src/walk.rs`](src/walk.rs) | The directory walk and `DENY_DIRS` — the cheap structural half of generated-file exclusion. |
+| [`src/workspace_ignore.rs`](src/workspace_ignore.rs) | The other half: what the workspace's own ignore rules exclude, resolved by asking `git` rather than by a second ignore engine. |
 | [`src/generated.rs`](src/generated.rs) | The per-file half: `.gitattributes linguist-generated`, `*.min.*`, and the minified-content heuristic (issue #272). |
 | [`src/watch.rs`](src/watch.rs) | The live re-index pipeline: `notify` event source → debounce → one transactional apply, plus the `WatchInjector` test seam. |
 | [`src/frames.rs`](src/frames.rs) | Query → `ContextFrame` assembly: citation labels, provenance, score bands, budget packing. |
@@ -139,13 +150,18 @@ extract per-language decoding into a submodule rather than grow the file.
 
 ## Key concepts
 
-**Languages are wired in at compile time, natively.** Ten `Language` variants
-— Rust, Python, JavaScript, TypeScript, Tsx, Sql, Go, Java, C, Php — over nine
-grammar crates (`tree-sitter-typescript` supplies both `LANGUAGE_TYPESCRIPT`
-and `LANGUAGE_TSX`, which is why `Tsx` is a separate variant even though it
-shares TypeScript's query strings). Extensions map in
+**Languages are wired in at compile time, natively.** Eleven `Language`
+variants — Rust, Python, JavaScript, TypeScript, Tsx, Sql, Go, Java, C, Php,
+Markdown — over nine grammar crates (`tree-sitter-typescript` supplies both
+`LANGUAGE_TYPESCRIPT` and `LANGUAGE_TSX`, which is why `Tsx` is a separate
+variant even though it shares TypeScript's query strings). Ten of the eleven
+are grammars; Markdown is the exception — it has no tree-sitter grammar here
+and is line-scanned in [`src/markdown.rs`](src/markdown.rs), which still
+yields section symbols and link import edges. Extensions map in
 [`Language::from_path`](src/lang.rs): `rs`; `py`/`pyi`; `js`/`jsx`/`mjs`/`cjs`;
-`ts`/`mts`/`cts`; `tsx`; `go`; `java`; `c`/`h`; `php`; `sql`. Grammars are
+`ts`/`mts`/`cts`; `tsx`; `go`; `java`; `c`/`h` and the C++ spellings
+(`cpp`/`cc`/`cxx`/`c++`/`hpp`/`hh`/`hxx`, read by the C grammar until a
+dedicated one lands — #3184); `php`; `sql`; `md`/`markdown`. Grammars are
 linked in from their own crates, not loaded as WASM, and the queries are
 module `const`s rather than `.scm` assets — L-L2: built-in assets that resolve
 relative to the binary's install path broke the moment the artifact was
@@ -194,14 +210,20 @@ respects `max_tokens`/`max_frames` (L-C5).
 
 - **The repository's own ignore rules are honored, and so is a deny-list —
   they are two filters, not one.** `workspace_ignore.rs` asks `git` what this
-  workspace ignores (one `git ls-files` per walk, only when the workspace is
-  itself the repository root), so per-directory ignore files, negations,
-  globs, `.git/info/exclude`, and the global excludesfile all behave exactly
-  as they do at the command line (#2360). `walk.rs`'s deny-list (hidden dirs,
-  `target`, `node_modules`, `dist`, `dist-standalone`, `build`, `out`,
-  `.next`, `vendor`, `__pycache__`, `venv`, …) survives *beside* that answer:
-  it is what still prunes a vendored bundle in a workspace that is **not** a
-  repository, where no ignore file says anything at all. The live watcher
+  workspace ignores (one `git ls-files` per walk), so per-directory ignore
+  files, negations, globs, `.git/info/exclude`, and the global excludesfile
+  all behave exactly as they do at the command line (#2360). Only what the
+  workspace **itself** declares counts: its own repository, or — for a
+  directory that is no repository but carries a `.gitignore`, an extracted
+  tarball or a bench container's `/app` — its own ignore file alone, read
+  through a detached git dir that holds the workspace as its work tree
+  (#3204). An ancestor's rules are never inherited: a scratch directory
+  under a `$HOME` dotfiles repo ignoring `*` would otherwise go silently
+  blind. `walk.rs`'s deny-list (hidden dirs, `target`, `node_modules`,
+  `dist`, `dist-standalone`, `build`, `out`, `.next`, `vendor`,
+  `__pycache__`, `venv`, …) survives *beside* that answer: it is what still
+  prunes a vendored bundle in a workspace that declares nothing at all. The
+  live watcher
   resolves the rules once at construction, so a `.gitignore` edited
   mid-session is not seen until the next full index pass.
 - **`.gitattributes` is still root-level only.** Per-directory files are not

@@ -485,6 +485,33 @@ fn classify_http_status_402_out_of_credit_stays_terminal() {
     assert!(matches!(err, ProviderError::Terminal(_)), "{err:?}");
 }
 
+/// The third 402 shape, recorded verbatim off the wire (#4380): the balance
+/// is committed to the caller's own concurrent calls, and the provider states
+/// the recovery — wait. Retryable, so the ladder and the parked wait reach it;
+/// and the message must not repeat the out-of-credit claim, which was believed
+/// by the user whose next prompt was "ran out of money :(" while the same key
+/// went on funding calls.
+#[test]
+fn classify_http_status_402_naming_in_flight_requests_is_retryable() {
+    let body = r#"{"error":{"message":"This request would exceed your available credits given your current in-flight requests. Retry after in-flight requests settle, or add credits.","code":402}}"#;
+    let err = classify_http_status(
+        "OpenRouter",
+        reqwest::StatusCode::PAYMENT_REQUIRED,
+        None,
+        body,
+        "moonshotai/kimi-k3",
+    );
+    assert!(err.is_retryable(), "{err:?}");
+    let ProviderError::RateLimited { retry_after_ms, .. } = &err else {
+        panic!("expected RateLimited, got {err:?}");
+    };
+    // No Retry-After header on this refusal: the ladder's own backoff runs.
+    assert_eq!(*retry_after_ms, None);
+    let msg = err.to_string();
+    assert!(msg.contains("in-flight"), "{msg}");
+    assert!(!msg.contains("out of credits"), "{msg}");
+}
+
 /// The rejection is recognised by shape even when the provider states no
 /// figure — the engine then halves its own ask rather than treating a
 /// repairable refusal as the end of the turn.

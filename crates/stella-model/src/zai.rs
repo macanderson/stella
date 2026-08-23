@@ -185,6 +185,22 @@ impl ZaiProvider {
         self
     }
 
+    /// Shrink the unary read bound so the non-streaming path is testable in
+    /// milliseconds instead of ten minutes. Separate from
+    /// [`Self::with_first_byte_deadline`] because the two bounds guard
+    /// different halves of the fallback: that one the stream's first byte,
+    /// this one the whole unary generation — head and body alike, which is
+    /// what lets a test stall the response *body* and reach the
+    /// classification `complete_unary_attempt` applies to `text()`.
+    #[cfg(test)]
+    pub(crate) fn with_unary_read_timeout(mut self, timeout: Duration) -> Self {
+        self.unary_client = reqwest::Client::builder()
+            .read_timeout(timeout)
+            .build()
+            .expect("the test client builds");
+        self
+    }
+
     /// The session-stable sticky-routing id minted for this construction.
     /// Test-only: the fleet-distinctness witness inspects it on the builder
     /// (no live gateway), and the wire-gating tests assert it appears only on
