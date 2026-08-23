@@ -572,6 +572,10 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 file-size-test: ## Test the file-size ratchet's language coverage and its change-relative judgement (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
 
+.PHONY: action-pins-test
+action-pins-test: ## Test that the action-pins guard covers composite actions too (#4288; hermetic; not part of `gate`)
+	./scripts/test-action-pins.sh
+
 .PHONY: guard-sigpipe-test
 guard-sigpipe-test: ## Test that the gate guards survive a reader that closes their pipe early (#1815; hermetic; not part of `gate`)
 	./scripts/test-guard-sigpipe.sh
