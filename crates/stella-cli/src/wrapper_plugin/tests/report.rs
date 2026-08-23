@@ -63,7 +63,7 @@ fn a_scoped_report_names_its_task_on_every_line() {
         Some("build-parser"),
         OutputFormat::Text,
         &report,
-        &wrapper.gate,
+        &wrapper.gates,
         &spends,
         &fanouts,
     );
@@ -92,7 +92,7 @@ fn a_scoped_report_names_its_task_on_every_line() {
         None,
         OutputFormat::Text,
         &report,
-        &wrapper.gate,
+        &wrapper.gates,
         &spends,
         &fanouts,
     );
@@ -126,7 +126,7 @@ fn the_candidate_sweep_renders_through_the_shared_wrapper_line() {
         None,
         OutputFormat::Text,
         &faulted_report(),
-        &wrapper.gate,
+        &wrapper.gates,
         &[],
         &[],
     );

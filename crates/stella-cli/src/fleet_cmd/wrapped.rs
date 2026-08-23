@@ -301,10 +301,15 @@ pub(super) fn bind_for_attempt(
     // `recall` reaches the workspace's own context plane — the coordination
     // root, like the claim store beside it — rather than an isolated
     // worktree's (which has none, and would answer every recall with nothing).
-    let host = crate::wrapper_plugin::WrapperHost::recalling(Box::new(
-        crate::wrapper_recall::SessionRecallHost::open(invocation_root),
-    ));
-    let bound = resolved.serving(host)?;
+    // One `recall` plane per member of the selection — the plane carries no
+    // manifest-derived narrowing, so they are equivalent; the signature is
+    // what keeps the planes that *are* narrowed from being shared
+    // (`ResolvedWrapper::serving`).
+    let bound = resolved.serving(|_| {
+        crate::wrapper_plugin::WrapperHost::recalling(Box::new(
+            crate::wrapper_recall::SessionRecallHost::open(invocation_root),
+        ))
+    })?;
     Ok(AttemptWrapper {
         bound,
         candidate,

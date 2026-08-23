@@ -156,14 +156,17 @@ pub(crate) async fn run_raw_one_shot(
     // plugin's `child_turn` needs this session's dispatcher, which needs the
     // provider built two lines up (#3576).
     let bound = match resolved {
-        Some(resolved) => {
-            let host = crate::wrapper_plugin::session_host(cfg, resolved.manifest(), sub_agents);
-            Some(
-                resolved
-                    .serving(host)
-                    .map_err(crate::failure::CliFailure::from)?,
-            )
-        }
+        Some(resolved) => Some(
+            resolved
+                // One host per member, built from that member's own manifest:
+                // the child-turn plane reads `[roles]` and `[loop] max_calls`,
+                // so a shared one would let a second plugin name the first's
+                // role intents (`ResolvedWrapper::serving`).
+                .serving(|manifest| {
+                    crate::wrapper_plugin::session_host(cfg, manifest, Arc::clone(&sub_agents))
+                })
+                .map_err(crate::failure::CliFailure::from)?,
+        ),
         None => None,
     };
     // The one derivation of "a human is here to answer" — the #2676 approval
@@ -506,16 +509,19 @@ pub async fn run_goal_cmd(
     // `crate::wrapper_plugin`'s module doc for why a fixed slot is unsafe
     // across a goal loop's own even/odd round math.
     let bound = match resolved {
-        Some(resolved) => {
-            let host = crate::wrapper_plugin::WrapperHost::recalling(Box::new(
-                crate::wrapper_recall::SessionRecallHost::open(&cfg.workspace_root),
-            ));
-            Some(
-                resolved
-                    .serving(host)
-                    .map_err(crate::failure::CliFailure::from)?,
-            )
-        }
+        Some(resolved) => Some(
+            resolved
+                // `recall` carries no manifest-derived narrowing, so every
+                // member gets an equivalent plane — one each, because the
+                // signature will not let a caller share the ones that must not
+                // be shared.
+                .serving(|_| {
+                    crate::wrapper_plugin::WrapperHost::recalling(Box::new(
+                        crate::wrapper_recall::SessionRecallHost::open(&cfg.workspace_root),
+                    ))
+                })
+                .map_err(crate::failure::CliFailure::from)?,
+        ),
         None => None,
     };
     // Goal mode always renders human-readable output, so its half of the

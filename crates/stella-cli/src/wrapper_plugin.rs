@@ -141,7 +141,8 @@ use stella_protocol::{AgentEvent, CompletionMessage};
 use stella_runtime::wrapper::{
     CandidateFanoutSpend, CandidateFanouts, ChildTurnSpend, ChildTurns, DEFAULT_HOST_MAX_CALLS,
     DEFAULT_HOST_MAX_CHILD_TURNS, DEFAULT_HOST_MAX_HOLDS, DispatchReport, DrivenTurn, HostCallGate,
-    HostPlanes, RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, WrapperDispatch,
+    HostPlanes, RoundInput, SubprocessWrapper, TurnDriver, TurnPrelude, TurnWrapper,
+    WrapperDispatch,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
@@ -319,9 +320,14 @@ pub(crate) fn no_pipeline_notice_for(
 /// `WrapperDispatch::run` call always returns after exactly one internal
 /// turn and the goal loop's own round math is untouched.
 pub(crate) fn reject_arbiter_wrapper_on_goal(resolved: &ResolvedWrapper) -> Result<(), String> {
-    if resolved.manifest().loop_grant.participation != stella_plugin::Participation::Arbiter {
+    // Any member being arbiter-grade is enough: a composition holds at most
+    // one arbiter (`super::compose` refuses two), and one is what brings the
+    // second hold loop this door cannot have.
+    let Some(arbiter) = resolved.manifests().find(|manifest| {
+        manifest.loop_grant.participation == stella_plugin::Participation::Arbiter
+    }) else {
         return Ok(());
-    }
+    };
     Err(format!(
         "--pipeline {variant} (\"{name}\") is arbiter-grade and cannot run on `stella goal` \
          (#3832): the goal loop is this door's own completion arbiter — Engine::assess decides \
@@ -330,7 +336,7 @@ pub(crate) fn reject_arbiter_wrapper_on_goal(resolved: &ResolvedWrapper) -> Resu
          its designed home instead: `stella run --pipeline {variant}`. Steering and observer \
          wrappers are unaffected and still run per round on `stella goal`.",
         variant = resolved.variant(),
-        name = resolved.manifest().name,
+        name = arbiter.name,
     ))
 }
 
@@ -401,19 +407,23 @@ pub(crate) fn reject_verification_flags_without_pipeline(
 pub(crate) struct BoundWrapper {
     /// The sequence that drives the plugin's points.
     pub(crate) dispatch: WrapperDispatch,
-    /// The host-call gate this plugin's conversations run through, kept so
+    /// One host-call gate per member, in selection order, kept so
     /// [`HostCallGate::refusals`] reaches a surface after the run.
-    gate: Arc<HostCallGate>,
-    /// The child-turn plane this host installed, kept for the same reason as
-    /// the gate beside it: the plane is the only thing that knows what a
+    ///
+    /// Per member rather than shared, because a gate carries one plugin's
+    /// `[loop]` grant — see [`ResolvedWrapper::serving`].
+    gates: Vec<Arc<HostCallGate>>,
+    /// The child-turn planes this host installed, kept for the same reason as
+    /// the gates beside them: a plane is the only thing that knows what a
     /// plugin spent, and a driver that installed one and could not report on
-    /// it would be silent about money (#3576).
-    child_turns: Option<Arc<SessionChildTurns>>,
-    /// The candidate fan-out plane, kept for the child plane's reason and one
-    /// more of its own: it is the only thing that knows which isolated
+    /// it would be silent about money (#3576). One per member that was given
+    /// one; empty on a door that installs none.
+    child_turns: Vec<Arc<SessionChildTurns>>,
+    /// The candidate fan-out planes, kept for the child planes' reason and one
+    /// more of their own: a plane is the only thing that knows which isolated
     /// workspaces are still on disk, so a driver that dropped it would leak
     /// every unadopted candidate of the run (#3892).
-    candidate_fanout: Option<Arc<SessionCandidateFanouts>>,
+    candidate_fanout: Vec<Arc<SessionCandidateFanouts>>,
 }
 
 impl BoundWrapper {
@@ -432,8 +442,9 @@ impl BoundWrapper {
     /// `Unavailable` the second case answers with.
     pub(crate) fn child_spends(&self) -> Vec<ChildTurnSpend> {
         self.child_turns
-            .as_ref()
-            .map_or_else(Vec::new, |plane| plane.spends())
+            .iter()
+            .flat_map(|plane| plane.spends())
+            .collect()
     }
 
     /// Every candidate fan-out this host performed, in order.
@@ -444,8 +455,9 @@ impl BoundWrapper {
     /// visible about the cheap spend and quiet about the expensive one.
     pub(crate) fn fanout_spends(&self) -> Vec<CandidateFanoutSpend> {
         self.candidate_fanout
-            .as_ref()
-            .map_or_else(Vec::new, |plane| plane.spends())
+            .iter()
+            .flat_map(|plane| plane.spends())
+            .collect()
     }
 
     /// Discard every candidate workspace this run still holds, and return what
@@ -457,15 +469,27 @@ impl BoundWrapper {
     /// [`CandidateFanouts::discard_all`], whose contract this is the caller
     /// half of.
     pub(crate) async fn sweep_candidates(&self) -> Vec<String> {
-        match &self.candidate_fanout {
-            Some(plane) => plane
-                .discard_all()
-                .await
-                .iter()
-                .map(ToString::to_string)
-                .collect(),
-            None => Vec::new(),
+        let mut failures = Vec::new();
+        for plane in &self.candidate_fanout {
+            failures.extend(plane.discard_all().await.iter().map(ToString::to_string));
         }
+        failures
+    }
+
+    /// The one member's gate, for a test that bound exactly one plugin.
+    ///
+    /// `#[cfg(test)]` rather than an accessor the crate ships: production
+    /// reads every gate ([`Self::report`]), and a "the first one" accessor on
+    /// the shipping surface is how a composition would come to be reported
+    /// through one member's refusals.
+    #[cfg(test)]
+    fn gate(&self) -> &Arc<HostCallGate> {
+        assert_eq!(
+            self.gates.len(),
+            1,
+            "this helper is for a one-member selection; a composition has a gate per member"
+        );
+        &self.gates[0]
     }
 
     /// Print what one round's dispatch concluded, exactly as [`run_wrapped`]
@@ -489,7 +513,7 @@ impl BoundWrapper {
             scope,
             format,
             report,
-            &self.gate,
+            &self.gates,
             &self.child_spends(),
             &self.fanout_spends(),
         );
@@ -710,25 +734,40 @@ pub(crate) fn session_host(
 /// The half of binding that needs no provider, no registry and no dispatcher,
 /// so it can run first — see [`WrapperHost`] for why the split exists.
 pub(crate) struct ResolvedWrapper {
+    /// The members of the selection, in the order the user named them. Never
+    /// empty — [`bind_installed`] refuses a selection that resolves to
+    /// nothing rather than building one.
+    members: Vec<ResolvedMember>,
+    variant: String,
+}
+
+/// One plugin of a selection: the manifest a human consented to, and the
+/// process that answers for it.
+struct ResolvedMember {
     manifest: stella_plugin::PluginManifest,
     wrapper: SubprocessWrapper,
-    variant: String,
 }
 
 impl std::fmt::Debug for ResolvedWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResolvedWrapper")
-            .field("plugin", &self.manifest.name)
+            .field(
+                "plugins",
+                &self
+                    .members
+                    .iter()
+                    .map(|member| member.manifest.name.as_str())
+                    .collect::<Vec<_>>(),
+            )
             .field("variant", &self.variant)
             .finish_non_exhaustive()
     }
 }
 
 impl ResolvedWrapper {
-    /// The manifest a human consented to at install — read by a caller
-    /// assembling this host's planes for it.
-    pub(crate) fn manifest(&self) -> &stella_plugin::PluginManifest {
-        &self.manifest
+    /// The manifests a human consented to at install, in selection order.
+    pub(crate) fn manifests(&self) -> impl Iterator<Item = &stella_plugin::PluginManifest> {
+        self.members.iter().map(|member| &member.manifest)
     }
 
     /// The `--pipeline` value that resolved this wrapper — the same string
@@ -741,40 +780,73 @@ impl ResolvedWrapper {
         &self.variant
     }
 
-    /// Bind the plugin's process to what this host will do for it.
+    /// Bind every member's process to what this host will do for it.
+    ///
+    /// # A host plane per member, and why cloning one will not do
+    ///
+    /// `host_for` is asked **once per member**, with that member's own
+    /// manifest, rather than taking one assembled [`WrapperHost`] and sharing
+    /// it. That is a privilege boundary, not a construction detail:
+    /// [`child_turn_plane`] reads the manifest's `[roles]` and `[loop]
+    /// max_calls`, so a plane built from member A's manifest and handed to
+    /// member B would let B name A's role intents and spend against A's
+    /// allowance. The gate is per member for the same reason — the `[loop]`
+    /// grant is the authoritative filter and it belongs to one plugin.
+    ///
+    /// `recall` is a host capability with no manifest-derived narrowing, so a
+    /// caller may hand every member an equivalent one; the child-turn and
+    /// candidate-fanout planes may not be shared, and this signature is what
+    /// stops a caller doing it by accident.
     ///
     /// # Errors
     ///
-    /// A wrapper whose declared stage order cannot be resolved — which a
-    /// validated manifest cannot hit, since the variant was found by its
-    /// `[wrapper] id`.
-    pub(crate) fn serving(self, host: WrapperHost) -> Result<BoundWrapper, String> {
-        let mut planes = HostPlanes::recalling(crate::wrapper_recall::BoxedRecall(host.recall));
-        if let Some(plane) = &host.child_turns {
-            planes = planes.with_child_turns(Arc::clone(plane));
-        }
-        if let Some(plane) = &host.candidate_fanout {
-            planes = planes.with_candidate_fanout(Arc::clone(plane));
-        }
-        // The manifest's own `[loop]` grant is the authoritative filter — an
-        // undeclared capability is refused before this host performs anything —
-        // and `DEFAULT_HOST_MAX_CALLS` clamps whatever allowance it asked for.
-        let gate = Arc::new(HostCallGate::declare(
-            self.manifest.loop_grant.clone(),
-            DEFAULT_HOST_MAX_CALLS,
-            Box::new(planes),
-        ));
+    /// A selection whose members' declared stage orders cannot be reconciled
+    /// — a contradictory order, or two arbiters (`super::compose`). A single
+    /// validated manifest cannot hit either, since the variant was found by
+    /// its `[wrapper] id`.
+    pub(crate) fn serving(
+        self,
+        host_for: impl Fn(&stella_plugin::PluginManifest) -> WrapperHost,
+    ) -> Result<BoundWrapper, String> {
         let variant = self.variant;
-        let dispatch = WrapperDispatch::bind(
-            self.manifest,
-            Arc::new(self.wrapper.serving(Arc::clone(&gate))),
-        )
-        .map_err(|error| format!("wrapper \"{variant}\" cannot be driven: {error}"))?;
+        let mut members: Vec<(stella_plugin::PluginManifest, Arc<dyn TurnWrapper>)> =
+            Vec::with_capacity(self.members.len());
+        let mut gates = Vec::with_capacity(self.members.len());
+        let mut child_turns = Vec::new();
+        let mut candidate_fanout = Vec::new();
+        for member in self.members {
+            let host = host_for(&member.manifest);
+            let mut planes = HostPlanes::recalling(crate::wrapper_recall::BoxedRecall(host.recall));
+            if let Some(plane) = &host.child_turns {
+                planes = planes.with_child_turns(Arc::clone(plane));
+            }
+            if let Some(plane) = &host.candidate_fanout {
+                planes = planes.with_candidate_fanout(Arc::clone(plane));
+            }
+            // The manifest's own `[loop]` grant is the authoritative filter —
+            // an undeclared capability is refused before this host performs
+            // anything — and `DEFAULT_HOST_MAX_CALLS` clamps whatever
+            // allowance it asked for.
+            let gate = Arc::new(HostCallGate::declare(
+                member.manifest.loop_grant.clone(),
+                DEFAULT_HOST_MAX_CALLS,
+                Box::new(planes),
+            ));
+            members.push((
+                member.manifest,
+                Arc::new(member.wrapper.serving(Arc::clone(&gate))) as Arc<dyn TurnWrapper>,
+            ));
+            gates.push(gate);
+            child_turns.extend(host.child_turns);
+            candidate_fanout.extend(host.candidate_fanout);
+        }
+        let dispatch = WrapperDispatch::bind_composed(members)
+            .map_err(|error| format!("wrapper \"{variant}\" cannot be driven: {error}"))?;
         Ok(BoundWrapper {
             dispatch,
-            gate,
-            child_turns: host.child_turns,
-            candidate_fanout: host.candidate_fanout,
+            gates,
+            child_turns,
+            candidate_fanout,
         })
     }
 }
@@ -865,11 +937,57 @@ fn warn_narrowed_ceilings(manifest: &stella_plugin::PluginManifest, warn: &mut d
     }
 }
 
+/// Resolve a whole `--pipeline` selection: one id, or several separated by
+/// commas, in the order the user meant them to run.
+///
+/// The order is the selection's, because nothing else in the system knows it
+/// (#3801, #4094). `--pipeline research-v1,plan-v1` states that grounding
+/// comes before planning; no manifest vocabulary says so, and none is added
+/// here.
+///
+/// # Errors
+///
+/// The first id that names nothing installed, phrased as
+/// [`resolve_member`] phrases it. A **repeated** id is refused too: it is a
+/// typo, not a request to run a plugin twice — a second copy would compose
+/// against itself, spend a second gate's allowance and print every refusal
+/// twice.
 pub(crate) fn bind_installed(
     roster: &PluginRoster,
     variant: &str,
     warn: &mut dyn FnMut(String),
 ) -> Result<ResolvedWrapper, String> {
+    let mut members = Vec::new();
+    let mut named: Vec<&str> = Vec::new();
+    for id in variant.split(',').map(str::trim) {
+        if id.is_empty() {
+            return Err(format!(
+                "`--pipeline {variant}` has an empty entry — a selection is one wrapper id, \
+                 or several separated by commas in the order they should run"
+            ));
+        }
+        if named.contains(&id) {
+            return Err(format!(
+                "`--pipeline {variant}` names \"{id}\" more than once — a selection runs each \
+                 plugin once, in the order given"
+            ));
+        }
+        named.push(id);
+        members.push(resolve_member(roster, id, warn)?);
+    }
+    Ok(ResolvedWrapper {
+        members,
+        variant: variant.to_string(),
+    })
+}
+
+/// Find the one installed plugin declaring `variant`, and declare its
+/// transport.
+fn resolve_member(
+    roster: &PluginRoster,
+    variant: &str,
+    warn: &mut dyn FnMut(String),
+) -> Result<ResolvedMember, String> {
     let installed = roster
         .plugins()
         .iter()
@@ -936,10 +1054,9 @@ pub(crate) fn bind_installed(
              receives a model credential; declare a [roles] tier instead"
         ));
     }
-    Ok(ResolvedWrapper {
+    Ok(ResolvedMember {
         manifest: installed.manifest.clone(),
         wrapper: admitted.wrapper,
-        variant: variant.to_string(),
     })
 }
 
@@ -1184,7 +1301,7 @@ pub(crate) async fn run_wrapped(
                 None,
                 format,
                 &report,
-                &bound.gate,
+                &bound.gates,
                 &bound.child_spends(),
                 &bound.fanout_spends(),
             );
@@ -1252,11 +1369,11 @@ fn report_to(
     scope: Option<&str>,
     format: OutputFormat,
     report: &DispatchReport,
-    gate: &HostCallGate,
+    gates: &[Arc<HostCallGate>],
     spends: &[ChildTurnSpend],
     fanouts: &[CandidateFanoutSpend],
 ) {
-    for line in report_lines(scope, format, report, gate, spends, fanouts) {
+    for line in report_lines(scope, format, report, gates, spends, fanouts) {
         eprintln!("{line}");
     }
 }
@@ -1273,7 +1390,7 @@ fn report_lines(
     scope: Option<&str>,
     format: OutputFormat,
     report: &DispatchReport,
-    gate: &HostCallGate,
+    gates: &[Arc<HostCallGate>],
     spends: &[ChildTurnSpend],
     fanouts: &[CandidateFanoutSpend],
 ) -> Vec<String> {
@@ -1281,7 +1398,10 @@ fn report_lines(
     for fault in &report.faults {
         lines.push(wrapper_line(scope, fault));
     }
-    for refused in gate.refusals() {
+    // Every member's refusals, in selection order: a composition has one gate
+    // per plugin (`ResolvedWrapper::serving`), and reading only the first
+    // would be silent about exactly the plugin whose ask went unanswered.
+    for refused in gates.iter().flat_map(|gate| gate.refusals()) {
         lines.push(wrapper_line(scope, &refused));
     }
     for line in spend_lines(spends) {
