@@ -93,7 +93,7 @@ One vocabulary across every panel, including plugin-drawn UI:
 | `▸` | collapsed, expandable | matches event metal |
 | `●` | one thing happened — the default event head (`edit`, `run`, an expanded `read`) | matches event metal |
 | `↓` | compacted — history replaced by a summary | dim, no rail |
-| `＋` | write (new file) | green sign, gold rail |
+| `+` | write (new file) | green sign, gold rail |
 | `◆` | memory | silver |
 | `✦` | skill | silver |
 | `▤ ▢ ƒ` | graph node kinds: file, type, fn | silver |
@@ -127,7 +127,7 @@ other common monospace faces:
 - `◌` U+25CC and `◉` U+25C9 are **native to JetBrains Mono**. Both are East
   Asian Width `N` — unambiguously one cell, which is stricter than nine rows
   above them already are: `◐`, `○`, `◇`, `◆`, `▤`, `●`, `↓` and the full block
-  are all width `A`, and `＋` is fullwidth outright.
+  are all width `A`.
 - `⊙` U+2299 replaces the design's first choice, `⌗` U+2317 VIEWDATA SQUARE.
   U+2317 reads better for *external* and is width `N`, but it is absent from
   **every** monospace face checked — JetBrains Mono, DejaVu Sans Mono, Fira
@@ -147,7 +147,8 @@ so a colour-degraded terminal loses nothing.
 
 The four rows above were checked against JetBrains Mono's `cmap` before they
 were chosen. The seventeen that shipped before them were not, and doing it
-exhaustively found **eight** characters the brand font does not carry (#4318):
+exhaustively found **eight** characters the brand font does not carry (#4318),
+one of which (`＋` U+FF0B) has since been retired — see below:
 
 | Codepoint | Glyph | Where it is used | Resolves to (macOS) |
 |---|---|---|---|
@@ -156,14 +157,14 @@ exhaustively found **eight** characters the brand font does not carry (#4318):
 | U+25A4 | `▤` | graph node: file | Menlo |
 | U+25A2 | `▢` | graph node: type | Menlo |
 | U+21B3 | `↳` | tool class: delegate | Menlo |
-| U+FF0B | `＋` | write | **PingFang SC** |
 
 Menlo is monospace, so those substitutions keep the cell grid on macOS and cost
 a tofu box on a bare Linux terminal running DejaVu Sans Mono or Fira Code. That
 trade is **accepted and written down here** rather than left to be rediscovered;
 it is the same precedent §4.1 cites when it accepts `↳`.
 
-Two rows are not that trade:
+Two rows were not that trade, and neither ships as it did when this section was
+written:
 
 - **`⑂` U+2442 OCR FORK is gone.** It resolved to the *proportional* Apple
   Symbols — the bucket that got U+2317 rejected above — and §4's answer was a
@@ -172,11 +173,11 @@ Two rows are not that trade:
   and nothing in the implementation ever selected between the two. Drift is
   `⌥` U+2325 OPTION KEY now: native to JetBrains Mono, width `N`, and a line
   that leaves its course and rejoins it, which is what a plan revision is.
-- **`＋` U+FF0B resolves to a CJK face** whose metrics are unrelated to the cell
-  the layout budgets as fullwidth. Unresolved: moving it means moving the
-  character §4 names and the width contract that follows from it, which is a
-  design decision rather than a coverage fix. It is recorded in the table below
-  so it is visible while it stands.
+- **`＋` U+FF0B resolved to a CJK face** whose metrics were unrelated to the
+  cell the layout budgeted as fullwidth — a visible hazard, not a coverage
+  gap a monospace substitute could absorb. #4482 retired it for the native
+  `+` U+002B, one cell like everything else in this vocabulary; write is no
+  longer fullwidth and the width contract below no longer names an exception.
 
 The coverage table is committed at `crates/stella-tui-theme/src/glyph.rs` and
 walked by `every_glyph_declares_its_brand_font_coverage`, which reads no font —
@@ -226,7 +227,7 @@ Rail metals: read silver-dim, edit gold, write gold, delete red, run gold, skill
 |---|---|---|---|
 | `read` | `▸ read <path> · ⚡ms · ↵ open` | none (collapsed by default) | expanding shows syntax-highlighted excerpt. **No size column**: the head's size is the emitter's measurement, resolved through the inline-diff reference only a *mutation* stamps, and a read emits no `FileChange` to stamp one from. An earlier draft of this row asked for `· <n> lines`; nothing could ever fill it, so the field was removed rather than defaulted (#4180). Restoring the column means giving `read_file` a wire-level producer — and settling which number a *truncated* read states — tracked in #4297 |
 | `edit` | `● edit <path> +a -b · ⚡ms` | syntax-highlighted diff (6.4) | expanded by default |
-| `write` | `＋ write <path> · new file · n lines` | first 5 highlighted lines, `⋯ n more · ↵ expand` | footer: `registered in graph as module node` |
+| `write` | `+ write <path> · new file · n lines` | first 5 highlighted lines, `⋯ n more · ↵ expand` | footer: `registered in graph as module node` |
 | `delete` | `✗ delete <path> · -n lines · git-backed · u undo` | one line: `graph check: 0 inbound refs · det` | graph check runs before the tool executes |
 | `run` | `● run <cmd>` | result line: pass green or fail red with counts | |
 | `skill` | `✦ skill <name> · auto\|/cmd · n tok` | `injected <summary> · used n× this repo` | |

@@ -71,7 +71,6 @@ bench/harbor_adapter/tests/test_code_graph_disclosure.py 1
 bench/harbor_adapter/tests/test_credential_leak_message.py 1
 bench/harbor_adapter/tests/test_lineage.py 1
 bench/harbor_adapter/tests/test_manifest_parity.py 1
-bench/harbor_adapter/tests/test_posture.py 3
 bench/harbor_adapter/tests/test_role_arms.py 2
 bench/harbor_adapter/tests/test_tool_set.py 1
 bench/loop-bench/README.md 3
@@ -98,7 +97,6 @@ crates/stella-cli/src/accounted_call.rs 1
 crates/stella-cli/src/agent/goal.rs 1
 crates/stella-cli/src/agent/goal/goal_wrapped.rs 1
 crates/stella-cli/src/agent/init.rs 2
-crates/stella-cli/src/agent/output.rs 1
 crates/stella-cli/src/agent/prompt.rs 4
 crates/stella-cli/src/agent/prompt/parity.rs 4
 crates/stella-cli/src/agent/prompt/tests.rs 2
@@ -112,7 +110,7 @@ crates/stella-cli/src/command_deck/add_dir.rs 1
 crates/stella-cli/src/command_deck/lead_control.rs 2
 crates/stella-cli/src/command_deck/mid_turn_ask.rs 2
 crates/stella-cli/src/command_deck/profile_cmd.rs 1
-crates/stella-cli/src/command_deck/session_clear.rs 3
+crates/stella-cli/src/command_deck/session_clear.rs 2
 crates/stella-cli/src/config_wiring.rs 1
 crates/stella-cli/src/context_cmd/validate.rs 3
 crates/stella-cli/src/context_records.rs 1
@@ -131,7 +129,6 @@ crates/stella-cli/src/mcp_cmd.rs 1
 crates/stella-cli/src/memory.rs 1
 crates/stella-cli/src/memory/evidence.rs 1
 crates/stella-cli/src/memory/learning.rs 1
-crates/stella-cli/src/memory/observations.rs 1
 crates/stella-cli/src/memory/recall.rs 1
 crates/stella-cli/src/memory/reflection.rs 1
 crates/stella-cli/src/memory/reflection/digest.rs 2
@@ -159,7 +156,6 @@ crates/stella-cli/src/reward.rs 1
 crates/stella-cli/src/self_driving_cmd/backlog.rs 2
 crates/stella-cli/src/self_driving_cmd/config.rs 1
 crates/stella-cli/src/self_driving_cmd/deliver.rs 1
-crates/stella-cli/src/self_driving_cmd/drive.rs 1
 crates/stella-cli/src/self_driving_cmd/work.rs 2
 crates/stella-cli/src/session_persist.rs 1
 crates/stella-cli/src/settings/authority.rs 2
@@ -192,7 +188,7 @@ crates/stella-core/src/context_record/context_use.rs 1
 crates/stella-core/src/context_record/kind.rs 1
 crates/stella-core/src/driver/capabilities.rs 1
 crates/stella-core/src/driver/live_services.rs 1
-crates/stella-core/src/driver/loop_escalation.rs 3
+crates/stella-core/src/driver/loop_escalation.rs 2
 crates/stella-core/src/driver/loop_evidence.rs 2
 crates/stella-core/src/driver/restore.rs 1
 crates/stella-core/src/driver/tests.rs 1
@@ -204,12 +200,11 @@ crates/stella-core/src/ingest.rs 1
 crates/stella-core/src/ingest/lineage.rs 1
 crates/stella-core/src/loop_detect.rs 1
 crates/stella-core/src/loop_detect/tests.rs 1
-crates/stella-core/src/mining.rs 2
+crates/stella-core/src/mining.rs 1
 crates/stella-core/src/receipts.rs 2
 crates/stella-core/src/records/render.rs 2
 crates/stella-core/src/repair.rs 1
 crates/stella-core/src/router.rs 2
-crates/stella-core/src/shell_text.rs 1
 crates/stella-core/src/skills/appraisal.rs 1
 crates/stella-core/src/skills/migration_contract.rs 3
 crates/stella-core/src/speculation.rs 1
@@ -242,7 +237,6 @@ crates/stella-home/src/lib.rs 2
 crates/stella-mcp/src/client/health.rs 1
 crates/stella-mcp/src/oauth.rs 2
 crates/stella-mcp/src/stdio.rs 2
-crates/stella-media/src/svg.rs 2
 crates/stella-model/src/anthropic/tests/context_editing.rs 1
 crates/stella-model/src/attachment.rs 1
 crates/stella-model/src/cache_economics.rs 3
@@ -270,12 +264,9 @@ crates/stella-protocol/src/candidate.rs 1
 crates/stella-protocol/src/context_event.rs 1
 crates/stella-protocol/src/contract.rs 2
 crates/stella-protocol/src/event.rs 1
-crates/stella-protocol/src/event/consumers/tests.rs 1
-crates/stella-protocol/src/event/tags.rs 1
 crates/stella-protocol/src/event/tests.rs 1
 crates/stella-protocol/src/event/tests/tag_table.rs 1
 crates/stella-protocol/src/issue.rs 4
-crates/stella-protocol/src/lane.rs 2
 crates/stella-protocol/src/proof.rs 1
 crates/stella-protocol/src/role.rs 1
 crates/stella-protocol/src/stage.rs 2
@@ -301,7 +292,7 @@ crates/stella-serve/src/pending.rs 1
 crates/stella-serve/src/remote.rs 1
 crates/stella-serve/src/remote/tests.rs 1
 crates/stella-serve/src/routes/sessions.rs 1
-crates/stella-serve/src/server.rs 2
+crates/stella-serve/src/server.rs 1
 crates/stella-serve/src/sessions.rs 1
 crates/stella-serve/src/subagents.rs 1
 crates/stella-serve/tests/http.rs 1
@@ -321,7 +312,6 @@ crates/stella-tools/src/batch.rs 2
 crates/stella-tools/src/catalog.rs 1
 crates/stella-tools/src/ctx.rs 1
 crates/stella-tools/src/custom.rs 1
-crates/stella-tools/src/foundry_author.rs 1
 crates/stella-tools/src/foundry_gate.rs 1
 crates/stella-tools/src/read.rs 2
 crates/stella-tools/src/read/tests.rs 1
@@ -341,14 +331,12 @@ crates/stella-transcript/src/syntax.rs 1
 crates/stella-tty/src/lib.rs 1
 crates/stella-tui-theme/src/clamp.rs 1
 crates/stella-tui-theme/src/fallback.rs 1
-crates/stella-tui-theme/src/glyph.rs 1
 crates/stella-tui-theme/src/token.rs 1
 crates/stella-tui-theme/src/wordmark.rs 1
 crates/stella-tui/examples/deck_film.rs 2
 crates/stella-tui/src/accessible.rs 3
 crates/stella-tui/src/accessible/announce.rs 1
 crates/stella-tui/src/deck.rs 1
-crates/stella-tui/src/deck_render/help.rs 1
 crates/stella-tui/src/deck_shell.rs 2
 crates/stella-tui/src/deck_ui.rs 1
 crates/stella-tui/src/deck_ui/create.rs 3
@@ -360,7 +348,6 @@ crates/stella-tui/src/model/recall.rs 1
 crates/stella-tui/src/model/turn.rs 2
 crates/stella-tui/src/notice.rs 1
 crates/stella-tui/src/palette.rs 1
-crates/stella-tui/src/progress.rs 1
 crates/stella-tui/src/render/entry.rs 2
 crates/stella-tui/src/render/entry/recall.rs 1
 crates/stella-tui/src/render/entry/tool.rs 1
@@ -377,7 +364,6 @@ crates/stella-tui/src/views/files.rs 2
 crates/stella-tui/src/views/models_card.rs 3
 crates/stella-tui/src/views/question.rs 1
 crates/stella-tui/src/views/settings.rs 1
-crates/stella-tui/src/views/subagents.rs 1
 crates/stella-tui/src/views/tools.rs 1
 crates/stella-tui/tests/deck_pty_smoke.rs 1
 crates/stella-tui/tests/deck_snapshot.rs 2
@@ -396,7 +382,6 @@ docs/design/agent-loop-skills-survey.md 1
 docs/design/build-plan.md 1
 docs/design/pipeline-journey.md 1
 docs/playbooks/pipeline-as-plugins-execution.md 1
-docs/prompts/README.md 1
 docs/prompts/domain-inference.md 1
 docs/prompts/reflection.md 2
 docs/spec/adaptive-context/adaptive-context-plan.md 2
@@ -405,15 +390,10 @@ docs/spec/adaptive-context/context-pr.md 2
 docs/spec/adaptive-context/context-record-examples/05-imported-proposals.toml 1
 docs/spec/adaptive-context/context-record-examples/07-agent-projection.md 1
 docs/spec/adaptive-context/context-record-examples/09-effect-witness.toml 1
-docs/spec/agent-native-delivery.md 8
 docs/spec/agent-native-delivery/provider.jira.toml 1
-docs/spec/backlog-self-driving.md 11
 docs/spec/config-system/DESIGN.md 3
-docs/spec/config-system/stella.next.toml 1
-docs/spec/diagnostics.md 5
 docs/spec/engine-embedding.md 1
 docs/spec/file-budget.md 2
-docs/spec/pipeline-as-plugins.md 9
 docs/spec/plugin-completion-plan.md 1
 docs/spec/plugin-marketplace.md 3
 docs/spec/plugin-transport-spike.md 4
@@ -428,9 +408,7 @@ docs/spec/session-telemetry-receipts-spec.md 2
 docs/spec/threat-model.md 1
 docs/spec/trace-replay-learning-harness.md 2
 docs/spec/turn-lane-assembly.md 4
-docs/spec/turn-loop-wrappers.md 6
 docs/spec/witness-protocol.md 2
-docs/spec/wrapper-socket.md 6
 plugins/stella-candidates/main.py 1
 plugins/stella-goal/main.py 1
 plugins/stella-plan/main.py 1
@@ -443,7 +421,6 @@ scripts/arena-run.sh 1
 scripts/arena_local.py 1
 scripts/bench-suites.sh 1
 scripts/build-tool-doc-examples.py 1
-scripts/check-contrast.py 1
 scripts/check-deleted-tests.sh 1
 scripts/check-god-files.sh 1
 scripts/check-left-behind.sh 1
@@ -474,7 +451,6 @@ website/content/docs/commands/search.mdx 1
 website/content/docs/commands/self-driving.mdx 1
 website/content/docs/configuration/agent-engine-config.mdx 1
 website/content/docs/configuration/settings.mdx 1
-website/content/docs/configuration/stella-toml.mdx 1
 website/content/docs/diagnostics.mdx 1
 website/content/docs/examples.mdx 1
 website/content/docs/guides/ci-engine-gate.mdx 2

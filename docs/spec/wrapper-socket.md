@@ -80,7 +80,7 @@ serialized request/response is not a point.** If that is discovered while the
 trait is still editable, the trait changes. If it is discovered after, the wire
 contract inherits a defect it did not choose.
 
-Two consequences worth writing down because they are easy to erode:
+Easy to erode, so written down here:
 
 1. **The Rust reference plugin uses the wire path in CI.** It may
    *additionally* have an in-process fast path. If only Rust can reach a
@@ -152,7 +152,7 @@ for later stages to read.
 **May not:** run the loop itself, or reach for ambient authority. Every
 capability arrives in the request.
 
-**The invariant-7 constraint, and it is load-bearing.** Contributed context
+**The invariant-7 constraint, and it is required.** Contributed context
 rides as a *volatile* message **after** the byte-stable system-prompt prefix,
 never inside it. Prompt-cache hits are a feature, and a wrapper that could
 inject into the stable prefix would make every installed plugin a cost
@@ -333,7 +333,7 @@ host  → { "result": 1, "ok": { "frames": [ … ] } }
 plugin→ { "point": "before_turn", "body": { "context": [ … ] } }     ← ends it
 ```
 
-### What this does not change, and the reasons are the load-bearing part
+### What this does not change, and why that part is required
 
 - **No ambient authority.** The plugin does not retrieve; it *asks*, and the
   host performs the retrieval, applies the gate, and returns only what the
@@ -386,7 +386,7 @@ manifest declared; the host resolves it to a `ModelCallRole` seat, and **refuses
 outright any intent that resolves to the worker's seat** — a plugin may not
 spend the model whose work it is judging, which is the independence
 `Roster::independence_losses` merely *reports* for an operator's own
-configuration. Two things a caller must know rather than discover: the
+configuration. A caller must know rather than discover: the
 `verifier` tier binds to no seat by default (a host that wants it says so with
 `ChildTurns::with_seat`, because attributing a plugin's call to `verdict` would
 put a call on the receipt the pipeline did not make — #2584), and `run_test` is
@@ -420,7 +420,7 @@ strongest plugin this socket permitted was *bounded retry with correction over
 the shared tree* — each attempt mutating the one real work tree in place, no
 isolation, no rollback of a loser. Real, and not best-of-N (#3844).
 
-Five things a caller must know rather than discover:
+A caller needs to know, not discover, the following:
 
 - **The seat rule is `child_turn`'s, inverted, and it is not a relaxation.** A
   child turn may not resolve to the worker's seat, because a plugin must not
@@ -453,7 +453,7 @@ declines it.** The substrate is
 `crates/stella-cli/src/candidate_workspaces.rs` — one `git worktree` per
 candidate under `.stella/private/candidates/`, one writing worker turn inside
 each, and an adoption that is `git diff` in the candidate and `git apply` on
-the real tree (#3892). Three consequences a plugin author should know:
+the real tree (#3892). A plugin author should know:
 
 - **Adoption applies a patch; it does not commit, merge or rebase.** An
   adopted candidate leaves the same thing the user's own turn leaves —

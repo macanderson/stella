@@ -152,6 +152,42 @@ fn command_flags() -> BTreeMap<String, BTreeSet<String>> {
         .collect()
 }
 
+/// The long names of `cmd`'s global, non-hidden arguments, in the order clap
+/// declared them — the same order `--help` renders them in.
+fn ordered_global_flags(cmd: &clap::Command) -> Vec<String> {
+    cmd.get_arguments()
+        .filter(|arg| arg.is_global_set())
+        .filter(|arg| !arg.is_hide_set())
+        .filter_map(clap::Arg::get_long)
+        .filter(|long| *long != "help" && *long != "version")
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The primary (first-named) `--long` flag of every `<OptionCard>` on `page`
+/// that documents a flag, in the order the cards appear on the page.
+///
+/// A card naming an alias beside its flag (`-v / --verbose`) counts by its
+/// first `--token`, matching what a reader scans top to bottom.
+fn ordered_carded_flags(page: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for card in page.split("<OptionCard").skip(1) {
+        let Some(rest) = card.split_once("name=\"") else {
+            continue;
+        };
+        let Some((name, _)) = rest.1.split_once('"') else {
+            continue;
+        };
+        if let Some(flag) = name
+            .split_whitespace()
+            .find_map(|token| token.strip_prefix("--"))
+        {
+            found.push(flag.trim_end_matches(',').to_owned());
+        }
+    }
+    found
+}
+
 fn page_source(slug: &str) -> Option<String> {
     std::fs::read_to_string(
         repo_root()
@@ -184,6 +220,39 @@ fn every_global_flag_has_a_card_on_the_index() {
          {COMMANDS_DOCS_DIR}/index.mdx: {missing:?}\n\
          add a card under `## Global flags`, or exempt it in {EXEMPT_FILE} as \
          `{GLOBAL}:<flag>  # reason`"
+    );
+}
+
+/// The global-flag cards on the commands index appear in the same order
+/// `stella --help` lists them in.
+///
+/// The index page claims this order explicitly ("The cards below are in
+/// `stella --help`'s own order") — a claim #4508 found false: the grid had
+/// drifted to `--no-anim, --plan-mode, --tools, -v, --log-level, --log-file`
+/// against `GlobalArgs`' declared `--no-anim, -v, --log-level, --plan-mode,
+/// --tools, --log-file`. Cheap to keep true once asserted, because
+/// `Cli::command()` is the same tree `--help` renders — see the module
+/// doc's "why the clap tree rather than the source".
+#[test]
+fn global_flag_cards_are_in_help_order() {
+    let exempt = exemptions();
+    let index = page_source("index").expect("the commands index must exist");
+
+    let expected: Vec<String> = ordered_global_flags(&Cli::command())
+        .into_iter()
+        .filter(|flag| !exempt.contains(&format!("{GLOBAL}:{flag}")))
+        .collect();
+    let global_set: BTreeSet<String> = expected.iter().cloned().collect();
+    let actual: Vec<String> = ordered_carded_flags(&index)
+        .into_iter()
+        .filter(|flag| global_set.contains(flag))
+        .collect();
+
+    assert_eq!(
+        expected, actual,
+        "the `## Global flags` cards in {COMMANDS_DOCS_DIR}/index.mdx are not \
+         in `stella --help`'s order (GlobalArgs' declaration order in \
+         crates/stella-cli/src/cli.rs) — reorder the cards to match"
     );
 }
 
