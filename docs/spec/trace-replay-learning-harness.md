@@ -512,9 +512,13 @@ harness earning its keep before it shipped.
   staying retrievable by id is what separates retirement from forgetting. A test
   asserting "the memory is gone" fails against a working sweep, and one
   asserting "the count went down" re-specifies retirement as deletion.
-- **`turns-to-first` is exact for memories and tools, approximate for skills,
-  absent for rules.** Filed as **#2359**: a placeholder must not render like a
-  measurement.
+- **`turns-to-first` is exact for all four classes** (#2359). It shipped exact
+  for memories and tools, approximate for skills — set to the total turn count
+  whenever any skill existed, so `skill 10` on a ten-turn corpus was a
+  placeholder printed in the same row as two measurements — and absent for
+  rules. Both are probed on disk per turn now, two directory reads against a
+  workspace of a handful of files. A class that never appeared renders as an em
+  dash, because "never" and "on the last turn" are different statements.
 
 ### 13.3 The adapter, as built
 

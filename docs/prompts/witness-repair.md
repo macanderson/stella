@@ -1,10 +1,20 @@
 ---
 id: prompt-witness-repair
 title: "witness_repair — the effective prompt"
-status: living
+status: archived
 ---
 
 # `witness_repair`
+
+**This page documents the pre-#3865 staged pipeline, kept for reference.**
+`stella-pipeline` was deleted in #3865, so
+`crates/stella-pipeline/src/pipeline/witness_stage.rs` and every symbol this
+page cites dispatch from no code in this tree. `plugins/stella-witness`, the
+open-source installed plugin, is the flip oracle only — it judges a witness,
+never authors or repairs one; witness authoring is what
+`doc:pipeline-as-plugins` §8 asks a verification plugin (Oxagen's Vera is the
+reference one) to port instead — see `docs/prompts/README.md § Half of this
+set is history`.
 
 Fixing a witness that did not fail on the current code. A test that passes
 before the work is done witnesses nothing — only a fail→pass flip counts as

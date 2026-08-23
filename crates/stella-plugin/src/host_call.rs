@@ -62,7 +62,9 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use stella_protocol::candidate::CandidateHandle;
 
-use crate::wire::{FromEnvelope, PendingBody, WrapperPoint, WrapperResponse, decode_body};
+use crate::wire::{
+    FromEnvelope, PendingBody, TestBaseline, WrapperPoint, WrapperResponse, decode_body,
+};
 
 /// The capabilities a plugin may ask the host for.
 ///
@@ -679,10 +681,56 @@ pub enum HostCallOk {
     Recall(RecallResult),
     /// `child_turn` — what the bounded turn the host ran reported back.
     ChildTurn(ChildTurnResult),
+    /// `run_test` — what the candidate's own invocation reported this time.
+    RunTest(TestRunResult),
     /// `candidate_fanout` — the candidates the host built, and what each did.
     CandidateFanout(CandidateFanoutResult),
     /// `adopt_candidate` — which candidate landed, and which were discarded.
     AdoptCandidate(AdoptCandidateResult),
+}
+
+/// What one `run_test` observed.
+///
+/// The plugin gets the answer and the output, and nothing about *how* the host
+/// ran it: no argv, no working directory, no exit code. The invocation is the
+/// one the grant already carried ([`CandidateGrant::test`](crate::CandidateGrant)),
+/// so a plugin that wanted to know what ran already knows.
+///
+/// Its required keys are `candidate`, `assertions` and `output`, and
+/// `candidate` alone is disjoint from every other variant's required set — the
+/// rule [`HostCallOk`] states for adding an untagged variant.
+/// [`AdoptCandidateResult`] is the near miss and is not one: it requires
+/// `adopted`, not `candidate`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestRunResult {
+    /// The workspace the host ran the invocation in, echoed back — the handle
+    /// the plugin asked with, never a path.
+    pub candidate: CandidateHandle,
+    /// What this run says about the invocation's **assertions**.
+    ///
+    /// [`TestBaseline`] rather than a fresh three-word
+    /// enum beside it, because it is the same question: "what did this test
+    /// invocation report", which the type already answers with #860's
+    /// four-way split — a run that timed out or could not find its toolchain
+    /// observed no assertion, and scoring its non-zero exit as red is the bug
+    /// that split exists to close. Two enums spelling `passed`/`failed`/
+    /// `unobserved` would be one vocabulary in two places, which is how the
+    /// last one drifted.
+    ///
+    /// `not-run` cannot appear here, and that is a refusal rather than a
+    /// silence: a candidate whose grant carried no test plan is answered
+    /// [`HostCallRefusal::Unavailable`] — there is nothing to re-run and
+    /// saying so sends the plugin somewhere useful, where a `not-run` result
+    /// would read as an observation.
+    pub assertions: TestBaseline,
+    /// What the invocation wrote, clamped by the host.
+    ///
+    /// One field rather than a stdout/stderr pair, because a plugin reading a
+    /// test runner's report reads what the runner printed and the split is the
+    /// host's own plumbing. Empty is an ordinary answer.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub output: String,
 }
 
 /// What one `child_turn` produced.

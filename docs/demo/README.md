@@ -115,15 +115,17 @@ something that reads as a corrupt terminal.
 
 Fonts fall back per glyph the way a terminal does: JetBrains Mono (the brand
 face, `docs/brand/fonts/`, OFL-1.1) → DejaVu Sans Mono → DejaVu Sans → Noto
-Sans Symbols 2 → Noto Sans Symbols → FreeMono (Arial Unicode on macOS). The
-deck's frames reach for 131 distinct characters and no single monospace face
-carries all of them; the v2 deck's `☰`, `⏸`, `⎿`, `⌕` and the fullwidth `＋`
-each needed a face the first cut's chain did not have. Each entry is looked
-for at its Debian path and its Homebrew path, so the pipeline runs on a Mac
-after `brew install --cask font-dejavu font-noto-sans-symbols
-font-noto-sans-symbols-2`. A glyph that survives the whole chain is a hard
-error naming the codepoint — a tofu box in a hero video is worse than a
-failed build.
+Sans Symbols 2 → Noto Sans Symbols. The deck's frames reach for well over a
+hundred distinct characters and no single monospace face carries all of them;
+the v2 deck's `☰`, `⏸`, `⎿` and `⌕` each needed a face the first cut's chain
+did not have. Each entry is looked for at its Debian path and its Homebrew
+path, so the pipeline runs on a Mac after `brew install --cask font-dejavu
+font-noto-sans-symbols font-noto-sans-symbols-2`. A glyph that survives the
+whole chain is a hard error naming the codepoint — a tofu box in a hero video
+is worse than a failed build. (A Halfwidth-and-Fullwidth-Forms tier — GNU
+FreeFont, Arial Unicode on macOS — sat at the end of the chain for the
+deck's `WRITE` glyph alone; #4482 retired that fullwidth character for the
+native `+`, which JetBrains Mono itself carries, and the tier went with it.)
 
 ## Publishing it
 

@@ -41,13 +41,13 @@ A Stella run ends like this more often than not:
 > …tests pass. Note that the retry path in `router.rs` still doesn't handle
 > the 429 case — that should probably be a follow-up. Work complete.
 
-Two things are true about that paragraph. First, it is the most valuable
-sentence in the entire transcript: it is a defect report authored by the one
-agent in the world that just read the code, with full context, at zero
-marginal cost. Second, it is written to the **least durable surface in the
-system**. The transcript is compacted, the session ends, the container is
-reclaimed, and the observation is gone. Nobody files it. The next run
-rediscovers it, states it in prose again, and declares done again.
+That paragraph is the most valuable sentence in the entire transcript: it is a
+defect report authored by the one agent in the world that just read the code,
+with full context, at zero marginal cost. It is also written to the **least
+durable surface in the system**. The transcript is compacted, the session
+ends, the container is reclaimed, and the observation is gone. Nobody files
+it. The next run rediscovers it, states it in prose again, and declares done
+again.
 
 Call this **residue**: a forward-looking claim that outlives the run it was
 made in, recorded somewhere that does not outlive the run.
@@ -56,8 +56,6 @@ The defect is not that agents fail to notice follow-up work. They notice it
 reliably — they *say so, out loud, immediately before claiming completion*.
 The defect is that Stella accepts a completion claim while residue is
 outstanding. Prose is an accepted discharge, and it should not be one.
-
-Three consequences compound:
 
 - **D1 — Loss.** Known work is discarded at a rate proportional to how good
   the agent is at noticing it.
@@ -70,8 +68,8 @@ Three consequences compound:
   — is undermined by a completion criterion that ignores the agent's own
   stated exceptions.
 
-D3 is the one that matters. Stella's differentiator is that `done` is a proof,
-not a claim. Residue is a hole in the proof.
+D3 is the deepest of the three. Stella's differentiator is that `done` is a
+proof, not a claim. Residue is a hole in the proof.
 
 ---
 
@@ -198,8 +196,8 @@ vocabulary — §4); estimates (measured, §2); severity (a defect is a defect;
 severity is a routing decision the policy makes from provider fields).
 
 Anything a customer needs that is not in this struct is reachable through the
-provider's field map as opaque data, and is never required for control
-flow. **If Stella branches on it, it belongs in this struct. If Stella only
+provider's field map as opaque data, and control flow never depends on it.
+**If Stella branches on it, it belongs in this struct. If Stella only
 passes it through, it does not.**
 
 ---
@@ -395,8 +393,8 @@ at `.stella/specs/<epic-key>/spec.md` and the plan at
 pointer — a custom field if `[fields.write].spec_ref` is configured, otherwise
 a pinned comment.
 
-Three reasons, and they are worth stating because the obvious alternative
-(tracker-canonical) is what most integrations do:
+The obvious alternative (tracker-canonical) is what most integrations do, and
+it loses on each of these:
 
 1. **Versioning.** A spec must be diffable against the code that implements
    it, by the same commit. A Jira description has one revision: current.
@@ -669,7 +667,7 @@ makes the process something the agent cannot finish without.**
 ## 10. New failure modes, and what mitigates them
 
 Any design that makes agents file issues will make agents file too many
-issues. These are required, not caveats.
+issues. What follows is required reading, not a set of caveats.
 
 ### 10.1 Backlog inflation
 

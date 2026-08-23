@@ -122,7 +122,11 @@ impl SessionMemory {
     ) -> Option<String> {
         let (registry, rendered) = self.turn_record_rendered(prompt)?;
         for drop in stella_core::steering::adapt::record_drops(registry, &rendered) {
-            report(record_drop_message(&drop.handle));
+            // A record channel drop is never also selected — the channel's
+            // own budget cut it before the plane saw it.
+            if let Some(message) = drop_message(&drop, false) {
+                report(message);
+            }
         }
         record_section_text(rendered)
     }
@@ -216,7 +220,7 @@ impl SessionMemory {
             &selected,
             record.as_ref(),
         );
-        report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
+        report_steering_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
 
         let frames = kept_frames(&recall.frames, &set);
         let kept = kept_skills(&selected.selected, &set);
@@ -334,7 +338,7 @@ impl SessionMemory {
             &selected,
             record.as_ref(),
         );
-        report_record_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
+        report_steering_drops(&set, |message| eprintln!("  {} {message}", "!".yellow()));
 
         // The per-frame cut this block exists to make. It runs AFTER the plane
         // has packed, not before the query: the drop is about what the model
@@ -914,24 +918,82 @@ fn record_section_text(rendered: RenderedChannel) -> Option<String> {
     (!text.trim().is_empty()).then(|| text.trim_start().to_string())
 }
 
-/// The eviction report for one budget-dropped record — the single producer
-/// both the plane path and the test-side section entry emit through.
-fn record_drop_message(handle: &str) -> String {
-    format!(
-        "a record applying to this turn did not fit the {RECORD_CHANNEL_BUDGET}-char \
-         record budget: ^{handle} — raise its precedence, or trim the records that \
-         outrank it"
-    )
+/// The eviction report for one dropped candidate — the single producer every
+/// source emits through (#3437).
+///
+/// One sentence shape for all of them, the record channel's:
+/// *what applied, which budget refused it, its handle, and the remedy*. The
+/// remedy is the half that differs, and it has to: telling a user whose skill
+/// lost its seat to "raise its precedence" is advice for a different channel.
+///
+/// `still_selected` is the section-budget class, and it is why this takes the
+/// whole ledger rather than a handle. A skill can be in `selected` *and*
+/// `dropped` by design — top-k kept it and `skills::section_fit` then left it
+/// out of the rendered section (`adapt::skill_drops`' own doc). Both classes
+/// genuinely miss the prompt, so both are reported; only the remedy differs,
+/// because `SKILLS_SECTION_TOKEN_BUDGET` is a constant and nothing
+/// configurable widens it until #3243 Phase 4 collapses the two budgets.
+///
+/// `None` for a source this path never produces — a tool schema or a
+/// plugin-contributed candidate. Silence there is the absence of a producer,
+/// not a withheld report.
+fn drop_message(
+    drop: &stella_core::steering::DroppedCandidate,
+    still_selected: bool,
+) -> Option<String> {
+    use stella_core::steering::SteeringSource;
+    let handle = &drop.handle;
+    match drop.source {
+        SteeringSource::Record => Some(format!(
+            "a record applying to this turn did not fit the {RECORD_CHANNEL_BUDGET}-char \
+             record budget: ^{handle} — raise its precedence, or trim the records that \
+             outrank it"
+        )),
+        SteeringSource::Memory => Some(format!(
+            "a memory recalled for this turn did not fit the retrieval budget: {handle} \
+             — raise `context.retrieval.max_tokens`"
+        )),
+        SteeringSource::Skill if still_selected => Some(format!(
+            "a skill matching this turn did not fit the skills section's token budget: \
+             {handle} — nothing configurable widens that budget yet (#3243)"
+        )),
+        SteeringSource::Skill => Some(format!(
+            "a skill matching this turn did not fit the skill budget: {handle} — raise \
+             `skills.max_skills`"
+        )),
+        SteeringSource::Tool | SteeringSource::Plugin => None,
+    }
 }
 
-/// Report every record the ledger says was dropped. Records only, today:
-/// frames and skills kept their sources' existing (silent) drop behavior
-/// through the migration — generalizing the report to them is real new
-/// surface, not a refactor.
-fn report_record_drops(set: &stella_core::steering::SteeringSet, mut report: impl FnMut(String)) {
+/// Report every candidate the ledger says was dropped, whatever its source.
+///
+/// #3358 completed the *ledger* across records, skills and frames; this is the
+/// human-facing half (#3437). Before it, a skill that lost its seat every turn
+/// and a frame the recall host's merge evicted were queryable and said nothing
+/// to the person watching the run — the #2709 observability gap in its other
+/// half.
+///
+/// Two recall-side filters are deliberately **not** reported here, and that is
+/// a decision rather than an omission. `project_recalled_frame` drops a frame
+/// the citation-label rule cannot name, and `is_suppressed_local_frame` drops
+/// one the session quarantined. Neither is a budget eviction: the first is a
+/// frame this process could not cite, and the second is deliberate
+/// suppression of a memory cited untruthful twice. Reporting either as
+/// `DroppedCandidate` would tell a user their budget was too small when it was
+/// not, and quarantine in particular wants its own vocabulary rather than a
+/// line advising a bigger retrieval budget. The provider's spend on both is
+/// already accounted for by the usage report captured above the filters.
+pub(super) fn report_steering_drops(
+    set: &stella_core::steering::SteeringSet,
+    mut report: impl FnMut(String),
+) {
     for drop in &set.dropped {
-        if drop.source == stella_core::steering::SteeringSource::Record {
-            report(record_drop_message(&drop.handle));
+        let still_selected = set
+            .selected
+            .iter()
+            .any(|c| c.source == drop.source && c.handle == drop.handle);
+        if let Some(message) = drop_message(drop, still_selected) {
+            report(message);
         }
     }
 }

@@ -281,6 +281,58 @@ fn busiest_file_is_none_on_an_empty_index() {
     assert_eq!(busiest_file(&conn).unwrap(), None);
 }
 
+/// The anti-join behind `CodeGraph::entry_points` (#3719): the files nothing
+/// in the index imports, shallowest path first and then lexicographic.
+/// Indexed from a real tree rather than hand-inserted rows, because the
+/// question is whether resolved imports actually land in `to_path` — a query
+/// tested against synthetic rows would pass on a resolver that resolves
+/// nothing.
+#[test]
+fn entry_points_names_the_files_nothing_imports_shallowest_first() {
+    let ws = tempdir().unwrap();
+    let dbdir = tempdir().unwrap();
+    let root = canon(&ws);
+    let db = dbdir.path().join("context.db");
+    // `main.rs` declares `mod helper;`, which resolves to the sibling
+    // `helper.rs` — the one file here with an importer.
+    fs::write(root.join("main.rs"), "mod helper;\npub fn run() {}\n").unwrap();
+    fs::write(root.join("helper.rs"), "pub fn help() {}\n").unwrap();
+    fs::write(root.join("bin.rs"), "pub fn bin() {}\n").unwrap();
+    fs::create_dir_all(root.join("tools")).unwrap();
+    fs::write(root.join("tools").join("probe.rs"), "pub fn probe() {}\n").unwrap();
+
+    let grammars = Grammars::load().unwrap();
+    let mut conn = open(&db).unwrap();
+    index_tree(&mut conn, &root, &grammars).unwrap();
+
+    assert_eq!(
+        importers_of(&conn, "helper.rs").unwrap(),
+        vec!["main.rs".to_string()],
+        "the fixture's one import must actually resolve, or this proves nothing"
+    );
+    assert_eq!(
+        entry_points(&conn, 10).unwrap(),
+        vec![
+            "bin.rs".to_string(),
+            "main.rs".to_string(),
+            "tools/probe.rs".to_string()
+        ],
+        "depth first, then lexicographic — and the imported file is excluded"
+    );
+    assert_eq!(
+        entry_points(&conn, 2).unwrap(),
+        vec!["bin.rs".to_string(), "main.rs".to_string()],
+        "the limit truncates the ordering rather than reordering it"
+    );
+}
+
+#[test]
+fn entry_points_is_empty_on_an_empty_index() {
+    let dbdir = tempdir().unwrap();
+    let conn = open(&dbdir.path().join("context.db")).unwrap();
+    assert!(entry_points(&conn, 5).unwrap().is_empty());
+}
+
 #[test]
 fn kill_during_indexing_leaves_a_consistent_store() {
     let ws = tempdir().unwrap();

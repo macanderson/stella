@@ -124,24 +124,66 @@ macro_rules! agent_event_tags {
     };
 }
 
+// The #4501 census, which drove [`ConsumerPosture::Unclassified`] to zero by
+// reading each remaining row's consumers instead of leaving them unaudited.
+// Three consumers recur below and are described once here instead of in
+// thirty rows:
+//
+// - The **Observatory** selects `event_type` by name in four places, and a
+//   row claiming `Surface::Observatory` appears in at least one:
+//   `journal.rs::entries` (the transcript), `sessions.rs`'s
+//   `TENDENCY_EVENT_TYPES` (the behavioural fold), `db.rs::recall_timings`,
+//   and `sent_context.rs::journal_payloads`.
+// - **`stella-serve`**'s `observe/tally.rs::TallyFold::observe` folds ten
+//   variants into the `TurnTally` on each settle record — the counts a host
+//   reads to tell a wedged turn from a waiting one. That is the arm
+//   `Surface::Serve` names.
+// - **`stella-cli/src/diag_bridge.rs`** writes a diagnostic record for nearly
+//   every variant. Recording is not deciding, so it earns no posture on its
+//   own; a row whose only readers are the bridge and the exhaustive TUI
+//   renderers is `RecordedOnly`.
 agent_event_tags! {
+    // The run owner's stage boundaries. `Surfaced` on both axes: the
+    // Observatory's journal query names the tag, and serve's tally counts
+    // `StageScope::Run` boundaries as its progress axis. Nothing branches on
+    // it — the stage has already changed by the time this announces it.
     Stage => "stage",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[Surface::Observatory];
+        ConsumerPosture::Surfaced,
+        &[Surface::Observatory, Surface::Serve];
     // Exemplar — `Surfaced`. Assistant prose has no behavioral consumer by
     // design: the engine does not branch on what the model said in English.
     Text => "text",
         ConsumerPosture::Surfaced,
         &[Surface::Observatory];
+    // The streaming preview. `Behavioral`: both durable writers refuse it —
+    // `spawn_renderer` skips the store write and `stella-store`'s
+    // `SessionJournal::write` skips the journal line — because the step's
+    // `Text` event carries the same bytes in full. Delete either branch and
+    // every answer doubles on disk, and the delta-coalescing runs tear into
+    // per-token flushes.
     TextDelta => "text_delta",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/agent/persistence.rs::spawn_renderer",
+        },
         &[];
+    // `Behavioral`: `ReasoningRun::admit` folds consecutive fragments into one
+    // block before the store write, so a page of thought costs one row instead
+    // of tens of thousands (#3969). The Observatory selects the tag and
+    // re-joins whatever fragments did land (`journal.rs::coalesce_reasoning`).
     Reasoning => "reasoning",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/agent/persistence/reasoning_run.rs::ReasoningRun::admit",
+        },
         &[Surface::Observatory];
+    // The other half of the `tool_result` row below: `project_event` opens the
+    // `tool_calls` row that the result settles, so severing this leaves every
+    // call unrecorded and every result orphaned. Also folded into the turn
+    // facts a wrapper plugin judges (`stella-cli/src/turn_facts.rs`).
     ToolStart => "tool_start",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[Surface::Observatory];
+        ConsumerPosture::Behavioral {
+            site: "stella-store/src/tool_calls.rs::project_event",
+        },
+        &[Surface::Observatory, Surface::Serve];
     // Exemplar — `Behavioral`. Projected into the store's `tool_calls` table
     // in the same transaction that records the event.
     //
@@ -152,50 +194,117 @@ agent_event_tags! {
     // `CompletionMessage`s), which is a different plane that happens to carry
     // the same facts. Citing it here would have described a dependency that
     // does not exist — and severing the event would not have been caught.
+    //
+    // `Surface::Serve` joined the row in the #4501 census: the tally reads
+    // `output.is_error()` off this event for its `tools_failed` count, which
+    // makes it a selecting arm the same way `tool_start` is.
     ToolResult => "tool_result",
         ConsumerPosture::Behavioral {
             site: "stella-store/src/tool_calls.rs::project_event",
         },
-        &[Surface::Observatory];
+        &[Surface::Observatory, Surface::Serve];
+    // `Behavioral`: the CGP trace recorder resolves the discarded call as
+    // `Rejected`, so its tool pairing stays truthful — the I/O ran and the
+    // model never saw it. Both Observatory lists select the tag, and serve's
+    // tally counts it rather than re-deriving discarded work.
     SpeculationDiscarded => "speculation_discarded",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[Surface::Observatory];
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/arena.rs::observe",
+        },
+        &[Surface::Observatory, Surface::Serve];
+    // `Behavioral`: the reflection digest's friction fold records each attempt
+    // and its reason, which is what `Priority::Friction` selects on when a
+    // lesson is mined into memory. The retry itself is the engine's decision;
+    // `site` names the consumer that keeps it.
     Retry => "retry",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/memory/reflection/digest.rs::TurnFriction::observe",
+        },
+        &[Surface::Observatory, Surface::Serve];
+    // `Surfaced`: the message was already injected at the step boundary by the
+    // time this echoes it, so a host learns *when* it landed and nothing
+    // decides on it. The Observatory's tendencies fold names the tag.
     Steered => "steered",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Surfaced,
+        &[Surface::Observatory];
+    // The park pair (#1471, #1857). `Surfaced`: serve's tally counts spans,
+    // wakes, polls and licensed seconds, which is what keeps its `stages`
+    // progress axis honest — a host reading a stalled turn can tell a
+    // deliberate wait from a hang. Both tags sit in the Observatory's journal
+    // query. The park loop itself runs on `stella-core::driver::waiting`, so
+    // these events report it and never drive it.
     TurnParked => "turn_parked",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[Surface::Observatory];
+        ConsumerPosture::Surfaced,
+        &[Surface::Observatory, Surface::Serve];
     TurnWoken => "turn_woken",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[Surface::Observatory];
+        ConsumerPosture::Surfaced,
+        &[Surface::Observatory, Surface::Serve];
+    // `Behavioral`: the friction fold records the pattern, its repeat count and
+    // whether the loop aborted the turn, which is what a mined lesson cites.
+    // The engine's own abort is decided in `stella-core`'s loop detection, so
+    // `site` names the reflection consumer.
     LoopDetected => "loop_detected",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/memory/reflection/digest.rs::TurnFriction::observe",
+        },
+        &[Surface::Observatory, Surface::Serve];
+    // `Surfaced`: the budget guard has already refused the call by the time
+    // this reports the refusal (`stella-core/src/driver.rs`). The Observatory's
+    // tendencies fold names the tag.
     BudgetDenied => "budget_denied",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Surfaced,
+        &[Surface::Observatory];
+    // `Behavioral`, same fold as `retry`: a doomed sequence reports its whole
+    // run at once, and the friction entry carries the last reason — which is
+    // the sentence a mined lesson quotes when a turn died on retries.
     RetriesExhausted => "retries_exhausted",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/memory/reflection/digest.rs::TurnFriction::observe",
+        },
+        &[Surface::Observatory, Surface::Serve];
+    // `Surfaced`: the authorization bus emits a content-free record after the
+    // decision is made (`stella-core/src/bus.rs`), so the deny has already
+    // happened. The Observatory's tendencies fold names the tag.
     PolicyDecision => "policy_decision",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Surfaced,
+        &[Surface::Observatory];
+    // `Behavioral`: `journal_preimages` indexes each rewrite by content digest,
+    // which is how a reconstructed transcript resolves a compacted block back
+    // to its bytes and how the digest check over it can pass. Selected by the
+    // Observatory's tendencies fold and by its sent-context view.
     Compaction => "compaction",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Behavioral {
+            site: "stella-store/src/reconstruct.rs::journal_preimages",
+        },
+        &[Surface::Observatory];
+    // `Behavioral`: reflection settlement strips the sub-turn's own ticks and
+    // re-emits one from the session guard, so the remaining budget on the wire
+    // is the session's. Drop that consumer and a nested report's ceiling
+    // reaches the caller as if it were the session's.
     BudgetTick => "budget_tick",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/agent/budget.rs::settle_reflection_budget",
+        },
         &[];
+    // The metering record. `Behavioral`: `persist_event_detailed` writes the
+    // per-call usage row every cost, cache and token figure is later read
+    // from, and carries `complete` up into the execution's accounting bit.
+    // Serve's tally counts it as the turn's model calls.
     StepUsage => "step_usage",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/agent/persistence.rs::persist_event_detailed",
+        },
+        &[Surface::Serve];
+    // An attempt that died and produced no usage frame, which is a different
+    // fact from a `step_usage` with `complete: false` (#4147). `Behavioral`:
+    // the same persistence hop carries it into `usage_complete`, and
+    // `settle_reflection_budget` counts it as accounting having happened. The
+    // Observatory's tendencies fold names the tag.
     UsageIncomplete => "usage_incomplete",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/agent/persistence.rs::persist_event_detailed",
+        },
+        &[Surface::Observatory];
     // Audited out of the #2703 backlog by #3977. `Behavioral`: the reflection
     // digest splits a goal arc's journal at each verdict and labels every
     // segment from this event's own `round`, so deleting the consumer would
@@ -230,20 +339,51 @@ agent_event_tags! {
     ProviderFallback => "provider_fallback",
         ConsumerPosture::Surfaced,
         &[Surface::Observatory];
+    // `Behavioral`: `TurnFacts::observe` folds these into the `changed_files`
+    // a wrapper plugin's verdict rule reads (#3552). Before that tap existed
+    // the field was always empty, and a wrapper gating on "did this turn touch
+    // anything" graded every run as untouched. The Observatory's journal query
+    // names the tag. The event's contract is unchanged by the posture:
+    // observability, never evidence (#2873).
     FileChange => "file_change",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/turn_facts.rs::TurnFacts::observe",
+        },
+        &[Surface::Observatory];
+    // `Behavioral`: the deck's forwarder holds the run's `Stage(Execute)`
+    // boundary until the first event that is not a recall, so a turn's recall
+    // renders ahead of the stage it opens. The Observatory's recall-timings
+    // view reads latency, frame count and token cost off the same event.
     ContextRecall => "context_recall",
-        ConsumerPosture::Unclassified { issue: "#2703" },
-        &[];
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/command_deck/forwarder.rs::spawn_forwarder",
+        },
+        &[Surface::Observatory];
+    // `RecordedOnly`: a memory write announces itself and nothing reads the
+    // announcement — the diagnostic bridge records one, the TUI's textline
+    // renders a line by exhaustive match, and no Observatory query names the
+    // tag. Wiring a real consumer (a memory-pressure view, or a reflection
+    // input) is what #4501 leaves open here.
     ContextWrite => "context_write",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];
+    // A context receipt. `Behavioral`: `persist_event_detailed` writes the
+    // `context_blocks` row that the Observatory's block registry and
+    // `stella-store`'s preimage reconstruction both resolve against — and the
+    // gap preimage that only ever exists in that row.
     BlockRegistered => "block_registered",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/agent/persistence.rs::persist_event_detailed",
+        },
         &[];
+    // What one model call was compiled from. `Behavioral`: the same
+    // persistence hop writes the manifest row, which is what a step's receipts
+    // and its parallel tool calls join against by `(turn_instance, step,
+    // call_seq)`.
     StepManifest => "step_manifest",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/agent/persistence.rs::persist_event_detailed",
+        },
         &[];
     // The verification pair, post-rail (#3790). Neither row is `Unclassified`
     // debt: the consumers are known and named below; what remains undecided —
@@ -271,32 +411,82 @@ agent_event_tags! {
     Verdict => "verdict",
         ConsumerPosture::RecordedOnly { issue: "#3790" },
         &[];
+    // `Behavioral`: the deck's forwarder seeds the task board from the
+    // proposal's steps as the gate is reached, so the ids already resolve when
+    // the first `task_start` arrives. Seeded on the proposal rather than on
+    // approval, and `seed_from_plan` is a no-op on a board that already has
+    // rows, so a declined or revised plan cannot clobber live work.
     ScopeReview => "scope_review",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/command_deck/forwarder.rs::spawn_forwarder",
+        },
         &[];
+    // `RecordedOnly`: the hunk gate's decision is already made when this
+    // reports it, and the readers are the diagnostic bridge and the TUI's
+    // exhaustive textline. No Observatory query names the tag. Whether a
+    // review surface should select it is what #4501 leaves open here.
     HunkReview => "hunk_review",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];
+    // `Behavioral`, and the one row where the TUI is the consumer rather than
+    // a renderer. `Model::apply` latches `pending_ask_user`, and
+    // `stella-tui/src/deck_ui/gates.rs::handle_focused_gates` reads that latch
+    // to claim the next digit or `⏎` for the answer card. Sever the arm and
+    // the question is unanswerable: the gate's channel
+    // (`stella-cli/src/command_deck/mid_turn_ask.rs`, which blocks on the
+    // answer rather than on this event) never receives a reply and the turn
+    // sits there until the session is killed.
     AskUser => "ask_user",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-tui/src/model.rs::Model::apply (latches pending_ask_user)",
+        },
         &[];
+    // The media pair (#4454). `RecordedOnly` because #4448 removed
+    // `stella-media` and left these with zero producers in this tree: they are
+    // kept as the wire contract an out-of-tree media MCP surface would speak,
+    // and removing them is a protocol break for anyone replaying a recording
+    // that carries the tag. The TUI's textline still renders both by
+    // exhaustive match. #4454 tracks the retire-or-keep decision at the next
+    // `PROTOCOL_VERSION` bump.
     MediaProgress => "media_progress",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::RecordedOnly { issue: "#4454" },
         &[];
     MediaComplete => "media_complete",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::RecordedOnly { issue: "#4454" },
         &[];
+    // The delivery artifacts. `Behavioral`: the calibration fold attaches every
+    // commit and PR a session records after a pass to that pass, and settles
+    // the unproven ones when the PR carries a terminal CI status — an
+    // unproven pass whose PR failed CI is counted as a false positive. That
+    // number is what the verifier's calibration report is.
     Commit => "commit",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/calibration.rs::calibration",
+        },
         &[];
     Pr => "pr",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/calibration.rs::calibration",
+        },
         &[];
+    // `RecordedOnly`: the board's authority is `stella-core`'s `TaskBoard`,
+    // which `command_deck/task_tap.rs` snapshots into this event after each
+    // `task_*` call, and the durable `tasks` rows are written from that same
+    // board rather than from the stream. What reads the event is the deck —
+    // a transcript entry and the active-task elapsed/cost anchor
+    // (`stella-tui/src/deck.rs`) — which is rendering, by exhaustive match. A
+    // cross-session consumer (replay rebuilding a board from the journal) is
+    // what #4501 leaves open here.
     TaskUpdate => "task_update",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];
+    // `RecordedOnly`: the delegation itself is driven by
+    // `stella-core::subagent`'s dispatcher and this reports its phases. The
+    // deck stamps a start/finish bracket from them (`deck.rs`), which is the
+    // elapsed a human reads; nothing else consumes them. The controllable
+    // sub-session lanes are a separate mechanism and do not ride this variant.
     SubAgent => "sub_agent",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];
     // The delivery decision (#2942). `Surfaced` rather than `RecordedOnly`
     // because the observatory's journal query was widened to select it in the
@@ -319,8 +509,16 @@ agent_event_tags! {
     CandidateDelivery => "candidate_delivery",
         ConsumerPosture::Surfaced,
         &[Surface::Observatory];
+    // `Behavioral`, twice over in the session journal. `unsettled_prompts`
+    // treats a non-retryable error as a settle, so resume does not return an
+    // already-failed prompt to the front of the queue; `is_transition` fsyncs
+    // the record, because a power cut must not take back the fact that the
+    // turn failed. A retryable error settles nothing, which is what the
+    // `retryable: false` pattern is doing there.
     Error => "error",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-store/src/journal.rs::unsettled_prompts",
+        },
         &[];
     // The engine's per-turn ending (#3379). `Behavioral`: the diagnostic
     // bridge drains its in-flight tool-call retention map on it, because that

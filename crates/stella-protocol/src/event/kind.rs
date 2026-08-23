@@ -879,13 +879,23 @@ pub enum AgentEvent {
     /// A media generation job changed state. Video jobs are async and
     /// long-lived; this event is how the TUI shows progress without polling
     /// shared state (L-T1).
+    ///
+    /// **No producer in this workspace** (#4454): #4448 removed
+    /// `crates/stella-media`, and CLAUDE.md's tool-surface rule forbids the
+    /// media built-in that would have been its caller (#3236, #3845). This
+    /// variant and [`AgentEvent::MediaComplete`] stay as the wire contract an
+    /// out-of-tree media MCP surface speaks, and because dropping the tags
+    /// would demote an older recording's media events to
+    /// [`AgentEvent::Unknown`]. Retiring them belongs to a `PROTOCOL_VERSION`
+    /// bump, which #4454 decides.
     MediaProgress {
         artifact_id: String,
         kind: MediaKind,
         state: MediaJobState,
     },
     /// A media artifact landed under `.stella/artifacts/` with a manifest
-    /// row.
+    /// row. Producerless here for the reason
+    /// [`AgentEvent::MediaProgress`] gives (#4454).
     MediaComplete { artifact: MediaArtifactRef },
     /// A commit landed (fleet ledger / pipeline execute stage).
     Commit { sha: String, message: String },

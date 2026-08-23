@@ -13,9 +13,10 @@ yet.
 
 - At **`plan`** it asks the host for one bounded turn at the `planner` role
   intent (`doc:wrapper-socket` §6b's `child_turn` call), sends the same fixed
-  planner instructions the built-in stage uses, parses the JSON-array-of-steps
-  answer the way `crates/stella-pipeline/src/plan.rs::parse_plan` does, and
-  contributes the result as one volatile context block.
+  planner instructions the built-in stage used, parses the JSON-array-of-steps
+  answer the way `crates/stella-pipeline/src/plan.rs::parse_plan` did (that
+  crate is deleted, #3865), and contributes the result as one volatile
+  context block.
 - Every other declared stage gets an empty contribution — byte-identical to a
   host with no plugin installed.
 
@@ -40,7 +41,7 @@ same call for the same reason.
 
 ## What it replaces, and what it does not
 
-The built-in stage is two files:
+The built-in stage — deleted with `stella-pipeline` in #3865 — was two files:
 
 | Built-in | What it does |
 | --- | --- |
@@ -69,7 +70,7 @@ did not actually offer.
 `Vec<PlanStep>` field and no per-step mechanism — its only fields are
 `context`, `role`, `scope` and `publish`
 (`crates/stella-plugin/src/wire.rs`). The built-in stage's own
-`crates/stella-pipeline/src/pipeline/plan_steps.rs` walks the plan as one
+`crates/stella-pipeline/src/pipeline/plan_steps.rs` walked the plan as one
 engine turn per step, host-executed; this plugin cannot drive that walk, so
 the parsed steps ride as **one prose block the worker reads before its own
 turn**, weaker than the built-in's execution loop and said so in the text it

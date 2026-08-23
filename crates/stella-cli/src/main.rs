@@ -1017,6 +1017,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             test_command,
             keep_witness,
             require_verified,
+            require_verdict,
             output_format,
         } => {
             let pipeline_choice =
@@ -1029,6 +1030,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 test_command.as_deref(),
                 keep_witness,
                 require_verified,
+            )?;
+            // Honored on `--pipeline <variant>` and meaningless without one,
+            // so it is refused here rather than accepted and ignored (#3554).
+            wrapper_plugin::reject_require_verdict_without_wrapper(
+                pipeline_choice,
+                require_verdict,
             )?;
             let prompt = prompt_source::resolve(
                 prompt,
@@ -1058,6 +1065,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     output_format,
                     pipeline_choice,
                     test_command.as_deref(),
+                    require_verdict,
                 ),
             )?;
         }

@@ -1,10 +1,18 @@
 ---
 id: prompt-triage
 title: "triage — the effective prompt"
-status: living
+status: archived
 ---
 
 # `triage`
+
+**This page documents the pre-#3865 staged pipeline, kept for reference; the
+shape lives in installed wrapper plugins now.** `stella-pipeline` was deleted
+in #3865, so `Pipeline::triage_stage` and every symbol this page cites
+dispatch from no code in this tree. No single plugin replaces this
+classify-and-route call; the stages it decided among live on as
+`plugins/stella-research`, `plugins/stella-plan` and `plugins/stella-witness`
+— see `docs/prompts/README.md § Half of this set is history`.
 
 Prompt classification and tier routing. The first model call of a `stella run`
 turn, and the one that decides how much orchestration the rest of the turn

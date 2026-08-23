@@ -52,6 +52,8 @@ pub mod provider;
 pub mod provider_listing;
 pub mod provider_parity;
 pub mod sse;
+#[cfg(test)]
+pub(crate) mod stream_fallback_support;
 pub(crate) mod stream_recovery;
 pub mod vertex;
 pub mod wire_log;

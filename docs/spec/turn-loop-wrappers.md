@@ -84,7 +84,7 @@ The end state, in one line: **one loop, six doors, and wrappers are plugins.**
 
 ## 2. Why this is worth doing
 
-Three reasons, in order of how much they cost us today.
+In order of how much they cost us today:
 
 **It is where the flakiness is.** The pipeline swallows the engine's `Complete`
 and emits its own (`crates/stella-pipeline/src/pipeline.rs`, the "Event
@@ -396,8 +396,8 @@ strictly **subtractive**:
   a route-specific supervisor sitting inside the engine crate today.
 
 That second deletion is what actually delivers "zero built-in wrappers". It
-also means move two makes `stella-core` smaller, which is a better claim than
-the one §4 makes and is worth stating in those terms.
+also means move two makes `stella-core` smaller, a better claim than the one
+§4 makes.
 
 The hook surface stays exactly what §4 says it is — the *dispatch* mechanism,
 with its existing `allow`/`modify`/`deny`/`require_approval` vocabulary. What
@@ -406,7 +406,7 @@ sequences it.
 
 ### 9.2 `judge` may not call a model — and goal mode's judge is a model call
 
-This is the one internal contradiction in §4, and it is required enough to
+This is the one internal contradiction in §4, and it matters enough to
 resolve rather than paper over.
 
 The table at §4 says `judge` "may not call a model". Four lines later, "Goal
@@ -416,7 +416,7 @@ transcript against the goal — that is what
 `crates/stella-core/src/goal.rs` does today and the only thing it could do. For
 an open-ended goal with no test surface there is no measurement to take.
 
-Both halves are right; they are describing different stages. The resolution:
+Both descriptions are right; they are describing different stages. The resolution:
 
 > **The model call belongs to `after_turn`, never to `judge`.**
 
@@ -437,7 +437,7 @@ visible on the receipt against a declared role instead of being described as a
 ### 9.3 The child-engine constructor is the whole security story
 
 §4's "bug class this deletes" is right that one blessed constructor kills it.
-Two things make that enforceable rather than aspirational:
+What makes that enforceable rather than aspirational:
 
 - **A wrapper is handed a `ChildTurn` port, not a provider, not an `Engine`, and
   not a credential.** It names a *role intent* (`triage`, `planner`,
@@ -553,7 +553,7 @@ column addition therefore has a precondition:
    `deck-pipeline` → `deck`;
 2. `pipeline_variant` becomes the sole home for which wrapper ran, NULL for an
    unwrapped turn;
-3. the backfill is stated rather than assumed: historical `pipeline` rows are
+3. the backfill is spelled out: historical `pipeline` rows are
    `kind='run', pipeline_variant='classic'`, and any query comparing across the
    migration boundary must say so, per §5's own confounding rule.
 

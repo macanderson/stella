@@ -189,8 +189,7 @@ ships anything. A driver restricted to it can size a cycle it has no way to run.
 already one — but to give the plugin platform a second channel: the same "may
 ask, never reach" discipline, for out-of-turn drivers.** §3 is that channel.
 
-Two things follow that are worth stating before the phases, because they change
-what this work costs:
+Before the phases, here is what changes what this work costs:
 
 - **It is smaller than it looks.** The wire shapes, the refusal-as-a-value
   discipline, the manifest gate, the consent rendering, and the subprocess
@@ -213,8 +212,8 @@ decides, `stella-cli` probes):
 | **`stella-cli`** (the binary) | Every new verb in §3. The issue port, the run execution, the git/forge effects, the curation writes. | Invariant 2 keeps all of it out of the engine; invariant 1 keeps the forge behind a port. |
 | **`plugins/stella-selfdriving`** (the driver) | *Policy only*: when to run, how many at once, in what order, when to stop, what to escalate. A loop that asks for declared capabilities and nothing else. | It is the piece an operator should be able to fork, replace, or write in another language without forking Stella. |
 
-The required consequence: **the judgement half becomes Stella's own agent
-loop.** `work` (§3.2) runs a unit of backlog through Stella's turn loop — the
+The consequence that everything else depends on: **the judgement half becomes
+Stella's own agent loop.** `work` (§3.2) runs a unit of backlog through Stella's turn loop — the
 same path a `stella run` takes, with whatever the installed plugins add over it
 and nothing else. If Stella's
 loop is not good enough to drive Stella's own backlog, that is a finding about
@@ -517,8 +516,6 @@ means there is no state an operator could have to clear.
 all four reasons, because a latch on any one of them would strand the loop
 exactly there.
 
-Two consequences worth stating:
-
 - **Every `BlockReason` names a `Clearance`** — the observable that will let it
   go. `BlockReason::clearance()` is total, so a new reason cannot be added
   without answering "and what would un-block it?". A block with no clearance is
@@ -567,8 +564,8 @@ a lens **and a baseline**. So:
 - The ladder resets to `rubric` when the baseline has moved by a declared
   threshold since the sweep that exhausted it — *N* merged commits or *D* days,
   recorded as `last_clean_head` in `calibration.json`, which is already carried
-  through `Calibration::extra` and was already required enough that dropping
-  it broke watch mode once.
+  through `Calibration::extra` and was already required closely enough that
+  dropping it broke watch mode once.
 
 A re-pass therefore yields exactly the findings the new code introduced, and
 nothing else. That is not make-work; it is the only honest reading of what a dry
@@ -587,7 +584,7 @@ flip). `sweep regress` re-runs those witnesses against current `main` on a
 schedule. A witness that goes green→red is a **regression**, filed as a new
 issue with the closed issue as its parent.
 
-Three things fall out, and all three are worth more than the sweep costs:
+Each of the following is worth more than the sweep costs:
 
 1. **New work with a guaranteed truth value.** A regression finding is not a
    model's opinion — a test that passed and now fails is a fact. Compare an
@@ -844,14 +841,13 @@ What each proposal is, and what accepts it:
 | **Context record** (`.stella/rules/*.toml`) | A recurring correction — the loop learned the same constraint repeatedly | **Human always in `regulated`.** This repo *is* `regulated`, and `promotions.jsonl` is a hash-chained ledger verified by `stella context validate` in CI. An autonomous promoter must not weaken that. |
 | **Skill** (`.stella/skills/<slug>/SKILL.md`) | Recurring reflection lessons sharing a digest | Deterministic rule (already the shape skill mining uses) |
 
-Two consequences worth stating plainly. First, in a `regulated` workspace the
-loop is **not** 100% autonomous over its own context, and that is correct rather
-than a limitation to engineer away — the governance mode exists precisely to put
-a human on this. Second, "100% autonomous" is therefore achievable for
-*delivery* (find → fix → prove → ship → file) and deliberately not for
-*self-modification of its own steering*. If that trade is unacceptable, the
-place to change it is the governance mode, explicitly, in a PR a human reads —
-not by giving `curate accept` a broader default.
+In a `regulated` workspace the loop is **not** 100% autonomous over its own
+context, and that is correct rather than a limitation to engineer away — the
+governance mode exists precisely to put a human on this. "100% autonomous" is
+therefore achievable for *delivery* (find → fix → prove → ship → file) and
+deliberately not for *self-modification of its own steering*. If that trade
+is unacceptable, the place to change it is the governance mode, explicitly,
+in a PR a human reads — not by giving `curate accept` a broader default.
 
 ---
 
@@ -927,9 +923,9 @@ drew its batch from. Both numbers are now folds of one ranking of one read.
 | The driver channel: dispatch context, `[driver]` block, `permits_call` | `stella-plugin` (wire + gate), `stella-runtime` (`src/wrapper/`, beside the existing host-call dispatch) |
 | The policy loop | `plugins/stella-selfdriving/` |
 
-**Sequencing note.** B0 → B1 → B2 is a hard chain, and B0 is now the required
-one: it is the phase that makes a self-driving plugin able to hold any capability
-at all. It is also the smallest of the three, because the wire shapes, the
+**Sequencing note.** B0 → B1 → B2 is a hard chain, and B0 is now the one the
+other two require: it is the phase that makes a self-driving plugin able to
+hold any capability at all. It is also the smallest of the three, because the wire shapes, the
 refusal codes, the manifest gate, the consent rendering and the subprocess
 transport all exist and are exercised by `stella-research` — B0 adds a dispatch
 context, not a platform. B3 and B4 are independent of

@@ -349,6 +349,6 @@ impl<'a> Replayer<'a> {
         let tools = detect_tool_gaps(&self.shell_history, self.foundry);
 
         // 6. Snapshot.
-        summary.observe_turn(turn, &report, tools.len());
+        summary.observe_turn(self.root, &report, tools.len());
     }
 }

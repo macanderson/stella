@@ -62,6 +62,7 @@ use stella_plugin::{
 
 use super::candidate_fanout::CandidateFanoutPlane;
 use super::child_turn::ChildTurnPlane;
+use super::test_run::TestRunPlane;
 
 /// The host's own ceiling on host calls per point, when a caller states none.
 ///
@@ -115,9 +116,13 @@ pub trait RecallHost: Send + Sync {
 ///
 /// One method over the closed [`HostCallArgs`], so the compiler makes an
 /// implementor answer for every capability rather than letting an unhandled one
-/// become a silence. A host that implements only some of them returns
-/// [`HostCallRefusal::Unsupported`] for the rest — a declared gap, delivered to
-/// the plugin, which is invariant 10's discipline pointed at capabilities.
+/// become a silence. An implementor that cannot perform one returns a refusal
+/// for it — [`HostCallRefusal::Unavailable`] when the capability exists and
+/// this host has nothing behind it, [`HostCallRefusal::Unsupported`] when the
+/// implementor does not perform it at all — a declared gap, delivered to the
+/// plugin, which is invariant 10's discipline pointed at capabilities.
+/// [`HostPlanes`] answers `Unavailable` for every one of the five, because it
+/// performs all five and what a caller withholds is a plane (#3580).
 ///
 /// This is the port the *gate* calls **after** it has checked the grant, so an
 /// implementor is never the thing that decides whether a plugin may ask.
@@ -147,8 +152,11 @@ pub trait HostCapabilities: Send + Sync {
 /// A plane that is not installed answers [`HostCallRefusal::Unavailable`] —
 /// "the capability is implemented, this host has nothing behind it" — which is
 /// the honest code for a driver that has not wired its context plane yet.
-/// [`HostCall::RunTest`] answers [`HostCallRefusal::Unsupported`] from every
-/// host, because nothing in this tree performs it at all (#3580).
+/// **Every** capability answers that way now: `run_test` was the last
+/// `Unsupported` arm, and it went when a plane existed to perform it (#3580).
+/// The distinction is not decoration — `Unsupported` sends a plugin author away
+/// and `Unavailable` sends them to the host's configuration, and only one of
+/// those is true once the implementation is here.
 ///
 /// `stella-cli` assembles one on the `stella run` path
 /// (`src/wrapper_plugin.rs::ResolvedWrapper::serving`) with both planes: a
@@ -160,6 +168,7 @@ pub struct HostPlanes {
     recall: Option<Box<dyn RecallHost>>,
     max_frames: u32,
     child_turns: Option<Box<dyn ChildTurnPlane>>,
+    test_runs: Option<Box<dyn TestRunPlane>>,
     candidate_fanout: Option<Box<dyn CandidateFanoutPlane>>,
 }
 
@@ -179,6 +188,7 @@ impl std::fmt::Debug for HostPlanes {
             .field("recall", &self.recall.is_some())
             .field("max_frames", &self.max_frames)
             .field("child_turns", &self.child_turns.is_some())
+            .field("test_runs", &self.test_runs.is_some())
             .field("candidate_fanout", &self.candidate_fanout.is_some())
             .finish_non_exhaustive()
     }
@@ -194,6 +204,7 @@ impl HostPlanes {
             recall: None,
             max_frames: DEFAULT_RECALL_FRAMES,
             child_turns: None,
+            test_runs: None,
             candidate_fanout: None,
         }
     }
@@ -226,6 +237,19 @@ impl HostPlanes {
     #[must_use]
     pub fn with_child_turns(mut self, child_turns: impl ChildTurnPlane + 'static) -> Self {
         self.child_turns = Some(Box::new(child_turns));
+        self
+    }
+
+    /// Serve `run_test` from this plane — [`TestRuns`](super::TestRuns) over
+    /// whatever holds the host's candidate workspaces, ordinarily (#3580).
+    ///
+    /// A host that installs none still answers
+    /// [`HostCallRefusal::Unavailable`], never `Unsupported`: the capability is
+    /// performed by this assembly, and what a caller can withhold is a plane,
+    /// not the implementation.
+    #[must_use]
+    pub fn with_test_runs(mut self, test_runs: impl TestRunPlane + 'static) -> Self {
+        self.test_runs = Some(Box::new(test_runs));
         self
     }
 
@@ -302,11 +326,17 @@ impl HostCapabilities for HostPlanes {
                 };
                 plane.adopt(adopt).await.map(HostCallOk::AdoptCandidate)
             }
-            HostCallArgs::RunTest(_) => Err(HostCallFailure::new(
-                HostCallRefusal::Unsupported,
-                "this host does not re-run a candidate's tests for plugins yet; the test plan in \
-                 the candidate grant is the path that exists today (#3580)",
-            )),
+            HostCallArgs::RunTest(run_test) => {
+                let Some(plane) = self.test_runs.as_ref() else {
+                    return Err(HostCallFailure::new(
+                        HostCallRefusal::Unavailable,
+                        "this host re-runs no candidate's tests for plugins — no test-run plane \
+                         was attached to its capabilities; the test plan in the candidate grant \
+                         is the path that needs none",
+                    ));
+                };
+                plane.run_test(run_test).await.map(HostCallOk::RunTest)
+            }
         }
     }
 }
@@ -704,10 +734,16 @@ mod tests {
         }
     }
 
-    /// A capability this host does not implement is a declared gap the plugin
-    /// is told about, not a silence and not a death.
+    /// A capability with no plane behind it is a declared gap the plugin is
+    /// told about, not a silence and not a death.
+    ///
+    /// It asserted [`HostCallRefusal::Unsupported`] until #3580, because
+    /// `run_test` was the one arm no host performed at all. Now a plane exists
+    /// and the honest code is `Unavailable` — "this host has nothing behind it
+    /// for you", which is a thing an operator can fix, where `Unsupported`
+    /// tells a plugin author to stop asking.
     #[tokio::test]
-    async fn an_unsupported_capability_is_answered_rather_than_fatal() {
+    async fn a_capability_with_no_plane_is_answered_rather_than_fatal() {
         let gate = gate(vec![HostCall::Recall, HostCall::RunTest], None, 1);
         let channel = gate.open();
         let outcome = channel
@@ -717,9 +753,9 @@ mod tests {
             .await;
         match outcome {
             HostCallOutcome::Err(failure) => {
-                assert_eq!(failure.refusal, HostCallRefusal::Unsupported);
+                assert_eq!(failure.refusal, HostCallRefusal::Unavailable);
             }
-            other => panic!("expected an unsupported refusal, got {other:?}"),
+            other => panic!("expected an unavailable refusal, got {other:?}"),
         }
         assert_eq!(gate.refusals().len(), 1);
     }
