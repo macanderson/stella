@@ -96,14 +96,14 @@ fn deck_renders_every_tab_with_real_content() {
     // `used/window`, which is why `/200k` goes with it.
     let session = render_tab(&model, DeckTab::Session, 190, 44);
     for needle in [
-        "ctx ",      // the context meter's inline label (SPEC 5)
-        "saved ",    // cache savings, the one cache number a reader acts on
-        "? help",    // the right-pinned help affordance
-        "stella*",   // the wordmark on the tab row (SPEC 3.3)
-        "⏎ queue",   // the hint row under the composer (SPEC 5)
-        "◆",         // a nested subagent's identity mark
-        "subagent",  // its dim role word
-        "returns:",  // its contract line
+        "ctx ",     // the context meter's inline label (SPEC 5)
+        "saved ",   // cache savings, the one cache number a reader acts on
+        "? help",   // the right-pinned help affordance
+        "stella*",  // the wordmark on the tab row (SPEC 3.3)
+        "⏎ queue",  // the hint row under the composer (SPEC 5)
+        "◆",        // a nested subagent's identity mark
+        "subagent", // its dim role word
+        "returns:", // its contract line
     ] {
         assert!(
             session.contains(needle),

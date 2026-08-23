@@ -16,7 +16,6 @@
 //! on panic. The deck's own closures do capture `&mut DeckUi`, and the
 //! argument for those lives with the boundary in `panel_guard`.
 
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};

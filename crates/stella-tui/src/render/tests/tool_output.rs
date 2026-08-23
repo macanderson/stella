@@ -172,29 +172,36 @@ fn colors(lines: &[Line<'static>]) -> Vec<(String, Option<ratatui::style::Color>
         .collect()
 }
 
+/// A JSON result is read as fields — `query needle`, `hits 3` — and not one
+/// brace, quote or comma of the wire reaches the pane. The key wears the
+/// muted tone and the value the text tone, so the object still has a shape
+/// without having syntax.
 #[test]
-fn a_json_result_body_is_syntax_coloured() {
+fn a_json_result_body_renders_as_fields_not_as_json() {
     let body = "{\n  \"query\": \"needle\",\n  \"hits\": 3\n}";
-    let spans = colors(&collapsed(&result(body)));
-
-    let key = syntax::tok_style(syntax::Tok::Keyword).fg;
-    let string = syntax::tok_style(syntax::Tok::Str).fg;
-    let number = syntax::tok_style(syntax::Tok::Number).fg;
-
+    let lines = collapsed(&result(body));
+    let rendered = text_of(&lines);
+    assert!(rendered.contains("query needle"), "{rendered}");
+    assert!(rendered.contains("hits 3"), "{rendered}");
+    for forbidden in ['{', '}', '"', ','] {
+        assert!(
+            !rendered.contains(forbidden),
+            "JSON punctuation {forbidden:?} reached the pane:\n{rendered}"
+        );
+    }
+    let spans = colors(&lines);
     assert!(
-        spans.iter().any(|(t, c)| t == "\"query\"" && *c == key),
-        "object key not coloured as structure: {spans:?}"
+        spans
+            .iter()
+            .any(|(t, c)| t == "query" && *c == Some(stella_tui_theme::token::MUTED)),
+        "the key is muted: {spans:?}"
     );
     assert!(
-        spans.iter().any(|(t, c)| t == "\"needle\"" && *c == string),
-        "string value not coloured as a string: {spans:?}"
+        spans
+            .iter()
+            .any(|(t, c)| t == "needle" && *c == Some(stella_tui_theme::token::TEXT)),
+        "the value is text: {spans:?}"
     );
-    assert!(
-        spans.iter().any(|(t, c)| t == "3" && *c == number),
-        "number value not coloured as a number: {spans:?}"
-    );
-    // A key and its value must not share a hue, or the object has no shape.
-    assert_ne!(key, string, "key and string value are the same colour");
 }
 
 #[test]
@@ -209,16 +216,15 @@ fn a_plain_text_result_is_not_coloured_as_json() {
     assert!(spans.iter().any(|(_, c)| *c == Some(theme::MUTED)));
 }
 
+/// A folded JSON result previews its first fields and states how many are
+/// behind `ctrl+o` — in fields, which is the unit the reader sees.
 #[test]
-fn a_json_preview_starts_at_the_opening_brace() {
-    let body = "{\n  \"a\": 1,\n  \"b\": 2\n}";
+fn a_json_preview_shows_the_first_fields_and_counts_the_rest() {
+    let body = "{\"a\": 1, \"b\": 2, \"c\": 3, \"d\": 4, \"e\": 5, \"f\": 6, \"g\": 7, \"h\": 8}";
     let rendered = text_of(&collapsed(&result(body)));
-    // `salient_line` skips a preamble to the interesting line; for an object
-    // that would cut the shape away from its own contents.
-    assert!(
-        rendered.contains('{'),
-        "JSON preview dropped its opening delimiter:\n{rendered}"
-    );
+    assert!(rendered.contains("a 1"), "{rendered}");
+    assert!(rendered.contains("2 more fields · ctrl+o"), "{rendered}");
+    assert!(!rendered.contains("h 8"), "the tail is folded:\n{rendered}");
 }
 
 /// The deck and the export/Observatory surfaces show the **same** amount of a

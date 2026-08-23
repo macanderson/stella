@@ -217,7 +217,6 @@ fn the_session_transcript_is_full_width_in_both_modes() {
     }
 }
 
-
 // ─────────────────────────── SCROLLBACK vs THE PANE ──────────────────────
 
 /// The second invariant #1258 names for phase 2: settled content is rendered
