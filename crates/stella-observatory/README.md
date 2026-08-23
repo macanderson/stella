@@ -121,7 +121,7 @@ it crosses.
 **Loopback-only** starts at `TcpListener::bind(("127.0.0.1", port))`
 (`src/lib.rs`), but the bind is not the boundary: a web page can resolve an
 attacker-controlled name to `127.0.0.1` and read this dashboard cross-origin.
-Three things close that. `host_is_local` (`src/lib.rs`) refuses any `Host`
+Three checks close that. `host_is_local` (`src/lib.rs`) refuses any `Host`
 that does not *parse* as a loopback IP — never a prefix test, because
 `127.0.0.1.attacker.example` is a registrable name `starts_with("127.")` waves
 through. `handle` refuses an unterminated request head with `431` *before*
@@ -146,7 +146,7 @@ returns `None` for a missing file rather than creating it. Outside
 contains `http://`, `https://`, `//cdn`, `@import` or `integrity=`, and the
 `CSP` constant (`src/lib.rs`) restates that to the browser (`default-src
 'self'`, `connect-src 'self'`, `img-src 'self'`). `'unsafe-inline'` on
-`script-src`/`style-src` is unavoidable and load-bearing: the page is one
+`script-src`/`style-src` is unavoidable and required: the page is one
 document with an inline `<script>`, an inline `<style>` and inline `style="…"`
 attributes, so dropping it from `style-src` would strip the layout silently.
 `csp_admits_everything_the_embedded_dashboard_actually_uses` pins both halves.

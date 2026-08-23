@@ -15,7 +15,7 @@ of its 14 routes.
 This matrix is why "Stella is an embeddable engine" is a checkable claim rather
 than a slogan: the CLI is a door, the API is a door, and a capability that exists
 behind only one of them is a declared deferral with a name on it or a failing
-test. Two things the plugin era adds to its job. A **wrapper is not a surface** —
+test. The plugin era adds two duties. A **wrapper is not a surface** —
 verification leaving the workspace for a plugin (#3246,
 `doc:turn-loop-wrappers`) must not be recorded as an API-side absence; what the
 matrix should hold once the wrapper contract lands (#3380) is that both doors can

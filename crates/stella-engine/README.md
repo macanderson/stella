@@ -30,7 +30,7 @@ two doors, and step mode is what makes it durable — a host that owns a queue, 
 deadline, and a crash-restart story drives `run_step`, persists the
 `Checkpoint`, and resumes in a different process.
 
-Two things this door deliberately does not carry:
+This door deliberately does not carry:
 
 - **No verification.** The staged pipeline is a *wrapper* around the loop, not
   part of it, and it is leaving the workspace to become a plugin (#3246,

@@ -33,6 +33,10 @@ ALLOW=(
   "scripts/check-design-refs.sh"   # this guard
   "scripts/check-doc-links.py"     # link checker: resolves links in both trees
   "Makefile"                       # doc-adopt promotes a doc OUT of docs/design
+  # A generated inventory of every file carrying a construction, written by
+  # `make prose-update`. Its paths are an index, not a citation -- nothing in
+  # it asks a reader to go and read the document.
+  "scripts/prose-baseline.txt"
 )
 
 is_allowed() {

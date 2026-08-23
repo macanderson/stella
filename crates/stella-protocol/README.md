@@ -46,7 +46,7 @@ declaring its say in the loop names this crate's `HookEvent` in its manifest.
 Neither of them can read Rust doc comments in `stella-core`, so a vocabulary this
 crate does not carry is a vocabulary they cannot use.
 
-Two consequences already visible in the tree:
+Already visible in the tree:
 
 - **One ending per turn, plus one per run.** Since #3379 the engine always emits
   its own terminal completion and no wrapper may filter or forge it; a wrapper's

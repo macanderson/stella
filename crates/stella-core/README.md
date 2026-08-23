@@ -189,7 +189,7 @@ compaction pass → loop detection → model call (wrapped in retry+backoff) →
 committed-step bookkeeping → dispatch → parked wait (when a tool deposited
 one). Each phase is one sub-method (`run_compaction_pass`,
 `check_loop_detection`, `run_model_call`, `dispatch_completion`,
-`maybe_park`). The order is load-bearing, not stylistic: identities are
+`maybe_park`). The order is required, not stylistic: identities are
 snapshotted *before* compaction because the compaction pass rewrites tool
 results in place and loop detection then runs on the rewritten history in that
 same step (#554). The engine holds no conversation state — `messages` is

@@ -11,7 +11,7 @@ stella_home::stella_home(); // $STELLA_HOME, else ~/.stella
 stella_home::data_dir();    // $STELLA_DATA_DIR, else the stella home, else "."
 ```
 
-`STELLA_HOME` moves the **whole** home, and "whole" is load-bearing: five
+`STELLA_HOME` moves the **whole** home, and "whole" is exact: five
 seams used to resolve `$HOME/.stella/...` themselves, so a process pointed at a
 scratch home moved its data tier and still read the developer's real
 `settings.json`, `credentials.toml`, `integrations.json` and `web_auth.toml`
@@ -68,8 +68,8 @@ which is the test — not "is it about the home directory". They still answer
 is I/O with failure modes, and it stays in the CLI.
 
 `resolve_user_plugins_dir` / `resolve_project_plugins_dir` (#3380) are the same
-shape arriving **one consumer early**, and that is said out loud rather than
-glossed: `stella-cli`'s plugin loader is their only caller today, and it calls
+shape arriving **one consumer early**: `stella-cli`'s plugin loader is their
+only caller today, and it calls
 the pure `resolve_*` half directly with its own redirectable root — not the
 ambient `user_plugins_dir()` wrapper, which nothing calls yet. The second
 consumer is the wrapper socket's other drivers — `stella-serve` and an

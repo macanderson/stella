@@ -21,7 +21,7 @@ native build); and there is no `unwrap`/`panic` outside tests.
 
 Stella's shape is one turn loop with a plugin architecture around it
 (`doc:turn-loop-wrappers`). This crate is the *fan-out* layer over that loop, and
-the distinction that keeps it from becoming a second engine is worth stating:
+the distinction that keeps it from becoming a second engine is this:
 a **wrapper** does more work around one prompt (propose, run a turn, judge,
 maybe go again); a **fleet** dispatches many independent prompts and records what
 each cost. Verification is a wrapper's job, not this crate's — and it is leaving
@@ -134,7 +134,7 @@ both.
 
 Both halves of that record are decided by the **worker**, not by this crate:
 `WorkerOutcome` carries them in and `finish_attempt` stamps them verbatim. A
-shared-tree run makes that a load-bearing detail — every worker of the wave
+shared-tree run makes that decisive — every worker of the wave
 commits onto one `HEAD`, so *which* commits are a task's cannot be re-derived
 from the shared log afterwards, and a worker that dies mid-attempt still owes
 the ledger the money it already spent. `stella-cli`'s fleet worker answers

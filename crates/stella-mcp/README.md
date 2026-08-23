@@ -190,7 +190,7 @@ and a server's metadata is untrusted for the same reason its output is
 
 ## Gotchas
 
-- **`PATH` is the only inherited variable, and it is load-bearing.** Without
+- **`PATH` is the only inherited variable, and it is required.** Without
   the pass-through, every registry-installed stdio server (`npx`/`uvx`/`docker`)
   failed to spawn. `stdio.rs`'s `a_bare_runner_command_resolves_via_inherited_path`
   is the witness.
