@@ -117,8 +117,16 @@ pub struct CallRecord<'a> {
     pub identity: Option<String>,
 }
 
-/// Threshold configuration for [`detect_loop`]. `Default` gives sensible
-/// starting values; callers (the step-driver) may tune per session.
+/// Threshold configuration for [`detect_loop`] and for the stall rung beside
+/// it. `Default` gives sensible starting values; callers (the step-driver) may
+/// tune per session.
+///
+/// Every field but the last is read by [`detect_loop`] itself.
+/// [`Self::stall_steer_threshold_secs`] is read by the driver's stall rung
+/// (`stella_core::driver`'s `loop_escalation`), which fires on the arm where
+/// this function found nothing — it lives here because it is a loop-detection
+/// threshold from the operator's side, and having it anywhere else is what
+/// #3623 was filed about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoopDetectionConfig {
     /// Consecutive identical (name + input + output) calls required to
@@ -166,6 +174,31 @@ pub struct LoopDetectionConfig {
     /// through and going back to the top is ordinary navigation. Eight is a
     /// sweep by any reading and is far below the 85-call shape #4034 measured.
     pub monotonic_sweep_threshold: usize,
+    /// Seconds of *pure* `sleep` one turn may ask for before the stall rung
+    /// says something about it. `0` disables the rung, like every threshold
+    /// above.
+    ///
+    /// The rung this bounds is the one no loop detector can reach. The
+    /// measured shape — `sleep 300; echo done` ×3 with a poll between each,
+    /// 1,089s of a 900s allowance — trips nothing: exact repeat needs the
+    /// calls adjacent, the interleaved rung is suppressed because the polls
+    /// answer differently and the window therefore "progresses", and the
+    /// budget guard is spend-based, so idling costs $0.
+    ///
+    /// 120s by default, from the fleet-wide census in #2022 rather than from
+    /// taste: 6 of 51 trials slept more than 30s, and the distribution splits
+    /// cleanly — 47s, 73s and 114s for trials that sleep incidentally, then
+    /// 307s and 1,089s for the two that sleep instead of working. A threshold
+    /// above the first group and below the second buys the pathological shape
+    /// and pays nothing for the ordinary one. It sits deliberately far above
+    /// `bash`'s own 30s per-call advisory (`stella_tools::bash`): this is the
+    /// escalation, not a second copy of that notice.
+    ///
+    /// A good default and not a law, which is why it is configuration rather
+    /// than the `const` it shipped as: a session that legitimately waits — a
+    /// slow CI poll, a long provisioning step — raises it, and a bench harness
+    /// lowers it to study the rung or zeroes it to measure its cost (#3623).
+    pub stall_steer_threshold_secs: u64,
 }
 
 impl Default for LoopDetectionConfig {
@@ -190,6 +223,7 @@ impl Default for LoopDetectionConfig {
             stagnation_threshold: 6,
             interleaved_repeat_threshold: 3,
             monotonic_sweep_threshold: 8,
+            stall_steer_threshold_secs: 120,
         }
     }
 }

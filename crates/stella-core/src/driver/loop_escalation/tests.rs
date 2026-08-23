@@ -572,9 +572,17 @@ mod stall {
     use super::StatusAndBash;
     use crate::driver::config::EngineConfig;
     use crate::driver::loop_escalation::{
-        LOOP_STEER_PREFIX, LoopSteerBudget, STALL_STEER_PREFIX, STALL_STEER_THRESHOLD_SECS,
+        LOOP_STEER_PREFIX, LoopSteerBudget, MAX_LOOP_STEERS, MAX_STALL_STEERS, STALL_STEER_PREFIX,
         check_loop_detection, steer_stalled_turn, turn_stall_seconds,
     };
+    use crate::loop_detect::LoopDetectionConfig;
+
+    /// The shipped default, read from configuration rather than pinned as a
+    /// literal here: the point of #3623 is that the number is tunable, so a
+    /// test asserting a constant would re-freeze what the change unfroze.
+    fn default_threshold() -> u64 {
+        LoopDetectionConfig::default().stall_steer_threshold_secs
+    }
     use crate::driver::loop_evidence::ResultIdentities;
     use crate::event_sender::EventSender;
     use crate::loop_detect::CallRecord;
@@ -636,7 +644,7 @@ mod stall {
             )));
         }
         assert_eq!(turn_stall_seconds(&window), 900);
-        assert!(turn_stall_seconds(&window) >= STALL_STEER_THRESHOLD_SECS);
+        assert!(turn_stall_seconds(&window) >= default_threshold());
     }
 
     /// #2022's witness, in the shape the trace recorded: three
@@ -848,12 +856,18 @@ mod stall {
         let quiet = records(&["sleep 60", "cargo test"]);
         let secs = turn_stall_seconds(&quiet);
         assert_eq!(secs, 60, "only the bare sleep counts, not the test run");
-        assert!(secs < STALL_STEER_THRESHOLD_SECS);
+        assert!(secs < default_threshold());
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let events = EventSender::new(tx);
         let mut messages = vec![CompletionMessage::user("build it")];
-        steer_stalled_turn(&mut messages, secs, &events);
+        steer_stalled_turn(
+            &mut messages,
+            secs,
+            default_threshold(),
+            &mut LoopSteerBudget::default(),
+            &events,
+        );
         assert_eq!(
             messages.len(),
             1,
@@ -871,6 +885,206 @@ mod stall {
     fn an_absurd_sleep_request_saturates() {
         let absurd = records(&["sleep 99999999999999999999", "sleep 99999999999999999999"]);
         assert_eq!(turn_stall_seconds(&absurd), u64::MAX);
+    }
+
+    /// **Witness (#3623.1).** The threshold that fires is the *configured*
+    /// one, not the shipped default. A session that legitimately waits raises
+    /// it and hears nothing; a bench harness lowers it and hears the rung on a
+    /// turn the default would have ignored; `0` turns it off outright, the
+    /// same convention every threshold beside it honours.
+    #[test]
+    fn the_configured_stall_threshold_is_the_one_that_fires() {
+        let transcript = || {
+            let mut messages = vec![
+                CompletionMessage::system("sys"),
+                CompletionMessage::user("optimize the portfolio"),
+            ];
+            messages.extend(call("c1", "sleep 100; echo done", "done"));
+            messages.extend(call("c2", "tail -n 5 build.log", "line A"));
+            messages
+        };
+        let steered_at = |threshold_secs: u64| {
+            let config = EngineConfig {
+                loop_detection: LoopDetectionConfig {
+                    stall_steer_threshold_secs: threshold_secs,
+                    ..LoopDetectionConfig::default()
+                },
+                ..EngineConfig::default()
+            };
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            let events = EventSender::new(tx);
+            let mut messages = transcript();
+            check_loop_detection(
+                &config,
+                &StatusAndBash,
+                &mut messages,
+                &ResultIdentities::default(),
+                &mut LoopSteerBudget::default(),
+                0.0,
+                &events,
+            );
+            messages
+                .last()
+                .is_some_and(|m| m.content.starts_with(STALL_STEER_PREFIX))
+        };
+        assert!(
+            !steered_at(default_threshold()),
+            "100s is under the 120s default and must stay unsteered"
+        );
+        assert!(
+            steered_at(60),
+            "a harness that lowers the threshold must hear the rung"
+        );
+        assert!(!steered_at(600), "a session that raises it must not");
+        assert!(!steered_at(0), "zero disables the rung");
+    }
+
+    /// **Witness (#3623.2).** A turn that is looping AND sleeping hears about
+    /// both. The window is three identical `sleep 300; echo done` calls: an
+    /// exact repeat by every measure, and 900s of pure sleep at the same time.
+    ///
+    /// Before this the stall rung lived inside the `NoLoop` arm, so the loop
+    /// steer was the only thing the turn was told — and once the loop budget
+    /// aborts, it never hears the rest. The two prescribe different things:
+    /// "vary the arguments" says nothing about a blind `sleep`, and a model
+    /// that obeys the loop steer is still sleeping away the clock.
+    #[test]
+    fn a_turn_that_loops_and_sleeps_hears_about_both() {
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("optimize the portfolio"),
+        ];
+        for id in ["c1", "c2", "c3"] {
+            messages.extend(call(id, "sleep 300; echo done", "done"));
+        }
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let outcome = check_loop_detection(
+            &EngineConfig::default(),
+            &StatusAndBash,
+            &mut messages,
+            &ResultIdentities::default(),
+            &mut LoopSteerBudget::default(),
+            0.0,
+            &events,
+        );
+        assert!(
+            outcome.is_none(),
+            "the first detection steers, never aborts"
+        );
+
+        let drained: Vec<AgentEvent> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(
+            drained
+                .iter()
+                .any(|e| matches!(e, AgentEvent::LoopDetected { .. })),
+            "anti-vacuity: this window really is a detected loop: {drained:?}"
+        );
+        for cause in [SteerCause::Loop, SteerCause::Stall] {
+            assert!(
+                drained
+                    .iter()
+                    .any(|e| matches!(e, AgentEvent::Steered { cause: c, .. } if *c == cause)),
+                "both rungs must reach the wire, missing {cause:?}: {drained:?}"
+            );
+        }
+        let tail: Vec<&CompletionMessage> = messages.iter().rev().take(2).collect();
+        assert!(
+            tail[0].content.starts_with(STALL_STEER_PREFIX),
+            "the stall steer is the last thing the model reads: {:?}",
+            tail[0].content
+        );
+        assert!(
+            tail[1].content.starts_with(LOOP_STEER_PREFIX)
+                && !tail[1].content.starts_with(STALL_STEER_PREFIX),
+            "and the loop steer sits before it: {:?}",
+            tail[1].content
+        );
+    }
+
+    /// The other half of the composition decision: the two rungs compose only
+    /// where the turn continues. On the abort arm the turn is over, and a
+    /// warning nobody will answer is a message written into a dead transcript.
+    #[test]
+    fn an_aborting_turn_is_not_also_told_it_was_sleeping() {
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("optimize the portfolio"),
+        ];
+        for id in ["c1", "c2", "c3"] {
+            messages.extend(call(id, "sleep 300; echo done", "done"));
+        }
+        // A budget with both warnings spent: the next detection of any loop
+        // ends the turn. Two DIFFERENT loops, because re-detecting one already
+        // warned about aborts without charging a second warning.
+        let mut budget = LoopSteerBudget::default();
+        for input in ["{\"a\":1}", "{\"b\":2}"] {
+            assert_eq!(
+                budget.escalate(&crate::loop_detect::LoopIdentity {
+                    tools: vec!["bash".to_string()],
+                    inputs: Some(vec![input.to_string()]),
+                }),
+                super::super::LoopEscalation::Steer
+            );
+        }
+        assert_eq!(budget.spent(), MAX_LOOP_STEERS, "the budget is spent");
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let before = messages.len();
+        let outcome = check_loop_detection(
+            &EngineConfig::default(),
+            &StatusAndBash,
+            &mut messages,
+            &ResultIdentities::default(),
+            &mut budget,
+            0.0,
+            &events,
+        );
+        assert!(outcome.is_some(), "a spent budget aborts the turn");
+        assert_eq!(
+            messages.len(),
+            before,
+            "an aborted turn gets no steer of either kind"
+        );
+    }
+
+    /// **Witness (#3623.3).** Warn-once is read off the transcript, so
+    /// compaction dropping the marker earns a still-sleeping turn another
+    /// warning — right, because the model can no longer see the first, and
+    /// unbounded, because nothing counted them. `MAX_STALL_STEERS` is the
+    /// ceiling; this replays the marker being lost four times and asserts the
+    /// turn pays for two.
+    #[test]
+    fn repeated_compactions_cannot_buy_unlimited_stall_steers() {
+        let mut messages = vec![
+            CompletionMessage::system("sys"),
+            CompletionMessage::user("optimize the portfolio"),
+        ];
+        messages.extend(call("c1", "sleep 300; echo done", "done"));
+        messages.extend(call("c2", "tail -n 5 build.log", "line A"));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let mut budget = LoopSteerBudget::default();
+        let mut steers = 0;
+        for _ in 0..4 {
+            check_loop_detection(
+                &EngineConfig::default(),
+                &StatusAndBash,
+                &mut messages,
+                &ResultIdentities::default(),
+                &mut budget,
+                0.0,
+                &events,
+            );
+            // What a compaction pass does to this rung's only state.
+            let before = messages.len();
+            messages.retain(|m| !m.content.starts_with(STALL_STEER_PREFIX));
+            steers += before - messages.len();
+        }
+        assert_eq!(
+            steers, MAX_STALL_STEERS as usize,
+            "the turn may lose its marker forever; it pays for two warnings"
+        );
     }
 
     proptest! {

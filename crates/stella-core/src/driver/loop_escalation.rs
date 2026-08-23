@@ -29,13 +29,20 @@
 //!
 //! # The stall rung
 //!
-//! One more thing lives here, on the arm where the detector found nothing: a
-//! turn that has asked to `sleep` away its allowance (#2022). It is the same
-//! claim — this turn is stuck — reached by the one route loop detection
-//! structurally cannot take, because sleeps separated by any other call read
-//! as a progressing window and idling costs $0 against a spend-based budget.
-//! It rides the same seam ([`STALL_STEER_PREFIX`] extends `LOOP_STEER_PREFIX`)
-//! and deliberately carries no abort: see [`steer_stalled_turn`].
+//! One more thing lives here: a turn that has asked to `sleep` away its
+//! allowance (#2022). It is the same claim — this turn is stuck — reached by
+//! the one route loop detection structurally cannot take, because sleeps
+//! separated by any other call read as a progressing window and idling costs
+//! $0 against a spend-based budget. It rides the same seam
+//! ([`STALL_STEER_PREFIX`] extends `LOOP_STEER_PREFIX`) and deliberately
+//! carries no abort: see [`steer_stalled_turn`].
+//!
+//! It runs on the arm where the detector found nothing **and** on the arm
+//! where a detection bought a steering warning, because a turn can be looping
+//! and sleeping at once and the two steers prescribe different things. It does
+//! not run on the abort arm, where the turn is already over. Its threshold is
+//! `crate::loop_detect::LoopDetectionConfig::stall_steer_threshold_secs` and
+//! its ceiling is [`MAX_STALL_STEERS`] (#3623).
 //!
 //! Split out of `driver.rs` the same way `super::settlement` was: the parent
 //! file sits at its file-size ceiling. The module is `pub(crate)` so
@@ -75,6 +82,31 @@ use super::{EngineConfig, LOOP_STEER_PREFIX, TurnOutcome};
 /// the number.
 pub(crate) const MAX_LOOP_STEERS: u32 = 2;
 
+/// How many stalled-turn warnings one turn may spend.
+///
+/// The stall rung's warn-once is read off the transcript, and that is
+/// deliberate — see [`steer_stalled_turn`] — but it is warn-once only while
+/// the marker is *visible*. Compaction rewrites and drops old messages, so a
+/// very long, very sleepy turn earns a fresh warning every time the marker
+/// goes, and each one costs a transcript message plus the model call that
+/// answers it. Nothing bounded that (#3623).
+///
+/// Two, matching [`MAX_LOOP_STEERS`], because the argument is the same one
+/// arrived at from the other side. There it is "the model was told and is
+/// looping anyway"; here it is "the model was told, cannot see it any more,
+/// and is still sleeping" — a second telling is worth buying, a third is a
+/// turn that has heard the point twice and is not going to act on it. Unlike
+/// the loop budget there is no abort behind this one, so the cap is the only
+/// thing that ends the sequence, which is why it cannot be left open.
+///
+/// Held in [`LoopSteerBudget`], which is per-turn state and is **not**
+/// checkpointed for this rung: a resumed turn restores the transcript, so the
+/// marker scan still suppresses a warning the model can see, and only the
+/// compaction-dropped case starts its count again. A wire field would buy
+/// exactness across a resume for a bound whose whole purpose is to stop a
+/// sequence, and #2022's rung was built without one on purpose.
+pub(crate) const MAX_STALL_STEERS: u32 = 2;
+
 /// What a loop detection is worth: another warning, or the turn's end.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum LoopEscalation {
@@ -88,7 +120,14 @@ pub(crate) enum LoopEscalation {
 }
 
 /// A turn's stuck-loop steering budget: the loop the most recent warning
-/// named, and how many warnings the turn has spent of [`MAX_LOOP_STEERS`].
+/// named, how many warnings the turn has spent of [`MAX_LOOP_STEERS`], and the
+/// separate tally the stall rung spends of [`MAX_STALL_STEERS`].
+///
+/// Two counters and not one, because the two rungs are bought with different
+/// evidence and end differently: a loop steer is granted per *distinct loop*
+/// and escalates to an abort, while a stall steer is granted per *lost
+/// marker* and never aborts. One shared count would let a looping turn spend
+/// the sleeping turn's warnings and the other way round.
 ///
 /// Pure decision state over owned data (invariant #2) — no I/O, no clock, no
 /// transcript. [`Self::escalate`] is the whole ladder in one total function,
@@ -102,6 +141,9 @@ pub(crate) struct LoopSteerBudget {
     /// Warnings spent. Invariant, established by construction and every
     /// mutation below: `spent == 0` exactly when `warned` is `None`.
     spent: u32,
+    /// Stalled-turn warnings spent, of [`MAX_STALL_STEERS`]. Deliberately not
+    /// carried by [`Self::resumed`]: see that constant's doc comment.
+    stall_spent: u32,
 }
 
 impl LoopSteerBudget {
@@ -123,7 +165,11 @@ impl LoopSteerBudget {
     /// ever name.
     pub(crate) fn resumed(warned: Option<LoopIdentity>, recorded: u32) -> Self {
         let spent = if warned.is_some() { recorded.max(1) } else { 0 };
-        Self { warned, spent }
+        Self {
+            warned,
+            spent,
+            stall_spent: 0,
+        }
     }
 
     /// The loop the most recent warning was about — what a checkpoint
@@ -182,6 +228,17 @@ impl LoopSteerBudget {
         self.spent += 1;
         LoopEscalation::Steer
     }
+
+    /// Charge a stalled-turn warning against [`MAX_STALL_STEERS`], answering
+    /// whether the turn could afford it. `&mut self` and one call for the same
+    /// reason [`Self::escalate`] is shaped that way.
+    pub(crate) fn spend_stall_steer(&mut self) -> bool {
+        if self.stall_spent >= MAX_STALL_STEERS {
+            return false;
+        }
+        self.stall_spent += 1;
+        true
+    }
 }
 
 /// Loop detection, before spending a model call on a step that's already
@@ -215,6 +272,10 @@ pub(super) fn check_loop_detection(
     let turn_instance = config.turn_instance;
     let records = recent_call_records(messages, result_identities);
     let verdict = detect_loop(&records, config.loop_detection);
+    // Read from the same window the verdict is, and before the transcript is
+    // touched, so both rungs answer about the same turn.
+    let stall_secs = turn_stall_seconds(&records);
+    let stall_threshold = config.loop_detection.stall_steer_threshold_secs;
     // The typed twin of the prose steer/abort (receipts spec §6.3): a
     // receipt parses this instead of string-matching "stuck-loop
     // detected:" prefixes. Emitted for both outcomes — `aborted` says
@@ -225,7 +286,7 @@ pub(super) fn check_loop_detection(
         // No loop is not the same as no trouble: the stall rung is exactly
         // the turn the detector above cannot see (#2022).
         LoopVerdict::NoLoop => {
-            steer_stalled_turn(messages, turn_stall_seconds(&records), events);
+            steer_stalled_turn(messages, stall_secs, stall_threshold, loop_steer, events);
             return None;
         }
         LoopVerdict::ExactRepeat { tool, count, .. } => {
@@ -287,6 +348,18 @@ pub(super) fn check_loop_detection(
             cause: SteerCause::Loop,
         });
         messages.push(CompletionMessage::user(text));
+        // The two rungs COMPOSE on this arm, and that is the decision #3623
+        // asked for. A turn can be looping and sleeping at once, and the two
+        // steers prescribe different things — "vary the arguments" says
+        // nothing about a blind `sleep`, and a model that obeys the loop steer
+        // is still sleeping away the clock. Withholding the stall steer here
+        // is not deferring it either: the next detection may abort, and after
+        // that the turn never hears it at all.
+        //
+        // They compose only where the turn continues. Below this point the
+        // turn is over, and a warning nobody will answer is a message written
+        // into a dead transcript.
+        steer_stalled_turn(messages, stall_secs, stall_threshold, loop_steer, events);
         return None;
     };
     let reason = abort_reason(&warned, &identity, &evidence);
@@ -392,31 +465,6 @@ fn steer_text(
     )
 }
 
-/// The seconds of *pure* `sleep` one turn may ask for before the engine says
-/// something about it (#2022).
-///
-/// The rung this bounds is the one no loop detector can reach. The measured
-/// shape — `sleep 300; echo done` ×3 with a poll between each, 1,089s of a
-/// 900s allowance — trips nothing: exact repeat needs the calls adjacent, the
-/// interleaved rung is suppressed because the polls answer differently and the
-/// window therefore "progresses", and the budget guard is spend-based, so
-/// idling costs $0.
-///
-/// 120s, from the fleet-wide census in that issue rather than from taste: 6 of
-/// 51 trials slept more than 30s, and the distribution splits cleanly — 47s,
-/// 73s and 114s for trials that sleep incidentally, then 307s and 1,089s for
-/// the two that sleep instead of working. A threshold above the first group
-/// and below the second buys the pathological shape and pays nothing for the
-/// ordinary one. It sits deliberately far above `bash`'s own 30s per-call
-/// advisory (`stella_tools::bash`): this is the escalation, not a second copy
-/// of that notice.
-///
-/// A `const` and not a `crate::loop_detect::LoopDetectionConfig` field, unlike
-/// every threshold beside it — a declared gap, tracked in #3623, not a
-/// silence: a session that legitimately waits cannot raise it and a bench
-/// harness cannot lower it to study the rung.
-pub(crate) const STALL_STEER_THRESHOLD_SECS: u64 = 120;
-
 /// The opening of the stalled-turn steer, for the warn-once scan below.
 ///
 /// A qualifier on `LOOP_STEER_PREFIX`, not a marker of its own. `crate::engine_markers`
@@ -481,15 +529,22 @@ fn turn_stall_seconds(records: &[CallRecord<'_>]) -> u64 {
         .fold(0u64, |total, secs| total.saturating_add(secs))
 }
 
-/// Steer a turn that is sleeping away its allowance — once *per turn*.
+/// Steer a turn that is sleeping away its allowance — once *per turn*, and at
+/// most [`MAX_STALL_STEERS`] times however often the marker is lost.
 ///
 /// Warn-once is read off the transcript rather than held in
 /// [`LoopSteerBudget`] or `crate::step::TurnState`: a steer the model can see
 /// is the only state this rung needs, and no checkpoint field, wire change or
-/// resume-reconciliation rule has to be invented to carry it. The one
-/// consequence worth naming is that compaction can drop the marker, after
-/// which a still-sleeping turn earns a second warning — which is the right
-/// answer anyway, since the model can no longer see the first.
+/// resume-reconciliation rule has to be invented to carry it. Compaction can
+/// drop the marker, after which a still-sleeping turn earns a second warning —
+/// which is the right answer, since the model can no longer see the first, and
+/// is why the transcript scan is not the whole rule. [`MAX_STALL_STEERS`] is
+/// the ceiling on how many times that can happen, because nothing else here
+/// ends the sequence: this rung carries no abort (#3623).
+///
+/// `threshold_secs` is `crate::loop_detect::LoopDetectionConfig::stall_steer_threshold_secs`,
+/// and `0` disables the rung outright — the same convention every threshold
+/// beside it honours.
 ///
 /// **The scan is bounded by [`turn_start_index`], and that is load-bearing.**
 /// A transcript is session-scoped — `run_turn` is handed the same `Vec` every
@@ -513,9 +568,11 @@ fn turn_stall_seconds(records: &[CallRecord<'_>]) -> u64 {
 fn steer_stalled_turn(
     messages: &mut Vec<CompletionMessage>,
     stall_secs: u64,
+    threshold_secs: u64,
+    budget: &mut LoopSteerBudget,
     events: &EventSender,
 ) {
-    if stall_secs < STALL_STEER_THRESHOLD_SECS {
+    if threshold_secs == 0 || stall_secs < threshold_secs {
         return;
     }
     let turn_start = turn_start_index(messages);
@@ -523,6 +580,12 @@ fn steer_stalled_turn(
         .iter()
         .any(|m| m.role == MessageRole::User && m.content.starts_with(STALL_STEER_PREFIX))
     {
+        return;
+    }
+    // Charged last, so a turn under the threshold or already carrying a
+    // visible marker spends nothing: the budget bounds warnings the model was
+    // actually given.
+    if !budget.spend_stall_steer() {
         return;
     }
     let text = stall_steer_text(stall_secs);

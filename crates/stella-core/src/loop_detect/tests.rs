@@ -88,6 +88,8 @@ fn history_shorter_than_exact_repeat_threshold_is_not_a_loop() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -103,6 +105,8 @@ fn exact_repeat_at_threshold_is_detected() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     let verdict = detect_loop(&records, config);
     assert_eq!(
@@ -129,6 +133,8 @@ fn exact_repeat_above_threshold_reports_full_count() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     match detect_loop(&records, config) {
         LoopVerdict::ExactRepeat { count, .. } => assert_eq!(count, 5),
@@ -184,6 +190,8 @@ fn different_arguments_to_the_same_tool_is_not_a_loop() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -206,6 +214,8 @@ fn call_id_is_ignored_when_comparing_calls() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert!(detect_loop(&records, config).is_loop());
 }
@@ -238,6 +248,8 @@ fn matching_identities_outrank_outputs_rewritten_since() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert!(
         detect_loop(&records, config).is_loop(),
@@ -269,6 +281,8 @@ fn differing_identities_outrank_outputs_collapsed_since() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -292,6 +306,8 @@ fn an_identity_never_resurrects_an_unresolved_output() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -314,6 +330,8 @@ fn one_sided_identity_falls_back_to_comparing_outputs() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert!(detect_loop(&records, config).is_loop());
 }
@@ -330,6 +348,8 @@ fn short_cycle_below_threshold_is_not_a_loop() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -354,6 +374,8 @@ fn short_cycle_at_threshold_is_detected() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     let verdict = detect_loop(&records, config);
     match &verdict {
@@ -382,6 +404,8 @@ fn short_cycle_above_threshold_reports_full_repeat_count() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     match detect_loop(&records, config) {
         LoopVerdict::ShortCycle { repeats, .. } => assert_eq!(repeats, 5),
@@ -433,6 +457,8 @@ fn period_three_cycle_with_identical_outputs_is_detected() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     let verdict = detect_loop(&records, config);
     match &verdict {
@@ -470,6 +496,8 @@ fn period_three_cycle_with_differing_outputs_is_not_a_loop() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -497,6 +525,8 @@ fn period_four_cycle_with_identical_outputs_is_detected() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     match detect_loop(&records, config) {
         LoopVerdict::ShortCycle { pattern, repeats } => {
@@ -533,6 +563,8 @@ fn period_five_cycle_is_beyond_the_detector() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -552,6 +584,8 @@ fn identical_calls_repeated_are_not_misreported_as_a_short_cycle() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -649,6 +683,8 @@ fn zero_or_one_exact_repeat_threshold_disables_that_check() {
             interleaved_repeat_threshold: 0, // ditto
             // Disabled: this case isolates another detector (#4042).
             monotonic_sweep_threshold: 0,
+            // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+            stall_steer_threshold_secs: 0,
         };
         assert_eq!(
             detect_loop(&records, config),
@@ -676,6 +712,8 @@ fn zero_short_cycle_repeats_disables_that_check() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -694,6 +732,8 @@ fn pathological_thresholds_do_not_overflow_the_cycle_arithmetic() {
         interleaved_repeat_threshold: 0, // disabled: this test isolates another check
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -904,6 +944,8 @@ fn identical_calls_are_reported_as_an_exact_repeat_not_stagnation() {
         interleaved_repeat_threshold: 0,
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -933,6 +975,8 @@ fn zero_or_one_stagnation_threshold_disables_that_check() {
             interleaved_repeat_threshold: 0,
             // Disabled: this case isolates another detector (#4042).
             monotonic_sweep_threshold: 0,
+            // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+            stall_steer_threshold_secs: 0,
         };
         assert_eq!(
             detect_loop(&records, config),
@@ -1006,7 +1050,7 @@ proptest! {
         stagnation_threshold in 0usize..8,
         monotonic_sweep_threshold in 0usize..8,
     ) {
-        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold: 0, monotonic_sweep_threshold };
+        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold: 0, monotonic_sweep_threshold, stall_steer_threshold_secs: 0 };
         let verdict = detect_loop(&records, config);
         // Whatever the verdict, `is_loop`/`evidence` must not panic either.
         let _ = verdict.is_loop();
@@ -1029,7 +1073,7 @@ proptest! {
             && records.len() < stagnation_threshold
             && records.len() < monotonic_sweep_threshold
         {
-            let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold: 0, monotonic_sweep_threshold };
+            let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold: 0, monotonic_sweep_threshold, stall_steer_threshold_secs: 0 };
             prop_assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
         }
     }
@@ -1062,7 +1106,7 @@ proptest! {
                 record
             })
             .collect();
-        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold: 0, monotonic_sweep_threshold: 0 };
+        let config = LoopDetectionConfig { exact_repeat_threshold, short_cycle_repeats, stagnation_threshold, interleaved_repeat_threshold: 0, monotonic_sweep_threshold: 0, stall_steer_threshold_secs: 0 };
         prop_assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
     }
 }
@@ -1097,6 +1141,8 @@ fn an_identical_call_interleaved_with_varying_work_is_a_loop() {
         interleaved_repeat_threshold: 0, // the old behaviour
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(
         detect_loop(&records, contiguous_only),
@@ -1108,6 +1154,8 @@ fn an_identical_call_interleaved_with_varying_work_is_a_loop() {
         interleaved_repeat_threshold: 3,
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
         ..contiguous_only
     };
     match detect_loop(&records, with_rung) {
@@ -1150,6 +1198,8 @@ fn an_interleave_whose_results_keep_changing_is_not_a_loop() {
         interleaved_repeat_threshold: 3,
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(
         detect_loop(&records, config),
@@ -1171,6 +1221,8 @@ fn a_contiguous_run_still_reports_as_an_exact_repeat() {
         interleaved_repeat_threshold: 3,
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert!(
         matches!(
@@ -1199,6 +1251,8 @@ fn an_unresolved_output_never_trips_the_interleaved_rung() {
         interleaved_repeat_threshold: 2,
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(detect_loop(&records, config), LoopVerdict::NoLoop);
 }
@@ -1252,6 +1306,8 @@ fn a_repeating_spacer_beside_a_streaming_poll_is_not_a_loop() {
         interleaved_repeat_threshold: 3,
         // Disabled: this case isolates another detector (#4042).
         monotonic_sweep_threshold: 0,
+        // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+        stall_steer_threshold_secs: 0,
     };
     assert_eq!(
         detect_loop(&records, only_the_new_rung),
