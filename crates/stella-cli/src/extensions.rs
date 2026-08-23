@@ -313,26 +313,54 @@ pub(crate) fn user_config_root() -> Option<PathBuf> {
     crate::paths::user_extension_root()
 }
 
-/// Run the sync at both scopes and report through `emit` — the shared init
-/// hook (`agent::init_workspace`) calls this so `stella init` and `/init`
-/// behave identically. Quiet when there is nothing to do — except a
-/// `NotLoadable` skip (a namespace directory adopted from another agent's
-/// dirs that stella's loader could never read), which always gets a line,
-/// even in a scope where nothing else linked (issue #104: the entire point
-/// is that this shape must never go unmentioned).
-pub fn sync_extensions(workspace_root: &Path, emit: &mut dyn FnMut(String)) {
+/// The user tier [`sync_extensions`] adopts across: where the other agents
+/// keep their definitions, and where stella's own copies go.
+///
+/// Two paths and not one, because `STELLA_HOME` moves one of them and not the
+/// other: `~/.claude` and `~/.agents` hang off the OS home whatever the stella
+/// root is set to, so deriving either from the other would be right only on a
+/// default install.
+#[derive(Clone, Copy, Debug)]
+pub struct UserScope<'a> {
+    /// The OS home, whose `.claude/` and `.agents/` are the sources.
+    pub home: &'a Path,
+    /// The user-global stella root, the symlink destination.
+    pub stella_root: &'a Path,
+}
+
+/// Run the sync at the workspace scope and, when one is given, the user scope,
+/// reporting through `emit` — the shared init hook
+/// (`agent::init_workspace`) calls this so `stella init` and `/init` behave
+/// identically. Quiet when there is nothing to do — except a `NotLoadable`
+/// skip (a namespace directory adopted from another agent's dirs that stella's
+/// loader could never read), which always gets a line, even in a scope where
+/// nothing else linked (issue #104: the entire point is that this shape must
+/// never go unmentioned).
+///
+/// `user` is a **parameter** rather than an ambient read, and that is the
+/// whole of #3675: this function *creates symlinks*, so resolving the home
+/// inside its body made every test that drove init — directly or through
+/// `agent::init_workspace` — write into the developer's own
+/// `~/.stella/{commands,skills,agents}/` however carefully the workspace root
+/// was sandboxed. `None` means workspace scope only. `agent::init_workspace`
+/// passes the pair `InitIo` already carries for the conversion offer, so one
+/// resolved value feeds both instead of two ambient reads that can disagree.
+/// The same repair `#3641` made one layer up, at the layer that writes.
+pub fn sync_extensions(
+    workspace_root: &Path,
+    user: Option<UserScope<'_>>,
+    emit: &mut dyn FnMut(String),
+) {
     let mut scopes: Vec<(&str, PathBuf, Vec<PathBuf>)> = vec![(
         "workspace",
         workspace_root.join(".stella"),
         SOURCE_DIRS.iter().map(|d| workspace_root.join(d)).collect(),
     )];
-    if let Some(home) = crate::paths::home()
-        && let Some(config_root) = user_config_root()
-    {
+    if let Some(user) = user {
         scopes.push((
             "user",
-            config_root,
-            SOURCE_DIRS.iter().map(|d| home.join(d)).collect(),
+            user.stella_root.to_path_buf(),
+            SOURCE_DIRS.iter().map(|d| user.home.join(d)).collect(),
         ));
     }
 
@@ -1031,6 +1059,55 @@ mod tests {
         assert_eq!(second.linked.len(), 1);
         let third = sync_into(&dest, &sources);
         assert!(third.linked.is_empty(), "re-running links nothing new");
+    }
+
+    /// **Witness (#3675).** `sync_extensions` symlinks into the user tier it
+    /// is *given*, and touches none at all when given none.
+    ///
+    /// The witness is the signature: on the base commit this function resolves
+    /// `paths::home()` and `user_config_root()` inside its own body, so there
+    /// is no tier to name and this does not compile — which is the defect,
+    /// because it means every test that drove `agent::init_workspace` created
+    /// symlinks under the developer's real `~/.stella/{commands,skills,agents}/`
+    /// however carefully the workspace root was sandboxed. The assertions are
+    /// what pin the behaviour once it does.
+    #[test]
+    fn sync_adopts_into_the_user_tier_it_is_given_and_none_otherwise() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().join("ws");
+        let home = tmp.path().join("home");
+        let stella_root = tmp.path().join("elsewhere/.stella");
+        write(&home.join(".claude/commands/deploy.md"), "Ship.");
+
+        let mut lines: Vec<String> = Vec::new();
+        sync_extensions(&workspace, None, &mut |line| lines.push(line));
+        assert!(
+            !stella_root.exists() && !home.join(".stella").exists(),
+            "no tier given, no tier written: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line.contains("user scope")),
+            "and nothing claims to have adopted one: {lines:?}"
+        );
+
+        lines.clear();
+        sync_extensions(
+            &workspace,
+            Some(UserScope {
+                home: &home,
+                stella_root: &stella_root,
+            }),
+            &mut |line| lines.push(line),
+        );
+        assert!(
+            stella_root.join("commands/deploy.md").exists(),
+            "the link lands in the NAMED root, not beside the source: {lines:?}"
+        );
+        assert!(
+            !home.join(".stella").exists(),
+            "and the root is not derived from the home — `STELLA_HOME` moves \
+             one and not the other"
+        );
     }
 
     #[test]
