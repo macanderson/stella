@@ -319,7 +319,8 @@ impl SubprocessWrapper {
     /// The filter here is what a caller can be *told* about, not what makes the
     /// property hold: the same judgement is asked again at every spawn, so a
     /// name registered as a credential after this call still never reaches a
-    /// child ([`registered_since_declare`], #3529).
+    /// child — it fails the dispatch with
+    /// [`WrapperError::CredentialRegisteredLate`] instead (#3529).
     ///
     /// # Errors
     ///
