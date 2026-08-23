@@ -830,7 +830,7 @@ async fn a_candidate_that_outlives_its_run_is_named_by_the_next_one() {
     };
     assert!(killed.exists(), "premise: the checkout is still on disk");
     assert_eq!(
-        record::orphans(&records, &|_| true).len(),
+        record::orphans(&records, &|_| true, &|_| None).len(),
         0,
         "an owner that is still alive is not residue"
     );
@@ -838,7 +838,7 @@ async fn a_candidate_that_outlives_its_run_is_named_by_the_next_one() {
     // The record this process wrote names this process, which is alive — so
     // the sweep of a *later* run is modelled by re-pointing the record at a
     // pid that certainly is not.
-    let mut mine = record::orphans(&records, &|_| false).remove(0);
+    let mut mine = record::orphans(&records, &|_| false, &|_| None).remove(0);
     assert_eq!(
         mine.checkout.canonicalize().unwrap(),
         killed,
@@ -876,14 +876,14 @@ async fn a_clean_removal_takes_the_record_with_it() {
 
     let candidate = subject.create("plugin:p/worker#0").await.unwrap();
     assert_eq!(
-        record::orphans(&root.join(CANDIDATES_DIR), &|_| false).len(),
+        record::orphans(&root.join(CANDIDATES_DIR), &|_| false, &|_| None).len(),
         1,
         "premise: creation wrote a record"
     );
 
     subject.remove(&candidate).await.unwrap();
     assert!(
-        record::orphans(&root.join(CANDIDATES_DIR), &|_| false).is_empty(),
+        record::orphans(&root.join(CANDIDATES_DIR), &|_| false, &|_| None).is_empty(),
         "a candidate that ended is not residue"
     );
 }
