@@ -1147,7 +1147,7 @@ enum Pick {
 /// How many contention probes one pass of [`next_claimable`] may spend.
 ///
 /// Each probe is one `gh pr list --search` call plus two `git` reads and a
-/// SQLite open ([`super::contention::gather`]), and a deferral deliberately
+/// SQLite open ([`super::contention::for_issue`]), and a deferral deliberately
 /// writes no `spent` entry — a peer finishing must let the loop take the issue
 /// on a later pass — so an uncapped walk re-probes the whole contended prefix
 /// on **every** poll, forever. Fifty contended issues at the top of the queue
