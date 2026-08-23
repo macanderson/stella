@@ -20,7 +20,7 @@ use std::path::Path;
 
 use stella_core::tool_foundry::{GapDetectionConfig, ShellInvocation, detect_tool_gaps};
 
-use super::trace::{ScriptedReflection, Trace, TraceTurn};
+use super::trace::{ScriptedReflection, Trace};
 use crate::memory::ReflectionReport;
 
 /// What one replay built, plus the corpus shape it was built from.
@@ -59,8 +59,15 @@ pub(crate) struct ReplaySummary {
     pub tools: Vec<String>,
     // ---- when ---------------------------------------------------------------
     /// Turn ordinal (1-based) at which each artifact class first appeared.
+    ///
+    /// All four are measured — probed per turn, `None` when the class never
+    /// appeared and rendered as an em dash. `first_skill_turn` used to be set
+    /// to the total turn count whenever any skill existed, which printed
+    /// `skill 10` beside two measured values and read as a measurement
+    /// (#2359); `first_rule_turn` did not exist at all.
     pub first_memory_turn: Option<usize>,
     pub first_skill_turn: Option<usize>,
+    pub first_rule_turn: Option<usize>,
     pub first_tool_turn: Option<usize>,
     /// Every turn's reported model error, in order — the starvation record.
     ///
@@ -92,9 +99,19 @@ impl ReplaySummary {
     }
 
     /// Fold one replayed turn into the summary.
+    ///
+    /// Skills and rules are probed on disk here rather than tallied at their
+    /// write sites, for the reason [`observe_final_state`] gives: what is on
+    /// disk is what a later session would load, and a counter incremented at
+    /// the write site keeps claiming a file a no-clobber refusal never
+    /// created. Two directory reads per turn against a workspace of a handful
+    /// of files — the cost #2350 declined to pay when nothing asserted on the
+    /// number, and the number was a placeholder for exactly as long (#2359).
+    ///
+    /// [`observe_final_state`]: ReplaySummary::observe_final_state
     pub(crate) fn observe_turn(
         &mut self,
-        _turn: &TraceTurn,
+        root: &Path,
         report: &ReflectionReport,
         tool_proposals: usize,
     ) {
@@ -105,6 +122,15 @@ impl ReplaySummary {
         }
         if tool_proposals > 0 && self.first_tool_turn.is_none() {
             self.first_tool_turn = Some(self.turns);
+        }
+        if self.first_skill_turn.is_none()
+            && !crate::memory::skill_paths_on_disk(&crate::memory::workspace_skills_dir(root))
+                .is_empty()
+        {
+            self.first_skill_turn = Some(self.turns);
+        }
+        if self.first_rule_turn.is_none() && !published_rules(root).is_empty() {
+            self.first_rule_turn = Some(self.turns);
         }
         if let Some(error) = &report.model_error {
             self.model_errors.push(error.clone());
@@ -132,12 +158,6 @@ impl ReplaySummary {
             .into_iter()
             .map(|proposal| proposal.name)
             .collect();
-        if !self.skills.is_empty() && self.first_skill_turn.is_none() {
-            // Skills are only observable on disk, so the best we can honestly
-            // say is "by the end". A per-turn probe would cost a directory walk
-            // per turn to sharpen a number nothing asserts on.
-            self.first_skill_turn = Some(self.turns);
-        }
         self.memories = memory_texts(root).len();
     }
 
@@ -179,10 +199,15 @@ impl ReplaySummary {
         out.push_str(&format!("  skills:   {}\n", render_list(&self.skills)));
         out.push_str(&format!("  rules:    {}\n", render_list(&self.rules)));
         out.push_str(&format!("  tools:    {}\n", render_list(&self.tools)));
+        // All four classes §6 names, each measured. An em dash where a class
+        // never appeared: "never" and "on the last turn" are different
+        // statements, and the old skill placeholder said the second when it
+        // meant neither.
         out.push_str(&format!(
-            "  turns-to-first: memory {}, skill {}, tool {}\n",
+            "  turns-to-first: memory {}, skill {}, rule {}, tool {}\n",
             render_turn(self.first_memory_turn),
             render_turn(self.first_skill_turn),
+            render_turn(self.first_rule_turn),
             render_turn(self.first_tool_turn),
         ));
 
