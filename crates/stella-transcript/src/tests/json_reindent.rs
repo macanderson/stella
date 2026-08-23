@@ -131,6 +131,51 @@ fn only_a_body_that_reads_as_json_is_re_indented() {
     assert!(syntax::reindent_json_body("error: no such file").is_none());
 }
 
+/// The agent's own task board is not JSON, and neither is anything else whose
+/// `[` opens something an array cannot hold.
+///
+/// `task_list` returns one row per line as `[x] #1 subject`
+/// (`stella_tools::tasks::render_line`), so a `starts_with('[')` sniff sent
+/// every board down the re-indent and the JSON colourer (#4344). All four
+/// status glyphs are covered, `-` included: it is the one that also opens a
+/// JSON number.
+#[test]
+fn a_task_board_is_not_json_and_a_real_array_still_is() {
+    for row in ["[ ] #1 a", "[x] #1 a", "[~] #1 a", "[-] #1 a"] {
+        assert!(!syntax::reads_as_json(row), "board row read as JSON: {row}");
+    }
+    assert!(!syntax::body_reads_as_json(&[
+        "[ ] #1 a".to_string(),
+        "[x] #2 b".to_string(),
+    ]));
+    assert!(syntax::reindent_json_body("[ ] #1 a\n[x] #2 b").is_none());
+
+    for array in [
+        r#"[{"a":1}]"#,
+        "[]",
+        "[ ]",
+        r#"["a"]"#,
+        "[1,2]",
+        "[-1]",
+        "[true]",
+        "[null]",
+        "[[0]]",
+        // A pretty-printed array's opening line, which is all
+        // `body_reads_as_json` ever sees of it.
+        "[",
+    ] {
+        assert!(
+            syntax::reads_as_json(array),
+            "array not read as JSON: {array}"
+        );
+    }
+    assert!(syntax::body_reads_as_json(&[
+        "[".to_string(),
+        r#"  {"a": 1}"#.to_string(),
+        "]".to_string(),
+    ]));
+}
+
 /// The fold measures the re-laid body, so a one-line API response stops
 /// claiming it is fully shown.
 ///

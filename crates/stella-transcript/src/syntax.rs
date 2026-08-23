@@ -110,12 +110,40 @@ pub type Runs = Vec<(String, Option<Tok>)>;
 /// wrong costs a few mis-tinted punctuation runs and nothing else, because the
 /// lexer is lossless either way.
 ///
+/// An opening `[` also has to be *followed* by something an array can hold,
+/// because the agent's own task board is one row per line in the shape
+/// `[x] #1 Fix the redirect loop` and a bare `starts_with('[')` sent every
+/// board down the JSON path — re-laid by [`reindent_json`] and painted with
+/// the JSON colourer instead of read as the prose it is (#4344). The four
+/// status glyphs are ` `, `~`, `x` and `-`, so `-` is admitted only ahead of a
+/// digit, where JSON requires one anyway.
+///
+/// A `[` with nothing after it on the line stays JSON: that is exactly the
+/// opening line of a pretty-printed array, and [`body_reads_as_json`] only
+/// ever sees the first one.
+///
 /// Shared so the deck and the export cannot disagree about *which* bodies get
 /// coloured, having already disagreed about whether any of them do.
 #[must_use]
 pub fn reads_as_json(text: &str) -> bool {
     let t = text.trim_start();
-    t.starts_with('{') || t.starts_with('[')
+    let Some(after) = t.strip_prefix('[') else {
+        return t.starts_with('{');
+    };
+    let rest = after.trim_start();
+    let Some(&first) = rest.as_bytes().first() else {
+        return true;
+    };
+    match first {
+        b'{' | b'[' | b'"' => true,
+        b'0'..=b'9' => true,
+        b'-' => rest.as_bytes().get(1).is_some_and(u8::is_ascii_digit),
+        // An empty array, and nothing trailing it — `[ ] #1 a` is a board row.
+        b']' => rest[1..].trim().is_empty(),
+        _ => ["true", "false", "null"]
+            .iter()
+            .any(|w| rest.starts_with(w)),
+    }
 }
 
 /// Whether an already-split body should be read as JSON.
