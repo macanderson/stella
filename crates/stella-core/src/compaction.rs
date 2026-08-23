@@ -295,6 +295,20 @@ const RETENTION_MIN_RECLAIM_CHARS: usize = 12_000;
 /// there. A conversation below half its budget has room for the bytes it is
 /// carrying, and paying a full prefix invalidation to take some of them back
 /// buys nothing it needs yet.
+///
+/// **That is an argument, and the census that followed it is unflattering**
+/// (#4452, over 93 session journals): of 330 firings on binaries with no gate,
+/// the conversation sat at a median 0.372 of its budget, so half suppresses
+/// 233 of them — 70.6%, forgoing 1.62 M of the 2.40 M tokens the pass
+/// reclaimed. A divisor of 3 suppresses 41.8%, 4 suppresses 23.6%.
+///
+/// It is recorded here rather than acted on because it does not yet answer
+/// the question: it counts firings and reclaimed tokens, not *billed* input
+/// tokens, and the miss those firings cost is the other half of the trade.
+/// Suppressing a firing also changes the transcript the next one sees, so the
+/// number bounds the effect rather than picking the divisor. #4452 is where
+/// the replay that settles it lives; this constant moves when that lands, not
+/// before.
 const RETENTION_TRIGGER_BUDGET_DIVISOR: u64 = 2;
 
 /// The bytes one aged payload retains: both kept ends plus the elision
