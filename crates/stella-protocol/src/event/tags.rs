@@ -45,6 +45,9 @@
 //!   - `stella-tui` `model::Model::apply`
 //!   - `stella-tui` `textline::event_line`
 //!   - `stella-tui` `deck::trace_of`
+//!   - `stella-cli` `diag_bridge::DomainBridge::observe` — a record, a tally,
+//!     or deliberately nothing. Listed since #3616, which found it by being
+//!     stopped by the compiler rather than by reading this list.
 //!
 //! **Silent** — wildcard / `matches!` arms the compiler CANNOT catch, so a new
 //! variant falls through to a default and is wrong only at runtime. These are
@@ -346,5 +349,14 @@ agent_event_tags! {
         ConsumerPosture::Behavioral {
             site: "stella-cli/src/arena.rs::observe (run terminator, latches SessionOutcome::Completed)",
         },
+        &[Surface::Observatory];
+    // What the trust gate held back (#2302's harness half, #3616). `Surfaced`
+    // and not `Behavioral`: nothing in the engine branches on it — the
+    // steering was already withheld by the time this says so — and rendering
+    // is exactly the realized value. The observatory journal names it in its
+    // own whitelist, so the claim below is checkable rather than decorative,
+    // and the TUI renders it the way it renders every variant.
+    SteeringWithheld => "steering_withheld",
+        ConsumerPosture::Surfaced,
         &[Surface::Observatory];
 }

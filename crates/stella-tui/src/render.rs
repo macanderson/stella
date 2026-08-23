@@ -428,13 +428,15 @@ pub use entry::THINKING_ROWS;
 /// `changes` seq recorded at fold time — never "the path's latest diff", which
 /// would misattribute an later edit's change to an earlier row.
 ///
-/// It resolves for as long as that mutation is still remembered:
-/// [`FileState`] keeps the last
-/// [`DIFF_HISTORY`](crate::model::file_state::DIFF_HISTORY) diffs per path, so
-/// the common "edit the same file a few times in one turn" shape keeps every
-/// row's diff, and only the ones aged out past that depth — or evicted with
-/// their path at [`MAX_TRACKED_FILES`](crate::model::file_state::MAX_TRACKED_FILES)
-/// — degrade to naming their change.
+/// It resolves for as long as that mutation's text is still held:
+/// [`FileState`] remembers every mutation of a path, so a file edited any
+/// number of times keeps every row's diff, and only two things take one away —
+/// the byte budget
+/// [`DIFF_TEXT_BUDGET`](crate::model::DIFF_TEXT_BUDGET) releasing the oldest
+/// text under memory pressure, or the path itself being evicted at
+/// [`MAX_TRACKED_FILES`](crate::model::file_state::MAX_TRACKED_FILES). The
+/// first leaves the row its measured `+N −M`; the second leaves it naming its
+/// change (#4365).
 ///
 /// This used to say the reference went stale the moment a later mutation
 /// bumped the counter, which described the behaviour before that history
@@ -468,8 +470,8 @@ pub(crate) fn resolve_inline_delta(
 /// #4156 are about — so the count and the delta are derived from the same set
 /// here rather than from different ends of it.
 ///
-/// A reference that no longer resolves (aged past `DIFF_HISTORY`, evicted with
-/// its path) contributes nothing rather than a zero, and `None` when *none* of
+/// A reference that no longer resolves (its path evicted) contributes nothing
+/// rather than a zero, and `None` when *none* of
 /// them resolve, which is the same "no column at all" the singular resolver
 /// already returns. For a one-change call this is [`resolve_inline_delta`]
 /// exactly.
