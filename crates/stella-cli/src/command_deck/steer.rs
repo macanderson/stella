@@ -9,8 +9,22 @@
 //! whole change is `stella_tui::envelope::steering`; this file is only what
 //! the driver does with the texts once they arrive.
 
+use crate::config::Config;
 use crate::session_persist::DurableQueue;
 use crate::subsession::SteeringTap;
+
+/// The persisted `ui.mid_turn_prompt` policy, or the deck's default (`queue`)
+/// when the key is absent, unreadable, or names a slug the deck does not know
+/// — chrome, never fatal, like `ui.theme`.
+pub(super) fn mid_turn_prompt_policy(cfg: &Config) -> stella_tui::deck_ui::MidTurnPrompt {
+    crate::settings::Settings::load(&cfg.workspace_root)
+        .ok()
+        .and_then(|s| {
+            s.ui_mid_turn_prompt()
+                .and_then(stella_tui::deck_ui::MidTurnPrompt::parse)
+        })
+        .unwrap_or_default()
+}
 
 /// One leading `>` marker off a text, and nothing else.
 ///
