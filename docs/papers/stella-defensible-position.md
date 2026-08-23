@@ -97,7 +97,7 @@ We identify seven such properties in Stella's design.
 |---|---|---|---|
 | I | Ports, not direct dependencies | The engine (`stella-core`) never imports a provider SDK, filesystem API, or terminal library | Crate-level dependency boundary; `Provider` trait (`stella-protocol`) and `ToolExecutor` trait (`stella-core::ports`) |
 | II | No I/O in the engine | All decision logic is synchronous functions over owned data | Architectural discipline; property-tested in `stella-core` |
-| III | Witness-test contract | A task is done only when a test fails on old code and passes on new | The pipeline's witness stage and flip oracle (`stella-pipeline`) |
+| III | Witness-test contract | A task is done only when a test fails on old code and passes on new | An installed verification plugin's witness stage and flip oracle (Oxagen's Vera is the reference one); the built-in staged pipeline that used to ship this in-tree (`stella-pipeline`) was deleted in #3865 |
 | IV | BYOK + zero telemetry egress by default | Community/default telemetry is local; only an explicitly enrolled Oxagen Enterprise managed deployment may send a signed-policy-authorized, content-free operational rollup | Architectural invariant; local SQLite (`stella-store`) plus the [managed enrollment boundary](../../website/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export) |
 | V | Prompt-cache-native memory | Lessons load into a byte-stable system prompt prefix at ~0.1x input price | `build_system_prompt` (`stella-cli::agent`); L-E8 cache discipline |
 | VI | Budget at safe boundaries | The budget guard consults only between model calls, never interrupts a tool | `run_turn` budget check (`stella-core::driver`); property-tested |
@@ -206,25 +206,29 @@ loops on your API budget).
 
 ### The invariant
 
-Opted into the staged pipeline (`stella run --pipeline classic`), Stella
-refuses to call a task done until a **witness test** proves it: a test
+Stella refuses to call a task done until a **witness test** proves it: a test
 that **fails on the old code** (the feature is genuinely absent) and **passes
 on the new code** (the feature is genuinely present). This is a **property of
-the path that produced the evidence, not of the binary**: the built-in staged
-pipeline's witness stage (`stella-pipeline`) runs the check itself and watches
-the fail→pass flip, as described below; verification supplied by an installed
-wrapper plugin on `--pipeline <other-variant>` is that plugin's own
-**self-reported** evidence, which Stella evaluates against a declared rule
-rather than re-running or re-checking. The raw step loop (the default on
-every door) makes no witness-test claim at all — it has no verification
-stage.
+the path that produced the evidence, not of the binary** — and, since #3865,
+that path is opt-in on every door via `stella run --pipeline <plugin-id>`,
+naming an *installed* verification plugin: the plugin's own `[oracle]` runs
+the check and reports its evidence, which Stella evaluates against the
+plugin's declared verdict rule and never re-runs or re-checks. `stella run
+--pipeline classic` is refused outright — the built-in staged pipeline that
+used to run this check itself (`stella-pipeline`) is deleted from the
+workspace, and the refusal names `stella plugin install` as the remedy. A
+plain `stella run` (the default on every door) makes no witness-test claim at
+all — it has no verification stage.
 
-The staged-pipeline mechanism, `--pipeline classic` specifically:
+The mechanism below is the built-in staged pipeline's, as it ran before
+#3865 — kept as the concrete illustration of the contract, because it is the
+shape a verification plugin (Oxagen's Vera is the reference one,
+`doc:pipeline-as-plugins` §8) ports rather than reinvents:
 
 1. The worker executes the change.
-2. When no `--test-command` is configured, an independent model — the
-   verifier's resolution, never the worker — authors the failing witness
-   test after reading the executed diff.
+2. When no oracle command is otherwise configured, an independent model —
+   never the worker — authors the failing witness test after reading the
+   executed diff.
 3. The flip oracle tracks the witness's fail→pass transition by running it:
    fail on the pre-change code, pass on the changed code.
 4. The flip is refused if the worker modified the witness files (tamper
@@ -233,8 +237,9 @@ The staged-pipeline mechanism, `--pipeline classic` specifically:
    the change is proven.
 
 The witness is scaffolding for that one run — it lives in the candidate
-workspace and is discarded with it (`stella run --keep-witness` promotes it
-instead).
+workspace and is discarded with it. `stella run --keep-witness` used to
+promote it instead; that flag, like `--pipeline classic`, is refused
+unconditionally since #3865.
 
 ### Why it is hard to copy
 
@@ -632,11 +637,14 @@ A rigorous analysis must consider what could erode Stella's position:
    safe-boundary abort gets a weaker version. The combination is harder to
    copy than the sum of its parts.
 
-4. **Scope creep.** Wiring in the remaining crates (`stella-pipeline`,
-   `stella-fleet`, `stella-tui`, `stella-graph` retrieval) is high-impact but
-   high-effort. If these layers don't ship, Stella's architecture is
-   partially realized. *Mitigation:* the shipping CLI already exercises the
-   core path; the library crates are complete and property-tested.
+4. **Scope creep.** *Resolved differently than planned.* `stella-fleet`,
+   `stella-tui`, and `stella-graph`-backed retrieval are wired and shipping
+   (`AGENTS.md § Status — what ships`). `stella-pipeline`, the crate this item
+   once named alongside them as a remaining wire-in, was instead deleted
+   (#3865): its built-in verification is now opt-in via an installed plugin
+   rather than a crate this binary links. *Mitigation:* the shipping CLI
+   already exercises the core path; the library crates are complete and
+   property-tested.
 
 ---
 

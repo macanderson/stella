@@ -200,9 +200,17 @@ Rules:
 - When a choice is ambiguous and getting it wrong would be costly, take the reversible option and name the ambiguity in your answer; otherwise proceed with your best judgment.
 ```
 
-## Opening user message
+## Opening user message — pre-#3865 staged pipeline, kept for reference
 
-The pipeline's worker gets one assembled user message before any step prompt,
+This section and "Per-step user message" below describe the deleted
+`stella-pipeline` crate's plan-walking loop (#3865): `assemble_user_message`
+and `step_prompt` dispatch from no code in this tree, unlike the personas
+above (`SYSTEM_PROMPT`/`PIPELINE_SYSTEM_PROMPT`), which are still live —
+`crates/stella-cli/src/agent/prompt.rs`. The plan-walking shape they describe
+is what `plugins/stella-plan` ports as an installed wrapper plugin instead
+(`doc:pipeline-as-plugins` §7).
+
+The pipeline's worker got one assembled user message before any step prompt,
 built by `assemble_user_message` (`crates/stella-pipeline/src/pipeline.rs`).
 Sections are conditional, in this order:
 

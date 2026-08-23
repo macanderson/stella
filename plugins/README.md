@@ -24,10 +24,11 @@ and, as pointedly, what it is not yet.
 
 `Cargo.toml`'s `members` list names twenty-five crates and none of them is
 here, on purpose. The whole point of `doc:pipeline-as-plugins` is to *uncouple*
-the staged pipeline from the binary — its stated endpoint is that
-`crates/stella-cli/Cargo.toml` stops declaring `stella-pipeline` — and a plugin
-that is a workspace member is built, versioned and linked with the binary it
-was supposed to leave. It would prove the opposite of what it is here to prove.
+the staged pipeline from the binary — its endpoint was
+`crates/stella-cli/Cargo.toml` no longer declaring `stella-pipeline`, reached
+when the crate itself was deleted (#3865) — and a plugin that is a workspace
+member is built, versioned and linked with the binary it was supposed to
+leave. It would prove the opposite of what it is here to prove.
 
 A plugin is a **separate program the host spawns**: argv from `[runtime]`, a
 JSON request on stdin, a JSON response on stdout, an environment allowlist the

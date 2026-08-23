@@ -41,10 +41,11 @@ doc for why that is enforced in the type rather than merely asked for.
 
 # What it does not do, and what replaced it
 
-The built-in stage this extracts is `crates/stella-pipeline/src/plan.rs`
-(the pure half — `build_planner_prompt`, `parse_plan`) plus
-`crates/stella-pipeline/src/pipeline/plan_stage.rs` (the I/O half — the model
-call, the one bounded JSON-repair retry, absolute-path resolution). This
+The built-in stage this extracts — deleted with `stella-pipeline` in #3865 —
+was `crates/stella-pipeline/src/plan.rs` (the pure half — `build_planner_prompt`,
+`parse_plan`) plus `crates/stella-pipeline/src/pipeline/plan_stage.rs` (the I/O
+half — the model call, the one bounded JSON-repair retry, absolute-path
+resolution). This
 plugin cannot make that model call itself: `doc:wrapper-socket` §7 hands a
 plugin no engine, no provider and no credential. Until #3562 it also had no
 way to *ask* for one; that gap is closed by the `child_turn` host call
