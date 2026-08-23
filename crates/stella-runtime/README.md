@@ -5,6 +5,14 @@
 registry, store, calibration, budget — built from explicit inputs into one
 value any surface can drive: the CLI, the serve sidecar, or a test.
 
+**What drives it today: only the parts.** `stella-cli` calls the `parts::*`
+free functions directly, and nothing in the workspace constructs the
+`RuntimeBuilder`/`SessionRuntime` composite — `stella-serve` does not depend
+on this crate at all. Read the paragraph above as the shape the composite is
+built to, not as a path in use. That is gap **G1** in
+`doc:engine-embedding` §4 (#3731), and closing it means serve assembling its
+resource half through `RuntimeBuilder::with_provider` rather than by hand.
+
 The crate exists because `stella-cli` is a bin-only crate — no `[lib]` target —
 so nothing inside it is callable from anywhere else. That one manifest fact is
 why the same engine setup got re-typed at seven call sites (`agent.rs` twice,

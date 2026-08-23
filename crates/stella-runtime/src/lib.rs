@@ -16,6 +16,15 @@
 //! stack only: resources, not ports. See [`SessionRuntime`] for where the line
 //! falls and why.
 //!
+//! # What drives it today: only the parts
+//!
+//! `stella-cli` calls the [`parts`] free functions directly, and nothing in the
+//! workspace constructs the [`RuntimeBuilder`]/[`SessionRuntime`] composite —
+//! `stella-serve` does not depend on this crate at all. The paragraph above is
+//! the shape the composite is built to, not a path in use. That is gap **G1**
+//! in `doc:engine-embedding` §4 (#3731); closing it means serve assembling its
+//! resource half through [`RuntimeBuilder::with_provider`] rather than by hand.
+//!
 //! # The invariant
 //!
 //! **Nothing in this crate reads the process environment or the current
