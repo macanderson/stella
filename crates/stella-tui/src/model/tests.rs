@@ -566,7 +566,7 @@ fn file_change_keeps_latest_diff_and_counts_touches() {
     let f = &model.files[0];
     assert_eq!(f.changes, 2);
     assert_eq!(f.kind, FileChangeKind::Modified);
-    assert_eq!(f.latest_diff.as_deref(), Some("+second"));
+    assert_eq!(f.latest_diff(), Some("+second"));
 }
 
 #[test]
@@ -608,7 +608,7 @@ fn reads_count_without_clobbering_mutation_state() {
         FileChangeKind::Modified,
         "a re-read never regresses the badge"
     );
-    assert_eq!(f.latest_diff.as_deref(), Some("+x"));
+    assert_eq!(f.latest_diff(), Some("+x"));
     assert_eq!((f.changes, f.reads), (1, 2));
 }
 
