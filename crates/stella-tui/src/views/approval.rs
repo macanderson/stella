@@ -208,17 +208,15 @@ impl ApprovalOverlay {
             };
         }
 
+        // Movement is the deck's one vocabulary rather than this card's own
+        // copy of it, so `⇞`/`⇟` and `Home`/`End` reach the choices too.
+        // Modal, so `letters` is true (#4370).
+        if crate::deck_ui::list_nav::select(key, &mut self.row, CHOICES.len(), true) {
+            return ApprovalAction::Handled;
+        }
         match key.code {
             // Every non-choice exit denies. Never Approve on silence.
             KeyCode::Esc => ApprovalAction::Resolve(deny()),
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.row = self.row.saturating_sub(1);
-                ApprovalAction::Handled
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.row = (self.row + 1).min(CHOICES.len() - 1);
-                ApprovalAction::Handled
-            }
             KeyCode::Enter => match self.row {
                 0 => ApprovalAction::Resolve(ApprovalResponse::Approve),
                 DENY_WITH_REASON_ROW => {
@@ -382,6 +380,28 @@ mod tests {
         let mut overlay = ApprovalOverlay::default();
         overlay.open(request());
         overlay
+    }
+
+    /// **The witness for #4370.** The card answers the deck's one list
+    /// vocabulary rather than its own copy of half of it: `j`/`k` moved before,
+    /// `Home`/`End` did not.
+    #[test]
+    fn the_card_takes_j_and_end() {
+        let mut overlay = open();
+        overlay.row = 0;
+        assert_eq!(
+            overlay.key(key(KeyCode::Char('j'))),
+            ApprovalAction::Handled
+        );
+        assert_eq!(overlay.row, 1, "`j` did not move the choice");
+        overlay.key(key(KeyCode::End));
+        assert_eq!(
+            overlay.row,
+            CHOICES.len() - 1,
+            "`End` did not reach the last choice"
+        );
+        overlay.key(key(KeyCode::Home));
+        assert_eq!(overlay.row, 0);
     }
 
     /// **The witness for #4240.** Choosing Allow approves the parked call,

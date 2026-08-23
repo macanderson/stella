@@ -91,6 +91,8 @@ One vocabulary across every panel, including plugin-drawn UI:
 | `✗` | failed, delete | red |
 | `⑂` | drift, plan revision (fallback `↯` on fonts lacking U+2442) | gold_bright |
 | `▸` | collapsed, expandable | matches event metal |
+| `●` | one thing happened — the default event head (`edit`, `run`, an expanded `read`) | matches event metal |
+| `↓` | compacted — history replaced by a summary | dim, no rail |
 | `＋` | write (new file) | green sign, gold rail |
 | `◆` | memory | silver |
 | `✦` | skill | silver |
@@ -123,9 +125,9 @@ was checked against the shipped `cmap` of the brand font (§3.4) and of six
 other common monospace faces:
 
 - `◌` U+25CC and `◉` U+25C9 are **native to JetBrains Mono**. Both are East
-  Asian Width `N` — unambiguously one cell, which is stricter than seven rows
-  above them already are: `◐`, `○`, `◇`, `◆`, `▤` and the full block are all
-  width `A`, and `＋` is fullwidth outright.
+  Asian Width `N` — unambiguously one cell, which is stricter than nine rows
+  above them already are: `◐`, `○`, `◇`, `◆`, `▤`, `●`, `↓` and the full block
+  are all width `A`, and `＋` is fullwidth outright.
 - `⊙` U+2299 replaces the design's first choice, `⌗` U+2317 VIEWDATA SQUARE.
   U+2317 reads better for *external* and is width `N`, but it is absent from
   **every** monospace face checked — JetBrains Mono, DejaVu Sans Mono, Fira

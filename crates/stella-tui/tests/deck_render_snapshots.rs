@@ -706,6 +706,33 @@ fn deck_render_snapshots_pin_the_help_overlay() {
     );
 }
 
+/// **The witness for #4371's other half.** A narrow frame keeps the single
+/// column and the `↓ N more` edge.
+///
+/// The two-column layout is a *wide-frame* affordance, not a replacement: at
+/// 100 columns two columns of 47 would clip every description to nothing, so
+/// the threshold has to hold in both directions or the fix trades one broken
+/// sheet for another.
+#[test]
+fn the_help_sheet_keeps_one_column_on_a_narrow_frame() {
+    let model = fixture_model();
+    let mut ui = ui_for(DeckTab::Skills);
+    ui.help_open = true;
+    let frame = render_frame(&model, &mut ui, 100, H);
+    assert!(
+        frame.contains("more · ⇟ space · End"),
+        "a 100-column sheet must still stack and say what is below:\n{frame}"
+    );
+    // One column means the everywhere section is BELOW the tab's keys rather
+    // than beside them, so both headings are on their own rows.
+    for line in frame.lines() {
+        assert!(
+            !(line.contains("SKILLS tab") && line.contains("everywhere")),
+            "a narrow frame laid the sections side by side: {line}"
+        );
+    }
+}
+
 /// SPEC 5 sent five status cells behind `?` as well as to the AGENTS tab, and
 /// `?` is the only one of the two left: the overlay drew keybindings only until
 /// #4188, and the AGENTS half went with the executions dashboard #4342 removed.
@@ -721,23 +748,15 @@ fn the_help_overlay_carries_the_metrics_spec_5_sends_behind_it() {
     let model = fixture_model();
     let mut ui = ui_for(DeckTab::Skills);
     ui.help_open = true;
-    // The sheet is longer than a 40-row frame since the focus-tree section
-    // joined it, and the numbers sit under the keys — so the first frame
-    // must say there is more below, and `End` must reach it.
-    let top = render_frame(&model, &mut ui, W, H);
-    assert!(
-        top.contains("more · ⇟ space · End"),
-        "a clipped sheet names what is below:\n{top}"
-    );
-    stella_tui::deck_ui::handle_deck_key(
-        crossterm::event::KeyEvent::new(
-            crossterm::event::KeyCode::End,
-            crossterm::event::KeyModifiers::NONE,
-        ),
-        &model,
-        &mut ui,
-    );
+    // At 160 columns the key sections sit side by side, so the numbers are on
+    // the FIRST screen of a 40-row frame — no scroll, and nothing below to
+    // announce (#4371). A sheet that fits and still claims there is more
+    // below would be lying about its own edge, so that is asserted too.
     let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        !frame.contains("more · ⇟ space · End"),
+        "the two-column sheet still clips on a 160×40 frame:\n{frame}"
+    );
 
     for needle in [
         // MODEL detail — which pin serves each role, the question the status

@@ -395,16 +395,15 @@ impl QuestionOverlay {
         }
 
         if self.mode == QuestionMode::Review {
+            // Movement is the deck's one vocabulary rather than this card's
+            // own copy of it, so `⇞`/`⇟` and `Home`/`End` reach the review
+            // rows too. Modal, so `letters` is true (#4370).
+            if crate::deck_ui::list_nav::select(key, &mut self.review_row, REVIEW_ROWS.len(), true)
+            {
+                return QuestionAction::Handled;
+            }
             return match key.code {
                 KeyCode::Esc => QuestionAction::Resolve(cancelled()),
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.review_row = self.review_row.saturating_sub(1);
-                    QuestionAction::Handled
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.review_row = (self.review_row + 1).min(REVIEW_ROWS.len() - 1);
-                    QuestionAction::Handled
-                }
                 KeyCode::Tab | KeyCode::BackTab => {
                     // Back to the questions to change something — the review
                     // is a checkpoint, not a one-way door.
@@ -427,16 +426,13 @@ impl QuestionOverlay {
         }
 
         let total = self.request.as_ref().map_or(0, |r| r.questions.len());
+        // As above: one vocabulary for the answer rows too.
+        let rows = self.row_count();
+        if crate::deck_ui::list_nav::select(key, &mut self.row, rows, true) {
+            return QuestionAction::Handled;
+        }
         match key.code {
             KeyCode::Esc => QuestionAction::Resolve(cancelled()),
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.row = self.row.saturating_sub(1);
-                QuestionAction::Handled
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.row = (self.row + 1).min(self.row_count().saturating_sub(1));
-                QuestionAction::Handled
-            }
             KeyCode::Tab => {
                 if self.focus + 1 < total {
                     self.focus += 1;
@@ -814,6 +810,39 @@ mod tests {
             questions,
         });
         overlay
+    }
+
+    /// **The witness for #4370.** The card answers the deck's one list
+    /// vocabulary rather than its own copy of half of it: `j`/`k` moved before,
+    /// `Home`/`End` did not — on the answer rows and on the review rows alike.
+    #[test]
+    fn the_card_takes_j_and_end_on_both_its_lists() {
+        let mut overlay = open(vec![question("Auth method", false)]);
+        let last = overlay.row_count() - 1;
+        assert!(last > 0, "the fixture needs more than one row to move to");
+
+        assert_eq!(
+            overlay.key(key(KeyCode::Char('j'))),
+            QuestionAction::Handled
+        );
+        assert_eq!(overlay.row, 1, "`j` did not move the answer rows");
+        overlay.key(key(KeyCode::End));
+        assert_eq!(overlay.row, last, "`End` did not reach the last row");
+        overlay.key(key(KeyCode::Home));
+        assert_eq!(overlay.row, 0);
+
+        overlay.key(key(KeyCode::Char('r')));
+        assert_eq!(overlay.mode, QuestionMode::Review);
+        overlay.key(key(KeyCode::Char('j')));
+        assert_eq!(overlay.review_row, 1, "`j` did not move the review rows");
+        overlay.key(key(KeyCode::End));
+        assert_eq!(
+            overlay.review_row,
+            REVIEW_ROWS.len() - 1,
+            "`End` did not reach the last review row"
+        );
+        overlay.key(key(KeyCode::Home));
+        assert_eq!(overlay.review_row, 0);
     }
 
     /// **The witness for #4220.** Select an option, attach a note, submit —

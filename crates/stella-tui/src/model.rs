@@ -46,6 +46,9 @@ pub use file_state::{FileState, MAX_TRACKED_FILES, RememberedDiff};
 pub(crate) use inline_diff::distinct_paths as distinct_diff_paths;
 pub use recall::{RecallBudget, RecalledFrameRow};
 pub use turn::{Hud, TurnCounters, TurnOpening, TurnReceipt};
+// The role predicate, for the AGENTS-tab fold in `super::deck`, which folds
+// `StepUsage` — a record with a role and no `call_seq` (#4307).
+pub(crate) use turn::role_supplies_the_turns_model;
 // Re-imported rather than left qualified, so the split was a pure move: every
 // call site in the fold reads exactly as it did before (#2958). See
 // `summarize`'s module doc for why the seam is there and not elsewhere.

@@ -149,6 +149,18 @@ cargo test -p stella-runtime --test research_plugin_recall
 cargo test -p stella-runtime --test research_plugin_dispatch
 ```
 
+Regenerate the `.expected.json` goldens from the same fixture the assertions
+run against, so the fixture has exactly one definition:
+
+```bash
+BLESS=1 cargo test -p stella-runtime --test research_plugin_conformance
+```
+
+Then **read the diff** — a golden blessed without looking is a changelog, not a
+test. Blessing a vector that carries a `.refusal.txt` sibling is refused: a
+refusal is graded by the plugin's stderr and exit status, and a second grading
+file is exactly what `every_vector_is_graded_by_exactly_one_sibling` forbids.
+
 A vector is a request plus exactly one grading sibling — `.expected.json` for
 an answer, `.refusal.txt` for a refusal, never both. The refusal half is not an
 afterthought: `BeforeTurnResponse` has no error variant, so a plugin that
@@ -174,10 +186,8 @@ repository's `.gitignore` would drop.
 | --- | --- |
 | **Its research half contributes nothing under `stella-cli` today**: the driver passes `candidate: None`, so there is no workspace to read, and it publishes `questions: 0`, so the stage's own condition skips it. Recall needs no candidate, so it is the half that can reach a real turn first | #3547 |
 | **And recall does not reach one yet either**: `stella-cli` attaches no `HostCallGate`, so the ask has nowhere to go and the stage is reported as a fault rather than served. The plugin degrades exactly as it does for any refusal; what is missing is the host wiring | #3561 |
-| It cannot answer triage's questions — the wire carries their count, not their text | #3539 |
+| It cannot answer triage's questions — the wire carries their count, not their text. Blocked on a producer, not on a design: nothing publishes `Signal::Questions` today (`pre_turn_signals` sends `0`), and the shape the field takes when a triage plugin does is written down in `doc:wrapper-socket` §5 | #3539 |
 | It cannot cause a model call, so the sub-agent fan-out did not come with it | #3541 |
 | It publishes no signals: `StageName::Research.publishes()` is empty, so there is none it could honestly publish | #3542 |
 | Its `[wrapper]` stage order over-declares, because the condition grammar has no conjunction | #3538 |
-| It is spawned once per declared stage and contributes at two of them | #3543 |
 | Nobody has benchmarked it against the built-in stage | #3544 |
-| The goldens have no `BLESS=1` regeneration path, so the fixture is defined twice the moment one changes | #3548 |
