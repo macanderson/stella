@@ -98,11 +98,34 @@ use crate::wrapper_plugin::BoundWrapper;
 /// `Engine::run_goal`'s internal `round_engine` uses — with the part that
 /// happens *after* the turn (the goal verifier) staying in
 /// [`run_goal_wrapped_turn`], never here.
+///
+/// What driving one level lower does **not** give up is the report a plugin
+/// reads. `crate::agent::run_turn` folds a turn's real tools and file changes
+/// through [`crate::turn_facts::TurnFacts`] and reaches the registry through
+/// [`persistence::attach_run_streams`]; this driver does both itself, per
+/// internal turn, over that turn's own sender (#3834, #4507). It used to do
+/// neither and reported `tools: None, changed_files: None` unconditionally —
+/// honest under `stella_plugin`'s wire contract ("this host does not report
+/// it"), and strictly less than `stella run`'s wrapped door already gave the
+/// same plugin.
 struct GoalRoundDriver<'r, 'e> {
     engine: &'r Engine<'e>,
     messages: &'r mut Vec<CompletionMessage>,
     budget: &'r mut BudgetGuard,
+    /// The run's raw channel. Every internal turn opens its **own** observed
+    /// sender over a clone of it — see [`Self::run_turn`].
     events: &'r mpsc::UnboundedSender<AgentEvent>,
+    /// The session registry, re-published onto each round's observed sender so
+    /// the events it is the sole producer of — the task board, a sub-agent's
+    /// lifecycle, a solo mutating call's own work-tree reading (#4175) — reach
+    /// this round's stream and this round's fold alike (#4507).
+    registry: &'r ToolRegistry,
+    /// The workspace this round runs in, for the round-boundary tree
+    /// measurement below.
+    cfg: &'r Config,
+    /// This goal run's one execution row, so a measured change writes its
+    /// `files_touched` projection as well as its event.
+    execution: Option<&'r (Arc<Store>, i64)>,
     /// The artifacts this host pinned before the **run**, and the finding it
     /// reports about them after every round's worker turn (#3835).
     ///
@@ -124,29 +147,46 @@ struct GoalRoundDriver<'r, 'e> {
 impl TurnDriver for GoalRoundDriver<'_, '_> {
     async fn run_turn(&mut self, prelude: TurnPrelude) -> DrivenTurn {
         self.messages.extend(prelude.into_messages());
+        // One observer per internal turn, exactly as
+        // `crate::wrapper_plugin::RawTurnDriver` builds one per round: `tools`
+        // and `changed_files` are facts about *this* turn, and a fold shared
+        // across rounds would report the first round's tools as the third
+        // round's (#3552).
+        //
+        // The tap sits OUTERMOST over the round's sender, which is what makes
+        // the registry attachment below fold into it: `crate::turn_files`'s
+        // per-call measurer holds this sender, so a solo mutating call's
+        // `FileChange` is folded here rather than consuming a change the
+        // round-boundary reading would then no longer be able to see
+        // (`snapshot_worktree` consumes what it reports). Same shape
+        // `agent::output::raw_event_sender_for_run` gives `stella run`'s
+        // wrapped door.
+        let facts = crate::turn_facts::TurnFacts::new();
+        let events = facts.observing(stella_core::EventSender::new(self.events.clone()));
+        persistence::attach_run_streams(self.registry, self.cfg, &events, self.execution);
         let outcome = self
             .engine
-            .run_turn(self.messages, self.budget, self.events)
+            .run_turn_with_sender(self.messages, self.budget, &events)
             .await;
+        // This turn's tree delta, read before the facts are — the producer of
+        // `changed_files` is the measurement, never the tool arguments (#2290).
+        // The loop takes a second reading after the plugin's own `after_turn`
+        // has run; the two partition the round between them rather than
+        // double-counting it.
+        crate::turn_files::emit_shared_tree_changes(self.cfg, &events, self.execution);
+        // `Some` in every arm, including the aborted one: this host *does*
+        // observe both facts now, and a turn that aborted after two tool calls
+        // made those two calls. `None` is reserved for a host that cannot look
+        // (#3834).
+        let observed = |completed: bool, answer: String| WrapperTurnOutcome {
+            completed,
+            answer,
+            tools: Some(facts.tools()),
+            changed_files: Some(facts.changed_files()),
+        };
         let turn = match &outcome {
-            TurnOutcome::Completed { text, .. } => WrapperTurnOutcome {
-                completed: true,
-                answer: text.clone(),
-                // Real tool/changed-file facts need the `turn_facts` fold
-                // `crate::wrapper_plugin::RawTurnDriver` wires through
-                // `crate::agent::run_turn` — not this direct
-                // `Engine::run_turn` call. `None` is "this host does not
-                // report it" (`stella_plugin`'s own wire contract), not a
-                // guess at zero (#3834).
-                tools: None,
-                changed_files: None,
-            },
-            TurnOutcome::Aborted { reason, .. } => WrapperTurnOutcome {
-                completed: false,
-                answer: reason.clone(),
-                tools: None,
-                changed_files: None,
-            },
+            TurnOutcome::Completed { text, .. } => observed(true, text.clone()),
+            TurnOutcome::Aborted { reason, .. } => observed(false, reason.clone()),
         };
         if self.driven.is_none() {
             self.driven = Some(outcome);
@@ -277,6 +317,9 @@ pub(crate) async fn run_goal_wrapped_turn(
                 messages: &mut *messages,
                 budget: &mut *budget,
                 events: &tx,
+                registry,
+                cfg,
+                execution: execution.as_ref(),
                 watch: &candidate.watch,
                 driven: None,
             };
@@ -298,15 +341,19 @@ pub(crate) async fn run_goal_wrapped_turn(
             // residual here, before the cost reads below (#3833). Draining is
             // destructive, so this takes only what no turn already took.
             crate::wrapper_plugin::settle_plugin_child_spend(registry, &mut *budget);
-            // What this round's worker turn changed, measured at the round
-            // boundary rather than at the run's end (#4159). The terminator
-            // stays where it is, below and outside this loop: a goal run drives
+            // What this round changed AFTER its worker turn ended — the
+            // plugin's own `after_turn` work (#4159). The terminator stays
+            // where it is, below and outside this loop: a goal run drives
             // several turns over one stream and owes exactly one ending, so
             // paying both debts here would end the run on its first round.
             //
-            // Exactly once per boundary: `snapshot_worktree` consumes what it
-            // reports, so a second reading in the same round would report an
-            // unchanged tree.
+            // The second of the round's two readings, not a repeat of the
+            // first: `GoalRoundDriver::run_turn` reads at the end of the worker
+            // turn so the wrapper's `TurnOutcome::changed_files` carries what
+            // that turn changed (#3834), and `snapshot_worktree` consumes what
+            // it reports — so the two readings partition the round exactly the
+            // way `crate::turn_files`'s per-call measurer partitions a turn,
+            // and neither can double-count a path.
             crate::turn_files::emit_shared_tree_changes_raw(cfg, &tx, execution.as_ref());
             let report = match dispatched {
                 Ok(report) => report,
@@ -423,8 +470,15 @@ pub(crate) async fn run_goal_wrapped_turn(
     // run's single terminator.
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
+    // The canonical teardown (#960): each round republished the registry's
+    // streams onto its own sender, so those clones are detached before the
+    // renderer is awaited or a completed goal run hangs on a channel that
+    // never closes.
+    let events = stella_core::EventSender::new(tx.clone());
     drop(tx);
-    let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
+    let persistence_complete = persistence::close_event_stream(registry, events, renderer)
+        .await
+        .persistence_complete;
 
     let (outcome_label, cost) = match &outcome {
         GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
