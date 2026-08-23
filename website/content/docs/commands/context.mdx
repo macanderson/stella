@@ -88,7 +88,9 @@ the CLI.
 
 A named list **replaces** rather than appends, because the usual repair is
 narrowing: `--paths crates/stella-core` after `paths = ["crates"]` matched
-everything.
+everything. Empty values are dropped, so `--paths ''` unscopes — clap has no way
+to spell "this flag was given no values", and a record scoped to `""` would match
+nothing while reading as scoped.
 
 **With no flags it re-stamps and changes nothing else**, which is the repair for
 a file somebody has already hand-edited. `record_hash` is a two-pass hash over an
