@@ -1046,7 +1046,7 @@ pub async fn run_deck_session(
                     // runs as that agent. Between turns only — the prompt
                     // is byte-stable across a turn (invariant #7).
                     Some(WorkspaceInput::AgentAssume { name, scope }) => {
-                        match assumed_persona(&cfg.workspace_root, &name, scope) {
+                        match authoring::assumed_persona(&cfg.workspace_root, &name, scope) {
                             Ok(persona) => {
                                 system_prompt = format!("{base_system_prompt}\n\n{persona}");
                                 if let Some(first) = messages.first_mut()
@@ -3422,7 +3422,7 @@ fn handle_agents_input(
             scope,
             content,
         } => {
-            let status = save_agent(root, name, *scope, content);
+            let status = authoring::save_agent(root, name, *scope, content);
             let _ = in_tx.send(agents_list_inbound(root, Some(status)));
             true
         }
@@ -3431,135 +3431,16 @@ fn handle_agents_input(
             scope,
             version,
         } => {
-            let status = pin_agent(root, name, *scope, *version);
+            let status = authoring::pin_agent(root, name, *scope, *version);
             let _ = in_tx.send(agents_list_inbound(root, Some(status)));
             true
         }
         WorkspaceInput::AgentDelete { name, scope } => {
-            let status = delete_agent(root, name, *scope);
+            let status = authoring::delete_agent(root, name, *scope);
             let _ = in_tx.send(agents_list_inbound(root, Some(status)));
             true
         }
         _ => false,
-    }
-}
-
-/// The delete path: the canonical definition and every archived version go
-/// (`agents_installed::remove_agent`). Returns the pane's status line.
-fn delete_agent(root: &std::path::Path, name: &str, scope: AgentScope) -> String {
-    let dir = match crate::agents_installed::agents_dir_for(scope, root) {
-        Ok(dir) => dir,
-        Err(e) => return format!("delete failed: {e}"),
-    };
-    let Some(slug) = crate::agents_installed::find_slug(&dir, name) else {
-        return format!(
-            "no installed agent named {name} at the {} scope",
-            scope.label()
-        );
-    };
-    match crate::agents_installed::remove_agent(&dir, &slug) {
-        Ok(true) => format!("deleted {name} ({} scope) and its versions", scope.label()),
-        Ok(false) => format!("{name} was already gone"),
-        Err(e) => format!("delete failed: {e}"),
-    }
-}
-
-/// The persona block an assumed agent contributes to the system prompt: the
-/// same words a `/name task` invocation opens with, minus the task.
-fn assumed_persona(
-    root: &std::path::Path,
-    name: &str,
-    scope: AgentScope,
-) -> Result<String, String> {
-    let dir = crate::agents_installed::agents_dir_for(scope, root)?;
-    let entry = crate::agents_installed::discover(
-        crate::agents_installed::user_agents_dir().as_deref(),
-        &crate::agents_installed::project_agents_dir(root),
-    )
-    .into_iter()
-    .find(|e| e.name == name && e.scope == scope)
-    .ok_or_else(|| format!("no installed agent named {name} in {}", dir.display()))?;
-    let body = entry
-        .content
-        .splitn(3, "---")
-        .nth(2)
-        .unwrap_or(&entry.content)
-        .trim()
-        .to_string();
-    let mut out = format!(
-        "You are acting as the following agent for this whole session.\n\n# Agent: {}\n{}\n\n{body}",
-        entry.name, entry.description
-    );
-    if let Some(tools) = &entry.tools {
-        out.push_str(&format!(
-            "\n\nThis agent's toolbelt is restricted to: {}.",
-            tools.join(", ")
-        ));
-    }
-    Ok(out)
-}
-
-/// The edit-save path: archive-then-write a NEW version and pin it (see
-/// `agents_installed::save_new_version`). Returns the pane's status line.
-fn save_agent(root: &std::path::Path, name: &str, scope: AgentScope, content: &str) -> String {
-    let dir = match crate::agents_installed::agents_dir_for(scope, root) {
-        Ok(dir) => dir,
-        Err(e) => return format!("save failed: {e}"),
-    };
-    let slug = crate::agents_installed::find_slug(&dir, name)
-        .unwrap_or_else(|| crate::agents_installed::slugify(name));
-    match crate::agents_installed::save_new_version(&dir, &slug, content) {
-        Ok(version) => format!(
-            "saved {name} — v{version} is now pinned (previous versions preserved under \
-             .versions/{slug}/)"
-        ),
-        Err(e) => format!("save failed: {e}"),
-    }
-}
-
-/// The pin-set path: re-point the pin at an existing version — never
-/// creates one. Returns the pane's status line.
-fn pin_agent(root: &std::path::Path, name: &str, scope: AgentScope, version: u32) -> String {
-    let dir = match crate::agents_installed::agents_dir_for(scope, root) {
-        Ok(dir) => dir,
-        Err(e) => return format!("pin failed: {e}"),
-    };
-    let Some(slug) = crate::agents_installed::find_slug(&dir, name) else {
-        return format!(
-            "no installed agent named {name} at the {} scope",
-            scope.label()
-        );
-    };
-    match crate::agents_installed::pin_version(&dir, &slug, version) {
-        Ok(()) => format!("{name} pinned to v{version} — no new version written"),
-        Err(e) => format!("pin failed: {e}"),
-    }
-}
-
-/// Cap on the free-text `reason` stamped on an agent-use telemetry row.
-const AGENT_USE_REASON_MAX: usize = 120;
-
-/// Record the agent-usage telemetry for a `/agent-name task…` invocation:
-/// resolution mirrors `CustomExtensions::expand` (commands shadow skills
-/// shadow agents — only a real agent invocation records), `version` is the
-/// definition's pinned version at this moment, `reason` is the task
-/// snippet. The row rides the registry's ledger and is drained into
-/// store.db by `agent::record_execution_end` under the execution the
-/// expanded prompt runs as.
-fn record_agent_invocation(
-    input: &str,
-    custom: &crate::extensions::CustomExtensions,
-    registry: &ToolRegistry,
-) {
-    let trimmed = input.trim();
-    let (head, args) = match trimmed.split_once(char::is_whitespace) {
-        Some((head, args)) => (head, args),
-        None => (trimmed, ""),
-    };
-    if let Some(crate::extensions::Invocation::Agent(agent)) = custom.lookup(head) {
-        let version = crate::agents_installed::active_version_for_source(&agent.source_path);
-        let reason: String = args.trim().chars().take(AGENT_USE_REASON_MAX).collect();
-        registry.record_agent_use(&agent.name, version, &reason);
     }
 }
 
@@ -3760,7 +3641,7 @@ async fn run_deck_command(
             // An AGENT invocation additionally records a usage-telemetry
             // row (agent, pinned version, task) on the registry's ledger.
             if let Some(expanded) = custom.expand(trimmed, &skills::deck_reserved()) {
-                record_agent_invocation(trimmed, custom, registry);
+                authoring::record_agent_invocation(trimmed, custom, registry);
                 return DeckCommand::Expanded(expanded);
             }
             // A bare unknown /word is a typo'd command, not a prompt — say so

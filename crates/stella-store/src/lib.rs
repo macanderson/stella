@@ -137,7 +137,6 @@ mod migrations;
 mod private;
 mod receipts;
 mod reconstruct;
-mod session_stats;
 mod telemetry;
 #[cfg(test)]
 mod test_env;
@@ -164,6 +163,7 @@ pub mod notify;
 pub mod prune;
 pub mod reflection;
 pub mod scoreboard;
+pub mod session_stats;
 pub mod sessions;
 pub mod task_board;
 pub mod turn_diffs;

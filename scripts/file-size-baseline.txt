@@ -23,7 +23,7 @@
 1781 crates/stella-model/src/anthropic/tests.rs
 2077 crates/stella-model/src/openai.rs
 1861 crates/stella-model/src/zai/tests.rs
-1729 crates/stella-store/src/lib.rs
+1732 crates/stella-store/src/lib.rs
 2266 crates/stella-store/src/tests.rs
 1814 crates/stella-store/src/usage.rs
 3991 crates/stella-tui/src/deck_ui.rs
