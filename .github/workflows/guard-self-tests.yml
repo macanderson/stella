@@ -81,12 +81,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # The three suites missing from this list run elsewhere and are not
-      # duplicated here: test-file-size.sh in file-size.yml,
-      # test-duplicate-claims.sh in duplicate-claims.yml, and
-      # test-deck-fit-all.sh plus test-self-driving.sh in ci.yml (the latter
-      # builds `stella`, so it belongs beside the toolchain). The three
-      # DELIBERATELY unhosted ones are named in the Makefile's
+      # The suites missing from this list run elsewhere and are not duplicated
+      # here: test-file-size.sh in file-size.yml, test-duplicate-claims.sh in
+      # duplicate-claims.yml, and test-deck-fit-all.sh, test-self-driving.sh
+      # and test-impacted-crates.sh in ci.yml. The last two want the toolchain:
+      # one builds `stella`, and the other runs `cargo metadata` against a
+      # synthetic workspace a dozen times — with no cargo on PATH the scoper
+      # answers `--workspace` for everything, which is its documented
+      # fall-back, so 13 of its 25 cases went red in this job before they moved.
+      #
+      # The three DELIBERATELY unhosted ones are named in the Makefile's
       # `UNHOSTED_SELF_TESTS`, with the reason each is excluded;
       # scripts/check-gate-parity.sh fails when a suite is in neither place.
       - name: action-pins guard covers composite actions
@@ -120,10 +124,6 @@ jobs:
       - name: gate-parity guard failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-gate-parity.sh
-
-      - name: gate-scoping picks the right crates
-        if: ${{ !cancelled() }}
-        run: ./scripts/test-impacted-crates.sh
 
       - name: the zsh completion installer
         if: ${{ !cancelled() }}
