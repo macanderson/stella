@@ -514,6 +514,15 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo build --workspace --release --config 'profile.release.lto="thin"' --config 'profile.release.codegen-units=16'
 
+      # A `GATE_STEPS` member that ran in no workflow at all (#4427). It sits
+      # here rather than in guard-self-tests.yml — the home of its twenty
+      # toolchain-free siblings — because it drives the real `stella` binary
+      # and builds one when it cannot find it, so it wants a warm cargo cache
+      # and the toolchain this job already has.
+      - name: the self-driving control logic
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: ./scripts/test-self-driving.sh
+
       # Last main step in the job, so it runs before rust-cache's post step —
       # which is the whole point (#4149).
       #

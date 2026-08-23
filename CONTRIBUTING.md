@@ -119,9 +119,14 @@ CI enforces the same steps, split across `ci.yml` (plus a release smoke build);
 `docs-guards.yml`, which runs the prose guards — `invariants`, `doc-links`,
 `command-docs`, `brand-case`, `gate-parity`, `god-files` and `design-refs` — on
 their own because they trigger on the `docs/**` and `*.md` paths that `ci.yml`
-deliberately ignores; and `wire-schema.yml`, for the
+deliberately ignores; `wire-schema.yml`, for the
 same reason in the other direction — a PR that only hand-edits a generated
-schema under `docs/wire/` starts neither of the others (#1439).
+schema under `docs/wire/` starts neither of the others (#1439); and
+`guard-self-tests.yml`, which runs `prose`, `hue-separation` and
+`transcript-surfaces` — `ci.yml`'s job skips itself for a prose-only diff,
+which is the diff `prose` is about — beside the hermetic suites that prove a
+guard can still fail (#3820, #4427). `gate-parity` now also fails when a gate
+step is named in the `Makefile` and run by no workflow at all.
 
 One more workflow, `deck-fit.yml`, measures every slide of every deck under
 `website/public/presentations/` against the fixed 1600x900 canvas they are

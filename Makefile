@@ -61,6 +61,28 @@ GATE_NO_BUILD := lockfile-sync format-check
 GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings lint test tool-docs \
                self-driving-test
 
+# The hermetic guard self-tests — `scripts/test-*.sh` — that deliberately run
+# in NO workflow, and why each one does not. Every other suite runs server-side
+# (guard-self-tests.yml, plus file-size.yml, duplicate-claims.yml and ci.yml),
+# and scripts/check-gate-parity.sh fails when a suite appears in neither this
+# list nor a workflow, so an omission cannot pass for a decision (#3820, #4427).
+# They stay out of `make gate` for the separate reason that they build
+# throwaway git repositories; that exclusion is not what this variable records.
+#
+#   test-main-canary.sh   — its cases run the canary against the LIVE tree and
+#                           expect it green, so it reports whatever `main` is
+#                           red on rather than the canary's own capability —
+#                           which is main-canary.yml's job, after the merge.
+#                           It also pays a `cargo check --workspace`.
+#   test-guard-sigpipe.sh — same shape: every case asserts a real guard exits 0
+#                           on this tree with its reader gone, so a genuinely
+#                           red guard fails it for the wrong reason, and
+#                           check-wire-schema.sh inside it builds the workspace.
+#   test-dev-env.sh       — 14 of its 38 cases fail outside a Linux dev box
+#                           (#4443). Wiring it before that is triaged would
+#                           land a workflow that is red on arrival.
+UNHOSTED_SELF_TESTS := test-main-canary.sh test-guard-sigpipe.sh test-dev-env.sh
+
 .PHONY: help
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*##' Makefile | \
@@ -497,9 +519,18 @@ gate: $(GATE_STEPS) ## Full CI gate: guards + rustdoc + fmt-check + clippy + tes
 print-gate-steps:
 	@echo $(GATE_STEPS)
 
+# Consumed by the same guard, for the same reason.
+.PHONY: print-unhosted-self-tests
+print-unhosted-self-tests:
+	@echo $(UNHOSTED_SELF_TESTS)
+
 .PHONY: gate-parity
 gate-parity: ## Assert AGENTS.md and CONTRIBUTING.md list the real gate steps (#1437)
 	@./scripts/check-gate-parity.sh
+
+.PHONY: gate-parity-test
+gate-parity-test: ## Test the gate-parity guard's failure directions (hermetic; not part of `gate`)
+	@./scripts/test-gate-parity.sh
 
 .PHONY: bench-suites
 bench-suites: ## Assert `make bench-test` runs every suite bench.yml runs, by derivation (#2847)
