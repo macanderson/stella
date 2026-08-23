@@ -186,7 +186,7 @@ repository's `.gitignore` would drop.
 | --- | --- |
 | **Its research half contributes nothing under `stella-cli` today**: the driver passes `candidate: None`, so there is no workspace to read, and it publishes `questions: 0`, so the stage's own condition skips it. Recall needs no candidate, so it is the half that can reach a real turn first | #3547 |
 | **And recall does not reach one yet either**: `stella-cli` attaches no `HostCallGate`, so the ask has nowhere to go and the stage is reported as a fault rather than served. The plugin degrades exactly as it does for any refusal; what is missing is the host wiring | #3561 |
-| It cannot answer triage's questions — the wire carries their count, not their text | #3539 |
+| It cannot answer triage's questions — the wire carries their count, not their text. Blocked on a producer, not on a design: nothing publishes `Signal::Questions` today (`pre_turn_signals` sends `0`), and the shape the field takes when a triage plugin does is written down in `doc:wrapper-socket` §5 | #3539 |
 | It cannot cause a model call, so the sub-agent fan-out did not come with it | #3541 |
 | It publishes no signals: `StageName::Research.publishes()` is empty, so there is none it could honestly publish | #3542 |
 | Its `[wrapper]` stage order over-declares, because the condition grammar has no conjunction | #3538 |
