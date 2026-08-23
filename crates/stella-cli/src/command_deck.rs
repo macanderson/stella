@@ -3209,14 +3209,12 @@ pub(super) fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<En
     // Code-graph definitions of the queried name, when an index exists
     // (definitions are an exact-name lookup, so an empty query has nothing
     // to resolve).
-    if !needle.is_empty() {
-        let db = crate::search_cmd::codegraph::graph_db_path(root);
-        if db.exists()
-            && let Ok(graph) = stella_graph::CodeGraph::open(root, &db)
-            && let Ok(frames) = graph.definitions(query.trim())
-        {
-            hits.extend(frames.iter().map(symbol_hit));
-        }
+    if !needle.is_empty()
+        && let Ok(Some(db)) = crate::search_cmd::codegraph::graph_db_path(root)
+        && let Ok(graph) = stella_graph::CodeGraph::open(root, &db)
+        && let Ok(frames) = graph.definitions(query.trim())
+    {
+        hits.extend(frames.iter().map(symbol_hit));
     }
     hits
 }

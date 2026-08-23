@@ -13,6 +13,11 @@
 //! scope chain, the warning reaches stderr, stdout stays clean for whoever is
 //! piping it, and the command still succeeds (advisory, never a gate).
 //!
+//! The same argument covers the stream-json half (#3616): `withheld::event`
+//! is pure and would stay green with the emit in `output::open_raw_turn`
+//! deleted, so the carrier is witnessed through a real process reading real
+//! stdout.
+//!
 //! That last sentence is why the steering notice is witnessed *here* and not
 //! only by `settings::tests`. Those tests exercise `settings::withheld`, which
 //! is pure — they would stay green with the `eprintln!` that makes the notice
@@ -253,5 +258,113 @@ fn a_trusted_checkout_and_one_with_no_steering_say_nothing() {
         !stderr.contains("project steering"),
         "a repo with no steering must not warn about a suppression that cost it \
          nothing: {stderr}"
+    );
+}
+
+/// A one-shot `stella run` in `dir`, machine-readable, that cannot reach a
+/// provider: `--base-url` points at a closed loopback port, so the first model
+/// call is refused at once. That is enough for what is under test — the
+/// withheld-steering event is emitted when the turn's channel opens, before
+/// anything is asked of a provider — and it keeps the case hermetic, with no
+/// mock server and no credential.
+fn run_stream_json(
+    dir: &tempfile::TempDir,
+    home: &tempfile::TempDir,
+    extra_env: &[(&str, &str)],
+) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
+    command
+        .args([
+            "--model",
+            "openrouter/z-ai/glm-5.1",
+            "--api-key",
+            "sk-not-a-real-key",
+            "--base-url",
+            "http://127.0.0.1:1",
+            "--spend-limit",
+            "0.05",
+            "run",
+            "--output-format",
+            "stream-json",
+            "say hi and stop",
+        ])
+        .current_dir(dir.path())
+        .env("HOME", home.path())
+        .env("STELLA_HOME", home.path())
+        .env("STELLA_DATA_DIR", home.path())
+        .env("NO_COLOR", "1")
+        .env("STELLA_NO_ENV_FILE", "1")
+        .env("STELLA_CATALOG_AUTO_REFRESH", "0")
+        .env(
+            "STELLA_MANAGED_SETTINGS",
+            home.path().join("no-managed.json"),
+        )
+        .env_remove("STELLA_MODEL")
+        .env_remove("STELLA_TRUST_PROJECT")
+        .env_remove("STELLA_PROJECT_HOOKS")
+        .env_remove("OPENROUTER_API_KEY")
+        .env_remove("ANTHROPIC_API_KEY")
+        .env_remove("ZAI_API_KEY")
+        .env_remove("OPENAI_API_KEY");
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    command.output().expect("run stella")
+}
+
+/// **Witness (#3616).** A harness reading `--output-format stream-json` learns
+/// on **stdout** that this checkout's steering was withheld, without scraping
+/// the human channel. Before this change the answer existed only as an
+/// `eprintln!`: the stream carried no such event at all, whatever the
+/// repository had on disk.
+///
+/// It pins the same two safety properties the stderr witness does, because the
+/// event is a second carrier of one fact and a second carrier is a second
+/// chance to leak: counts only, and the authority named, so a consumer can
+/// tell the remedy it can act on from the one it cannot.
+#[test]
+fn an_untrusted_checkouts_withheld_steering_reaches_the_event_stream() {
+    let (dir, home) = steering_workspace();
+    let output = run_stream_json(&dir, &home, &[]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let event = stdout
+        .lines()
+        .find(|line| line.contains("\"type\":\"steering_withheld\""))
+        .unwrap_or_else(|| panic!("no steering_withheld event on stdout — stream was:\n{stdout}"));
+    assert!(
+        event.contains("\"withheld_by\":\"project_untrusted\""),
+        "the event must name the authority, because it decides the remedy: {event}"
+    );
+    assert!(
+        event.contains("\"memories\":1") && event.contains("\"records\":1"),
+        "the event must say how much was withheld: {event}"
+    );
+    assert!(
+        !event.contains("SECRET-MARKER-BODY") && !event.contains("00-marker"),
+        "counts, never content or filenames — the same rule the stderr line is \
+         held to, for the same reason: {event}"
+    );
+    assert_eq!(
+        stdout
+            .lines()
+            .filter(|line| line.contains("\"type\":\"steering_withheld\""))
+            .count(),
+        1,
+        "one notice per run: {stdout}"
+    );
+}
+
+/// The silent arm on the machine channel: a trusted checkout is getting its
+/// steering, so the stream says nothing about a suppression that did not
+/// happen.
+#[test]
+fn a_trusted_checkouts_event_stream_carries_no_withheld_notice() {
+    let (dir, home) = steering_workspace();
+    let output = run_stream_json(&dir, &home, &[("STELLA_TRUST_PROJECT", "1")]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("steering_withheld"),
+        "a trusted workspace loaded its steering and is owed no event: {stdout}"
     );
 }

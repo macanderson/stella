@@ -85,8 +85,33 @@ impl Interrupt {
 }
 
 /// Resolve on the first shutdown signal.
+///
+/// `pub(crate)` for the one caller that cannot use [`until_interrupted`]: the
+/// self-driving driver is a synchronous loop, so it has no work future to race
+/// and drop. It watches this on a thread of its own and latches the answer
+/// (`self_driving_cmd::stop`) — which spelling of "a signal that ends
+/// a Stella process" it honours has to be this one, or the two doors would
+/// disagree about what SIGTERM means.
 #[cfg(unix)]
-async fn first_signal() -> Interrupt {
+pub(crate) async fn first_signal() -> Interrupt {
+    first_signal_armed(|| {}).await
+}
+
+/// [`first_signal`], calling `armed` once the handlers are installed.
+///
+/// A caller that races a signal against its own work does not need this: the
+/// work cannot finish before the future is polled. A caller that arms a
+/// *watcher* and then goes off to do something else does — it has no other way
+/// to know whether a signal arriving in the next instant will be caught or
+/// will take the default disposition and kill the process. That is the
+/// self-driving driver (`self_driving_cmd::stop`), whose whole reason
+/// for existing is that a signalled run leaves no record.
+///
+/// `armed` fires after SIGTERM's stream is registered, which `signal()` does
+/// eagerly. SIGINT is armed a few instructions later, when the `select!` below
+/// first polls `ctrl_c` — the same `block_on`, no await in between.
+#[cfg(unix)]
+pub(crate) async fn first_signal_armed(armed: impl FnOnce()) -> Interrupt {
     use tokio::signal::unix::{SignalKind, signal};
 
     let mut terminate = match signal(SignalKind::terminate()) {
@@ -94,10 +119,12 @@ async fn first_signal() -> Interrupt {
         // If SIGTERM cannot be registered, still honour Ctrl-C rather than
         // giving up on both.
         Err(_) => {
+            armed();
             let _ = tokio::signal::ctrl_c().await;
             return Interrupt::Int;
         }
     };
+    armed();
     tokio::select! {
         _ = tokio::signal::ctrl_c() => Interrupt::Int,
         _ = terminate.recv() => Interrupt::Term,
@@ -105,7 +132,13 @@ async fn first_signal() -> Interrupt {
 }
 
 #[cfg(not(unix))]
-async fn first_signal() -> Interrupt {
+pub(crate) async fn first_signal() -> Interrupt {
+    first_signal_armed(|| {}).await
+}
+
+#[cfg(not(unix))]
+pub(crate) async fn first_signal_armed(armed: impl FnOnce()) -> Interrupt {
+    armed();
     let _ = tokio::signal::ctrl_c().await;
     Interrupt::Int
 }
@@ -123,8 +156,12 @@ pub(crate) async fn until_interrupted<F: Future>(work: F) -> Result<F::Output, I
 ///
 /// Split out of [`until_interrupted`] purely so the state transition is
 /// testable: [`first_signal`] can only be driven by raising a real signal at
-/// the *process*, which in a test harness would take down every other test in
-/// the binary. Production has exactly one caller and it passes `first_signal`.
+/// the *process*, and here the handler is installed by the same future the
+/// raise would have to race, so a test that signalled early would take down
+/// the whole binary. (A caller that arms first can signal itself safely, which
+/// is what [`first_signal_armed`] is for and what `self_driving_cmd::stop`'s
+/// witness does.) Production has exactly one caller and it passes
+/// `first_signal`.
 async fn race<F: Future>(
     work: F,
     signal: impl Future<Output = Interrupt>,

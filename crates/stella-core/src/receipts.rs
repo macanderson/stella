@@ -899,6 +899,10 @@ pub struct ReceiptLedger {
     /// The revision the next receipt describes; see
     /// [`Self::set_transcript_revision`].
     revision: TranscriptRevision,
+    /// The pure-`sleep` seconds this turn has asked for as of the next
+    /// receipt, or `None` when nothing classified them — see
+    /// [`Self::set_stall_seconds_requested`].
+    stall_seconds_requested: Option<u64>,
     /// Whether `context.lifecycle.enabled` is on for this session. Off by
     /// default and off for every caller that does not opt in, which is the
     /// whole point: with it off the receipt is byte-for-byte what it was
@@ -927,6 +931,7 @@ impl ReceiptLedger {
             calibration_factor: 1.0,
             digests: BlockDigestCache::default(),
             revision: TranscriptRevision::default(),
+            stall_seconds_requested: None,
             lifecycle_enabled: false,
         }
     }
@@ -948,6 +953,20 @@ impl ReceiptLedger {
     pub fn set_effective_budget(&mut self, budget_tokens: u64, factor: f64) {
         self.effective_budget_tokens = budget_tokens;
         self.calibration_factor = factor;
+    }
+
+    /// Record the pure-`sleep` seconds the stall rung classified for this
+    /// turn, so the number it decides on survives the decision (#3621).
+    ///
+    /// Pushed per step alongside [`Self::set_effective_budget`], and for the
+    /// same reason: the value is computed on the way to the model call, by a
+    /// pass that is not this one, and threading it through
+    /// [`Self::emit_step_receipt`] would grow an argument list that is
+    /// already at its limit. A ledger nobody tells keeps `None`, which is what
+    /// the replay path — no detector window, nothing to classify — must
+    /// report rather than a zero it did not observe.
+    pub fn set_stall_seconds_requested(&mut self, seconds: u64) {
+        self.stall_seconds_requested = Some(seconds);
     }
 
     /// Tell the ledger which revision of the transcript the next receipt
@@ -1054,6 +1073,7 @@ impl ReceiptLedger {
             effective_budget_tokens: self.effective_budget_tokens,
             calibration_factor: self.calibration_factor,
             estimated_input_tokens,
+            stall_seconds_requested: self.stall_seconds_requested,
             compiled_frame: compiled_frame.flatten(),
         });
     }

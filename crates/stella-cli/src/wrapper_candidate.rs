@@ -159,16 +159,21 @@ fn observe(root: &Path, path: &str) -> Option<ArtifactIdentity> {
 /// Mint the grant for the shared work tree, and pin whatever witness artifacts
 /// the test command names.
 ///
-/// `test_command` is the user's `--test-command`, unparsed. It crosses
-/// [`parse_test_invocation`] — the host's strict, closed runner vocabulary —
-/// before anything is put on the wire, so a plugin receives an argv the host
-/// itself would run and never a line to hand to a shell (#1400).
+/// `test_command` is the oracle for this turn, unparsed — `stella run`'s
+/// `--test-command`, or the fleet task's own `test_command` plan field
+/// (#3884). It crosses [`parse_test_invocation`] — the host's strict, closed
+/// runner vocabulary — before anything is put on the wire, so a plugin
+/// receives an argv the host itself would run and never a line to hand to a
+/// shell (#1400).
 ///
 /// # Errors
 ///
 /// A message naming what a user can fix: a workspace root the filesystem will
-/// not resolve, or a test command the parser refuses. `stella-cli` is a binary,
-/// so a `String` here is the finished product (AGENTS.md invariant 5).
+/// not resolve, or a test command the parser refuses. The refusal quotes the
+/// command rather than the flag that carried it, because two doors carry it
+/// and a message naming `--test-command` is wrong on the one whose oracle came
+/// out of a plan file. `stella-cli` is a binary, so a `String` here is the
+/// finished product (AGENTS.md invariant 5).
 pub(crate) fn grant_shared_tree(
     workspace_root: &Path,
     test_command: Option<&str>,
@@ -179,7 +184,7 @@ pub(crate) fn grant_shared_tree(
 
     let invocation = match test_command {
         Some(command) => Some(parse_test_invocation(command).map_err(|error| {
-            format!("--test-command cannot be given to a wrapper plugin: {error}")
+            format!("the test command `{command}` cannot be given to a wrapper plugin: {error}")
         })?),
         None => None,
     };
@@ -327,12 +332,14 @@ mod tests {
 
     /// A test command the host's own parser refuses produces no grant carrying
     /// it — the plugin never receives an invocation this host would not run.
+    /// The refusal quotes the command, which is the half a user can act on
+    /// whichever door supplied it (`--test-command` or a fleet plan file).
     #[test]
     fn a_refused_test_command_mints_no_grant() {
         let dir = workspace();
         let error = grant_shared_tree(dir.path(), Some("rm -rf /"))
             .expect_err("`rm` is not in the runner vocabulary");
-        assert!(error.contains("--test-command"), "{error}");
+        assert!(error.contains("rm -rf /"), "{error}");
     }
 
     /// The fence is asked before the filesystem is, even though the parser

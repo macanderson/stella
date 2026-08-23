@@ -763,6 +763,26 @@ async fn worker_recall_block(
     (recalled.text, event)
 }
 
+/// The task boundary a fleet attempt stamps onto every lesson it mines.
+///
+/// The plan's task id — not the attempt, and not the claim-holder identity
+/// `{run_id}/{task.id}` that `EngineWorker::run` composes for the claims table
+/// (#3989). Governance counts *distinct tasks* before it promotes
+/// anything, and the boundary exists to stop a lesson clearing a threshold it
+/// has not earned, so where the boundary is uncertain the safe move is to merge
+/// rather than split.
+///
+/// Three attempts at one task share this, and so does the same task id in a
+/// later run, or in an unrelated plan that happens to spell a task `t1`. Each
+/// of those merges evidence and delays a
+/// promotion, which is the recoverable direction. Keying on the run instead
+/// would make every nightly re-run of one task a fresh distinct task — the
+/// over-counting the session default already has, and the reason a fleet
+/// attempt cannot simply keep that default.
+fn attempt_task_boundary(task: &Task) -> String {
+    format!("fleet:{}", task.id)
+}
+
 /// Mine one fleet attempt's turn into the workspace's memory — the steering
 /// *out* of an unattended lane, where [`worker_recall_block`] is the steering
 /// in (#3956).
@@ -786,6 +806,11 @@ async fn worker_recall_block(
 /// [`agent::open_store`] is called against `cfg.workspace_root` for the
 /// coordination store while the attempt's own telemetry store is rooted in the
 /// task tree.
+///
+/// **Which task the lesson lands under** is the other decision. `task_id` is
+/// the boundary governance counts distinct tasks with, and a fleet attempt is
+/// the first caller in this tree that genuinely knows one;
+/// [`attempt_task_boundary`] carries the choice and its retry semantics.
 ///
 /// **What an unattended lane may teach.** Opened through
 /// [`crate::memory::SessionMemory::open`] rather than `open_for_session`, so
@@ -823,12 +848,19 @@ async fn mine_attempt_lesson(
     provider: &dyn stella_protocol::Provider,
     evidence: crate::memory::TurnEvidence<'_>,
     execution_id: Option<i64>,
+    task_id: &str,
     budget: &mut stella_core::BudgetGuard,
 ) -> Option<crate::memory::ReflectionReport> {
     let mut memory = crate::memory::SessionMemory::open(invocation_root, false)?;
     if let Some(id) = execution_id {
         memory.set_execution_id(id);
     }
+    // Without this every attempt takes the session default — one synthetic task
+    // per attempt, so a retry wave reads to governance as several distinct
+    // tasks and can clear a promotion threshold on one task's evidence. See
+    // [`attempt_task_boundary`] for why the boundary is the task rather than
+    // the attempt or the run.
+    memory.set_task_id(task_id);
     // `quiet`, for the Command Deck's reason: with `--watch` a live grid owns
     // the terminal, and a per-worker reflection line would be N-fold noise
     // painted over it.
@@ -906,6 +938,7 @@ async fn run_task(
             root,
             variant,
             &task.id,
+            task.test_command.as_deref(),
         )?),
         None => None,
     };
@@ -1207,6 +1240,9 @@ async fn run_task(
             same_tree(root, &invocation_root)
                 .then(|| execution.as_ref().map(|(_, id)| *id))
                 .flatten(),
+            // The task, not this attempt: a retry wave is one task's worth of
+            // evidence and must count as one (#3989).
+            &attempt_task_boundary(task),
             &mut budget,
         )
         .await;

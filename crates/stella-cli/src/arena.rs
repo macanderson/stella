@@ -583,6 +583,7 @@ mod tests {
             effective_budget_tokens: 4096,
             calibration_factor: 1.0,
             estimated_input_tokens: 120,
+            stall_seconds_requested: None,
             compiled_frame: None,
         }
     }
