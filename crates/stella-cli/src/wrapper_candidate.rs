@@ -55,12 +55,21 @@
 //! comparator (`stella_plugin::witness_identity_matches`) the staged
 //! pipeline itself used.
 //!
-//! What it does **not** cover is stated rather than implied: an invocation that
-//! names no path — `cargo test --test flip`, whose artifact is `tests/flip.rs`
-//! by cargo's convention and not by anything in the argv — snapshots nothing
-//! and the finding is [`TamperFinding::NotChecked`]. That is a refusal to
-//! credit, not a pass. Widening it needs the plugin to declare its own witness
-//! artifacts on the wire, which is a wire change and is #3587.
+//! What the invocation cannot say, the plugin can. An invocation that names no
+//! path — `cargo test --test flip`, whose artifact is `tests/flip.rs` by
+//! cargo's convention and not by anything in the argv; `dotnet test --filter`,
+//! which names no file at all — used to snapshot nothing, and the finding was
+//! [`TamperFinding::NotChecked`] forever: a refusal to credit, so nothing was
+//! wrongly vouched for, but a plugin with a cargo witness could never reach
+//! `Verdict::Met` on this path either. `BeforeTurnResponse::witness` is the
+//! wire half of the fix (#3587) and [`TamperWatch::pin_declared`] is this one.
+//!
+//! The division of labour does not move: **the plugin says which artifacts,
+//! the host says whether they changed.** A declaration is a list of paths, not
+//! a finding, and every path crosses the same fence before the filesystem is
+//! touched. A plugin that declares nothing still gets `NotChecked` — no credit
+//! — exactly as before. Deriving the path from the runner's convention stays
+//! rejected: that is the host guessing at a witness rather than watching one.
 
 use std::path::{Path, PathBuf};
 
@@ -89,10 +98,17 @@ pub(crate) struct GrantedCandidate {
 ///
 /// Empty is a real state and the reason [`TamperFinding::NotChecked`] exists —
 /// see this module's docs for the invocation shapes that produce it.
+/// The pin set is behind a `Mutex` because a plugin may add to it mid-run and
+/// every driver that holds a watch holds it by shared reference — three of them
+/// now (`wrapper_plugin::RawTurnDriver`, `agent::goal::goal_wrapped`,
+/// `fleet_cmd::wrapped`), each embedding it in a struct the dispatcher then
+/// borrows. Threading `&mut` through all three to add a path would be a wide
+/// change for a narrow fact; the lock is held for the length of one `Vec` walk
+/// and never across an await.
 #[derive(Debug)]
 pub(crate) struct TamperWatch {
     root: PathBuf,
-    pinned: Vec<(String, ArtifactIdentity)>,
+    pinned: std::sync::Mutex<Vec<(String, ArtifactIdentity)>>,
 }
 
 impl TamperWatch {
@@ -104,19 +120,59 @@ impl TamperWatch {
     /// an entry meaning "nothing was here" would make a file the worker
     /// legitimately created read as a change to a witness.
     pub(crate) fn pin(root: &Path, paths: &[String]) -> Self {
-        let mut pinned = Vec::new();
+        let watch = Self {
+            root: root.to_path_buf(),
+            pinned: std::sync::Mutex::new(Vec::new()),
+        };
+        watch.pin_declared(paths);
+        watch
+    }
+
+    /// Add the artifacts a wrapper plugin declared for the round about to run,
+    /// pinning each at the identity it has *now* (#3587).
+    ///
+    /// This is what widens the watch past the invocation shapes that name their
+    /// artifact in the argv: `cargo test --test flip`, `dotnet test --filter …`
+    /// and `pnpm vitest -t …` name no file the host could observe, and deriving
+    /// one from the runner's convention is the host guessing at a witness
+    /// rather than watching one. A plugin that knows says so; the host still
+    /// does the watching, and the plugin never vouches for its own witness
+    /// (#3499).
+    ///
+    /// **It only ever adds.** An artifact already pinned keeps the identity it
+    /// was first observed at, and re-pinning is what this must not do: a
+    /// wrapper holds a turn open for several rounds, and re-observing a
+    /// baseline at the start of round 2 would launder a rewrite the worker made
+    /// in round 1 into "unchanged". Sticky in the safe direction, which is the
+    /// direction the watch exists for.
+    ///
+    /// Every path crosses the fence before the filesystem is touched, because
+    /// [`observe`] is the only way in and it fences first — a declaration that
+    /// escapes the granted root is dropped from the watch rather than followed.
+    pub(crate) fn pin_declared(&self, paths: &[String]) {
+        let mut pinned = self
+            .pinned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for path in paths {
-            let Some(identity) = observe(root, path) else {
+            if pinned.iter().any(|(seen, _): &(String, _)| seen == path) {
+                continue;
+            }
+            let Some(identity) = observe(&self.root, path) else {
                 continue;
             };
-            if !pinned.iter().any(|(seen, _): &(String, _)| seen == path) {
-                pinned.push((path.clone(), identity));
-            }
+            pinned.push((path.clone(), identity));
         }
-        Self {
-            root: root.to_path_buf(),
-            pinned,
-        }
+    }
+
+    /// How many artifacts this watch is vouching for. Zero is
+    /// [`TamperFinding::NotChecked`].
+    #[cfg(test)]
+    pub(crate) fn pinned_count(&self) -> usize {
+        self.pinned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
     }
 
     /// Re-observe every pinned artifact and report what the host found.
@@ -129,10 +185,14 @@ impl TamperWatch {
     /// is tampering here for the same reason it is there: the identity carries
     /// the location the observation was made at.
     pub(crate) fn finding(&self) -> TamperFinding {
-        if self.pinned.is_empty() {
+        let pinned = self
+            .pinned
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if pinned.is_empty() {
             return TamperFinding::NotChecked;
         }
-        for (path, expected) in &self.pinned {
+        for (path, expected) in pinned.iter() {
             let current = observe(&self.root, path);
             if !witness_identity_matches(expected, current.as_ref()) {
                 return TamperFinding::Tampered {
@@ -357,9 +417,98 @@ mod tests {
             ],
         );
         assert_eq!(
-            watch.pinned.len(),
+            watch.pinned_count(),
             1,
             "only the path inside the root is watched"
         );
+    }
+
+    /// **Witness (#3587).** An invocation that names no artifact reaches
+    /// `Verdict::Met` territory only because the plugin declared one — and the
+    /// host, not the plugin, is what decides whether it changed.
+    ///
+    /// Before this, `cargo test --test witness_flip` pinned nothing on every
+    /// run of every plugin, so the finding was `NotChecked` and `judge` read
+    /// that as `UndecidedReason::TamperUnchecked`: never a wrong credit, and
+    /// never a decidable verdict either.
+    #[test]
+    fn a_declared_artifact_is_watched_where_the_invocation_named_none() {
+        let dir = workspace();
+        let granted = grant_shared_tree(dir.path(), Some("cargo test --test witness_flip"))
+            .expect("the grant mints");
+        assert_eq!(
+            granted.watch.finding(),
+            TamperFinding::NotChecked,
+            "the falsifier: cargo's argv names `witness_flip`, not a file"
+        );
+
+        granted
+            .watch
+            .pin_declared(&["tests/witness_flip.sh".to_string()]);
+        assert_eq!(
+            granted.watch.finding(),
+            TamperFinding::Clean,
+            "declared and untouched is a decidable answer, not an abstention"
+        );
+
+        std::fs::write(
+            dir.path().join("tests/witness_flip.sh"),
+            "#!/bin/sh\nexit 0\n",
+        )
+        .expect("the worker rewrites the declared witness");
+        assert_eq!(
+            granted.watch.finding(),
+            TamperFinding::Tampered {
+                artifact: "tests/witness_flip.sh".to_string(),
+            },
+            "the host does the comparison; declaring an artifact does not vouch for it"
+        );
+    }
+
+    /// A declaration is a path, never a permission: the same fence the
+    /// invocation's own arguments cross.
+    #[test]
+    fn a_declared_path_outside_the_root_is_dropped_rather_than_followed() {
+        let dir = workspace();
+        let granted = grant_shared_tree(dir.path(), None).expect("no test command is fine");
+        granted.watch.pin_declared(&[
+            "../outside.sh".to_string(),
+            "/etc/passwd".to_string(),
+            "tests/witness_flip.sh".to_string(),
+        ]);
+        assert_eq!(granted.watch.pinned_count(), 1);
+    }
+
+    /// **The rule that makes a multi-round watch safe.** Re-declaring an
+    /// artifact after the worker has already rewritten it does not re-baseline
+    /// it.
+    ///
+    /// A wrapper holds a turn open for several rounds and declares its witness
+    /// at each one. If the second declaration re-observed, a rewrite made in
+    /// round 1 would read as "unchanged" from round 2 onward — the exact
+    /// laundering the watch exists to refuse, arriving through the mechanism
+    /// that widened it.
+    #[test]
+    fn re_declaring_an_artifact_does_not_relaunder_an_earlier_rewrite() {
+        let dir = workspace();
+        let granted = grant_shared_tree(dir.path(), None).expect("the grant mints");
+        let declared = vec!["tests/witness_flip.sh".to_string()];
+
+        granted.watch.pin_declared(&declared);
+        std::fs::write(
+            dir.path().join("tests/witness_flip.sh"),
+            "#!/bin/sh\nexit 0\n",
+        )
+        .expect("round 1 rewrites it");
+
+        granted.watch.pin_declared(&declared);
+        assert_eq!(
+            granted.watch.finding(),
+            TamperFinding::Tampered {
+                artifact: "tests/witness_flip.sh".to_string(),
+            },
+            "round 2's declaration must not re-baseline round 1's rewrite"
+        );
+        assert_eq!(granted.watch.pinned_count(), 1, "and does not double-pin");
     }
 }

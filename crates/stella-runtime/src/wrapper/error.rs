@@ -46,6 +46,38 @@ pub enum WrapperError {
     #[error("a wrapper's timeout must be at least one millisecond")]
     ZeroTimeout,
 
+    /// A declared environment name was admitted when the transport was
+    /// declared and has since been registered as a model credential, so the
+    /// spawn was refused rather than made with it (#3529).
+    ///
+    /// **Not the same failure as an ordinary refusal**, which is not a failure
+    /// at all: a credential the manifest asked for is dropped at
+    /// `SubprocessWrapper::declare` and reported in `AdmittedWrapper::refused`,
+    /// and the plugin runs without it exactly as the install consent said it
+    /// would. This variant exists because that report has already been printed
+    /// by the time the registry grows, so a second silent drop would reach
+    /// nobody — the plugin would run without a variable its author believed it
+    /// had, with nothing anywhere saying why. Refusing the dispatch is what
+    /// turns an invisible narrowing back into a sentence somebody reads.
+    ///
+    /// A host that catches it reads it the same way as every other variant
+    /// here: the wrapper contributed nothing to this point, not that it had
+    /// nothing to contribute.
+    #[error(
+        "wrapper `{program}` was declared holding {}, which trusted settings have since \
+         registered as a model credential; the spawn was refused rather than made with it — \
+         drop the name from [runtime] env, or declare a [roles] tier and let the host make the \
+         call",
+        .names.join(", ")
+    )]
+    CredentialRegisteredLate {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The admitted names the registry has since claimed, in the order the
+        /// manifest declared them. Never their values.
+        names: Vec<String>,
+    },
+
     /// The process could not be started at all.
     #[error("cannot start wrapper `{program}`: {source}")]
     Spawn {
@@ -408,6 +440,28 @@ pub enum DriverError {
     /// driver before it ran.
     #[error("a driver session's budget must be at least one millisecond")]
     ZeroTimeout,
+
+    /// A declared environment name was admitted when the driver was declared
+    /// and has since been registered as a model credential, so the spawn was
+    /// refused rather than made with it (#3529).
+    ///
+    /// [`WrapperError::CredentialRegisteredLate`]'s argument, at the channel
+    /// with the most reason to want a credential and the least business
+    /// holding one.
+    #[error(
+        "driver `{program}` was declared holding {}, which trusted settings have since \
+         registered as a model credential; the spawn was refused rather than made with it — \
+         drop the name from [runtime] env, or declare a [roles] tier and let the host make the \
+         call",
+        .names.join(", ")
+    )]
+    CredentialRegisteredLate {
+        /// `argv[0]`, as declared.
+        program: String,
+        /// The admitted names the registry has since claimed, in the order the
+        /// manifest declared them. Never their values.
+        names: Vec<String>,
+    },
 
     /// The process could not be started at all.
     #[error("cannot start driver `{program}`: {source}")]

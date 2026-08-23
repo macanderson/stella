@@ -89,6 +89,7 @@ mod framing;
 mod host_call;
 mod in_process;
 mod subprocess;
+mod test_run;
 mod verdict;
 
 use async_trait::async_trait;
@@ -122,6 +123,10 @@ pub use in_process::{InProcessWrapper, WrapperHandler};
 pub use subprocess::{
     AdmittedWrapper, DEFAULT_WRAPPER_TIMEOUT, MAX_WRAPPER_TIMEOUT, SubprocessWrapper,
     refuses_env_name,
+};
+pub use test_run::{
+    DEFAULT_HOST_MAX_TEST_RUNS, DEFAULT_TEST_OUTPUT_CHARS, TestObservation, TestRunDenial,
+    TestRunHost, TestRunPlane, TestRunRecord, TestRuns,
 };
 pub use verdict::{again, judge};
 
@@ -200,6 +205,7 @@ pub struct AdmittedContribution {
     role: Option<String>,
     context: Vec<VolatileContext>,
     scope: Vec<String>,
+    witness: Vec<String>,
     publish: Vec<PublishedSignal>,
 }
 
@@ -216,6 +222,19 @@ impl AdmittedContribution {
     #[must_use]
     pub fn scope(&self) -> &[String] {
         &self.scope
+    }
+
+    /// Workspace-relative paths this wrapper will judge its flip against, for
+    /// the host to snapshot before the turn and re-check after it (#3587).
+    ///
+    /// Unchecked here, deliberately, and it is the same non-check
+    /// [`Self::scope`] gets: a path is neither a permission nor a claim, and
+    /// the only thing that can validate one is the host that holds the granted
+    /// root. It fences each path there — a declaration that escapes the root is
+    /// dropped from the watch rather than followed.
+    #[must_use]
+    pub fn witness(&self) -> &[String] {
+        &self.witness
     }
 
     /// The signals this stage published, already checked against the kind each
@@ -306,6 +325,7 @@ pub fn admissible(
         role: response.role,
         context: response.context,
         scope: response.scope,
+        witness: response.witness,
         publish: response.publish,
     })
 }

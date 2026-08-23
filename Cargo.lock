@@ -3173,6 +3173,7 @@ name = "stella-plugin"
 version = "0.9.169"
 dependencies = [
  "proptest",
+ "schemars",
  "serde",
  "serde_json",
  "stella-protocol",
