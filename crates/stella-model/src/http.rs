@@ -41,7 +41,7 @@ pub(crate) const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// A `reqwest::Client` with [`CONNECT_TIMEOUT`] applied, plus a per-read
 /// stall bound of [`STREAM_IDLE_TIMEOUT`]. The read timeout closes the gap
-/// [`next_with_timeout`] cannot see: the wait between a successful connect
+/// [`next_stream_read`] cannot see: the wait between a successful connect
 /// and the first response byte (headers). Without it, a provider LB that
 /// accepts the connection and then black-holes hangs `.send()` forever and
 /// the retry engine never fires. The bound matches the stream-idle policy,
@@ -610,11 +610,11 @@ pub(crate) fn classify_http_status(
     }
 }
 
-/// One bounded stream read, with the four outcomes kept distinct. The
-/// distinction [`next_with_timeout`] collapses — a stall versus a transport
-/// fault — is exactly the bit the streaming→non-streaming fallback needs: a
-/// stall before the first byte is a broken *streaming path* (fallback
-/// material), while a reset says nothing about streaming specifically.
+/// One bounded stream read, with the four outcomes kept distinct. Keeping a
+/// stall apart from a transport fault is exactly the bit the
+/// streaming→non-streaming fallback needs: a stall before the first byte is a
+/// broken *streaming path* (fallback material), while a reset says nothing
+/// about streaming specifically.
 pub(crate) enum StreamRead<T> {
     /// The next item arrived within the bound.
     Item(T),
@@ -639,29 +639,6 @@ where
         Ok(Some(Err(e))) => StreamRead::Failed(e.to_string()),
         Ok(None) => StreamRead::End,
         Err(_elapsed) => StreamRead::Idle,
-    }
-}
-
-/// Await the next stream item, bounded by `idle`. Maps a stalled stream (no
-/// item within `idle`) and any transport error to a **retryable**
-/// `ProviderError::Transport`, and a clean end-of-stream to `Ok(None)`.
-/// A thin classification over [`next_stream_read`] for the adapters that
-/// don't need to tell the two failure shapes apart.
-pub(crate) async fn next_with_timeout<S, T>(
-    stream: &mut S,
-    idle: Duration,
-) -> Result<Option<T>, ProviderError>
-where
-    S: Stream<Item = reqwest::Result<T>> + Unpin,
-{
-    match next_stream_read(stream, idle).await {
-        StreamRead::Item(item) => Ok(Some(item)),
-        StreamRead::End => Ok(None),
-        StreamRead::Failed(message) => Err(ProviderError::transport(message)),
-        StreamRead::Idle => Err(ProviderError::transport(format!(
-            "stream idle timeout: no data for {}s",
-            idle.as_secs()
-        ))),
     }
 }
 
@@ -732,7 +709,7 @@ pub(crate) fn stream_ended_before_terminal(provider: &str, terminal_event: &str)
 /// rides out on the error instead of dying with the aggregator's stack frame.
 ///
 /// This is the recovery half of the two error paths every streaming adapter
-/// has — a mid-stream transport fault ([`next_with_timeout`]) and a clean EOF
+/// has — a mid-stream transport fault ([`next_stream_read`]) and a clean EOF
 /// with no terminal event ([`stream_ended_before_terminal`]). Both used to
 /// discard a `CompletionUsage` that, on the Anthropic-shaped dialects, already
 /// held the provider's own exact input and cache figures from the opening

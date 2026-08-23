@@ -95,7 +95,7 @@ pub struct ZaiProvider {
     unary_client: reqwest::Client,
     /// [`http::FIRST_BYTE_TIMEOUT`] in production; a field so the
     /// hung-stream path is testable in milliseconds (the same reason
-    /// `next_with_timeout` takes `idle` as a parameter).
+    /// `next_stream_read` takes `idle` as a parameter).
     first_byte_deadline: Duration,
 }
 

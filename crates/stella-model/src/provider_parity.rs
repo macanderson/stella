@@ -115,6 +115,7 @@ pub(crate) fn adapter_sources() -> &'static [&'static str] {
         include_str!("openai/provider.rs"),
         include_str!("openai/stream_fallback_tests.rs"),
         include_str!("gemini/tests.rs"),
+        include_str!("gemini/tests/stream_fallback.rs"),
         include_str!("vertex.rs"),
         include_str!("zai/tests.rs"),
         include_str!("zai/tests/error_classify.rs"),
@@ -733,15 +734,19 @@ pub static STREAM_FALLBACK_POSTURE: &[(&str, StreamFallbackPosture)] = &[
     ),
     (
         "gemini",
-        StreamFallbackPosture::StreamingOnly {
-            note: "streamGenerateContent has no unary parse path yet (generateContent would \
-                   be the fallback); tracked in #2746",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "retried attempt re-issues the byte-identical body against plain \
+                        generateContent instead of streamGenerateContent?alt=sse, through \
+                        the unary read bound (http::unary_client)",
+            witness: "a_gemini_stream_hung_before_its_first_byte_falls_back_to_generate_content",
         },
     ),
     (
         "vertex",
-        StreamFallbackPosture::StreamingOnly {
-            note: "shares gemini's streaming aggregator and its gap; tracked in #2746",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shares gemini's assembly and unary generateContent path under the \
+                        project-scoped URL (see the gemini row)",
+            witness: "a_vertex_stream_hung_before_its_first_byte_falls_back_to_generate_content",
         },
     ),
     (

@@ -126,3 +126,10 @@ pub(crate) fn empty_streams_stall_the_unary_body(is_streaming: fn(&str) -> bool)
 pub(crate) fn stream_flag_in_body(request: &str) -> bool {
     request.contains("\"stream\":true")
 }
+
+/// The Google surfaces' streaming discriminator, which rides on the URL: the
+/// two delivery paths name different methods (`:streamGenerateContent` vs
+/// `:generateContent`) and send byte-identical bodies.
+pub(crate) fn stream_method_in_url(request: &str) -> bool {
+    request.contains(":streamGenerateContent")
+}
