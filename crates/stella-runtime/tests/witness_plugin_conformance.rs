@@ -20,9 +20,11 @@
 //! Refusal vectors are spawned directly, because a typed host cannot send a
 //! request with a bad version or an unknown field.
 //!
-//! `test-duration-ms` is normalised out of the comparison — it is wall clock,
-//! and asserting on it would make this fail on a slow runner rather than on a
-//! real break. Every other measurement is compared exactly.
+//! `test-duration-ms` is *pinned* to `0` before the comparison — it is wall
+//! clock, and asserting on it would make this fail on a slow runner rather than
+//! on a real break. The key stays, so a run that stops reporting it is still a
+//! failure; everything else in the response is compared exactly, and the same
+//! pin runs at `BLESS=1` time so a regenerated golden round-trips (#4437).
 //!
 //! # The property that matters most
 //!
@@ -36,6 +38,8 @@
 //! as `python3`, and its vectors name POSIX programs.
 
 #![cfg(unix)]
+
+mod common;
 
 use std::fs;
 use std::io::Write;
@@ -72,7 +76,7 @@ fn argv(manifest: &PluginManifest) -> Vec<String> {
         .expect("a plugin the host spawns declares [runtime]")
         .argv
         .iter()
-        .map(|arg| arg.replace("${plugin_dir}", &dir))
+        .map(|arg| stella_plugin::expand_plugin_dir(arg, Path::new(&dir)))
         .collect()
 }
 
@@ -101,6 +105,19 @@ fn vectors() -> Vec<PathBuf> {
     found.sort();
     assert!(!found.is_empty(), "the vector directory must not be empty");
     found
+}
+
+/// Pin the one measurement that is wall clock.
+///
+/// `0` rather than removal: the committed goldens already carry
+/// `"test-duration-ms": 0`, so the key's *presence* stays part of the contract
+/// and only its value is exempt.
+fn pin_wall_clock(response: &mut WrapperResponse) {
+    if let WrapperResponse::AfterTurn(after) = response
+        && let Some(duration) = after.evidence.measurements.get_mut("test-duration-ms")
+    {
+        *duration = 0;
+    }
 }
 
 fn sibling(request: &Path, suffix: &str) -> PathBuf {
@@ -144,23 +161,11 @@ async fn every_response_vector_answers_with_its_golden_evidence() {
             .await
             .unwrap_or_else(|e| panic!("{name}: the plugin did not answer: {e}"));
 
-        let golden: WrapperResponse =
-            serde_json::from_str(&fs::read_to_string(&golden_path).expect("a readable golden"))
-                .unwrap_or_else(|e| panic!("{name}'s golden is not a response: {e}"));
-        let WrapperResponse::AfterTurn(golden) = golden else {
-            panic!("{name}'s golden must be an after_turn response");
-        };
-
-        let mut observed = response.evidence;
-        let mut expected = golden.evidence;
-        // Wall clock, not a claim about the work.
-        observed.measurements.remove("test-duration-ms");
-        expected.measurements.remove("test-duration-ms");
-
-        assert_eq!(observed.flip, expected.flip, "{name}: the flip changed");
-        assert_eq!(
-            observed.measurements, expected.measurements,
-            "{name}: the measurements changed"
+        common::bless_or_assert(
+            &name,
+            &golden_path,
+            &WrapperResponse::AfterTurn(response),
+            pin_wall_clock,
         );
         graded += 1;
     }
