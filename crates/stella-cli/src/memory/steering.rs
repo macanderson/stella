@@ -45,6 +45,57 @@ pub(super) fn frame_candidates(frames: &[RecalledFrame]) -> Vec<SteeringCandidat
         .collect()
 }
 
+/// What one turn's recall blocks have already put in front of the model, by
+/// steering handle.
+///
+/// The dedup key for the mid-turn re-query (#4236). The re-query used to
+/// compare rendered blocks byte for byte, which answers a question drift never
+/// asks: drift is incremental, so the block that follows `{A, B, C}` is
+/// `{A, B, C, D}` — different bytes, same three frames, injected again whole.
+/// Frames and skills carry stable handles (a `nod_…` id or citation label, a
+/// skill slug), so the set of handles is the honest granularity.
+///
+/// Records are deliberately absent. Their channel renders as one budgeted
+/// block rather than per-handle bytes ([`stella_core::records::Registry::render_volatile_for_turn`]),
+/// so suppressing one record means re-rendering the channel without it, not
+/// filtering a list — a separate change to the renderer, tracked rather than
+/// half-made here.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ProducedSteering {
+    frames: std::collections::HashSet<String>,
+    skills: std::collections::HashSet<String>,
+}
+
+impl ProducedSteering {
+    /// The handles a rendered block contributed — the frames and skills that
+    /// reached its bytes, not the wider set recall returned.
+    pub(super) fn of(
+        frames: &[RecalledFrame],
+        skills: &[stella_core::skills::SelectedSkill],
+    ) -> Self {
+        Self {
+            frames: frames.iter().map(frame_handle).collect(),
+            skills: skills.iter().map(|s| s.skill.name.clone()).collect(),
+        }
+    }
+
+    /// Has this frame handle already been rendered this turn?
+    pub(super) fn has_frame(&self, handle: &str) -> bool {
+        self.frames.contains(handle)
+    }
+
+    /// Has this skill slug already been rendered this turn?
+    pub(super) fn has_skill(&self, slug: &str) -> bool {
+        self.skills.contains(slug)
+    }
+
+    /// Fold another block's handles in.
+    fn absorb(&mut self, other: &Self) {
+        self.frames.extend(other.frames.iter().cloned());
+        self.skills.extend(other.skills.iter().cloned());
+    }
+}
+
 /// A frame's identity in the steering ledger: the stable `nod_…` id when the
 /// frame is materialized, its citation label otherwise — the same precedence
 /// a receipt join uses.
@@ -96,11 +147,24 @@ pub(super) struct GatheredSteering {
 ///   without meaning drift), and it starts at the empty set, so a turn that
 ///   never drifts never queries. `MIN_STEPS_BETWEEN` spaces answers so two
 ///   changes in adjacent steps cannot double-bill.
-/// - **Dedup** — the produced-set is seeded from every `RECALL_MARKER`
+/// - **Dedup** — two granularities, because the two failures are different.
+///   Per *handle* ([`ProducedSteering`]): a frame or skill this turn has
+///   already rendered is left out of the next block, so an incremental drift
+///   re-injects only what it added rather than the whole set again (#4236).
+///   Per *block*: the produced-set is seeded from every `RECALL_MARKER`
 ///   message already in history (the turn-opening block included), mirroring
 ///   `inject_recall_block`'s any-prior-marker rule: whatever this returns
 ///   WILL be injected verbatim by the engine, so a byte-identical block must
 ///   die here.
+///
+///   The handle set starts EMPTY rather than seeded from history, and that is
+///   a bound, not an oversight: the adapter is handed the rendered
+///   conversation, and a rendered block is not invertible to handles — a
+///   code-graph frame renders under its label while its handle is its node id
+///   (`frame_recall_line` prints an id only for memory frames). So the
+///   turn-opening block's frames can still be repeated once, by the first
+///   answered re-query; what cannot happen any more is the same frame
+///   compounding across every re-query after it.
 /// - **Telemetry** — a re-query is a full recall fan-out with provider spend
 ///   behind it, so it reports the same `ContextRecall` event the pre-turn
 ///   block does (#3366). The pre-turn recall runs before the turn's channel
@@ -117,6 +181,9 @@ pub(crate) struct SessionRequery<'m> {
 struct RequeryState {
     /// Blocks already in (or headed for) history, by exact bytes.
     produced: std::collections::HashSet<String>,
+    /// Frames and skills this turn's re-queries have already rendered, so the
+    /// next block carries only what is new (#4236).
+    produced_steering: ProducedSteering,
     /// The signal fingerprint the plane last answered — or the empty
     /// fingerprint at turn open, so an unchanged signal never queries.
     answered_fingerprint: u64,
@@ -145,6 +212,7 @@ impl<'m> SessionRequery<'m> {
             memory,
             state: std::sync::Mutex::new(RequeryState {
                 produced,
+                produced_steering: ProducedSteering::default(),
                 answered_fingerprint: fingerprint(&[], &[]),
             }),
             events: None,
@@ -205,7 +273,16 @@ impl stella_core::ports::SteeringRequery for SessionRequery<'_> {
         {
             return None;
         }
-        let recalled = self.memory.signal_recall_block(signal).await;
+        // The handle set is cloned out rather than held across the await: the
+        // guard is a `std::sync::Mutex`, and holding one over a suspension
+        // point is what makes a future non-`Send`.
+        let already = self
+            .state
+            .lock()
+            .expect("requery state")
+            .produced_steering
+            .clone();
+        let recalled = self.memory.signal_recall_block(signal, &already).await;
         // The spend happened here, so it is reported here — before the dedup
         // and the empty-block gate below, both of which can discard the text
         // while the provider round trip is already paid for. That discard is
@@ -218,6 +295,10 @@ impl stella_core::ports::SteeringRequery for SessionRequery<'_> {
         // new must not be re-asked every step until it drifts again.
         state.answered_fingerprint = current;
         let block = recalled.text?;
+        // Recorded before the block-level dedup can discard the text, because
+        // these handles are in front of the model either way: a block dropped
+        // here is a block byte-identical to one already in history.
+        state.produced_steering.absorb(&recalled.produced);
         state.produced.insert(block.clone()).then_some(block)
     }
 }

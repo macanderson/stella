@@ -388,6 +388,140 @@ fn a_pathless_prompt_anchors_on_what_the_turn_touched() {
     );
 }
 
+/// A workspace with TWO domains, one skill each, and a real file under each —
+/// the shape a turn that drifts twice needs: the second drift must be able to
+/// add a frame or a skill the first one did not have.
+fn workspace_two_domains() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+
+    crate::domains::Domains {
+        version: 1,
+        inferred_by: "heuristic".into(),
+        source_fingerprint: None,
+        domains: vec![
+            crate::domains::Domain {
+                name: "model-adapters".into(),
+                description: "provider adapters".into(),
+                paths: vec!["crates/stella-model".into()],
+            },
+            crate::domains::Domain {
+                name: "cli-surface".into(),
+                description: "command line surface".into(),
+                paths: vec!["crates/stella-cli".into()],
+            },
+        ],
+    }
+    .save(root)
+    .expect("domains.toml writes");
+
+    for (dir_path, file) in [
+        ("crates/stella-model", "anthropic.rs"),
+        ("crates/stella-cli", "main.rs"),
+    ] {
+        let at = root.join(dir_path);
+        std::fs::create_dir_all(&at).unwrap();
+        std::fs::write(at.join(file), "// source\n").unwrap();
+    }
+
+    // Both skills share zero wording with the prompt below, so the only thing
+    // that can select either is its domain tag.
+    for (slug, domain, body) in [
+        (
+            "adapter-notes",
+            "model-adapters",
+            "Always reuse an existing adapter's shape.",
+        ),
+        (
+            "cli-notes",
+            "cli-surface",
+            "Flags are declared once and parsed once.",
+        ),
+    ] {
+        let skill_dir = root.join(".stella").join("skills").join(slug);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            format!(
+                "---\nname: {slug}\ndescription: quirks worth knowing\n\
+                 domains: {domain}\n---\n\n{body}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    dir
+}
+
+/// **Witness (#4236).** A second re-query whose steering set is a strict
+/// superset of the first renders ONLY what the first one did not — the frame
+/// and the skill already in front of the model are left out.
+///
+/// Fails on base, where the dedup is byte-exact over the whole rendered block
+/// (`state.produced.insert(block.clone())`): drift is incremental, so the
+/// block that follows `{A, B}` is `{A, B, C}` — different bytes, same first
+/// two items, injected whole. These are `User` messages and compaction passes
+/// 1–4 only rewrite tool results, so every repeat is permanent in the paid
+/// prefix for the rest of the session.
+#[tokio::test]
+async fn a_second_requery_renders_only_the_frames_the_first_did_not() {
+    use stella_core::ports::SteeringRequery as _;
+
+    let dir = workspace_two_domains();
+    let lesson = "the deploy script must run migrations before restarting the api";
+    let memory = session(dir.path());
+    memory
+        .store
+        .upsert(ContextDelta {
+            memories: vec![MemoryInput::reflection(lesson, Vec::<String>::new())],
+            ..ContextDelta::default()
+        })
+        .await
+        .expect("store a recallable lesson");
+
+    let requery = crate::memory::SessionRequery::new(&memory, &[]);
+    let first_touched = vec!["crates/stella-model/anthropic.rs".to_string()];
+    let then_touched = vec![
+        "crates/stella-model/anthropic.rs".to_string(),
+        "crates/stella-cli/main.rs".to_string(),
+    ];
+    fn signal<'a>(prompt: &'a str, touched: &'a [String]) -> stella_core::steering::TurnSignal<'a> {
+        stella_core::steering::TurnSignal {
+            prompt,
+            touched_paths: touched,
+            since_last_query: 5,
+            ..Default::default()
+        }
+    }
+
+    let first = requery
+        .requery(&signal(lesson, &first_touched))
+        .await
+        .expect("the first drift surfaces the lesson and the domain's skill");
+    assert!(
+        first.contains(lesson) && first.contains("adapter-notes"),
+        "the control: the first block carries both, or the assertions below \
+         pass for the wrong reason: {first}"
+    );
+
+    let second = requery
+        .requery(&signal(lesson, &then_touched))
+        .await
+        .expect("the second drift surfaces the second domain's skill");
+    assert!(
+        second.contains("cli-notes"),
+        "the second block carries what the drift added: {second}"
+    );
+    assert!(
+        !second.contains(lesson),
+        "a frame already in front of the model is not re-injected: {second}"
+    );
+    assert!(
+        !second.contains("adapter-notes"),
+        "a skill already in front of the model is not re-injected: {second}"
+    );
+}
+
 /// An anchor has to name a file that exists — one that names nothing scopes
 /// nothing, and would widen the query while looking like it narrowed it.
 #[test]
