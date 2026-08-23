@@ -324,8 +324,7 @@ crates, and every call targets an endpoint the user chose or configured:
 `stella-model` (your model provider), `stella-mcp` (MCP servers you configure,
 plus the MCP registry when you run `stella mcp search`), `stella-tools` (your
 issue tracker — GitHub or Linear — only when you invoke the issue tools), and
-`stella-media` (your image/video provider, only when you invoke the media
-tools), and `stella-cli` only for the signed Oxagen Enterprise managed
+`stella-cli` only for the signed Oxagen Enterprise managed
 operational sink described above. Community/default builds activate no
 telemetry client or analytics endpoint, and there is no update checker.
 

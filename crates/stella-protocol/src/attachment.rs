@@ -1,7 +1,8 @@
 //! Multimodal *input* attachments — images, documents, audio, and video a
 //! user hands to the model as context (pasted from the clipboard or named by
-//! path). The chat-side counterpart of `stella-media`'s generation types:
-//! that crate makes media, this type carries media *into* a completion.
+//! path). The chat-side counterpart of this crate's own generation types
+//! (`MediaKind`, `MediaJobState`, `MediaArtifactRef`): those describe media a
+//! surface produces, this type carries media *into* a completion.
 //!
 //! ## Payloads live on disk, not in the envelope
 //!

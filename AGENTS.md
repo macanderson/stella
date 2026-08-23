@@ -655,7 +655,7 @@ empty and is meant to stay empty.
 
 ## Workspace layout — where a change goes
 
-Twenty-six crates, every one under the `crates/` directory (`crates/stella-core`,
+Twenty-five crates, every one under the `crates/` directory (`crates/stella-core`,
 `crates/stella-cli`, …; the two bench members stay under `bench/`). The
 one-sentence rule of thumb below routes you to the right one; **each crate's
 own `README.md`** (linked from the table) then covers its boundary, layout,
@@ -686,7 +686,6 @@ the files you must plan around (see below).
 | Retrieval: graph, embeddings, episodic memory | [`stella-context`](crates/stella-context/README.md) | |
 | Tree-sitter code indexing | [`stella-graph`](crates/stella-graph/README.md) | |
 | MCP client (external tool servers) | [`stella-mcp`](crates/stella-mcp/README.md) | |
-| Multimodal generation | [`stella-media`](crates/stella-media/README.md) | |
 | Multi-agent fan-out, worktree isolation | [`stella-fleet`](crates/stella-fleet/README.md) | |
 | The Observatory telemetry dashboard (`stella observe`) | [`stella-observatory`](crates/stella-observatory/README.md) | Loopback-only, read-only, embedded HTML. |
 | The headless engine server a host process drives over the wire | [`stella-serve`](crates/stella-serve/README.md) | Its **own binary**, not linked into [`stella-cli`](crates/stella-cli/README.md). Every model/tool call is remoted back to the host; the engine holds no ambient authority. Design: [`docs/spec/serve-surface.md`](docs/spec/serve-surface.md). |
@@ -774,7 +773,7 @@ a plan needs and the part that rarely changes:
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
 | `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs` |
 
-The other twenty-one crates carry no god files — keep it that way. Each crate's
+The other twenty crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
 constraint is in view wherever planning starts.
 
@@ -999,7 +998,7 @@ be closed by exactly one PR; if a fix spans several, close on the last and
   workspace.
 - **Witness tests** for features — see above.
 - **Wiremock-based adapter tests** for provider SSE parsing and HTTP error
-  classification (`stella-model`, `stella-mcp`, `stella-media`).
+  classification (`stella-model`, `stella-mcp`).
 - **Integration tests** with fixture MCP servers (`crates/stella-mcp/tests/`).
 - **Golden frames** for the command deck
   (`crates/stella-tui/tests/deck_render_snapshots.rs`). Each tab and overlay renders

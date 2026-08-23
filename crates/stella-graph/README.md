@@ -115,10 +115,13 @@ This crate has no god files: no file here exceeds the gate's 1500-line
 ratchet (`scripts/check-file-size.sh`), and none may appear — a new file
 crossing the limit fails the gate outright, and
 `scripts/file-size-baseline.txt` accepts no new entries. When a file
-approaches the limit, split it before it crosses — and
-[`src/parse.rs`](src/parse.rs) is the one approaching it, close enough that a
-new language's decoder arm and tests may be what pushes it over: plan to
-extract per-language decoding into a submodule rather than grow the file.
+approaches the limit, split it before it crosses.
+[`src/parse.rs`](src/parse.rs) was the one approaching it, and C++ (#3184) was
+the language that pushed it over: its later-language tests now live in
+[`src/parse/added_language_tests.rs`](src/parse/added_language_tests.rs). The
+file still holds every decoder, so the next language should extract
+per-language decoding into a sibling under `src/parse/` rather than grow it
+again.
 `./scripts/check-file-size.sh` reports where it actually stands; a count
 written here would be stale by the next PR.
 
@@ -150,18 +153,17 @@ written here would be stale by the next PR.
 
 ## Key concepts
 
-**Languages are wired in at compile time, natively.** Eleven `Language`
-variants — Rust, Python, JavaScript, TypeScript, Tsx, Sql, Go, Java, C, Php,
-Markdown — over nine grammar crates (`tree-sitter-typescript` supplies both
+**Languages are wired in at compile time, natively.** Twelve `Language`
+variants — Rust, Python, JavaScript, TypeScript, Tsx, Sql, Go, Java, C, Cpp,
+Php, Markdown — over ten grammar crates (`tree-sitter-typescript` supplies both
 `LANGUAGE_TYPESCRIPT` and `LANGUAGE_TSX`, which is why `Tsx` is a separate
-variant even though it shares TypeScript's query strings). Ten of the eleven
+variant even though it shares TypeScript's query strings). Eleven of the twelve
 are grammars; Markdown is the exception — it has no tree-sitter grammar here
 and is line-scanned in [`src/markdown.rs`](src/markdown.rs), which still
 yields section symbols and link import edges. Extensions map in
 [`Language::from_path`](src/lang.rs): `rs`; `py`/`pyi`; `js`/`jsx`/`mjs`/`cjs`;
-`ts`/`mts`/`cts`; `tsx`; `go`; `java`; `c`/`h` and the C++ spellings
-(`cpp`/`cc`/`cxx`/`c++`/`hpp`/`hh`/`hxx`, read by the C grammar until a
-dedicated one lands — #3184); `php`; `sql`; `md`/`markdown`. Grammars are
+`ts`/`mts`/`cts`; `tsx`; `go`; `java`; `c`/`h`; the C++ spellings
+`cpp`/`cc`/`cxx`/`c++`/`hpp`/`hh`/`hxx`; `php`; `sql`; `md`/`markdown`. Grammars are
 linked in from their own crates, not loaded as WASM, and the queries are
 module `const`s rather than `.scm` assets — L-L2: built-in assets that resolve
 relative to the binary's install path broke the moment the artifact was
@@ -240,8 +242,11 @@ respects `max_tokens`/`max_frames` (L-C5).
 - **`Language::Php` uses `LANGUAGE_PHP`, not `LANGUAGE_PHP_ONLY`** — real
   `.php` files open and close `<?php` around markup, which the PHP-only
   grammar cannot parse at all.
-- **`.h` indexes as C** even in a C++ tree. Misreading a header still yields
-  useful struct/function symbols; skipping it loses every declaration.
+- **`.h` indexes as C** even in a C++ tree — the one ambiguous extension, and
+  C is the reading that is right whenever the file is plain C. A `.h` that
+  declares a class loses those members; the `.cpp` that defines them is read
+  by the C++ grammar, which indexes each out-of-line definition under its
+  unqualified name.
 - **SQL has no `SQL_IMPORTS`** (the const is `""`), and `parse_file` returns an
   empty import vector for it.
 - **`references()` is a linear text scan** over the indexed corpus, capped at
@@ -258,8 +263,10 @@ cargo test -p stella-graph                 # no crate-specific `make` target exi
 cargo test -p stella-graph -- --ignored    # adds the real-FS notify smoke test
 ```
 
-Per-language extraction and the query-compile guard (`all_queries_compile`)
-live in `#[cfg(test)]` modules inside [`src/parse.rs`](src/parse.rs); the
+The query-compile guard (`all_queries_compile`) and the first four languages'
+extraction tests live in a `#[cfg(test)]` module inside
+[`src/parse.rs`](src/parse.rs); Go, Java, C, C++ and PHP are tested in
+[`src/parse/added_language_tests.rs`](src/parse/added_language_tests.rs). The
 integration tests are fixture-driven over real files in tempdirs:
 [`tests/languages.rs`](tests/languages.rs) (end-to-end indexing, Python
 relative and TS `index.ts` resolution, byte-compat skip),
@@ -282,13 +289,14 @@ To add a language:
 
 1. Add the `tree-sitter-<lang>` crate to the workspace `[workspace.dependencies]`
    in `../Cargo.toml` and to this crate's [`Cargo.toml`](Cargo.toml).
-2. Add `<LANG>_SYMBOLS` and `<LANG>_IMPORTS` to [`src/queries.rs`](src/queries.rs),
-   following the `@name` + kind-capture convention and matching name fields
-   with `(_)`.
-3. Add the `Language` variant in [`src/lang.rs`](src/lang.rs) and extend all
-   five matches: `from_path`, `tag`, `ts_language`, `symbol_query`,
-   `import_query`. They are exhaustive, so the compiler enumerates what is
-   missing.
+2. Add `<LANG>_SYMBOLS`, `<LANG>_IMPORTS` and `<LANG>_CALLS` to
+   [`src/queries.rs`](src/queries.rs), following the `@name` + kind-capture
+   convention and matching name fields with `(_)`.
+3. Add the `Language` variant in [`src/lang.rs`](src/lang.rs) and extend the
+   six matches: `from_path`, `tag`, `ts_language`, `symbol_query`,
+   `import_query`, `call_query`. They are exhaustive, so the compiler
+   enumerates what is missing. `ALL` is the one place it cannot: add the
+   variant there too, and grow the array's length.
 4. In [`src/parse.rs`](src/parse.rs), add a `LangPack` field to `Grammars`,
    load it in `Grammars::load`, map it in `Grammars::pack`, and add an arm to
    the import-decoder match in `parse_file` (each language decodes its own
@@ -298,8 +306,10 @@ To add a language:
    edge even when the target is outside the tree.
 6. Add tests: `all_queries_compile` in `src/parse.rs` fails immediately if a
    query string does not compile; add a symbols-and-imports test beside
-   `go_symbols_and_grouped_imports`, and extend `new_extensions_classify`
-   (`src/parse.rs`) and `extensions_map_to_languages` (`src/lang.rs`).
+   `go_symbols_and_grouped_imports` in
+   [`src/parse/added_language_tests.rs`](src/parse/added_language_tests.rs),
+   and extend `new_extensions_classify` (same file) and
+   `extensions_map_to_languages` (`src/lang.rs`).
 
 To add a storage source, implement extraction in a new
 [`src/storage/`](src/storage) module, dispatch it from `StorageExtractor::extract`,

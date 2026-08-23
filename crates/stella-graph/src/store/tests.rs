@@ -164,6 +164,62 @@ fn byte_identical_content_is_never_reparsed() {
     assert_eq!(third.files_parsed, 1);
 }
 
+/// A file whose extension now maps to a *different* language re-parses even
+/// though its bytes did not change (#3184).
+///
+/// The hazard is invisible to a content hash and outlives every release: a
+/// `.cpp` file indexed under the C grammar keeps its C-grammar symbols in
+/// every existing `codegraph.db` until somebody edits the file. The row is
+/// aged here the way an older build left it — the language tag rewritten in
+/// place, content untouched — because that is exactly the state a user
+/// upgrading into the C++ grammar has on disk.
+#[test]
+fn a_file_whose_language_was_remapped_reparses_without_a_content_change() {
+    let ws = tempdir().unwrap();
+    let dbdir = tempdir().unwrap();
+    let root = canon(&ws);
+    let db = dbdir.path().join("context.db");
+    fs::write(root.join("ray.cpp"), "class Ray { public: int cast(); };\n").unwrap();
+    let grammars = Grammars::load().unwrap();
+    let mut conn = open(&db).unwrap();
+
+    assert_eq!(
+        index_tree(&mut conn, &root, &grammars)
+            .unwrap()
+            .files_parsed,
+        1
+    );
+    assert_eq!(
+        index_tree(&mut conn, &root, &grammars)
+            .unwrap()
+            .files_skipped_unchanged,
+        1,
+        "the ordinary byte-compat skip still applies"
+    );
+
+    // Age the row into what a build before the C++ grammar wrote.
+    conn.execute(
+        "UPDATE code_graph_files SET language = 'c' WHERE path = 'ray.cpp'",
+        [],
+    )
+    .unwrap();
+
+    let after = index_tree(&mut conn, &root, &grammars).unwrap();
+    assert_eq!(
+        after.files_parsed, 1,
+        "a remapped language must re-parse: {after:?}"
+    );
+    assert_eq!(after.files_skipped_unchanged, 0);
+    let language: String = conn
+        .query_row(
+            "SELECT language FROM code_graph_files WHERE path = 'ray.cpp'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(language, "cpp", "and the row records the language it used");
+}
+
 /// The witness for #3102 finding 1: an index pass can be narrated while it
 /// runs. The whole pass is one transaction, so the only honest source of
 /// per-file progress is the loop inside it — the callback must fire once per
