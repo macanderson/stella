@@ -20,14 +20,26 @@
 //! `stella-diff` / `stella-home` pattern (#1139, #1511; moved out of
 //! `stella-core` per `doc:pipeline-as-plugins` §10, work item D1).**
 //! `stella-cli` (`self_driving_cmd`) and `stella-observatory`
-//! (`src/self_driving.rs`, read-only) both link it directly. The observatory
-//! used to carry its own private `fold_runs`, and the two implementations
-//! drifted: the dashboard and `stella self-driving metrics` disagreed about
-//! whether the loop was `NOISY` for every odd cycle count (#1613). One copy,
-//! two readers, is the fix — and the reason this lives in a leaf crate
-//! instead of a plugin binary: burying the fold inside a plugin executable
-//! would recreate the same drift the observatory cannot link `stella-core` to
-//! reach (an observer must not pull in the machinery it observes).
+//! (`src/self_driving.rs`, read-only) both link it directly. What they share
+//! is the **judgement**: [`liveness`], [`metrics`], [`starved`] and
+//! [`DEFAULT_STALE_AFTER_SECS`], plus the [`CycleRecord`] and [`Calibration`]
+//! shapes those read. That is the #1613 fix — the dashboard and `stella
+//! self-driving metrics` disagreed about whether the loop was `NOISY` for
+//! every odd cycle count, because each carried its own threshold arithmetic,
+//! and now neither does.
+//!
+//! What they do **not** share is the fold. [`fold_runs`] has one caller in
+//! the workspace, `stella-cli`'s `self_driving_cmd`; the observatory still
+//! folds `runs.jsonl` itself, because its rows carry fields [`RunRow`] does
+//! not have — `driver`, `host`, `workspace_root`, `reason`, `minutes`,
+//! `red_gates`, and a live block with `cycle`, `tier`, `aperture`, `pid` and
+//! `cycle_pid`. It calls [`liveness`] from inside that fold, so the one rule
+//! that could drift is the one rule that is shared.
+//!
+//! A leaf crate rather than a plugin binary for the same reason: burying the
+//! shared judgement inside a plugin executable would recreate the drift the
+//! observatory cannot link `stella-core` to reach (an observer must not pull
+//! in the machinery it observes).
 //!
 //! Ported from `scripts/self-driving.sh` (#1548); the shell driver now delegates
 //! these decisions instead of carrying a second copy of them.

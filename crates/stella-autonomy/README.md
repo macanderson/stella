@@ -39,16 +39,29 @@ this crate is the result of.
 [`stella-observatory`](../stella-observatory) links it deliberately** — read
 the reason on `stella-autonomy`'s line in
 [`stella-observatory/Cargo.toml`](../stella-observatory/Cargo.toml). The
-observatory used to carry its own private `fold_runs` and `self_improvement`,
-written back when the only other implementation was a shell script. The two
-drifted: the dashboard and `stella self-driving metrics` disagreed about
-whether the loop was `NOISY`, because one tested `2 * new_findings < n` and the
-other tested `new_findings < n / 2` in integer arithmetic — every odd cycle
-count landed on opposite sides (#1613). One copy in a leaf crate that both
-readers link is the fix. Burying the fold inside a plugin executable instead
-would recreate exactly that drift: the observatory must not link
-`stella-core` (an observer must not pull in the machinery it observes), and it
-has no way to link into another binary's private module. A leaf crate is the
+observatory used to compute its own `self_improvement` signals, written back
+when the only other implementation was a shell script. The two drifted: the
+dashboard and `stella self-driving metrics` disagreed about whether the loop
+was `NOISY`, because one tested `2 * new_findings < n` and the other tested
+`new_findings < n / 2` in integer arithmetic — every odd cycle count landed on
+opposite sides (#1613). One copy in a leaf crate that both readers link is the
+fix, and it is the **judgement** that moved: `liveness`, `metrics`, `starved`
+and `DEFAULT_STALE_AFTER_SECS`, plus the `CycleRecord` and `Calibration`
+shapes they read.
+
+The fold itself did not move, and this README used to say it had.
+`stella_autonomy::fold_runs` has one caller in the workspace,
+[`stella-cli`](../stella-cli)'s `self_driving_cmd`;
+[`stella-observatory`](../stella-observatory)'s `src/self_driving.rs` still
+declares its own, because the rows it emits carry `driver`, `host`,
+`workspace_root`, `reason`, `minutes`, `red_gates` and a live block that
+`RunRow` has no fields for. It calls `stella_autonomy::liveness` from inside
+that fold, so the rule that could drift is shared even where the fold is not.
+
+Burying the shared judgement inside a plugin executable instead would recreate
+exactly the #1613 drift: the observatory must not link `stella-core` (an
+observer must not pull in the machinery it observes), and it has no way to
+link into another binary's private module. A leaf crate is the
 [`stella-diff`](../stella-diff) / [`stella-home`](../stella-home) precedent
 (#1139, #1511): shared by linking, without costing either caller its
 isolation.
