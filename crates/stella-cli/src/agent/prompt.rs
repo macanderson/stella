@@ -782,9 +782,9 @@ pub(crate) fn build_pipeline_system_prompt(
 /// isolation gate excludes stored steering — memories, rules, skills, custom
 /// tools — never this block, which is computed from the live process and
 /// workspace at assembly (#2692). Lives here rather than beside its caller in
-/// `agent/tests.rs` because that file is a grandfathered god file closed to
-/// growth, and because "persona + environment, nothing appended" is this
-/// module's own contract to state.
+/// `agent/tests.rs` because that file sits close to the 1500-line ratchet,
+/// and because "persona + environment, nothing appended" is this module's own
+/// contract to state.
 #[cfg(test)]
 pub(crate) fn expected_isolated_pipeline_prompt(workspace_root: &std::path::Path) -> String {
     let mut expected = PIPELINE_SYSTEM_PROMPT.to_string();

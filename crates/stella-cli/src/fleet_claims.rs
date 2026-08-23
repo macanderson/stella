@@ -18,7 +18,7 @@
 //! supported way to hand the same task to two workers.
 //!
 //! A sibling of `fleet_cmd.rs` rather than a section of it, because that file
-//! is a grandfathered god file closed to growth (AGENTS.md § *God files*).
+//! sits close to the 1500-line ratchet (AGENTS.md § *God files*).
 
 use std::path::Path;
 

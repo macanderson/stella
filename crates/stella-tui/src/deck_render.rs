@@ -986,9 +986,10 @@ fn render_scroll_gutter(first: usize, visible: usize, total: usize, area: Rect, 
 }
 
 // The `?` overlay — SPEC 11's key sheet and SPEC 5's metric detail. Split out
-// rather than grown here: this file is a grandfathered god file closed to
-// growth, and the metric rows #4188 asks for do not fit in its four lines of
-// headroom. `help.rs`'s module doc carries the argument.
+// rather than grown here: this file was a grandfathered god file at the time,
+// and the metric rows #4188 asks for did not fit in its four lines of
+// headroom. The split retired its baseline entry; `help.rs`'s module doc
+// carries the argument.
 mod help;
 use help::render_help;
 

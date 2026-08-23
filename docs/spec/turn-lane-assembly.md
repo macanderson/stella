@@ -260,7 +260,8 @@ witness fails on `main` for a structural reason, which is the strongest kind.
 
 *Cost:* the largest of the four. Every test that builds an `Engine` changes —
 `goal.rs` alone has ~12, `driver/tests.rs` many more. Mechanical, but wide.
-`driver.rs` is a grandfathered god file at 1917 lines, so `TurnCapabilities`
+`driver.rs` is a grandfathered god file (its ceiling lives in
+`scripts/file-size-baseline.txt`), so `TurnCapabilities`
 lands in a sibling module (`driver/capabilities.rs`), following
 `driver/settlement.rs`.
 
