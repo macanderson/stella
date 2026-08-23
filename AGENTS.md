@@ -640,6 +640,23 @@ the files you must plan around (see below).
 | Declare CLI-vs-API capability parity (witnessed, ratcheted) | [`stella-parity`](crates/stella-parity/README.md) | The cross-surface capability matrix: every engine capability carries a posture + named witness test per surface, so a feature cannot ship on one surface and silently miss the other. |
 | Context Graph Protocol (wire types / host / conformance) | external repo: [`context-graph-protocol`](https://github.com/macanderson/context-graph-protocol) | Split out of this workspace; Stella depends on it as registry crates (`contextgraph-*`) pinned with exact `=` version requirements in the root `[workspace.dependencies]`. Stays dependency-light by contract. |
 
+### When a new crate is justified
+
+**This is the normative statement of the rule.** Six crate READMEs used to
+carry their own paraphrase of it, each worded differently, with nothing for
+them to point at (#3721); they now cite this section and keep only their own
+answer to it. Cite it as *AGENTS.md § "When a new crate is justified"*.
+
+A new crate is warranted only when functionality (a) sits behind a port/trait
+and would otherwise drag heavy dependencies into a crate that is deliberately
+light, (b) needs a dependency direction the current graph forbids, or (c) is a
+genuinely separate deliverable with its own binary and release cadence.
+
+Absent all three, extend an existing crate. A new one costs a row in the table
+above, an impacted-crates scope, CI time and a README, and a wrong split is
+harder to undo than a wrong merge. A justified one updates that table and the
+root `Cargo.toml` members list in the same PR.
+
 ### God files — plan around them, never into them
 
 Read this **before** planning any change, because it constrains where new
