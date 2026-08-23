@@ -685,6 +685,7 @@ pub async fn run_deck_session(
         initial_graph: agent::graph_snapshot(&cfg.workspace_root),
         no_anim,
         accessible,
+        mid_turn_prompt: steer::mid_turn_prompt_policy(cfg),
         ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering
@@ -952,10 +953,11 @@ pub async fn run_deck_session(
                     // Any submission releases a hold and runs NOW — ahead of the
                     // parked backlog. `EnqueueFront` is the deck's explicit
                     // front-insert (sent while it knows dispatch is held); a
-                    // plain `Enqueue` behaves identically here because running
-                    // the text immediately IS the front of the queue.
+                    // plain `Enqueue` and an `EnqueueNext` behave identically
+                    // here because running the text immediately IS the front.
                     Some(WorkspaceInput::Enqueue { text })
                     | Some(WorkspaceInput::EnqueueFront { text })
+                    | Some(WorkspaceInput::EnqueueNext { text })
                     | Some(WorkspaceInput::ToAgent {
                         input: UserInput::Prompt { text, .. },
                         ..
@@ -1351,12 +1353,14 @@ pub async fn run_deck_session(
                         .await
                             && !service_registry_action(
                                 &other,
-                                &session_registry,
-                                &store,
-                                cfg,
-                                budget_limit,
-                                &session_record.id,
-                                &workspace_path,
+                                &sessions_view::SessionScope {
+                                    registry: &session_registry,
+                                    store: &store,
+                                    cfg,
+                                    budget_limit,
+                                    mine: &session_record.id,
+                                    workspace: &workspace_path,
+                                },
                                 &in_tx,
                             )
                             && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
@@ -1687,6 +1691,8 @@ pub async fn run_deck_session(
                         // if a turn started before it arrived — the deck's
                         // queue view already shows it first.
                         Some(WorkspaceInput::EnqueueFront { text }) => queue.push_front(text),
+                        // Waits its turn; never drained to a sidecar (see `steer`).
+                        Some(WorkspaceInput::EnqueueNext { text }) => queue.push_back(text),
                         // The deck's queue editor mutates its own view of the
                         // backlog and mirrors each edit here so the dispatch
                         // queue never drifts from what the user is looking at.
@@ -1931,12 +1937,14 @@ pub async fn run_deck_session(
                         ) => {
                             service_registry_action(
                                 &input,
-                                &session_registry,
-                                &store,
-                                cfg,
-                                budget_limit,
-                                &session_record.id,
-                                &workspace_path,
+                                &sessions_view::SessionScope {
+                                    registry: &session_registry,
+                                    store: &store,
+                                    cfg,
+                                    budget_limit,
+                                    mine: &session_record.id,
+                                    workspace: &workspace_path,
+                                },
                                 &in_tx,
                             );
                         }
@@ -2473,43 +2481,30 @@ pub(crate) fn prompt_line(prompt: &str, max_chars: usize) -> String {
 #[allow(clippy::too_many_arguments)]
 fn service_registry_action(
     input: &WorkspaceInput,
-    registry: &stella_store::SessionRegistry,
-    store: &Option<Arc<Store>>,
-    cfg: &Config,
-    budget_limit: Option<f64>,
-    my_session_id: &str,
-    workspace: &str,
+    scope: &sessions_view::SessionScope<'_>,
     in_tx: &mpsc::UnboundedSender<Inbound>,
 ) -> bool {
-    let snapshot = || sessions_inbound(registry, store.as_deref(), my_session_id, workspace);
+    let sessions_view::SessionScope { registry, mine, .. } = *scope;
     match input {
         WorkspaceInput::SessionsRefresh => {
-            let _ = in_tx.send(snapshot());
+            let _ = in_tx.send(scope.snapshot());
             // The rows without a description get one, off the pump.
-            sessions_view::describe_sessions(
-                registry.clone(),
-                store.clone(),
-                cfg.clone(),
-                budget_limit,
-                my_session_id.to_string(),
-                workspace.to_string(),
-                in_tx.clone(),
-            );
+            sessions_view::describe_sessions(scope, in_tx.clone());
         }
         WorkspaceInput::SessionOpen { id } => {
             spawn_session_replay(id.clone(), registry.list(), in_tx.clone());
         }
         WorkspaceInput::SessionArchive { id } => {
             let _ = registry.set_status(id, stella_store::SessionStatus::Archived);
-            let _ = in_tx.send(snapshot());
+            let _ = in_tx.send(scope.snapshot());
         }
         WorkspaceInput::SessionDelete { id } => {
             // The deck refuses to delete its own record UI-side too; this is
             // the belt-and-suspenders check.
-            if id != my_session_id {
+            if id != mine {
                 let _ = registry.remove(id);
             }
-            let _ = in_tx.send(snapshot());
+            let _ = in_tx.send(scope.snapshot());
         }
         WorkspaceInput::NotificationRead { id } => {
             let store = stella_store::NotificationStore::open_default();

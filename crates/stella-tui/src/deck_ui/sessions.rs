@@ -215,7 +215,7 @@ mod tests {
                 ),
                 row("archived-here", SessionPhase::Archived, "/w", now, false),
             ],
-            ..DeckUi::default()
+            ..Default::default()
         };
         let ids: Vec<&str> = visible_session_rows(&ui, now)
             .iter()
@@ -240,7 +240,7 @@ mod tests {
                 row("b", SessionPhase::Complete, "/w", now - DAY, false),
                 row("p", SessionPhase::Paused, "/w", now - 5 * DAY, false),
             ],
-            ..DeckUi::default()
+            ..Default::default()
         };
         let ids: Vec<&str> = visible_session_rows(&ui, now)
             .iter()

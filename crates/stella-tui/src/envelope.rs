@@ -754,6 +754,18 @@ pub enum WorkspaceInput {
     /// prompt runs before the prompt the hold returned to the queue — and
     /// receiving it is what releases the hold.
     EnqueueFront { text: String },
+    /// Queue a prompt as the lead's NEXT turn, behind whatever is already
+    /// waiting, and never fork it to a sidecar lane. The deck sends this for
+    /// a plain prompt typed while the lead is running under the default
+    /// [`MidTurnPrompt::Queue`](crate::deck_ui::MidTurnPrompt) policy, so the
+    /// backlog is exactly what an Esc then steers into the running turn
+    /// ([`WorkspaceInput::Steer`]). At rest it dispatches like
+    /// [`WorkspaceInput::Enqueue`].
+    ///
+    /// A third verb rather than a flag on `Enqueue` because the driver's
+    /// mid-turn arm routes a plain `Enqueue` to a sidecar (`route_mid_turn`)
+    /// and `EnqueueFront` jumps the backlog; neither is "wait your turn".
+    EnqueueNext { text: String },
     /// Remove one not-yet-dispatched prompt from the queue (0 = oldest). The
     /// deck's queue editor sends this for `ctrl+x` delete and for pulling a
     /// prompt back into the composer to edit it.

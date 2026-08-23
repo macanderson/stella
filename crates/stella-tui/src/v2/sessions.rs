@@ -281,7 +281,7 @@ mod tests {
         model.now_ms = 40 * 24 * 60 * 60 * 1000;
         let mut ui = DeckUi {
             sessions_open: true,
-            ..DeckUi::default()
+            ..Default::default()
         };
         let mut described = row(
             "digest",

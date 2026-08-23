@@ -1,17 +1,22 @@
-//! Where a prompt submitted while a turn is running should go — asked, not
-//! assumed.
+//! Where a prompt submitted while a turn is running should go.
 //!
 //! The deck used to answer this silently: any mid-turn prompt without a `>`
 //! marker became a sidecar sub-session. That is a defensible default for a
 //! *concurrent* request and a bad one for the far more common case, which is
 //! the next thing the user wants to say to the agent they are already talking
-//! to. The two are indistinguishable from the text, so the deck stops
-//! guessing and asks — three routes, one keystroke each.
+//! to. So the default is now [`MidTurnPrompt::Queue`]: the prompt waits in the
+//! backlog as the lead's next turn, and Esc delivers the whole backlog into
+//! the running turn (`deck_ui::steer`) — type, type, type, Esc, and the agent
+//! keeps working with everything you said. Nothing completes, nothing is
+//! cancelled, no stranger lane starts.
 //!
-//! Only genuinely ambiguous submissions raise the card. An explicit `>`, a
-//! slash command, a `!` shell line, and the first prompt after a double-Esc
-//! hold all carry their own intent already, and a card over intent the user
-//! has stated is just a keystroke tax.
+//! The other two answers stay reachable through `ui.mid_turn_prompt`:
+//! [`MidTurnPrompt::Ask`] raises a routing card (three routes, one keystroke
+//! each), and [`MidTurnPrompt::AlwaysSpawn`] is the old silent fork.
+//!
+//! Whatever the policy, a submission that states its own routing is never
+//! second-guessed: an explicit `>`, a slash command, a `!` shell line, and
+//! the first prompt after a double-Esc hold all carry their own intent.
 
 use super::*;
 
@@ -73,15 +78,20 @@ fn carries_its_own_intent(text: &str) -> bool {
 /// card was raised and the caller should treat the key as handled.
 ///
 /// The running check is the focused agent's own status, so a prompt typed at
-/// an idle agent — including one whose turn just finished — never sees the
-/// card. That is the same boundary the driver enforces on its side
-/// (`SteeringTap::is_settling`), which is what keeps the two layers agreeing
-/// about what "still running" means.
+/// an idle agent — including one whose turn just finished — never queues or
+/// sees the card: it is simply the next turn. That is the same boundary the
+/// driver enforces on its side (`SteeringTap::is_settling`), which is what
+/// keeps the two layers agreeing about what "still running" means.
 pub fn route(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> Option<WorkspaceInput> {
     let focused = model.agents.get(ui.focused);
     let running = focused.is_some_and(|a| a.status == crate::AgentStatus::Running);
-    if !running || carries_its_own_intent(&text) || ui.ask_before_spawn.not_asking() {
+    if !running || carries_its_own_intent(&text) {
         return Some(WorkspaceInput::Enqueue { text });
+    }
+    match ui.mid_turn_prompt {
+        MidTurnPrompt::Queue => return Some(WorkspaceInput::EnqueueNext { text }),
+        MidTurnPrompt::AlwaysSpawn => return Some(WorkspaceInput::Enqueue { text }),
+        MidTurnPrompt::Ask => {}
     }
     let live = model
         .agents
@@ -180,24 +190,37 @@ pub fn release_if_settled(ui: &mut DeckUi, agent: &str, event: &stella_protocol:
     ui.composer.load(text);
 }
 
-/// Whether the deck asks before forking a turn into a sidecar.
+/// What a plain prompt submitted at a running agent does — the
+/// `ui.mid_turn_prompt` setting.
 ///
 /// A preference rather than a constant because the answer is genuinely
-/// personal: someone dispatching many independent requests at one agent wants
-/// the old silent spawn, and someone in a long single-threaded collaboration
-/// wants never to be forked at all. Both are reachable without editing code.
+/// personal: someone in a long single-threaded collaboration wants the
+/// backlog-then-Esc rhythm and never to be forked; someone dispatching many
+/// independent requests at one agent wants the old silent spawn; someone who
+/// does both wants to be asked. All three are reachable from settings
+/// (`"queue"` / `"ask"` / `"spawn"`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum AskBeforeSpawn {
-    /// Raise the card (the default — the deck does not guess).
+pub enum MidTurnPrompt {
+    /// Wait in the backlog as the lead's next turn; Esc steers the backlog
+    /// into the running turn. The default.
     #[default]
+    Queue,
+    /// Raise the routing card (`s` steer / `n` next / `p` sidecar).
     Ask,
-    /// Never ask; a mid-turn prompt always forks, as it did before.
+    /// Never ask; a mid-turn prompt always forks to a sidecar lane.
     AlwaysSpawn,
 }
 
-impl AskBeforeSpawn {
-    fn not_asking(self) -> bool {
-        matches!(self, Self::AlwaysSpawn)
+impl MidTurnPrompt {
+    /// Parse the settings slug. `None` for an unrecognised value, so the
+    /// reader keeps the default rather than failing the file.
+    pub fn parse(slug: &str) -> Option<Self> {
+        match slug.trim() {
+            "queue" => Some(Self::Queue),
+            "ask" => Some(Self::Ask),
+            "spawn" => Some(Self::AlwaysSpawn),
+            _ => None,
+        }
     }
 }
 
@@ -224,12 +247,49 @@ mod tests {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
-    /// The whole point: a prompt typed at a running agent parks on the card
-    /// instead of silently becoming someone else's problem.
+    /// A deck under the routing-card policy.
+    fn asking_ui() -> DeckUi {
+        DeckUi {
+            mid_turn_prompt: MidTurnPrompt::Ask,
+            ..Default::default()
+        }
+    }
+
+    /// **The witness for the default.** A plain prompt typed at a running
+    /// agent waits in the backlog as the lead's next turn — no card, no
+    /// sidecar lane — which is exactly what an Esc then steers into the turn.
     #[test]
-    fn a_prompt_at_a_running_agent_raises_the_card_and_sends_nothing_yet() {
+    fn by_default_a_prompt_at_a_running_agent_queues_for_the_lead() {
         let model = model_with_lead(crate::AgentStatus::Running);
         let mut ui = DeckUi::default();
+        assert_eq!(ui.mid_turn_prompt, MidTurnPrompt::Queue);
+        assert_eq!(
+            route(&mut ui, &model, "add the tests".into()),
+            Some(WorkspaceInput::EnqueueNext {
+                text: "add the tests".into()
+            })
+        );
+        assert!(ui.pending_dispatch.is_none(), "no card under the default");
+    }
+
+    /// The settings slugs, and that an unknown one keeps the default.
+    #[test]
+    fn the_policy_parses_its_three_slugs_and_nothing_else() {
+        assert_eq!(MidTurnPrompt::parse("queue"), Some(MidTurnPrompt::Queue));
+        assert_eq!(MidTurnPrompt::parse(" ask "), Some(MidTurnPrompt::Ask));
+        assert_eq!(
+            MidTurnPrompt::parse("spawn"),
+            Some(MidTurnPrompt::AlwaysSpawn)
+        );
+        assert_eq!(MidTurnPrompt::parse("sidecar"), None);
+    }
+
+    /// Under `ask`, a prompt typed at a running agent parks on the card
+    /// instead of silently becoming someone else's problem.
+    #[test]
+    fn under_ask_a_prompt_at_a_running_agent_raises_the_card_and_sends_nothing_yet() {
+        let model = model_with_lead(crate::AgentStatus::Running);
+        let mut ui = asking_ui();
         assert_eq!(route(&mut ui, &model, "add the tests".into()), None);
         assert_eq!(
             ui.pending_dispatch.as_ref().map(|p| p.text.as_str()),
@@ -274,7 +334,7 @@ mod tests {
         ];
         for (code, expected) in cases {
             let model = model_with_lead(crate::AgentStatus::Running);
-            let mut ui = DeckUi::default();
+            let mut ui = asking_ui();
             route(&mut ui, &model, "go".into());
             assert_eq!(
                 handle_key(key(code), &mut ui),
@@ -291,7 +351,7 @@ mod tests {
     #[test]
     fn esc_returns_the_text_to_the_composer_instead_of_dropping_it() {
         let model = model_with_lead(crate::AgentStatus::Running);
-        let mut ui = DeckUi::default();
+        let mut ui = asking_ui();
         route(&mut ui, &model, "a careful question".into());
         assert_eq!(
             handle_key(key(KeyCode::Esc), &mut ui),
@@ -306,7 +366,7 @@ mod tests {
     #[test]
     fn an_unrelated_key_is_swallowed_and_leaves_the_card_up() {
         let model = model_with_lead(crate::AgentStatus::Running);
-        let mut ui = DeckUi::default();
+        let mut ui = asking_ui();
         route(&mut ui, &model, "held".into());
         assert_eq!(
             handle_key(key(KeyCode::Char('z')), &mut ui),
@@ -316,12 +376,12 @@ mod tests {
         assert_eq!(ui.composer.buffer(), "", "nothing leaked into the composer");
     }
 
-    /// With the preference off, the deck behaves exactly as it did before.
+    /// Under `spawn`, the deck behaves exactly as it originally did.
     #[test]
     fn always_spawn_restores_the_old_silent_fork() {
         let model = model_with_lead(crate::AgentStatus::Running);
         let mut ui = DeckUi {
-            ask_before_spawn: AskBeforeSpawn::AlwaysSpawn,
+            mid_turn_prompt: MidTurnPrompt::AlwaysSpawn,
             ..Default::default()
         };
         assert_eq!(

@@ -261,7 +261,7 @@ mod tests {
         let model = planned_model();
         let ui = DeckUi {
             tab: DeckTab::Session,
-            ..DeckUi::default()
+            ..Default::default()
         };
         let area = Rect::new(0, 0, 100, 1);
         let mut buf = Buffer::empty(area);
@@ -279,7 +279,7 @@ mod tests {
         let model = WorkspaceModel::new();
         let ui = DeckUi {
             tab: DeckTab::Graph,
-            ..DeckUi::default()
+            ..Default::default()
         };
         let area = Rect::new(0, 0, 100, 1);
         let mut buf = Buffer::empty(area);

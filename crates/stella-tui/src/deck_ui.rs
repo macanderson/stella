@@ -577,8 +577,8 @@ pub struct DeckUi {
     /// to say whether it steers the running turn, continues the thread, or
     /// forks a sidecar. See [`dispatch`].
     pub pending_dispatch: Option<PendingDispatch>,
-    /// Whether that card is raised at all (default: yes).
-    pub ask_before_spawn: AskBeforeSpawn,
+    /// What a plain mid-turn prompt does (`ui.mid_turn_prompt`); see [`dispatch`].
+    pub mid_turn_prompt: MidTurnPrompt,
     pub splash: SplashState,
     /// Startup system notifications, shown as a transient dialog rather than
     /// as transcript rows (see [`crate::notice`]).
@@ -823,7 +823,7 @@ impl Default for DeckUi {
             issues: IssuesPanel::default(),
             composer: Composer::with_paste_threshold(crate::composer::DECK_PASTE_LINE_THRESHOLD),
             pending_dispatch: None,
-            ask_before_spawn: AskBeforeSpawn::default(),
+            mid_turn_prompt: MidTurnPrompt::default(),
             splash: SplashState::new(),
             notice: NoticeState::new(),
             index_readiness: IndexReadiness::unknown(),
@@ -1559,7 +1559,7 @@ mod steer;
 pub use gates::HunkMarks;
 mod nav;
 mod queue_editor;
-pub use dispatch::{AskBeforeSpawn, DispatchRoute, PendingDispatch};
+pub use dispatch::{DispatchRoute, MidTurnPrompt, PendingDispatch};
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
 use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};

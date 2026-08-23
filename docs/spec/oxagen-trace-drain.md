@@ -28,7 +28,7 @@ optimism. They are called out individually rather than smoothed over.
 > Does Stella have a way for Oxagen to be fed the full trace for every agent
 > execution?
 
-**No — and the absence is deliberate, enforced, and load-bearing.**
+**No — and the absence is deliberate and enforced.**
 
 Three egress paths exist today. All three are either **content-free by
 construction** or **local-only**:
@@ -185,7 +185,7 @@ document and an active enrollment.
 ### 3.3 The guard that makes both of those true
 
 `crates/stella-store/src/content_free.rs` is why §3.1 and §3.2 can be stated as
-fact rather than intent. Two halves:
+fact rather than intent:
 
 1. **A schema allowlist.** `HUB_TELEMETRY_COLUMNS` is compared against the live
    `PRAGMA table_info`, so adding a hub column fails the build until a human
@@ -512,7 +512,7 @@ becomes semantically searchable for free.
 | `sub_agent` events | `-[:BRANCHED_TO_SUBAGENT]->(:Execution)` | |
 | `reflections` | `-[:REMEMBERS]->(:AgentMemory)` | |
 | `commit`, `pr` | `(:EntityNode)` + `IMPLEMENTS` / `PART_OF` / `AUTHORED_BY` | the GitHub connector's existing vocabulary |
-| `file_locks` | `-[:LOCKED]->(:SourceFile)` | already a declared *lineage-only* projection — explicitly **not** load-bearing for mutual exclusion (ADR-021 §5) |
+| `file_locks` | `-[:LOCKED]->(:SourceFile)` | already a declared *lineage-only* projection — explicitly **not** relied on for mutual exclusion (ADR-021 §5) |
 
 ### 8.2 What Stella justifies adding
 
