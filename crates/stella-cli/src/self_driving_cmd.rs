@@ -15,6 +15,7 @@
 
 mod audit;
 mod backlog;
+mod budget;
 mod claim;
 // `pub(crate)` rather than private: `plugin_cmd::configure` asserts against
 // this reader directly (#3999). A package that configures attribution has to
@@ -1218,7 +1219,12 @@ fn work_issue(
     // delta over that state is the only producer these counters can have. See
     // `learning`, and `drive`'s Work arm, which measures the same window.
     let learned_before = learning::tally(&root);
-    let outcome = work::start(&root, &issue, flags, &attribution)?;
+    // One unit is one turn here, so the run and the turn are the same ceiling —
+    // but it goes through the same budget as `drive`'s, so there is one place a
+    // child turn's ceiling is decided and one place its cost is folded back in
+    // (#4353).
+    let mut budget = budget::RunBudget::new(flags.clone());
+    let outcome = work::start(&root, &issue, &mut budget, &attribution)?;
     let learned = learning::tally(&root).since(learned_before);
     hooks::after_issue_work(&root, &settings, &hook_issue, hook_outcome(&outcome));
 

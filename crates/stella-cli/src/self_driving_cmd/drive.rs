@@ -138,12 +138,12 @@ pub(super) fn drive(
             } else {
                 "waiting for review before any merge"
             },
-            // Named as what it is: each turn is its own `stella run` session
-            // with this ceiling (#4353), so a reader does not multiply it out
-            // as the run's total.
+            // Named as what it is: the ceiling on this whole run, not on each
+            // turn (#4353). Each child turn is handed the remainder, so a
+            // reader must not multiply it out by the issue count.
             flags
                 .spend_limit
-                .map_or(String::new(), |cap| format!(", ${cap} per turn")),
+                .map_or(String::new(), |cap| format!(", ${cap} for the whole run")),
         ),
     );
 
@@ -271,6 +271,12 @@ pub(super) fn drive(
         let _ = crate::issue_provider::ensure_label(kind, "Work the self-driving loop may take.");
     }
 
+    // The run's USD ceiling, and the accounting that makes `--spend-limit`
+    // mean what its help says (#4353). Every child turn is spawned through
+    // `work::run_turn`, which takes this rather than the flags — so a turn
+    // cannot be started against the original cap, and cannot finish without
+    // its cost being folded in.
+    let mut budget = super::budget::RunBudget::new(flags.clone());
     let mut spent: HashMap<String, Spent> = HashMap::new();
     // The ledger claims this run holds, one per issue taken and not yet
     // worked. Keyed by issue so the Work arm can take back the one it is
@@ -304,6 +310,14 @@ pub(super) fn drive(
         // of what a caught signal buys.
         if let Some(signal) = super::stop::caught() {
             return stopped_by_signal(durable, &tally, signal);
+        }
+
+        // The run's own ceiling, asked at the same boundary and for the same
+        // reason (#4353). Before the observation rather than after it, because
+        // an exhausted run has nothing to decide: reading the queue would spend
+        // a tracker call to choose an issue it cannot pay to work.
+        if let Some(out) = budget.exhausted() {
+            return budget_reached(durable, &tally, out);
         }
 
         let obs = observe(
@@ -378,7 +392,8 @@ pub(super) fn drive(
                 // operator whose clone is full of their own leftovers wants
                 // `ContentionPolicy::ClaimsOnly`, which is what that policy
                 // is for (`stella_autonomy::ContentionPolicy`).
-                if let Err(error) = assess_one(durable, &root, &provider, &cfg, flags, &mut triaged)
+                if let Err(error) =
+                    assess_one(durable, &root, &provider, &cfg, &mut budget, &mut triaged)
                 {
                     audit::record(
                         durable,
@@ -539,19 +554,20 @@ pub(super) fn drive(
                 // A `work` that cannot start is one issue's problem, not the
                 // loop's: a single leftover branch must not halt a run that has
                 // other issues to get on with.
-                let outcome = match super::work::start(&root, &resolved, flags, &cfg.attribution) {
-                    Ok(outcome) => outcome,
-                    Err(reason) => {
-                        audit::record(
-                            durable,
-                            Audit::Deferred,
-                            Some(&issue.0),
-                            &format!("could not start ({reason}); moving on"),
-                        );
-                        durable.update_stats(|s| s.issues_deferred += 1);
-                        continue;
-                    }
-                };
+                let outcome =
+                    match super::work::start(&root, &resolved, &mut budget, &cfg.attribution) {
+                        Ok(outcome) => outcome,
+                        Err(reason) => {
+                            audit::record(
+                                durable,
+                                Audit::Deferred,
+                                Some(&issue.0),
+                                &format!("could not start ({reason}); moving on"),
+                            );
+                            durable.update_stats(|s| s.issues_deferred += 1);
+                            continue;
+                        }
+                    };
                 let learned = super::learning::tally(&root).since(learned_before);
 
                 // Every counter this unit moves, in one write — shared with the
@@ -834,7 +850,7 @@ pub(super) fn drive(
                          it (#3599). Stopping rather than spinning on a step it cannot take."
                     ),
                 );
-                return report(durable, &tally);
+                return report(durable, &tally, &budget);
             }
 
             LoopStep::Curate => {
@@ -844,7 +860,7 @@ pub(super) fn drive(
                     None,
                     "the machine asked to curate and this build cannot — B6 builds it (#3599).",
                 );
-                return report(durable, &tally);
+                return report(durable, &tally, &budget);
             }
 
             LoopStep::Watch { until } => {
@@ -854,7 +870,7 @@ pub(super) fn drive(
                     None,
                     &format!("nothing left to do; the machine would watch for {until:?}"),
                 );
-                return report(durable, &tally);
+                return report(durable, &tally, &budget);
             }
         }
     }
@@ -952,7 +968,7 @@ fn assess_one(
     root: &std::path::Path,
     provider: &crate::issue_provider::GhIssueProvider,
     cfg: &super::config::LoopConfig,
-    flags: &TurnFlags,
+    budget: &mut super::budget::RunBudget,
     triaged: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
     let unassessed = super::backlog::unassessed(provider, &cfg.triage)?;
@@ -976,7 +992,7 @@ fn assess_one(
         .unwrap_or_default();
 
     let prompt = super::triage::prompt(&issue, &body, &cfg.triage);
-    let output = super::work::run_turn(root, root, &prompt, flags)?;
+    let output = super::work::run_turn(root, root, &prompt, budget)?;
 
     let Some(assessment) = super::triage::parse(&output, &cfg.triage) else {
         super::backlog::escalate_blocking(
@@ -1452,14 +1468,55 @@ fn stopped_by_signal(
     Err(reason.to_owned())
 }
 
-fn report(durable: &Durable, tally: &Tally) -> Result<(), String> {
+/// End a run that has spent its ceiling.
+///
+/// Reported as *budget reached*, never as *finished* — the same distinction
+/// `--max-issues` already draws, and for the same reason: a run that stopped
+/// because it ran out of money has told you nothing about whether the backlog
+/// is done, and a supervisor that read the two endings alike would stop
+/// scheduling work the moment one run hit its cap.
+///
+/// `Ok`, not `Err`. The ceiling was honoured, which is the run doing what it
+/// was asked; a non-zero exit would make an operator's own budget read as a
+/// failure to their scheduler.
+fn budget_reached(
+    durable: &Durable,
+    tally: &Tally,
+    out: super::budget::Exhausted,
+) -> Result<(), String> {
     audit::record(
         durable,
         Audit::SessionStopped,
         None,
         &format!(
-            "{} opened, {} merged, {} escalated — `stella self-driving stats` has the rest",
-            tally.opened, tally.merged, tally.escalated
+            "budget reached — ${:.2} of the run's ${:.2} spend limit is gone, so no further \
+             turn was started. {} opened, {} merged, {} escalated. Raise --spend-limit to \
+             carry on; every claim this run held is released.",
+            out.spent, out.cap, tally.opened, tally.merged, tally.escalated
+        ),
+    );
+    Ok(())
+}
+
+fn report(
+    durable: &Durable,
+    tally: &Tally,
+    budget: &super::budget::RunBudget,
+) -> Result<(), String> {
+    audit::record(
+        durable,
+        Audit::SessionStopped,
+        None,
+        &format!(
+            "{} opened, {} merged, {} escalated{} — `stella self-driving stats` has the rest",
+            tally.opened,
+            tally.merged,
+            tally.escalated,
+            // What the run actually cost, from the turns' own accounting
+            // (#4353). Printed whether or not a ceiling was set: an operator
+            // deciding what to set next time needs the number from the run that
+            // did not have one.
+            format_args!(", ${:.2} spent", budget.spent()),
         ),
     );
     Ok(())
