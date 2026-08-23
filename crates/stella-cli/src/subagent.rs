@@ -254,6 +254,15 @@ pub struct SessionSubAgents {
     /// Weak on purpose — the registry owns this dispatcher. See module docs.
     tools: Weak<ToolRegistry>,
     config: EngineConfig,
+    /// The operator's `tools.<name>` switches, applied to every child this
+    /// dispatcher runs (#3930).
+    ///
+    /// Held rather than re-derived per dispatch because `dispatch` has no
+    /// `&Config` — the seam it hands to `run_child` takes the policy as data,
+    /// and this is where the session's copy lives. [`Self::new`] leaves it
+    /// permissive; [`install_for_session`] is the production installer and is
+    /// where the real one is read.
+    policy: stella_tools::policy::ToolPolicy,
     /// `Arc` so a clone rides onto the child's thread: the child settles its
     /// own spend the moment it stops, rather than after a `.await` the parent
     /// may never reach. See "Settling is the child's job".
@@ -275,12 +284,26 @@ impl SessionSubAgents {
             seats: crate::agent::seats::SeatProviders::new(),
             tools: Arc::downgrade(registry),
             config,
+            policy: stella_tools::policy::ToolPolicy::allow_all(),
             pool: Arc::new(Mutex::new(BudgetGuard::new(
                 mode,
                 None,
                 Some(DEFAULT_POOL_LIMIT_USD),
             ))),
         }
+    }
+
+    /// Apply the operator's `tools.<name>` switches to this session's children.
+    ///
+    /// A separate builder rather than a [`Self::new`] parameter for
+    /// [`Self::with_seats`]'s reason: deriving the policy needs a `&Config`,
+    /// which the test doubles do not have and do not need. The permissive
+    /// default is what `new` already meant — it is the shipped posture
+    /// ([`stella_tools::policy::ToolPolicy::allow_all`]), not an exemption.
+    #[must_use]
+    pub fn with_tool_policy(mut self, policy: stella_tools::policy::ToolPolicy) -> Self {
+        self.policy = policy;
+        self
     }
 
     /// Serve the named roles from models of their own.
@@ -358,11 +381,13 @@ impl SessionSubAgents {
         mode: stella_protocol::BudgetMode,
         pool_limit_usd: Option<f64>,
         seats: crate::agent::seats::SeatProviders,
+        policy: stella_tools::policy::ToolPolicy,
     ) -> Arc<Self> {
         let dispatcher = Arc::new(
             Self::new(provider, registry, config, mode)
                 .with_pool_limit(pool_limit_usd)
-                .with_seats(seats),
+                .with_seats(seats)
+                .with_tool_policy(policy),
         );
         registry.attach_sub_agent_dispatcher(dispatcher.clone() as Arc<dyn SubAgentDispatcher>);
         dispatcher
@@ -425,6 +450,7 @@ pub fn install_for_session(
         stella_protocol::BudgetMode::Observed,
         session_pool_limit_usd(),
         seats,
+        crate::agent::session_tool_policy(cfg),
     ))
 }
 
@@ -458,13 +484,34 @@ pub fn session_pool_limit_usd() -> Option<f64> {
 
 #[async_trait]
 impl SubAgentDispatcher for SessionSubAgents {
+    /// Run a `delegate` child behind the same chain the parent turn runs
+    /// behind: the operator's `tools.<name>` switches and the session
+    /// authorization gate (#3930).
+    ///
+    /// It used to run against the **bare** registry, so a child could call a
+    /// tool the operator had switched off for this workspace and its calls
+    /// reached no gate and wrote no `tool.call.requested` journal entry. The
+    /// parent turn that spawned it was fully gated; the child it spawned was
+    /// not — and a capability withheld from a turn is not withheld if the turn
+    /// can delegate it.
+    ///
+    /// `policy_stack_with` rather than `session_stack`, deliberately:
+    /// `.stella/tools/*.toml` customs stay withheld from a dispatched child on
+    /// #3339's argument — an unreviewed local script's side effects are
+    /// invisible to the coordination a child's writes go through, and the
+    /// human at the keyboard is not this child's principal. A child that needs
+    /// a custom tool argues for promoting the tool, not for widening this
+    /// chain.
     async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome {
         let Some(tools) = self.tools.upgrade() else {
             return SubAgentOutcome::Refused {
                 reason: "the session's tool registry is gone".to_string(),
             };
         };
-        self.run_child(spec, tools, None).await
+        // Read before `spec` moves onto the child's thread.
+        let principal = stella_core::ports::Principal::SubAgent(spec.agent_id.clone());
+        self.run_child(spec, tools, Some((self.policy.clone(), principal)))
+            .await
     }
 }
 
@@ -491,15 +538,12 @@ impl SessionSubAgents {
     /// session's money, which is exactly what
     /// [`crate::wrapper_plugin::SessionChildTurns`]' doc refuses.
     ///
-    /// Unlike [`SubAgentDispatcher::dispatch`], the child runs behind the
+    /// Like [`SubAgentDispatcher::dispatch`], the child runs behind the
     /// operator's tool switches and the session authorization gate
-    /// ([`crate::agent::tool_stack::policy_stack_with`]). That asymmetry is
-    /// deliberate rather than an oversight: this child was asked for by an
-    /// *installed third-party plugin* and it writes, so the operator's
-    /// `tools.<name>` switches have to reach it. `delegate`'s children run
-    /// against the bare registry and always have; widening that is a change
-    /// to a different capability's behavior and is filed rather than smuggled
-    /// in here (#3930).
+    /// ([`crate::agent::tool_stack::policy_stack_with`]). The two used to
+    /// differ — `delegate`'s children ran against the bare registry — and
+    /// #3930 closed that: the principal is what separates them now, not the
+    /// chain.
     pub(crate) async fn dispatch_in_workspace(
         &self,
         spec: SubAgentSpec,
@@ -512,12 +556,12 @@ impl SessionSubAgents {
 
     /// The one child-running body both entry points share.
     ///
-    /// `stack` is `None` for a `delegate` child (the bare registry, as it has
-    /// always been) and `Some` for a rooted candidate, which runs behind the
-    /// operator's switches — see [`Self::dispatch_in_workspace`] for why the
-    /// two differ. A private helper taking the difference as data is the one
-    /// shape that keeps the subtle half — `ParentGone`, `OrphanStop`,
-    /// `catch_unwind`, settle-before-report — written exactly once.
+    /// `stack` is the policy and principal the child's chain is assembled
+    /// from, inside the child's own thread — `None` only for a caller that has
+    /// none, which since #3930 is no production door. A private helper taking
+    /// the difference as data is the one shape that keeps the subtle half —
+    /// `ParentGone`, `OrphanStop`, `catch_unwind`, settle-before-report —
+    /// written exactly once.
     async fn run_child(
         &self,
         spec: SubAgentSpec,

@@ -477,6 +477,7 @@ fn the_delegate_tool_is_always_advertised_and_never_read_only() {
         stella_protocol::BudgetMode::Observed,
         None,
         crate::agent::seats::SeatProviders::new(),
+        stella_tools::policy::ToolPolicy::allow_all(),
     );
     assert_eq!(
         registry
@@ -982,5 +983,96 @@ async fn a_panicking_child_still_settles_the_spend_it_incurred() {
         stella_core::subagent::drain_sub_agent_spend(&registry.sub_agent_spend_ledger()) >= 0.25,
         "and so must the parent's ledger — that is what the engine folds into \
          the budget at the next step boundary"
+    );
+}
+
+/// Records the tool names the child's engine advertised to the model, then
+/// ends the turn — what a child may *call* is decided before any call is made,
+/// by which schemas reach the request.
+#[derive(Default)]
+struct SchemaCapturingProvider {
+    advertised: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl Provider for SchemaCapturingProvider {
+    fn id(&self) -> &str {
+        "schema-capturing"
+    }
+    async fn complete_ref(
+        &self,
+        request: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        *self.advertised.lock().unwrap_or_else(|p| p.into_inner()) = request
+            .tools
+            .iter()
+            .map(|schema| schema.name.clone())
+            .collect();
+        Ok(stella_protocol::CompletionResult {
+            upstream_provider: None,
+            text: "done".into(),
+            tool_calls: vec![],
+            usage: stella_protocol::CompletionUsage::default(),
+            model: "schema-capturing".into(),
+            cost_usd: 0.0,
+            finish_reason: None,
+        })
+    }
+}
+
+/// The tool names one `delegate` child was offered, under `policy`.
+async fn child_tool_names(policy: stella_tools::policy::ToolPolicy) -> Vec<String> {
+    let registry = registry();
+    let provider = Arc::new(SchemaCapturingProvider::default());
+    let dispatcher = SessionSubAgents::new(
+        provider.clone(),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_tool_policy(policy);
+
+    dispatcher
+        .dispatch(SubAgentSpec::read_only("child", "look something up"))
+        .await;
+    let names = provider
+        .advertised
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    names.clone()
+}
+
+/// **Witness (#3930).** A `delegate` child runs behind the operator's
+/// `tools.<name>` switches.
+///
+/// It used to run against the bare registry, so a tool the operator had
+/// switched off for this workspace was still offered to — and callable by —
+/// any child the model delegated to. A capability withheld from a turn is not
+/// withheld if the turn can delegate it.
+///
+/// Both directions are asserted from one tool name: on the pre-fix code the
+/// switched-off case answers exactly what the permissive case does, so an
+/// assertion that only checked the permissive side would pass on the defect.
+#[tokio::test]
+async fn a_delegate_child_is_refused_a_tool_the_operator_switched_off() {
+    let permitted = child_tool_names(stella_tools::policy::ToolPolicy::allow_all()).await;
+    assert!(
+        permitted.iter().any(|name| name == "read_file"),
+        "the base registry offers it, so the switched-off case below is about \
+         the policy and not about an absent tool: {permitted:?}"
+    );
+
+    let withheld = child_tool_names(stella_tools::policy::ToolPolicy::from_switches([(
+        "read_file".to_string(),
+        false,
+    )]))
+    .await;
+    assert!(
+        !withheld.iter().any(|name| name == "read_file"),
+        "a tool the operator switched off must not reach a delegated child: {withheld:?}"
+    );
+    assert!(
+        !withheld.is_empty(),
+        "and only that one is withheld — the child still has a tool surface: {withheld:?}"
     );
 }
