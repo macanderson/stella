@@ -117,7 +117,7 @@ impl WorkspaceIgnore {
     /// thing to do and which used to consult no rules at all (#4050). `None`
     /// means "not this shape, keep looking", never "ignore nothing".
     ///
-    /// Two conditions, and the second is the whole design:
+    /// Two conditions:
     ///
     /// 1. **`root` is genuinely inside a working tree.** `rev-parse
     ///    --show-toplevel` succeeds and names a strict ancestor of `root`.

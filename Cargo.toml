@@ -17,7 +17,6 @@ members = [
   "crates/stella-context",
   "crates/stella-graph",
   "crates/stella-mcp",
-  "crates/stella-media",
   "crates/stella-engine",
   "crates/stella-runtime",
   "crates/stella-fleet",
@@ -128,7 +127,6 @@ crossterm = "0.29"
 notify = "8"
 ratatui = "0.30"
 unicode-width = "0.2"
-roxmltree = "0.21"
 # `default-features = false` drops scraper's `main` feature, which exists only
 # to build scraper's OWN command-line binary and drags `getopts` into the
 # workspace with it — an argument parser compiled into a coding agent that

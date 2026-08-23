@@ -2504,15 +2504,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roxmltree"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "rpassword"
 version = "7.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3121,28 +3112,6 @@ dependencies = [
  "tokio",
  "toml",
  "wiremock",
-]
-
-[[package]]
-name = "stella-media"
-version = "0.9.154"
-dependencies = [
- "async-trait",
- "base64 0.23.1",
- "libc",
- "reqwest",
- "roxmltree",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "stella-protocol",
- "stella-store",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "wiremock",
- "zeroize",
 ]
 
 [[package]]

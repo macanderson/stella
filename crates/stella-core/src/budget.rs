@@ -23,8 +23,8 @@
 //!
 //! [`BudgetGuard::record_spend`] takes a bare `cost_usd: f64` and does not
 //! care what produced it — a text completion, an image job, or a video job
-//! all settle through the same call ("media counts"), which is what lets
-//! `stella-media`'s spend meter into the same guard with no special-casing.
+//! all settle through the same call ("media counts"), which is what lets a
+//! media surface's spend meter into the same guard with no special-casing.
 //!
 //! # Precision
 //!
