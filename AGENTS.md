@@ -958,6 +958,20 @@ seconds; `cargo test --workspace` rebuilds everything.
   merge and files an issue when the answer changed (#3332). The two halves are
   deliberately separate: one stops you shipping a stale lock, the other bounds
   how long `main` stays broken when nobody did.
+- **A grep over cargo's output is not a build result; the exit code is.**
+  Cargo colourises when it thinks it is talking to a terminal, which puts the
+  escape *before* the word — a line that reads
+  `error[E0624]: method is private` on screen is
+  `\x1b[1m\x1b[91merror[E0624]\x1b[0m…`, so `rg '^error'` matches nothing and
+  prints a reassuring blank. That is not "no errors"; it is a filter that
+  cannot see them. In PR #3005 a `cargo build --workspace` was declared clean
+  on exactly that filter while `stella-cli` was failing to compile with six
+  `documentation comments cannot be applied to function parameters` errors, and
+  the mistake survived two more commands before an exit code contradicted it.
+  A pipe compounds it: `$?` becomes the filter's status, so `cargo build … | rg
+  …` reports on `rg`. Redirect to a file and read `$?`; pass `--color=never`
+  (or `CARGO_TERM_COLOR=never`) when you filter deliberately; anchor on
+  `error\[` rather than `^error` if you filter coloured output anyway.
 - **`.cargo/config.toml` is gitignored** — it holds per-developer cargo aliases
   (`tc` = test stella-core, etc.). It's not committed.
 - **Settings 3-scope merge**: user → org-managed (`STELLA_MANAGED_SETTINGS`) →
