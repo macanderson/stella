@@ -126,7 +126,7 @@
           "type": "object"
         },
         {
-          "description": "A speculatively-executed read-only call (`stella-core::speculation`)\nwhose result never reached the transcript: its stream attempt failed\nand the pool was dropped, or the committed call diverged from what\nwas announced so the pooled result was rejected at harvest. The\ntool's real I/O still ran — this is the event-log's record of that\nwork, so call counts reconcile with what actually executed rather\nthan silently diverging. `reason` is a short stable token\n(`\"attempt_failed\"`, `\"harvest_mismatch\"`). Additive to the wire\ncontract: consumers recorded before speculation existed never see it.",
+          "description": "A speculatively-executed read-only call (`stella-core::speculation`)\nwhose result never reached the transcript: its stream attempt failed\nand the pool was dropped, or the committed call diverged from what\nwas announced so the pooled result was rejected at harvest. The\ntool's real I/O still ran — this is the event-log's record of that\nwork, so call counts reconcile with what actually executed rather\nthan silently diverging. `reason` is a short stable token\n(`\"attempt_failed\"`, `\"harvest_mismatch\"`, `\"budget_abort\"` — the\nbudget guard ending the turn with a pool still in flight is the third\nproducer, and went unlisted here until #3156). Additive to the wire\ncontract: consumers recorded before speculation existed never see it.",
           "properties": {
             "call_id": {
               "type": "string"
