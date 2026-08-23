@@ -40,8 +40,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
                     dead-code-allows diagnostic-codes bench-suites tokens \
-                    hue-separation transcript-surfaces prose deck-fit-all-test \
-                    deck-paths css-vars
+                    hue-separation contrast transcript-surfaces prose \
+                    deck-fit-all-test deck-paths css-vars
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -324,6 +324,28 @@ tokens-update: ## Regenerate every colour artifact from design/tokens/stella-tok
 .PHONY: hue-separation
 hue-separation: ## Assert no two web semantic roles sit within 30° of each other in OKLCH (#4071)
 	@python3 ./scripts/check-hue-separation.py
+
+# The third colour question, and the third ruler. `tokens` asks what kind of
+# colour a value is, `hue-separation` asks whether two of them can be told
+# apart, and this asks whether one can be READ on the ground it is painted on --
+# WCAG 2.1 luminance, which answers none of the other two. Four pairings sit
+# under their floor today and are held at their exact measured ratio by
+# scripts/contrast-baseline.txt (#4423).
+.PHONY: contrast
+contrast: ## Assert no licensed colour pairing is darker than the ratchet allows
+	@python3 ./scripts/check-contrast.py
+
+.PHONY: contrast-report
+contrast-report: ## Name every licensed pairing, its ratio, its threshold and its ground
+	@python3 ./scripts/check-contrast.py --report
+
+.PHONY: contrast-update
+contrast-update: ## Retighten the contrast ratchet (run after lightening a colour)
+	@python3 ./scripts/check-contrast.py --update
+
+.PHONY: contrast-test
+contrast-test: ## Test the contrast ratchet's direction (hermetic; not part of `gate`)
+	./scripts/test-contrast.sh
 
 .PHONY: typed-errors
 typed-errors: ## Assert no library crate's public API returns Result<_, String> (invariant #5)

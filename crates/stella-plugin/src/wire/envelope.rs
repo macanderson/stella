@@ -4,8 +4,8 @@
 //! Split out of [`crate::wire`] rather than grown inside it: that file is the
 //! wire *vocabulary* — the requests, responses, grants and evidence a plugin
 //! speaks — and this is the framing those types arrive in. Two subjects, and
-//! the file-size ratchet is what made the distinction load-bearing rather than
-//! tidy (AGENTS.md, "God files — plan around them, never into them").
+//! the file-size ratchet is what forced the split rather than leaving it to
+//! taste (AGENTS.md, "God files — plan around them, never into them").
 
 use serde::{Deserialize, Deserializer};
 

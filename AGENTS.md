@@ -91,6 +91,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + bench-suites
                          #   + tokens (hue clamp + no retired hex)
                          #   + hue-separation (30° OKLCH, web tokens)
+                         #   + contrast (WCAG, down-only ratchet)
                          #   + transcript-surfaces
                          #   + prose (no content-free constructions added)
                          #   + deck-fit-all-test (the deck enumeration)
