@@ -9,10 +9,11 @@
 //! drives) a real, typed verdict it can act on early: steer or abort with
 //! a clear reason instead of grinding to the cap.
 //!
-//! Four failure modes are detected, matching real agent stuck-loop
+//! Five failure modes are detected, matching real agent stuck-loop
 //! signatures. The first three read a **contiguous suffix** and reset at the
 //! first mismatch; the fourth exists because that is a blind spot they all
-//! share (#1851):
+//! share (#1851), and the fifth because all four are defined on repeated
+//! output, which a linear sweep never produces (#4042):
 //!
 //! 1. **Exact repeat** — the same tool called with byte-identical input,
 //!    over and over (`read_file` on the same path, `bash` re-running the
@@ -43,6 +44,13 @@
 //!    different file, repeat. It is guarded by `window_is_progressing` so it
 //!    cannot fire on correct polling, where a repeating spacer sits beside a
 //!    query that IS answering differently each round.
+//! 5. **Monotonic sweep** — many calls to one tool against one target whose
+//!    arguments keep *advancing*, and which have wrapped back to the start and
+//!    resumed. The one rung here that reads no output at all, because there is
+//!    no repeated output to read: a paging sweep produces a fresh page every
+//!    call, so all four checks above reset on every one of them. The `sweep`
+//!    submodule carries the argument for why the wrap, and not the call
+//!    count, is the discriminator.
 //!
 //! **Progress is part of the loop definition.** A repeat or cycle only
 //! counts when the *outputs* are byte-identical too: identical input with
@@ -71,6 +79,8 @@
 use std::borrow::Cow;
 
 use stella_protocol::{ToolCall, ToolOutput};
+
+mod sweep;
 
 /// Longest trailing cycle period the short-cycle detector considers.
 /// Real stuck signatures observed so far are periods 2 and 3 (the
@@ -147,6 +157,15 @@ pub struct LoopDetectionConfig {
     /// weaken the evidence — it only hides it from a scan that reads a
     /// contiguous suffix, which is what every other check here does.
     pub interleaved_repeat_threshold: usize,
+    /// Calls to one tool against one target — same input but for the integers
+    /// in it — required before a wrapped sweep is reported. `0` or `1` disable
+    /// the check.
+    ///
+    /// A floor, not the evidence. The evidence is the wrap (`sweep`'s module
+    /// docs); this only rules out a target small enough that reading it
+    /// through and going back to the top is ordinary navigation. Eight is a
+    /// sweep by any reading and is far below the 85-call shape #4034 measured.
+    pub monotonic_sweep_threshold: usize,
 }
 
 impl Default for LoopDetectionConfig {
@@ -170,6 +189,7 @@ impl Default for LoopDetectionConfig {
             short_cycle_repeats: 3,
             stagnation_threshold: 6,
             interleaved_repeat_threshold: 3,
+            monotonic_sweep_threshold: 8,
         }
     }
 }
@@ -229,6 +249,21 @@ pub enum LoopVerdict {
         input: serde_json::Value,
         count: usize,
     },
+    /// `calls` calls to `tool` against one `target` — the call's arguments with
+    /// every integer replaced by `#` — whose cursors advanced monotonically and
+    /// then `wraps` times ran off the end and restarted, resuming the sweep.
+    ///
+    /// The shape none of the four above can see, because they are all defined
+    /// on byte-identical output and a sweep produces a fresh page every call
+    /// (#4042). `read_file`'s own ceiling (#4041) closed the observed case for
+    /// that one tool; this closes the shape for any tool that pages, including
+    /// `bash` spelling its range into a command string.
+    MonotonicSweep {
+        tool: String,
+        target: String,
+        calls: usize,
+        wraps: usize,
+    },
 }
 
 impl LoopVerdict {
@@ -278,6 +313,24 @@ impl LoopVerdict {
                  (input: {})",
                 truncate(&input.to_string(), MAX_DESCRIBED_INPUT)
             )),
+            LoopVerdict::MonotonicSweep {
+                tool,
+                target,
+                calls,
+                wraps,
+            } => Some(format!(
+                "you have made {calls} `{tool}` calls against the same target, advancing the \
+                 range each time, and {} back to the start to sweep it again — so you are \
+                 re-reading what you have already been shown. Paging through it again cannot \
+                 surface anything the first pass did not: search it for what you are looking \
+                 for, or work with what you have (target: {})",
+                if *wraps == 1 {
+                    "once you went".to_string()
+                } else {
+                    format!("{wraps} times you went")
+                },
+                truncate(target, MAX_DESCRIBED_INPUT)
+            )),
         }
     }
 
@@ -313,6 +366,17 @@ impl LoopVerdict {
             LoopVerdict::InterleavedRepeat { tool, input, .. } => Some(LoopIdentity {
                 tools: vec![tool.clone()],
                 inputs: Some(vec![input.to_string()]),
+            }),
+            // Stagnation's precedent, one step on: a sweep also spans
+            // deliberately differing arguments, so naming any one offset would
+            // misidentify it — but unlike stagnation the *target* is stable and
+            // is what the loop is about. Carrying it means a model steered
+            // about sweeping one file and then sweeping a different one is
+            // recognized as a different loop, which is the #1743 rule applied
+            // consistently.
+            LoopVerdict::MonotonicSweep { tool, target, .. } => Some(LoopIdentity {
+                tools: vec![tool.clone()],
+                inputs: Some(vec![target.clone()]),
             }),
         }
     }
@@ -486,10 +550,16 @@ fn same_output(a: &CallRecord<'_>, b: &CallRecord<'_>) -> bool {
 /// 2. **Short cycle** (see the module docs), shortest period first so the
 ///    tightest description of the evidence wins (a period-2 loop is never
 ///    reported as the period-4 loop it also technically is).
-/// 3. **Stagnation** (see the module docs), checked LAST because it is the
-///    weakest claim: "this tool stopped being informative" is true of every
-///    exact repeat and every same-tool cycle too, so checking it earlier
-///    would swallow both of the better-described verdicts above.
+/// 3. **Stagnation** (see the module docs), checked LAST of the output-keyed
+///    rungs because it is the weakest claim: "this tool stopped being
+///    informative" is true of every exact repeat and every same-tool cycle
+///    too, so checking it earlier would swallow both of the better-described
+///    verdicts above.
+/// 4. **Monotonic sweep** (see the module docs), checked after all of them.
+///    Not because it is weak — the wrap is strong evidence — but because it is
+///    the only rung that reads no output, so it is also the only one that can
+///    fire on a window another rung describes better. A sweep whose pages
+///    happen to repeat is a repeat, and should be reported as one.
 ///
 /// Never panics on any input — empty history, a single call, history
 /// shorter than every threshold, and a zeroed-out `config` (which disables
@@ -505,6 +575,10 @@ pub fn detect_loop(records: &[CallRecord<'_>], config: LoopDetectionConfig) -> L
         return verdict;
     }
     if let Some(verdict) = detect_stagnation(records, config.stagnation_threshold) {
+        return verdict;
+    }
+    if let Some(verdict) = sweep::detect_monotonic_sweep(records, config.monotonic_sweep_threshold)
+    {
         return verdict;
     }
     LoopVerdict::NoLoop

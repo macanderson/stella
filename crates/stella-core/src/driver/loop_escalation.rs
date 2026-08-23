@@ -245,6 +245,12 @@ pub(super) fn check_loop_detection(
         LoopVerdict::InterleavedRepeat { tool, count, .. } => {
             ("interleaved_repeat", vec![tool.clone()], *count)
         }
+        // `repeats` carries the wrap count rather than the call count: a
+        // receipt reading this row wants the evidence, and for a sweep the
+        // evidence is how many times it went back to the start (#4042).
+        LoopVerdict::MonotonicSweep { tool, wraps, .. } => {
+            ("monotonic_sweep", vec![tool.clone()], *wraps)
+        }
     };
     let evidence = verdict
         .evidence()
@@ -303,12 +309,20 @@ pub(super) fn check_loop_detection(
 /// varying. Cycles keep the generic steer: several tools are involved and
 /// no single wait replaces them. Pure over the verdict plus the declared
 /// schemas (invariant #2) — `schemas()` returns owned declarations, no I/O.
+///
+/// A monotonic sweep is excluded for the reason cycles are, arrived at from
+/// the other side: nothing about it is a status check, its arguments change on
+/// every call by construction, and "make one blocking wait" is advice for a
+/// turn that is waiting. [`LoopVerdict::evidence`] already carries the
+/// prescription that shape needs.
 fn polling_tool(verdict: &LoopVerdict, tools: &dyn ToolExecutor) -> Option<String> {
     let tool = match verdict {
         LoopVerdict::ExactRepeat { tool, .. }
         | LoopVerdict::Stagnant { tool, .. }
         | LoopVerdict::InterleavedRepeat { tool, .. } => tool,
-        LoopVerdict::NoLoop | LoopVerdict::ShortCycle { .. } => return None,
+        LoopVerdict::NoLoop
+        | LoopVerdict::ShortCycle { .. }
+        | LoopVerdict::MonotonicSweep { .. } => return None,
     };
     tools
         .schemas()

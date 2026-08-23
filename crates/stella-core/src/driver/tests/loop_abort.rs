@@ -181,6 +181,8 @@ fn exact_repeat_only(max_steps: usize) -> EngineConfig {
             short_cycle_repeats: 0,
             stagnation_threshold: 0,
             interleaved_repeat_threshold: 0,
+            // Disabled: this case isolates another detector (#4042).
+            monotonic_sweep_threshold: 0,
         },
         ..EngineConfig::default()
     }

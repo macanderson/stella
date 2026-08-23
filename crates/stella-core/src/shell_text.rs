@@ -302,9 +302,10 @@ const WRITING_GIT_SUBCOMMANDS: &[&str] = &[
 ///   deliberately does not qualify: `cmd 2>&1` tokenizes to `… 2> & 1` here,
 ///   and reading that as a write would make every command that captures
 ///   stderr look like a mutation;
-/// - a command word in [`WRITING_COMMANDS`] or [`FORMATTING_COMMANDS`], or
+/// - a command word in this module's reviewed `WRITING_COMMANDS` or
+///   `FORMATTING_COMMANDS` list, or
 ///   `sed`/`perl` carrying an in-place flag (`-i`, `-i.bak`);
-/// - `git` with a subcommand in [`WRITING_GIT_SUBCOMMANDS`], or `cargo fmt`.
+/// - `git` with a subcommand in `WRITING_GIT_SUBCOMMANDS`, or `cargo fmt`.
 ///
 /// What it deliberately misses, because no reading of the command text can
 /// see it: a build or generator step that rewrites a file as a side effect
