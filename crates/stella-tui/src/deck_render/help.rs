@@ -32,6 +32,8 @@
 //! whichever pin is answering — so with the AGENTS tab's per-row model column
 //! gone, "which pin serves each role" is answered here or nowhere.
 
+use unicode_width::UnicodeWidthStr;
+
 use super::*;
 use crate::keymap::{self, Scope};
 
@@ -124,26 +126,47 @@ fn metric_rows(model: &WorkspaceModel) -> Vec<Line<'static>> {
     lines
 }
 
+/// Cells the panel reserves for a row's description, beyond the key column
+/// and the two-space margin. The widest sentence in the keymap is what set
+/// it: `queue the prompt — mid-turn it waits its turn (unless a card asks)`
+/// ran to the panel's edge under the old fixed 84-cell cap and a 13-cell key
+/// column, so this is that same budget stated as what it is.
+const DESCRIPTION_W: usize = 71;
+
 /// One aligned `key → description` row of the help overlay. The key column is
-/// padded to a fixed width so the descriptions line up into a scannable
-/// second column.
+/// padded to [`keymap::key_column_width`] — the widest chord in the table —
+/// so every description starts in the same place.
+///
+/// The width is asked for rather than spelled. This used to pad to a literal
+/// 13 while the table held a 15-cell chord, and the two rows wider than the
+/// pad pushed their descriptions left of every other row's (#4428). The
+/// padding is also measured in cells, not `char`s: `{key:<13}` counts `char`s,
+/// which is the same number only for the ASCII rows.
 fn help_row(key: &str, desc: &str) -> Line<'static> {
+    let pad = keymap::key_column_width().saturating_sub(UnicodeWidthStr::width(key));
     Line::from(vec![
-        Span::styled(format!("  {key:<13} "), theme::accent()),
+        Span::styled(format!("  {key}{} ", " ".repeat(pad)), theme::accent()),
         Span::styled(desc.to_string(), theme::body()),
     ])
 }
 
 /// The frame width at which the sheet lays its key sections side by side.
 ///
-/// Below it one column of 84 is the whole panel; at or above it the panel
+/// Below it one column of [`one_column_w`] is the whole panel; at or above it the panel
 /// widens and splits, which is what puts SPEC 5's metric block on the first
 /// screen of a 40-row terminal instead of a scroll away (#4371).
 const TWO_COLUMN_MIN_W: u16 = 120;
 
 /// The single column's width, and the cap the panel keeps below the
 /// threshold — one sentence per key on a 100-column terminal.
-const ONE_COLUMN_W: u16 = 84;
+///
+/// The description budget *plus* the key column, not a single spelled number,
+/// so a chord added to the keymap widens the panel instead of eating cells
+/// off the longest sentence — which is what a fixed 84 did the moment the
+/// column stopped being 13 (#4428).
+fn one_column_w() -> u16 {
+    (DESCRIPTION_W + keymap::key_column_width()) as u16
+}
 
 /// Blank cells between the two columns, so a long description on the left
 /// does not run into the key on the right.
@@ -242,7 +265,7 @@ pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     let w = if wide {
         area.width.saturating_sub(4)
     } else {
-        area.width.saturating_sub(4).min(ONE_COLUMN_W)
+        area.width.saturating_sub(4).min(one_column_w())
     };
     let mut lines: Vec<Line<'static>> = if wide {
         // Two borders out of `w`, then the gutter, split evenly.
@@ -303,4 +326,51 @@ pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     Paragraph::new(lines)
         .scroll((window.start as u16, 0))
         .render(inner, buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keymap::BINDINGS;
+
+    /// **The witness (#4428).** Every row of the sheet starts its description
+    /// in the same column, whatever the chord.
+    ///
+    /// Fails on a spelled pad: at 13 cells the key span of `ctrl-n / ctrl-p`
+    /// (15) and of `⇞ ⇟ · Home End` (14) is wider than the rest, so those
+    /// descriptions begin one and three columns right of every other row's.
+    #[test]
+    fn every_key_column_is_the_same_width() {
+        let width = |b: &crate::keymap::Binding| {
+            UnicodeWidthStr::width(&*help_row(b.keys, "x").spans[0].content)
+        };
+        let widest = BINDINGS
+            .iter()
+            .max_by_key(|b| UnicodeWidthStr::width(b.keys))
+            .expect("the keymap is not empty");
+        let want = width(widest);
+        for b in BINDINGS {
+            assert_eq!(
+                width(b),
+                want,
+                "`{}` pads its key column to a different width than `{}`",
+                b.keys,
+                widest.keys
+            );
+        }
+    }
+
+    /// The metric block shares `help_row`, so its labels line up with the
+    /// chords above them rather than forming a second, narrower column.
+    #[test]
+    fn a_metric_label_lines_up_with_the_chords() {
+        let chord = UnicodeWidthStr::width(&*help_row("⏎", "x").spans[0].content);
+        for label in ["triage", "worker", "verifier", "engine", "cpu", "mem"] {
+            assert_eq!(
+                UnicodeWidthStr::width(&*help_row(label, "x").spans[0].content),
+                chord,
+                "the `{label}` row sits in a different column than the keys"
+            );
+        }
+    }
 }

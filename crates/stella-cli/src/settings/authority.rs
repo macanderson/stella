@@ -45,6 +45,22 @@ pub struct AuthorityPolicy {
     pub project_prompts_allowed: bool,
     pub project_custom_tools_allowed: bool,
     pub media_requires_host_approval: bool,
+    /// What saying no to the repository actually cost it: the counts of
+    /// steering left on disk, and which authority refused (#3616).
+    ///
+    /// Here rather than beside the verdict's other consumers because it is the
+    /// same answer read from the other side — `project_prompts_allowed` is
+    /// what the session may use, this is what it may not — and because one
+    /// object carrying both is what keeps the stderr notice and the event
+    /// stream from describing different workspaces.
+    ///
+    /// Not computed by [`AuthorityPolicy::compute`], which is pure over the
+    /// settings chain: filling this in means reading the workspace's steering
+    /// directories, so [`super::Settings::load`] does it once the verdict is
+    /// resolved. `None` means nothing was withheld — every trusted checkout,
+    /// and every repository with no steering on disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub withheld: Option<super::WithheldNotice>,
 }
 
 impl Default for AuthorityPolicy {
@@ -54,6 +70,7 @@ impl Default for AuthorityPolicy {
             project_prompts_allowed: false,
             project_custom_tools_allowed: false,
             media_requires_host_approval: true,
+            withheld: None,
         }
     }
 }
@@ -72,6 +89,10 @@ impl AuthorityPolicy {
             steering_allowed: true,
             project_prompts_allowed: project_trusted
                 && permits(managed.and_then(|policy| policy.project_prompts)),
+            // Filled in by `Settings::load` once the verdict is resolved:
+            // this function is pure over the settings chain and the survey
+            // reads the workspace's directories.
+            withheld: None,
             project_custom_tools_allowed: project_trusted
                 && permits(managed.and_then(|policy| policy.project_custom_tools)),
             media_requires_host_approval: managed

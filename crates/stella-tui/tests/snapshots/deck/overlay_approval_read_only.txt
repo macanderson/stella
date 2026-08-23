@@ -22,17 +22,17 @@
  │ ⊙ apps/app/automations/page.tsx
  │ ⎿ 312 lines                                                                                                                               42ms
 
-☰  plan  5/7  ·  Workflows canvas
-
-⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
-
-                                          ┌ approval ─────────────────────────────── ↑↓ move · ⏎ choose · esc denies ┐
-                                          │read_file  read-only                                                      │
-                                          │  .stella/private/credentials.toml                                        │
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations()
+ │     11 +  const [q, setQ] = useState(""┌ approval ─────────────────────────────── ↑↓ move · ⏎ choose · esc denies ┐
+ │     12 +  const filtered = filter(items│read_file  read-only                                                      │
+ │     13 +  const onNew = () => open()   │  .stella/private/credentials.toml                                        │
                                           │                                                                          │
-                                          │gate    tool.call.requested                                               │
+☰  plan  5/7  ·  Workflows canvas         │gate    tool.call.requested                                               │
                                           │reason  matched rule secrets-are-off-limits                               │
-                                          │                                                                          │
+⏸ plan  Refactor the automations store int│                                                                          │
                                           │  Allow this call, once                                                   │
                                           │▸ Deny                                                                    │
                                           │  Deny, and say why                                                       │

@@ -688,6 +688,7 @@ async fn a_worker_mines_its_lesson_into_the_invocation_root_not_its_worktree() {
         &OneLesson,
         crate::memory::TurnEvidence::with_friction(&messages, &friction, true),
         None,
+        &super::attempt_task_boundary(&Task::new("t1", "billing", "run the billing migration")),
         &mut budget,
     )
     .await
@@ -801,5 +802,144 @@ fn a_fleet_attempt_reflects_before_its_spend_is_read() {
         FLEET.contains("&invocation_root,"),
         "the lesson must be mined against the invocation root; against the \
          attempt's root it dies with the worktree"
+    );
+}
+
+/// Answers each reflection call with a lesson of its own.
+///
+/// Two attempts saying the identical thing would derive the identical
+/// observation id and the ledger would absorb the second as a replay — one
+/// record, and a distinct-task count of 1 for a reason that has nothing to do
+/// with the boundary under test.
+struct ALessonPerAttempt(std::sync::atomic::AtomicUsize);
+
+#[async_trait::async_trait]
+impl stella_protocol::Provider for ALessonPerAttempt {
+    fn id(&self) -> &str {
+        "a-lesson-per-attempt"
+    }
+
+    async fn complete_ref(
+        &self,
+        _req: stella_protocol::CompletionRequestRef<'_>,
+    ) -> Result<stella_protocol::CompletionResult, stella_protocol::ProviderError> {
+        const LESSONS: [&str; 2] = [
+            "the billing migration must be run with the ledger writer stopped",
+            "the invoice backfill has to be replayed from the last checkpoint file",
+        ];
+        let nth = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(stella_protocol::CompletionResult {
+            upstream_provider: None,
+            text: format!(
+                r#"{{"lessons": [
+                    {{"lesson": "{}",
+                     "trigger": "a task touches the billing migration",
+                     "saves": "a corrupted ledger",
+                     "kind": "domain", "domains": []}}
+                ]}}"#,
+                LESSONS[nth % LESSONS.len()]
+            ),
+            tool_calls: vec![],
+            usage: stella_protocol::CompletionUsage {
+                reported: true,
+                input_tokens: 1,
+                ..stella_protocol::CompletionUsage::default()
+            },
+            model: "a-lesson-per-attempt".into(),
+            cost_usd: 0.0,
+            finish_reason: None,
+        })
+    }
+}
+
+/// **Witness (#3989).** Two attempts at one fleet task stamp one task boundary,
+/// and that boundary is derived from the plan's task rather than from the
+/// process the attempts happened to run in.
+///
+/// Fails on base, where `mine_attempt_lesson` never calls `set_task_id`: each
+/// attempt opens a fresh `SessionMemory` and takes the session default, so a
+/// retry wave reads to governance as several distinct tasks and can clear a
+/// distinct-task promotion threshold on one task's worth of evidence.
+///
+/// The derivation is the half that discriminates; equality alone would not.
+/// Two attempts in the same second of the same process already share
+/// `session:<secs>-<pid>`, so "both boundaries are the same string" passes on
+/// base by coincidence — which is why the assertion names `fleet:<task id>`.
+///
+/// The observation half is what makes it a statement about governance rather
+/// than about a log line: `ObservationRecord::task_id` is the field the
+/// distinct-task threshold counts, and it is reached through extraction, which
+/// falls back to `turn:<timestamp>` for any lesson that carries no boundary.
+#[tokio::test]
+async fn two_attempts_at_one_task_are_one_task_to_governance() {
+    let (_td, _guard, root) = steered_workspace();
+    let cfg = steered_config(root.clone());
+    let task = Task::new(
+        "migrate-billing",
+        "billing migration",
+        "run the billing migration",
+    );
+    let messages = mined_transcript();
+    let friction = crate::memory::TurnFriction::default();
+    let provider = ALessonPerAttempt(std::sync::atomic::AtomicUsize::new(0));
+
+    // Two attempts at the SAME task — a retry wave, which is the shape the
+    // session default over-counts.
+    for attempt in 0..2 {
+        let mut budget = agent::build_budget_guard(Some(10.0));
+        budget.begin_turn();
+        let report = super::mine_attempt_lesson(
+            &root,
+            &cfg,
+            &provider,
+            crate::memory::TurnEvidence::with_friction(&messages, &friction, true),
+            None,
+            &super::attempt_task_boundary(&task),
+            &mut budget,
+        )
+        .await
+        .unwrap_or_else(|| panic!("attempt {attempt}: the workspace's memory opens"));
+        // The control: an unreadable response mines nothing, and every
+        // assertion below would then be reading an empty log.
+        assert!(
+            report.model_error.is_none(),
+            "attempt {attempt} must mine a lesson before this test can say \
+             anything about its boundary: {report:?}"
+        );
+    }
+
+    let log = stella_store::workspace_private_state_path(&root, "reflections.jsonl")
+        .expect("the mining log's path");
+    let lessons: Vec<crate::memory::ReflectionLesson> = std::fs::read_to_string(&log)
+        .expect("both attempts appended to the mining log")
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("a mined lesson"))
+        .collect();
+    assert_eq!(lessons.len(), 2, "one lesson per attempt reached the log");
+    for lesson in &lessons {
+        assert_eq!(
+            lesson.task_id, "fleet:migrate-billing",
+            "a fleet attempt stamps the boundary it genuinely knows; the \
+             session default `session:<secs>-<pid>` mints a synthetic task per \
+             attempt, which is the over-count governance must not see"
+        );
+    }
+
+    let db = stella_store::workspace_private_sqlite_path(&root, "context.db").expect("db path");
+    let store = stella_context::ContextStore::open(db).expect("the context ledger opens");
+    let observed = crate::memory::observations::all_observations(&store, 100);
+    assert_eq!(
+        observed.len(),
+        2,
+        "both attempts left an observation, so the count below is over two \
+         records and not over one the ledger deduplicated"
+    );
+    let distinct: std::collections::BTreeSet<&str> =
+        observed.iter().map(|o| o.task_id.as_str()).collect();
+    assert_eq!(
+        distinct,
+        std::collections::BTreeSet::from(["fleet:migrate-billing"]),
+        "the field the distinct-task threshold counts must hold ONE task for a \
+         retry wave at one task: {distinct:?}"
     );
 }

@@ -49,6 +49,11 @@ pub(super) fn event_intensity(ev: &AgentEvent) -> u8 {
         // metering tick). Cool-but-present is the honest reading, and it keeps
         // a burst of future events from impersonating heavy edit activity.
         AgentEvent::Unknown { .. } => 60,
+        // A notice about the session, emitted once before any work begins.
+        // Explicit rather than falling through the wildcard: at the default it
+        // would open every untrusted checkout's sparkline with a burst of
+        // activity that never happened.
+        AgentEvent::SteeringWithheld { .. } => 20,
         // A park is the turn deliberately idling — the coolest honest signal,
         // pitched with the metering ticks so a long wait never reads as work.
         AgentEvent::TurnParked { .. } | AgentEvent::TurnWoken { .. } => 60,
@@ -328,6 +333,22 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
             ),
         ),
         AgentEvent::AskUser { question, .. } => (TraceKind::Other, snip(question)),
+        // Counts and nothing else — the withheld text is repository-controlled
+        // and the event carries none of it to trace (#3616).
+        AgentEvent::SteeringWithheld {
+            memories,
+            records,
+            skills,
+            commands,
+            agents,
+            ..
+        } => (
+            TraceKind::Other,
+            format!(
+                "project steering withheld ({} items)",
+                memories + records + skills + commands + agents
+            ),
+        ),
         AgentEvent::Error { message, .. } => (TraceKind::Error, snip(message)),
         AgentEvent::TurnComplete { model, cost_usd } => {
             (TraceKind::Complete, format!("turn {model} ${cost_usd:.4}"))

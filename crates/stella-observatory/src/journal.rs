@@ -81,7 +81,8 @@ pub(crate) fn entries(
            AND event_type IN ('stage', 'text', 'reasoning', 'tool_start',
                               'tool_result', 'speculation_discarded',
                               'turn_parked', 'turn_woken', 'file_change',
-                              'candidate_delivery', 'turn_complete')
+                              'candidate_delivery', 'turn_complete',
+                              'steering_withheld')
          ORDER BY seq ASC";
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
