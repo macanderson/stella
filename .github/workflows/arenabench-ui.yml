@@ -1,0 +1,65 @@
+name: arenabench-ui
+
+# arenabench/ui/package.json declares `npm run typecheck`, and nothing ran it
+# (#4477). `diff-view-parity.yml` triggers on four specific
+# `arenabench/ui/lib|scripts` files and runs two `.mjs` parity scripts against
+# them — it never installs the app or runs `tsc`. `ci.yml` ignores
+# `arenabench/**` entirely (it is the Rust gate), so a TSX edit was checked by
+# nothing except the source-text assertions in
+# `arenabench/tests/test_web_form.py`. PR #4476's `seat-card.tsx` for #4413
+# landed that way.
+#
+# Its own file, for the same disjoint-paths reason `diff-view-parity.yml` and
+# `wire-schema.yml` each have one (#1439): triggering this on every PR would
+# install a Next.js app on changes that never touch it, and `ci.yml`/
+# `docs-guards.yml` already ignore or do not cover `arenabench/ui/**`.
+on:
+  pull_request:
+    paths:
+      - "arenabench/ui/**"
+      - ".github/workflows/arenabench-ui.yml"
+  push:
+    branches: [main]
+    paths:
+      - "arenabench/ui/**"
+      - ".github/workflows/arenabench-ui.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: arenabench-ui-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Checkout, `npm ci`, typecheck, and a static build — nothing that needs more.
+permissions:
+  contents: read
+
+jobs:
+  typecheck-and-build:
+    name: typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: arenabench/ui/package-lock.json
+
+      - name: npm ci
+        working-directory: arenabench/ui
+        run: npm ci
+
+      - name: npm run typecheck
+        working-directory: arenabench/ui
+        run: npm run typecheck
+
+      # `next build` static-exports into arenabench/arenabench/web/ (see the
+      # package description) — cheap enough to run on every change in scope,
+      # and it catches what `tsc --noEmit` alone does not: a page that
+      # type-checks but fails Next's own build-time analysis (e.g. an invalid
+      # `generateStaticParams` shape).
+      - name: npm run build
+        working-directory: arenabench/ui
+        run: npm run build
