@@ -19,7 +19,7 @@
 //! file, and the shell is the point.
 //!
 //! A **plugin's** hook — an action carrying a
-//! [`PluginHookOrigin`](stella_core::hooks::PluginHookOrigin), assembled by
+//! [`stella_core::hooks::PluginHookOrigin`], assembled by
 //! the host from an installed manifest — is its declared argv, executed
 //! directly, from an environment cleared and then refilled with the names the
 //! manifest declared and nothing else. Two differences from the operator's
