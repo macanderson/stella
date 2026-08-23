@@ -8,10 +8,10 @@
 //! (#4440). The fixtures it shares with the parent reach here through
 //! `super::*`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use stella_core::ports::ToolExecutor as _;
 
-use super::super::roster::{PluginRoster, PluginScope};
+use super::super::roster::PluginScope;
 use super::super::*;
 use super::*;
 /// Add the three contributed directories to a package source tree.

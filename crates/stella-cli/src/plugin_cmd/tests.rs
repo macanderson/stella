@@ -10,7 +10,6 @@
 use std::collections::BTreeMap;
 
 use std::path::{Path, PathBuf};
-use stella_core::ports::ToolExecutor as _;
 
 use super::roster::{PluginRoster, PluginScope};
 use super::*;
