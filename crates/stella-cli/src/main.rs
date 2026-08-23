@@ -792,11 +792,12 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // definitions of a word end up disagreeing. Every routing and
             // ceiling flag, not the spend limit alone — `--model` was accepted
             // and dropped for as long as only that one was threaded (#4352).
-            return self_driving_cmd::run(
-                cmd,
-                &self_driving_cmd::turn_flags::TurnFlags::from_globals(&cli.globals),
-            )
-            .map_err(failure::CliFailure::from);
+            // The globals are read before anything else runs, so a flag this
+            // command cannot honour is refused before a state directory is
+            // touched or a turn is planned (#4471).
+            let flags = self_driving_cmd::turn_flags::TurnFlags::from_globals(&cli.globals)
+                .map_err(failure::CliFailure::from)?;
+            return self_driving_cmd::run(cmd, &flags).map_err(failure::CliFailure::from);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file

@@ -28,12 +28,35 @@
 //! `--accessible`, the animation toggles) describe the parent's terminal, and
 //! the child's stdout is a pipe.
 //!
-//! `--api-key` is deliberately **not** forwarded. It is the one global whose
-//! forwarding is a credential decision rather than a routing one — it would
-//! put the key in a second process's argv, where `ps` can read it for the
-//! whole length of a turn — and the credential chain already reaches the child
-//! by every other route (`STELLA_API_KEY`, `~/.stella/credentials.toml`). That
-//! is a judgement worth making on its own rather than inside this fix.
+//! # `--api-key` is refused rather than forwarded (#4471)
+//!
+//! It is the one global whose forwarding is a credential decision rather than a
+//! routing one — argv is readable by `ps` for the whole length of a turn — so
+//! #4405 left it out. Left out *silently*, which is the same shape #4352 had
+//! just fixed: a flag accepted and dropped. So it is now refused at the door,
+//! naming the routes that do reach a child.
+//!
+//! The alternative was the sealed credential handoff
+//! ([`crate::credential_handoff`]), which puts a secret in a child without
+//! argv or environment. It was not taken, for two reasons that are about this
+//! command rather than about the seam:
+//!
+//! - **The handoff seals a value into a named provider slot**, so the parent
+//!   would have to resolve which provider the child is going to select. This
+//!   command deliberately never does — `stella self-driving` runs with zero
+//!   API keys, and every turn is a child that resolves its own configuration.
+//!   Making a credential flag force a provider resolution in the parent would
+//!   put that whole chain (settings, catalog, an interactive prompt) in front
+//!   of a loop that today needs none of it.
+//! - **A consumed handoff is authoritative** —
+//!   [`credential_handoff::is_present`](crate::credential_handoff::is_present)
+//!   disables the child's credentials-file discovery outright, so a run
+//!   holding `~/.stella/credentials.toml` for three providers and passing
+//!   `--api-key` for one would lose the other two. That is a larger change
+//!   than `--api-key` means anywhere else.
+//!
+//! What the refusal costs a user is one exported variable; what it ends is a
+//! flag that looked like it worked.
 
 use std::process::Command;
 use std::time::Duration;
@@ -71,8 +94,16 @@ pub(crate) struct TurnFlags {
 
 impl TurnFlags {
     /// Read the parent's parsed globals.
-    pub(crate) fn from_globals(globals: &crate::cli::GlobalArgs) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// `--api-key`, which this command cannot honour — see the module doc for
+    /// why, and [`Self::api_key_refusal`] for what the sentence says.
+    pub(crate) fn from_globals(globals: &crate::cli::GlobalArgs) -> Result<Self, String> {
+        if globals.api_key.is_some() {
+            return Err(Self::api_key_refusal());
+        }
+        Ok(Self {
             model: globals.model.clone(),
             base_url: globals.base_url.clone(),
             upstream_pin: globals.upstream_pin.clone(),
@@ -80,7 +111,22 @@ impl TurnFlags {
             spend_limit: globals.spend_limit,
             turn_timeout: globals.turn_timeout,
             max_output_tokens: globals.max_output_tokens,
-        }
+        })
+    }
+
+    /// What a user who passed `--api-key` is told instead.
+    ///
+    /// Both remedies, because they are for different situations: an exported
+    /// variable is what a script wants, and `stella auth` is what a person at
+    /// a terminal wants. A refusal that named neither would be the silent drop
+    /// with extra steps.
+    fn api_key_refusal() -> String {
+        "stella self-driving does not forward --api-key to the turns it runs: a credential \
+         in a child's argv is readable by `ps` for the whole length of a turn. Export the \
+         provider's own variable instead (OPENROUTER_API_KEY, ANTHROPIC_API_KEY, …) — a \
+         child inherits the environment — or store it once with `stella auth`, which every \
+         turn reads from ~/.stella/credentials.toml."
+            .to_string()
     }
 
     /// Append every flag that was actually set to a child `stella run`.
@@ -117,5 +163,63 @@ impl TurnFlags {
         if let Some(cap) = self.max_output_tokens {
             cmd.arg("--max-output-tokens").arg(cap.to_string());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser as _;
+
+    /// The globals clap really parses out of `argv` — the same values `main`
+    /// hands this module, so a test cannot accidentally assert about a shape
+    /// the parser never produces.
+    fn globals(argv: &[&str]) -> crate::cli::GlobalArgs {
+        crate::cli::Cli::try_parse_from(argv)
+            .expect("these argv parse")
+            .globals
+    }
+
+    /// **#4471's witness.** The one session flag `TurnFlags` leaves out is now
+    /// refused rather than accepted and dropped — the silent-drop shape #4352
+    /// fixed for `--model` and #4405 left behind here by omission.
+    #[test]
+    fn an_api_key_is_refused_by_name_rather_than_silently_dropped() {
+        let refused = TurnFlags::from_globals(&globals(&[
+            "stella",
+            "self-driving",
+            "state",
+            "--api-key",
+            "sk-should-never-reach-a-child",
+        ]))
+        .expect_err("a credential this command cannot honour must not be accepted");
+
+        assert!(refused.contains("--api-key"), "{refused}");
+        assert!(
+            refused.contains("stella auth") && refused.contains("API_KEY"),
+            "a refusal that names no remedy is the silent drop with extra steps: {refused}"
+        );
+        assert!(
+            !refused.contains("sk-should-never-reach-a-child"),
+            "and it must not echo the secret it refused: {refused}"
+        );
+    }
+
+    /// The routing globals still arrive, or the refusal above would have
+    /// broken the fix it sits beside (#4352).
+    #[test]
+    fn every_other_global_still_reaches_the_turn() {
+        let flags = TurnFlags::from_globals(&globals(&[
+            "stella",
+            "self-driving",
+            "state",
+            "--model",
+            "openrouter/kimi-k3",
+            "--spend-limit",
+            "30",
+        ]))
+        .expect("no credential, no refusal");
+        assert_eq!(flags.model.as_deref(), Some("openrouter/kimi-k3"));
+        assert_eq!(flags.spend_limit, Some(30.0));
     }
 }
