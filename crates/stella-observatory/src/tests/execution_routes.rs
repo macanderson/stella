@@ -345,6 +345,123 @@ fn model_card_route_names_its_missing_parameters() {
     assert!(body.contains("slug"), "{body}");
 }
 
+/// A catalog file shaped like `stella-store::catalog`'s DDL (the hand-written
+/// subset discipline `seeded_workspace` documents), holding one card with two
+/// versions so the newest-version pick is observable.
+fn seeded_catalog(dir: &TempDir) -> std::path::PathBuf {
+    let path = dir.path().join("catalog.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE model_cards (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           api_provider TEXT NOT NULL, model_provider TEXT NOT NULL,
+           slug TEXT NOT NULL, display_name TEXT, family TEXT,
+           source TEXT NOT NULL DEFAULT 'test');
+         CREATE TABLE model_card_versions (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           model_card_id INTEGER NOT NULL, version INTEGER NOT NULL,
+           input_usd_per_mtok REAL, output_usd_per_mtok REAL,
+           cached_input_usd_per_mtok REAL, cache_write_usd_per_mtok REAL,
+           context_window INTEGER, max_output_tokens INTEGER,
+           release_date TEXT, last_updated TEXT,
+           supports_reasoning INTEGER, supports_tools INTEGER, knowledge TEXT,
+           source TEXT NOT NULL DEFAULT 'test',
+           content_hash TEXT NOT NULL DEFAULT '');
+         INSERT INTO model_cards
+           (api_provider, model_provider, slug, display_name, family)
+         VALUES ('openrouter', 'anthropic', 'claude-x', 'Claude X', 'claude');
+         INSERT INTO model_card_versions
+           (model_card_id, version, input_usd_per_mtok, output_usd_per_mtok,
+            cached_input_usd_per_mtok, cache_write_usd_per_mtok,
+            context_window, max_output_tokens, release_date, last_updated,
+            supports_reasoning, supports_tools, knowledge)
+         VALUES
+           (1, 1, 1.0, 4.0, 0.1, 1.25, 100000, 32000,
+            '2026-01-01', '2026-02-01', 0, 1, '2025-04'),
+           (1, 2, 3.0, 15.0, 0.3, 3.75, 200000, 64000,
+            '2026-03-01', '2026-04-01', 1, 1, '2025-10');",
+    )
+    .unwrap();
+    path
+}
+
+/// **The found path (#4567).** Against a seeded catalog, the card resolves
+/// the newest version's row — every column the route serves, including the
+/// api-provider/model-provider split the profile card exists to print.
+///
+/// Calls [`model_card::model_card`] with the catalog path threaded as a
+/// parameter: the env-derived default (`stella_home::data_dir()`) reads
+/// process-wide `STELLA_HOME`/`STELLA_DATA_DIR`, and setting those in one
+/// test races every parallel test in the binary.
+#[test]
+fn model_card_serves_the_newest_version_of_a_seeded_card() {
+    let dir = TempDir::new().unwrap();
+    let path = seeded_catalog(&dir);
+    let card = crate::model_card::model_card(&path, "openrouter", "claude-x").unwrap();
+    assert_eq!(
+        card,
+        serde_json::json!({
+            "found": true,
+            "api_provider": "openrouter",
+            "model_provider": "anthropic",
+            "slug": "claude-x",
+            "display_name": "Claude X",
+            "family": "claude",
+            "context_window": 200_000,
+            "max_output_tokens": 64_000,
+            "supports_reasoning": true,
+            "supports_tools": true,
+            "knowledge": "2025-10",
+            "release_date": "2026-03-01",
+            "last_updated": "2026-04-01",
+            "input_usd_per_mtok": 3.0,
+            "output_usd_per_mtok": 15.0,
+            "cached_input_usd_per_mtok": 0.3,
+            "cache_write_usd_per_mtok": 3.75,
+        }),
+        "version 2's figures, version 1's nowhere"
+    );
+
+    // A card the catalog does not hold, and a catalog that does not exist:
+    // both are states, not failures.
+    let missing = crate::model_card::model_card(&path, "openrouter", "no-such").unwrap();
+    assert_eq!(missing["found"], false, "{missing}");
+    let absent =
+        crate::model_card::model_card(&dir.path().join("nowhere.db"), "openrouter", "claude-x")
+            .unwrap();
+    assert_eq!(absent["found"], false, "{absent}");
+    assert_eq!(absent["note"], "no model catalog on this machine");
+}
+
+/// **The degrade path (#4567).** A catalog written before the capability
+/// columns (`supports_reasoning` et al, added by `CATALOG_MIGRATIONS`) fails
+/// the prepare, and that must read as the same state as no catalog — never a
+/// 500 on the turn page.
+#[test]
+fn model_card_degrades_a_catalog_older_than_its_columns() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("catalog.db");
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE model_cards (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               api_provider TEXT NOT NULL, model_provider TEXT NOT NULL,
+               slug TEXT NOT NULL);
+             CREATE TABLE model_card_versions (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               model_card_id INTEGER NOT NULL, version INTEGER NOT NULL);
+             INSERT INTO model_cards (api_provider, model_provider, slug)
+             VALUES ('openrouter', 'anthropic', 'claude-x');
+             INSERT INTO model_card_versions (model_card_id, version)
+             VALUES (1, 1);",
+        )
+        .unwrap();
+    let card = crate::model_card::model_card(&path, "openrouter", "claude-x").unwrap();
+    assert_eq!(card["found"], false, "{card}");
+    assert_eq!(card["note"], "catalog schema too old");
+}
+
 /// `after_seq` (#1476) narrows the transcript to rows newer than the
 /// drawer's last-seen `seq` — the incremental fetch a still-running
 /// execution's poll uses instead of re-downloading the whole transcript

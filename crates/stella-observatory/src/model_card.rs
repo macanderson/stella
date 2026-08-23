@@ -16,24 +16,35 @@
 //! from `model_provider` (whose silicon — `anthropic`), which is exactly the
 //! split the profile card has to print for a gateway-routed seat.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
 use crate::db::{DbError, open_read_only};
 
-/// The user-tier catalog database, or wherever `STELLA_HOME` points.
-fn catalog_db() -> PathBuf {
+/// The user-tier catalog database, or wherever `STELLA_HOME` points — the
+/// default the route applies. [`model_card`] takes the path as a parameter
+/// instead of resolving it itself because `stella_home::data_dir()` reads
+/// process-wide env (`STELLA_HOME`/`STELLA_DATA_DIR`): a test that set it
+/// would race every parallel test in the binary, so the tests thread a temp
+/// path and only the route touches the environment — the same
+/// pure-resolver-half pattern `stella-home` itself uses (#4567).
+pub(crate) fn default_catalog_db() -> PathBuf {
     stella_home::data_dir().join("catalog.db")
 }
 
-/// The newest catalog card for `(api_provider, slug)`.
+/// The newest catalog card for `(api_provider, slug)` in the catalog at
+/// `catalog_db` ([`default_catalog_db`] on the live route).
 ///
 /// `found: false` when the catalog is absent or holds no such card — a state,
 /// not a failure: a workspace that never synced the catalog still gets a
 /// profile card, just one that says the offered defaults are unknown.
-pub(crate) fn model_card(api_provider: &str, slug: &str) -> Result<Value, DbError> {
-    let Some(conn) = open_read_only(&catalog_db()) else {
+pub(crate) fn model_card(
+    catalog_db: &Path,
+    api_provider: &str,
+    slug: &str,
+) -> Result<Value, DbError> {
+    let Some(conn) = open_read_only(catalog_db) else {
         return Ok(json!({ "found": false, "note": "no model catalog on this machine" }));
     };
     let mut stmt = match conn.prepare(

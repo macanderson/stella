@@ -736,11 +736,34 @@ fn bump(out: &mut Value, key: &str) {
     out[key] = json!(n + 1);
 }
 
+/// Whether this store's `telemetry` table carries `cache_write_tokens`.
+///
+/// [`session_turns`] sums it for the turn table's cache tooltip, and it is the
+/// youngest telemetry column that query touches: a store written before the
+/// column existed would fail the whole prepare, degrading the session's turn
+/// list to *empty* — the established per-query degrade, but paid here by a
+/// view that renders fine without the one figure. The cross-project switcher
+/// (`?project=`) is exactly where such old stores appear, so the sum is
+/// selected only when the column exists and reads 0 otherwise (#4567).
+///
+/// The probe is a prepare of a statement that fetches nothing; a missing
+/// *table* also fails it, and that case answers the same either way — the
+/// outer query degrades to no turns on a store with no telemetry at all.
+fn telemetry_has_cache_write(conn: &Connection) -> bool {
+    conn.prepare("SELECT cache_write_tokens FROM telemetry LIMIT 0")
+        .is_ok()
+}
+
 /// The session's turns from the three long-lived tables, newest first (the
 /// caller reverses after capping). Younger per-turn attachments — skills,
 /// MCP servers, receipt counts, the reflection verdict — ride in afterwards
 /// through [`fold_turn_extras`].
 fn session_turns(conn: &Connection, id: &str) -> Result<Vec<Value>, DbError> {
+    let cache_write_sum = if telemetry_has_cache_write(conn) {
+        "sum(cache_write_tokens)"
+    } else {
+        "0"
+    };
     let sql = format!(
         "SELECT e.id, e.kind, e.prompt, e.provider, e.model, e.outcome,
                 e.cost_usd, e.started_at, e.finished_at,
@@ -758,7 +781,7 @@ fn session_turns(conn: &Connection, id: &str) -> Result<Vec<Value>, DbError> {
                            sum(cache_miss_tokens) AS cache_miss_tokens,
                            sum(retries)           AS retries,
                            sum(duration_ms)       AS duration_ms,
-                           sum(cache_write_tokens) AS cache_write_tokens
+                           {cache_write_sum}      AS cache_write_tokens
                     FROM telemetry GROUP BY execution_id) t
            ON t.execution_id = e.id
          LEFT JOIN (SELECT execution_id, count(*) AS calls,
