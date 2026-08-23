@@ -577,6 +577,11 @@ pub async fn run_goal_cmd(
                         manifest,
                         std::sync::Arc::clone(&sub_agents)
                             as std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+                        // The grant minted above, so a plugin's `run_test`
+                        // re-runs the invocation this loop is judged against
+                        // rather than being told the capability has nothing
+                        // behind it (#4536).
+                        candidate.as_ref().map(|granted| &granted.grant),
                     )
                 })
                 .map_err(crate::failure::CliFailure::from)?,

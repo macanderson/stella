@@ -223,6 +223,7 @@ impl AttemptWrapper {
         report: Result<DispatchReport, stella_runtime::wrapper::WrapperError>,
         driver: AttemptDriver<'_, '_>,
         require_verdict: bool,
+        held: Option<&HeldReports>,
     ) -> Result<TurnOutcome, String> {
         let report = report
             .map_err(|error| format!("wrapper \"{}\" cannot be driven: {error}", self.variant()))?;
@@ -232,8 +233,21 @@ impl AttemptWrapper {
         // the human's only view of what a plugin concluded about this attempt,
         // and scoped to this attempt's task because `--max-concurrency > 1`
         // puts N workers' lines on one stream (#3883).
-        self.bound
-            .report(Some(&self.task), crate::OutputFormat::Text, &report);
+        let lines = self
+            .bound
+            .report_lines(Some(&self.task), crate::OutputFormat::Text, &report);
+        match held {
+            // The live grid owns the terminal: an `eprintln!` now lands on the
+            // alternate screen it is painting and is destroyed by the next
+            // frame. Held, never suppressed — a refusal reported nowhere is
+            // the silence #3561 closed (#3883).
+            Some(held) => held.hold(lines),
+            None => {
+                for line in &lines {
+                    eprintln!("{line}");
+                }
+            }
+        }
         let driven = driver.driven.ok_or_else(|| {
             format!(
                 "wrapper \"{}\" drove this attempt with no turn",
@@ -247,6 +261,43 @@ impl AttemptWrapper {
             return Err(refusal);
         }
         Ok(driven)
+    }
+}
+
+/// Wrapper report lines held while the live dashboard owns the terminal,
+/// printed by `run_fleet` once the grid tears down (#3883).
+///
+/// The lines already name their task (`BoundWrapper::report_lines` is called
+/// with the attempt's task as its scope), so deferring them costs no
+/// attribution — only immediacy, which the alternate screen was destroying
+/// anyway. Suppressing them instead is not acceptable: a refusal reported
+/// nowhere is the silence #3561 closed. Whether these lines should *also*
+/// reach a dashboard pane while the run is live is a `FleetMsg` design of its
+/// own; holding is the half every run needs regardless.
+///
+/// One buffer per run, shared by every worker thread. [`Self::hold`] appends
+/// an attempt's whole report under one lock, so concurrent attempts' lines
+/// interleave per report, never per line.
+#[derive(Debug, Default)]
+pub(super) struct HeldReports(std::sync::Mutex<Vec<String>>);
+
+impl HeldReports {
+    /// Append one attempt's report, atomically.
+    pub(super) fn hold(&self, lines: Vec<String>) {
+        if lines.is_empty() {
+            return;
+        }
+        // A poisoned lock means a worker thread panicked mid-`extend`; the
+        // lines already in the buffer are still worth printing, so take the
+        // data rather than the poison.
+        let mut all = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+        all.extend(lines);
+    }
+
+    /// Everything held, in arrival order, leaving the buffer empty.
+    pub(super) fn drain(&self) -> Vec<String> {
+        let mut all = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+        std::mem::take(&mut *all)
     }
 }
 
@@ -382,6 +433,11 @@ impl ResolvedAttempt {
                 manifest,
                 std::sync::Arc::clone(&dispatcher)
                     as std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+                // This attempt's own grant, so `run_test` re-runs the
+                // invocation in the worktree the attempt runs in — never the
+                // invocation root, whose tree no attempt is judged against
+                // (#4536).
+                Some(&self.candidate.grant),
             )
         })?;
         Ok(AttemptWrapper {

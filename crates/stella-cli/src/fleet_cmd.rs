@@ -195,6 +195,10 @@ pub async fn run_fleet(
         None
     };
 
+    // Wrapper report lines cannot print while the grid owns the alternate
+    // screen; the workers hold them here and the live arm below prints them
+    // once the dashboard has restored the terminal (#3883).
+    let held_reports = live.then(|| Arc::new(wrapped::HeldReports::default()));
     let worker = EngineWorker {
         cfg: cfg.clone(),
         // Divide the aggregate cap across the concurrency width so one wave's
@@ -204,6 +208,7 @@ pub async fn run_fleet(
         dash: worker_dash,
         wrapper_variant: wrapper_variant.map(str::to_string),
         require_verdict,
+        held_reports: held_reports.clone(),
     };
     let fleet = Fleet::new(
         worker,
@@ -305,6 +310,14 @@ pub async fn run_fleet(
         let report = run_result.map_err(|e| format!("fleet run failed: {e}"))?;
         if let Ok(res) = dash_result {
             print_dash_summary(&res);
+        }
+        // The wrapper reports the workers held while the grid was up. Each
+        // line already names its task, so printing them together after
+        // teardown loses no attribution (#3883).
+        if let Some(held) = &held_reports {
+            for line in held.drain() {
+                eprintln!("{line}");
+            }
         }
         report
     } else {
@@ -538,6 +551,13 @@ struct EngineWorker {
     /// attempt. Meaningless without `wrapper_variant`, and refused before the
     /// fan-out in that case.
     require_verdict: bool,
+    /// Where an attempt's wrapper report goes while the live grid owns the
+    /// terminal: held here and printed by [`run_fleet`] after teardown,
+    /// because an `eprintln!` onto the alternate screen is destroyed by the
+    /// next frame (#3883). `Some` exactly when `dash` is — both exist because
+    /// the run is live — and `None` keeps the headless path printing at
+    /// settle time, as it always has.
+    held_reports: Option<Arc<wrapped::HeldReports>>,
 }
 
 #[async_trait::async_trait]
@@ -558,6 +578,7 @@ impl FleetWorker for EngineWorker {
         let per_child_budget = self.per_child_budget;
         let wrapper_variant = self.wrapper_variant.clone();
         let require_verdict = self.require_verdict;
+        let held_reports = self.held_reports.clone();
         let task = task.clone();
         let root = workspace_root.to_path_buf();
         let claim_holder = format!("{}/{}", self.run_id, task.id);
@@ -605,6 +626,7 @@ impl FleetWorker for EngineWorker {
                         worker_spend,
                         wrapper_variant.as_deref(),
                         require_verdict,
+                        held_reports.as_deref(),
                     ))
                 });
             let _ = tx.send(result);
@@ -928,6 +950,7 @@ async fn run_task(
     spend: crate::fleet_spend::SpendRecovery,
     wrapper_variant: Option<&str>,
     require_verdict: bool,
+    held_reports: Option<&wrapped::HeldReports>,
 ) -> Result<WorkerOutcome, String> {
     // Where this workspace starts. In an ISOLATED worktree this is the whole
     // attribution story — one writer, so the whole advance to `HEAD` is this
@@ -1196,9 +1219,12 @@ async fn run_task(
                         _ = stop_wait => None,
                     };
                     let raced = match dispatched {
-                        Some(report) => {
-                            Raced::Outcome(wrapper.settle(report, driver, require_verdict))
-                        }
+                        Some(report) => Raced::Outcome(wrapper.settle(
+                            report,
+                            driver,
+                            require_verdict,
+                            held_reports,
+                        )),
                         None => Raced::Stopped,
                     };
                     // What the plugin's last point spent has no engine turn
