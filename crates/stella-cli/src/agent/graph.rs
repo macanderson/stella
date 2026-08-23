@@ -51,7 +51,12 @@ async fn build_code_graph_with(
     let root = workspace_root.to_path_buf();
     let outcome = drive_index_blocking(root, INDEX_PROGRESS_INTERVAL, emit).await;
     match outcome {
-        Ok(Ok(stats)) => emit(InitLine::Step(format_graph_stats(&stats))),
+        Ok(Ok(stats)) => {
+            emit(InitLine::Step(format_graph_stats(&stats)));
+            if let Some(line) = format_entry_points(&stats) {
+                emit(InitLine::Step(line));
+            }
+        }
         Ok(Err(warning)) => emit(InitLine::Step(warning)),
         Err(e) => emit(InitLine::Step(format!(
             "! code-graph indexing task failed: {e} — run `stella init` again to retry"
@@ -373,10 +378,18 @@ pub(super) fn index_workspace_graph_blocking(
         files_unchanged: stats.files_skipped_unchanged,
         files_skipped_generated: stats.files_skipped_generated,
         files_skipped_too_large: stats.files_skipped_too_large,
+        entry_points: graph.entry_points(ENTRY_POINT_SAMPLE).unwrap_or_default(),
     };
     graph.shutdown();
     Ok(summary)
 }
+
+/// How many entry points the orientation line names. Small on purpose: the
+/// line is a starting point for a reader, not the roster — a tree with two
+/// hundred uningested test files would otherwise print two hundred paths at
+/// the end of every `stella init`. The graph answers the full question for
+/// anyone who wants it.
+const ENTRY_POINT_SAMPLE: usize = 5;
 
 /// Whole-index totals plus this pass's parse/skip split, for the startup line.
 pub(super) struct GraphSummary {
@@ -397,6 +410,15 @@ pub(super) struct GraphSummary {
     /// whose file left the index otherwise gets no signal at all, and reads
     /// the graph's silence about it as the file having no symbols.
     pub(super) files_skipped_too_large: usize,
+    /// Up to [`ENTRY_POINT_SAMPLE`] indexed files nothing in the index
+    /// imports, shallowest path first — binaries, scripts, tests, dead code.
+    /// The orientation half of the summary: the totals say how much was
+    /// indexed, this says where a reader starts.
+    ///
+    /// Empty when the index is empty, and also when every indexed file is
+    /// imported by another — a real answer in a tree with one cyclic module
+    /// graph, not a failure to compute one.
+    pub(super) entry_points: Vec<String>,
 }
 
 /// The `✓ code graph: N symbols, M imports…` summary line, shared by `stella
@@ -435,6 +457,30 @@ pub(super) fn format_graph_stats(summary: &GraphSummary) -> String {
         return base;
     }
     format!("{base} — {}", clauses.join(", "))
+}
+
+/// The `· start here: …` line that follows [`format_graph_stats`], naming the
+/// files nothing in the index imports. `None` when the index found none,
+/// because a line reading `start here:` with nothing after it tells a reader
+/// less than no line at all.
+///
+/// Deliberately its own line rather than another clause on the stats line:
+/// the totals answer "how much is indexed" and this answers "where do I
+/// start", and a reader scanning `stella init`'s output for the second
+/// should not have to find it at the end of the first.
+pub(super) fn format_entry_points(summary: &GraphSummary) -> Option<String> {
+    if summary.entry_points.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "· start here: {} — nothing in the index imports {}",
+        summary.entry_points.join(", "),
+        if summary.entry_points.len() == 1 {
+            "it"
+        } else {
+            "them"
+        }
+    ))
 }
 
 /// A session-lifetime holder for the live code graph. It keeps the in-process
@@ -706,7 +752,12 @@ pub(crate) fn spawn_session_graph(
         let outcome =
             drive_index_blocking(root.clone(), INDEX_PROGRESS_INTERVAL, &mut status).await;
         match outcome {
-            Ok(Ok(stats)) => status(InitLine::Step(format_graph_stats(&stats))),
+            Ok(Ok(stats)) => {
+                status(InitLine::Step(format_graph_stats(&stats)));
+                if let Some(line) = format_entry_points(&stats) {
+                    status(InitLine::Step(line));
+                }
+            }
             Ok(Err(warning)) => status(InitLine::Step(warning)),
             Err(e) => status(InitLine::Step(format!(
                 "! code-graph indexing task failed: {e} — search ranks over the last good index \
