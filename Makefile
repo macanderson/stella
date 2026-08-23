@@ -39,6 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
+                    tool-error-class \
                     dead-code-allows diagnostic-codes consumer-sites bench-suites wire-paths \
                     tokens hue-separation contrast transcript-surfaces prose \
                     deck-fit-all-test deck-paths css-vars reserved-paths
@@ -392,6 +393,18 @@ typed-errors-update: ## Retighten the invariant-#5 ratchet (run after typing sig
 .PHONY: typed-errors-test
 typed-errors-test: ## Test the invariant-#5 ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-typed-errors.sh
+
+.PHONY: tool-error-class
+tool-error-class: ## Assert no NEW unclassified ToolOutput::error( site (#3167)
+	@python3 ./scripts/check-tool-error-class.py
+
+.PHONY: tool-error-class-update
+tool-error-class-update: ## Retighten the #3167 ratchet (run after classifying a site)
+	@python3 ./scripts/check-tool-error-class.py --update
+
+.PHONY: tool-error-class-test
+tool-error-class-test: ## Test the #3167 ratchet's direction (hermetic; not part of `gate`)
+	./scripts/test-tool-error-class.sh
 
 .PHONY: prose
 prose: ## Assert no content-free prose was added (down-only ratchet)

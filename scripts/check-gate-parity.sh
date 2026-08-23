@@ -141,6 +141,7 @@ step_command() {
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
   typed-errors) echo 'check-typed-errors' ;;
+  tool-error-class) echo 'check-tool-error-class' ;;
   dead-code-allows) echo 'check-dead-code-allows' ;;
   tokens) echo 'check-tokens' ;;
   hue-separation) echo 'check-hue-separation' ;;

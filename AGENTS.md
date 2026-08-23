@@ -86,6 +86,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + typed-errors
+                         #   + tool-error-class (#3167 unclassified-ToolOutput::error ratchet)
                          #   + dead-code-allows
                          #   + diagnostic-codes
                          #   + consumer-sites (Behavioral 'site' strings point at live code)

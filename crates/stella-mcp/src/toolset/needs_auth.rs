@@ -60,9 +60,12 @@ pub(super) fn route(set: &super::McpToolSet, name: &str) -> Option<ToolOutput> {
         .iter()
         .find(|(server, _)| name == login_required_tool_name(server))?;
     if set.is_disabled(server) {
-        return Some(ToolOutput::error(format!(
-            "mcp server `{server}` is disabled for this session — tool `{name}` unavailable"
-        )));
+        return Some(ToolOutput::classified_error(
+            stella_protocol::ErrorClass::RefusedByPolicy,
+            format!(
+                "mcp server `{server}` is disabled for this session — tool `{name}` unavailable"
+            ),
+        ));
     }
     Some(login_required_output(server))
 }
@@ -235,6 +238,29 @@ mod tests {
         // Re-enabling brings the placeholder back, live.
         disabled.lock().unwrap().clear();
         assert_eq!(set.schemas().len(), 1);
+    }
+
+    /// #3167 witness: a session-disabled server's placeholder answer is
+    /// classified `RefusedByPolicy`, byte-identical to the pre-#3167 message.
+    /// Fails on the pre-#3167 tree, where `class` is always `None`.
+    #[tokio::test]
+    async fn a_disabled_servers_placeholder_error_is_classified_refused_by_policy() {
+        use stella_core::ports::ToolExecutor as _;
+        let disabled: DisabledServers = Arc::new(Mutex::new(HashSet::new()));
+        disabled.lock().unwrap().insert("github".to_string());
+        let set = suppressed_set("github").with_disabled_servers(disabled);
+
+        let result = set
+            .execute("mcp__github__login_required", &serde_json::Value::Null)
+            .await;
+        assert_eq!(
+            result,
+            ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                "mcp server `github` is disabled for this session — tool \
+                 `mcp__github__login_required` unavailable"
+            )
+        );
     }
 
     #[test]
