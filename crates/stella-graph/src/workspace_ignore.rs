@@ -51,8 +51,10 @@ impl WorkspaceIgnore {
 
     /// Ask what the workspace at `root` declares uninteresting.
     ///
-    /// One `git ls-files` per call (~30ms on a 20k-entry tree), reading only
-    /// what `root` **itself** declares. That is correctness, not economy:
+    /// One `git ls-files` per call (~30ms on a 20k-entry tree, preceded by a
+    /// `git init` into a temporary directory in the second shape below),
+    /// reading only what `root` **itself** declares. That is correctness,
+    /// not economy:
     /// a workspace that merely sits *under* someone else's repository — a
     /// scratch directory beneath a `$HOME` dotfiles repo whose `.gitignore`
     /// says `*` — must not inherit rules nobody wrote for it, or the caller
@@ -103,24 +105,25 @@ impl WorkspaceIgnore {
     /// `root` (`git_dir` absent) or a detached git dir holding `root` as its
     /// work tree.
     fn ask_git(root: &Path, git_dir: Option<&Path>) -> Self {
+        // `ls-files` prints paths relative to the CURRENT DIRECTORY, not to
+        // the work tree, so this is what makes the output walk-relative
+        // whatever directory the process was launched from. Run from
+        // `root/generated` without it, a workspace ignoring `generated/`
+        // answers `./` — an entry that matches nothing the walk asks about.
         let mut command = std::process::Command::new("git");
-        match git_dir {
-            None => {
-                command.arg("-C").arg(root);
-            }
-            Some(git_dir) => {
-                command
-                    .arg("--git-dir")
-                    .arg(git_dir)
-                    .arg("--work-tree")
-                    .arg(root)
-                    // The user's global excludes are the user's, not this
-                    // workspace's. A repository gets them because git gives
-                    // them to it; a directory that is not one has no
-                    // relationship to them at all. An empty value disables
-                    // the lookup outright, including its XDG default.
-                    .args(["-c", "core.excludesFile="]);
-            }
+        command.arg("-C").arg(root);
+        if let Some(git_dir) = git_dir {
+            command
+                .arg("--git-dir")
+                .arg(git_dir)
+                .arg("--work-tree")
+                .arg(root)
+                // The user's global excludes are the user's, not this
+                // workspace's. A repository gets them because git gives them
+                // to it; a directory that is not one has no relationship to
+                // them at all. An empty value disables the lookup outright,
+                // including its XDG default.
+                .args(["-c", "core.excludesFile="]);
         }
         let Ok(output) = command
             .args([
