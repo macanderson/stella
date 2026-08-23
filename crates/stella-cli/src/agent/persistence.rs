@@ -912,6 +912,7 @@ pub(crate) fn persist_event_detailed(
         effective_budget_tokens,
         calibration_factor,
         estimated_input_tokens,
+        stall_seconds_requested,
         compiled_frame,
     } = event
     {
@@ -931,6 +932,11 @@ pub(crate) fn persist_event_detailed(
                 // half-written frame identity would be a hash no id resolves.
                 compiled_frame_id: compiled_frame.as_ref().map(|f| f.compiled_frame_id.clone()),
                 frame_hash: compiled_frame.as_ref().map(|f| f.frame_hash.clone()),
+                // Carried through as-is, `None` included: the receipt records
+                // what the emitter classified, and a store that turned "not
+                // classified" into zero would be the invented number #3621
+                // exists to avoid.
+                stall_seconds_requested: *stall_seconds_requested,
                 blocks: blocks
                     .iter()
                     .map(|b| ManifestBlockRow {

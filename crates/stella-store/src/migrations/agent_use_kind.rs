@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! v29 → v30: `agent_uses` grows `kind` — which of the log's two writers
+//! v30 → v31: `agent_uses` grows `kind` — which of the log's two writers
 //! minted the row's `agent` name (#3822).
 //!
 //! `agent_uses` had one writer for its whole life: the deck, recording an
@@ -27,7 +27,7 @@
 //! Unlike `tasks.contract` (v28 → v29), the fact here IS recoverable, so a
 //! default is a record rather than an invention: the delegation writer landed
 //! in #3821, after every row this migration can see was written, so every
-//! pre-v30 row is a definition invocation. `NOT NULL DEFAULT 'definition'`
+//! pre-v31 row is a definition invocation. `NOT NULL DEFAULT 'definition'`
 //! states that; a nullable column would make every historical row read as
 //! *unknown* when it is known.
 
@@ -43,7 +43,7 @@ use crate::migrations::{column_exists, table_exists};
 /// only — SQLite does not re-check rows already at rest — which is the whole
 /// requirement here, since every one of them is being defaulted to a value the
 /// check accepts.
-pub(super) fn migrate_v29_to_v30(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+pub(super) fn migrate_v30_to_v31(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     if table_exists(tx, "agent_uses")? && !column_exists(tx, "agent_uses", "kind")? {
         tx.execute_batch(
             "ALTER TABLE agent_uses ADD COLUMN kind TEXT NOT NULL DEFAULT 'definition' \
@@ -59,7 +59,7 @@ mod tests {
     use crate::migrations::apply_migration;
     use rusqlite::Connection;
 
-    fn seed_v29(conn: &Connection) {
+    fn seed_v30(conn: &Connection) {
         conn.execute_batch(
             "CREATE TABLE agent_uses (
                execution_id INTEGER NOT NULL,
@@ -71,17 +71,17 @@ mod tests {
              INSERT INTO agent_uses (execution_id, agent, version, reason)
                VALUES (1, 'reviewer', 2, 'review the diff');",
         )
-        .expect("seed a v29 file");
+        .expect("seed a v30 file");
     }
 
     /// Every row written before the delegation writer existed is a definition
     /// invocation, and reads as one.
     #[test]
-    fn v30_migration_reads_existing_rows_as_definition_invocations() {
+    fn v31_migration_reads_existing_rows_as_definition_invocations() {
         let mut conn = Connection::open_in_memory().expect("db");
-        seed_v29(&conn);
+        seed_v30(&conn);
 
-        apply_migration(&mut conn, migrate_v29_to_v30, 30).expect("migrate");
+        apply_migration(&mut conn, migrate_v30_to_v31, 31).expect("migrate");
 
         let kind: String = conn
             .query_row(
@@ -98,8 +98,8 @@ mod tests {
     #[test]
     fn the_migrated_column_rejects_a_kind_outside_the_two() {
         let mut conn = Connection::open_in_memory().expect("db");
-        seed_v29(&conn);
-        apply_migration(&mut conn, migrate_v29_to_v30, 30).expect("migrate");
+        seed_v30(&conn);
+        apply_migration(&mut conn, migrate_v30_to_v31, 31).expect("migrate");
 
         let rejected = conn.execute(
             "INSERT INTO agent_uses (execution_id, agent, version, kind) \
@@ -120,8 +120,8 @@ mod tests {
     #[test]
     fn the_migration_is_idempotent() {
         let mut conn = Connection::open_in_memory().expect("db");
-        seed_v29(&conn);
-        apply_migration(&mut conn, migrate_v29_to_v30, 30).expect("first");
-        apply_migration(&mut conn, migrate_v29_to_v30, 30).expect("second");
+        seed_v30(&conn);
+        apply_migration(&mut conn, migrate_v30_to_v31, 31).expect("first");
+        apply_migration(&mut conn, migrate_v30_to_v31, 31).expect("second");
     }
 }

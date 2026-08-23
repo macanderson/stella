@@ -463,6 +463,7 @@ fn seed_system_receipt(store: &Store, execution_id: i64, step: u64, system: &str
                 effective_budget_tokens: 136_363,
                 calibration_factor: 1.1,
                 estimated_input_tokens: 48,
+                stall_seconds_requested: None,
                 compiled_frame_id: None,
                 frame_hash: None,
                 blocks: vec![ManifestBlockRow {
@@ -548,6 +549,7 @@ fn seed_receipt(store: &Store, execution_id: i64, call: &ToolCall, output: &Tool
                 effective_budget_tokens: 136_363,
                 calibration_factor: 1.1,
                 estimated_input_tokens: 203,
+                stall_seconds_requested: None,
                 compiled_frame_id: None,
                 frame_hash: None,
                 blocks: vec![

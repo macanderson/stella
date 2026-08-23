@@ -4,18 +4,18 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-    ⋯ ctrl+o for provenance and budget
-
-── PLAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-  Planning the automations cluster: list, editor, triggers, workflows.
-
-☰  plan  4/7  ·  Wire the triggers API
-
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
  │ ⊙ apps/app/automations/page.tsx
  │ ⎿ 312 lines                                                                                                                               42ms
+
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations()
+ │     11 +  const [q, setQ] = useState("")
+ │     12 +  const filtered = filter(items, q)
+ │     13 +  const onNew = () => open()
 
 ☰  plan  5/7  ·  Workflows canvas
 

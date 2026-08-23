@@ -66,6 +66,10 @@ use stella_autonomy::{
 };
 use stella_fleet::issue_claim_key;
 
+mod settlement;
+
+use settlement::{Settlement, issue_finished_by};
+
 use super::audit::{self, Action as Audit};
 use super::state::LoopState as Durable;
 use super::turn_flags::TurnFlags;
@@ -281,8 +285,35 @@ pub(super) fn drive(
 
     resume(durable, &cfg, &mut state);
 
+    // Armed once the run is committed to looping, so a signal during the
+    // set-up above still takes the default disposition and kills the process
+    // outright — there is nothing to record before the session exists.
+    super::stop::watch();
+
     loop {
-        let obs = observe(&root, &provider, &base_branch, max_issues, tally.opened);
+        // At a step boundary, never mid-turn — the discipline invariant 6 sets
+        // for the budget guard, for the same reason: a `stella run` child cut
+        // down where it stands leaves a worktree, a branch and possibly a pull
+        // request that no record accounts for. A signal caught while a turn is
+        // in flight is honoured the moment that turn returns.
+        //
+        // Returning is also what releases what the run holds: `leases` and the
+        // Work arm's `_lease` are RAII, so an ordinary return frees every
+        // claimed issue for the next actor instead of leaving a peer to wait
+        // out the TTL. A killed process cannot do that, which is the other half
+        // of what a caught signal buys.
+        if let Some(signal) = super::stop::caught() {
+            return stopped_by_signal(durable, &tally, signal);
+        }
+
+        let obs = observe(
+            &root,
+            durable,
+            &provider,
+            &base_branch,
+            max_issues,
+            tally.opened,
+        );
 
         match step(&state, &obs, &doctrine) {
             LoopStep::Blocked {
@@ -295,7 +326,21 @@ pub(super) fn drive(
                     None,
                     &format!(
                         "blocked: {reason:?}. Waiting for {clears_when:?}; re-asking in \
-                         {poll_secs}s — nobody needs to tell it to resume."
+                         {poll_secs}s — nobody needs to tell it to resume.{}",
+                        // The one block an operator caused deliberately is the
+                        // one they need an address for. `Clearance` names the
+                        // observable; this names the file, because "delete
+                        // this to resume" is the whole instruction and a
+                        // parked loop that does not say where its flag lives
+                        // is asking the reader to go and find out.
+                        if matches!(reason, stella_autonomy::BlockReason::OperatorStop) {
+                            format!(
+                                " Delete {} to resume.",
+                                super::stop::stop_file(&durable.dir).display()
+                            )
+                        } else {
+                            String::new()
+                        }
                     ),
                 );
                 sleep(poll_secs);
@@ -400,10 +445,10 @@ pub(super) fn drive(
                     // difference between a batch job and a loop somebody can
                     // walk away from.
                     //
-                    // The deferral count is on this line because without it an
-                    // exhausted queue and a queue whose every candidate went to
-                    // a peer read identically, and the second is the one where
-                    // something is happening.
+                    // The deferral count is on this line because a queue whose
+                    // every candidate went to a peer is one where something is
+                    // happening, and without the count it reads exactly like
+                    // an exhausted one.
                     //
                     // Truncation is said for the same reason one step further
                     // on: a scan that stopped at its probe budget has not seen
@@ -674,18 +719,51 @@ pub(super) fn drive(
                             &format!("could not advance it ({error}); re-asking in {poll_secs}s"),
                         );
                         sleep(poll_secs);
-                        false
+                        Settlement::Pending
                     }
                 };
 
-                if settled {
+                // The fix landed, so the issue it fixed is finished — and the
+                // loop is the only thing that knows both halves at this
+                // instant (#4119). Sixteen pull requests merged on a live
+                // `oxagen-platform` run and closed nothing: every closure was
+                // performed by hand afterwards, and the next pass saw each
+                // fixed issue back in the queue as unclaimed work.
+                //
+                // Failing to close is not a reason to keep carrying it. The
+                // merge happened, the trailer and the pull-request body both
+                // say `Closes #N` (`super::deliver`), and re-advancing a
+                // merged pull request forever to retry a tracker write would
+                // trade a stale issue for a wedged loop.
+                if let Some(issue) = issue_finished_by(settled, &pr, &state.carrying) {
+                    match super::lifecycle::close_fixed_by_pr(&provider, durable, &issue.0, &pr.0) {
+                        Ok(spelled) => audit::record(
+                            durable,
+                            Audit::IssueClosed,
+                            Some(&issue.0),
+                            &format!("closed as {spelled}, citing {}", pr.0),
+                        ),
+                        Err(error) => audit::record(
+                            durable,
+                            Audit::Transient,
+                            Some(&issue.0),
+                            &format!(
+                                "merged {} but could not close it ({error}); the pull request's \
+                                 `Closes` trailer is the remaining route",
+                                pr.0
+                            ),
+                        ),
+                    }
+                }
+
+                if settled == Settlement::Pending {
+                    sleep(poll_secs);
+                } else {
                     for carried in &mut state.carrying {
                         if carried.pr == pr {
                             carried.disposition = PrDisposition::Settled;
                         }
                     }
-                } else {
-                    sleep(poll_secs);
                 }
             }
 
@@ -934,9 +1012,6 @@ fn assess_one(
 }
 
 /// Advance one pull request by exactly one deterministic transition.
-///
-/// Returns whether it settled — merged, escalated, or handed back — so the
-/// caller can stop carrying it.
 fn advance(
     policy_blocking: &stella_autonomy::BlockingPolicy,
     pr: &str,
@@ -944,7 +1019,7 @@ fn advance(
     no_review: bool,
     tally: &mut Tally,
     durable: &Durable,
-) -> Result<bool, String> {
+) -> Result<Settlement, String> {
     let entry = spent.entry(pr.to_owned()).or_default();
     let reading = super::deliver::observe(pr, policy_blocking)?;
     if reading.settled {
@@ -957,7 +1032,13 @@ fn advance(
             Some(pr),
             "already settled on the forge — carrying it no further",
         );
-        return Ok(true);
+        // Deliberately not `Merged`: this arm is reached both when a human
+        // merged it first and when the merge below succeeded but the pass
+        // after it did not, and only one of those is this loop's merge to
+        // report. Closing on it would credit the loop with a closure it did
+        // not make, and the human who merged is the one who knows whether the
+        // issue is finished.
+        return Ok(Settlement::Otherwise);
     }
     // Said out loud every time. A loop that merges past a check the repository
     // marks required, without naming which one and on what grounds, is
@@ -1019,7 +1100,7 @@ fn advance(
             tally.merged += 1;
             durable.update_stats(|s| s.prs_merged += 1);
             audit::record(durable, Audit::PrMerged, Some(pr), "merged");
-            Ok(true)
+            Ok(Settlement::Merged)
         }
         Action::Escalate { reason } => {
             tally.escalated += 1;
@@ -1030,7 +1111,7 @@ fn advance(
                 Some(pr),
                 &format!("handed to a human: {reason:?}"),
             );
-            Ok(true)
+            Ok(Settlement::Otherwise)
         }
         Action::MarkReady => {
             super::deliver::mark_ready(pr)?;
@@ -1040,7 +1121,7 @@ fn advance(
                 Some(pr),
                 "ci is green — taken out of draft",
             );
-            Ok(false)
+            Ok(Settlement::Pending)
         }
         Action::PushFix => {
             // A red that the base already explains is not this pull request's
@@ -1067,7 +1148,7 @@ fn advance(
                             "red against a base that has since gone green — merged the base in for a \
                              fresh verdict before treating it as ours",
                         );
-                        return Ok(false);
+                        return Ok(Settlement::Pending);
                     }
                     Err(error) => audit::record(
                         durable,
@@ -1104,7 +1185,7 @@ fn advance(
                 Some(pr),
                 "needs a fix, which this build does not author — leaving it for a human",
             );
-            Ok(true)
+            Ok(Settlement::Otherwise)
         }
         Action::Rebase => {
             entry.rebases += 1;
@@ -1115,9 +1196,9 @@ fn advance(
                 Some(pr),
                 "needs a rebase, which this build does not perform — leaving it",
             );
-            Ok(true)
+            Ok(Settlement::Otherwise)
         }
-        Action::Wait => Ok(false),
+        Action::Wait => Ok(Settlement::Pending),
     }
 }
 
@@ -1245,11 +1326,30 @@ fn next_claimable(
 /// stopping.
 fn observe(
     root: &std::path::Path,
+    durable: &Durable,
     provider: &crate::issue_provider::GhIssueProvider,
     base: &str,
     max_issues: u32,
     opened: u32,
 ) -> LoopObservation {
+    // Asked first, and before anything that costs a network call: a parked
+    // loop must not spend the forge's rate limit finding out about a base it
+    // is not going to act on. Re-read every poll and never cached — see
+    // [`super::stop::parked`] for why a latch here would be the thing that
+    // stops the loop resuming.
+    if super::stop::parked(durable) {
+        return LoopObservation {
+            grant_valid: true,
+            stop_requested: true,
+            budget_exhausted: false,
+            queue_depth: max_issues.saturating_sub(opened),
+            base_broken: false,
+            base_breakage_filed: false,
+            base_breakage_issue: None,
+            base_fix_contention: Contention::default(),
+        };
+    }
+
     // The base is read on every poll rather than cached, because "somebody
     // repaired main" is exactly the event this loop must notice without being
     // told. A latch here would be the thing that stops it self-resuming.
@@ -1276,6 +1376,14 @@ fn observe(
         .map(|key| super::contention::for_base_fix(root, key))
         .unwrap_or_default();
 
+    // `grant_valid` and `budget_exhausted` are declarations, not observations,
+    // so `BlockReason::GrantRevoked` and `BlockReason::BudgetSpent` are
+    // unreachable from here. Neither has anything to read: this build has no
+    // `[driver]` grant to validate, and `--spend-limit` is a per-turn ceiling
+    // on the child `stella run` rather than a ledger for the run as a whole
+    // (#4353). Producing them means building those two things first, which is
+    // why they are a named gap here and not two bare literals a reader takes
+    // for answers.
     LoopObservation {
         grant_valid: true,
         stop_requested: false,
@@ -1296,8 +1404,52 @@ fn runtime() -> tokio::runtime::Runtime {
         .expect("a current-thread runtime is always constructible")
 }
 
+/// Wait, in slices, so a caught signal is honoured at the next slice.
+///
+/// The loop spends nearly all of its wall clock in here — a poll interval is
+/// forty-five seconds by default — so sleeping it out in one call would leave
+/// a Ctrl-C looking ignored for most of a minute, which is indistinguishable
+/// from one that was.
 fn sleep(secs: u64) {
-    std::thread::sleep(std::time::Duration::from_secs(secs));
+    const SLICE: std::time::Duration = std::time::Duration::from_millis(250);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    loop {
+        if super::stop::caught().is_some() {
+            return;
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        std::thread::sleep(remaining.min(SLICE));
+    }
+}
+
+/// End the run because the operating system said so, with the record that a
+/// killed process could never write (#4361).
+///
+/// Returns `Err` so `main` reports the shell-conventional `128 + signum` —
+/// `stella self-driving drive` cut short by SIGTERM must be distinguishable
+/// from one that finished, the same contract every other door honours
+/// ([`crate::signals`]).
+fn stopped_by_signal(
+    durable: &Durable,
+    tally: &Tally,
+    signal: crate::signals::Interrupt,
+) -> Result<(), String> {
+    let reason = signal.reason();
+    audit::record(
+        durable,
+        Audit::SessionStopped,
+        None,
+        &format!(
+            "{reason} by a signal — {} opened, {} merged, {} escalated. Every claim this run \
+             held is released.",
+            tally.opened, tally.merged, tally.escalated
+        ),
+    );
+    crate::signals::note_interrupt(signal);
+    Err(reason.to_owned())
 }
 
 fn report(durable: &Durable, tally: &Tally) -> Result<(), String> {

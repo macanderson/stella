@@ -1043,10 +1043,14 @@ fn skill_usage_records_per_execution_version_rows() {
     //       promised, not only what became of it — nullable with no backfill,
     //       because NULL (no contract recorded) and a stored `read_only` are
     //       different facts and a default would invent the second. v30
-    //       `agent_uses.kind` (#3822): which of the log's two writers minted
-    //       the row's `agent` name, so an installed definition's repeated
-    //       invocations stop reading like a pile of one-off delegations.
-    assert_eq!(SCHEMA_VERSION, 30);
+    //       `step_receipt.stall_seconds_requested` (#3621): the number the
+    //       stall rung decides on, which nothing persisted — nullable for the
+    //       same reason, since NULL is "not classified" and 0 is "looked and
+    //       found none". v31 `agent_uses.kind` (#3822): which of the log's two
+    //       writers minted the row's `agent` name, so an installed
+    //       definition's repeated invocations stop reading like a pile of
+    //       one-off delegations.
+    assert_eq!(SCHEMA_VERSION, 31);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
