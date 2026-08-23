@@ -72,6 +72,21 @@
 //! MCP and custom tool — runs alone in its own dispatch group, which is
 //! precisely when a before/after snapshot means what it says.
 //!
+//! # What the tree cannot see, the call reports itself
+//!
+//! A snapshot is git's reading, and git does not read a gitignored path or a
+//! workspace with no journal bound. A `write_file` into `.stella/agents/…`
+//! under a `/.stella/*` ignore rule measured nothing, so its row rendered with
+//! no diff and no line count — the exact shape of a call that changed nothing.
+//! `write_file` and `edit_file` therefore carry their **own reading**
+//! ([`crate::own_change`]): a diff over the bytes they read and the bytes they
+//! wrote, which is a measurement of what landed and not the argument-derived
+//! guess the reasons above rule out. The registry hands it to
+//! [`CallMeasure::measure_and_publish`] beside the snapshot, and the host
+//! publishes it for every path the snapshot did not cover. Where both saw the
+//! path the snapshot's reading is the one published, so the
+//! one-change-one-event property above is kept.
+//!
 //! # This is observability, never evidence
 //!
 //! Unchanged from `FileChange`'s standing contract, and it has teeth at this
@@ -100,11 +115,17 @@ pub trait CallMeasure: Send + Sync {
     /// an implementation that reported a cumulative delta would make every
     /// counter downstream sum a prefix of itself once per call.
     ///
+    /// `own` is the call's own reading of what it changed
+    /// ([`crate::own_change`]), empty for a tool that carries none. An
+    /// implementation publishes each entry whose path the tree reading did
+    /// not report — never one it did, or the Files tab counts that change
+    /// twice.
+    ///
     /// Best-effort and infallible by signature, like every other
     /// turn-boundary write: a call whose bytes are already on disk is not made
     /// less done by an unmeasurable tree, and a measurement failure must never
     /// become a tool failure.
-    fn measure_and_publish(&self);
+    fn measure_and_publish(&self, own: &[crate::own_change::OwnChange]);
 }
 
 /// The registry's slot for a host-supplied [`CallMeasure`].
@@ -143,7 +164,7 @@ mod tests {
     fn attaching_twice_leaves_only_the_second_measurer() {
         struct Counting(Arc<AtomicUsize>);
         impl CallMeasure for Counting {
-            fn measure_and_publish(&self) {
+            fn measure_and_publish(&self, _own: &[crate::own_change::OwnChange]) {
                 self.0.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -156,7 +177,7 @@ mod tests {
         *slot.write().unwrap() = Some(Arc::new(Counting(second.clone())));
 
         let measurer = slot.read().unwrap().clone().expect("attached");
-        measurer.measure_and_publish();
+        measurer.measure_and_publish(&[]);
 
         assert_eq!(
             first.load(Ordering::Relaxed),

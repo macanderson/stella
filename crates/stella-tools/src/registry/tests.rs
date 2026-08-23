@@ -31,10 +31,14 @@ async fn only_a_successful_solo_mutating_call_is_measured_on_its_own() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Default)]
-    struct Counting(AtomicUsize);
+    struct Counting(
+        AtomicUsize,
+        std::sync::Mutex<Vec<crate::own_change::OwnChange>>,
+    );
     impl CallMeasure for Counting {
-        fn measure_and_publish(&self) {
+        fn measure_and_publish(&self, own: &[crate::own_change::OwnChange]) {
             self.0.fetch_add(1, Ordering::Relaxed);
+            self.1.lock().unwrap().extend_from_slice(own);
         }
     }
 
@@ -79,6 +83,16 @@ async fn only_a_successful_solo_mutating_call_is_measured_on_its_own() {
         1,
         "a successful write measures the change it made"
     );
+    {
+        // The write's own reading reaches the measurer beside the tree
+        // reading, so a path git cannot see still gets its diff.
+        let own = counter.1.lock().unwrap();
+        assert_eq!(own.len(), 1, "one written file, one own reading");
+        assert_eq!(own[0].path, "a.txt");
+        assert_eq!(own[0].kind, crate::own_change::OwnChangeKind::Created);
+        assert_eq!((own[0].added, own[0].removed), (1, 0));
+        assert!(own[0].diff.contains("+hello"), "{}", own[0].diff);
+    }
 
     reg.execute("read_file", &serde_json::json!({"path": "a.txt"}))
         .await;
@@ -113,7 +127,7 @@ async fn detaching_the_event_stream_drops_the_call_measurer_too() {
 
     struct Noop;
     impl CallMeasure for Noop {
-        fn measure_and_publish(&self) {}
+        fn measure_and_publish(&self, _own: &[crate::own_change::OwnChange]) {}
     }
 
     let (_root, reg) = bare_registry();
@@ -129,6 +143,58 @@ async fn detaching_the_event_stream_drops_the_call_measurer_too() {
         "and gone when the turn's stream closes — a live one would hold the \
          channel open after the renderer was meant to finish"
     );
+}
+
+/// **Witness.** A registry with an event stream and no measurer still
+/// publishes a file tool's own reading as a `FileChange`, diff included.
+///
+/// A host that never binds a journal had no `FileChange` producer at all, so
+/// every `write_file` and `edit_file` it rendered was diffless. Fails before
+/// the own reading existed: nothing was sent on the stream.
+#[tokio::test]
+async fn a_file_tool_s_own_reading_is_published_without_a_measurer() {
+    use stella_protocol::{AgentEvent, FileChangeKind};
+
+    let (_root, reg) = bare_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    reg.attach_events(stella_core::EventSender::new(tx));
+
+    let write = serde_json::json!({ "path": "notes.md", "content": "one\ntwo\n" });
+    assert!(!reg.execute("write_file", &write).await.is_error());
+    let Ok(AgentEvent::FileChange {
+        path,
+        kind,
+        added,
+        removed,
+        diff,
+    }) = rx.try_recv()
+    else {
+        panic!("the write's own reading must reach the stream");
+    };
+    assert_eq!(path, "notes.md");
+    assert_eq!(kind, FileChangeKind::Created);
+    assert_eq!((added, removed), (2, 0));
+    assert!(diff.as_deref().is_some_and(|d| d.contains("+two")));
+
+    // An edit on the file the session just authored reads as a modification
+    // of it, with both sides of the change on the wire.
+    let edit =
+        serde_json::json!({ "path": "notes.md", "old_string": "two", "new_string": "three" });
+    assert!(!reg.execute("edit_file", &edit).await.is_error());
+    let Ok(AgentEvent::FileChange {
+        kind,
+        added,
+        removed,
+        diff,
+        ..
+    }) = rx.try_recv()
+    else {
+        panic!("the edit's own reading must reach the stream");
+    };
+    assert_eq!(kind, FileChangeKind::Modified);
+    assert_eq!((added, removed), (1, 1));
+    let diff = diff.expect("an edit carries its diff");
+    assert!(diff.contains("-two\n+three\n"), "{diff}");
 }
 
 #[tokio::test]

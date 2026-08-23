@@ -64,6 +64,7 @@ use stella_core::TurnOutcome;
 use stella_protocol::event::{AgentEvent, FileChangeKind};
 use stella_store::work_journal::{JournalChange, JournalChangeKind};
 use stella_store::{FileTouchRow, Store};
+use stella_tools::own_change::{OwnChange, OwnChangeKind};
 
 use crate::config::Config;
 use crate::durability::SessionDurability;
@@ -109,8 +110,65 @@ impl stella_tools::call_measure::CallMeasure for TurnCallMeasure {
     /// this reading and the boundary's partition the turn between them. That
     /// is the property the counters downstream depend on, and it is why this
     /// calls the boundary's own function rather than a per-call variant of it.
-    fn measure_and_publish(&self) {
-        emit_measured_tree_changes(&self.durability, &self.tx, self.execution.as_ref());
+    fn measure_and_publish(&self, own: &[OwnChange]) {
+        let measured =
+            emit_measured_tree_changes(&self.durability, &self.tx, self.execution.as_ref());
+        emit_own_changes(&self.tx, self.execution.as_ref(), own, &measured);
+    }
+}
+
+/// Publish a call's own reading for every path the tree reading left out.
+///
+/// The tree reading is git's, and git does not see a gitignored path or a
+/// workspace with no journal bound — which is how a `write_file` into
+/// `.stella/agents/…` rendered as `wrote 9214 bytes` with no diff under it.
+/// The tool's own diff (`stella_tools::own_change`) fills exactly that gap, and
+/// only that gap: a path the snapshot reported keeps the snapshot's event, so
+/// the Files tab still counts each change once.
+///
+/// Both projections are written, as for a measured change: the event the
+/// transcript folds, and the `files_touched` row the reflection loop reads.
+fn emit_own_changes(
+    tx: &EventSender,
+    execution: Option<&(Arc<Store>, i64)>,
+    own: &[OwnChange],
+    measured: &[String],
+) {
+    let unmeasured: Vec<&OwnChange> = own
+        .iter()
+        .filter(|change| !measured.contains(&change.path))
+        .collect();
+    if unmeasured.is_empty() {
+        return;
+    }
+    if let Some((store, execution_id)) = execution {
+        let rows: Vec<FileTouchRow> = unmeasured.iter().map(|c| own_touch_row(c)).collect();
+        let _ = store.record_files_touched(*execution_id, &rows);
+    }
+    for change in unmeasured {
+        let _ = tx.send(stella_tools::own_change::file_change(change.clone()));
+    }
+}
+
+/// The durable row for a change the call itself read, in the same CRUD
+/// alphabet as [`file_touch_row`] and with its provenance named.
+fn own_touch_row(change: &OwnChange) -> FileTouchRow {
+    FileTouchRow {
+        path: change.path.clone(),
+        ops: match change.kind {
+            OwnChangeKind::Created => "C",
+            OwnChangeKind::Modified => "U",
+        }
+        .to_string(),
+        lines_added: u64::from(change.added),
+        lines_removed: u64::from(change.removed),
+        events_json: serde_json::json!([{
+            "event": "measured",
+            "reason": "the call's own before/after reading",
+            "lines_added": change.added,
+            "lines_removed": change.removed,
+        }])
+        .to_string(),
     }
 }
 
@@ -240,7 +298,9 @@ pub(crate) fn emit_shared_tree_changes(
     tx: &EventSender,
     execution: Option<&(Arc<Store>, i64)>,
 ) {
-    emit_measured_tree_changes(&cfg.durability, tx, execution);
+    // The boundary sweep has no call's own reading to reconcile against, so
+    // the published paths are not needed here.
+    let _ = emit_measured_tree_changes(&cfg.durability, tx, execution);
 }
 
 /// [`emit_shared_tree_changes`] over the durability handle alone.
@@ -251,14 +311,18 @@ pub(crate) fn emit_shared_tree_changes(
 /// then run the *same* function, which is the load-bearing half of the
 /// no-double-counting argument in `stella_tools::call_measure`: there is one
 /// measurement, called more or less often, not two that have to agree.
+///
+/// Returns the paths it published, so a per-call reading the tool supplied
+/// itself ([`emit_own_changes`]) can be published for the rest and no path
+/// gets two events.
 pub(crate) fn emit_measured_tree_changes(
     durability: &SessionDurability,
     tx: &EventSender,
     execution: Option<&(Arc<Store>, i64)>,
-) {
+) -> Vec<String> {
     let measured = durability.snapshot_worktree();
     if measured.is_empty() {
-        return;
+        return Vec::new();
     }
     if let Some((store, execution_id)) = execution {
         let rows: Vec<FileTouchRow> = measured.iter().map(file_touch_row).collect();
@@ -267,9 +331,11 @@ pub(crate) fn emit_measured_tree_changes(
         // fail a turn whose bytes are already on disk.
         let _ = store.record_files_touched(*execution_id, &rows);
     }
+    let paths = measured.iter().map(|c| c.path.clone()).collect();
     for change in measured {
         let _ = tx.send(file_change(change));
     }
+    paths
 }
 
 /// One measured delta as a durable row.
@@ -452,6 +518,59 @@ mod tests {
              exactly how the deck's Files tab stayed empty for every session. \
              Use `turn_files::close_turn_boundary_raw`, which pays both."
         );
+    }
+
+    /// **Witness.** A path the tree reading cannot see still reaches the
+    /// stream with its diff, from the call's own reading.
+    ///
+    /// An unbound durability is the no-journal case exactly, and it is also
+    /// what a gitignored path looks like from the snapshot's side: nothing
+    /// measured. Before this, `measure_and_publish` sent nothing here and the
+    /// row rendered `wrote N bytes` with no diff and no line count.
+    #[test]
+    fn a_call_s_own_reading_is_published_where_the_tree_saw_nothing() {
+        use stella_tools::call_measure::CallMeasure as _;
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let measure =
+            TurnCallMeasure::new(SessionDurability::default(), EventSender::new(tx), None);
+        let own = stella_tools::own_change::own_change(
+            ".stella/agents/kfc/spec-tasks.md",
+            None,
+            "# tasks\n- one\n",
+        );
+        measure.measure_and_publish(std::slice::from_ref(&own));
+
+        let Ok(AgentEvent::FileChange {
+            path,
+            kind,
+            added,
+            removed,
+            diff,
+        }) = rx.try_recv()
+        else {
+            panic!("the call's own reading must be published when nothing was measured");
+        };
+        assert_eq!(path, ".stella/agents/kfc/spec-tasks.md");
+        assert_eq!(kind, FileChangeKind::Created);
+        assert_eq!((added, removed), (2, 0));
+        assert!(
+            diff.as_deref().is_some_and(|d| d.contains("+- one")),
+            "the diff rides the event: {diff:?}"
+        );
+        assert!(rx.try_recv().is_err(), "one change, one event");
+    }
+
+    /// The durable row a self-read change writes uses the CRUD letters both
+    /// reader queries grep for, like a measured one.
+    #[test]
+    fn a_self_read_change_writes_a_crud_lettered_row() {
+        let created = stella_tools::own_change::own_change("a.md", None, "x\n");
+        let modified = stella_tools::own_change::own_change("b.md", Some("x\n"), "y\n");
+        assert_eq!(own_touch_row(&created).ops, "C");
+        let row = own_touch_row(&modified);
+        assert_eq!(row.ops, "U");
+        assert_eq!((row.lines_added, row.lines_removed), (1, 1));
     }
 
     fn measured(kind: JournalChangeKind) -> JournalChange {

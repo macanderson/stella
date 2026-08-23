@@ -52,6 +52,7 @@ mod global;
 mod journal;
 mod live;
 mod self_driving;
+mod self_driving_sessions;
 mod sent_context;
 mod sessions;
 mod transcript_view;
@@ -75,6 +76,10 @@ const MARK_SVG: &str = include_str!("assets/mark.svg");
 const WORDMARK_SVG: &str = include_str!("assets/wordmark.svg");
 /// The stella wordmark, served for the header lockup's light-theme cut.
 const WORDMARK_LIGHT_SVG: &str = include_str!("assets/wordmark-light.svg");
+/// The self-driving agents view — its own script so the charts and motion
+/// are reviewable apart from the page, loaded by `index.html` from `/assets/`
+/// (same origin, which `script-src 'self'` already permits).
+const SELF_DRIVING_JS: &str = include_str!("assets/self_driving.js");
 
 /// How long a peer has to deliver a complete request head.
 ///
@@ -237,6 +242,13 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                 status: "200 OK",
                 content_type: "image/svg+xml",
                 body: WORDMARK_LIGHT_SVG.as_bytes().to_vec(),
+            };
+        }
+        "/assets/self_driving.js" => {
+            return Response {
+                status: "200 OK",
+                content_type: "text/javascript; charset=utf-8",
+                body: SELF_DRIVING_JS.as_bytes().to_vec(),
             };
         }
         // The rendered transcript (`?id=<execution id>`). Unlike every route
@@ -438,6 +450,14 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         "/api/self-driving" => Ok(self_driving::runs(root)),
         "/api/self-driving-run" => Ok(query_param(query, "id")
             .map(|id| self_driving::run_detail(&id))
+            .unwrap_or_else(|| serde_json::json!({}))),
+        // The issue-level loop (`stella self-driving drive`): every session on
+        // this machine folded from its journal, the queue it last ranked, the
+        // claims live in `fleet.db` right now, and the learning recorded
+        // beside the work. Also machine-scoped, for the same reason.
+        "/api/self-driving-sessions" => Ok(self_driving_sessions::sessions(root)),
+        "/api/self-driving-session" => Ok(query_param(query, "id")
+            .map(|id| self_driving_sessions::session_detail(&id))
             .unwrap_or_else(|| serde_json::json!({}))),
         _ => return Response::error("404 Not Found", "no such route"),
     };
