@@ -13,7 +13,7 @@
 //! This answers that one question and nothing else:
 //!
 //! - **No creation.** The path is resolved by looking, never by
-//!   [`crate::private::ensure_workspace_state_dir`], which would make a
+//!   `private::ensure_workspace_state_dir`, which would make a
 //!   directory appear as a side effect of a count. Deliberately *not*
 //!   [`crate::existing_workspace_private_sqlite_path`], which is the right
 //!   guard for a caller that is about to open the store and the wrong one
@@ -21,7 +21,7 @@
 //! - **No migration**, of the schema or of the legacy layout. A store still
 //!   sitting at the pre-`private/` path is read where it lies; moving it is
 //!   the session's job, on a path that can report a failure.
-//! - **Immutable at the SQLite level** ([`crate::open_private_sqlite_read_only`]),
+//! - **Immutable at the SQLite level** (`open_private_sqlite_read_only`),
 //!   so a count cannot create a journal, checkpoint a WAL, or leave a lock
 //!   behind — and it inherits that path's owner-and-regular-file validation.
 //!   The documented cost is that an uncheckpointed `-wal`'s pages are
