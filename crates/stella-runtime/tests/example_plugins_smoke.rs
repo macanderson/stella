@@ -262,7 +262,7 @@ fn runnable(examples: &Path, language: &str) -> Result<(Vec<String>, PluginManif
         .ok_or("no [runtime]")?
         .argv
         .iter()
-        .map(|arg| arg.replace("${plugin_dir}", &dir))
+        .map(|arg| stella_plugin::expand_plugin_dir(arg, Path::new(&dir)))
         .collect();
     let program = argv.first().ok_or("empty argv")?;
 

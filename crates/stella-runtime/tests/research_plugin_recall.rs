@@ -76,7 +76,7 @@ fn argv(manifest: &PluginManifest) -> Vec<String> {
         .expect("a plugin the host spawns declares [runtime]")
         .argv
         .iter()
-        .map(|arg| arg.replace("${plugin_dir}", &dir))
+        .map(|arg| stella_plugin::expand_plugin_dir(arg, Path::new(&dir)))
         .collect()
 }
 
