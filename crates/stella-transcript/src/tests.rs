@@ -13,6 +13,10 @@ mod json_reindent;
 // The turn frame, and the append-only property the plain surface streams on.
 mod frame;
 
+// The width contract, and the generator that proves it over content nobody
+// wrote by hand.
+mod width;
+
 use crate::digest::{self, format_cost, format_duration, format_tokens};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::{Command, Cursor, FoldState, Zoom, apply};
