@@ -334,6 +334,66 @@ fn generic_coding_words_alone_do_not_select_a_skill() {
     );
 }
 
+/// **Witness (#4384).** English function words shared with a skill's wording
+/// no longer select it.
+///
+/// Fails on base, where `they`, `its`, `itself`, `such`, `user` and `agent`
+/// were in neither stopword list and so scored at full strength — two of them
+/// clearing the corroboration floor on their own. The three skills below are
+/// the three session `ses-1787465453163-60967` recorded, each reconstructed
+/// from the terms the `skill_usage` row gave as its reason; the prompt is a
+/// TUI keybinding task, which none of them is about.
+///
+/// The second half is what keeps it from being a blunt fix: the skill whose
+/// subject the prompt half-named (`source`) must still be reachable by a
+/// prompt that names the rest of it.
+#[test]
+fn english_function_words_alone_do_not_select_a_skill() {
+    let skills = vec![
+        skill(
+            "find-skills",
+            "help the user find the agent skills they can use",
+            &[],
+            SkillOrigin::Workspace,
+        ),
+        skill(
+            "ultra-audit",
+            "score a codebase by its number of defects, however large it is itself",
+            &[],
+            SkillOrigin::Workspace,
+        ),
+        skill(
+            "source-command-update-docs",
+            "regenerate the docs for such a source command",
+            &[],
+            SkillOrigin::Workspace,
+        ),
+    ];
+    let prompt = "fix the source file picker so that when issues are selected they are \
+                  sent to the prompt itself, such that the user can see what its state is";
+
+    let selected = select_skills(&skills, prompt, &[], &SelectionConfig::default());
+    assert!(
+        selected.is_empty(),
+        "'they', 'its', 'itself', 'such', 'user' and 'agent' carry no information \
+         about this task: {selected:?}"
+    );
+
+    // …and the skill the prompt half-named is still reachable.
+    let selected = select_skills(
+        &skills,
+        "regenerate the source command docs",
+        &[],
+        &SelectionConfig::default(),
+    );
+    assert_eq!(
+        selected.len(),
+        1,
+        "a prompt naming the skill's actual subject must still select it: {selected:?}"
+    );
+    assert_eq!(selected[0].skill.name, "source-command-update-docs");
+}
+
 /// **Witness (#3298).** A non-Latin prompt whose wording matches a skill's
 /// description selects that skill.
 ///
