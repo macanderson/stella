@@ -25,6 +25,7 @@ use crate::search::semantic::{
 use crate::search::{codegraph, scan};
 
 mod budget;
+mod ceiling;
 mod refresh;
 mod shims;
 mod visibility;
@@ -661,15 +662,6 @@ async fn a_misconfigured_embedder_note_joins_the_cut_list_note_instead_of_replac
         note.contains("misconfigured"),
         "the misconfiguration must still be said: {note}"
     );
-}
-
-/// The ranking's memory guard is disclosed when it fills — the promise
-/// `RANK_CEILING`'s doc makes ("reported, never silent").
-#[test]
-fn a_full_candidate_list_earns_a_ceiling_note() {
-    assert!(super::ceiling_note(super::RANK_CEILING, 0).is_some());
-    assert!(super::ceiling_note(0, super::RANK_CEILING).is_some());
-    assert_eq!(super::ceiling_note(5, 7), None);
 }
 
 /// Two caveats must both survive into the one note line.
