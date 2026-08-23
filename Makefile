@@ -395,6 +395,12 @@ doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included 
 # Covered by scripts/test-shellcheck-guard.sh (`make shellcheck-guard-test`),
 # which pins both halves: the notice on an absent binary, and that a present
 # one is still invoked with its argv intact and its findings still fatal.
+#
+# The argument list on the last line is the only one in the tree. ci.yml's gate
+# job and CONTRIBUTING.md's fence both call this target rather than restating
+# it: the two lists diverged the moment there were two, and cost a red CI step
+# on every PR plus two repair PRs to notice (#3353, #3372, #3375). The same
+# test suite pins that ci.yml still calls the target.
 .PHONY: shellcheck
 shellcheck: ## Lint install.sh, scripts/*.sh, and .githooks/* (#916)
 	@command -v shellcheck >/dev/null 2>&1 || { \

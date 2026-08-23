@@ -72,7 +72,7 @@ A red gate is an automatic "not yet":
 ./scripts/check-cargo-install-pins.sh
 ./scripts/check-license-allowlist-parity.sh
 ./scripts/check-repro-wiring.sh
-shellcheck install.sh scripts/*.sh scripts/lib/*.sh .githooks/*
+make shellcheck
 ./scripts/check-invariants.sh
 python3 ./scripts/check-doc-links.py check
 ./scripts/check-command-docs.sh

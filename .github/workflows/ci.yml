@@ -365,11 +365,16 @@ jobs:
       # them fails open (#916).
       - name: shellcheck
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
-        # scripts/lib/*.sh must be inputs too: the help-header helper is
-        # sourced by most scripts (#3353), and shellcheck only follows a
-        # sourced file it was handed — otherwise every sourcing script
-        # trips SC1091. Keep this glob list matching the Makefile target.
-        run: shellcheck install.sh scripts/*.sh scripts/lib/*.sh .githooks/*
+        # The file list lives in the Makefile target and nowhere else. It used
+        # to be spelled out here as well, with a comment asking the next author
+        # to keep the two copies matching — and they diverged anyway: #3353
+        # taught the Makefile the `scripts/lib/*.sh` glob (shellcheck only
+        # follows a sourced file it was handed, so without it every script
+        # sourcing the help-header helper trips SC1091), this copy kept the old
+        # list, and the step was red on every PR until #3372 repaired it.
+        # `make` is available on ubuntu-latest and the target shells out to
+        # shellcheck directly, so this step stays toolchain-free (#3375).
+        run: make shellcheck
 
       # NOTE: despite the action's name, this job does not build on `stable`.
       # rust-toolchain.toml pins the repo to a concrete toolchain (1.97.0), and

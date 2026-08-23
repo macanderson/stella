@@ -25,7 +25,8 @@
 #   1. Every step in `GATE_STEPS` is named in AGENTS.md's gate block.
 #   2. Every step is named in CONTRIBUTING.md's gate fence, via the alias table
 #      below (that fence lists raw commands, on purpose — its reader wants to
-#      run them without make).
+#      run them without make; `shellcheck` is the one exception, and the alias
+#      table says why).
 #   3. CONTRIBUTING.md's fence does not run a `check-*.sh` that is no longer a
 #      gate step — which is how a removed guard leaves a ghost behind. Only
 #      that fence is checked this way: it is a delimited list of commands,
@@ -117,7 +118,11 @@ fi
 # that two spellings mean the same step.
 contributing_alias() {
   case "$1" in
-  shellcheck) echo 'shellcheck ' ;;
+  # The one step the fence spells as a make target. Its argument list — which
+  # files get linted — is the Makefile recipe's and nowhere else's, after a
+  # hand-copied second list in ci.yml and a third here drifted from it (#3375).
+  # A raw command in this fence would be a fourth.
+  shellcheck) echo 'make shellcheck' ;;
   # Eight Python guards, so the `.sh` default below does not fit them.
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
