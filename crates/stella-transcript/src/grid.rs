@@ -32,14 +32,14 @@
 //! that a digest is a summary rather than cut content, applied here):
 //!
 //! - **A digest row elides at a named boundary.** A turn name, a prose head, a
-//!   note summary and a step's object are cut by [`digest::elide`] or
-//!   [`head_cells`] against what the row has left, so the rails and chips they
-//!   sit beside stay where the constants put them.
+//!   note summary and a step's object are cut by [`digest::elide`] or by this
+//!   module's own `head_cells` against what the row has left, so the rails and
+//!   chips they sit beside stay where the constants put them.
 //! - **A framed row reserves before it fills.** Every `─` fill is
 //!   `width - used` with no floor: a fill that floors at one cell pushes a row
 //!   that exactly fits one cell past the edge (#3769).
-//! - **A content row is cut by [`clamp_line`].** A result body line, a diff
-//!   row or an argument value is as wide as the tool made it, and there is no
+//! - **A content row is cut by `clamp_line`.** A result body line, a diff row
+//!   or an argument value is as wide as the tool made it, and there is no
 //!   named boundary inside it to prefer. It is cut at a cell boundary, last,
 //!   after every digest row has already fitted itself.
 

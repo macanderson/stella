@@ -29,7 +29,7 @@ pub(crate) const SCHEMA_VERSION: i64 = 11;
 ///
 /// The node's two unwritten columns stay because dropping a column in SQLite
 /// rewrites the table, and a point-in-time node reader would want them where
-/// they are. Nothing selects them: [`crate::store::node::NodeRow`] deliberately
+/// they are. Nothing selects them: [`crate::NodeRow`] deliberately
 /// does not project a column no writer fills, so no consumer can read the NULL
 /// as an absence of valid time rather than an absence of node versioning
 /// (#3136).
