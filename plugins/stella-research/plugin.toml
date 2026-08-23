@@ -68,26 +68,34 @@ max_calls = 1
 # (#3388) — the join key of the A/B comparison §7 requires before any built-in
 # is deleted: `--pipeline research-v1` against `--pipeline classic`.
 #
-# The order is the built-in classic one, transcribed from
-# `stage_rank` in `crates/stella-pipeline/src/replay.rs`. Read the conditions
-# exactly as written, because the honest half is what is missing from them:
+# The order is the built-in classic one, transcribed from `stage_rank` in
+# `crates/stella-pipeline/src/replay.rs` — a crate deleted in #3865, so the
+# order is now this file's own and there is no built-in left to mirror.
 #
-#   - `research` carries its real gate. The built-in stage returns from its
-#     first line with no events and no spend when triage named no questions
-#     (`Pipeline::research_stage`), and `questions > 0` is that branch exactly.
-#   - **Every other stage is declared unconditional, and the built-in's own
-#     gates are not.** The conversational fast path returns before plan,
-#     execute, witness and verify; the authored-witness decision is a
-#     five-term conjunction. The closed condition grammar has no conjunction —
-#     one signal, one comparison — so those gates cannot be written here at
-#     all, and writing one conjunct would declare a weaker rule as if it were
-#     the rule. The gap is #3538, not a shrug.
+# **Every stage is declared unconditional, and that is a decision rather than
+# an omission (#3547).** `research` used to carry `if = "questions > 0"`,
+# transcribed from the built-in stage's own early return when triage named no
+# questions. Two things ended it:
 #
-# What that costs today: nothing, and the reason is worth stating rather than
-# assuming. `WrapperDispatch::open_round` uses this list to decide **where this
-# plugin is asked to contribute** — it does not run stages; the host runs the
-# turn. A host that later drives its stage order *from* a resolved
-# `StageProgram` must close #3538 first, or a chat turn would plan.
+#   - The rule it transcribed is gone with the crate that enforced it.
+#   - No shipping host runs a triage stage, so `Signal::Questions` is
+#     published as `0` unconditionally
+#     (`crates/stella-cli/src/wrapper_plugin.rs::pre_turn_signals`). A stage
+#     gated on a triage signal is therefore a stage that never runs — the
+#     plugin was installed, selected, dispatched, and contributed nothing,
+#     correctly and uselessly. `doc:wrapper-socket` §5 states the rule for
+#     every manifest author, not just this one.
+#
+# The other built-in gates could not be written here anyway: the conversational
+# fast path returns before plan, execute, witness and verify, and the
+# authored-witness decision is a five-term conjunction, while the closed
+# condition grammar has one signal and one comparison. Writing one conjunct
+# would declare a weaker rule as if it were the rule. That gap is #3538.
+#
+# What the list costs today: nothing. `WrapperDispatch::open_round` uses it to
+# decide **where this plugin is asked to contribute** — it does not run stages;
+# the host runs the turn. A host that later drives its stage order *from* a
+# resolved `StageProgram` must close #3538 first, or a chat turn would plan.
 [wrapper]
 id = "research-v1"
 
@@ -99,7 +107,6 @@ name = "recall"
 
 [[wrapper.stages]]
 name = "research"
-if = "questions > 0"
 
 [[wrapper.stages]]
 name = "plan"

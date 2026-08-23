@@ -390,9 +390,11 @@ fn the_shipped_manifest_declares_before_turn_and_nothing_stronger() {
         .expect("the stage this plugin exists for");
     assert_eq!(
         research.condition.as_deref(),
-        Some("questions > 0"),
-        "the built-in stage skips byte-for-byte when triage named no questions, \
-         and this is that branch exactly"
+        None,
+        "the stage this plugin exists for is unconditional (#3547): it used to \
+         carry `questions > 0`, transcribed from a built-in whose crate is \
+         deleted, and no shipping host runs a triage stage — so the condition \
+         made the stage one the plugin was never asked to contribute at"
     );
     assert!(
         manifest.subloop.is_none() && manifest.roles.is_none(),

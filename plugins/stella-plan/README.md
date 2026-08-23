@@ -176,6 +176,7 @@ test. Blessing a vector that carries a `.refusal.txt` sibling is refused.
 | Gap | Issue |
 | --- | --- |
 | No plan plugin can also read recall or research findings under one `--pipeline` selection — `WrapperDispatch::bind` takes exactly one manifest | #3801 |
+| Selecting `--pipeline plan-v1` now buys a planner child turn on every wrapped turn. The `plan` stage carried `if = "plans"` until #3547; no host runs a triage stage, so `plans` was published `false` unconditionally and the plugin was inert end to end — `plan` is the only stage it answers at. Until something publishes a real triage assessment, the selection is the only signal there is | #3547 |
 | No `repo_structure` wire representation, so the planner prompt omits the section the built-in reads | #3562 (item 2) |
 | No `--revise` wire representation, so a rejected plan's revision note cannot reach a re-plan | #3562 (item 3) |
 | The parsed plan rides as prose, not the typed `Vec<PlanStep>` the built-in's per-step engine-turn walk needs | #3562 (item 4) |

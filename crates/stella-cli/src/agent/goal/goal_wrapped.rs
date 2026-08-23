@@ -194,6 +194,12 @@ pub(crate) async fn run_goal_wrapped_turn(
     // pinned before the first one (#3835). Minted by the caller, in the same
     // breath as the wrapper it belongs to.
     candidate: &crate::wrapper_candidate::GrantedCandidate,
+    // One ledger per round, folded from this arc's journal and read by the
+    // caller's reflection (#3976). The wrapped arm folds it exactly as
+    // `run_goal_turn` does, and it covers the rounds this door drove — not the
+    // plugin's own child turns, which ride the host-call channel and are
+    // reported separately by `BoundWrapper::child_spends`.
+    rounds: Option<&mut Vec<crate::memory::TurnFriction>>,
 ) -> Result<(), crate::failure::CliFailure> {
     let turn_start = Instant::now();
     // This is the WRAPPED arm — `run_goal_cmd` calls it only when
@@ -242,7 +248,7 @@ pub(crate) async fn run_goal_wrapped_turn(
         Principal::User,
         registry.hook_bus(),
     );
-    let hook_runner = ShellHookRunner;
+    let hook_runner = HostHookRunner;
     let mut engine = Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
         .with_calibration(calibration);
     if let Some(hooks) = &cfg.hooks {
@@ -424,7 +430,15 @@ pub(crate) async fn run_goal_wrapped_turn(
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
     drop(tx);
-    let persistence_complete = renderer.await.unwrap_or_default().persistence_complete;
+    let rendered = renderer.await.unwrap_or_default();
+    let persistence_complete = rendered.persistence_complete;
+    // The arc's friction, split at each round's own `GoalVerdict` so no round
+    // is credited with another's tools — the same fold `run_goal_turn` does,
+    // at the same point, and for the same reason: this is the first moment the
+    // whole stream is both complete and still owned (#3962, #3976).
+    if let Some(slot) = rounds {
+        *slot = crate::memory::TurnFriction::per_goal_round(&rendered.events);
+    }
 
     let (outcome_label, cost) = match &outcome {
         GoalOutcome::Met { cost_usd, .. } => ("goal_met", *cost_usd),
