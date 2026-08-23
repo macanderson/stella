@@ -89,7 +89,7 @@ One vocabulary across every panel, including plugin-drawn UI:
 | `○` | queued, pending | dim |
 | `◇` | gate (deterministic, merge-blocking) | gold |
 | `✗` | failed, delete | red |
-| `⑂` | drift, plan revision (fallback `↯` on fonts lacking U+2442) | gold_bright |
+| `⌥` | drift, plan revision | gold_bright |
 | `▸` | collapsed, expandable | matches event metal |
 | `●` | one thing happened — the default event head (`edit`, `run`, an expanded `read`) | matches event metal |
 | `↓` | compacted — history replaced by a summary | dim, no rail |
@@ -142,6 +142,51 @@ other common monospace faces:
 
 The 16-colour fallback (§3.5) needs no work here: these carry meaning by shape,
 so a colour-degraded terminal loses nothing.
+
+### 4.2 Every glyph is checked against the brand font
+
+The four rows above were checked against JetBrains Mono's `cmap` before they
+were chosen. The seventeen that shipped before them were not, and doing it
+exhaustively found **eight** characters the brand font does not carry (#4318):
+
+| Codepoint | Glyph | Where it is used | Resolves to (macOS) |
+|---|---|---|---|
+| U+25D0 U+25D1 U+25D2 U+25D3 | `◐ ◑ ◒ ◓` | running, and the whole spinner cycle | Menlo |
+| U+2726 | `✦` | skill | Menlo |
+| U+25A4 | `▤` | graph node: file | Menlo |
+| U+25A2 | `▢` | graph node: type | Menlo |
+| U+21B3 | `↳` | tool class: delegate | Menlo |
+| U+FF0B | `＋` | write | **PingFang SC** |
+
+Menlo is monospace, so those substitutions keep the cell grid on macOS and cost
+a tofu box on a bare Linux terminal running DejaVu Sans Mono or Fira Code. That
+trade is **accepted and written down here** rather than left to be rediscovered;
+it is the same precedent §4.1 cites when it accepts `↳`.
+
+Two rows are not that trade:
+
+- **`⑂` U+2442 OCR FORK is gone.** It resolved to the *proportional* Apple
+  Symbols — the bucket that got U+2317 rejected above — and §4's answer was a
+  stated substitute, `↯` U+21AF, **which the brand font also lacks**. On the one
+  font this document names, the remedy was as absent as the thing it remedied,
+  and nothing in the implementation ever selected between the two. Drift is
+  `⌥` U+2325 OPTION KEY now: native to JetBrains Mono, width `N`, and a line
+  that leaves its course and rejoins it, which is what a plan revision is.
+- **`＋` U+FF0B resolves to a CJK face** whose metrics are unrelated to the cell
+  the layout budgets as fullwidth. Unresolved: moving it means moving the
+  character §4 names and the width contract that follows from it, which is a
+  design decision rather than a coverage fix. It is recorded in the table below
+  so it is visible while it stands.
+
+The coverage table is committed at `crates/stella-tui-theme/src/glyph.rs` and
+walked by `every_glyph_declares_its_brand_font_coverage`, which reads no font —
+a gate that needs a font installed is a gate that skips, and a skipped check
+reports green. Regenerate it with:
+
+```
+uv run --with fonttools --with pyobjc-framework-CoreText \
+    python scripts/gen-glyph-coverage.py
+```
 
 ## 5. Layout
 
@@ -216,11 +261,11 @@ Rule: contracts are **required only for tasks that produce diffs**. Read-only ta
 
 ### 7.2 States
 
-`✓ done`, `◐ running`, `○ queued`, `◇ verify` (gate task, blocks merge), `✗ blocked`, `⑂` drift-inserted.
+`✓ done`, `◐ running`, `○ queued`, `◇ verify` (gate task, blocks merge), `✗ blocked`, `⌥` drift-inserted.
 
 ### 7.3 Plan panel
 
-Collapsed: the breadcrumb strip. Expanded (tab): task list with per-task right-aligned economics (`9k tok`), the running task as a highlighted card showing its contract line, evidence line, and cost line. Drift-inserted tasks render with `⑂` in gold_bright and an `inserted` tag. Footer: `planned 6 · actual 7 · ⑂ 1 drift`, then `drift is recorded, not hidden. it trains your model.`
+Collapsed: the breadcrumb strip. Expanded (tab): task list with per-task right-aligned economics (`9k tok`), the running task as a highlighted card showing its contract line, evidence line, and cost line. Drift-inserted tasks render with `⌥` in gold_bright and an `inserted` tag. Footer: `planned 6 · actual 7 · ⌥ 1 drift`, then `drift is recorded, not hidden. it trains your model.`
 
 ### 7.4 Drift
 
@@ -228,7 +273,7 @@ Planned path comes from `[:NEXT]` edges, actual from `[:THEN]`. The task zoom re
 
 ### 7.5 Task zoom
 
-`↵` on a task opens a full-screen view: contract block (checks with per-check mechanism and det/model tag), evidence block, planned vs actual lanes, spend strip, and an action row: `r re-run checks · s split task · b hand to worker · i promote to issue · ⑂ diff plan`. Closing line: `a task closes when its checks pass, not when the model says so.`
+`↵` on a task opens a full-screen view: contract block (checks with per-check mechanism and det/model tag), evidence block, planned vs actual lanes, spend strip, and an action row: `r re-run checks · s split task · b hand to worker · i promote to issue · ⌥ diff plan`. Closing line: `a task closes when its checks pass, not when the model says so.`
 
 ## 8. Scenario specs
 
@@ -240,7 +285,7 @@ Red as alarm. When a gate fails during a verify turn:
 
 1. The gate board row flips to `✗ <gate> failed` with a red rail and a red-tinted row background. Every other row keeps its normal metal, so the red row is the only saturated non-gold element on screen.
 2. A failure block renders under the gate: failing case name, a two-line stderr or assertion excerpt in dim, and keys `^N jump to failure · l full log · r rerun gate`.
-3. stella responds with a **proposed plan revision**, never a silent fix: `⑂ propose r4: add task 3b "<title>"` with the linked cause and any linked issue. Action row: `a approve r4 · e edit · x dismiss`. Nothing runs until approval.
+3. stella responds with a **proposed plan revision**, never a silent fix: `⌥ propose r4: add task 3b "<title>"` with the linked cause and any linked issue. Action row: `a approve r4 · e edit · x dismiss`. Nothing runs until approval.
 4. The receipt area states `merge blocked · unblocks on green`. Verify work continues to price at `$0.00 · det`.
 
 The alarm quality comes entirely from red scarcity (section 2). No blinking, no bell by default.
