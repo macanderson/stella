@@ -744,12 +744,15 @@ class ArenaServer:
         #
         # Last write wins, because the last emission is the complete one: the
         # accumulator only ever grows, and the consolidated `text` event
-        # replaces the fragment run outright. Insertion order is preserved so
-        # the transcript still reads in the order it happened.
+        # replaces the fragment run outright. Ordered by `seq` rather than by
+        # insertion: the two agree for every entry except the `prompt` row,
+        # which carries the reserved seq 0 however late its `block_registered`
+        # lands in the stream (#4039) — and the SSE client sorts, while this
+        # endpoint's caller renders the list as given.
         collapsed: dict[int, dict[str, Any]] = {}
         for entry in entries:
             collapsed[entry["seq"]] = entry
-        return {"entries": list(collapsed.values())}
+        return {"entries": sorted(collapsed.values(), key=lambda e: e["seq"])}
 
     def video(self, match_id: str, contestant_id: str, task: str) -> Path | None:
         match = self.runner.matches.get(match_id)

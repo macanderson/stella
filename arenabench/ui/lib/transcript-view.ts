@@ -18,6 +18,22 @@ export function isFailedResult(entry: TranscriptEntry): boolean {
 }
 
 /**
+ * The reading order of a transcript: ascending `seq`.
+ *
+ * One function rather than an inline sort at the SSE fold, because the order
+ * carries a policy (#4039): the `prompt` row rides the reserved seq 0, and its
+ * `block_registered` event lands *after* the trial's first stage rule on the
+ * wire — so arrival order would render the question below a row of the answer,
+ * and only a sort keyed on `seq` puts the anchor first. Non-mutating: the SSE
+ * fold hands in a Map's values, but nothing says a future caller will.
+ */
+export function orderEntries(
+  entries: readonly TranscriptEntry[],
+): TranscriptEntry[] {
+  return [...entries].sort((a, b) => a.seq - b.seq);
+}
+
+/**
  * The `seq`s an errors-only view keeps.
  *
  * Not simply "every entry with an error flag". A failed result read alone is
