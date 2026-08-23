@@ -165,6 +165,7 @@ mod tests {
             turns: 0,
             spend_micros: 0,
             model: None,
+            autofix: None,
         }
     }
 

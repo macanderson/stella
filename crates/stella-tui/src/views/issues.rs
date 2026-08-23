@@ -106,6 +106,11 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             render_list(&ui.issues, ui.accessible, inner, &mut lines);
             render_detail(&ui.issues, inner.width as usize, &mut lines);
         }
+        // The confirmation is a floating popup rendered after the base view —
+        // the browse list stays visible behind it.
+        IssuesMode::ConfirmSend => {
+            render_list(&ui.issues, ui.accessible, inner, &mut lines);
+        }
     }
 
     // Notice line (op outcomes, errors, the no-tracker hint) + key footer.
@@ -135,6 +140,56 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     if ui.issues.mode == IssuesMode::Create && ui.issues.typeahead.open() {
         render_typeahead(ui, inner, active_field_line, buf);
     }
+
+    // The send-to-prompt confirmation floats above the browse list.
+    if ui.issues.mode == IssuesMode::ConfirmSend {
+        render_confirm_send(ui, inner, buf);
+    }
+}
+
+/// The `p` confirmation popup: names every issue about to be submitted so the
+/// human can verify the batch before ⏎ sends it. Esc cancels.
+fn render_confirm_send(ui: &DeckUi, inner: Rect, buf: &mut Buffer) {
+    let rows = ui.issues.picked_rows();
+    // +4: title, blank, footer hint, and the border's own two rows are
+    // accounted by the block; the content is title + one line per issue.
+    let height = (rows.len() as u16 + 4).min(inner.height.saturating_sub(2));
+    let width = (inner.width * 2 / 3).max(40).min(inner.width.saturating_sub(4));
+    let popup = Rect {
+        x: inner.x + (inner.width.saturating_sub(width)) / 2,
+        y: inner.y + (inner.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    Clear.render(popup, buf);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::accent())
+        .title(Span::styled(" send to prompt ", theme::accent()));
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "about to submit {} issue{} as a prompt:",
+            rows.len(),
+            if rows.len() == 1 { "" } else { "s" }
+        ),
+        Style::new().fg(token::TEXT),
+    )));
+    lines.push(Line::default());
+    for row in rows {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {}", row.key), theme::accent()),
+            Span::styled(format!("  {}", row.title), Style::new().fg(token::TEXT)),
+        ]));
+    }
+    lines.push(Line::default());
+    lines.push(Line::from(vec![
+        Span::styled(" ↵", Style::new().fg(token::GOLD)),
+        Span::styled(" send & go to transcript", Style::new().fg(token::MUTED)),
+        Span::styled("   esc", Style::new().fg(token::GOLD)),
+        Span::styled(" cancel", Style::new().fg(token::MUTED)),
+    ]));
+    Paragraph::new(lines).block(block).render(popup, buf);
 }
 
 /// The session's own PR, as one strip above the list.
@@ -593,6 +648,7 @@ fn footer(mode: IssuesMode) -> Line<'static> {
             ("r", "refresh"),
             ("]/[", "page"),
             ("space", "pick"),
+            ("p", "send to prompt"),
             ("x", "close / reopen"),
         ],
         IssuesMode::SearchTracker => &[("type", "query"), ("↵", "search"), ("esc", "back")],
@@ -605,6 +661,7 @@ fn footer(mode: IssuesMode) -> Line<'static> {
         IssuesMode::Comment | IssuesMode::SetStatus => {
             &[("type", "text"), ("↵", "send"), ("esc", "cancel")]
         }
+        IssuesMode::ConfirmSend => &[("↵", "send & go to transcript"), ("esc", "cancel")],
     };
     let key = Style::new().fg(token::MUTED);
     let dim = Style::new().fg(token::DIM);

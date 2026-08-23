@@ -305,6 +305,9 @@ pub enum IssuesMode {
     Comment,
     /// A small status-word input for the selected issue (`s`).
     SetStatus,
+    /// The send-to-prompt confirmation (`p`): lists the issues about to be
+    /// submitted; ⏎ submits and forwards to the Session tab, Esc cancels.
+    ConfirmSend,
 }
 
 /// The create form's focusable fields, in Tab order.
@@ -972,7 +975,9 @@ impl DeckUi {
                         }
                     }
                 },
-                IssuesMode::Browse => {}
+                // The confirmation holds no text — swallow the paste, never
+                // leak it to the composer behind the popup.
+                IssuesMode::ConfirmSend | IssuesMode::Browse => {}
             }
             return;
         }
@@ -1676,7 +1681,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // popup's keys, so it must claim them ahead of the deck-global tab
     // navigation and the composer.
     if ui.tab == DeckTab::Issues && ui.issues.mode != IssuesMode::Browse {
-        return handle_issues_modal_key(key, ui);
+        return handle_issues_modal_key(key, model, ui);
     }
 
     // Ctrl-R toggles the collapsed-thinking view from anywhere.
@@ -2417,13 +2422,53 @@ fn queue_issues_first_load(ui: &mut DeckUi) {
 /// The ISSUES sub-modes' keys, dispatched by the modal gate in
 /// [`handle_deck_key`]. Every key is consumed — nothing leaks to the
 /// composer or the tab views while a sub-mode is open.
-fn handle_issues_modal_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
+fn handle_issues_modal_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     match ui.issues.mode {
         IssuesMode::SearchTracker => handle_issues_search_key(key, ui),
         IssuesMode::Create => handle_issue_form_key(key, ui),
         IssuesMode::Comment | IssuesMode::SetStatus => handle_issue_prompt_key(key, ui),
+        IssuesMode::ConfirmSend => handle_issue_confirm_send_key(key, model, ui),
         // Unreachable — the gate only fires for non-Browse modes.
         IssuesMode::Browse => DeckAction::Ignored,
+    }
+}
+
+/// The send-to-prompt confirmation (`p`): ⏎ submits the staged issues as one
+/// prompt and forwards to the Session tab so the human watches it land; Esc
+/// cancels back to the browse list. Every other key is swallowed — the popup
+/// is modal.
+fn handle_issue_confirm_send_key(
+    key: KeyEvent,
+    model: &WorkspaceModel,
+    ui: &mut DeckUi,
+) -> DeckAction {
+    match key.code {
+        KeyCode::Esc => {
+            ui.issues.mode = IssuesMode::Browse;
+            DeckAction::Handled
+        }
+        KeyCode::Enter => {
+            let rows: Vec<IssueRow> = ui
+                .issues
+                .picked_rows()
+                .into_iter()
+                .cloned()
+                .collect();
+            ui.issues.mode = IssuesMode::Browse;
+            if rows.is_empty() {
+                // The list refreshed out from under the popup — nothing to
+                // send, and nothing to confirm either.
+                ui.issues.notice = Some("the selection is gone — the list changed".into());
+                return DeckAction::Handled;
+            }
+            let text = issues_prompt_text(&rows);
+            ui.issues.picked.clear();
+            // Forward to the transcript BEFORE submitting so the human lands
+            // where the prompt is about to appear.
+            ui.set_tab(DeckTab::Session);
+            submit_prompt(ui, model, text)
+        }
+        _ => DeckAction::Handled,
     }
 }
 
@@ -3638,7 +3683,7 @@ use mcp_keys::handle_mcp_key;
 
 /// ISSUES-tab browse keys and the multiselect they drive.
 mod issues_keys;
-use issues_keys::{handle_issues_browse_key, issues_page_request};
+use issues_keys::{handle_issues_browse_key, issues_page_request, issues_prompt_text};
 
 #[cfg(test)]
 mod tests;
