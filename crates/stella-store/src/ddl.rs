@@ -295,22 +295,34 @@ pub(crate) const FORGOTTEN_DDL: &str = "CREATE TABLE IF NOT EXISTS forgotten (
        ON forgotten(surface, forgotten_at);";
 
 /// `agent_uses` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — the agent-invocation log
-/// ([`AgentUseRow`](crate::AgentUseRow)): one row per invocation of an installed agent
-/// definition, attributed to the execution it ran under and to the
-/// definition's pinned `version` at invocation time. Deliberately **not**
-/// UNIQUE on any key: invoking the same agent-version twice in one execution
-/// is two real events, and the drain-per-execution write path never
-/// double-writes a drained event. `IF NOT EXISTS` keeps the one DDL usable
-/// for both the fresh-file path and the additive v3 → v4 migration. No
-/// secondary index: every reader (the JSON export, the observatory) walks
-/// the whole log; the v4-era `agent_uses_by_agent` index served no query
-/// and was dropped in v17.
+/// ([`AgentUseRow`](crate::AgentUseRow)): one row per invocation, attributed to
+/// the execution it ran under and to the `version` pinned at invocation time.
+/// Deliberately **not** UNIQUE on any key: invoking the same agent-version
+/// twice in one execution is two real events, and the drain-per-execution
+/// write path never double-writes a drained event. `IF NOT EXISTS` keeps the
+/// one DDL usable for both the fresh-file path and the additive v3 → v4
+/// migration. No secondary index: every reader (the JSON export, the
+/// observatory) walks the whole log; the v4-era `agent_uses_by_agent` index
+/// served no query and was dropped in v17.
+///
+/// `kind` is what makes `agent` readable (#3822). Two writers share this
+/// table and mint that column from different name spaces: a `'definition'`
+/// row's `agent` is an installed agent definition's name (`reviewer`), stable
+/// across sessions and worth counting; a `'delegation'` row's is the child id
+/// the `task` tool minted from the model's own description
+/// (`find-retry-policy-2`), unique per delegation and never repeated. Grouping
+/// them together made "this session leaned on the reviewer agent"
+/// indistinguishable from "this session delegated eight research questions".
+/// Rows written before v30 default to `'definition'`, which is what every one
+/// of them is: the `task` writer is younger than the column's absence (#3821).
 pub(crate) const AGENT_USES_DDL: &str = "CREATE TABLE IF NOT EXISTS agent_uses (
        execution_id INTEGER NOT NULL,
        agent TEXT NOT NULL,
        version INTEGER NOT NULL,
        reason TEXT NOT NULL DEFAULT '',
-       ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+       ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       kind TEXT NOT NULL DEFAULT 'definition'
+         CHECK (kind IN ('definition', 'delegation'))
      );";
 
 /// `skill_usage` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — per-execution skill-version

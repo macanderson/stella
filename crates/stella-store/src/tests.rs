@@ -978,6 +978,7 @@ fn agent_uses_log_one_row_per_invocation_never_aggregated() {
                     agent: "reviewer".into(),
                     version: 2,
                     reason: "review the diff".into(),
+                    kind: crate::KIND_DEFINITION.into(),
                 },
                 // The SAME agent-version again in the same execution: a
                 // second real invocation, a second row — the log carries
@@ -986,6 +987,7 @@ fn agent_uses_log_one_row_per_invocation_never_aggregated() {
                     agent: "reviewer".into(),
                     version: 2,
                     reason: "second pass".into(),
+                    kind: crate::KIND_DEFINITION.into(),
                 },
             ],
         )
@@ -1040,8 +1042,11 @@ fn skill_usage_records_per_execution_version_rows() {
     //       the old key collapsed. v29 `tasks.contract` (#4238): what a task
     //       promised, not only what became of it — nullable with no backfill,
     //       because NULL (no contract recorded) and a stored `read_only` are
-    //       different facts and a default would invent the second.
-    assert_eq!(SCHEMA_VERSION, 29);
+    //       different facts and a default would invent the second. v30
+    //       `agent_uses.kind` (#3822): which of the log's two writers minted
+    //       the row's `agent` name, so an installed definition's repeated
+    //       invocations stop reading like a pile of one-off delegations.
+    assert_eq!(SCHEMA_VERSION, 30);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
@@ -1100,6 +1105,7 @@ fn v4_migration_adds_agent_uses_to_a_pre_v4_file() {
                 agent: "planner".into(),
                 version: 1,
                 reason: String::new(),
+                kind: crate::KIND_DEFINITION.into(),
             }],
         )
         .unwrap();

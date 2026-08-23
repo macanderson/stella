@@ -468,6 +468,10 @@ pub(crate) fn record_execution_end(
             agent: u.agent,
             version: u.version,
             reason: u.reason,
+            // The one place the two sibling crates' vocabularies meet:
+            // `stella-tools` owns the enum, `stella-store` owns the stored
+            // token, and neither depends on the other (#3822).
+            kind: u.kind.as_str().to_string(),
         })
         .collect();
     let uses_ok = uses.is_empty() || store.record_agent_uses(execution_id, &uses).is_ok();

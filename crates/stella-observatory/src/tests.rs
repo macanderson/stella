@@ -1255,3 +1255,110 @@ fn hub_telemetry_aggregates_scope_and_drills_to_project() {
     assert_eq!(leaf["calls"], 2);
     assert!((leaf["cost_usd"].as_f64().unwrap() - 0.75).abs() < 1e-9);
 }
+
+/// One workspace whose store holds only what the AGENTS panel reads: the
+/// executions a session owns, and the invocation log under them.
+/// `kind_column` selects the v30 shape or the one that predates it (#3822).
+fn agent_uses_workspace(kind_column: bool) -> TempDir {
+    let dir = TempDir::new().unwrap();
+    let dot = dir.path().join(".stella");
+    std::fs::create_dir_all(dot.join("private")).unwrap();
+    let conn = Connection::open(dot.join("private/store.db")).unwrap();
+    let kind_ddl = if kind_column {
+        ", kind TEXT NOT NULL DEFAULT 'definition'"
+    } else {
+        ""
+    };
+    conn.execute_batch(&format!(
+        "CREATE TABLE executions (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           kind TEXT NOT NULL, prompt TEXT NOT NULL,
+           provider TEXT NOT NULL, model TEXT NOT NULL,
+           started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+           finished_at TEXT, outcome TEXT, session_id TEXT,
+           cost_usd REAL NOT NULL DEFAULT 0);
+         CREATE TABLE agent_uses (
+           execution_id INTEGER NOT NULL, agent TEXT NOT NULL,
+           version INTEGER NOT NULL, reason TEXT NOT NULL DEFAULT '',
+           ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP{kind_ddl});
+         INSERT INTO executions
+           (kind, prompt, provider, model, outcome, session_id, cost_usd)
+         VALUES ('deck', 'ship it', 'zai', 'glm-5.2', 'completed', 'ses-1', 0.03);"
+    ))
+    .unwrap();
+    let rows: &[(&str, &str)] = &[
+        ("reviewer", "definition"),
+        ("reviewer", "definition"),
+        ("find-retry-policy", "delegation"),
+        ("find-retry-policy-2", "delegation"),
+        ("audit-the-budget-guard", "delegation"),
+    ];
+    for (agent, kind) in rows {
+        if kind_column {
+            conn.execute(
+                "INSERT INTO agent_uses (execution_id, agent, version, kind) VALUES (1, ?, 1, ?)",
+                rusqlite::params![agent, kind],
+            )
+            .unwrap();
+        } else {
+            conn.execute(
+                "INSERT INTO agent_uses (execution_id, agent, version) VALUES (1, ?, 1)",
+                rusqlite::params![agent],
+            )
+            .unwrap();
+        }
+    }
+    dir
+}
+
+/// **The #3822 witness.** An installed agent definition is one counted group;
+/// every `task` delegation collapses into one more.
+///
+/// `GROUP BY agent` over both writers rendered this fixture as `reviewer x 2`
+/// beside three one-row groups named after whatever the model typed, and got
+/// noisier the more the session delegated. A minted child id is the model's
+/// prose, so the delegation group names none of them and reports how many
+/// there were.
+#[test]
+fn the_agents_panel_counts_definitions_and_collapses_delegations() {
+    let dir = agent_uses_workspace(true);
+    let v: serde_json::Value =
+        serde_json::from_slice(&respond(dir.path(), "/api/session?id=ses-1").body).unwrap();
+
+    let agents = v["agents"].as_array().expect("agents panel");
+    assert_eq!(
+        agents.len(),
+        2,
+        "one definition group and one delegation group, never N singletons: {v}"
+    );
+    let definition = agents
+        .iter()
+        .find(|a| a["kind"] == "definition")
+        .expect("the installed definition's group");
+    assert_eq!(definition["agent"], "reviewer", "{definition}");
+    assert_eq!(definition["uses"], 2, "{definition}");
+
+    let delegations = agents
+        .iter()
+        .find(|a| a["kind"] == "delegation")
+        .expect("the delegation group");
+    assert!(delegations["agent"].is_null(), "{delegations}");
+    assert_eq!(delegations["uses"], 3, "{delegations}");
+    assert_eq!(delegations["distinct"], 3, "{delegations}");
+}
+
+/// A store written before v30 cannot answer which writer minted a name, and
+/// says so: the panel still lists what it has, with `kind` null. Degrading to
+/// an empty panel would blank a surface that works today.
+#[test]
+fn a_store_without_the_kind_column_still_lists_its_agents_as_unknown() {
+    let dir = agent_uses_workspace(false);
+    let v: serde_json::Value =
+        serde_json::from_slice(&respond(dir.path(), "/api/session?id=ses-1").body).unwrap();
+
+    let agents = v["agents"].as_array().expect("agents panel");
+    assert_eq!(agents.len(), 4, "the pre-v30 grouping, ungrouped: {v}");
+    assert!(agents.iter().all(|a| a["kind"].is_null()), "{v}");
+    assert_eq!(agents[0]["agent"], "reviewer", "{v}");
+    assert_eq!(agents[0]["uses"], 2, "{v}");
+}

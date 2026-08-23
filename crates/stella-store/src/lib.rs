@@ -144,6 +144,7 @@ mod test_env;
 mod tests;
 mod tool_calls;
 
+pub mod agent_uses;
 pub mod cache_gaps;
 pub mod cache_trend;
 pub mod catalog;
@@ -182,6 +183,7 @@ use migrations::{
     initialize_store_pragmas,
 };
 
+pub use agent_uses::{AgentUseRow, KIND_DEFINITION, KIND_DELEGATION};
 pub use cache_gaps::CacheCallGap;
 pub use catalog::CatalogStore;
 pub use drain::{
@@ -396,18 +398,6 @@ pub struct RuleRow {
     pub contents: String,
     /// Opaque label naming the writer (extension/provider id).
     pub source: String,
-}
-
-/// One agent-invocation row for the `agent_uses` log: which installed agent
-/// definition (by name), at which pinned version, was invoked under an
-/// execution — with a short free-text reason when one was available. The
-/// timestamp column defaults to the insert time; the ledger drains per
-/// execution, so insert time is invocation-accurate to within the turn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentUseRow {
-    pub agent: String,
-    pub version: u32,
-    pub reason: String,
 }
 
 /// One skill-invocation row for the `skill_usage` log — the analogue of
@@ -926,22 +916,6 @@ impl Store {
                     row.truthful,
                     row.remark,
                 ],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// Record non-aggregated agent invocations from one execution. One
-    /// transaction — see [`Self::record_files_touched`].
-    pub fn record_agent_uses(&self, execution_id: i64, uses: &[AgentUseRow]) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for row in uses {
-            tx.execute(
-                "INSERT INTO agent_uses (execution_id, agent, version, reason) \
-                 VALUES (?, ?, ?, ?)",
-                params![execution_id, row.agent, row.version as i64, row.reason],
             )?;
         }
         tx.commit()?;

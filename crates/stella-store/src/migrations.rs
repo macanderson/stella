@@ -28,6 +28,8 @@
 //! | [`token_unit`] | v18 → v19 | the one-token-rule reconciliation |
 //! | [`pipeline_variant`] | v25 → v26 | the door/wrapper split |
 //! | [`execution_role`] | v26 → v27 | the door/role split |
+//! | [`task_contract`] | v28 → v29 | what a task promised, beside what became of it |
+//! | [`agent_use_kind`] | v29 → v30 | which of two writers minted an `agent_uses` name |
 //!
 //! A new step gets a new module (or joins the group whose shape it shares),
 //! declares itself here, and takes the next slot in the ladder. It does not
@@ -47,6 +49,7 @@ use crate::{Result, StoreError};
 
 mod abandoned_state;
 mod additive_tables;
+mod agent_use_kind;
 mod call_identity;
 mod error_class;
 mod execution_plane;
@@ -96,7 +99,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 29] = [
+pub(crate) const MIGRATIONS: [Migration; 30] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -242,6 +245,12 @@ pub(crate) const MIGRATIONS: [Migration; 29] = [
     // two for every pre-contract row, and inventing the second is the
     // self-report `TaskContract` exists to end.
     task_contract::migrate_v28_to_v29,
+    // v29 → v30: `agent_uses` grows `kind` — which of the log's two writers
+    // minted this row's `agent` name (#3822). Additive, column-guarded ADD
+    // COLUMN, `NOT NULL DEFAULT 'definition'`: unlike v28 → v29 the historical
+    // fact is known rather than guessed, because the delegation writer (#3821)
+    // is younger than every row this step can see. See the module's own doc.
+    agent_use_kind::migrate_v29_to_v30,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -281,7 +290,9 @@ pub(crate) const MIGRATIONS: [Migration; 29] = [
     //   v26 → v27: CLAIMED above by the door/role split (#3395).
     //
     //   v27 → v28: CLAIMED above by the tool-call identity fix (#4033).
-    // Nothing is reserved now: take v28 → v29 and add your own line here.
+    //
+    //   v29 → v30: CLAIMED above by the `agent_uses.kind` discriminator (#3822).
+    // Nothing is reserved now: take v30 → v31 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];
