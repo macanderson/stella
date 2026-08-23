@@ -553,6 +553,59 @@ mod tests {
         );
     }
 
+    /// **The chosen behaviour for #3620**, pinned rather than left to be
+    /// rediscovered as a bug: a delimiter produced by expansion is recorded
+    /// literally, so the terminator this scan looks for is the two-character
+    /// text `$END` and the terminator the shell looks for is whatever `END`
+    /// expands to. Where those differ, [`skip_heredoc_body`] runs to
+    /// end-of-input and every later line is dropped as body — including a
+    /// real `cd`.
+    ///
+    /// The miss is the deliberate side of this module's posture. The
+    /// alternative — open no heredoc at all when the delimiter carries an
+    /// unquoted `$` or a backtick — trades this silence for a *wrong* note on
+    /// a `cd` that really does sit inside such a body, and a false warning
+    /// telling the agent its work is invisible to verification is the defect
+    /// #2301 was filed for. Between two misses, take the one that stays quiet.
+    ///
+    /// Contrast [`an_arithmetic_shift_is_not_a_heredoc`] above: that shape
+    /// swallowed the command through a genuine *misparse* — a left shift read
+    /// as an opener — and was fixed. This one reads the text correctly and
+    /// declines to evaluate it.
+    #[test]
+    fn an_expansion_valued_heredoc_delimiter_is_taken_literally() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+
+        // The divergence, which needs the expansion to have a value: the
+        // shell ends the body at `DONE`, this scan is still looking for the
+        // literal `$END`, and the `cd` two lines later is never seen.
+        assert_eq!(
+            cd_escape_target("END=DONE\ncat <<$END > s.sh\nhello\nDONE\ncd /outside", &root),
+            None,
+            "an expansion-valued delimiter loses the rest of the command, by choice (#3620)"
+        );
+
+        // #3620's own repro writes the terminator as `$END`, and that one is
+        // seen — the literal delimiter this scan recorded happens to match
+        // the literal line in the text, so the two agree by coincidence
+        // rather than by resolution. Pinned so a later reading of the issue
+        // does not mistake this for the fix having landed.
+        assert_eq!(
+            cd_escape_target("cat <<$END > s.sh\nhello\n$END\ncd /outside", &root).as_deref(),
+            Some("/outside"),
+            "a literally-written terminator still closes the body"
+        );
+
+        // The quoted spelling is what the detector is built for, and is
+        // unaffected: the body is hidden, the `cd` after it is seen.
+        assert_eq!(
+            cd_escape_target("cat <<'END' > s.sh\nhello\nEND\ncd /outside", &root).as_deref(),
+            Some("/outside"),
+            "a literal delimiter must still terminate its body"
+        );
+    }
+
     /// The four inline copies this predicate replaced had already diverged:
     /// the grep-scan boundary omitted `&`.
     #[test]
