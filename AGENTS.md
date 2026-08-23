@@ -366,7 +366,7 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    deterministic — prompt-cache hits are a feature, and nondeterminism there
    is a cost regression. Memories are loaded once per session and concatenated
    in sorted filename order; recalled context rides as a volatile message
-   *after* the stable prefix (see `crates/stella-cli/src/agent.rs::build_system_prompt`
+   *after* the stable prefix (see `crates/stella-cli/src/agent/prompt.rs::build_system_prompt`
    and `crates/stella-cli/src/memory.rs` for the L-E8 discipline).
 8. **Provider feature parity is declared, not assumed.** Providers diverge
    in sneaky ways, and this is guarded on **six axes** today in
