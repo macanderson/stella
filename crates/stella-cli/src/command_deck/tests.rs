@@ -462,7 +462,6 @@ fn memory_hits_carry_the_preview_provenance_and_citation_suffixes() {
         "naming-convention",
         "Prefer kebab-case for  skill names\nand slugs.",
         "2026-07-01T00:00:00Z",
-        Some("2026-06-15T00:00:00Z"),
         Some((12, 0.9)),
     );
     assert_eq!(hit.kind, "Memory");
@@ -470,21 +469,21 @@ fn memory_hits_carry_the_preview_provenance_and_citation_suffixes() {
     assert_eq!(
         hit.description,
         "Prefer kebab-case for skill names and slugs. · observed \
-         2026-07-01T00:00:00Z · valid from 2026-06-15T00:00:00Z · cited 12× avg 0.9"
+         2026-07-01T00:00:00Z · cited 12× avg 0.9"
     );
+    // Observation time is the only time a node carries: no `valid from`
+    // clause restating it (#3136).
+    assert!(!hit.description.contains("valid from"));
 
-    // No valid_from → observation time stands in; no citations → no
-    // suffix; a long content truncates char-safe with an ellipsis.
+    // No citations → no suffix; a long content truncates char-safe with an
+    // ellipsis.
     let long = "x".repeat(200);
-    let hit = memory_hit("m", &long, "2026-07-01", None, None);
+    let hit = memory_hit("m", &long, "2026-07-01", None);
     assert!(
         hit.description
             .starts_with(&"x".repeat(MEMORY_PREVIEW_CHARS - 1))
     );
-    assert!(
-        hit.description
-            .contains("… · observed 2026-07-01 · valid from 2026-07-01")
-    );
+    assert!(hit.description.ends_with("… · observed 2026-07-01"));
     assert!(!hit.description.contains("cited"));
 }
 

@@ -3092,14 +3092,17 @@ pub(super) fn agent_entity_hits(
 const MEMORY_PREVIEW_CHARS: usize = 60;
 
 /// One memory node as a type-ahead hit: a flattened content preview plus a
-/// provenance suffix (`· observed … · valid from …` — valid-from falls back
-/// to the observation time, the store's own convention) and, when the
-/// memory has been cited, its citation stats.
+/// provenance suffix (`· observed …`) and, when the memory has been cited, its
+/// citation stats.
+///
+/// Observation time is the only time a node has. It used to be followed by a
+/// `· valid from …` clause reading `NodeRow::valid_from`, which no node writer
+/// ever fills — so the clause restated the observation timestamp on every row
+/// it has ever rendered (#3136).
 fn memory_hit(
     display_name: &str,
     content: &str,
     recorded_at: &str,
-    valid_from: Option<&str>,
     citations: Option<(i64, f64)>,
 ) -> EntityHit {
     let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -3109,10 +3112,7 @@ fn memory_hit(
     } else {
         flat
     };
-    let mut description = format!(
-        "{preview} · observed {recorded_at} · valid from {}",
-        valid_from.unwrap_or(recorded_at)
-    );
+    let mut description = format!("{preview} · observed {recorded_at}");
     if let Some((count, avg)) = citations {
         description.push_str(&format!(" · cited {count}× avg {avg:.1}"));
     }
@@ -3204,7 +3204,6 @@ pub(super) fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<En
                         &n.display_name,
                         &n.content,
                         &n.recorded_at,
-                        n.valid_from.as_deref(),
                         stats.get(&n.public_id).copied(),
                     )
                 }),

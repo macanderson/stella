@@ -188,9 +188,11 @@ place.
   survive, and `stella-graph` opens its own `codegraph.db`. The witness is
   `opening_drops_orphaned_code_graph_tables_from_context_db`
   ([`src/store/tests.rs`](src/store/tests.rs)). Do not reintroduce graph tables here.
-- **`NodeRow::valid_from` is always `None`.** The columns exist on `node` but
-  `upsert_node` never writes them. Fact history is recoverable; node content
-  history is not.
+- **Nodes carry no valid time.** The `valid_from`/`valid_to` columns exist on
+  `node` but `upsert_node` never writes them, so `NodeRow` does not project
+  them — a `None` there would read as "no valid time exists for this fact"
+  when it means "nodes are not versioned yet". Fact history is recoverable;
+  node content history is not.
 - **This plane forgets *and* reclaims — but they are different mechanisms.**
   Forgetting is `supersede_node`: a tombstone, with `restore_node` as its exact
   inverse, so a point-in-time query still sees what was believed before.

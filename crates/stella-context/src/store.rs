@@ -507,7 +507,7 @@ impl ContextStore {
         // is parameterized rather than formatted all the same.
         let placeholders = vec!["?"; kinds.len()].join(", ");
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at, recall_tier
+            "SELECT id, public_id, kind, display_name, content, content_hash, uri, recorded_at, recall_tier
              FROM node WHERE kind IN ({placeholders}) AND superseded_at IS NULL
              ORDER BY recorded_at DESC, id DESC",
         ))?;
@@ -626,7 +626,7 @@ impl ContextStore {
         let conn = lock(&self.conn);
         let row = conn
             .query_row(
-                "SELECT id, public_id, kind, display_name, content, content_hash, uri, valid_from, recorded_at, recall_tier
+                "SELECT id, public_id, kind, display_name, content, content_hash, uri, recorded_at, recall_tier
                  FROM node WHERE public_id = ?1 AND superseded_at IS NULL",
                 params![public_id],
                 map_node_row,
