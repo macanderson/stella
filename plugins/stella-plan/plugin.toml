@@ -52,6 +52,13 @@ description = "Asks the host for one bounded planner-role child turn, at the pla
 participation = "steering"
 # `before_turn` only: there is nothing to say about a turn already run.
 points = ["before_turn"]
+# The stages it answers at, exhaustively (#3543). `main.py` refuses every
+# stage but `plan`, and the eight-stage order below is the pipeline it wants
+# *run*, not the set of stages it has anything to say at — without this line
+# the host started `python3` eight times a round to hear
+# `{"protocol_version": 1}` seven times. Every name here must appear in
+# `[[wrapper.stages]]` below, or the manifest does not load.
+before_turn_stages = ["plan"]
 # The one host capability this plugin may ask for, exhaustively
 # (`doc:wrapper-socket` §6b). `child_turn` is the mechanism
 # `doc:turn-loop-wrappers` §9.3 names for "a wrapper needs one bounded model
@@ -64,18 +71,6 @@ calls = ["child_turn"]
 # Declared rather than left to the host's ceiling (4, `DEFAULT_HOST_MAX_CHILD_TURNS`)
 # so the consent text a human reads states the real number.
 max_calls = 1
-
-# `[roles]` requires `[subloop]` (`ManifestError::RolesRequireSubloop`,
-# `crates/stella-plugin/src/manifest.rs:772-775`) even though this plugin
-# uses none of `[subloop]`'s own bounded-child-turn *dispatch* — its child
-# turn is spent entirely over the host-call channel above. That coupling is
-# a real, awkward constraint on any plugin that wants a role intent purely
-# for `child_turn`, tracked at #3496 rather than treated as intentional
-# here. `stages = ["plan"]` is declared only to satisfy the validator; the
-# host never reads it for this plugin, because nothing here asks the host
-# to run `[subloop]`'s own stage list.
-[subloop]
-stages = ["plan"]
 
 # The one role intent this plugin names. `tier = "plan"` resolves to
 # `ModelCallRole::Plan` under the host's `default_seats()`

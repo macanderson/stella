@@ -315,6 +315,24 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 speculated: false,
             },
         ),
+        // The edit, measured the way a live turn measures it: the `FileChange`
+        // folds strictly between the call's `ToolStart` and its `ToolResult`,
+        // which is the window a transcript row claims its inline diff from
+        // (`model::inline_diff`). Emitted outside a call it is a Files-tab row
+        // and nothing else — which is what the fixture did until the deck film
+        // went looking for the diff in the transcript and found a bare read.
+        ev(
+            lead,
+            tool_start(
+                "c3",
+                "edit_file",
+                json!({
+                    "path": "apps/app/automations/page.tsx",
+                    "old_string": "  const items = []",
+                    "new_string": "  const items = useAutomations()",
+                }),
+            ),
+        ),
         ev(
             lead,
             AgentEvent::FileChange {
@@ -325,6 +343,18 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 added: crate::diff::count_diff_lines(PAGE_DIFF).0,
                 removed: crate::diff::count_diff_lines(PAGE_DIFF).1,
                 diff: Some(PAGE_DIFF.into()),
+            },
+        ),
+        ev(
+            lead,
+            AgentEvent::ToolResult {
+                call_id: "c3".into(),
+                output: ToolOutput::Ok {
+                    content: "edited apps/app/automations/page.tsx (1 hunk)".into(),
+                    data: None,
+                },
+                duration_ms: 18,
+                speculated: false,
             },
         ),
         ev(
@@ -402,12 +432,47 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
         ),
         ev(
             auth,
+            AgentEvent::ToolResult {
+                call_id: "c2".into(),
+                output: ToolOutput::Ok {
+                    content: "3 matches in 2 files".into(),
+                    data: None,
+                },
+                duration_ms: 61,
+                speculated: false,
+            },
+        ),
+        // The new file lands inside its own `write_file` window, for the same
+        // reason the lead's edit above does: that is what lets the lane's
+        // transcript draw the diff, not just the Files tab count it.
+        ev(
+            auth,
+            tool_start(
+                "c4",
+                "write_file",
+                json!({ "path": "apps/api/routes/v1/automations.ts" }),
+            ),
+        ),
+        ev(
+            auth,
             AgentEvent::FileChange {
                 path: "apps/api/routes/v1/automations.ts".into(),
                 kind: FileChangeKind::Created,
                 added: crate::diff::count_diff_lines(TRIGGERS_DIFF).0,
                 removed: crate::diff::count_diff_lines(TRIGGERS_DIFF).1,
                 diff: Some(TRIGGERS_DIFF.into()),
+            },
+        ),
+        ev(
+            auth,
+            AgentEvent::ToolResult {
+                call_id: "c4".into(),
+                output: ToolOutput::Ok {
+                    content: "wrote apps/api/routes/v1/automations.ts (3 lines)".into(),
+                    data: None,
+                },
+                duration_ms: 9,
+                speculated: false,
             },
         ),
         ev(

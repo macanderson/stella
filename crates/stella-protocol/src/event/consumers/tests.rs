@@ -12,8 +12,8 @@ use super::*;
 
 #[test]
 fn the_ledger_is_total_over_known_type_tags() {
-    // The load-bearing test. Adding an `AgentEvent` variant without declaring
-    // what consumes it fails here, naming the tag and what to do about it.
+    // Adding an `AgentEvent` variant without declaring what consumes it fails
+    // here, naming the tag and what to do about it.
     let violations = audit();
     assert!(
         violations.is_empty(),
@@ -50,6 +50,25 @@ fn unclassified_rows_are_a_down_only_debt() {
          If you added a variant and reached for Unclassified, classify it \
          instead — the ceiling only moves down."
     );
+}
+
+/// The two `AgentEvent` surfaces `stella-pipeline`'s removal (#3865) left with
+/// no producer are kept on purpose (#3881), so a journal or a
+/// `stella-events.jsonl` written before that removal still decodes into its
+/// typed variant instead of demoting to [`AgentEvent::Unknown`].
+///
+/// Deleting one is a defensible decision and this is where it has to argue:
+/// the tag leaves `KNOWN_TYPE_TAGS` in the same edit, and this test names what
+/// that costs a reader of an old recording.
+#[test]
+fn the_producerless_pipeline_surfaces_still_decode() {
+    for tag in ["proof", "candidate_delivery"] {
+        assert!(
+            KNOWN_TYPE_TAGS.contains(&tag),
+            "`{tag}` has no producer in this workspace, but recordings that \
+             predate #3865 carry it — dropping the tag demotes them to Unknown"
+        );
+    }
 }
 
 #[test]

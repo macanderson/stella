@@ -27,7 +27,7 @@ available_for_speculation = true
 risk_level = "low"
 
 description = '''
-Report this session's environment: workspace root, whether it is a git repository (and whether it is a linked worktree), platform/arch, OS release, login shell dialect, and the scratch directory path. Your system prompt's Session environment block already states everything here except the scratch directory — call this only when you need the scratch directory path, or when no such block is in your prompt. Never spend calls on pwd, uname, or shell probing for these facts.
+Report this session's environment: workspace root, whether it is a git repository (and whether it is a linked worktree), platform/arch, OS release, login shell dialect, the scratch directory path, and which of python3, pip, pip3, apt-get, cc, make and xxd are on PATH. Your system prompt's Session environment block already states everything here except the scratch directory and the PATH probe — call this only when you need one of those, or when no such block is in your prompt. Call it before planning any task around an interpreter or a package manager, so a missing one costs a call rather than a timed-out command. Never spend calls on pwd, uname, which, or shell probing for these facts.
 '''
 
 # The JSON Schema the model is handed for this tool's arguments, verbatim.

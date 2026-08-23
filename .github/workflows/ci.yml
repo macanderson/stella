@@ -382,6 +382,16 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-bench-suites.sh
 
+      # The same shape one workflow over: `.githooks/pre-push` chooses between
+      # `make guards-fast` and `make guards` on wire-schema.yml's `paths:`
+      # filter, and used to carry its own copy of it under a comment naming the
+      # hazard. A divergence there is silent and in the direction that
+      # misleads — the cheap rung for a diff the workflow would have called
+      # wire-touching (#3836).
+      - name: the pre-push hook derives wire-schema.yml's paths filter
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-wire-paths.sh
+
       # Also toolchain-free (shellcheck ships preinstalled on ubuntu-latest).
       # install.sh is fetched over the network and piped into `sh` by
       # strangers before Stella is installed; the guard scripts are what the
@@ -418,7 +428,7 @@ jobs:
           components: clippy, rustfmt
 
       - if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
-        uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       # Nothing else in this job passes `--locked`, so a PR that edits a
       # manifest without committing the regenerated Cargo.lock builds green
@@ -514,6 +524,35 @@ jobs:
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo build --workspace --release --config 'profile.release.lto="thin"' --config 'profile.release.codegen-units=16'
 
+      # Two guard self-tests that want the toolchain, so they sit here rather
+      # than in guard-self-tests.yml with their twenty toolchain-free siblings
+      # (#3820, #4427). This one is also a `GATE_STEPS` member that ran in no
+      # workflow at all: it drives the real `stella` binary and builds one when
+      # it cannot find it.
+      - name: the self-driving control logic
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: ./scripts/test-self-driving.sh
+
+      # The other one runs `cargo metadata` against a synthetic workspace a
+      # dozen times, so it wants the toolchain too — and it wants ripgrep,
+      # which ubuntu-latest does not ship. `scripts/impacted-crates.sh` answers
+      # `--workspace` for anything it cannot narrow with confidence, and a
+      # missing `rg` is one of those things, so without it every narrowing case
+      # reads as a failure: 13 of 25 red, each `want=[-p leaf]
+      # got=[--workspace]`, reporting the runner rather than the scoper.
+      #
+      # Installed rather than skipped. A `command -v rg || skip` would leave
+      # this suite reporting green on every run while proving nothing, which is
+      # the exact failure #3820 exists to end.
+      - name: gate-scoping picks the right crates
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: |
+          command -v rg >/dev/null 2>&1 || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ripgrep
+          }
+          ./scripts/test-impacted-crates.sh
+
       # Last main step in the job, so it runs before rust-cache's post step —
       # which is the whole point (#4149).
       #
@@ -572,7 +611,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
-      - uses: Swatinem/rust-cache@258712b0b7b1ddf8bddc9fc3b0faca682b2736c3 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
 
       # Pinned by exact version, not just `--locked`: `--locked` fixes the
       # tool's own transitive graph but not the tool itself, so an unpinned

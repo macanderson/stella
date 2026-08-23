@@ -312,6 +312,37 @@ fn vitals(model: &WorkspaceModel, lane: &AgentEntry) -> Vec<Span<'static>> {
     spans
 }
 
+/// The same vitals for a `delegate` child, which has fewer of them (#4369).
+///
+/// Two differences from a lane's, and both are about what the deck can
+/// honestly say. The quiet time is the **parent's** and is labelled that way,
+/// because the wire does not attribute a child's own events to the child
+/// (#4347). The elapsed is absent rather than zero when no bracket was
+/// stamped — a replayed session has the transcript rows and none of the
+/// clock readings behind them.
+fn delegate_vitals(model: &WorkspaceModel, d: &rows::Delegate) -> Vec<Span<'static>> {
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let mut spans = Vec::new();
+    if let Some(quiet) = rows::delegate_parent_quiet_ms(model, d) {
+        let style = if rows::delegate_stalled(model, d) {
+            Style::new().fg(token::RED).add_modifier(Modifier::BOLD)
+        } else {
+            muted
+        };
+        spans.push(Span::styled(" · ", dim));
+        spans.push(Span::styled(
+            format!("parent quiet {}", cards::fmt_mss(quiet)),
+            style,
+        ));
+    }
+    if let Some(elapsed) = d.elapsed_ms(model.now_ms) {
+        spans.push(Span::styled(" · ", dim));
+        spans.push(Span::styled(cards::fmt_mss(elapsed), muted));
+    }
+    spans
+}
+
 /// Draw the overlay over `area`.
 pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let w = area.width.saturating_sub(6).min(110);
@@ -376,7 +407,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
                     .get(d.parent)
                     .map(|a| a.meta.id.clone())
                     .unwrap_or_default();
-                let head = vec![
+                let mut head = vec![
                     cursor,
                     Span::styled(format!("{} ", glyph::TOOL_DELEGATE), mark),
                     Span::styled(d.agent_id.clone(), id_style),
@@ -392,6 +423,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
                         dim,
                     ),
                 ];
+                head.extend(delegate_vitals(model, d));
                 (
                     head,
                     d.instruction_preview.clone(),
@@ -768,6 +800,77 @@ mod tests {
         assert!(
             matches!(&list[0], Row::Delegate(d) if d.finished.as_ref().is_some_and(|f| f.steps == 4)),
             "the finish row joins the start row: {list:?}"
+        );
+    }
+
+    /// **The witness for #4369.** A child's head states how long it has run
+    /// and how long its parent has been quiet, red past the stall threshold,
+    /// and the elapsed freezes at the finish bracket.
+    ///
+    /// The quiet number is labelled `parent quiet` and not `quiet`: the wire
+    /// does not attribute a child's own events to the child (#4347), so
+    /// printing a bare `quiet` would claim the deck knows something it does
+    /// not.
+    #[test]
+    fn a_delegate_childs_head_states_its_elapsed_and_its_parents_quiet() {
+        let mut model = model_with(&[]);
+        model.apply_inbound(&Inbound::Status {
+            agent: "lead".into(),
+            status: AgentStatus::Running,
+        });
+        delegate_started(&mut model, "lead", "d:1", "Survey the three planes.");
+        let started = model.now_ms;
+
+        // Ninety seconds in, with the parent quiet the whole time.
+        model.now_ms = started + 90_000;
+        let mut ui = DeckUi::default();
+        open(&mut ui);
+        let text = text_of(&model, &ui, 110, 14);
+        assert!(
+            text.contains("parent quiet "),
+            "a child's head says whose quiet time it is printing: {text}"
+        );
+        assert!(
+            text.contains("1:30"),
+            "a running child states its elapsed: {text}"
+        );
+        let child = match rows::rows(&model).into_iter().next() {
+            Some(Row::Delegate(d)) => d,
+            other => panic!("the first row is not a delegate: {other:?}"),
+        };
+        assert!(
+            rows::delegate_stalled(&model, &child),
+            "90s past the {}ms threshold is stalled",
+            crate::v2::pulse::STALL_AFTER_MS
+        );
+        assert_eq!(child.elapsed_ms(model.now_ms), Some(90_000));
+
+        // The finish freezes the clock: another minute passes and the number
+        // does not move.
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::SubAgent {
+                phase: SubAgentPhase::Finished {
+                    agent_id: "d:1".into(),
+                    status: SubAgentStatus::Completed,
+                    summary: "three planes, one store".into(),
+                    truncated: false,
+                    cost_usd: 0.12,
+                    steps: 4,
+                    absorbed_messages: 9,
+                    reason: None,
+                },
+            },
+        });
+        model.now_ms = started + 150_000;
+        let after = text_of(&model, &ui, 110, 14);
+        assert!(
+            after.contains("1:30"),
+            "a finished child's elapsed is frozen at its bracket: {after}"
+        );
+        assert!(
+            !after.contains("parent quiet"),
+            "quiet time is a question about something still running: {after}"
         );
     }
 

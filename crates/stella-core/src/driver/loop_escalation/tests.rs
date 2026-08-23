@@ -570,6 +570,7 @@ proptest! {
 
 mod stall {
     use super::StatusAndBash;
+    use crate::driver::TurnMemos;
     use crate::driver::config::EngineConfig;
     use crate::driver::loop_escalation::{
         LOOP_STEER_PREFIX, LoopSteerBudget, MAX_LOOP_STEERS, MAX_STALL_STEERS, STALL_STEER_PREFIX,
@@ -583,7 +584,6 @@ mod stall {
     fn default_threshold() -> u64 {
         LoopDetectionConfig::default().stall_steer_threshold_secs
     }
-    use crate::driver::loop_evidence::ResultIdentities;
     use crate::event_sender::EventSender;
     use crate::loop_detect::CallRecord;
     use proptest::prelude::*;
@@ -673,23 +673,48 @@ mod stall {
 
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let events = EventSender::new(tx);
+        let mut memos = TurnMemos::new(0, false);
         let outcome = check_loop_detection(
             &EngineConfig::default(),
             &StatusAndBash,
             &mut messages,
-            &ResultIdentities::default(),
+            &mut memos,
             &mut LoopSteerBudget::default(),
             0.0,
             &events,
         );
 
         assert!(outcome.is_none(), "a stalled turn is steered, never killed");
+        // **Witness (#3621).** The number the rung decided on reaches this
+        // step's receipt — three `sleep 300`s, countable afterwards without
+        // re-joining `tool_start`/`tool_result` and re-running the classifier
+        // by hand. Before this change nothing carried it anywhere.
+        memos.receipts.emit_step_receipt_estimating(
+            &messages,
+            0,
+            crate::receipts::ServedBy {
+                role: stella_protocol::ModelCallRole::Worker,
+                provider: "anthropic",
+                model: "opus",
+            },
+            &events,
+        );
         let drained: Vec<AgentEvent> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
         assert!(
             !drained
                 .iter()
                 .any(|e| matches!(e, AgentEvent::LoopDetected { .. })),
             "no loop rung fires on this window — that is the whole point: {drained:?}"
+        );
+        assert!(
+            drained.iter().any(|e| matches!(
+                e,
+                AgentEvent::StepManifest {
+                    stall_seconds_requested: Some(900),
+                    ..
+                }
+            )),
+            "the step's receipt must carry the seconds the rung steered on: {drained:?}"
         );
 
         let steer = messages
@@ -724,7 +749,7 @@ mod stall {
             &EngineConfig::default(),
             &StatusAndBash,
             &mut messages,
-            &ResultIdentities::default(),
+            &mut memos,
             &mut LoopSteerBudget::default(),
             0.0,
             &events,
@@ -752,7 +777,7 @@ mod stall {
                 &EngineConfig::default(),
                 &StatusAndBash,
                 messages,
-                &ResultIdentities::default(),
+                &mut TurnMemos::new(0, false),
                 &mut LoopSteerBudget::default(),
                 0.0,
                 &events,
@@ -918,7 +943,7 @@ mod stall {
                 &config,
                 &StatusAndBash,
                 &mut messages,
-                &ResultIdentities::default(),
+                &mut TurnMemos::new(0, false),
                 &mut LoopSteerBudget::default(),
                 0.0,
                 &events,
@@ -963,7 +988,7 @@ mod stall {
             &EngineConfig::default(),
             &StatusAndBash,
             &mut messages,
-            &ResultIdentities::default(),
+            &mut TurnMemos::new(0, false),
             &mut LoopSteerBudget::default(),
             0.0,
             &events,
@@ -1035,7 +1060,7 @@ mod stall {
             &EngineConfig::default(),
             &StatusAndBash,
             &mut messages,
-            &ResultIdentities::default(),
+            &mut TurnMemos::new(0, false),
             &mut budget,
             0.0,
             &events,
@@ -1071,7 +1096,7 @@ mod stall {
                 &EngineConfig::default(),
                 &StatusAndBash,
                 &mut messages,
-                &ResultIdentities::default(),
+                &mut TurnMemos::new(0, false),
                 &mut budget,
                 0.0,
                 &events,

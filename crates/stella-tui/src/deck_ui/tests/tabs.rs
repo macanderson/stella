@@ -1,5 +1,8 @@
-//! The tab bar and the per-tab controls that only fire on an empty composer:
-//! ⌃C from anywhere, the AGENTS tab's focus/stop keys, and the TRACES filter.
+//! The tab bar itself: `tab` / `⇧tab` walking it, and `⌃C` quitting from
+//! wherever it has stopped.
+//!
+//! Each tab's own keys are witnessed in the file named for that tab —
+//! `agents.rs`, `traces.rs`, `graph.rs`, `skills.rs`, `issues.rs` (#4429).
 
 use super::*;
 
@@ -28,18 +31,4 @@ fn tab_and_backtab_walk_the_tab_bar() {
     // Re-selecting the active tab is a no-op, not an error.
     ui.set_tab(DeckTab::Session);
     assert_eq!(ui.tab, DeckTab::Session);
-}
-
-#[test]
-fn traces_filter_cycles_through_agents_and_back() {
-    let model = model_with(&["a", "b"]);
-    let mut ui = ready_ui();
-    ui.tab = DeckTab::Traces;
-    assert_eq!(ui.trace_filter, None);
-    handle_deck_key(ch('f'), &model, &mut ui);
-    assert_eq!(ui.trace_filter.as_deref(), Some("a"));
-    handle_deck_key(ch('f'), &model, &mut ui);
-    assert_eq!(ui.trace_filter.as_deref(), Some("b"));
-    handle_deck_key(ch('f'), &model, &mut ui);
-    assert_eq!(ui.trace_filter, None);
 }

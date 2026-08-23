@@ -28,7 +28,7 @@
 //! dispatched — and the *tree* the plugin is told about is the worker's, via
 //! the candidate grant below.
 //!
-//! # What the grant names, and what it deliberately does not carry
+//! # What the grant names, and where its test plan comes from
 //!
 //! [`crate::wrapper_candidate::grant_shared_tree`] mints the grant over the
 //! tree this attempt actually runs in, so a plugin reading or testing it
@@ -36,16 +36,25 @@
 //! touched — the argument that module makes for `stella run`, applied to a
 //! root that is per-task here.
 //!
-//! It carries **no [`stella_plugin::TestPlan`]**: `stella fleet` declares no
-//! `--test-command`, so there is no invocation for the host to parse, nothing
-//! to pin, and [`stella_plugin::TamperFinding::NotChecked`] is the honest
-//! finding rather than a `Clean` nobody established. A witness-flavoured
-//! plugin therefore reports `Undecided` on this door, which is a refusal to
-//! credit a flip nobody could observe — exactly what `crate::wrapper_candidate`
-//! argues for the same shape on `stella run`. Giving fleet its own
-//! `--test-command` is a flag decision with its own blast radius (it is
-//! per-task, not per-run, so it belongs in the plan file rather than on the
-//! command line) and is tracked in #3884.
+//! Its [`stella_plugin::TestPlan`] is the task's own
+//! [`stella_fleet::Task::test_command`] (#3884). The oracle is **per task**,
+//! not per run, which is why it is a plan-file field rather than a
+//! `--test-command` flag: two tasks touching different subsystems are decided
+//! by different commands, and one flag over a fan-out would hand every worker
+//! an oracle that answers about somebody else's work. It crosses
+//! [`stella_plugin::parse_test_invocation`] — the host's closed runner
+//! vocabulary — on the way, so a plugin receives an argv this host would run
+//! and never a line to hand to a shell, and a command that vocabulary refuses
+//! fails **this task's** dispatch by name rather than the fan-out around it.
+//!
+//! A task that declares none (the default, and every positional `stella fleet
+//! "…"` prompt, which builds [`stella_fleet::Task::new`]) grants no plan:
+//! there is nothing for the host to parse, nothing to pin, and
+//! [`stella_plugin::TamperFinding::NotChecked`] is the honest finding rather
+//! than a `Clean` nobody established. A witness-flavoured plugin then reports
+//! `Undecided` for that task — a refusal to credit a flip nobody could
+//! observe, exactly what `crate::wrapper_candidate` argues for the same shape
+//! on `stella run`.
 //!
 //! # One host plane: `recall`, and deliberately no `child_turn`
 //!
@@ -116,8 +125,13 @@ impl AttemptWrapper {
     pub(super) fn round_input(&self, prompt: &str, budget_metered: bool) -> RoundInput {
         RoundInput {
             goal: prompt.to_string(),
-            // No `--test-command` reaches this door — see the module doc.
-            signals: crate::wrapper_plugin::pre_turn_signals(false, budget_metered),
+            // Read off the grant rather than re-derived: the plan on the wire
+            // is what a plugin can actually run, so a signal saying a test
+            // exists must be the same fact the grant carries.
+            signals: crate::wrapper_plugin::pre_turn_signals(
+                self.candidate.grant.test.is_some(),
+                budget_metered,
+            ),
             candidate: Some(self.candidate.grant.clone()),
         }
     }
@@ -276,19 +290,23 @@ impl TurnDriver for AttemptDriver<'_, '_> {
 }
 
 /// Resolve `variant` against what the **invocation** workspace has installed
-/// and bind it for one attempt running in `tree`.
+/// and bind it for one attempt running in `tree`, with `test_command` as that
+/// attempt's oracle.
 ///
 /// # Errors
 ///
 /// Whatever [`crate::wrapper_plugin::resolve`] refuses (a variant nothing
 /// installed declares, a manifest with no `[runtime]` block), a tree the
-/// candidate fence will not mint a grant over, or a wrapper whose declared
-/// stage order cannot be resolved.
+/// candidate fence will not mint a grant over, a `test_command` the host's
+/// runner vocabulary refuses, or a wrapper whose declared stage order cannot
+/// be resolved. Every one of them fails this attempt's dispatch by name; the
+/// fan-out's other tasks are unaffected.
 pub(super) fn bind_for_attempt(
     invocation_root: &std::path::Path,
     tree: &std::path::Path,
     variant: &str,
     task: &stella_fleet::TaskId,
+    test_command: Option<&str>,
 ) -> Result<AttemptWrapper, String> {
     // Silent by design, and this is the one place in the crate where that is
     // not a dropped refusal: `run_fleet`'s pre-flight resolves the SAME
@@ -297,7 +315,7 @@ pub(super) fn bind_for_attempt(
     // N identical copies of one sentence on the stderr of a run with N
     // workers, interleaved by concurrency and attributed to nothing.
     let resolved = crate::wrapper_plugin::resolve(invocation_root, variant, &mut |_| {})?;
-    let candidate = crate::wrapper_candidate::grant_shared_tree(tree, None)?;
+    let candidate = crate::wrapper_candidate::grant_shared_tree(tree, test_command)?;
     // `recall` reaches the workspace's own context plane — the coordination
     // root, like the claim store beside it — rather than an isolated
     // worktree's (which has none, and would answer every recall with nothing).

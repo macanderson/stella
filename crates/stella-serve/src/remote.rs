@@ -17,10 +17,10 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use stella_core::bus::{self, HookBus, HookDecision, HookEventDraft, names as hook_names};
-use stella_core::hooks::decision::{GateVerdict, OperatorPosture};
+use stella_core::bus::{self, HookBus, HookEventDraft, names as hook_names};
+use stella_core::hooks::decision::{GateVerdict, OperatorPosture, resolve_precedence};
 use stella_core::ports::authz::authz_verdict;
-use stella_core::ports::{AuthzGate, Principal, ToolExecutor};
+use stella_core::ports::{AuthzGate, DispatchAdmission, DispatchGate, Principal, ToolExecutor};
 use stella_core::retry::Sleeper;
 use stella_protocol::{
     CompletionRequestRef, CompletionResult, Provider, ProviderError, ToolCallObserver, ToolOutput,
@@ -435,9 +435,12 @@ impl RemoteToolExecutor {
     /// cannot see the shell command it is judging cannot judge it. Observable
     /// events below carry `sanitize_tool_input`'d copies instead.
     ///
-    /// Deliberately the same decision handling as the CLI's `ToolRegistry`,
-    /// down to the dropped-`input` case: two surfaces answering one `Deny`
-    /// differently is exactly the drift `stella-parity` exists to catch.
+    /// The decision fold is the CLI's `ToolRegistry`'s, called rather than
+    /// restated: `resolve_precedence` over one `HookDecision`, refusals
+    /// classified [`stella_protocol::ErrorClass::RefusedByPolicy`]. Two
+    /// surfaces answering one `Deny` differently is exactly the drift
+    /// `stella-parity` exists to catch, and this file had already drifted
+    /// into an unclassified error on both refusal arms (#3843).
     fn gate_tool_call(
         bus: &HookBus,
         name: &str,
@@ -447,14 +450,23 @@ impl RemoteToolExecutor {
             hook_names::TOOL_CALL_REQUESTED,
             serde_json::json!({ "tool": name, "input": input }),
         ));
-        match outcome.decision {
-            HookDecision::Deny(denial) => Err(ToolOutput::error(format!(
-                "`{name}` was denied by an extension policy: {denial}"
-            ))),
-            HookDecision::RequireApproval { reason } => Err(ToolOutput::error(format!(
-                "`{name}` requires approval before it can run: {reason}"
-            ))),
-            _ => {
+        match resolve_precedence(&OperatorPosture::NoOpinion, Ok(&outcome.decision), false) {
+            GateVerdict::Deny { reason } => Err(ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                format!("`{name}` was denied by an extension policy: {reason}"),
+            )),
+            // A served turn has no human to park on, so the structured
+            // refusal is the honest answer — the same posture, the same
+            // class and the same sentence the authorization gate's own
+            // approval arm takes below. Routing this to a host-side approval
+            // exchange is #3288, and it is the one thing that would let a
+            // served session ask; inventing a local responder here would ask
+            // nobody and answer anyway.
+            GateVerdict::RequireApproval { reason } => Err(ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                format!("`{name}` requires approval before it can run: {reason}"),
+            )),
+            GateVerdict::Allow => {
                 if !outcome.modified {
                     return Ok(None);
                 }
@@ -608,6 +620,43 @@ impl ToolExecutor for RemoteToolExecutor {
         let output = self.dispatch(name, input).await;
         Self::report_tool_outcome(bus, name, &output, millis(started_at.elapsed()));
         output
+    }
+
+    /// This executor owns the served session's blocking policy chain, so it
+    /// is the surface's one [`DispatchGate`] (#2793, #3843) — the accessor a
+    /// decorator that dispatches a name of its own reaches it through. Serve
+    /// has exactly one such decorator, [`crate::subagents::DelegatingTools`],
+    /// and its engine-side `delegate` reached the model with no extension
+    /// policy consulted until it did.
+    fn dispatch_gate(&self) -> Option<&dyn DispatchGate> {
+        Some(self)
+    }
+}
+
+/// The served surface's one dispatch gate: the `tool.call.requested` chain
+/// and the fold over it, offered through the port rather than copied by every
+/// decorator that needs it.
+///
+/// Deliberately **not** the authorization gate as well. [`AuthzGate`] answers
+/// "may this principal call this tool at all" from a contract and runs inside
+/// [`ToolExecutor::execute`] above; this answers "what did this deployment's
+/// extension policy decide about this exact call". Folding both in here would
+/// run the authorization ladder twice for every remoted call, and the CLI's
+/// own `impl DispatchGate for ToolRegistry` — the reference this one keeps
+/// parity with — draws the line in the same place.
+#[async_trait]
+impl DispatchGate for RemoteToolExecutor {
+    async fn admit(&self, name: &str, input: &Value) -> DispatchAdmission {
+        // No bus, no chains: the same "policy plane absent" case
+        // `execute` has always had, and the same answer.
+        let Some(bus) = &self.bus else {
+            return DispatchAdmission::Admit;
+        };
+        match Self::gate_tool_call(bus, name, input) {
+            Ok(None) => DispatchAdmission::Admit,
+            Ok(Some(amended)) => DispatchAdmission::AmendedInput(amended),
+            Err(refusal) => DispatchAdmission::Refuse(refusal),
+        }
     }
 }
 

@@ -32,6 +32,8 @@
 //! whichever pin is answering — so with the AGENTS tab's per-row model column
 //! gone, "which pin serves each role" is answered here or nowhere.
 
+use unicode_width::UnicodeWidthStr;
+
 use super::*;
 use crate::keymap::{self, Scope};
 
@@ -124,14 +126,109 @@ fn metric_rows(model: &WorkspaceModel) -> Vec<Line<'static>> {
     lines
 }
 
+/// Cells the panel reserves for a row's description, beyond the key column
+/// and the two-space margin. The widest sentence in the keymap is what set
+/// it: `queue the prompt — mid-turn it waits its turn (unless a card asks)`
+/// ran to the panel's edge under the old fixed 84-cell cap and a 13-cell key
+/// column, so this is that same budget stated as what it is.
+const DESCRIPTION_W: usize = 71;
+
 /// One aligned `key → description` row of the help overlay. The key column is
-/// padded to a fixed width so the descriptions line up into a scannable
-/// second column.
+/// padded to [`keymap::key_column_width`] — the widest chord in the table —
+/// so every description starts in the same place.
+///
+/// The width is asked for rather than spelled. This used to pad to a literal
+/// 13 while the table held a 15-cell chord, and the two rows wider than the
+/// pad pushed their descriptions left of every other row's (#4428). The
+/// padding is also measured in cells, not `char`s: `{key:<13}` counts `char`s,
+/// which is the same number only for the ASCII rows.
 fn help_row(key: &str, desc: &str) -> Line<'static> {
+    let pad = keymap::key_column_width().saturating_sub(UnicodeWidthStr::width(key));
     Line::from(vec![
-        Span::styled(format!("  {key:<13} "), theme::accent()),
+        Span::styled(format!("  {key}{} ", " ".repeat(pad)), theme::accent()),
         Span::styled(desc.to_string(), theme::body()),
     ])
+}
+
+/// The frame width at which the sheet lays its key sections side by side.
+///
+/// Below it one column of [`one_column_w`] is the whole panel; at or above it the panel
+/// widens and splits, which is what puts SPEC 5's metric block on the first
+/// screen of a 40-row terminal instead of a scroll away (#4371).
+const TWO_COLUMN_MIN_W: u16 = 120;
+
+/// The single column's width, and the cap the panel keeps below the
+/// threshold — one sentence per key on a 100-column terminal.
+///
+/// The description budget *plus* the key column, not a single spelled number,
+/// so a chord added to the keymap widens the panel instead of eating cells
+/// off the longest sentence — which is what a fixed 84 did the moment the
+/// column stopped being 13 (#4428).
+fn one_column_w() -> u16 {
+    (DESCRIPTION_W + keymap::key_column_width()) as u16
+}
+
+/// Blank cells between the two columns, so a long description on the left
+/// does not run into the key on the right.
+const GUTTER: usize = 3;
+
+/// One column's rows, clipped and padded to exactly `width` cells.
+///
+/// Clipping takes the description, never the key: the key column is the
+/// scannable one and is 16 cells at the start of every row, so truncating
+/// from the right cannot reach it at any width this layout uses. A clipped
+/// row ends in `…`, so a sentence that stops reads as cut rather than as
+/// written that way.
+fn fit(line: &Line<'static>, width: usize) -> Vec<Span<'static>> {
+    let clipped = line.width() > width;
+    let room = if clipped {
+        width.saturating_sub(1)
+    } else {
+        width
+    };
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    for span in &line.spans {
+        if used >= room {
+            break;
+        }
+        let mut text = String::new();
+        for ch in span.content.chars() {
+            let w = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + w > room {
+                break;
+            }
+            used += w;
+            text.push(ch);
+        }
+        if !text.is_empty() {
+            spans.push(Span::styled(text, span.style));
+        }
+    }
+    if clipped {
+        spans.push(Span::styled("…", theme::muted()));
+        used += 1;
+    }
+    if used < width {
+        spans.push(Span::raw(" ".repeat(width - used)));
+    }
+    spans
+}
+
+/// Lay `left` beside `right`, each column `col` cells wide.
+///
+/// The taller column decides the row count; the shorter one pads out, so the
+/// right column's rows stay in the same place whichever side runs out first.
+fn side_by_side(left: &[Line<'static>], right: &[Line<'static>], col: usize) -> Vec<Line<'static>> {
+    let blank = Line::default();
+    (0..left.len().max(right.len()))
+        .map(|i| {
+            let mut spans = fit(left.get(i).unwrap_or(&blank), col);
+            spans.push(Span::raw(" ".repeat(GUTTER)));
+            spans.extend(fit(right.get(i).unwrap_or(&blank), col));
+            Line::from(spans)
+        })
+        .collect()
 }
 
 /// The help overlay: the active tab's keys first, then the deck-wide keys —
@@ -146,22 +243,37 @@ pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     // deck-wide chords. Context-aware on purpose — only keys that work
     // where the reader is, so the sheet stays short enough to read at a
     // glance.
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    let sections = [
-        (format!("  {} tab", ui.tab.title()), Scope::Tab(ui.tab)),
-        (
-            "  moving around — every tab, every overlay".to_string(),
-            Scope::Navigation,
-        ),
-        ("  everywhere".to_string(), Scope::Everywhere),
-    ];
-    for (heading, scope) in sections {
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(heading, theme::heading())));
-        for b in keymap::in_scope(scope) {
-            lines.push(help_row(b.keys, b.does));
-        }
-    }
+    let section = |heading: String, scope: Scope| {
+        let mut out = vec![
+            Line::default(),
+            Line::from(Span::styled(heading, theme::heading())),
+        ];
+        out.extend(keymap::in_scope(scope).map(|b| help_row(b.keys, b.does)));
+        out
+    };
+    let mut here = section(format!("  {} tab", ui.tab.title()), Scope::Tab(ui.tab));
+    here.extend(section(
+        "  moving around — every tab, every overlay".to_string(),
+        Scope::Navigation,
+    ));
+    let everywhere = section("  everywhere".to_string(), Scope::Everywhere);
+
+    // Wide frames get the panel's full width and two columns; the metric
+    // block below still spans both. On a narrow frame the sections stack and
+    // the block's own `↓ N more` edge says the numbers are there.
+    let wide = area.width >= TWO_COLUMN_MIN_W;
+    let w = if wide {
+        area.width.saturating_sub(4)
+    } else {
+        area.width.saturating_sub(4).min(one_column_w())
+    };
+    let mut lines: Vec<Line<'static>> = if wide {
+        // Two borders out of `w`, then the gutter, split evenly.
+        let col = (w as usize).saturating_sub(2 + GUTTER) / 2;
+        side_by_side(&here, &everywhere, col)
+    } else {
+        here.into_iter().chain(everywhere).collect()
+    };
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
         "  letter & arrow hotkeys apply while the prompt box is empty",
@@ -173,10 +285,7 @@ pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     // to be *here*, not to be first.
     lines.extend(metric_rows(model));
 
-    // Size the panel to its content, capped to the frame. Wide enough for a
-    // sentence per key on a 100-column terminal; narrower frames clip the
-    // description, never the key.
-    let w = area.width.saturating_sub(4).min(84);
+    // Size the panel to its content, capped to the frame.
     let h = area.height.min(lines.len() as u16 + 2);
     let popup = Rect {
         x: area.x + (area.width.saturating_sub(w)) / 2,
@@ -217,4 +326,51 @@ pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     Paragraph::new(lines)
         .scroll((window.start as u16, 0))
         .render(inner, buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keymap::BINDINGS;
+
+    /// **The witness (#4428).** Every row of the sheet starts its description
+    /// in the same column, whatever the chord.
+    ///
+    /// Fails on a spelled pad: at 13 cells the key span of `ctrl-n / ctrl-p`
+    /// (15) and of `⇞ ⇟ · Home End` (14) is wider than the rest, so those
+    /// descriptions begin one and three columns right of every other row's.
+    #[test]
+    fn every_key_column_is_the_same_width() {
+        let width = |b: &crate::keymap::Binding| {
+            UnicodeWidthStr::width(&*help_row(b.keys, "x").spans[0].content)
+        };
+        let widest = BINDINGS
+            .iter()
+            .max_by_key(|b| UnicodeWidthStr::width(b.keys))
+            .expect("the keymap is not empty");
+        let want = width(widest);
+        for b in BINDINGS {
+            assert_eq!(
+                width(b),
+                want,
+                "`{}` pads its key column to a different width than `{}`",
+                b.keys,
+                widest.keys
+            );
+        }
+    }
+
+    /// The metric block shares `help_row`, so its labels line up with the
+    /// chords above them rather than forming a second, narrower column.
+    #[test]
+    fn a_metric_label_lines_up_with_the_chords() {
+        let chord = UnicodeWidthStr::width(&*help_row("⏎", "x").spans[0].content);
+        for label in ["triage", "worker", "verifier", "engine", "cpu", "mem"] {
+            assert_eq!(
+                UnicodeWidthStr::width(&*help_row(label, "x").spans[0].content),
+                chord,
+                "the `{label}` row sits in a different column than the keys"
+            );
+        }
+    }
 }

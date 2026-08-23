@@ -10,13 +10,16 @@
 #
 # ── Why this suite exists at all ─────────────────────────────────────────────
 #
-# The ratchet's language list has now been wrong twice, the same way both
-# times, and neither failure was visible from its output:
+# The ratchet's language list has now been wrong three times, the same way
+# every time, and no failure was visible from its output:
 #
 #   #825   an 8,166-line Python analyzer sat under a guard watching only *.rs,
 #          which reported OK every run.
 #   #1563  the delivery-loop driver reached ~1,900 lines of shell under a guard
 #          watching only *.rs and *.py, which also reported OK every run.
+#   #3811  arenabench/ui/components/arena/transcript-page.tsx reached 1,571
+#          lines under a guard watching no TypeScript at all. A human noticed
+#          and split it; nothing in the gate could have.
 #
 # A guard that silently covers less than it claims is worse than no guard: it
 # reads as evidence the tree is meeting a limit it is not. The whole-repo run
@@ -120,7 +123,7 @@ want() {
 }
 
 # ── One case per watched language ────────────────────────────────────────────
-for lang in rs py sh; do
+for lang in rs py sh ts tsx mjs js; do
   r="$(new_repo "over_$lang")"
   plant "$r" "src/big.$lang" 1600
   want "L-${lang} a 1600-line .${lang} file is flagged" \
@@ -157,6 +160,10 @@ r="$(new_repo "under")"
 plant "$r" "src/ok.rs" 1400
 plant "$r" "src/ok.py" 1400
 plant "$r" "tools/ok.sh" 1400
+plant "$r" "ui/ok.ts" 1400
+plant "$r" "ui/ok.tsx" 1400
+plant "$r" "ui/ok.mjs" 1400
+plant "$r" "ui/ok.js" 1400
 plant "$r" ".githooks/pre-push" 1400
 want "N1 files under the limit in every language pass" expect-pass "$r"
 
@@ -165,6 +172,32 @@ want "N1 files under the limit in every language pass" expect-pass "$r"
 r="$(new_repo "unwatched")"
 plant "$r" "docs/huge.md" 4000
 want "N2 an unwatched language is left alone" expect-pass "$r"
+
+# `.mdx` is the deliberate omission #3811 decided rather than an oversight: the
+# website's documentation pages are prose, and "split it into submodules" — the
+# only remedy this guard offers — has no meaning for a page read top to bottom.
+# A ratchet whose failure has no correct fix teaches people to edit the
+# baseline, so the decision is pinned here rather than left to be re-derived.
+r="$(new_repo "mdx")"
+plant "$r" "website/content/docs/huge.mdx" 4000
+want "N3 a long .mdx page is prose, not a god file" expect-pass "$r"
+
+# Generated-and-committed TypeScript is excluded for a different reason again:
+# `docs/wire/*.d.ts` is written by scripts/export-agentevent-schema.sh, and
+# `wire-schema` fails the gate if it differs from what that exporter produces.
+# Splitting it is not something a human may do — the next regeneration would
+# undo the split and redden that guard instead.
+r="$(new_repo "generated")"
+plant "$r" "docs/wire/agentevent.d.ts" 3000
+want "N4 generated docs/wire/*.d.ts is not judged" expect-pass "$r"
+
+# ...and the exclusion is exactly that narrow. A hand-written `.ts` beside it
+# under the same directory is still watched, so the escape hatch cannot be
+# widened by moving a file into `docs/wire/`.
+r="$(new_repo "generated_narrow")"
+plant "$r" "docs/wire/handwritten.ts" 1600
+want "L-wire a hand-written .ts under docs/wire/ is still flagged" \
+  expect-fail "$r" "docs/wire/handwritten.ts is 1600 lines"
 
 # ── The baseline skew: judging the CHANGE, not the tree (#2004) ───────────────
 #

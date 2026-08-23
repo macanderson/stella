@@ -3,7 +3,8 @@
 //! actually ask for — the two files, the redaction of a planted key in a
 //! prompt, a tool argument, AND a reconstructed transcript, the provenance
 //! stamp, the reward labels with their policy, the transcript-verification
-//! gate with its manifest count, and byte-identity across runs.
+//! gate with its manifest count, the severity a withheld transcript's digest
+//! mismatch is reported at, and byte-identity across runs.
 //!
 //! Every assertion here fails on the pre-#872 tree, where the subcommand does
 //! not parse at all (clap exits 2 with "unrecognized subcommand"); the #2083
@@ -105,6 +106,7 @@ fn worker_manifest(blocks: Vec<ManifestBlockRow>) -> StepManifestRow {
         effective_budget_tokens: 1000,
         calibration_factor: 1.0,
         estimated_input_tokens: 40,
+        stall_seconds_requested: None,
         compiled_frame_id: None,
         frame_hash: None,
         blocks,
@@ -151,9 +153,14 @@ struct Seeded {
     /// The turn whose receipts plane holds nothing at all — see
     /// [`seeded_workspace`].
     pre_receipts: i64,
+    /// The mismatching turn stamped with the era this build writes.
+    mismatched_integrity: i64,
+    /// The same mismatch on a journal written before compaction recorded its
+    /// rewrites.
+    mismatched_compaction: i64,
 }
 
-/// A workspace whose store holds five settled executions, one per filter arm:
+/// A workspace whose store holds seven settled executions, one per filter arm:
 ///
 /// - `flipped`: accepted — `completed`, a mutating change, a digest-verified
 ///   worker transcript, and a `SubmitFast` verdict (the deterministic flip,
@@ -170,6 +177,12 @@ struct Seeded {
 ///   for. It reaches the unvouched arm by the other route (nothing to
 ///   reconstruct rather than a reconstruction that fell short), and it is the
 ///   only fixture on which the reward's step term has nothing to count.
+/// - `mismatched_integrity` and `mismatched_compaction`: the third route to
+///   the unvouched arm — a receipt whose block resolves to bytes that do not
+///   re-hash to its recorded digest. Byte-for-byte the same failure on both;
+///   they differ only in the era stamped on the execution row, which is what
+///   `Reconstruction::mismatch_severity` reads to decide whether those bytes
+///   are a legacy compaction rewrite or unaccounted for.
 ///
 /// A project-scope `.stella/settings.json` pins the default reward weights
 /// explicitly, so the labels asserted below cannot drift with whatever the
@@ -218,6 +231,7 @@ fn seeded_workspace() -> Seeded {
             effective_budget_tokens: 1000,
             calibration_factor: 1.0,
             estimated_input_tokens: 10,
+            stall_seconds_requested: None,
             compiled_frame: None,
         },
         AgentEvent::ToolStart { call: call.clone() },
@@ -428,12 +442,96 @@ fn seeded_workspace() -> Seeded {
         .finish_execution(pre_receipts, "completed", 0.10)
         .expect("finish");
 
+    // Two settled successes whose receipt cites a block the journal cannot
+    // re-hash: the same bytes, the same failure, differing only in who wrote
+    // the journal. `begin_execution` stamps the era this build writes, so the
+    // first stays as seeded and the second is rewritten below.
+    let mismatched_integrity =
+        seed_mismatching_execution(&store, "a transcript that does not re-hash");
+    let mismatched_compaction =
+        seed_mismatching_execution(&store, "a legacy transcript that does not re-hash");
+
+    // The era is stamped at `begin_execution` and no public API rewrites it,
+    // so the legacy row is aged through a direct connection — the same seam
+    // `stats_prune_cli.rs` uses to backdate `started_at`. Close the store
+    // first: the CLI opens this file next, and two writers is a needless race.
+    drop(store);
+    let conn = rusqlite::Connection::open(dir.path().join(".stella/private/store.db"))
+        .expect("open store.db");
+    conn.execute(
+        "UPDATE executions SET journal_era = 0 WHERE id = ?1",
+        [mismatched_compaction],
+    )
+    .expect("age the journal era");
+
     Seeded {
         dir,
         flipped,
         tampered,
         pre_receipts,
+        mismatched_integrity,
+        mismatched_compaction,
     }
+}
+
+/// A settled success whose single receipt cites a `tool_result` block recording
+/// a digest over bytes the journal does not hold. Nothing journals the
+/// replacement, so the block resolves through the `call_id` fallback to the
+/// pre-compaction output and re-hashes to something else: `unresolved` stays
+/// empty and `digest_mismatches` carries the block, which is the only shape
+/// that reaches a non-`none` severity.
+///
+/// The shape is `reconstruct.rs`'s own `seed_mismatching_block`, called twice
+/// for the same reason it is there: the claim is that one identical mismatch
+/// reads two ways.
+fn seed_mismatching_execution(store: &Store, prompt: &str) -> i64 {
+    let journaled = ToolOutput::Ok {
+        content: "the original tool output".into(),
+        data: None,
+    };
+    let sent = ToolOutput::Ok {
+        content: "[tool output evicted to fit context]".into(),
+        data: None,
+    };
+    let sent_json = serde_json::to_string(&sent).expect("output json");
+
+    let id = store
+        .begin_execution("run", prompt, "zai", "glm-5.2")
+        .expect("execution");
+    let events = [
+        AgentEvent::ToolResult {
+            call_id: "c_rewritten".into(),
+            output: journaled,
+            duration_ms: 5,
+            speculated: false,
+        },
+        AgentEvent::FileChange {
+            path: "src/compacted.rs".into(),
+            kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 0,
+            diff: None,
+        },
+    ];
+    for (seq, event) in events.iter().enumerate() {
+        store.record_event(id, seq as u64, event).expect("event");
+    }
+    store
+        .record_context_block(
+            id,
+            &journal_block("blk_rewritten", "tool_result", "c_rewritten", &sent_json),
+        )
+        .expect("context block");
+    store
+        .record_step_manifest(
+            id,
+            &worker_manifest(vec![manifest_entry("blk_rewritten", 0)]),
+        )
+        .expect("manifest");
+    store
+        .finish_execution(id, "completed", 0.03)
+        .expect("finish");
+    id
 }
 
 fn export(dir: &tempfile::TempDir, out: &str, extra: &[&str]) -> String {
@@ -476,7 +574,7 @@ fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
     } = seeded_workspace();
     let summary = export(&dir, "out", &[]);
     assert!(
-        summary.contains("2 accepted turn(s) from 5 settled execution(s)"),
+        summary.contains("2 accepted turn(s) from 7 settled execution(s)"),
         "the summary reports what it kept and what it read: {summary}"
     );
 
@@ -484,7 +582,7 @@ fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
     assert_eq!(
         jsonl.lines().count(),
         2,
-        "the aborted and the two unvouched executions are excluded: {jsonl}"
+        "the aborted and the four unvouched executions are excluded: {jsonl}"
     );
     let mut lines = jsonl.lines();
     let record: serde_json::Value = serde_json::from_str(lines.next().unwrap()).unwrap();
@@ -563,8 +661,8 @@ fn export_writes_one_record_per_accepted_turn_with_its_provenance() {
     let manifest: serde_json::Value =
         serde_json::from_slice(&read(dir.path(), "out", "manifest.json")).expect("manifest json");
     assert_eq!(manifest["records"], 2);
-    assert_eq!(manifest["filter"]["executions_scanned"], 5);
-    assert_eq!(manifest["filter"]["executions_transcripts_unverified"], 2);
+    assert_eq!(manifest["filter"]["executions_scanned"], 7);
+    assert_eq!(manifest["filter"]["executions_transcripts_unverified"], 4);
     assert_eq!(manifest["filter"]["include_unverified_transcripts"], false);
     assert_eq!(manifest["filter"]["executions_accepted"], 2);
     assert_eq!(
@@ -642,7 +740,7 @@ fn the_date_window_and_require_verdict_are_reported_as_applied() {
     let manifest: serde_json::Value =
         serde_json::from_slice(&read(dir.path(), "future", "manifest.json")).expect("json");
     assert_eq!(manifest["records"], 0);
-    assert_eq!(manifest["filter"]["executions_scanned"], 5);
+    assert_eq!(manifest["filter"]["executions_scanned"], 7);
     assert_eq!(manifest["filter"]["executions_in_window"], 0);
     assert_eq!(manifest["filter"]["since"], "2099-01-01");
     assert_eq!(manifest["execution_id_range"], serde_json::Value::Null);
@@ -684,19 +782,19 @@ fn the_unvouched_turn_is_reachable_only_under_the_transcript_opt_in() {
 
     let summary = export(&dir, "loose", &["--include-unverified-transcripts"]);
     assert!(
-        summary.contains("4 accepted turn(s) from 5 settled execution(s)"),
-        "both unvouched turns are now kept: {summary}"
+        summary.contains("6 accepted turn(s) from 7 settled execution(s)"),
+        "every unvouched turn is now kept: {summary}"
     );
     assert!(
-        summary.contains("2 turn(s) exported with transcript_verified=false"),
+        summary.contains("4 turn(s) exported with transcript_verified=false"),
         "the summary says the transcripts were withheld, not that nothing happened: {summary}"
     );
 
     let jsonl = String::from_utf8(read(dir.path(), "loose", "dataset.jsonl")).expect("utf8");
     assert_eq!(
         jsonl.lines().count(),
-        4,
-        "the two unvouched executions join the two verified ones: {jsonl}"
+        6,
+        "the four unvouched executions join the two verified ones: {jsonl}"
     );
     let unvouched: serde_json::Value =
         serde_json::from_str(jsonl.lines().nth(2).unwrap()).expect("record json");
@@ -731,13 +829,13 @@ fn the_unvouched_turn_is_reachable_only_under_the_transcript_opt_in() {
         manifest["schema"], 3,
         "the record shape changed, so did the schema"
     );
-    assert_eq!(manifest["records"], 4);
+    assert_eq!(manifest["records"], 6);
     assert_eq!(manifest["filter"]["include_unverified_transcripts"], true);
     assert_eq!(
-        manifest["filter"]["executions_transcripts_unverified"], 2,
+        manifest["filter"]["executions_transcripts_unverified"], 4,
         "the same count in both modes is what makes them comparable"
     );
-    assert_eq!(manifest["filter"]["executions_accepted"], 4);
+    assert_eq!(manifest["filter"]["executions_accepted"], 6);
     assert_eq!(
         manifest["filter"]["acceptance_predicate"],
         "executions.outcome in {completed, goal_met} AND at least one mutating \
@@ -820,6 +918,71 @@ fn a_turn_with_no_receipts_at_all_withholds_the_reward_scalar_it_cannot_shape() 
         serde_json::from_str(jsonl.lines().next().unwrap()).expect("record json");
     assert_eq!(verified["reward"]["cost"]["steps"], 1);
     assert!(verified["reward"]["reward"].as_f64().is_some());
+}
+
+/// #2123's other two arms, through the binary. `transcript_mismatch_severity`
+/// was added to separate a benign legacy compaction rewrite from bytes that are
+/// unaccounted for, and until this test only `none` had ever been exported: the
+/// path from `Reconstruction::mismatch_severity` through `transcripts` to the
+/// serialized field was covered nowhere outside a unit test of the two pure
+/// helpers on either end of it.
+///
+/// The two fixtures mismatch identically — one block, one recorded digest, one
+/// recovered preimage, `unresolved` empty on both. The era stamped on the
+/// execution row is the only difference between them, so a record reading
+/// `integrity` where its sibling reads `compaction` can have come from nothing
+/// else.
+#[test]
+fn a_digest_mismatch_exports_the_severity_its_journal_era_gives_it() {
+    let Seeded {
+        dir,
+        mismatched_integrity,
+        mismatched_compaction,
+        ..
+    } = seeded_workspace();
+    export(&dir, "loose", &["--include-unverified-transcripts"]);
+
+    let jsonl = String::from_utf8(read(dir.path(), "loose", "dataset.jsonl")).expect("utf8");
+    let record = |execution_id: i64| -> serde_json::Value {
+        jsonl
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("record json"))
+            .find(|record: &serde_json::Value| record["execution_id"] == execution_id)
+            .expect("a mismatching turn is exported under the flag")
+    };
+
+    let integrity = record(mismatched_integrity);
+    assert_eq!(
+        integrity["transcript_mismatch_severity"], "integrity",
+        "this journal records every compaction rewrite, so nothing explains \
+         these bytes: {integrity}"
+    );
+    let compaction = record(mismatched_compaction);
+    assert_eq!(
+        compaction["transcript_mismatch_severity"], "compaction",
+        "the same bytes on a pre-#1667 journal are an in-place rewrite, and \
+         calling that tampering is the false alarm #1668 removed: {compaction}"
+    );
+
+    // Both are unvouched on the same terms as every other withheld transcript:
+    // the severity qualifies the withholding, it does not soften it.
+    for record in [&integrity, &compaction] {
+        assert_eq!(record["transcript_verified"], false);
+        assert_eq!(
+            record["calls"].as_array().map(Vec::len),
+            Some(0),
+            "a mismatched transcript is withheld whole: {record}"
+        );
+        assert_eq!(record["outcome"], "completed");
+        assert_eq!(record["changes"][0]["path"], "src/compacted.rs");
+    }
+
+    // The digest-verified record is still `none`, so the field is reporting the
+    // reconstruction rather than the flag that let these two through.
+    let verified: serde_json::Value =
+        serde_json::from_str(jsonl.lines().next().unwrap()).expect("record json");
+    assert_eq!(verified["transcript_verified"], true);
+    assert_eq!(verified["transcript_mismatch_severity"], "none");
 }
 
 /// The dataset carries redacted prompts and full tool outputs, which is at

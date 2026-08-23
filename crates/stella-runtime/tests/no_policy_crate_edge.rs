@@ -16,6 +16,15 @@
 //! downstream of it into `CARGO_SCOPE` whenever the policy crate changes, and
 //! costs every consumer a compile of a tree it never calls (#3280).
 //!
+//! That second cost does not need the edge to be a *policy* edge, which is
+//! why this file carries a second, broader assertion: a declared workspace
+//! edge nothing in `src/` names is a phantom edge whatever it points at.
+//! `stella-context`, `stella-graph` and `stella-mcp` were all three declared
+//! here and referenced nowhere, so the crate paid for tree-sitter indexing, an
+//! embedder and an MCP client on every build of every consumer, and
+//! `impacted-crates.sh` widened `CARGO_SCOPE` to this crate whenever any of
+//! the three changed (#3732). A comment could have justified them; none did.
+//!
 //! This began (#3280) as the witness for one subtraction — the edge to the
 //! built-in staged pipeline, which is why the file was called
 //! `no_pipeline_edge.rs`. That crate was deleted from the workspace outright
@@ -55,36 +64,43 @@ const FORBIDDEN_DEPENDENCIES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Dependency names declared by this crate's own manifest.
+/// Every dependency this crate's own manifest declares, paired with the table
+/// header it was declared under.
 ///
 /// Hand-parsed rather than pulled through a TOML dependency: the shape being
 /// read is one line per dependency in a known table, and adding a crate to
 /// `[dev-dependencies]` to read four lines is a worse trade than the parse.
 /// `env!("CARGO_MANIFEST_DIR")` is resolved by the compiler, so this reads no
 /// ambient process state and does not disturb `no_ambient_reads.rs`.
-fn declared_dependencies() -> Vec<String> {
+///
+/// The header comes back because the two assertions below want different
+/// slices of the same parse: a forbidden edge is forbidden wherever it is
+/// declared, while a phantom edge is a claim about `[dependencies]` alone —
+/// a `[dev-dependencies]` entry is *meant* to be invisible to `src/`.
+fn declared_dependencies() -> Vec<(String, String)> {
     let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
         .expect("the crate's own Cargo.toml is readable");
 
-    let mut names = Vec::new();
-    let mut in_dependency_table = false;
+    let mut declared = Vec::new();
+    let mut table: Option<String> = None;
     for line in manifest.lines() {
         let line = line.trim();
         if let Some(header) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
             // `[dependencies]`, `[dev-dependencies]`, `[build-dependencies]`
             // and their `[target.'…'.dependencies]` forms all count: a
             // phantom edge in any of them still reaches the resolver.
-            in_dependency_table = header.ends_with("dependencies");
+            table = header.ends_with("dependencies").then(|| header.to_string());
             continue;
         }
-        if !in_dependency_table || line.is_empty() || line.starts_with('#') {
+        let Some(header) = &table else { continue };
+        if line.is_empty() || line.starts_with('#') {
             continue;
         }
         if let Some((name, _)) = line.split_once('=') {
-            names.push(name.trim().trim_matches('"').to_string());
+            declared.push((header.clone(), name.trim().trim_matches('"').to_string()));
         }
     }
-    names
+    declared
 }
 
 #[test]
@@ -96,15 +112,67 @@ fn the_assembly_seam_declares_no_edge_to_a_policy_crate() {
     // vacuously true, which is the failure mode a subtraction test is most
     // exposed to.
     assert!(
-        declared.iter().any(|d| d == "stella-core"),
+        declared.iter().any(|(_, name)| name == "stella-core"),
         "parsed no `stella-core` edge out of the manifest, so the scan is \
          broken rather than clean; declared = {declared:?}"
     );
 
     for (forbidden, why) in FORBIDDEN_DEPENDENCIES {
         assert!(
-            !declared.iter().any(|d| d == forbidden),
+            !declared.iter().any(|(_, name)| name == forbidden),
             "stella-runtime declares `{forbidden}`: {why}"
+        );
+    }
+}
+
+/// Every workspace crate `[dependencies]` declares is named somewhere in
+/// `src/` — the subtraction #3732 asked for, kept from coming back.
+///
+/// A phantom edge is invisible to every other guard in the tree: it compiles,
+/// it lints clean, and `cargo` has no opinion about a dependency nothing
+/// imports. What it costs is paid by everyone else — the build of the tree it
+/// pulls in, and a `CARGO_SCOPE` that widens to this crate whenever the crate
+/// it never calls changes.
+///
+/// Scoped to `[dependencies]` and to `src/` deliberately, in both directions:
+/// a `[dev-dependencies]` entry is *supposed* to be absent from `src/`, and a
+/// `[dependencies]` entry used only by `tests/` is a dev-dependency that was
+/// filed in the wrong table.
+#[test]
+fn every_declared_workspace_edge_is_named_in_the_source() {
+    let source = {
+        let mut text = String::new();
+        let mut stack = vec![std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src"
+        ))];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("the crate has a src/ directory") {
+                let path = entry.expect("a readable source entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    text.push_str(&std::fs::read_to_string(&path).expect("a readable module"));
+                }
+            }
+        }
+        text
+    };
+    assert!(
+        source.contains("stella_plugin"),
+        "read no source, so the scan is broken rather than clean"
+    );
+
+    for (table, name) in declared_dependencies() {
+        if table != "dependencies" || !name.starts_with("stella-") {
+            continue;
+        }
+        assert!(
+            source.contains(&name.replace('-', "_")),
+            "stella-runtime declares `{name}` and names it nowhere in src/. \
+             Drop the line, or move it to [dev-dependencies] if only the tests \
+             need it — an edge that costs every consumer a compile of a tree \
+             this crate never calls is the defect #3732 named."
         );
     }
 }

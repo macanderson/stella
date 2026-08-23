@@ -548,6 +548,76 @@ fn an_unknown_envelope_key_is_refused_rather_than_ignored() {
     );
 }
 
+/// **The #3518 witness.** A malformed body reports *where* it is malformed.
+///
+/// #3500's envelope held `body` as a `serde_json::Value` until `point` had
+/// been read, then re-deserialized out of that buffer through
+/// `serde::de::Error::custom` — which carries the field name and drops the
+/// `at line N column M` a direct `from_slice` would have had. The field name
+/// is what makes the failure *decidable*; the position is what a plugin author
+/// navigates by, and the whole reason they are reading the error at all.
+///
+/// Asserted on both key orders, because the fix keeps the buffer for the
+/// reversed one: `point` first is the order the host itself always writes and
+/// the one that keeps positions, and `body` first must still decode — a JSON
+/// library that writes its map in the other order cannot be made wrong by this.
+#[test]
+fn a_malformed_body_reports_the_position_the_author_navigates_by() {
+    // Pretty-printed rather than one line, so a line number is a real answer
+    // and not always 1.
+    let point_first = "{\n  \"point\": \"before_turn\",\n  \"body\": {\n    \
+                       \"protocol_version\": 1,\n    \"system_prompt\": \"you are...\"\n  }\n}";
+    let err = serde_json::from_str::<WrapperResponse>(point_first)
+        .expect_err("an unknown key inside the body is refused");
+    let text = err.to_string();
+    assert!(text.contains("system_prompt"), "got {text}");
+    assert!(
+        text.contains("at line 5 column"),
+        "the position is the half an author navigates by, got {text}"
+    );
+    assert_eq!(err.line(), 5, "got {text}");
+
+    // The reversed order still decodes, and still names the field. It reaches
+    // the buffer, so it has no position to offer — which is the trade this
+    // change makes deliberately rather than the regression it would be if the
+    // common path had lost one too.
+    let body_first = "{\n  \"body\": {\n    \"protocol_version\": 1,\n    \
+                      \"system_prompt\": \"you are...\"\n  },\n  \"point\": \"before_turn\"\n}";
+    let err = serde_json::from_str::<WrapperResponse>(body_first)
+        .expect_err("the body is held to the same line whichever key came first");
+    assert!(err.to_string().contains("system_prompt"), "got {err}");
+
+    // And a well-formed message decodes in either order, which is what proves
+    // the two assertions above failed on the body rather than on the ordering.
+    for text in [
+        r#"{"point": "before_turn", "body": {"protocol_version": 1}}"#,
+        r#"{"body": {"protocol_version": 1}, "point": "before_turn"}"#,
+    ] {
+        assert_eq!(
+            serde_json::from_str::<WrapperResponse>(text)
+                .expect("either order decodes")
+                .point(),
+            WrapperPoint::BeforeTurn
+        );
+    }
+
+    // The envelope's own keys stay singular. A repeated `point` silently won
+    // by last-write under the derived reader; here it is named.
+    let err = serde_json::from_str::<WrapperResponse>(
+        r#"{"point": "before_turn", "point": "after_turn", "body": {"protocol_version": 1}}"#,
+    )
+    .expect_err("a repeated envelope key is a malformed message, not a preference");
+    assert!(err.to_string().contains("point"), "got {err}");
+
+    // And an envelope missing one of them says which.
+    let err = serde_json::from_str::<WrapperResponse>(r#"{"point": "before_turn"}"#)
+        .expect_err("an envelope with no body is not a response");
+    assert!(err.to_string().contains("body"), "got {err}");
+    let err = serde_json::from_str::<WrapperResponse>(r#"{"body": {"protocol_version": 1}}"#)
+        .expect_err("an envelope with no point addresses nothing");
+    assert!(err.to_string().contains("point"), "got {err}");
+}
+
 #[test]
 fn an_unknown_field_is_refused_rather_than_ignored() {
     let err = serde_json::from_str::<BeforeTurnResponse>(

@@ -647,11 +647,20 @@ struct AnthropicStreamError {
     message: String,
 }
 
-/// Map an Anthropic in-stream error to a typed `ProviderError`. Anthropic
-/// documents `overloaded_error` and `api_error` as transient server-side
-/// conditions (retryable `Transport`); `rate_limit_error` is `RateLimited`;
-/// everything else (`invalid_request_error`, `authentication_error`,
-/// `permission_error`, `not_found_error`, …) is `Terminal`.
+/// Map an Anthropic in-stream error to a typed `ProviderError`.
+/// `overloaded_error` is Anthropic's own brownout frame and classifies as the
+/// park-eligible `Overloaded`, the same class the status-line 529 gets: which
+/// side of the response boundary the provider shed load on is invisible to
+/// the user and says nothing about recoverability (#3859). `api_error` and
+/// `timeout_error` are transient server-side conditions with no such waiting
+/// story, so they stay retryable `Transport`; `rate_limit_error` is
+/// `RateLimited`; everything else (`invalid_request_error`,
+/// `authentication_error`, `permission_error`, `not_found_error`, …) is
+/// `Terminal`.
+///
+/// The caller pipes the result through [`http::attach_partial`], which now
+/// decorates both retryable classes — so an overload three frames into a
+/// stream keeps the input tokens that stream already reported.
 fn classify_anthropic_stream_error(err: &AnthropicStreamError) -> ProviderError {
     let detail = if err.message.is_empty() {
         format!("Anthropic stream error ({})", err.kind)
@@ -659,7 +668,8 @@ fn classify_anthropic_stream_error(err: &AnthropicStreamError) -> ProviderError 
         format!("Anthropic stream error: {}", err.message)
     };
     match err.kind.as_str() {
-        "overloaded_error" | "api_error" | "timeout_error" => ProviderError::transport(detail),
+        "overloaded_error" => ProviderError::overloaded(detail, None),
+        "api_error" | "timeout_error" => ProviderError::transport(detail),
         "rate_limit_error" => ProviderError::RateLimited {
             message: detail,
             retry_after_ms: None,
@@ -1110,8 +1120,17 @@ async fn aggregate_anthropic_stream(
             match parsed {
                 Ok(AnthropicStreamEvent::Error { error }) => {
                     // A mid-stream error aborts the turn with a typed error —
-                    // never a truncated Ok with the text seen so far.
-                    return Err(classify_anthropic_stream_error(&error));
+                    // never a truncated Ok with the text seen so far. It is a
+                    // loss site like the two above, and carries the same
+                    // accounting: `message_start` has usually already reported
+                    // what the prompt cost, and the provider bills it whether
+                    // or not the stream then dies (#3859).
+                    return Err(http::attach_partial(
+                        classify_anthropic_stream_error(&error),
+                        &usage,
+                        &text,
+                        pricing,
+                    ));
                 }
                 Ok(AnthropicStreamEvent::MessageStart { message }) => {
                     if let Some(u) = message.usage {

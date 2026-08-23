@@ -840,7 +840,7 @@ impl<'a> Engine<'a> {
             &self.config,
             self.tools,
             &mut state.messages,
-            &state.memos.identities,
+            &mut state.memos,
             &mut state.loop_steer,
             state.total_cost_usd,
             events,

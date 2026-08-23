@@ -194,6 +194,17 @@ fn store_rule_files(workspace_root: &Path) -> Vec<RuleFile> {
         .collect()
 }
 
+/// How many rules [`store_rule_files`] would have loaded, counted without
+/// opening the store.
+///
+/// Lives beside the loader rather than at the caller so the trust-gate survey
+/// asks *this* module which store holds project rules, instead of keeping a
+/// second answer to that question the way a re-derived discovery rule would
+/// (#3617).
+pub(crate) fn store_rule_count(workspace_root: &Path) -> usize {
+    stella_store::rules_peek::published_rule_count(workspace_root)
+}
+
 /// The session's full rule source: extension-authored store rules first
 /// (lowest precedence), then the on-disk rule files in directory order.
 struct SessionRuleSource {

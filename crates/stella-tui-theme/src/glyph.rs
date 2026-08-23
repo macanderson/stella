@@ -15,14 +15,15 @@
 //! the row to its right, so [`width`] states the width rather than leaving
 //! each call site to measure. Nothing else here is fullwidth.
 //!
-//! [`WRITE`] is the only *unconditionally* wide one. Seven others carry East
+//! [`WRITE`] is the only *unconditionally* wide one. Nine others carry East
 //! Asian Width `A` (**ambiguous**) rather than `N`, so a terminal configured
 //! for CJK double-width ambiguity draws them in two cells: [`RUNNING`],
-//! [`QUEUED`], [`GATE`], [`MEMORY`], [`NODE_FILE`], [`TOOL_EXECUTE`], and
-//! `BLOCK_EIGHTHS[8]`. [`width`] answers one for all of them, because that is
-//! what every non-CJK configuration draws and what the layout budgets.
+//! [`QUEUED`], [`GATE`], [`MEMORY`], [`NODE_FILE`], [`TOOL_EXECUTE`],
+//! [`EVENT`], [`COMPACTED`], and `BLOCK_EIGHTHS[8]`. [`width`] answers one for
+//! all of them, because that is what every non-CJK configuration draws and
+//! what the layout budgets.
 //!
-//! The hazard predates the tool-class rows below: six of those seven shipped
+//! The hazard predates the tool-class rows below: six of the nine shipped
 //! before them. It is not guarded, because nothing here knows the terminal's
 //! ambiguous-width setting — a real fix means asking the terminal, not
 //! asserting a number.
@@ -132,6 +133,23 @@ pub const TOOL_EXECUTE: char = '⊙';
 /// caught mid-spin.
 pub const TOOL_DELEGATE: char = '↳';
 
+/// One thing happened here — the transcript's default head, for a row whose
+/// verb the renderer knows and which has no glyph of its own: `● edit <path>`,
+/// `● run <cmd>`, and an expanded `read`.
+///
+/// U+25CF BLACK CIRCLE, present in JetBrains Mono. Width `A` — see the module
+/// doc. The most-drawn glyph in the deck, and until #4320 the only one drawn
+/// as a bare literal, outside this vocabulary and so outside every test over
+/// it.
+pub const EVENT: char = '●';
+
+/// A compaction — history replaced by a summary. Dim, and the row carries no
+/// rail (SPEC 6.2).
+///
+/// U+2193 DOWNWARDS ARROW, present in JetBrains Mono. Width `A` — see the
+/// module doc.
+pub const COMPACTED: char = '↓';
+
 /// The eighth-block ramp, empty through full — the only sub-cell precision
 /// this design allows itself (SPEC 2: cell-grid honest).
 ///
@@ -147,7 +165,7 @@ pub const METER_TRACK: char = '░';
 ///
 /// The tests walk this instead of a second list, so a glyph added without a
 /// stated width is caught rather than assumed.
-pub const ALL: [(&str, char); 20] = [
+pub const ALL: [(&str, char); 22] = [
     ("done", DONE),
     ("running", RUNNING),
     ("queued", QUEUED),
@@ -166,6 +184,8 @@ pub const ALL: [(&str, char); 20] = [
     ("tool_mutate", TOOL_MUTATE),
     ("tool_execute", TOOL_EXECUTE),
     ("tool_delegate", TOOL_DELEGATE),
+    ("event", EVENT),
+    ("compacted", COMPACTED),
     ("block_full", BLOCK_EIGHTHS[8]),
     ("meter_track", METER_TRACK),
 ];

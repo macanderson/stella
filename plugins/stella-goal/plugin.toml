@@ -97,6 +97,13 @@ hooks = ["Stop"]
 # dispatched (#3501), so leaving either off would silently drop half of what
 # this plugin exists to do.
 points = ["before_turn", "after_turn"]
+# The stages it answers `before_turn` at, exhaustively (#3543). `main.py`
+# contributes the goal framing at `execute` and answers empty everywhere else,
+# so this line is the difference between one `python3` start a round and one
+# per stage of the order below. `after_turn` needs no such list: it is asked
+# once per round about the round, not once per stage. Every name here must
+# appear in `[[wrapper.stages]]` below, or the manifest does not load.
+before_turn_stages = ["execute"]
 # The one host capability this plugin may ask for. `child_turn` is the
 # mechanism `doc:turn-loop-wrappers` §9.3 names for "a wrapper needs one
 # bounded model call it does not own the credential for", and the socket
@@ -159,14 +166,6 @@ measurements = ["met"]
 [[oracle.checks]]
 requirement = "goal-met"
 check = "met >= 1"
-
-# `[roles]` requires `[subloop]` (`ManifestError::RolesRequireSubloop`) even
-# though this plugin uses none of `[subloop]`'s own bounded-child-turn
-# dispatch mechanism — the same awkward coupling `plugins/stella-plan`
-# documents and tracks at #3496. `stages = ["verify"]` is declared only to
-# satisfy the validator; the host never reads it for this plugin.
-[subloop]
-stages = ["verify"]
 
 # The one role intent this plugin names. `tier = "verifier"` is the honest
 # name for what this call is — an independent assessment of the worker's own

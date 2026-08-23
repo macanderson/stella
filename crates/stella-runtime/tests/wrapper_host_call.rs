@@ -341,6 +341,7 @@ async fn a_grant_below_steering_leaks_no_capability() {
         participation: Participation::Observer,
         hooks: Vec::new(),
         points: vec![WrapperPoint::BeforeTurn],
+        before_turn_stages: Vec::new(),
         calls: vec![HostCall::Recall],
         max_calls: None,
         max_fanout_width: None,

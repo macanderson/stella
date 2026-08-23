@@ -52,7 +52,7 @@ use crate::package::{
 };
 use crate::runtime::Runtime;
 use crate::wire::WrapperPoint;
-use crate::wrapper::Wrapper;
+use crate::wrapper::{StageName, Wrapper};
 
 /// How much of a say in the turn loop a plugin has declared (#3245 §2).
 ///
@@ -150,6 +150,29 @@ pub struct LoopGrant {
     /// may *not* do is leave the host to find out by refusal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub points: Vec<WrapperPoint>,
+    /// The stages this plugin answers `before_turn` at, exhaustively.
+    ///
+    /// **A narrowing of [`Self::points`], not a second grant** (#3543). A
+    /// `[wrapper]` declares a *stage order* — the whole pipeline it wants run,
+    /// its own contributions and the ceremony it is content to leave to
+    /// others — and `[loop] points` declares which sockets it answers. Neither
+    /// says which of those stages it has anything to say at, so the host asked
+    /// it at every one: `plugins/stella-research` contributes at exactly one
+    /// stage, declares the eight-stage classic order, and paid eight `python3`
+    /// starts a round to answer `{"protocol_version":1}` seven times.
+    ///
+    /// Empty is the default and means "every stage this program runs", so a
+    /// manifest written before this field existed is unchanged — which is the
+    /// only compatible reading, since the alternative would silence a shipped
+    /// plugin at every stage.
+    ///
+    /// Validated at load against the `[wrapper]` stage order: a name no stage
+    /// declares is a load error, for the reason a condition naming an
+    /// unpublished signal is. Enforced by [`LoopGrant::permits_stage`], which
+    /// is authoritative in [`LoopGrant::permits_point`]'s sense — an
+    /// undeclared stage is never dispatched, not merely usually skipped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub before_turn_stages: Vec<StageName>,
     /// The host capabilities the plugin may ask for mid-point, exhaustively —
     /// an undeclared call is refused, even if the plugin's process asks for it
     /// (`doc:wrapper-socket` §6b, #3540).
@@ -218,6 +241,32 @@ impl LoopGrant {
     #[must_use]
     pub fn permits_point(&self, point: WrapperPoint) -> bool {
         self.participation.includes(Participation::Steering) && self.points.contains(&point)
+    }
+
+    /// Whether the host may dispatch this plugin at `point` **for `stage`** —
+    /// [`LoopGrant::permits_point`] narrowed by [`Self::before_turn_stages`]
+    /// (#3543).
+    ///
+    /// The point filter is checked here too, so a caller that reaches for the
+    /// narrower question cannot accidentally skip the wider one: this is a
+    /// strengthening of `permits_point`, never a second door beside it.
+    ///
+    /// An empty stage list is "every stage this program runs", which is what
+    /// keeps a manifest written before the field existed dispatching exactly
+    /// as it did. [`WrapperPoint::AfterTurn`] is asked once per round about
+    /// the round rather than once per stage, so it has no stage list to
+    /// consult and is decided by the point alone.
+    #[must_use]
+    pub fn permits_stage(&self, point: WrapperPoint, stage: &StageName) -> bool {
+        if !self.permits_point(point) {
+            return false;
+        }
+        match point {
+            WrapperPoint::BeforeTurn => {
+                self.before_turn_stages.is_empty() || self.before_turn_stages.contains(stage)
+            }
+            WrapperPoint::AfterTurn => true,
+        }
     }
 
     /// Whether the host may perform `call` when this plugin asks for it —
@@ -319,7 +368,10 @@ pub struct PluginManifest {
     /// Steering and above: declared stages run as bounded child turns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subloop: Option<Subloop>,
-    /// Routing intents for subloop stages. Requires `[subloop]`.
+    /// Routing intents the host resolves against the user's own providers —
+    /// for a `[subloop]` stage, or for a `[wrapper]` point naming one on its
+    /// `before_turn` response. Requires one of those two: an intent nothing
+    /// can spend is dead config in a document a human consented to (#3496).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles: Option<BTreeMap<String, Role>>,
     /// Steering and above: the wrapper's stage order and the conditions
@@ -623,6 +675,24 @@ impl PluginManifest {
             wrapper.validate()?;
         }
 
+        // A `before_turn_stages` entry names a stage the host will never
+        // dispatch unless this manifest's own `[wrapper]` orders it, so a name
+        // that appears in neither is a narrowing that silently narrows to
+        // nothing — the `UnknownMeasurement` argument, pointed at dispatch.
+        // Checked in declaration order, and after `[wrapper]`'s own rules, so
+        // an author fixing a stage list is not first told about a stage list.
+        for stage in &self.loop_grant.before_turn_stages {
+            let ordered = self
+                .wrapper
+                .as_ref()
+                .is_some_and(|wrapper| wrapper.stages.iter().any(|s| &s.name == stage));
+            if !ordered {
+                return Err(ManifestError::UndispatchableStage {
+                    stage: stage.to_string(),
+                });
+            }
+        }
+
         if let Some(runtime) = &self.runtime {
             if !participation.includes(Participation::Observer) {
                 return Err(ManifestError::RuntimeRequiresObserver { participation });
@@ -631,8 +701,15 @@ impl PluginManifest {
         }
 
         if let Some(roles) = &self.roles {
-            if self.subloop.is_none() {
-                return Err(ManifestError::RolesRequireSubloop);
+            // "A role must have something that could resolve it", not "a role
+            // requires a subloop". `[subloop]` was the only such thing when
+            // this rule was written; `BeforeTurnResponse::role` (#3380) made a
+            // `[wrapper]` the second, and `stella_runtime::wrapper::admissible`
+            // refuses an intent this table does not declare — so a wrapper
+            // naming one has to declare it here. Refused when neither exists,
+            // because then nothing can ever spend it (#3496).
+            if self.subloop.is_none() && self.wrapper.is_none() {
+                return Err(ManifestError::RolesResolveNowhere);
             }
             for (name, role) in roles {
                 if role.tier.trim().is_empty() {
@@ -913,15 +990,48 @@ mod tests {
     }
 
     #[test]
-    fn roles_without_a_subloop_are_rejected_and_tiers_must_be_non_empty() {
+    fn roles_that_resolve_nowhere_are_rejected_and_tiers_must_be_non_empty() {
         let orphaned = parse(
             "name = \"x\"\n[loop]\nparticipation = \"steering\"\n\n[roles.triage]\ntier = \"cheap\"",
         )
         .unwrap_err();
-        assert!(matches!(orphaned, ManifestError::RolesRequireSubloop));
+        assert!(matches!(orphaned, ManifestError::RolesResolveNowhere));
 
         let blank_tier = parse(
             "name = \"x\"\n[loop]\nparticipation = \"steering\"\n\n[subloop]\nstages = [\"triage\"]\n\n[roles.triage]\ntier = \"\"",
+        )
+        .unwrap_err();
+        assert!(matches!(blank_tier, ManifestError::EmptyRoleTier { .. }));
+    }
+
+    /// **The witness for #3496.** A `[wrapper]` that names a role intent on
+    /// its `before_turn` response is a second thing that can resolve one, so
+    /// `[roles]` beside it loads with no `[subloop]` to prop it up — while
+    /// `[roles]` with neither is still refused, because the rule is "something
+    /// must be able to spend this", not "declare any table you like".
+    ///
+    /// Three shipped manifests were declaring a `[subloop]` they never used to
+    /// get past the old rule (`plugins/stella-plan`, `plugins/stella-goal`,
+    /// and this crate's own reference fixture in
+    /// `crates/stella-runtime/tests/wrapper_socket.rs`); all three drop it in
+    /// the same change.
+    #[test]
+    fn a_wrapper_can_name_a_role_intent_without_declaring_a_subloop() {
+        let wrapper_only = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\n\n\
+             [wrapper]\nid = \"x-v1\"\n\n[[wrapper.stages]]\nname = \"plan\"\n\n\
+             [roles.planner]\ntier = \"plan\"",
+        )
+        .expect("a wrapper naming a role intent needs no subloop to resolve it");
+        assert!(wrapper_only.subloop.is_none());
+        assert!(wrapper_only.roles.is_some());
+
+        // A tier is still a tier: widening which tables satisfy the rule does
+        // not widen what the entries themselves may say.
+        let blank_tier = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\n\n\
+             [wrapper]\nid = \"x-v1\"\n\n[[wrapper.stages]]\nname = \"plan\"\n\n\
+             [roles.planner]\ntier = \" \"",
         )
         .unwrap_err();
         assert!(matches!(blank_tier, ManifestError::EmptyRoleTier { .. }));
@@ -948,6 +1058,7 @@ mod tests {
             participation: Participation::Observer,
             hooks: vec![HookEvent::PreToolUse],
             points: vec![WrapperPoint::BeforeTurn],
+            before_turn_stages: Vec::new(),
             calls: vec![HostCall::Recall],
             max_calls: None,
             max_fanout_width: None,
@@ -956,6 +1067,11 @@ mod tests {
         assert!(!smuggled.permits_hook(HookEvent::PreToolUse));
         assert!(!smuggled.permits_point(WrapperPoint::BeforeTurn));
         assert!(!smuggled.permits_call(HostCall::Recall));
+        // The stage filter is a strengthening of the point filter, so it
+        // inherits the grade check rather than reopening it: an empty stage
+        // list is "every stage", and a grade below steering still reaches
+        // nothing (#3543).
+        assert!(!smuggled.permits_stage(WrapperPoint::BeforeTurn, &StageName::new("execute")));
     }
 
     /// **Witness for #3501 item 2.** A manifest declares the socket points it

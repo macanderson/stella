@@ -1040,6 +1040,15 @@
             "role": {
               "$ref": "#/$defs/ModelCallRole"
             },
+            "stall_seconds_requested": {
+              "description": "The pure-`sleep` seconds this turn has **asked for** across the\ndetector's window, as of this step — the number the stall rung\n(`stella_core::driver::loop_escalation`) decides on, recorded\nrather than thrown away once it has decided (#3621).\n\nRequested, never executed: it is read off the calls' own text so\nthe same transcript classifies the same way every step, which is\nwhat keeps the rung deterministic (invariant #2). A call killed by\nthe shell's own timeout still contributes its full request, so\nthis is an upper bound on wall clock. Executed seconds are already\nderivable from `ToolResult.duration_ms`, and the gap between the\ntwo is the signal — see #3624.\n\n`None` is \"this emitter did not classify\", not \"zero seconds\": the\nreplay/reconstruction path rebuilds a receipt from stored messages\nwith no detector window around it, and a reader must not count that\nas a turn that slept for nothing.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "step": {
               "format": "uint",
               "minimum": 0,
@@ -1398,6 +1407,53 @@
             "type",
             "model",
             "cost_usd"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The workspace's own steering — memories, rules and published context\nrecords, skills, commands, agents — was on disk and was **not** loaded,\nbecause the authority in `withheld_by` refused it (#2302, #3616).\n\nEmitted once per run, before the turn opens, and only when something\nwas actually held back: a notice every repository sees is one nobody\nreads. It is the machine-readable twin of the stderr line, so a harness\nrunning `--output-format stream-json` learns that this session was not\nsteered by the repository it is sitting in without scraping the human\nchannel.\n\n**Counts only** — never a filename, never a body, never the workspace\npath. The withheld text is repository-controlled, and a refusal that\nechoed it would be the exfiltration channel the refusal exists to\nprevent.",
+          "properties": {
+            "agents": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "commands": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "memories": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "records": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "skills": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "steering_withheld",
+              "type": "string"
+            },
+            "withheld_by": {
+              "$ref": "#/$defs/Withholder"
+            }
+          },
+          "required": [
+            "type",
+            "withheld_by",
+            "memories",
+            "records",
+            "skills",
+            "commands",
+            "agents"
           ],
           "type": "object"
         }
@@ -3941,6 +3997,21 @@
         "deterministic"
       ],
       "type": "object"
+    },
+    "Withholder": {
+      "description": "Which authority held a workspace's steering back\n([`AgentEvent::SteeringWithheld`], #2302/#3616).\n\nTwo causes resolve one refusal, and they are not interchangeable: they have\ndifferent remedies, and one of them the user cannot lift at all. A harness\nthat folded them together would tell an operator to set a flag they have\nalready set.",
+      "oneOf": [
+        {
+          "const": "project_untrusted",
+          "description": "This process was not told to trust the repository. The remedy is the\noperator's own — trusting the checkout lifts it.",
+          "type": "string"
+        },
+        {
+          "const": "managed_ceiling",
+          "description": "The org-managed scope pins project prompts off. A **ceiling**: it holds\nwhether or not the checkout is trusted, and no environment variable\nlifts it.",
+          "type": "string"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
