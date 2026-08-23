@@ -3,7 +3,7 @@
 //! stay reachable, split out to keep `compaction.rs` under the size gate.
 
 use super::*;
-use stella_protocol::{ToolCall, ToolResult};
+use stella_protocol::{ErrorClass, ToolCall, ToolResult};
 
 fn tool_msg(call_id: &str, content: String) -> CompletionMessage {
     CompletionMessage {
@@ -897,6 +897,77 @@ fn large_error_output_is_evicted_like_large_ok() {
     match &messages[2].tool_results[0].output {
         ToolOutput::Error { message, .. } => assert!(message.contains("evicted")),
         _ => panic!("expected an eviction stub that keeps the error variant"),
+    }
+}
+
+#[test]
+fn aging_preserves_the_original_errors_class() {
+    // #3167: aging must not launder an already-classified failure back to
+    // "unaudited" by reconstructing it through the unclassified `error()`
+    // constructor. Witness: on the pre-fix code this assertion sees `None`
+    // (aging always rebuilt via `ToolOutput::error`, dropping `class`).
+    let body = format!("HEADLINE\n{}\nTAILLINE", "filler ".repeat(6000));
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        assistant_with_call("c1"),
+        CompletionMessage {
+            role: MessageRole::Tool,
+            content: String::new(),
+            tool_calls: vec![],
+            tool_results: vec![ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::classified_error(ErrorClass::NotFound, body),
+            }],
+            attachments: Vec::new(),
+        },
+        assistant_with_call("c2"),
+        tool_msg("c2", "recent ".repeat(50)),
+    ];
+    let report = compact(&mut messages, 2_000).expect("should compact");
+    assert!(report.aged >= 1, "{report:?}");
+    match &messages[2].tool_results[0].output {
+        ToolOutput::Error { class, .. } => {
+            assert_eq!(
+                *class,
+                Some(ErrorClass::NotFound),
+                "class must survive aging"
+            );
+        }
+        other => panic!("expected an aged Error, got {other:?}"),
+    }
+}
+
+#[test]
+fn eviction_preserves_the_original_errors_class() {
+    // Same witness as aging, for the eviction pass (#3167): reconstructing
+    // via `ToolOutput::error` on the old code reset `class` to `None`.
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        assistant_with_call("c1"),
+        CompletionMessage {
+            role: MessageRole::Tool,
+            content: String::new(),
+            tool_calls: vec![],
+            tool_results: vec![ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::classified_error(ErrorClass::Environment, "boom ".repeat(300)),
+            }],
+            attachments: Vec::new(),
+        },
+        assistant_with_call("c2"),
+        tool_msg("c2", "recent ".repeat(50)),
+    ];
+    let report = compact(&mut messages, 200).expect("should compact");
+    assert!(report.evicted >= 1, "{report:?}");
+    match &messages[2].tool_results[0].output {
+        ToolOutput::Error { class, .. } => {
+            assert_eq!(
+                *class,
+                Some(ErrorClass::Environment),
+                "class must survive eviction"
+            );
+        }
+        other => panic!("expected an evicted Error, got {other:?}"),
     }
 }
 

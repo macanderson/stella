@@ -92,8 +92,12 @@ impl ToolExecutor for PolicyToolSet<'_> {
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         if !self.policy.allows(name) {
             // Same wording shape as an unknown tool: a disabled tool must not
-            // advertise itself through its own refusal.
-            return ToolOutput::error(format!("unknown tool: {name}"));
+            // advertise itself through its own refusal. The wording hides it,
+            // but the true cause is `self.policy.allows` declining the call.
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                format!("unknown tool: {name}"),
+            );
         }
         self.inner.get().execute(name, input).await
     }

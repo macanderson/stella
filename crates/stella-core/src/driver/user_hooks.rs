@@ -209,12 +209,15 @@ impl<'a> Engine<'a> {
         events: Option<&EventSender>,
     ) -> ToolOutput {
         if call.input.is_null() {
-            return ToolOutput::error(format!(
-                "malformed tool call: `{}`'s arguments were not valid JSON (the model's \
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::InvalidInput,
+                format!(
+                    "malformed tool call: `{}`'s arguments were not valid JSON (the model's \
                      streamed output didn't parse) — retry this call with well-formed JSON \
                      arguments",
-                call.name
-            ));
+                    call.name
+                ),
+            );
         }
         match self.hooks {
             None => self.tools.execute(&call.name, &call.input).await,
@@ -263,19 +266,25 @@ impl<'a> Engine<'a> {
         // either feed the same ladder with them.
         match pre.verdict(&OperatorPosture::NoOpinion, false) {
             GateVerdict::Deny { reason } => {
-                return ToolOutput::error(format!(
-                    "tool `{}` was blocked by a PreToolUse hook: {reason}",
-                    call.name
-                ));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!(
+                        "tool `{}` was blocked by a PreToolUse hook: {reason}",
+                        call.name
+                    ),
+                );
             }
             GateVerdict::RequireApproval { reason } => {
                 let Some(route) = self.hook_approvals else {
-                    return ToolOutput::error(format!(
-                        "tool `{}` requires approval — a PreToolUse hook asked for a human \
+                    return ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::RefusedByPolicy,
+                        format!(
+                            "tool `{}` requires approval — a PreToolUse hook asked for a human \
                              decision ({reason}), but no interactive surface is attached to \
                              answer it; grant the call via policy or rerun interactively",
-                        call.name
-                    ));
+                            call.name
+                        ),
+                    );
                 };
                 let request = ApprovalRouteRequest {
                     subject: ApprovalSubject::Tool {
@@ -287,10 +296,10 @@ impl<'a> Engine<'a> {
                 match route.resolve(&request).await {
                     ApprovalRouteResolution::Approved => {}
                     ApprovalRouteResolution::Denied { reason } => {
-                        return ToolOutput::error(format!(
-                            "tool `{}` requires approval — {reason}",
-                            call.name
-                        ));
+                        return ToolOutput::classified_error(
+                            stella_protocol::ErrorClass::RefusedByPolicy,
+                            format!("tool `{}` requires approval — {reason}", call.name),
+                        );
                     }
                 }
             }

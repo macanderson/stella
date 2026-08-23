@@ -352,6 +352,7 @@ async fn a_monotonic_paging_sweep_is_refused_before_it_burns_a_turn() {
 
     let mut refused_at = None;
     let mut refusals = Vec::new();
+    let mut classes = Vec::new();
     for step in 0..40u64 {
         let out = tool
             .execute(
@@ -363,9 +364,10 @@ async fn a_monotonic_paging_sweep_is_refused_before_it_burns_a_turn() {
                 &ctx,
             )
             .await;
-        if let ToolOutput::Error { message, .. } = out {
+        if let ToolOutput::Error { message, class } = out {
             refused_at.get_or_insert(step);
             refusals.push(message);
+            classes.push(class);
         }
     }
     let refused_at = refused_at.expect("the sweep must be refused, not run to the cap");
@@ -388,6 +390,15 @@ async fn a_monotonic_paging_sweep_is_refused_before_it_burns_a_turn() {
     // ceiling is a wall rather than a redirection.
     assert!(refusals[0].contains("omitting `limit`"), "{}", refusals[0]);
     assert!(refusals[0].contains("`search`"), "{}", refusals[0]);
+    // The #3167 witness: this ceiling is a tool policy working as designed
+    // (never a tool defect), so it earns `RefusedByPolicy` — the same class
+    // as the four approval/extension-policy denials, and never `Internal`.
+    assert!(
+        classes
+            .iter()
+            .all(|c| *c == Some(stella_protocol::ErrorClass::RefusedByPolicy)),
+        "{classes:?}"
+    );
 }
 
 /// The remedy the refusal advertises has to actually work: once the

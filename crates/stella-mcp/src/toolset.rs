@@ -612,11 +612,14 @@ impl McpToolSet {
                 }
                 output
             }
-            Err(err) => ToolOutput::error(format!(
-                "mcp server `{}` failed calling `{raw_tool}`: {}",
-                client.name(),
-                err.user_message()
-            )),
+            Err(err) => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
+                format!(
+                    "mcp server `{}` failed calling `{raw_tool}`: {}",
+                    client.name(),
+                    err.user_message()
+                ),
+            ),
         }
     }
 }
@@ -810,10 +813,13 @@ impl McpToolSet {
         if let Some((idx, raw_tool)) = self.routes.get(name) {
             let client = &self.clients[*idx];
             if self.is_disabled(client.name()) {
-                return ToolOutput::error(format!(
-                    "mcp server `{}` is disabled for this session — tool `{name}` unavailable",
-                    client.name()
-                ));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!(
+                        "mcp server `{}` is disabled for this session — tool `{name}` unavailable",
+                        client.name()
+                    ),
+                );
             }
             return self.execute_mcp(client, raw_tool, input).await;
         }
@@ -829,9 +835,10 @@ impl McpToolSet {
         }
         // A namespaced name we don't recognize is an MCP miss, not a native
         // tool — never fall through to native for it.
-        ToolOutput::error(format!(
-            "unknown MCP tool `{name}` — not advertised by any connected server"
-        ))
+        ToolOutput::classified_error(
+            stella_protocol::ErrorClass::NotFound,
+            format!("unknown MCP tool `{name}` — not advertised by any connected server"),
+        )
     }
 }
 
@@ -915,9 +922,10 @@ impl ToolExecutor for McpToolSet {
         }
         match &self.native {
             Some(native) => native.execute(name, input).await,
-            None => ToolOutput::error(format!(
-                "unknown tool `{name}` (no native tools configured)"
-            )),
+            None => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::NotFound,
+                format!("unknown tool `{name}` (no native tools configured)"),
+            ),
         }
     }
 
@@ -1018,10 +1026,13 @@ impl ToolExecutor for CandidateMcpView {
             return if self.inner.is_candidate_safe_tool(name) {
                 self.inner.execute(name, input).await
             } else {
-                ToolOutput::error(format!(
-                    "mcp tool `{name}` is withheld from Best-of-N candidates — its \
+                ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    format!(
+                        "mcp tool `{name}` is withheld from Best-of-N candidates — its \
                          server is not marked `candidate_safe` in .stella/mcp.toml"
-                ))
+                    ),
+                )
             };
         }
         self.native.execute(name, input).await
