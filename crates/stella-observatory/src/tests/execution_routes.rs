@@ -290,6 +290,49 @@ fn transcript_route_names_the_parameter_it_is_missing() {
     assert!(body.contains("id"), "{body}");
 }
 
+/// **The #4538 witness.** `execution_reflection.partial_run` (schema v32,
+/// #3808) reaches the panel: a cancelled run whose only reflection row came
+/// from finalize — no self-review to gate on — must render the flag instead
+/// of `reflection: null`, and a graded reflection must carry the flag beside
+/// its grade, so the panel can say "this covers a partial run" either way.
+///
+/// The shared fixture predates the column on purpose (every other test in
+/// this file is the pre-v32 degrade witness: the flag is silently absent and
+/// nothing else changes); this one migrates its own copy forward.
+#[test]
+fn a_cancelled_runs_reflection_reads_partial_run_not_null() {
+    let ws = seeded_workspace();
+    let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE execution_reflection
+           ADD COLUMN partial_run INTEGER NOT NULL DEFAULT 0;
+         INSERT INTO executions
+           (kind, prompt, provider, model, outcome, session_id, cost_usd)
+         VALUES ('run', 'refactor the parser', 'zai', 'glm-5.2',
+                 'cancelled', 'ses-1', 0.01);
+         INSERT INTO execution_reflection (execution_id, partial_run)
+         VALUES (3, 1);",
+    )
+    .unwrap();
+    drop(conn);
+
+    let cancelled = respond(ws.path(), "/api/execution?id=3");
+    let v: serde_json::Value = serde_json::from_slice(&cancelled.body).unwrap();
+    assert_eq!(
+        v["reflection"],
+        serde_json::json!({ "partial_run": true }),
+        "a finalize-only row on a cancelled run is a reason, not a null: {v}"
+    );
+
+    let graded = respond(ws.path(), "/api/execution?id=1");
+    let v: serde_json::Value = serde_json::from_slice(&graded.body).unwrap();
+    assert_eq!(v["reflection"]["self_rating"], 8);
+    assert_eq!(
+        v["reflection"]["partial_run"], false,
+        "a graded full-run reflection states the flag rather than omitting it: {v}"
+    );
+}
+
 /// `/api/model-card` names its missing parameters; the card itself is read
 /// from the user-tier catalog, which a seeded workspace deliberately does not
 /// fabricate.
