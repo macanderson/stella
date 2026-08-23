@@ -1206,6 +1206,25 @@ pub(super) async fn warm_chunks_opened<P: FnMut(usize) + ?Sized>(
 /// truncation line — the first because the reader must be able to tell a
 /// meaning match from a name match, the second because a reader who cannot
 /// tell a complete answer from a truncated one stops looking.
+///
+/// [`allocate`] spends [`stella_core::search::Facet::estimated_cost`], which
+/// is an estimate on purpose and is uniformly low for a deep hit — a `Body`
+/// facet is priced at 1,600 characters and quotes up to `MAX_BODY_LINES`
+/// (40) source lines of whatever length they happen to be. So the granted
+/// depths bound the
+/// *ladder*, not the answer, and an operator who sets `STELLA_SEARCH_BUDGET`
+/// to bound context spend used to receive a small multiple of it with nothing
+/// said (#3140). This function therefore measures each rendered block and
+/// stops appending whole blocks once the real total would pass the budget,
+/// folding the rest into the truncation line and reporting the measured
+/// length there rather than the estimate.
+///
+/// Two bounds, both deliberate. **Whole blocks only**: truncating inside a
+/// block would break the depth-superset property, since a partial render at
+/// depth *n + 1* need not contain the render at depth *n*. And the **top hit
+/// always renders**, even when it alone overruns: a search that answers
+/// nothing costs the caller a second search, so the overshoot is bounded at
+/// one hit block rather than traded for an empty answer.
 pub fn render(
     graph: Option<&CodeGraph>,
     root: &Path,
@@ -1229,26 +1248,34 @@ pub fn render(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
-    let mut content = String::new();
-    if let Some(note) = &answer.note {
-        content.push_str(&format!("({note})\n"));
-    }
-    content.push_str(&format!(
-        "search `{query}` — {} result(s) at depth {}",
-        allocation.granted.len(),
-        config.depth.level()
-    ));
-    content.push_str("\nvia: ");
-    content.push_str(
-        &answer
-            .strategies
-            .iter()
-            .map(|strategy| strategy.label())
-            .collect::<Vec<_>>()
-            .join(" -> "),
-    );
+    // The head is built twice: once with the granted count to price the
+    // blocks against, and again with the count that survived the measurement.
+    // Pricing against the larger count is the safe direction — the only field
+    // that moves is a decimal digit, which can shrink but never grow, so the
+    // final content is never longer than what the fence was told to allow.
+    let head = |shown: usize| {
+        let mut head = String::new();
+        if let Some(note) = &answer.note {
+            head.push_str(&format!("({note})\n"));
+        }
+        head.push_str(&format!(
+            "search `{query}` — {shown} result(s) at depth {}",
+            config.depth.level()
+        ));
+        head.push_str("\nvia: ");
+        head.push_str(
+            &answer
+                .strategies
+                .iter()
+                .map(|strategy| strategy.label())
+                .collect::<Vec<_>>()
+                .join(" -> "),
+        );
+        head
+    };
 
     if answer.hits.is_empty() {
+        let mut content = head(0);
         content.push_str("\nno file matched. Widen the description, or grep for an exact literal.");
         return ToolOutput::Ok {
             content,
@@ -1256,16 +1283,29 @@ pub fn render(
         };
     }
 
+    let mut blocks = String::new();
+    let mut measured = head(allocation.granted.len()).len();
+    let mut shown = 0usize;
     for (hit, depth) in answer.hits.iter().zip(&allocation.granted) {
-        content.push('\n');
-        content.push_str(&enrich::render_hit(graph, root, hit, *depth, &mut guard));
+        let block = format!("\n{}", enrich::render_hit(graph, root, hit, *depth, &mut guard));
+        if shown > 0 && measured + block.len() > config.budget {
+            break;
+        }
+        measured += block.len();
+        blocks.push_str(&block);
+        shown += 1;
     }
 
-    if allocation.truncated() {
+    let mut content = head(shown);
+    content.push_str(&blocks);
+
+    let omitted = answer.hits.len() - shown;
+    if omitted > 0 {
+        let spent = content.len();
         content.push_str(&format!(
-            "\nTRUNCATED: {} further result(s) were dropped to stay inside the context budget \
-             ({} of {} characters spent). They exist — narrow the query to see them.",
-            allocation.omitted, allocation.spent, config.budget
+            "\nTRUNCATED: {omitted} further result(s) were dropped to stay inside the context \
+             budget ({spent} of {} characters spent). They exist — narrow the query to see them.",
+            config.budget
         ));
     }
 
