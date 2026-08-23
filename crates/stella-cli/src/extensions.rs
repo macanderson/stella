@@ -303,8 +303,8 @@ fn create_symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
 /// build, where `UserPaths::extensions_visible` is false: the extension root
 /// correctly answers "no user tier" while the bare root still resolves to the
 /// developer's real `~/.stella`. So one function body resolved the user scope
-/// through two policies — skills through
-/// [`crate::memory::skill_files`]'s `user_skills_dir` (correct), commands and
+/// through two policies — skills through `memory::skill_files`'s
+/// `user_skills_dir` (correct), commands and
 /// agents through here — and an un-redirected unit test saw no user-scope
 /// skills while reading the developer's own `~/.stella/commands/` and
 /// `~/.stella/agents/`. That is the exact outcome `extensions_visible`'s doc
