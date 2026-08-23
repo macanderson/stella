@@ -37,6 +37,50 @@ pub(crate) fn cap_chars(s: &str, cap: usize) -> String {
     format!("{}[…]", &s[..end])
 }
 
+/// What a dropped head is replaced by, so the summarizer is told it is
+/// looking at the newer part of a longer log rather than the whole of a
+/// short one — and so a reader of the request can tell the two apart.
+const DROPPED_HEAD_MARKER: &str = "[older history dropped: it exceeded the summarizer's own \
+                                   context window and was never summarized]\n";
+
+/// The newer half of an already-rendered span, with its older head dropped.
+///
+/// The one branch reactive overflow recovery could not repair is a
+/// *summarizer request* that itself overflows: the call that exists to shrink
+/// the transcript is rejected for being too large, so the span is left intact
+/// and the turn aborts (#2751). Dropping the head is the only lever left — the
+/// content is lost unsummarized, which is why the splice marker says so.
+///
+/// The cut lands on the next line boundary at or after the halfway byte, so
+/// the tail opens on a whole rendered record rather than mid-way through one;
+/// falling back to the next char boundary when the half has no newline left
+/// in it. `None` when the drop would not actually shrink the request — an
+/// empty render, a half that leaves no tail, or one so short that the marker
+/// costs more than the head saved — so a caller looping on this always
+/// terminates.
+pub(crate) fn drop_span_head(rendered: &str) -> Option<String> {
+    let half = rendered.len() / 2;
+    if half == 0 {
+        return None;
+    }
+    let cut = match rendered[half..].find('\n') {
+        Some(offset) => half + offset + 1,
+        None => {
+            let mut cut = half;
+            while !rendered.is_char_boundary(cut) {
+                cut += 1;
+            }
+            cut
+        }
+    };
+    let tail = &rendered[cut..];
+    if tail.is_empty() {
+        return None;
+    }
+    let shorter = format!("{DROPPED_HEAD_MARKER}{tail}");
+    (shorter.len() < rendered.len()).then_some(shorter)
+}
+
 /// Flatten a message span into the summarizer's input: roles, text, tool
 /// calls with their inputs, and truncated results — enough to reconstruct
 /// WHAT happened without re-shipping the content that overflowed.
@@ -79,4 +123,49 @@ pub(crate) fn render_span_for_summary(span: &[CompletionMessage]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DROPPED_HEAD_MARKER, drop_span_head};
+
+    /// The cut keeps the newer tail, opens it on a whole rendered record,
+    /// and names what went — and it converges, which is what lets the caller
+    /// loop on it (#2751).
+    #[test]
+    fn dropping_a_head_keeps_the_newer_tail_and_converges() {
+        let rendered: String = (0..40).map(|i| format!("assistant: line {i}\n")).collect();
+        let once = drop_span_head(&rendered).expect("a long render has a head to drop");
+        assert!(once.starts_with(DROPPED_HEAD_MARKER));
+        assert!(once.len() < rendered.len());
+        // The tail opens on a whole record and still carries the newest one.
+        let tail = once.strip_prefix(DROPPED_HEAD_MARKER).unwrap();
+        assert!(tail.starts_with("assistant: line "), "{tail}");
+        assert!(tail.ends_with("assistant: line 39\n"), "{tail}");
+        assert!(!once.contains("line 0\n"), "the oldest record is gone");
+
+        // Repeated dropping terminates rather than growing on the marker.
+        let mut current = once;
+        while let Some(shorter) = drop_span_head(&current) {
+            assert!(shorter.len() < current.len());
+            current = shorter;
+        }
+    }
+
+    /// Nothing worth dropping answers `None`, so a caller looping on this
+    /// never spins on a render it cannot shrink.
+    #[test]
+    fn a_render_with_no_head_to_drop_is_refused() {
+        assert_eq!(drop_span_head(""), None);
+        assert_eq!(drop_span_head("assistant: hi\n"), None);
+    }
+
+    /// The halfway byte can land inside a multi-byte char; the cut walks to
+    /// a boundary rather than panicking on a slice.
+    #[test]
+    fn a_multibyte_render_cuts_on_a_char_boundary() {
+        let rendered = "форматировать".repeat(40);
+        let shorter = drop_span_head(&rendered).expect("a long render can shed a head");
+        assert!(shorter.len() < rendered.len());
+    }
 }

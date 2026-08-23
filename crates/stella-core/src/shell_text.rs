@@ -34,6 +34,11 @@
 /// command and begins the next. Redirection tokens (`2>&1`, `>>`, `<`) are
 /// deliberately **not** operator words — they neither end a command nor start
 /// one, and `stella-tools`' `redirect_target` reads them as ordinary words.
+///
+/// Neither are the paren words [`shell_words`] emits (`(`, `)`, `$(`). They
+/// are word boundaries, not separators: `(` *introduces* a command, and a
+/// consumer that treated it as one would read `echo (cd /outside` as a
+/// directory change the shell never performs.
 pub fn is_operator_word(word: &str) -> bool {
     matches!(word, ";" | "&" | "&&" | "|" | "||" | "\n")
 }
@@ -48,6 +53,11 @@ pub fn is_operator_word(word: &str) -> bool {
 /// word, so `cd /app; ls` yields the target `/app`, not the unresolvable
 /// `/app;` a paid bench trial saw warned about as an escape from its own
 /// session root.
+///
+/// The subshell parens split for the same reason and are emitted the same
+/// way, `$(` as one opener; unlike the operators they are not
+/// [`is_operator_word`]s, because `(` starts a command rather than ending
+/// one.
 pub fn shell_words(command: &str) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -77,6 +87,35 @@ pub fn shell_words(command: &str) -> Vec<String> {
                     op.push(c);
                 }
                 words.push(op);
+            }
+            // A paren bounds a command rather than belonging to the word
+            // beside it: `(` opens a subshell, `)` closes one and also
+            // terminates a `case` pattern. Glued to the adjacent word they hid
+            // a real directory change from every consumer that reads command
+            // position — `(cd /outside; ls)` yielded `["(cd", …]`, so no word
+            // ever equalled `cd` (#3619), while the spaced `( cd /outside )`
+            // had been read correctly all along.
+            //
+            // Each is emitted alone: neither pairs the way `&&` does, so `((`
+            // is two words. The one exception is `$(`, which is a single
+            // command-substitution opener rather than a `$` word beside a
+            // subshell — split in two, the `$` sits between the opener and the
+            // command and hides it again.
+            '(' | ')' if !in_single && !in_double => {
+                let substitution = c == '(' && cur.ends_with('$');
+                if substitution {
+                    cur.pop();
+                    has_word = !cur.is_empty();
+                }
+                if has_word {
+                    words.push(std::mem::take(&mut cur));
+                    has_word = false;
+                }
+                words.push(if substitution {
+                    String::from("$(")
+                } else {
+                    String::from(c)
+                });
             }
             '\\' if !in_single => {
                 // Keep the escape literal (covers `\|`, `\"`, …); we don't
@@ -201,6 +240,28 @@ mod tests {
         assert_eq!(shell_words("cd /app; ls"), ["cd", "/app", ";", "ls"]);
         assert_eq!(shell_words("a&&b"), ["a", "&&", "b"]);
         assert_eq!(shell_words("echo 'a;b'"), ["echo", "a;b"]);
+    }
+
+    /// The paren words, which bound a command without separating two: the
+    /// glued spelling has to tokenize the way the spaced one already did, or
+    /// the `cd` inside a subshell is never a word at all (#3619).
+    #[test]
+    fn subshell_parens_are_words_of_their_own() {
+        assert_eq!(
+            shell_words("(cd /outside; ls)"),
+            ["(", "cd", "/outside", ";", "ls", ")"]
+        );
+        assert_eq!(shell_words("( cd /x )"), ["(", "cd", "/x", ")"]);
+        // `$(` is one opener; a `$` word beside a subshell would sit between
+        // the opener and the command it introduces.
+        assert_eq!(shell_words("$(cd /x)"), ["$(", "cd", "/x", ")"]);
+        assert_eq!(shell_words("out=$(pwd)"), ["out=", "$(", "pwd", ")"]);
+        // Quoted and escaped parens stay inside the word.
+        assert_eq!(shell_words("echo '(cd /x)'"), ["echo", "(cd /x)"]);
+        assert_eq!(
+            shell_words(r"find . \( -name x \)"),
+            ["find", ".", r"\(", "-name", "x", r"\)"]
+        );
     }
 
     #[test]

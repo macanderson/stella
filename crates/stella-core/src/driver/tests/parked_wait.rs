@@ -620,3 +620,91 @@ async fn a_sustained_transport_fault_still_exhausts_the_ladder_and_aborts() {
         "no park may open for a failure waiting cannot fix"
     );
 }
+
+/// A [`crate::ports::TurnSteering`] that answers "no" until the `latch_on`th
+/// ask and "yes" from then on — a person pressing Esc while the turn is
+/// already parked. The step boundary asks once before the model call, so a
+/// latch at the boundary would end the turn before any park could open.
+struct StopOnAsk {
+    asks: AtomicU32,
+    latch_on: u32,
+}
+
+impl crate::ports::TurnSteering for StopOnAsk {
+    fn drain_steering(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn soft_stop_requested(&self) -> bool {
+        self.asks.fetch_add(1, Ordering::SeqCst) + 1 >= self.latch_on
+    }
+}
+
+/// #2743's witness: a soft stop landing mid-park ends the turn the way a
+/// soft stop at a step boundary does.
+///
+/// The park sits INSIDE the model-call ladder, so aborting it surfaced the
+/// pending `RateLimited` — the turn ended as `Aborted { Failure }` with a
+/// `RetriesExhausted` + `Error` pair, recording a provider failure for what
+/// was a person's decision. The provider really was rate limiting; that is
+/// simply not why the turn ended.
+#[tokio::test]
+async fn a_soft_stop_during_a_park_ends_the_turn_as_a_deliberate_stop() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Err(throttled())]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    // Ask 1 is the step boundary's, which must answer "no" or the turn ends
+    // before a park exists; ask 2 is the park's first per-chunk tick.
+    let steering = StopOnAsk {
+        asks: AtomicU32::new(0),
+        latch_on: 2,
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+        .with_steering(&steering);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("do the task"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(
+        matches!(
+            outcome,
+            TurnOutcome::Aborted { ref reason, kind: AbortKind::DeliberateStop, .. }
+                if reason == SOFT_STOP_REASON
+        ),
+        "a mid-park Esc must settle as the step-boundary soft stop does: {outcome:?}"
+    );
+    let events = drain_events(&mut rx);
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::TurnParked { .. })),
+        "the park must have opened, or this proves nothing: {events:?}"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            AgentEvent::TurnWoken { reason, .. } if reason == "soft_stop"
+        )),
+        "the park closes naming the soft stop: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::RetriesExhausted { .. })),
+        "a user decision is not an exhausted ladder: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(e, AgentEvent::Error { .. })),
+        "a user decision surfaces no provider failure: {events:?}"
+    );
+}
