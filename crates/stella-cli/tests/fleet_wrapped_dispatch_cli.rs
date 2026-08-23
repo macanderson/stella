@@ -48,6 +48,11 @@ const VARIANT: &str = "fleet-fixture-v1";
 /// rule with no requirements is `Verdict::Met`"), so the dispatch drives
 /// exactly one internal turn — one attempt, one worker turn, as the raw arm
 /// does.
+///
+/// The `witness` stage is conditional on the `test-command` signal, which is
+/// what makes the per-task oracle (#3884) observable from outside: it is
+/// programmed away for a task that declares none and dispatched for one that
+/// does.
 const PLUGIN_TOML: &str = r#"
 name = "fleet-fixture"
 [loop]
@@ -59,6 +64,9 @@ timeout_secs = 30
 env = ["PATH"]
 [wrapper]
 id = "fleet-fixture-v1"
+[[wrapper.stages]]
+name = "witness"
+if = "test-command"
 [[wrapper.stages]]
 name = "execute"
 "#;
@@ -100,6 +108,17 @@ fn install_fixture_wrapper(workspace: &Path) -> PathBuf {
     perms.set_mode(0o755);
     std::fs::set_permissions(&script, perms).expect("chmod +x");
     dir.join("rounds.log")
+}
+
+/// The witness a plan file's `test_command` names, and the artifact the host
+/// pins before the attempt runs.
+fn install_witness_script(workspace: &Path) {
+    std::fs::create_dir_all(workspace.join("tests")).expect("tests dir");
+    std::fs::write(
+        workspace.join("tests").join("witness_flip.sh"),
+        "#!/bin/sh\nexit 1\n",
+    )
+    .expect("witness script");
 }
 
 /// A real repository with one commit: `stella fleet` pins its base to a sha
@@ -157,14 +176,16 @@ fn store_path(workspace: &Path) -> PathBuf {
     workspace.join(".stella").join("private").join("store.db")
 }
 
-#[tokio::test]
-async fn a_fleet_worker_dispatches_its_attempt_through_the_bound_wrapper() {
-    let workspace = tempfile::tempdir().expect("workspace");
-    let data = tempfile::tempdir().expect("data dir");
-    init_repo(workspace.path());
-    let rounds_log = install_fixture_wrapper(workspace.path());
-    let server = mock_worker_provider().await;
-
+/// Run one hermetic `stella fleet …` against `server_uri`, with `fleet_args`
+/// appended after the subcommand — the whole no-ambient-credentials envelope
+/// in one place, so a second case cannot quietly inherit a real key by
+/// forgetting one `env_remove`.
+async fn run_fleet(
+    workspace: &Path,
+    data: &Path,
+    server_uri: &str,
+    fleet_args: &[&str],
+) -> std::process::Output {
     let child = Command::new(env!("CARGO_BIN_EXE_stella"))
         .args([
             "--model",
@@ -172,17 +193,15 @@ async fn a_fleet_worker_dispatches_its_attempt_through_the_bound_wrapper() {
             "--api-key",
             "sk-test-zai",
             "--base-url",
-            &server.uri(),
+            server_uri,
             "--spend-limit",
             "5.0",
             "fleet",
-            "do the thing, then stop",
-            "--pipeline",
-            VARIANT,
         ])
-        .current_dir(workspace.path())
-        .env("STELLA_HOME", data.path())
-        .env("STELLA_DATA_DIR", data.path())
+        .args(fleet_args)
+        .current_dir(workspace)
+        .env("STELLA_HOME", data)
+        .env("STELLA_DATA_DIR", data)
         // Same hermeticity discipline as `goal_wrapped_dispatch_cli.rs`: no
         // `.env`, no inherited real key, and the project plugin tier trusted
         // so the fixture wrapper actually loads.
@@ -209,17 +228,45 @@ async fn a_fleet_worker_dispatches_its_attempt_through_the_bound_wrapper() {
         .spawn()
         .expect("spawn stella fleet");
 
-    let output = tokio::task::spawn_blocking(move || child.wait_with_output())
+    tokio::task::spawn_blocking(move || child.wait_with_output())
         .await
         .expect("join")
-        .expect("wait on stella");
+        .expect("wait on stella")
+}
 
+/// The same run, held to exiting 0 — every case but the refusal one, where a
+/// failed task is the assertion.
+async fn run_fleet_ok(
+    workspace: &Path,
+    data: &Path,
+    server_uri: &str,
+    fleet_args: &[&str],
+) -> std::process::Output {
+    let output = run_fleet(workspace, data, server_uri, fleet_args).await;
     assert!(
         output.status.success(),
         "stella fleet --pipeline {VARIANT} did not exit 0 — stdout: {}\nstderr: {}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    output
+}
+
+#[tokio::test]
+async fn a_fleet_worker_dispatches_its_attempt_through_the_bound_wrapper() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let data = tempfile::tempdir().expect("data dir");
+    init_repo(workspace.path());
+    let rounds_log = install_fixture_wrapper(workspace.path());
+    let server = mock_worker_provider().await;
+
+    run_fleet_ok(
+        workspace.path(),
+        data.path(),
+        &server.uri(),
+        &["do the thing, then stop", "--pipeline", VARIANT],
+    )
+    .await;
 
     // The wrapper was genuinely asked about this attempt: one `before_turn`,
     // for the one task the plan carries.
@@ -257,5 +304,121 @@ async fn a_fleet_worker_dispatches_its_attempt_through_the_bound_wrapper() {
         variant.as_deref(),
         Some(VARIANT),
         "executions.pipeline_variant must name the wrapper that drove this attempt"
+    );
+    // A positional prompt builds `Task::new`, which declares no oracle — so
+    // the grant carries no test plan and the stage program says so, rather
+    // than the host inventing a command nobody asked for (#3884).
+    assert!(
+        !calls[0].contains("\"program\""),
+        "a task with no declared test command must be granted no test plan: {}",
+        calls[0]
+    );
+    assert!(
+        !log.contains("\"stage\":\"witness\""),
+        "the `test-command` signal must be false, so the conditional stage is \
+         programmed away: {log}"
+    );
+}
+
+/// **Witness (#3884).** A plan file's per-task `test_command` reaches the
+/// plugin as the attempt's `TestPlan`, and as the `test-command` signal the
+/// stage program is written against — so a witness-flavoured wrapper has a
+/// flip to observe on this door at all. Before this change
+/// `bind_for_attempt` passed `None` unconditionally: the requests logged
+/// below carried no `test` under their candidate whatever the plan said, the
+/// conditional stage was programmed away every time, and every
+/// witness-flavoured plugin reported `Undecided` on every fleet attempt.
+#[tokio::test]
+async fn a_plan_files_per_task_test_command_reaches_the_plugin_as_a_test_plan() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let data = tempfile::tempdir().expect("data dir");
+    init_repo(workspace.path());
+    install_witness_script(workspace.path());
+    let rounds_log = install_fixture_wrapper(workspace.path());
+    let server = mock_worker_provider().await;
+
+    let plan = workspace.path().join("plan.json");
+    std::fs::write(
+        &plan,
+        r#"{"tasks":[{"id":"witnessed","title":"decide me",
+            "prompt":"do the thing, then stop",
+            "test_command":"sh tests/witness_flip.sh"}]}"#,
+    )
+    .expect("plan file");
+
+    run_fleet_ok(
+        workspace.path(),
+        data.path(),
+        &server.uri(),
+        &["--plan", "plan.json", "--pipeline", VARIANT],
+    )
+    .await;
+
+    let log = std::fs::read_to_string(&rounds_log).unwrap_or_default();
+    let calls: Vec<&str> = log.lines().filter(|line| !line.is_empty()).collect();
+    // Two stages, because the `test-command` signal admitted the conditional
+    // one — the signal and the grant are the same fact, read twice.
+    assert_eq!(
+        calls.len(),
+        2,
+        "expected a `witness` and an `execute` before_turn for the planned task: {log}"
+    );
+    assert!(
+        log.contains("\"stage\":\"witness\""),
+        "the stage conditional on `test-command` must be dispatched: {log}"
+    );
+    // The parsed argv, not the raw line: the command crossed the host's closed
+    // runner vocabulary before anything reached the wire.
+    for call in &calls {
+        assert!(
+            call.contains(r#""test":{"program":"sh","args":["tests/witness_flip.sh"]"#),
+            "the plan's test command must ride the candidate grant as a parsed plan: {call}"
+        );
+    }
+}
+
+/// A `test_command` the host's runner vocabulary refuses fails **that task's**
+/// dispatch by name — the fan-out reports it rather than swallowing it, and
+/// the wrapper is never handed an invocation this host would not run.
+#[tokio::test]
+async fn a_refused_test_command_fails_that_tasks_dispatch_by_name() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let data = tempfile::tempdir().expect("data dir");
+    init_repo(workspace.path());
+    let rounds_log = install_fixture_wrapper(workspace.path());
+    let server = mock_worker_provider().await;
+
+    let plan = workspace.path().join("plan.json");
+    std::fs::write(
+        &plan,
+        r#"{"tasks":[{"id":"refused","title":"not a runner",
+            "prompt":"do the thing, then stop",
+            "test_command":"rm -rf /"}]}"#,
+    )
+    .expect("plan file");
+
+    let output = run_fleet(
+        workspace.path(),
+        data.path(),
+        &server.uri(),
+        &["--plan", "plan.json", "--pipeline", VARIANT],
+    )
+    .await;
+
+    let seen = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        seen.contains("rm -rf /"),
+        "the refusal must quote the command the plan declared: {seen}"
+    );
+    assert!(
+        std::fs::read_to_string(&rounds_log)
+            .unwrap_or_default()
+            .trim()
+            .is_empty(),
+        "no attempt may be dispatched on an oracle the host refused"
     );
 }

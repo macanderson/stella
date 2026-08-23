@@ -39,6 +39,7 @@ fn edit_events() -> Vec<AgentEvent> {
             effective_budget_tokens: 1000,
             calibration_factor: 1.0,
             estimated_input_tokens: 10,
+            stall_seconds_requested: None,
             compiled_frame: None,
         },
         AgentEvent::ToolStart {
