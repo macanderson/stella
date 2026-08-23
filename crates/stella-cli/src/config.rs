@@ -5,222 +5,55 @@
 //! The full chain lives in `stella_model::credential::ApiKey::resolve`; this
 //! module's job is picking WHICH provider (from `--model`, or the first one
 //! with a resolvable credential) and then running that chain for it.
+//!
+//! # Where a concern lives
+//!
+//! This file kept growing toward the 1500-line ceiling
+//! (`scripts/check-file-size.sh`) until #3566/#4494 split it by subject, the
+//! same way `aux_credentials`/`listing`/`providers`/`reload` already had:
+//! [`launcher_overrides`] owns the process-wide invocation facts (trusted
+//! launcher, `--upstream-pin`, `--allow-dir`, the interactive-prompt latch);
+//! [`report`] owns `Config`'s own printed status; [`discovery`] owns
+//! enumerating every CURRENTLY configured provider, as opposed to resolving
+//! the ONE this file's own resolve chain still does. Everything moved is
+//! re-exported at its old path, so nothing about where a caller reaches it
+//! changed.
 
 use std::env;
 
 use colored::Colorize;
 use stella_model::credential::{ApiKey, AuxCredentials, CredentialError, CredentialsFile};
 
-/// Trusted-launcher override for the complete `agent_engine_config` object.
-///
-/// This is intentionally one JSON object rather than a collection of
-/// independently overridable variables: a benchmark launcher can replace the
-/// repository/user engine posture atomically after the normal settings scopes
-/// merge. The value is never included in an error message.
-const TRUSTED_ENGINE_CONFIG_ENV: &str = "STELLA_ENGINE_CONFIG_JSON";
-
-fn invalid_trusted_engine_config() -> String {
-    format!(
-        "{TRUSTED_ENGINE_CONFIG_ENV} is invalid; refusing to start with a partial engine override"
-    )
-}
-
-/// Reject unknown fields before deserializing through the normal settings
-/// type. `AgentEngineConfig` deliberately tolerates forward-compatible fields
-/// in ordinary settings files; the trusted launcher seam is stricter because
-/// a misspelled benchmark control must fail closed instead of silently using a
-/// provider default.
-fn trusted_engine_config_shape_is_strict(value: &serde_json::Value) -> bool {
-    fn object_has_only(value: &serde_json::Value, allowed: &[&str]) -> bool {
-        value
-            .as_object()
-            .is_some_and(|object| object.keys().all(|key| allowed.contains(&key.as_str())))
-    }
-
-    /// `allowed` plus the retired-but-recognized names, as one slice.
-    ///
-    /// A retired key is **recognized here and reported everywhere else**: it
-    /// parses into nothing, and both the settings walker and the launcher say
-    /// so by name. See `settings::unknown`'s `RETIRED_ENGINE_ROOT` for why
-    /// #3908's role keys take this path while `pipeline_max_revisions` was
-    /// dropped outright and is refused.
-    fn tolerating(
-        allowed: &'static [&'static str],
-        retired: &'static [&'static str],
-    ) -> Vec<&'static str> {
-        allowed.iter().chain(retired).copied().collect()
-    }
-
-    // The ONE vocabulary, shared with the settings.json unknown-key warning
-    // (`settings::unknown`). A second hand-maintained copy here would drift the
-    // moment a knob is added — and because this gate fails CLOSED, a drifted
-    // copy is a refused benchmark run rather than a missing warning.
-    use crate::settings::{
-        ENGINE_AGENT_FIELDS as AGENT_FIELDS, ENGINE_AGENT_NAMES as AGENT_NAMES,
-        ENGINE_PARAM_FIELDS as PARAM_FIELDS, ENGINE_ROOT_FIELDS as ROOT_FIELDS,
-        RETIRED_ENGINE_AGENT_NAMES, RETIRED_ENGINE_ROOT,
-    };
-
-    if !object_has_only(value, &tolerating(ROOT_FIELDS, RETIRED_ENGINE_ROOT)) {
-        return false;
-    }
-    let Some(agents) = value.get("agents") else {
-        return true;
-    };
-    if agents.is_null() {
-        return true;
-    }
-    if !object_has_only(agents, &tolerating(AGENT_NAMES, RETIRED_ENGINE_AGENT_NAMES)) {
-        return false;
-    }
-    let Some(agent_map) = agents.as_object() else {
-        return false;
-    };
-    agent_map.values().all(|agent| {
-        if agent.is_null() {
-            return true;
-        }
-        if !object_has_only(agent, AGENT_FIELDS) {
-            return false;
-        }
-        match agent.get("params") {
-            None => true,
-            Some(params) if params.is_null() => true,
-            Some(params) => object_has_only(params, PARAM_FIELDS),
-        }
-    })
-}
-
-fn trusted_engine_config_override() -> Result<Option<crate::settings::AgentEngineConfig>, String> {
-    let Some(raw) = env::var_os(TRUSTED_ENGINE_CONFIG_ENV) else {
-        return Ok(None);
-    };
-    let raw = raw
-        .into_string()
-        .map_err(|_| invalid_trusted_engine_config())?;
-    let value: serde_json::Value =
-        serde_json::from_str(&raw).map_err(|_| invalid_trusted_engine_config())?;
-    if !trusted_engine_config_shape_is_strict(&value) {
-        return Err(invalid_trusted_engine_config());
-    }
-    serde_json::from_value(value)
-        .map(Some)
-        .map_err(|_| invalid_trusted_engine_config())
-}
-
-/// Whether the credential chain's last step — the masked interactive prompt —
-/// may fire in this process.
-///
-/// `stella_model::credential::ApiKey::resolve` states the contract plainly:
-/// "headless/non-interactive callers (CI, `--output-format stream-json`)
-/// should pass `false` and get a clean `NotFound` instead of hanging on a read
-/// from a stdin that isn't there." Nothing honoured it. Every `--model
-/// provider/slug` path passed `true` unconditionally, so
-/// `stella --model anthropic/… run --output-format json '…'` launched from an
-/// attached terminal with no key stopped dead on a password prompt while the
-/// caller waited on a JSON object that could never arrive — the machine
-/// interface deadlocked on a human one.
-///
-/// A process-wide latch rather than a threaded parameter because the two
-/// non-`main` entry points into `Config::load` (`agent::run_init`,
-/// `ingest_cmd::extract_all`) have no view of the requested output format and
-/// have no business growing one; this mirrors [`JSON_SUMMARY_EMITTED`] and
-/// `signals::INTERRUPTED`, the other two facts about the invocation that
-/// `main` establishes once.
-///
-/// [`JSON_SUMMARY_EMITTED`]: crate::note_json_summary_emitted
-static INTERACTIVE_CREDENTIALS: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(true);
-
-/// Forbid the interactive credential prompt for the rest of this process.
-/// Called by `main` once the requested output format is known.
-pub(crate) fn forbid_interactive_credentials() {
-    INTERACTIVE_CREDENTIALS.store(false, std::sync::atomic::Ordering::SeqCst);
-}
-
-/// `--upstream-pin`: the gateway upstreams this invocation is pinned to.
-///
-/// A process-wide cell rather than a parameter threaded through `Config::load`
-/// for the same reason as [`INTERACTIVE_CREDENTIALS`] above: it is a fact about
-/// the *invocation* that `main` establishes once, and the non-`main` entry
-/// points into `Config::load` have no view of it and no business growing one.
-///
-/// It outranks settings deliberately. The benchmark harness runs with
-/// settings isolation (`STELLA_NO_SETTINGS`), so an argument is the only
-/// authority that reaches a measured trial — the same reason `--base-url` is
-/// a validated CLI argument there.
-static UPSTREAM_PIN: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-
-/// Record `--upstream-pin` for the rest of this process. Called by `main`;
-/// a second call is ignored, so no later caller can re-route a running session.
-pub(crate) fn set_upstream_pin(order: Vec<String>) {
-    if !order.is_empty() {
-        let _ = UPSTREAM_PIN.set(order);
-    }
-}
-
-/// The invocation's pin, if one was given.
-fn upstream_pin_override() -> Option<&'static [String]> {
-    UPSTREAM_PIN.get().map(Vec::as_slice)
-}
-
-/// `--allow-dir`: extra directories this invocation may write to.
-///
-/// A process-wide cell for the same reason as [`UPSTREAM_PIN`] above — it is a
-/// fact about the invocation `main` establishes once, and the other entry
-/// points into `Config::load` have no view of it. Unlike the pin it does not
-/// outrank settings: the two lists are UNIONED (`crate::write_dirs::resolve`),
-/// because a flag that replaced the committed list would revoke a write
-/// permission the operator never asked to revoke.
-static ALLOW_DIRS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-
-/// Record `--allow-dir` for the rest of this process. Called by `main`; a
-/// second call is ignored, so no later caller can widen a running session's
-/// write scope.
-pub(crate) fn set_allow_dirs(dirs: Vec<String>) {
-    if !dirs.is_empty() {
-        let _ = ALLOW_DIRS.set(dirs);
-    }
-}
-
-/// The invocation's `--allow-dir` values, empty when none were given.
-fn allow_dirs_override() -> &'static [String] {
-    ALLOW_DIRS.get().map_or(&[][..], Vec::as_slice)
-}
-
-/// Which source supplies a provider's upstream pin: the flag outranks the
-/// settings entry, and absent both there is no pin.
-///
-/// Pure, and separated from the two call sites that leak, so the precedence
-/// that actually decides a measured run is testable without writing to the
-/// process-wide cell above — which is one-shot, and would leak into every
-/// sibling test sharing the process.
-fn pin_source<'a>(
-    flag: Option<&'a [String]>,
-    entry: Option<&'a Vec<String>>,
-) -> Option<&'a [String]> {
-    flag.or_else(|| entry.map(Vec::as_slice))
-}
-
-/// Whether `interactive` may still be honoured. `ApiKey::resolve` applies its
-/// own `stdin().is_terminal()` guard on top of this; this is the *policy*
-/// half, which a tty check cannot answer.
-fn interactive_allowed() -> bool {
-    INTERACTIVE_CREDENTIALS.load(std::sync::atomic::Ordering::SeqCst)
-}
-
 // Not `aux`: that spelling made the repository un-checkoutable on Windows.
 // The module's own header carries the argument.
 mod aux_credentials;
+mod discovery;
+mod launcher_overrides;
 mod listing;
 mod providers;
 mod reload;
+mod report;
 
 // Re-exported at the old paths: the table moved for the line ratchet, not
 // for callers, and `crate::config::PROVIDERS` stays the one way to reach it.
 pub(crate) use aux_credentials::{AuxField, has_required_aux, provider_aux, settable_aux_fields};
+pub use discovery::{ConfiguredProvider, discover_configured_providers};
+use launcher_overrides::{
+    allow_dirs_override, interactive_allowed, pin_source, trusted_engine_config_override,
+    upstream_pin_override,
+};
+pub(crate) use launcher_overrides::{
+    forbid_interactive_credentials, set_allow_dirs, set_upstream_pin,
+};
 pub(crate) use providers::no_api_key_error;
 pub use providers::{Dialect, LOCAL_PROVIDER, PROVIDERS, ProviderConfig};
+// Read only by `config/tests/trusted_engine.rs`, through the `use super::*;`
+// chain this re-export feeds — `#[cfg(test)]` so a non-test build never sees
+// an unused import for a name nothing there calls directly.
+#[cfg(test)]
+use launcher_overrides::{
+    INTERACTIVE_CREDENTIALS, TRUSTED_ENGINE_CONFIG_ENV, trusted_engine_config_shape_is_strict,
+};
 
 /// Intern a string as a `&'static str`. `ProviderConfig` is `&'static str`
 /// throughout (it is almost always one of the static [`PROVIDERS`] rows), so
@@ -1167,81 +1000,6 @@ impl Config {
             self.cache_ttl = Some(stella_model::CacheTtl::OneHour);
         }
     }
-
-    /// Print the provider/model table for an interactive session. The listing
-    /// depends only on `PROVIDERS` and the ambient environment, never on
-    /// `self`, so it delegates to the static [`Config::print_available_models`]
-    /// — one renderer backs both the `/models` REPL command and the top-level
-    /// `stella models` subcommand, and they can never drift apart. The REPL
-    /// call site has no startup `Loaded` record handy, so its source labels
-    /// degrade to the generic `env:VAR` form rather than a specific dotenv
-    /// filename — see `credential_status::label_for`.
-    pub fn print_models(&self) {
-        Self::print_available_models(None);
-    }
-
-    /// `loaded_env` is the startup dotenv-load record (main's
-    /// `env_files::maybe_load` result) — pass `Some` so the API Key line can
-    /// name the exact `.env*` file a key came from, and so the "Env files"
-    /// line (always shown, unconditionally — unlike `STELLA_ENV_DEBUG`) can
-    /// list which files/names were loaded.
-    pub fn print_config(&self, loaded_env: Option<&crate::env_files::Loaded>) {
-        println!(
-            "{}\n",
-            "Stella — Current Configuration".bright_cyan().bold()
-        );
-        println!(
-            "  Provider:   {}",
-            self.provider.display_name.bright_magenta()
-        );
-        println!(
-            "  Model:      {}/{}",
-            self.provider.id.bright_magenta(),
-            self.model_id.bright_white()
-        );
-        let source = self
-            .credential_source
-            .map(|s| crate::credential_status::label_for(&self.provider, s, loaded_env))
-            .unwrap_or_else(|| "n/a (local placeholder)".to_string());
-        println!(
-            "  API Key:    {} {}",
-            self.api_key.redacted_preview().dimmed(),
-            format!("({source})").dimmed()
-        );
-        println!("  Base URL:   {}", self.effective_base_url().dimmed());
-        println!("  Workspace:  {}", self.workspace_root.display());
-        println!("  Dialect:    {}", self.provider.dialect.label());
-        if let Some(summary) = loaded_env.and_then(crate::credential_status::env_files_summary) {
-            println!("  Env files:  {}", summary.dimmed());
-        }
-        self.print_role_wiring();
-    }
-
-    /// The four engine roles, what each will actually send, and which setting
-    /// decided it.
-    ///
-    /// Printed unconditionally, including when no engine settings exist — "all
-    /// four ride the session model" is an answer, and a block that appears
-    /// only sometimes cannot be used to check anything.
-    fn print_role_wiring(&self) {
-        use crate::config_wiring::{render, resolve};
-        let configured = discover_configured_providers();
-        let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
-        let session = crate::engine_config::ModelSpec {
-            provider: self.provider.id.to_string(),
-            model: self.model_id.clone(),
-        };
-        let wiring = resolve(
-            self.engine_settings.as_ref(),
-            &session,
-            self.model_pinned_by_flag,
-            &is_provider,
-        );
-        println!("\n  {}", "Engine roles".bright_cyan().bold());
-        for line in render(&wiring) {
-            println!("    {line}");
-        }
-    }
 }
 
 /// The provider-aware credential chain: CLI flag -> primary env var ->
@@ -1341,120 +1099,6 @@ pub(crate) fn resolve_provider_key(
         }
         Err(other) => Err(other),
     }
-}
-
-/// A provider whose BYOK credential currently resolves, paired with the
-/// resolved key. Produced by [`discover_configured_providers`] and consumed
-/// by the goal loop's role Router: the `config` supplies the id/family/model
-/// for a `stella_core::router::ProviderProfile`, the `api_key` builds the
-/// concrete verifier adapter when this provider is routed as verifier. `api_key`
-/// is an [`ApiKey`] (H3) so the derived `Debug` never leaks the secret.
-#[derive(Debug, Clone)]
-pub struct ConfiguredProvider {
-    pub config: ProviderConfig,
-    pub api_key: ApiKey,
-    /// The provider's auxiliary values, resolved by the same chain and from
-    /// the same store as `api_key` — so a routed verifier on Bedrock builds with
-    /// the credentials discovery actually verified, not a second lookup that
-    /// could disagree.
-    pub aux: AuxCredentials,
-}
-
-/// Enumerate every provider in [`PROVIDERS`] whose credential currently
-/// resolves, in preference order, pairing each with its resolved key. Uses
-/// the SAME credential chain [`Config::load`] uses ([`resolve_provider_key`],
-/// non-interactively — env var / alias / credentials file, never a prompt),
-/// so a provider is "configured" here iff `Config` could have auto-selected
-/// it. Never fails: an unreadable credentials file yields no discovered
-/// providers. Under trusted handoff/no-settings isolation the filesystem store
-/// is not read at all and discovery uses an empty in-memory store.
-///
-/// The goal loop calls this to build a role Router that can pick a
-/// cross-family VERIFIER; with one configured family
-/// it returns a single entry and the verifier stays the worker provider.
-pub fn discover_configured_providers() -> Vec<ConfiguredProvider> {
-    // A trusted handoff/no-settings process must never inspect a task-image
-    // credential store. Outside that boundary, a corrupt/unreadable file
-    // yields no discovery: the goal loop simply keeps the worker as verifier.
-    let credentials_sealed =
-        crate::credential_handoff::is_present() || crate::settings::filesystem_settings_disabled();
-    let credentials_file = if credentials_sealed {
-        CredentialsFile::empty()
-    } else {
-        let Ok(credentials_file) = CredentialsFile::load_default() else {
-            return Vec::new();
-        };
-        credentials_file
-    };
-    // Same degradation posture for settings: verifier routing is best-effort,
-    // so an unreadable settings.json costs the config-defined providers,
-    // never the built-ins. (`Config::load` is where a bad file is loud.)
-    let settings = env::current_dir()
-        .ok()
-        .and_then(|ws| crate::settings::Settings::load(&ws).ok())
-        .unwrap_or_default();
-
-    let mut configured: Vec<ConfiguredProvider> = PROVIDERS
-        .iter()
-        .filter_map(|provider| {
-            let provider = effective_builtin(provider, &settings);
-            let settings_key = settings
-                .providers
-                .get(provider.id)
-                .and_then(|e| e.api_key.clone());
-            resolve_provider_key(
-                &provider,
-                None,
-                settings_key.as_deref(),
-                &credentials_file,
-                false,
-            )
-            .ok()
-            .and_then(|(api_key, _source)| {
-                // A provider whose primary key resolves but whose required
-                // companion value does not cannot build — see
-                // `aux::has_required_aux`. Discovery is what auto-detection
-                // and verifier routing pick from, so admitting it here would
-                // hand both a provider that fails at construction.
-                let aux = provider_aux(&provider, &credentials_file);
-                has_required_aux(&provider, &aux).then_some(ConfiguredProvider {
-                    config: provider,
-                    api_key,
-                    aux,
-                })
-            })
-        })
-        .collect();
-    for (id, entry) in &settings.providers {
-        if PROVIDERS.iter().any(|p| p.id == id.as_str()) || id == LOCAL_PROVIDER.id {
-            continue;
-        }
-        // The verifier router needs a model to route to — an entry without
-        // `default_model` can't serve as a verifier.
-        if entry.default_model.as_deref().unwrap_or("").is_empty() {
-            continue;
-        }
-        let Ok(provider) = custom_provider(id, entry) else {
-            continue;
-        };
-        if let Ok((api_key, _)) = resolve_provider_key(
-            &provider,
-            None,
-            entry.api_key.as_deref(),
-            &credentials_file,
-            false,
-        ) {
-            // A settings.json provider cannot declare the Vertex/Bedrock
-            // dialects (`custom_provider` rejects both), so it never has an
-            // auxiliary value to resolve.
-            configured.push(ConfiguredProvider {
-                config: provider,
-                api_key,
-                aux: AuxCredentials::new(),
-            });
-        }
-    }
-    configured
 }
 
 #[cfg(test)]
