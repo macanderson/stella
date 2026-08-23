@@ -302,6 +302,18 @@ impl SubSessions {
         self.specs.get(lane).cloned()
     }
 
+    /// Drop `lane`'s retained spec — Delete's half of the ledger, so a later
+    /// Restart cannot revive a row the user removed. `false` (and the spec
+    /// kept) while a worker is live on the lane: the delete's deregister is
+    /// deferred to its `Ended`, and the spec goes with it.
+    pub(crate) fn forget(&mut self, lane: &str) -> bool {
+        if self.is_live(lane) {
+            return false;
+        }
+        self.cleared.remove(lane);
+        self.specs.remove(lane).is_some()
+    }
+
     /// Signal one worker to stop (clean cancel: its turn future drops at the
     /// next await point, exactly the lead's cancel semantics). `false` when
     /// no such worker is live — a stale stop is a no-op, never an error.
