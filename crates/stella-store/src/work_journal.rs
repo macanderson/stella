@@ -314,6 +314,20 @@ impl WorkJournal {
     /// Returns the new commit id. Paths are workspace-relative and are staged
     /// individually — never `git add -A`, which would sweep in the user's own
     /// unrelated work and make the history a lie about what the agent did.
+    ///
+    /// # `paths` is empty at every caller left, and that is the current answer
+    ///
+    /// This is the checkpoint primitive: [`Self::record_checkpoint`] and
+    /// [`Self::clear_checkpoint`] are its only callers, and both pass an empty
+    /// path slice. The last caller that passed real paths — the file-CRUD
+    /// tools' read/write ledger — was deleted by the twelve-tool purge
+    /// (#3244), which is why the head lineage's trees carry only reserved
+    /// `.stella-journal/` blobs. The path-staging arm below is kept rather than
+    /// deleted because it is what [`Self::read_at_turn`] would replay if a
+    /// caller returned, and because [`Self::snapshot_worktree`]'s `git add -A`
+    /// is deliberately the *other* discipline: this one records what the agent
+    /// named, that one records what the tree became. A turn's diff reads the
+    /// second (#3420).
     pub fn record(
         &self,
         paths: &[String],
@@ -609,6 +623,12 @@ impl WorkJournal {
     /// new. Reserved journal records (the private `journal_blob_path`
     /// namespace, `.stella-journal/`) are never workspace paths and are
     /// filtered out.
+    ///
+    /// Which lineage a turn ref points into is [`Self::mark_turn`]'s caller's
+    /// choice, and in production it is the snapshot lineage
+    /// ([`Self::snapshot_worktree`], #3420): the head lineage's trees hold only
+    /// the reserved blobs this filter drops, so a diff over it is empty for
+    /// every turn no matter what the turn did.
     ///
     /// **Read-only by construction.** Both shapes are tree-to-tree plumbing
     /// (`diff-tree`, `ls-tree`) that touches neither an index nor the work
