@@ -737,3 +737,53 @@ fn a_failed_page_fetch_leaves_the_header_on_the_page_still_shown() {
     );
     assert_eq!(ui.issues.loaded_page, ui.issues.page);
 }
+
+/// **The witness (#4368).** `s` opens the status prompt for the selected
+/// issue, and says why rather than doing nothing when the list is empty —
+/// the keymap row nothing pressed.
+#[test]
+fn issues_s_opens_the_status_prompt_for_the_selection() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    handle_deck_key(ch('s'), &model, &mut ui);
+    assert_eq!(
+        ui.issues.mode,
+        IssuesMode::Browse,
+        "nothing to set a status on"
+    );
+    assert!(ui.issues.notice.is_some(), "and the key says why");
+
+    ui.issues.rows = vec![a_issue("7")];
+    ui.issues.input = "stale".into();
+    handle_deck_key(ch('s'), &model, &mut ui);
+    assert_eq!(ui.issues.mode, IssuesMode::SetStatus);
+    assert!(ui.issues.input.is_empty(), "the prompt starts blank");
+}
+
+/// `o` hands the selected issue to the browser. Witnessed on a row with no
+/// url — the arm that reports instead of launching one — because a witness
+/// must not open a browser window on whoever runs the suite.
+#[test]
+fn issues_o_opens_the_selection_in_the_browser() {
+    let model = WorkspaceModel::new();
+    let mut ui = issues_ui();
+    let mut row = a_issue("7");
+    row.url.clear();
+    ui.issues.rows = vec![row];
+
+    assert_eq!(
+        handle_deck_key(ch('o'), &model, &mut ui),
+        DeckAction::Handled
+    );
+    let notice = ui.issues.notice.clone().unwrap_or_default();
+    assert!(
+        notice.contains("no url"),
+        "the key reached the arm: {notice:?}"
+    );
+
+    handle_deck_key(ch('z'), &model, &mut ui);
+    ui.issues.notice = None;
+    handle_deck_key(ch('o'), &model, &mut ui);
+    assert_eq!(ui.composer.buffer(), "zo", "a prompt in progress wins");
+    assert!(ui.issues.notice.is_none());
+}

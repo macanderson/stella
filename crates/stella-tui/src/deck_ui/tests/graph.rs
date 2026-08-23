@@ -20,6 +20,7 @@ fn ui_with_graph() -> DeckUi {
         }],
         edges: vec![],
         files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
+        query_ms: None,
     });
     ui
 }
@@ -138,9 +139,49 @@ fn a_re_rooted_snapshot_resets_the_node_cursor() {
         }],
         edges: vec![],
         files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
+        query_ms: None,
     };
     ingest_inbound(&Inbound::GraphSnapshot(rerooted), &mut model, &mut ui);
     assert_eq!(ui.graph_cursor, 0, "the cursor lands on the new focus");
+}
+
+/// **The witness (#4368).** `↑ ↓` walk the neighborhood list itself — the
+/// keymap row that had no test: every arrow witness on this tab pressed keys
+/// inside the *picker*, which is a different list behind a modal.
+#[test]
+fn arrows_walk_the_neighborhood_and_clamp_at_both_ends() {
+    use crate::graph::GraphNode;
+    let model = model_with(&["lead"]);
+    let mut ui = ui_with_graph();
+    let node = |label: &str| GraphNode {
+        label: label.into(),
+        kind: "file".into(),
+        location: Some(label.into()),
+    };
+    if let Some(graph) = ui.graph.as_mut() {
+        graph.nodes = vec![node("src/a.rs"), node("src/b.rs"), node("src/c.rs")];
+    }
+
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    assert_eq!(ui.graph_cursor, 1);
+    for _ in 0..5 {
+        handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    }
+    assert_eq!(ui.graph_cursor, 2, "clamps at the last neighbor");
+    for _ in 0..5 {
+        handle_deck_key(key(KeyCode::Up), &model, &mut ui);
+    }
+    assert_eq!(ui.graph_cursor, 0, "and at the first");
+
+    // `j`/`k` are the same step, and — unlike the arrows, which are never
+    // gated (`deck_ui::list_nav`) — they build a prompt while one is being
+    // typed rather than walking the list under it.
+    handle_deck_key(ch('j'), &model, &mut ui);
+    assert_eq!(ui.graph_cursor, 1, "j is ↓");
+    handle_deck_key(ch('z'), &model, &mut ui);
+    handle_deck_key(ch('j'), &model, &mut ui);
+    assert_eq!(ui.composer.buffer(), "zj");
+    assert_eq!(ui.graph_cursor, 1, "the neighborhood stayed where it was");
 }
 
 #[test]

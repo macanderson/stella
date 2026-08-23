@@ -243,6 +243,18 @@ pub(crate) fn dropped_by_server(
     .unwrap_or_default()
 }
 
+/// Tools trimmed off each server to fit the per-server schema BYTE budget.
+///
+/// The sibling of [`dropped_by_server`], and deliberately not folded into it:
+/// the two report different walls, and the deck's rows name which one a server
+/// hit (#4441). [`budget_note`] carries the same distinction in prose.
+pub(crate) fn trimmed_by_server(
+    mcp: Option<&stella_mcp::McpToolSet>,
+) -> std::collections::HashMap<String, usize> {
+    mcp.map(|s| s.over_budget_servers().into_iter().collect())
+        .unwrap_or_default()
+}
+
 /// The deck's short health label for one server, or `None` when it reported no
 /// health at all.
 pub(crate) fn health_label(health: &[stella_mcp::ServerHealth], name: &str) -> Option<String> {

@@ -1060,10 +1060,24 @@ impl SessionModel {
             | AgentEvent::RetriesExhausted { .. }
             | AgentEvent::PolicyDecision { .. } => {}
             // A session-level fact established before the turn opened, not a
-            // step of it: the plain surface prints it from
-            // `textline::event_line`, and the deck's own transcript has no
-            // entry for it yet.
-            AgentEvent::SteeringWithheld { .. } => {}
+            // step of it — but the transcript is the only place the deck can
+            // say it, since stderr is swallowed under the alternate screen
+            // (#4463).
+            AgentEvent::SteeringWithheld {
+                withheld_by,
+                memories,
+                records,
+                skills,
+                commands,
+                agents,
+            } => self.transcript.push(TranscriptEntry::SteeringWithheld {
+                withheld_by: *withheld_by,
+                memories: *memories,
+                records: *records,
+                skills: *skills,
+                commands: *commands,
+                agents: *agents,
+            }),
         }
         self.evict_transcript_overflow();
     }
