@@ -77,8 +77,16 @@ const PARK_BACKOFF_CAP_MS: u64 = 300_000;
 pub enum ParkDirective {
     /// Keep waiting: sleep the next chunk.
     Continue,
-    /// End the park now and surface the parked error — the caller saw a
-    /// soft stop (or decided the wait is no longer worth it).
+    /// End the park now and surface the parked error.
+    ///
+    /// Deliberately reasonless: *why* a park ended early is the supervisor's
+    /// own knowledge, and the supervisor is caller-side, so it records the
+    /// answer where it can act on it rather than routing it back through this
+    /// module (`driver::rate_limit`'s `soft_stopped` is the engine's — it is
+    /// what lets a mid-park Esc settle as the step-boundary soft stop instead
+    /// of a provider failure, #2743). Carrying the reason here would teach
+    /// `retry` about steering, which is the coupling this port exists to
+    /// prevent.
     Abort,
 }
 

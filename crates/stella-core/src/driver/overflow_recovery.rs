@@ -153,6 +153,15 @@ pub(crate) enum ModelCallFailure {
         /// payload if this ends up surfacing terminally.
         attempt_reasons: Vec<String>,
     },
+    /// The user asked the turn to stop while it was parked on a
+    /// park-eligible failure, and the park honored the latch (#2743). The
+    /// pending provider error is deliberately discarded: the turn ended
+    /// because a person asked, so it settles as the step-boundary soft stop
+    /// does — no `RetriesExhausted`, no `Error`, every completed step kept.
+    /// The failed attempts that opened the park already reported themselves
+    /// through the per-attempt `UsageIncomplete` observer, so nothing is lost
+    /// from the accounting by dropping the error here.
+    SoftStopped,
     /// The provider refused to fund the requested output ceiling. Withheld
     /// from the terminal channels exactly as the overflow arm is — the
     /// caller decides between a clamp rung
@@ -234,6 +243,25 @@ impl<'a> Engine<'a> {
                 message,
                 attempt_reasons,
             } => (message, attempt_reasons),
+            // Settled here rather than in the ladder so every ending of a
+            // model call leaves through one door, and byte-identical to
+            // `super::step_boundary`'s exit: the same reason string, the same
+            // `DeliberateStop`, the same tool-call repair for history a
+            // caller handed in. A park is inside the ladder, so before #2743
+            // this ending wore the parked provider's error and telemetry
+            // recorded a provider failure for a user's decision.
+            ModelCallFailure::SoftStopped => {
+                crate::step::close_open_tool_calls(
+                    &mut state.messages,
+                    super::SOFT_STOP_TOOL_RESULT,
+                    events,
+                );
+                return Some(StepOutcome::Aborted {
+                    reason: super::SOFT_STOP_REASON.to_string(),
+                    kind: AbortKind::DeliberateStop,
+                    cost_usd: state.total_cost_usd,
+                });
+            }
             // The output-side mirror, settled here rather than in a parallel
             // method so both ladders share one "withheld while recovering,
             // terminal when spent" shape — the property that matters to an
