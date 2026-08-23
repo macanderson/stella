@@ -77,6 +77,13 @@ honestly"*:
 > and runs UNSANDBOXED even when this is set. […] `STELLA_BASH_SANDBOX`
 > is a bound on one tool, not on the session.
 
+Several of the tool names in that quotation no longer dispatch: #3244 cut
+the surface back to the working and coordination groups declared in
+`crates/stella-tools/src/catalog.rs`. The quotation is left as it was
+written, because what it establishes — that `STELLA_BASH_SANDBOX` bounded
+one tool while every other route to a subprocess ran outside it — is
+unchanged by which tools those routes were.
+
 and, on the macOS backend:
 
 > Treat it as blast-radius reduction for accidental and prompt-injected
@@ -189,14 +196,15 @@ exists and it is tempting.
 
 It is the wrong altitude here, for three reasons:
 
-1. **It puts a Stella in the sandbox.** All 59 `impl Tool` blocks would
-   have to execute on the far side, which means a Stella binary in the
-   image, which means version skew between the two halves of one session
-   and an image rebuild on every release.
-2. **It puts your credentials in the sandbox.** `web_search`,
-   `github_rest`, `issue_ops`, and `tracker_auth` are tools. Remoting the
-   executor sends them — and the tokens they use — to a third party's
-   container. That is a direct violation of **I2**.
+1. **It puts a Stella in the sandbox.** Every built-in would have to
+   execute on the far side, which means a Stella binary in the image,
+   which means version skew between the two halves of one session and an
+   image rebuild on every release.
+2. **It puts your credentials in the sandbox.** `delegate` spends the
+   user's provider key, and every MCP server and custom manifest tool
+   holds whatever token its config gave it. Remoting the executor sends
+   them — and those tokens — to a third party's container. That is a
+   direct violation of **I2**.
 3. **It splits the ledgers from the fold.** The registry is not a
    dispatch table; it is also the session's file-touch ledger, its
    memory-citation ledger, its agent-use ledger, its task board, and its
@@ -211,7 +219,7 @@ Transparent, zero code change, and it is what people will suggest first.
 It dies on latency arithmetic. A local `stat` is tens of microseconds; a
 cross-WAN one is tens of milliseconds — three to four orders of
 magnitude. `rg` across this repo issues millions of syscalls. `cargo
-build` issues far more. A single `grep_files` call would take minutes.
+build` issues far more. A single `search` call would take minutes.
 The transparency is real and the performance is unusable, and no amount
 of caching fixes a build.
 
@@ -261,8 +269,8 @@ pub trait Sandbox: Send + Sync {
 
     // ---- path-scoped: one call, one path (or a batch of them) --------
     async fn read(&self, path: &SbPath, range: Option<LineRange>) -> SbResult<FileRead>;
-    /// Batched deliberately: `code_map` and `overview` want tens of files
-    /// and must not pay tens of round trips for them.
+    /// Batched deliberately: indexing the tree wants tens of files and
+    /// must not pay tens of round trips for them.
     async fn read_many(&self, paths: &[SbPath]) -> SbResult<Vec<SbResult<FileRead>>>;
     async fn write(&self, path: &SbPath, bytes: &[u8], mode: WriteMode) -> SbResult<WriteReceipt>;
     async fn remove(&self, path: &SbPath, recursive: bool) -> SbResult<RemoveReceipt>;
@@ -339,23 +347,38 @@ diff text.
 ## 5. Which side each tool runs on
 
 Not every tool is workspace-bound, and getting this table wrong is how
-credentials end up in a vendor's container. Three classes:
+credentials end up in a vendor's container. The partition below is
+derived from the groups in `crates/stella-tools/src/catalog.rs`, which is
+the only place a built-in is declared and therefore the only authority on
+what the surface is. Three classes:
 
 ### Sandbox-bound — execute against the tree, wherever it is
 
-`read_file` · `write_file` · `edit_file` · `apply_edits` · `delete_file`
-· `glob_files` · `grep_files` · `read_symbol` · `bash` · `run_script` ·
-`run_tests` · `build_project` · `start_process` · `read_output` ·
-`clear_output` · `send_stdin` · `restart_process` · `stop_process` · `code_map` · `project_overview` ·
-`impact` · `staleness` · `validate` · `verify_done` · `diagnostics` ·
-git operations in `repo` · custom tools · foundry-authored tools
+The **working surface**, which is the whole reason a sandbox exists: the
+shell group (`bash`), the file group (`read_file` · `write_file` ·
+`edit_file` · `delete_file`) and the search group (`search`). The
+environment group (`get_environment`) joins them, because what it reports
+— workspace root, git bit, platform, shell dialect, scratch dir — is a
+description of wherever the commands run, and answering it from the host
+would be answering about the wrong machine.
+
+Beside them, any custom manifest tool or foundry-authored tool whose body
+reads or writes the tree.
 
 ### Host-bound — stay on the user's machine, never reachable from the sandbox
 
-`web_search` · `web_extract` · `github_rest` · `issues` · `issue_ops` ·
-`tracker_auth` · `cite_memory` and the memory store · `exploration` ·
-context records · the task board · sub-agent dispatch · **the model call
-itself** · MCP servers · user hooks
+The **coordination surface**, all of it. The task group's board
+(`task_create` · `task_list` · `task_start` · `task_complete` ·
+`task_cancel` · `task_assign`) and `delegate` beside it; the scratch
+group (`save_state` · `get_state` · `list_state` · `delete_state`); the
+question group (`ask_question`). Plus what was never a built-in and never
+could cross: **the model call itself**, the `~/.stella` store and its
+memories, context records, MCP servers, and user hooks.
+
+`delegate` and `ask_question` are the two that make the rule easy to
+read. `delegate` spends the user's provider key and hands a child a whole
+tool surface; `ask_question` needs the human who is sitting at the
+terminal. Neither has any meaning on the far side of the boundary.
 
 This class is the security spine. The sandbox never receives the user's
 provider keys, GitHub token, `~/.stella` store, or model credentials —
@@ -365,7 +388,9 @@ already had to have in order to run anything.
 
 ### Pure — no I/O either way
 
-`task_*` board operations, schema gating, planning helpers.
+Schema gating and the planning helpers inside the engine. No built-in
+sits here: the task board looks pure and is not, because its rows are
+host-side session state that the deck and the fold both read.
 
 ### 5.1 The credential tension, stated honestly
 
@@ -425,11 +450,11 @@ listed here rather than in §4 because it is the load-bearing one.
 
 ### 6.3 Index builders — accepted cost, measured before optimized
 
-`code_map`, `project_overview`, `impact`, and `staleness` build indexes
-by reading many files. Expressed as `glob` + `read_many`, that is two to
-a handful of round trips carrying real bytes. They run roughly once per
-session rather than once per step, so Phase 1 ships them that way and
-measures.
+`search`'s semantic rung reads many files to build the index it ranks
+against, and `stella init`'s code-graph pass does the same. Expressed as
+`glob` + `read_many`, that is two to a handful of round trips carrying
+real bytes. They run roughly once per session rather than once per step,
+so Phase 1 ships them that way and measures.
 
 A local read-through mirror of the tree is the obvious optimization and
 is **deliberately deferred**: a stale mirror is a correctness bug that
@@ -590,7 +615,7 @@ daemon, no sync loop.
 The rule in §3.4 is only real if it is enforced. A `CountingSandbox`
 test double wraps any `Sandbox` and counts verbs per tool call; a test
 asserts the ceiling for each workspace-bound tool (`write_file` ≤ 1,
-`bash` ≤ 3 including both probe fingerprints, `grep_files` = 1, and so
+`bash` ≤ 3 including both probe fingerprints, `search` = 1, and so
 on). A future change that reintroduces a client-side loop fails a test
 instead of quietly making remote sessions unusable.
 

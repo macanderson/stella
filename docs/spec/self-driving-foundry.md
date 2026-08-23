@@ -59,17 +59,16 @@ each row is a dependency of a later section.
 | Match configuration and artifacts (seats, attempts, `stella-events.jsonl` per trial, `result.json`, reward at `verifier_result.rewards.reward`) | `arenabench/arenabench/{config,model,runner,telemetry}.py` | Shipped. |
 | Paired statistical comparison with guard metrics and a `GuardBlocked` verdict | `crates/stella-core/src/comparison.rs` + `self_tuning::select_winner` | Shipped, deterministic, unused by arenabench (§5.4). |
 | Byte-exact model-call reconstruction, digest-verified | `crates/stella-store/src/reconstruct.rs` | Shipped. |
-| Full-transcript trace capture with reward labels | `crates/stella-cli/src/trace.rs` (#1042); the reward-labelling half was `crates/stella-pipeline/src/reward.rs` (#1043) | **Half gone.** Trace capture ships and still defaults off, so no corpus accumulates. Reward labelling went with `stella-pipeline` (#3865) — a captured trace now carries no reward label, so this row cannot be read as "shipped". |
-| SFT dataset exporter with named acceptance predicate and manifest | `stella dataset export`, `crates/stella-cli/src/dataset_cmd.rs` (#872) | Shipped; predates reward labels and transcript reconstruction — carries neither. |
+| Full-transcript trace capture with reward labels | trace capture was `crates/stella-cli/src/trace.rs` (#1042); reward labelling is `crates/stella-cli/src/reward.rs` (#1043) | **Half gone, and the other half is the opposite of what this row used to say.** Trace capture was deleted with the pipeline (#3852) and has no replacement, so no standalone trace corpus accumulates. Reward labelling *survives*: it was relocated into `stella-cli` rather than deleted, and `stella dataset export` is its consumer. |
+| SFT dataset exporter with named acceptance predicate and manifest | `stella dataset export`, `crates/stella-cli/src/dataset_cmd.rs` (#872, #2083, #2123) | Shipped, and carries both things this row once said it lacked. `DatasetRecord::reward` is an `Option<RewardLabel>` with its policy; `DatasetRecord::calls` carries the reconstructed transcript, admitted only when `Reconstruction::is_verified` vouches for it, with `transcript_verified` / `transcript_mismatch_severity` recording the exception and `--include-unverified-transcripts` as the stated opt-in. `DATASET_SCHEMA_VERSION` is `3`. |
 | Flip proof, tamper exclusion, verdict evidence | `crates/stella-protocol/src/proof.rs`, `ladder.rs`; doc:witness-protocol, doc:verification-gate | Shipped. |
 | Local/OpenAI-compatible serving of arbitrary weights | reserved `local` provider (`crates/stella-model/src/factory.rs`), custom providers in `settings.json` | Shipped. |
 | Event-stream replay and equivalence checking | was `crates/stella-pipeline/src/replay.rs`; doc:replay-golden-trajectories | **Gone** (#3865). Shipped as stream conformance, never as model-response replay; the committed `docs/wire/` schema gate is all that survives. |
 | Closed-loop playbook prose | `docs/playbooks/self-improving-model.html` | Written; not code. |
 
 Gaps, in one line each: no manifest; no generation layer above cycles; no
-resume of in-flight work; per-seat SUT pinning missing; the exporter is
-blind to rewards and transcripts; no preference-pair emitter; no trainer
-port; no weights registry; two daemon surfaces.
+resume of in-flight work; per-seat SUT pinning missing; no preference-pair
+emitter; no trainer port; no weights registry; two daemon surfaces.
 
 ---
 
@@ -427,12 +426,21 @@ that don't become challengers become GitHub issues, exactly as today.
 
 ### 7.1 Capture
 
-`[dataset] capture = true` forces `trace_capture` on for every
+`[dataset] capture = true` forces trace capture on for every
 campaign-launched run (arena seats included — the adapter already ships
 the binary and env into the container; it gains the trace flag and pulls
-`traces.jsonl` back with the other artifacts). Traces are the full,
-digest-verified, secret-redacted transcript records of
-`crates/stella-cli/src/trace.rs` — reward-labeled per #1043.
+the records back with the other artifacts).
+
+**The capture module this was written against is gone.**
+`crates/stella-cli/src/trace.rs` and the `trace_capture` setting that
+armed it were deleted with the staged pipeline (#3852); the setting is a
+retired key now (`settings/unknown.rs`), rejected with that explanation
+rather than silently ignored. What survives is the source it read from:
+`Store::reconstruct_call` rebuilds a call's exact `prompt_messages` from
+the event stream and vouches for them with a digest, and
+`stella dataset export` already assembles a record out of it. So this
+section's capture step is a re-wiring on top of the exporter, not a
+resurrection of a deleted module.
 
 ### 7.2 Harvest
 
@@ -450,15 +458,16 @@ into corpus increments with full lineage: every emitted example names its
 its sources. "When a regulator asks what the model learned from, there's
 an answer" is a property of the pipeline, not a slogan.
 
-Two exporter upgrades fall out immediately (they are Phase 0, §12,
-because they are valuable independent of campaigns):
+One exporter upgrade fell out immediately and has landed; one has not.
+Both are Phase 0 (§12), because they are valuable independent of campaigns:
 
-- `stella dataset export` gains `reward` and `prompt_messages` (from
-  `Store::reconstruct_call`, gated on `is_verified()`), closing the two
-  gaps it shipped with. **The `reward` half now needs a source:** it was to
-  come from `stella-pipeline/src/reward.rs`, deleted in #3865. A reward label
-  is a verdict, and verdicts are now a verification plugin's to report, so
-  this reads a plugin's evidence rather than a host module.
+- **Landed (#2083, #2123).** `stella dataset export` carries `reward` and
+  `prompt_messages` (from `Store::reconstruct_call`, gated on
+  `is_verified()`), closing the two gaps it shipped with. The `reward`
+  half reads `crates/stella-cli/src/reward.rs`, which survived the
+  `stella-pipeline` deletion. What that module maps from is a verdict, and
+  verdicts are a verification plugin's to report now, so a corpus is only
+  as labelled as the installed plugin's evidence makes it.
 - A **preference-pair emitter**: two twins attempting the same task in
   the same generation with divergent rewards are a natural DPO pair —
   same prompt, chosen/rejected trajectories, plus the paired metadata

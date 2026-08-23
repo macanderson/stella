@@ -443,14 +443,22 @@ serve-image: ## Build the stella-serve image and smoke the container (needs Dock
 # building, so this rung needs no build at all. The pre-push
 # hook picks between the two by grepping the pushed diff (#1439); wire-schema
 # is not optional, it is *conditional*, and the condition is in one place.
+# Every rung ends by saying whether the pre-push hook is installed, and says
+# nothing when it is. Not a GATE_STEPS entry and never a failure: it is a fact
+# about this clone, not about the change (#3887). An uninstalled hook means
+# `git push` runs no gate and prints nothing about that, which is the one
+# failure mode a silent absence guarantees.
 .PHONY: guards-fast
 guards-fast: $(GATE_GUARDS_FAST) $(GATE_NO_BUILD) ## Toolchain-free guards + lock resolve + fmt (no cargo build at all)
+	@./scripts/check-hooks-installed.sh
 
 .PHONY: guards
 guards: $(GATE_GUARDS) $(GATE_NO_BUILD) ## Global guards + lock resolve + fmt only (nothing compiles beyond the wire-schema exporters; nothing to scope)
+	@./scripts/check-hooks-installed.sh
 
 .PHONY: gate
 gate: $(GATE_STEPS) ## Full CI gate: guards + rustdoc + fmt-check + clippy + test
+	@./scripts/check-hooks-installed.sh
 
 # Consumed by scripts/check-gate-parity.sh. Printing the variable is the whole
 # point: a guard that re-parsed this Makefile with a regex would be one more
@@ -540,6 +548,7 @@ main-red-hold-test: ## Test the red-main hold, blocking branch included (hermeti
 
 .PHONY: check
 check: $(GATE_GUARDS) $(GATE_NO_BUILD) lint ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy, no rustdoc and no tests
+	@./scripts/check-hooks-installed.sh
 
 .PHONY: impacted
 impacted: ## Print the cargo scope for a diff (RANGE=origin/main..HEAD)
@@ -571,6 +580,10 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 .PHONY: file-size-test
 file-size-test: ## Test the file-size ratchet's language coverage and its change-relative judgement (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
+
+.PHONY: action-pins-test
+action-pins-test: ## Test that the action-pins guard covers composite actions too (#4288; hermetic; not part of `gate`)
+	./scripts/test-action-pins.sh
 
 .PHONY: guard-sigpipe-test
 guard-sigpipe-test: ## Test that the gate guards survive a reader that closes their pipe early (#1815; hermetic; not part of `gate`)

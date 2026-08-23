@@ -604,46 +604,12 @@ pub(crate) fn parse_worktree_list(stdout: &str) -> Vec<WorktreeEntry> {
 }
 
 #[cfg(test)]
+pub(crate) mod test_support;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
-
-    // Fake GitCli
-
-    type GitHandler = Box<dyn Fn(&[String]) -> GitOutput + Send + Sync>;
-
-    /// A [`GitCli`] that records every invocation and answers via a handler
-    /// closure — the seam that lets us assert on the exact git arguments
-    /// (esp. the pathspec discipline) without a real repo.
-    struct ScriptedGit {
-        calls: Arc<Mutex<Vec<Vec<String>>>>,
-        handler: GitHandler,
-    }
-
-    impl ScriptedGit {
-        fn new(handler: impl Fn(&[String]) -> GitOutput + Send + Sync + 'static) -> Self {
-            Self {
-                calls: Arc::new(Mutex::new(Vec::new())),
-                handler: Box::new(handler),
-            }
-        }
-
-        fn calls(&self) -> Vec<Vec<String>> {
-            self.calls.lock().unwrap_or_else(|e| e.into_inner()).clone()
-        }
-    }
-
-    #[async_trait]
-    impl GitCli for ScriptedGit {
-        async fn run(&self, _repo: &Path, args: &[&str]) -> Result<GitOutput, GitError> {
-            let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-            self.calls
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push(owned.clone());
-            Ok((self.handler)(&owned))
-        }
-    }
+    use crate::git::test_support::ScriptedGit;
 
     fn manager(git: ScriptedGit) -> WorktreeManager<ScriptedGit> {
         WorktreeManager::new(git, "/repo")

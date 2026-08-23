@@ -1,6 +1,6 @@
 name: docs-guards
 
-# Six guards over prose. None needs a Rust toolchain, which is why they live
+# Seven guards over prose. None needs a Rust toolchain, which is why they live
 # here rather than in ci.yml -- that workflow deliberately skips its Rust jobs
 # for a diff confined to `docs/**`, `website/**` and `*.md` (a job-level prose
 # filter since #1892), and this one triggers on exactly those paths.
@@ -42,6 +42,15 @@ name: docs-guards
 #     scripts/file-size-baseline.txt, which `make file-size-update` rewrites
 #     without touching either (#1435).
 #
+#  7. design-refs (scripts/check-design-refs.sh): nothing outside the docs/design
+#     scratchpad cites it, because anything in there may be rewritten, renamed
+#     or deleted at any moment. It ran only in ci.yml's Rust job until #3888,
+#     which a prose-only diff skips — so moving a document into that directory
+#     could turn every Rust comment citing it into a violation and land green,
+#     reddening main on a required check for everyone. It runs in both
+#     workflows: its subject is Rust comments, so a Rust-only PR must run it
+#     too.
+#
 # Rust sources are in the path filter because the first three read them: a
 # citation added to a .rs comment is exactly how one goes stale, and the
 # subcommand list the third guard checks is itself a Rust enum.
@@ -58,6 +67,7 @@ on:
       - "scripts/check-brand-case.sh"
       - "scripts/check-gate-parity.sh"
       - "scripts/check-god-files.sh"
+      - "scripts/check-design-refs.sh"
       - "scripts/file-size-baseline.txt"
       - ".github/workflows/docs-guards.yml"
   push:
@@ -73,6 +83,7 @@ on:
       - "scripts/check-brand-case.sh"
       - "scripts/check-gate-parity.sh"
       - "scripts/check-god-files.sh"
+      - "scripts/check-design-refs.sh"
       - "scripts/file-size-baseline.txt"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
@@ -133,3 +144,10 @@ jobs:
       - name: the god-file prose matches the baseline
         if: ${{ !cancelled() }}
         run: bash scripts/check-god-files.sh
+
+      # The direction that bites is the docs-only one: a document moved into
+      # the scratchpad turns every Rust comment citing it into a violation,
+      # with no .rs file touched and ci.yml's Rust job skipped (#3888).
+      - name: nothing outside docs/design cites docs/design
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-design-refs.sh

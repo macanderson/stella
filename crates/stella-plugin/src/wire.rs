@@ -476,7 +476,7 @@ impl BeforeTurnResponse {
 /// never inside it: prompt-cache hits are a feature, and a wrapper that could
 /// inject into the stable prefix would make every installed plugin a per-turn
 /// cost regression for every user who installed it. That is the same
-/// discipline `crates/stella-cli/src/agent.rs::build_system_prompt` and
+/// discipline `crates/stella-cli/src/agent/prompt.rs::build_system_prompt` and
 /// `crates/stella-cli/src/memory.rs` already hold for recalled context.
 ///
 /// So this type carries no placement field. There is no `Placement::System`
