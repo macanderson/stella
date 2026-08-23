@@ -4,7 +4,7 @@
 //! Whether a wrapper's conclusion decides the run's exit status.
 //!
 //! Until #3554 it never did: `run_wrapped` returned the last round's turn
-//! result, so a `DispatchReport` whose outcome was [`Outcome::Unmet`] printed
+//! result, so a `DispatchReport` whose outcome was `Outcome::Unmet` printed
 //! to stderr and exited `0`. A delivery gate that must not ship unproven work
 //! had no way to read a plugin's refusal, and `--require-verified` — the flag
 //! that shape of user reaches for — was wired to the deleted staged
@@ -24,7 +24,7 @@ use stella_plugin::{Outcome, UndecidedReason};
 /// The failure `--require-verdict` owes the caller, or `None` to exit on the
 /// turn's own result.
 ///
-/// Anything other than [`Outcome::Met`] fails under the flag, `Undecided`
+/// Anything other than `Outcome::Met` fails under the flag, `Undecided`
 /// included. A gate whose whole purpose is "do not ship work the wrapper did
 /// not vouch for" cannot pass on "nothing decided it either way" — that is
 /// precisely the case where nothing vouched. The message names which of the
