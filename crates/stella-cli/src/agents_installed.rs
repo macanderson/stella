@@ -59,19 +59,25 @@ pub fn project_agents_dir(workspace_root: &Path) -> PathBuf {
     workspace_root.join(".stella").join("agents")
 }
 
-/// The user-scope agents directory (`~/.stella/agents`), or `None`
-/// without a home directory.
+/// The user-scope agents directory (`~/.stella/agents`), or `None` when there
+/// is no user tier to read — no home directory in production, and a test build
+/// that has not installed a home of its own (#3864).
 pub fn user_agents_dir() -> Option<PathBuf> {
     crate::extensions::user_config_root().map(|root| root.join("agents"))
 }
 
 /// The agents directory for one scope.
+///
+/// The user scope **errors** rather than degrading to the project one when no
+/// user tier resolves, which is the decision #3864 asked for: an operator who
+/// typed `--scope user` asked for that directory by name, and writing their
+/// agent into the workspace instead would put it under version control and
+/// leave `stella agents --scope user` unable to find it.
 pub fn agents_dir_for(scope: AgentScope, workspace_root: &Path) -> Result<PathBuf, String> {
     match scope {
         AgentScope::Project => Ok(project_agents_dir(workspace_root)),
-        AgentScope::User => {
-            user_agents_dir().ok_or_else(|| "no home directory for the user scope".to_string())
-        }
+        AgentScope::User => user_agents_dir()
+            .ok_or_else(|| "no user-global stella root for the user scope".to_string()),
     }
 }
 

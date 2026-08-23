@@ -294,10 +294,23 @@ fn create_symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
     ))
 }
 
-/// The user-global stella config root (`~/.stella`), or `None`
-/// without a home directory.
+/// The user-global stella root user-scope **extensions** are loaded from
+/// (`~/.stella`), or `None` when there is no user tier to read.
+///
+/// [`crate::paths::user_extension_root`] and not
+/// [`crate::paths::stella_root`], which is what this resolved through until
+/// #3864. The two are the same value in production and diverge in a test
+/// build, where `UserPaths::extensions_visible` is false: the extension root
+/// correctly answers "no user tier" while the bare root still resolves to the
+/// developer's real `~/.stella`. So one function body resolved the user scope
+/// through two policies — skills through
+/// [`crate::memory::skill_files`]'s `user_skills_dir` (correct), commands and
+/// agents through here — and an un-redirected unit test saw no user-scope
+/// skills while reading the developer's own `~/.stella/commands/` and
+/// `~/.stella/agents/`. That is the exact outcome `extensions_visible`'s doc
+/// comment says it exists to prevent.
 pub(crate) fn user_config_root() -> Option<PathBuf> {
-    crate::paths::stella_root()
+    crate::paths::user_extension_root()
 }
 
 /// Run the sync at both scopes and report through `emit` — the shared init
@@ -1293,5 +1306,62 @@ mod tests {
         assert!(list.contains("⚡ reviewer — reviews diffs"));
         let empty = CustomExtensions::default();
         assert!(empty.render_agent_list().contains("no custom agents"));
+    }
+
+    /// **Witness (#3864).** One loader, one policy: with the user extension
+    /// tier hidden, `CustomExtensions` reads no user-scope command or agent —
+    /// exactly as it already read no user-scope skill.
+    ///
+    /// The redirect installs a real root and then hides the tier, so the
+    /// assertion separates "the loader honours the policy" from "there was
+    /// nothing in that directory". Fails on the base commit: commands and
+    /// agents resolved through `paths::stella_root`, which ignores the policy
+    /// and answers with the developer's own `~/.stella` in a test build —
+    /// while skills, resolving through `paths::user_extension_root`, correctly
+    /// saw no user tier at all.
+    #[test]
+    fn a_hidden_user_tier_hides_commands_and_agents_as_it_already_hid_skills() {
+        let user = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        write(
+            &user.path().join(".stella/commands/deploy.md"),
+            "---\ndescription: ship it\n---\nDeploy $ARGUMENTS now.",
+        );
+        write(
+            &user.path().join(".stella/agents/reviewer.md"),
+            "---\nname: reviewer\ndescription: reviews\n---\nYou review.",
+        );
+        write(
+            &user.path().join(".stella/skills/sql-style/SKILL.md"),
+            &skill_md("sql-style"),
+        );
+
+        // The control: with the tier visible, all three load, so the
+        // assertions below cannot pass because the fixture is empty.
+        let _home = crate::paths::test_user_home(user.path().to_path_buf());
+        let visible = CustomExtensions::load_with_workspace_extensions(workspace.path(), false);
+        assert_eq!(visible.commands.len(), 1, "premise: the command is there");
+        assert_eq!(visible.agents.len(), 1, "premise: the agent is there");
+        assert_eq!(visible.skills.len(), 1, "premise: the skill is there");
+
+        let _hidden = crate::paths::test_extensions_visible(false);
+        let loaded = CustomExtensions::load_with_workspace_extensions(workspace.path(), false);
+        assert!(
+            loaded.commands.is_empty(),
+            "a hidden user tier must yield no commands, got {:?}",
+            loaded
+                .commands
+                .iter()
+                .map(|c| c.invocation())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            loaded.agents.is_empty(),
+            "and no agents — `stella agents` installs into this same directory"
+        );
+        assert!(
+            loaded.skills.is_empty(),
+            "premise: skills already honoured the policy"
+        );
     }
 }
