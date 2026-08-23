@@ -29,14 +29,17 @@ pub enum ProviderError {
     /// provider `5xx` (a response arrived, but the server failed transiently
     /// and the same request may yet succeed). Retryable.
     ///
-    /// This is the one variant that carries accounting, because it is the one
-    /// failure that can strike *after* the provider has begun reporting it. A
-    /// stream cut during generation has already delivered its input-token
-    /// frame; `partial` is where that survives instead of dying with the
-    /// adapter's stack frame. Build it with [`ProviderError::transport`] and
-    /// attach with [`ProviderError::with_partial`] rather than naming the
-    /// field, so the ~20 dispatch-time sites that have nothing to report stay
-    /// a single call.
+    /// Carries accounting, because it can strike *after* the provider has
+    /// begun reporting. A stream cut during generation has already delivered
+    /// its input-token frame; `partial` is where that survives instead of
+    /// dying with the adapter's stack frame. Build it with
+    /// [`ProviderError::transport`] and attach with
+    /// [`ProviderError::with_partial`] rather than naming the field, so the
+    /// ~20 dispatch-time sites that have nothing to report stay a single call.
+    ///
+    /// [`ProviderError::Overloaded`] carries the same field for the same
+    /// reason, since #3859: a brownout signalled in band strikes at exactly
+    /// this point in a stream's life.
     #[error("provider transport error: {message}")]
     Transport {
         message: String,
@@ -81,12 +84,16 @@ pub enum ProviderError {
     /// brownout burned the ~16s ladder and aborted a turn with wall-clock
     /// budget still unspent (#2742) — the exact loss #2667 measured for 429s.
     ///
-    /// Deliberately carries no [`crate::completion::PartialUsage`]: this is a
-    /// status-line classification, taken before any response body became a
-    /// stream, so there is never accounting to salvage. An overload signalled
-    /// *mid-stream* (a provider's in-band `overloaded_error` frame) can have
-    /// observed usage and therefore stays `Transport` today — the deliberate
-    /// gap tracked in #3859, not an oversight.
+    /// Reached two ways, and it carries accounting because of the second.
+    /// Off the **status line** (HTTP 529) nothing had become a stream, so
+    /// `partial` is `None` and there was never anything to salvage. **In
+    /// band**, three frames into an open SSE stream, the provider has already
+    /// reported its input tokens — that is the same shape
+    /// [`ProviderError::Transport`] carries `partial` for, and dropping it
+    /// here would trade a park that never fires for accounting silently lost
+    /// on every mid-stream brownout (#3859). Which of the two happened is not
+    /// a fact about recoverability, so it must not decide whether the turn
+    /// survives.
     // The hint is interpolated by hand for the same reason `RateLimited`
     // does it: `{retry_after_ms:?}` leaks Rust syntax into a user-facing line.
     #[error("provider overloaded{}: {message}", .retry_after_ms.as_ref().map(|ms| format!(" (retry after {ms}ms)")).unwrap_or_default())]
@@ -96,6 +103,11 @@ pub enum ProviderError {
         /// The server's stated backoff, when it sent one. Honored verbatim by
         /// `stella-core::retry`, exactly as `RateLimited`'s is.
         retry_after_ms: Option<u64>,
+        /// Accounting observed before the overload frame arrived, when any
+        /// was. `None` for the status-line 529, which never opened a stream.
+        /// Build with [`ProviderError::overloaded`] and attach with
+        /// [`ProviderError::with_partial`] rather than naming the field.
+        partial: Option<PartialUsage>,
     },
 
     /// The credential was missing, malformed, expired, or not entitled to the
@@ -189,19 +201,42 @@ impl ProviderError {
         }
     }
 
+    /// An overload with no accounting to report — the shape of the status-line
+    /// 529, which is classified before any response body became a stream. A
+    /// mid-stream overload frame builds through here too and picks up its
+    /// accounting from [`ProviderError::with_partial`].
+    pub fn overloaded(message: impl Into<String>, retry_after_ms: Option<u64>) -> Self {
+        ProviderError::Overloaded {
+            message: message.into(),
+            retry_after_ms,
+            partial: None,
+        }
+    }
+
     /// Attach accounting that survived this failure.
     ///
-    /// A no-op on every variant except [`ProviderError::Transport`], so an
-    /// adapter can pipe its dying stream's usage through `map_err` without
-    /// first proving which error class it is about to decorate. That matters
-    /// because the classification is made further down (a mid-stream
-    /// `error` frame can be terminal), and a partial hung on a terminal
-    /// failure would claim spend for a request the provider rejected outright.
+    /// Decorates the two retryable variants a *dying stream* can produce —
+    /// [`ProviderError::Transport`] and [`ProviderError::Overloaded`] — and is
+    /// a no-op on every other, so an adapter can pipe its usage through
+    /// `map_err` without first proving which error class it is about to
+    /// decorate. That matters because the classification is made further down
+    /// (a mid-stream `error` frame can be terminal), and a partial hung on a
+    /// terminal failure would claim spend for a request the provider rejected
+    /// outright.
     #[must_use]
     pub fn with_partial(self, partial: PartialUsage) -> Self {
         match self {
             ProviderError::Transport { message, .. } => ProviderError::Transport {
                 message,
+                partial: Some(partial),
+            },
+            ProviderError::Overloaded {
+                message,
+                retry_after_ms,
+                ..
+            } => ProviderError::Overloaded {
+                message,
+                retry_after_ms,
                 partial: Some(partial),
             },
             other => other,
@@ -212,7 +247,8 @@ impl ProviderError {
     #[must_use]
     pub fn partial_usage(&self) -> Option<&PartialUsage> {
         match self {
-            ProviderError::Transport { partial, .. } => partial.as_ref(),
+            ProviderError::Transport { partial, .. }
+            | ProviderError::Overloaded { partial, .. } => partial.as_ref(),
             _ => None,
         }
     }
@@ -327,13 +363,67 @@ mod tests {
     }
 
     /// A partial hung on a terminal failure would claim spend for a request
-    /// the provider refused outright, so `with_partial` declines to decorate
-    /// anything but `Transport`.
+    /// the provider refused outright, so `with_partial` decorates only the two
+    /// retryable variants a dying stream can produce.
     #[test]
     fn with_partial_is_inert_on_terminal_variants() {
         let err = ProviderError::Auth("bad key".into()).with_partial(PartialUsage::default());
         assert!(err.partial_usage().is_none());
         assert!(matches!(err, ProviderError::Auth(_)));
+
+        for terminal in [
+            ProviderError::Malformed("bad json".into()),
+            ProviderError::Cancelled,
+            ProviderError::Terminal("HTTP 400".into()),
+            ProviderError::ContextOverflow {
+                message: "too long".into(),
+            },
+            ProviderError::RateLimited {
+                message: "429".into(),
+                retry_after_ms: Some(500),
+            },
+        ] {
+            let decorated = terminal.with_partial(PartialUsage::default());
+            assert!(decorated.partial_usage().is_none(), "{decorated}");
+        }
+    }
+
+    /// Witness for #3859's protocol half: an overload signalled *mid-stream*
+    /// arrives after the provider has already reported its input tokens, so
+    /// the class that lets the turn park must also be able to carry that
+    /// accounting out. Before `Overloaded` had a `partial`, an adapter faced
+    /// the choice between parking and accounting and could not have both.
+    #[test]
+    fn a_mid_stream_overload_parks_and_still_reports_what_the_stream_observed() {
+        let partial = PartialUsage {
+            usage: crate::completion::CompletionUsage {
+                input_tokens: 61_000,
+                cached_input_tokens: 58_000,
+                output_tokens: 240,
+                ..Default::default()
+            },
+            cost_usd: 0.037,
+            input_reported: true,
+        };
+        let err = ProviderError::overloaded("Anthropic stream error: overloaded_error", None)
+            .with_partial(partial);
+
+        assert!(err.is_park_eligible(), "{err}");
+        let recovered = err.partial_usage().expect("partial survives the overload");
+        assert_eq!(recovered.usage.input_tokens, 61_000);
+        assert_eq!(recovered.cost_usd, 0.037);
+    }
+
+    /// The status-line 529 is classified before any body became a stream, so
+    /// it has nothing to report and must say so rather than shipping a zeroed
+    /// envelope that reads as "this call was free".
+    #[test]
+    fn a_status_line_overload_reports_no_accounting() {
+        assert!(
+            ProviderError::overloaded("anthropic HTTP 529 Overloaded", Some(90_000))
+                .partial_usage()
+                .is_none()
+        );
     }
 
     /// A dispatch-time fault learned nothing, and must say so rather than
@@ -352,10 +442,8 @@ mod tests {
     /// retryable and NOT — that gap is the whole reason the variant exists.
     #[test]
     fn overloaded_is_retryable_and_park_eligible_while_transport_is_only_retryable() {
-        let overloaded = ProviderError::Overloaded {
-            message: "anthropic HTTP 529 Overloaded: overloaded".into(),
-            retry_after_ms: None,
-        };
+        let overloaded =
+            ProviderError::overloaded("anthropic HTTP 529 Overloaded: overloaded", None);
         assert!(overloaded.is_retryable());
         assert!(overloaded.is_park_eligible());
 
@@ -404,19 +492,11 @@ mod tests {
             Some(500)
         );
         assert_eq!(
-            ProviderError::Overloaded {
-                message: "529".into(),
-                retry_after_ms: Some(90_000),
-            }
-            .retry_after_hint_ms(),
+            ProviderError::overloaded("529", Some(90_000)).retry_after_hint_ms(),
             Some(90_000)
         );
         assert_eq!(
-            ProviderError::Overloaded {
-                message: "529".into(),
-                retry_after_ms: None,
-            }
-            .retry_after_hint_ms(),
+            ProviderError::overloaded("529", None).retry_after_hint_ms(),
             None
         );
         assert_eq!(
@@ -429,19 +509,14 @@ mod tests {
     /// the stated wait is visible when the server gave one.
     #[test]
     fn overloaded_renders_its_hint_without_leaking_rust_syntax() {
-        let err = ProviderError::Overloaded {
-            message: "anthropic HTTP 529 Overloaded: overloaded".into(),
-            retry_after_ms: Some(90_000),
-        };
+        let err =
+            ProviderError::overloaded("anthropic HTTP 529 Overloaded: overloaded", Some(90_000));
         let msg = err.to_string();
         assert!(msg.contains("provider overloaded"), "{msg}");
         assert!(msg.contains("retry after 90000ms"), "{msg}");
         assert!(!msg.contains("Some("), "{msg}");
 
-        let hintless = ProviderError::Overloaded {
-            message: "z.ai HTTP 529: overloaded".into(),
-            retry_after_ms: None,
-        };
+        let hintless = ProviderError::overloaded("z.ai HTTP 529: overloaded", None);
         assert!(!hintless.to_string().contains("retry after"), "{hintless}");
     }
 

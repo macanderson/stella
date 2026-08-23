@@ -1,7 +1,7 @@
 //! The one list every per-variant fact about [`AgentEvent`] expands from.
 //!
-//! Three things are generated here from a single table: [`AgentEvent::type_tag`],
-//! [`KNOWN_TYPE_TAGS`], and [`SIGNAL_CONSUMERS`]. Keeping them in one place is
+//! [`AgentEvent::type_tag`], [`KNOWN_TYPE_TAGS`] and [`SIGNAL_CONSUMERS`] are
+//! all generated here from a single table. Keeping them in one place is
 //! not tidiness — it is what makes two whole classes of bug unrepresentable
 //! rather than merely tested for:
 //!
@@ -229,8 +229,10 @@ agent_event_tags! {
     // whether a verification plugin re-emits these variants — is a producer
     // question the plugin wire contract (#3511) settles, not an audit gap.
     //
-    // `Proof`'s only production emitter is `stella-pipeline`, so once that
-    // crate leaves the tree no plugin-less run can produce it; what consumes
+    // `Proof`'s only production emitter was `stella-pipeline`, and that crate
+    // has since left the tree (#3865), so no plugin-less run produces it —
+    // confirmed rather than predicted by #3881, which decided all three of the
+    // extraction's producerless surfaces together. What consumes
     // it today is the deck's traces tab
     // (`stella-tui/src/deck/classify.rs::proof_trace`), the offline transcript
     // export (`stella-cli/src/export/transcript.rs`), and a debug-level diag
@@ -286,6 +288,13 @@ agent_event_tags! {
     // decision is the typed `pipeline::delivery::Delivery` value this event is
     // a projection of, so severing the event changes what a reader sees and
     // nothing about what the engine does.
+    //
+    // The posture is about consumption and stays true; the *producer* is gone.
+    // `Pipeline::deliver_winner` left with `stella-pipeline` (#3865), so no run
+    // in this workspace emits this variant. #3881 decided to keep it rather
+    // than retire it — recorded journals carry the tag, and a best-of-N wrapper
+    // plugin reporting a delivery over the socket is what a re-homed producer
+    // would look like. The variant's own doc carries the argument.
     CandidateDelivery => "candidate_delivery",
         ConsumerPosture::Surfaced,
         &[Surface::Observatory];

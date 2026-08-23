@@ -230,6 +230,12 @@ pub enum ProviderErrorWire {
         message: String,
         #[serde(default)]
         retry_after_ms: Option<u64>,
+        /// Accounting a host's stream had already observed when the overload
+        /// frame arrived in band. `None` for the status-line 529, which never
+        /// opened a stream; `serde(default)` keeps hosts that predate the
+        /// field valid (#3859).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        partial: Option<stella_protocol::PartialUsage>,
     },
     Auth {
         message: String,
@@ -283,10 +289,14 @@ impl From<ProviderErrorWire> for ProviderError {
             ProviderErrorWire::Overloaded {
                 message,
                 retry_after_ms,
-            } => ProviderError::Overloaded {
-                message,
-                retry_after_ms,
-            },
+                partial,
+            } => {
+                let error = ProviderError::overloaded(message, retry_after_ms);
+                match partial {
+                    Some(partial) => error.with_partial(partial),
+                    None => error,
+                }
+            }
             ProviderErrorWire::Auth { message } => ProviderError::Auth(message),
             ProviderErrorWire::UnknownModel { slug } => ProviderError::UnknownModel { slug },
             ProviderErrorWire::Malformed { message } => ProviderError::Malformed(message),
@@ -323,9 +333,11 @@ impl From<&ProviderError> for ProviderErrorWire {
             ProviderError::Overloaded {
                 message,
                 retry_after_ms,
+                partial,
             } => ProviderErrorWire::Overloaded {
                 message: message.clone(),
                 retry_after_ms: *retry_after_ms,
+                partial: *partial,
             },
             ProviderError::Auth(m) => ProviderErrorWire::Auth { message: m.clone() },
             ProviderError::UnknownModel { slug } => {
@@ -551,14 +563,22 @@ mod tests {
                 message: "429, no hint".into(),
                 retry_after_ms: None,
             },
-            ProviderError::Overloaded {
-                message: "529".into(),
-                retry_after_ms: Some(90_000),
-            },
-            ProviderError::Overloaded {
-                message: "529, no hint".into(),
-                retry_after_ms: None,
-            },
+            ProviderError::overloaded("529", Some(90_000)),
+            ProviderError::overloaded("529, no hint", None),
+            // A brownout signalled in band, after the host's stream had
+            // already reported its input tokens (#3859). The park-eligible
+            // class and the accounting both have to survive the crossing.
+            ProviderError::overloaded("overloaded_error mid-stream", None).with_partial(
+                stella_protocol::PartialUsage {
+                    usage: stella_protocol::CompletionUsage {
+                        input_tokens: 61_000,
+                        output_tokens: 240,
+                        ..Default::default()
+                    },
+                    cost_usd: 0.037,
+                    input_reported: true,
+                },
+            ),
             ProviderError::Auth("bad key".into()),
             ProviderError::UnknownModel {
                 slug: "glm-5.2".into(),
@@ -600,6 +620,14 @@ mod tests {
                 original.retry_after_hint_ms(),
                 "the server's stated backoff changed across the wire: {json}"
             );
+            assert_eq!(
+                back.partial_usage()
+                    .map(|p| (p.usage.input_tokens, p.cost_usd)),
+                original
+                    .partial_usage()
+                    .map(|p| (p.usage.input_tokens, p.cost_usd)),
+                "accounting a dying stream salvaged was lost across the wire: {json}"
+            );
         }
     }
 
@@ -620,6 +648,7 @@ mod tests {
         let back: ProviderError = ProviderErrorWire::Overloaded {
             message: "HTTP 529".into(),
             retry_after_ms: None,
+            partial: None,
         }
         .into();
         assert!(back.is_retryable());

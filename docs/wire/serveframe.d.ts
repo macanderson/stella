@@ -2583,6 +2583,13 @@ export type ProviderErrorWire = {
 } | {
   kind: "overloaded";
   message: string;
+  /**
+   * Accounting a host's stream had already observed when the overload
+   * frame arrived in band. `None` for the status-line 529, which never
+   * opened a stream; `serde(default)` keeps hosts that predate the
+   * field valid (#3859).
+   */
+  partial?: PartialUsage | null;
   retry_after_ms?: number | null;
 } | {
   kind: "auth";

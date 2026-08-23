@@ -41,8 +41,15 @@
 //! logic was needed to say what happened. The host that held it when these
 //! types were written was the staged pipeline's `pipeline::delivery`
 //! (`crates/stella-pipeline`, deleted in #3865), and **nothing in this
-//! workspace produces the projection today** — a wrapper plugin's own
-//! delivery step is the shape that would replace it. Retiring it is #3881.
+//! workspace produces the projection today**.
+//!
+//! #3881 decided that keeps it rather than retires it. A projection with no
+//! producer costs nothing to hold and something real to drop: recorded
+//! journals and `stella-events.jsonl` files already carry the tag and stay
+//! readable, and a wrapper plugin reporting its own delivery step over the
+//! socket (`doc:wrapper-socket`) needs this exact shape — the argument for
+//! severing it would have to be that best-of-N delivery is never coming back,
+//! which is not a claim anyone is in a position to make.
 
 use serde::{Deserialize, Serialize};
 

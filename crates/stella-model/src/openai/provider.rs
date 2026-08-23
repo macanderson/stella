@@ -136,4 +136,51 @@ mod tests {
             result.finish_reason
         );
     }
+
+    /// The Responses dialect's half of #3859: a `response.failed` carrying an
+    /// overload must reach the engine as the park-eligible `Overloaded`, and
+    /// must bring the usage that response reported with it.
+    ///
+    /// As `Transport` the brownout could not park, so a sustained one burned
+    /// the inline ladder and aborted a turn with wall-clock budget left. As an
+    /// `Overloaded` that carries no accounting, the prompt the provider had
+    /// already billed for was reported as free. The test pins both.
+    #[tokio::test]
+    async fn a_failed_response_that_names_an_overload_parks_and_keeps_its_usage() {
+        let server = MockServer::start().await;
+        let sse_body = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hel\"}\n\n",
+            "data: {\"type\":\"response.failed\",\"response\":{\"usage\":{\"input_tokens\":61000,\"output_tokens\":2,\"input_tokens_details\":{\"cached_tokens\":58000}},\"error\":{\"code\":\"server_overloaded\",\"message\":\"The model is overloaded\"}}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse_body, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let provider =
+            OpenAiProvider::new(ApiKey::new("sk-test"), "gpt-5.2").with_base_url(server.uri());
+        let err = provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, ProviderError::Overloaded { .. }), "{err:?}");
+        assert!(err.is_park_eligible(), "{err:?}");
+
+        let partial = err
+            .partial_usage()
+            .expect("the failed response's own usage envelope must survive");
+        assert_eq!(partial.usage.input_tokens, 61_000);
+        assert_eq!(partial.usage.cached_input_tokens, 58_000);
+        assert!(partial.input_reported);
+    }
 }
