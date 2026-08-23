@@ -270,6 +270,13 @@ fn output_schema() -> Value {
         data: None,
     })
     .expect("ToolOutput is Serialize");
+    // Deliberately the unclassified constructor (#3167): `arm()` below reads
+    // the payload's ONE field by taking `.keys().next()` on a `Value::Object`,
+    // which sorts alphabetically (this workspace does not enable
+    // serde_json's `preserve_order`). A classified error's `class` key sorts
+    // before `message`, so `arm()` would report the wrong field name for the
+    // documented schema. Keep the pre-#3145 shape here; see
+    // `scripts/check-tool-error-class.py`'s `TEST_ONLY_FILES`.
     let error =
         serde_json::to_value(ToolOutput::error(String::new())).expect("ToolOutput is Serialize");
     let (ok_tag, ok_field) = arm(&ok);

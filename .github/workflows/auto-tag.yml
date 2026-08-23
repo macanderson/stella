@@ -297,14 +297,26 @@ jobs:
           git commit -m "${title}"
           git push -f origin "HEAD:refs/heads/${branch}"
 
-          body="Automated write-back from auto-tag.yml: ${TAG} was just released, and this PR records that version everywhere the sources carry one —
-
-          - \`[workspace.package].version\` in \`Cargo.toml\` (inherited by every crate)
-          - the workspace-member entries in \`Cargo.lock\`
-          - \`packaging/homebrew/stella.rb\` (build-from-source formula)
-          - \`CHANGELOG.md\` — whatever was under \`[Unreleased]\` now sits under \`[${version}]\`
-
-          The workflow dispatches the required \`ci\` checks onto this branch and merges once they're green (past GitHub's phantom \`action_required\` check suite for this GITHUB_TOKEN-authored PR — see #275); no action is needed unless the dispatched run fails."
+          # Built as an array of whole lines rather than one multi-line quoted
+          # string: this step is one YAML block scalar, so every SCRIPT line
+          # has to stay indented to match it or YAML ends the block early and
+          # reads the rest as new top-level content — but the PR body must NOT
+          # carry that indentation into the rendered markdown, or GitHub reads
+          # each paragraph as an indented code block rather than a normal one
+          # (#4517; the same fix as the deferral issue body below). An array
+          # element's own indentation (outside the quotes) satisfies YAML; the
+          # quoted content (inside them) carries none of it into the body.
+          body_lines=(
+            "Automated write-back from auto-tag.yml: ${TAG} was just released, and this PR records that version everywhere the sources carry one —"
+            ""
+            "- \`[workspace.package].version\` in \`Cargo.toml\` (inherited by every crate)"
+            "- the workspace-member entries in \`Cargo.lock\`"
+            "- \`packaging/homebrew/stella.rb\` (build-from-source formula)"
+            "- \`CHANGELOG.md\` — whatever was under \`[Unreleased]\` now sits under \`[${version}]\`"
+            ""
+            "The workflow dispatches the required \`ci\` checks onto this branch and merges once they're green (past GitHub's phantom \`action_required\` check suite for this GITHUB_TOKEN-authored PR — see #275); no action is needed unless the dispatched run fails."
+          )
+          body="$(printf '%s\n' "${body_lines[@]}")"
 
           existing="$(gh pr list --head "${branch}" --state open --json number --jq '.[0].number // empty')"
           if [ -n "${existing}" ]; then

@@ -266,7 +266,8 @@ impl Tool for SpawnSubAgent {
         let prompt = match input.get("prompt").and_then(Value::as_str) {
             Some(prompt) if !prompt.trim().is_empty() => prompt.trim(),
             _ => {
-                return ToolOutput::error(
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
                     "missing required string field `prompt` — the sub-agent cannot \
                          see this conversation, so the question must be self-contained",
                 );
@@ -284,7 +285,8 @@ impl Tool for SpawnSubAgent {
             slot.clone()
         };
         let Some(dispatcher) = dispatcher else {
-            return ToolOutput::error(
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
                 "sub-agents are unavailable in this session — do the work directly \
                      with your own tools",
             );
@@ -365,7 +367,8 @@ impl Tool for SpawnSubAgent {
 fn render(outcome: &SubAgentOutcome) -> ToolOutput {
     match outcome {
         SubAgentOutcome::Completed(report) if report.summary.trim().is_empty() => {
-            ToolOutput::error(
+            ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
                 "the sub-agent finished without reporting anything — its answer was empty. \
                  Do the work directly, or re-ask with a narrower, self-contained question.",
             )
@@ -392,14 +395,20 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
                 data: Some(metrics("partial", report)),
             }
         }
-        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::error(format!(
-            "the sub-agent stopped before producing anything: {reason} — do the work \
+        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::Environment,
+            format!(
+                "the sub-agent stopped before producing anything: {reason} — do the work \
                  directly, or ask a narrower question"
-        )),
-        SubAgentOutcome::Refused { reason } => ToolOutput::error(format!(
-            "the sub-agent was not started: {reason} — do the work directly with your \
+            ),
+        ),
+        SubAgentOutcome::Refused { reason } => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::RefusedByPolicy,
+            format!(
+                "the sub-agent was not started: {reason} — do the work directly with your \
                  own tools"
-        )),
+            ),
+        ),
     }
 }
 

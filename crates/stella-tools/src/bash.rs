@@ -511,7 +511,10 @@ impl Tool for Bash {
         // Read `shell_write_audit` on why this permits far more than it
         // refuses, and on why it is not a sandbox.
         if let Some(refusal) = shell_write_audit(command, ctx) {
-            return ToolOutput::error(refusal);
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                refusal,
+            );
         }
 
         let timeout_secs = crate::exec::timeout_from(input, DEFAULT_TIMEOUT_SECS);
@@ -562,7 +565,10 @@ impl Tool for Bash {
         let child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                return ToolOutput::error(format!("failed to spawn: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("failed to spawn: {e}"),
+                );
             }
         };
 
@@ -591,7 +597,10 @@ impl Tool for Bash {
             // Wait failure leaves the child's state unknown — the still-armed
             // guard kills the group on return rather than leak it.
             Ok(Err(e)) => {
-                return ToolOutput::error(format!("command failed: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("command failed: {e}"),
+                );
             }
             Err(_) => {
                 // Timeout — kill the process group.
@@ -641,7 +650,7 @@ impl Tool for Bash {
         if output.status.success() {
             ToolOutput::ok(combined)
         } else {
-            ToolOutput::error(combined)
+            ToolOutput::classified_error(stella_protocol::ErrorClass::Environment, combined)
         }
     }
 }
@@ -794,6 +803,25 @@ mod tests {
         }
     }
 
+    /// #3167 witness: a nonzero exit is classified `Environment` and the
+    /// message bytes are exactly what they were before classification — the
+    /// loop detector and prompt cache compare these bytes. Fails on the
+    /// pre-#3167 tree, where `class` is always `None`.
+    #[tokio::test]
+    async fn nonzero_exit_is_classified_environment_with_unchanged_message_bytes() {
+        let dir = std::env::temp_dir();
+        let result = Bash::new(None)
+            .execute(&serde_json::json!({"command": "exit 42"}), &cx(&dir))
+            .await;
+        assert_eq!(
+            result,
+            ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
+                "\n[exit code: 42]"
+            )
+        );
+    }
+
     #[tokio::test]
     async fn timeout_kills_command() {
         let dir = std::env::temp_dir();
@@ -807,6 +835,27 @@ mod tests {
         if let ToolOutput::Error { message, .. } = result {
             assert!(message.contains("timed out"))
         }
+    }
+
+    /// #3167 witness: a timeout is classified `Timeout` and the message bytes
+    /// are exactly what they were before classification. Fails on the
+    /// pre-#3167 tree, where `class` is always `None`.
+    #[tokio::test]
+    async fn timeout_is_classified_timeout_with_unchanged_message_bytes() {
+        let dir = std::env::temp_dir();
+        let result = Bash::new(None)
+            .execute(
+                &serde_json::json!({"command": "sleep 30", "timeout_secs": 1}),
+                &cx(&dir),
+            )
+            .await;
+        assert_eq!(
+            result,
+            ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Timeout,
+                "command timed out after 1s"
+            )
+        );
     }
 
     /// Dropping the future mid-wait (a cancelled turn) must kill the whole

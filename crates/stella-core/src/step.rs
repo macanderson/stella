@@ -759,7 +759,14 @@ pub(crate) fn close_open_tool_calls(
             .into_iter()
             .map(|call| ToolResult {
                 call_id: call.call_id.clone(),
-                output: ToolOutput::error(message.to_string()),
+                // Every caller closes an open call here because the *engine*
+                // decided to stop the turn (cancel, budget abort, soft-stop,
+                // provider fallback) — working as designed, never a tool
+                // defect, so this is a policy-plane refusal, not `Internal`.
+                output: ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    message.to_string(),
+                ),
             })
             .collect()
     };
