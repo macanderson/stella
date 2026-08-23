@@ -158,6 +158,7 @@ fn own_touch_row(change: &OwnChange) -> FileTouchRow {
         ops: match change.kind {
             OwnChangeKind::Created => "C",
             OwnChangeKind::Modified => "U",
+            OwnChangeKind::Deleted => "D",
         }
         .to_string(),
         lines_added: u64::from(change.added),
@@ -567,10 +568,14 @@ mod tests {
     fn a_self_read_change_writes_a_crud_lettered_row() {
         let created = stella_tools::own_change::own_change("a.md", None, "x\n");
         let modified = stella_tools::own_change::own_change("b.md", Some("x\n"), "y\n");
+        let deleted = stella_tools::own_change::own_delete("c.md", "x\ny\n");
         assert_eq!(own_touch_row(&created).ops, "C");
         let row = own_touch_row(&modified);
         assert_eq!(row.ops, "U");
         assert_eq!((row.lines_added, row.lines_removed), (1, 1));
+        let row = own_touch_row(&deleted);
+        assert_eq!(row.ops, "D", "a deletion completes the CRUD alphabet");
+        assert_eq!((row.lines_added, row.lines_removed), (0, 2));
     }
 
     fn measured(kind: JournalChangeKind) -> JournalChange {

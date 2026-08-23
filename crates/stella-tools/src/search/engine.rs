@@ -1287,7 +1287,10 @@ pub fn render(
     let mut measured = head(allocation.granted.len()).len();
     let mut shown = 0usize;
     for (hit, depth) in answer.hits.iter().zip(&allocation.granted) {
-        let block = format!("\n{}", enrich::render_hit(graph, root, hit, *depth, &mut guard));
+        let block = format!(
+            "\n{}",
+            enrich::render_hit(graph, root, hit, *depth, &mut guard)
+        );
         if shown > 0 && measured + block.len() > config.budget {
             break;
         }

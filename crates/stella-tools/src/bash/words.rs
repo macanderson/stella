@@ -581,7 +581,10 @@ mod tests {
         // shell ends the body at `DONE`, this scan is still looking for the
         // literal `$END`, and the `cd` two lines later is never seen.
         assert_eq!(
-            cd_escape_target("END=DONE\ncat <<$END > s.sh\nhello\nDONE\ncd /outside", &root),
+            cd_escape_target(
+                "END=DONE\ncat <<$END > s.sh\nhello\nDONE\ncd /outside",
+                &root
+            ),
             None,
             "an expansion-valued delimiter loses the rest of the command, by choice (#3620)"
         );
