@@ -354,6 +354,18 @@ impl CodeGraph {
         }
     }
 
+    /// Push a lease taken by [`acquire_lease`](Self::acquire_lease) out by
+    /// another TTL, so an unbounded pass that is still making progress keeps
+    /// the lease it is working under (#4047).
+    ///
+    /// Call it from wherever the pass commits a batch. Renewing on progress
+    /// rather than on a timer is what leaves the expiry able to do its job: a
+    /// holder that died stops calling this and loses the lease on schedule.
+    pub fn renew_lease(&self, lease: &lease::Lease) {
+        let conn = self.inner.write_guard();
+        lease::renew(&conn, lease);
+    }
+
     /// Give up a lease taken by [`acquire_lease`](Self::acquire_lease).
     pub fn release_lease(&self, lease: &lease::Lease) {
         let conn = self.inner.write_guard();
