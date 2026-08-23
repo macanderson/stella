@@ -405,6 +405,14 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
                 println!("  ships {label}: {}", named.join(", "));
             }
         }
+        // What it configured, which is the surface that reaches furthest
+        // outside the package (#4018). The `ships …` lines answer "where did
+        // this tool come from?"; without this, a user looking at a
+        // `stella.toml` that signs their commits in someone else's name has no
+        // way to learn from stella that a package put it there.
+        for line in configure_lines(workspace_root, plugin) {
+            println!("{line}");
+        }
         match &plugin.manifest.runtime {
             Some(runtime) => println!(
                 "  runs: {} ({}s, env: {})",
@@ -469,6 +477,46 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The `configures:` lines for one installed package, in manifest order (#4018).
+///
+/// Pure over the strings [`configure::configured`] gathered, so the wording is
+/// assertable without a terminal.
+///
+/// # What each line says, and why in that order
+///
+/// The **prior** value is the one fact a user cannot recover anywhere else:
+/// what the key holds now is visible in `stella.toml`, and what removing the
+/// package would put back is written down only in the package's own journal.
+/// So the line leads with the key and what the package set it to — the claim —
+/// and carries what that replaced in parentheses.
+///
+/// A key whose value no longer matches what the package wrote gets a second
+/// clause rather than silence. It is a real and legitimate state (the user
+/// edited it by hand), and it changes what `remove` will do: the revert puts
+/// back the *prior* value, discarding the edit.
+fn configure_lines(workspace_root: &Path, plugin: &roster::InstalledPlugin) -> Vec<String> {
+    let target = configure::ConfigTarget::resolve(workspace_root, plugin.scope).ok();
+    configure::configured(
+        &plugin.dir,
+        &plugin.manifest,
+        target.as_ref().map(configure::ConfigTarget::path),
+    )
+    .into_iter()
+    .map(|key| {
+        let was = key.prior.as_deref().unwrap_or("unset");
+        let mut line = format!("  configures: {} = {}  (was: {was})", key.key, key.declared);
+        if let configure::CurrentValue::Edited(now) = &key.current {
+            let now = now.as_deref().unwrap_or("removed");
+            line.push_str(&format!(
+                " — edited since to {now}; `stella plugin remove {}` still restores {was}",
+                plugin.manifest.name
+            ));
+        }
+        line
+    })
+    .collect()
 }
 
 /// Uninstall `name` from **every** tier that holds it.
