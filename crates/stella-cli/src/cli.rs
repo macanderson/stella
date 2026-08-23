@@ -180,12 +180,15 @@ pub(crate) struct GlobalArgs {
     )]
     pub(crate) allow_dir: Vec<String>,
 
-    /// Hard USD spend limit for the whole session
+    /// Hard USD spend limit for the whole invocation
     ///
-    /// Scoped to the session, not the turn: enforced mode aborts cleanly
+    /// Scoped to the invocation, not the turn: enforced mode aborts cleanly
     /// (never mid-tool) once cumulative spend across every turn and goal round
-    /// exceeds this. Omit to meter spend for the cost summary without ever
-    /// blocking (observed mode).
+    /// exceeds this. `stella self-driving drive` honours it the same way,
+    /// across every turn it spawns — triage, work and retry alike — and stops
+    /// before starting one it cannot pay for, reporting *budget reached*
+    /// rather than *finished*. Omit to meter spend for the cost summary
+    /// without ever blocking (observed mode).
     #[arg(long, global = true, env = "STELLA_SPEND_LIMIT", value_parser = parse_spend_limit)]
     pub(crate) spend_limit: Option<f64>,
 

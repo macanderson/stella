@@ -15,6 +15,7 @@
 
 mod audit;
 mod backlog;
+mod budget;
 mod claim;
 // `pub(crate)` rather than private: `plugin_cmd::configure` asserts against
 // this reader directly (#3999). A package that configures attribution has to
@@ -349,6 +350,20 @@ pub(crate) enum SelfDrivingCmd {
         cmd: RunCmd,
     },
 
+    /// Ask a running loop to park at its next boundary.
+    ///
+    /// Writes the flag `drive` re-reads on every poll (#3942). It parks
+    /// between issues and between turns — never mid-turn, because a killed
+    /// turn leaves a worktree, a branch and possibly a pull request that
+    /// nothing has recorded. Deleting the file puts the loop back to work with
+    /// no other input; the output names the path.
+    Stop {
+        /// The loop's durable state directory, for stopping a loop rooted
+        /// somewhere other than this workspace's own.
+        #[arg(long, value_name = "DIR")]
+        root: Option<std::path::PathBuf>,
+    },
+
     /// List runs (shorthand for `run list`).
     Runs,
 
@@ -650,6 +665,7 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String>
                 Ok(())
             }
         },
+        SelfDrivingCmd::Stop { root } => stop::request(root.as_deref().unwrap_or(&st.dir)),
         SelfDrivingCmd::Runs => runs_report(&st),
         SelfDrivingCmd::Phase { name } => {
             st.run_write(name, None, None);
@@ -1203,7 +1219,12 @@ fn work_issue(
     // delta over that state is the only producer these counters can have. See
     // `learning`, and `drive`'s Work arm, which measures the same window.
     let learned_before = learning::tally(&root);
-    let outcome = work::start(&root, &issue, flags, &attribution)?;
+    // One unit is one turn here, so the run and the turn are the same ceiling —
+    // but it goes through the same budget as `drive`'s, so there is one place a
+    // child turn's ceiling is decided and one place its cost is folded back in
+    // (#4353).
+    let mut budget = budget::RunBudget::new(flags.clone());
+    let outcome = work::start(&root, &issue, &mut budget, &attribution)?;
     let learned = learning::tally(&root).since(learned_before);
     hooks::after_issue_work(&root, &settings, &hook_issue, hook_outcome(&outcome));
 

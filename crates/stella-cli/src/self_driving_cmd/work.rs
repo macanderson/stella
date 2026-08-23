@@ -68,6 +68,7 @@ use std::process::{Command, Stdio};
 
 use stella_protocol::issue::Issue;
 
+use super::budget::RunBudget;
 use super::turn_flags::TurnFlags;
 
 /// Where this verb's worktrees live — gitignored, and outside the fleet's
@@ -368,16 +369,23 @@ pub(super) fn verify_locally(dir: &Path, command: &str, timeout_secs: u64) -> Re
 /// `PATH` may be an older release — the staleness trap #1753 already cost a
 /// session, and a work unit measured against the wrong binary is worse than
 /// one that did not run.
+///
+/// Takes the run's [`RunBudget`] rather than the flags, because narrowing the
+/// child's ceiling to what is left and folding what it spent back in are two
+/// halves of one fact (#4353). Every child turn this loop runs — triage, work,
+/// retry — is spawned here, so this is the one place both halves can be paid,
+/// and a caller cannot pay one without the other.
 pub(super) fn run_turn(
     dir: &Path,
     state_root: &Path,
     prompt: &str,
-    flags: &TurnFlags,
+    budget: &mut RunBudget,
 ) -> Result<String, String> {
+    let flags = budget.next_turn_flags().map_err(|out| out.to_string())?;
     let exe = std::env::current_exe()
         .map_err(|error| format!("cannot resolve this binary to run the turn: {error}"))?;
 
-    let mut cmd = turn_command(&exe, dir, state_root, flags);
+    let mut cmd = turn_command(&exe, dir, state_root, &flags);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
@@ -402,6 +410,10 @@ pub(super) fn run_turn(
         .map_err(|error| format!("the turn did not complete: {error}"))?;
 
     let summary = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    // Before the exit code is looked at, and deliberately: a turn that aborted
+    // still spent, and its summary still carries the number. Charging only the
+    // successes would let a run of failing turns spend without bound.
+    budget.record(&summary);
 
     if out.status.success() {
         Ok(summary)
@@ -567,12 +579,17 @@ pub(super) struct Worktree {
 pub(super) fn start(
     root: &Path,
     issue: &Issue,
-    flags: &TurnFlags,
+    budget: &mut RunBudget,
     attribution: &stella_autonomy::Attribution,
 ) -> Result<WorkOutcome, String> {
     use stella_fleet::git::{SystemGitCli, WorktreeManager};
 
     refuse_if_unsteered(root)?;
+    // Asked before a worktree is cut, not after the turn refuses: a unit that
+    // cannot be paid for should leave nothing behind to clean up.
+    if let Some(out) = budget.exhausted() {
+        return Err(out.to_string());
+    }
 
     let manager = WorktreeManager::new(SystemGitCli, root.to_path_buf())
         .with_worktrees_root(root.join(WORKTREES_DIR))
@@ -616,7 +633,7 @@ pub(super) fn start(
         &created.path,
         root,
         &prompt_for(issue, &attribution.commit),
-        flags,
+        budget,
     );
     let change = tree_change(&created.path, &base);
     let outcome = classify(turn, change, &wt);
@@ -1019,5 +1036,53 @@ mod tests {
     #[test]
     fn the_fence_grows_one_past_the_longest_run_in_the_body() {
         assert_eq!(fence_for("a ```` b"), "`````");
+    }
+
+    /// **Witness (#4353).** The second turn of a run is spawned with what is
+    /// LEFT of `--spend-limit`, not with `--spend-limit`.
+    ///
+    /// Fails on the base, where `run_turn` took the parent's `TurnFlags` and
+    /// handed the same ceiling to every child: each child is its own `stella
+    /// run` session, so `drive --max-issues 10 --spend-limit 30` could spend
+    /// ten times thirty, plus a triage turn per issue. The only way to honour
+    /// a "$30 total" brief was an external watchdog summing
+    /// `executions.cost_usd` out of `store.db` and killing the process.
+    ///
+    /// Asserted over the whole built command — the same reason #4352's witness
+    /// is — so a correct `RunBudget` that `run_turn` never consulted could not
+    /// satisfy it. `run_turn` now takes the budget rather than the flags, and
+    /// the budget's flags are private to its module, so there is no route to a
+    /// child turn that skips the narrowing.
+    #[test]
+    fn the_second_turn_of_a_run_is_spawned_with_what_is_left() {
+        let spent =
+            |usd: f64| serde_json::json!({ "status": "completed", "cost_usd": usd }).to_string();
+        let mut budget = RunBudget::new(TurnFlags {
+            spend_limit: Some(30.0),
+            ..TurnFlags::default()
+        });
+
+        let first = turn_args(&budget.next_turn_flags().expect("the run has its full cap"));
+        assert!(
+            first.windows(2).any(|w| w == ["--spend-limit", "30"]),
+            "the first turn may spend the whole run's cap: {first:?}"
+        );
+
+        budget.record(&spent(12.0));
+        let second = turn_args(&budget.next_turn_flags().expect("still $18 left"));
+        assert!(
+            second.windows(2).any(|w| w == ["--spend-limit", "18"]),
+            "the second turn is bounded by the remainder: {second:?}"
+        );
+
+        budget.record(&spent(18.0));
+        assert!(
+            budget.next_turn_flags().is_err(),
+            "and a run with nothing left starts no further turn"
+        );
+        assert!(
+            budget.exhausted().is_some(),
+            "which is the condition `drive` reports as *budget reached*"
+        );
     }
 }
