@@ -135,7 +135,10 @@ pub fn entry_fields(entry: &TranscriptEntry) -> Vec<&str> {
         E::TaskUpdate { active, .. } => active.as_deref().into_iter().collect(),
         E::Error { message, .. } => vec![message],
         E::Complete { model, .. } => vec![model],
-        E::Evicted { .. }
+        // Counts and a closed authority — the row carries no free text a
+        // reader could type into a find box, and deliberately no filename.
+        E::SteeringWithheld { .. }
+        | E::Evicted { .. }
         | E::Stage { .. }
         | E::Compaction { .. }
         | E::BudgetTick { .. }

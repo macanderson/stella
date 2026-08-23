@@ -19,7 +19,7 @@
 //! determinism extends through the renderer precisely because these are inert).
 
 use stella_protocol::{
-    BudgetMode, CiStatus, MediaJobState, MediaKind, PrStatus, StageName, SubAgentStatus,
+    BudgetMode, CiStatus, MediaJobState, MediaKind, PrStatus, StageName, SubAgentStatus, Withholder,
 };
 
 use super::recall::{RecallBudget, RecalledFrameRow};
@@ -195,6 +195,27 @@ pub enum TranscriptEntry {
         from: String,
         to: String,
         reason: String,
+    },
+    /// The trust gate held back this checkout's steering (#2302, #3616,
+    /// #4463): counts of what was not loaded, and which authority withheld
+    /// it — because the remedy differs and only one of the two is something
+    /// the user can act on.
+    ///
+    /// Counts only. The withheld text is repository-controlled and the wire
+    /// event carries none of it, so there is no filename or body here to
+    /// render even by accident.
+    ///
+    /// A session-level fact rather than a step of a turn, kept on the
+    /// transcript anyway because that is the only surface the deck has: the
+    /// stderr line the plain door prints is swallowed under the alternate
+    /// screen, so without a row the deck told the user nothing at all.
+    SteeringWithheld {
+        withheld_by: Withholder,
+        memories: usize,
+        records: usize,
+        skills: usize,
+        commands: usize,
+        agents: usize,
     },
     /// Context recall completed; frames are cited by human label, never raw
     /// id (L-C4).
