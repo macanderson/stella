@@ -39,7 +39,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    dead-code-allows diagnostic-codes bench-suites wire-paths \
+                    dead-code-allows diagnostic-codes consumer-sites bench-suites wire-paths \
                     tokens hue-separation contrast transcript-surfaces prose \
                     deck-fit-all-test deck-paths css-vars reserved-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
@@ -78,10 +78,14 @@ GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings lint test tool-docs \
 #                           on this tree with its reader gone, so a genuinely
 #                           red guard fails it for the wrong reason, and
 #                           check-wire-schema.sh inside it builds the workspace.
-#   test-dev-env.sh       — 14 of its 38 cases fail outside a Linux dev box
-#                           (#4443). Wiring it before that is triaged would
-#                           land a workflow that is red on arrival.
-UNHOSTED_SELF_TESTS := test-main-canary.sh test-guard-sigpipe.sh test-dev-env.sh
+#
+# test-dev-env.sh used to be here too: 14 of its 38 cases failed everywhere
+# (#4443), not just outside a Linux dev box as first suspected — its fixture
+# built a synthetic repo shaped `stella-core/src/`, and setup-dev-env.sh's own
+# workspace-shape check requires `crates/stella-core/`, a mismatch dating to
+# this workspace's move under `crates/` long after the fixture was written.
+# Fixed by reshaping the fixture to match; it now runs in guard-self-tests.yml.
+UNHOSTED_SELF_TESTS := test-main-canary.sh test-guard-sigpipe.sh
 
 .PHONY: help
 help: ## Show this help
@@ -456,6 +460,14 @@ diagnostic-codes: ## Assert docs/reference/diagnostics.md documents every emitte
 diag-reference: ## Regenerate the diagnostic-code reference from the tree, preserving prose (#2507)
 	@python3 ./scripts/diagnostic-codes.py write
 
+.PHONY: consumer-sites
+consumer-sites: ## Assert every ConsumerPosture::Behavioral 'site' string still names live code (#4459)
+	@./scripts/check-consumer-sites.sh
+
+.PHONY: consumer-sites-test
+consumer-sites-test: ## Test the consumer-sites guard's failure directions (hermetic; not part of `gate`)
+	./scripts/test-consumer-sites.sh
+
 .PHONY: doc-warnings
 doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included (#634, #2336; CARGO_SCOPE to narrow)
 	RUSTDOCFLAGS="-D warnings" cargo doc $(CARGO_SCOPE) --no-deps --document-private-items --keep-going
@@ -628,6 +640,10 @@ main-canary: ## Ask whether main still composes green (check only; no issue is f
 .PHONY: main-canary-test
 main-canary-test: ## Test the post-merge canary, announcements included (hermetic; not part of `gate`)
 	./scripts/test-main-canary.sh
+
+.PHONY: deleted-tests-test
+deleted-tests-test: ## Test the deleted-test guard's live-vs-stale PR body handling (hermetic; not part of `gate`; #4495)
+	./scripts/test-deleted-tests.sh
 
 # The canary's other half: it detects, this is what consumes the detection at
 # the point a merge is still a decision (#3917). Not a gate step for the same

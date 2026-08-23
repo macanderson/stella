@@ -15,7 +15,7 @@
 # can only be tested by breaking things — writing 1600-line files into a crate,
 # appending bogus entries to the file-size baseline, replacing settings.json
 # with garbage — and a test suite that does that to your live worktree is one
-# early exit away from leaving a probe file in stella-core/src or a corrupted
+# early exit away from leaving a probe file in crates/stella-core/src or a corrupted
 # baseline staged for commit. The fixture makes the blast radius a directory
 # that gets deleted on exit, including on failure (see the trap).
 #
@@ -75,7 +75,7 @@ assert_cmd() { # assert_cmd <name> <command...>
 
 # ── Fixture: a minimal repo shaped enough like stella to satisfy the scripts ──
 REPO="$FIX/stella"
-mkdir -p "$REPO/stella-core/src" "$REPO/scripts" "$REPO/.githooks"
+mkdir -p "$REPO/crates/stella-core/src" "$REPO/scripts" "$REPO/.githooks"
 cp "$repo_root/scripts/setup-dev-env.sh" "$repo_root/scripts/fmt-file.sh" \
    "$REPO/scripts/"
 chmod +x "$REPO/scripts/"*.sh
@@ -87,7 +87,7 @@ printf '[workspace]\nmembers = ["stella-core"]\n\n[workspace.package]\nedition =
   > "$REPO/Cargo.toml"
 cat > "$REPO/scripts/file-size-baseline.txt" <<'EOF'
 # Synthetic baseline for tests. Format: <ceiling> <path>.
-2282 stella-core/src/grandfathered.rs
+2282 crates/stella-core/src/grandfathered.rs
 EOF
 
 git -C "$REPO" init -q .
@@ -106,6 +106,35 @@ SETTINGS="$REPO/agent-settings.json"
 CACHE="$FIX/cache"
 export STELLA_ENV_CACHE="$CACHE"
 
+# setup-dev-env.sh's tool_table() names two `ci`-tier entries, cargo-deny and
+# the shell linter, whose absence makes it exit non-zero even on a PLAIN (non
+# `--check`) run: the final `missing_required` check at the end of the script
+# is unconditional on MODE. Both are genuinely installed on a working dev
+# machine, but neither is guaranteed present on whatever happens to be
+# running this suite: cargo-deny is `cargo install`ed only inside ci.yml's
+# separate `supply-chain` job, never in guard-self-tests.yml's, and the shell
+# linter being preinstalled on ubuntu-latest is an assumption about the
+# runner image, not a guarantee this suite controls. S6 ("full run is
+# idempotent") is the one case that checks BOTH setup invocations exit 0, so
+# it is the one case an absent `ci`-tier tool actually fails — S5c/S7/S8/S9/
+# P1-P4 only check file/JSON content, not the exit code, so they stayed green
+# even while every setup call was quietly failing underneath them. Confirmed
+# on a bare Ubuntu 24.04 container with git+jq only: cargo-deny absent ->
+# missing_required=1 -> both S6 runs exit 1 -> "$rc1$rc2" = "11", not "00".
+#
+# Stub both onto PATH the same way S4 builds its own controlled PATH below,
+# just adding rather than removing: setup-dev-env.sh only ever calls
+# `command -v` on these, never invokes them, so a no-op executable is enough
+# to make tool detection deterministic regardless of the host.
+STUB_BIN="$FIX/stub-bin"
+mkdir -p "$STUB_BIN"
+for stub in cargo-deny shellcheck; do
+  printf '#!/bin/sh\nexit 0\n' >"$STUB_BIN/$stub"
+  chmod +x "$STUB_BIN/$stub"
+done
+PATH="$STUB_BIN:$PATH"
+export PATH
+
 payload() { printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$1"; }
 pad() { # pad <count> ; emits <count> newline-terminated comment lines
   awk -v n="$1" 'BEGIN { for (i = 0; i < n; i++) print "// pad " i }'
@@ -117,11 +146,11 @@ echo 'fn main() {}' > "$FIX/outside.rs"
 out=$(payload "$FIX/outside.rs" | "$HOOK" 2>&1); check "H2  .rs outside the repo" 0 $? "" "$out"
 out=$(printf '' | "$HOOK" 2>&1); check "H3  empty stdin" 0 $? "" "$out"
 out=$(printf 'not json' | "$HOOK" 2>&1); check "H4  unparseable payload" 0 $? "" "$out"
-out=$(payload "$REPO/stella-core/src/nope.rs" | "$HOOK" 2>&1); check "H5  nonexistent file" 0 $? "" "$out"
+out=$(payload "$REPO/crates/stella-core/src/nope.rs" | "$HOOK" 2>&1); check "H5  nonexistent file" 0 $? "" "$out"
 
 # The path-argument form is the entry point humans and editors use; the JSON
 # form is what agent harnesses pipe. Both must reach the same verdict.
-big_arg="$REPO/stella-core/src/big_arg.rs"
+big_arg="$REPO/crates/stella-core/src/big_arg.rs"
 pad 1600 > "$big_arg"
 out=$(cd "$REPO" && "$HOOK" "$big_arg" 2>&1); rc=$?
 check "H0  path argument blocks the same file" 2 $rc "over the 1500-line limit" "$out"
@@ -135,19 +164,19 @@ check "H0b bare invocation does not hang" 0 $rc "" "$out"
 
 echo
 echo "=== hook: formatting ==="
-probe="$REPO/stella-core/src/probe.rs"
+probe="$REPO/crates/stella-core/src/probe.rs"
 printf 'fn  main( ) {\nlet x=1;\n   let y   =   2;\n}\n' > "$probe"
 out=$(cd "$REPO" && payload "$probe" | "$HOOK" 2>&1); check "H6  small file passes" 0 $? "" "$out"
 grep -q 'let x = 1;' "$probe"; assert "H6b rustfmt actually rewrote it" $?
 
 echo
 echo "=== hook: file-size ratchet ==="
-big="$REPO/stella-core/src/big.rs"
+big="$REPO/crates/stella-core/src/big.rs"
 pad 1600 > "$big"
 out=$(cd "$REPO" && payload "$big" | "$HOOK" 2>&1); rc=$?
 check "H7  new file over 1500 blocks" 2 $rc "NOT in scripts/file-size-baseline.txt" "$out"
 
-gf="$REPO/stella-core/src/grandfathered.rs"
+gf="$REPO/crates/stella-core/src/grandfathered.rs"
 pad 2400 > "$gf"   # baseline ceiling is 2282
 out=$(cd "$REPO" && payload "$gf" | "$HOOK" 2>&1); rc=$?
 check "H8  grandfathered past ceiling blocks" 2 $rc "over its baseline ceiling of 2282" "$out"
@@ -168,7 +197,7 @@ out=$(cd "$REPO" && payload "$big" | "$HOOK" 2>&1)
 printf '%s' "$out" | grep -qF "$(wc -l <"$big" | tr -d ' ') lines"
 assert "H12 reported count == wc -l" $?
 
-edge="$REPO/stella-core/src/edge.rs"
+edge="$REPO/crates/stella-core/src/edge.rs"
 # 1500 terminated lines + an unterminated final line: wc -l = 1500 (allowed),
 # awk NR = 1501 (would block). The final line is invalid Rust on purpose so
 # rustfmt bails and leaves the missing newline in place.

@@ -85,6 +85,7 @@ permissions:
   contents: write # push the tag + the version-sync branch
   actions: write # dispatch release.yml + ci.yml
   pull-requests: write # open/auto-merge the version-sync PR
+  issues: write # open/comment/close the version-writeback-deferred issue (#3842)
 
 jobs:
   tag:
@@ -334,6 +335,7 @@ jobs:
           ADMIN_MERGE_TOKEN: ${{ secrets.RELEASE_ADMIN_TOKEN }}
           # Fixed by convention — see "Open the version-sync PR" above.
           BRANCH: bot/version-sync
+          VERSION: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
 
@@ -418,9 +420,86 @@ jobs:
           # was merged); the reset puts the tree back either way.
           git merge --abort 2>/dev/null || true
           git reset --hard HEAD >/dev/null
+
+          # #3842: the refusal below used to be invisible outside this run's
+          # log. `exit 0` is right — a stale sync branch is routine and
+          # self-healing, and failing the job here would red the release
+          # workflow on a condition that fixes itself — but nothing
+          # distinguished "merged the write-back" from "silently skipped it",
+          # and the recovery argument ("whatever merge moved main starts
+          # another auto-tag run, which force-updates this branch") is an
+          # ASSUMPTION: it holds only while commits keep landing on main. If
+          # the refusal happens on the last merge before a quiet period, the
+          # write-back never lands and every run still reports green.
+          #
+          # Report it the way main-canary.yml reports a broken tree: one
+          # labelled issue, opened while the condition recurs and closed the
+          # run it clears — scripts/main-canary.sh's header carries the full
+          # argument for that shape, including why a monitor that only ever
+          # files gets muted and ends up worse than none. A distinct label
+          # from main-canary's own `main-red`: this is not "main is broken",
+          # `main` compiles and its lock resolves fine — it is "this branch's
+          # version write-back hasn't landed yet".
+          defer_label="version-writeback-deferred"
+          open_defer_issue="$(gh issue list --label "$defer_label" --state open --limit 1 \
+            --json number --jq '.[0].number // empty' 2>/dev/null || true)"
+
           if [ "${merge_verdict}" -ne 0 ]; then
             echo "::warning::merging ${BRANCH} would leave main's Cargo.lock unresolvable — NOT merging (#3336). main moved under this branch; the next release cycle rebuilds it from the current tip, or re-run auto-tag.yml by hand."
+
+            short_sha="$(git rev-parse --short HEAD)"
+            # Built as an array of whole lines rather than one multi-line
+            # quoted string: this step is one YAML block scalar, so every
+            # SCRIPT line has to stay indented to match it or YAML ends the
+            # block early and reads the rest as new top-level content — but
+            # the issue body must NOT carry that indentation, or GitHub's
+            # markdown reads each paragraph as an indented code block. An
+            # array element's own indentation (outside the quotes) satisfies
+            # YAML; the quoted content (inside them) carries none of it into
+            # the rendered body.
+            defer_lines=(
+              "Auto-tag refused to merge the \`${BRANCH}\` version-sync PR (writing back \`${VERSION}\`) at \`${short_sha}\`: merging it would leave \`main\`'s \`Cargo.lock\` unresolvable (#3336)."
+              ""
+              "This is usually self-healing — whatever merge moved \`main\` under this branch starts another \`auto-tag\` run, which force-updates \`${BRANCH}\` from the then-current tip and retries. That recovery only fires while commits keep landing on \`main\`, though: if this refusal happens on the last merge before a quiet period, the write-back never lands and nothing else would have said so (#3842)."
+              ""
+              "**If this is still open and no \`auto-tag\` run has retried recently**, run it by hand:"
+              ""
+              '```sh'
+              "gh workflow run auto-tag.yml"
+              '```'
+              ""
+              "Closes automatically the run the write-back merges."
+            )
+            defer_body="$(printf '%s\n' "${defer_lines[@]}")"
+
+            if [ -n "${open_defer_issue}" ]; then
+              gh issue comment "${open_defer_issue}" \
+                --body "Still deferred at \`${short_sha}\`, branch \`${BRANCH}\`, writing back \`${VERSION}\`." \
+                || echo "::warning::could not comment on deferral issue #${open_defer_issue}"
+            else
+              # `--force`: idempotent label creation, the same reason
+              # main-canary.sh ensures its own label before its first issue.
+              gh label create "$defer_label" \
+                --color FBCA04 \
+                --description "the version write-back to main was refused and has not since landed (#3842)" \
+                --force \
+                || echo "::warning::could not ensure the ${defer_label} label"
+              gh issue create \
+                --title "version write-back to main is deferred (${BRANCH})" \
+                --label "$defer_label" \
+                --body "$defer_body" \
+                || echo "::warning::could not open a deferral issue"
+            fi
             exit 0
+          fi
+
+          if [ -n "${open_defer_issue}" ]; then
+            short_sha="$(git rev-parse --short HEAD)"
+            gh issue comment "${open_defer_issue}" \
+              --body "The write-back merges cleanly again as of \`${short_sha}\` — closing. Reopen if you disagree." \
+              || true
+            gh issue close "${open_defer_issue}" --reason completed \
+              || echo "::warning::could not close deferral issue #${open_defer_issue}"
           fi
 
           # RELEASE_ADMIN_TOKEN: a maintainer PAT with bypass rights on this
