@@ -120,8 +120,12 @@ CI enforces the same steps split across three workflows:
 and `doc-links`, and adds a `Cargo.lock` sync check, `stella context
 validate`, a release smoke build (thin LTO), and the deleted-test guard
 (`scripts/check-deleted-tests.sh`);
-`docs-guards.yml` runs those two plus a second run of `command-docs`, because
-all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
+`docs-guards.yml` runs those two plus a second run of `command-docs`,
+`brand-case`, `gate-parity`, `god-files` and `design-refs`, because all of them
+trigger on the `docs/**` and `*.md` paths `ci.yml` ignores — `design-refs` was
+the last to join, after a docs-only PR was found able to move a document into
+the `docs/design` scratchpad, invalidate every Rust comment citing it, and land
+green (#3888); and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
 because a PR that hand-edits a generated schema and nothing else starts neither
 of the other two (#1439).
