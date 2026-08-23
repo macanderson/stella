@@ -393,6 +393,11 @@ impl SessionSubAgents {
 /// could not be built is a settings line that reads like a capability and is
 /// not one — the session still runs, on the session's model, and the operator
 /// is told which seat degraded and why.
+///
+/// **Unless the engine config came from the trusted launcher seam**, in which
+/// case the same degradation refuses the session instead: this is the host
+/// that `Config::engine_settings_trusted` says consults it, and
+/// [`crate::agent::seats::EnginePosture`] carries the argument (#1147, #3937).
 pub fn install_for_session(
     cfg: &crate::config::Config,
     registry: &Arc<ToolRegistry>,
@@ -411,7 +416,11 @@ pub fn install_for_session(
         crate::agent::seats::SeatProviders::new()
     } else {
         let configured = crate::config::discover_configured_providers();
-        let (seats, notices) = crate::agent::seats::resolve_seat_models(&assignments, &configured);
+        let (seats, notices) = crate::agent::seats::resolve_seat_models(
+            &assignments,
+            &configured,
+            crate::agent::seats::EnginePosture::of(cfg),
+        )?;
         for notice in notices {
             eprintln!("  seat: {notice}");
         }

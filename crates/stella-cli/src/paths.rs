@@ -288,6 +288,19 @@ pub(crate) fn test_filesystem_isolation(enabled: bool) -> TestPathsGuard {
     amend(move |current| current.filesystem_isolated = enabled)
 }
 
+/// Hide (or reveal) the user extension tier alone, keeping whatever root this
+/// thread already resolves.
+///
+/// The seam a test needs to exercise [`UserPaths::extensions_visible`] as
+/// *policy*: composed after [`test_user_home`], it gives a redirected root
+/// that extension loaders must still refuse to read — which is what separates
+/// "the loader honours the policy" from "the loader found nothing there"
+/// (#3864).
+#[cfg(test)]
+pub(crate) fn test_extensions_visible(visible: bool) -> TestPathsGuard {
+    amend(move |current| current.extensions_visible = visible)
+}
+
 /// Apply `change` to the paths this thread sees right now.
 ///
 /// Amending rather than replacing is what lets the narrow spellings nest:

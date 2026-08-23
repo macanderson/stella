@@ -35,19 +35,24 @@ use crate::interactive::{AskUserIo, TtyAskUserIo};
 /// derivation is how two consumers end up disagreeing about whether anyone
 /// is listening.
 ///
-/// `user_root` is the user-global config root (`~/.stella`) init is allowed to
-/// touch, and it rides here for the same reason `ask` does: init must not
-/// derive it. What this feeds — the first-session conversion offer — *writes
-/// files* into that root, so resolving it inside `init_workspace` made the
-/// blast radius an environment the caller inherits rather than a value it
-/// chooses, and no test could drive the accepting path without converting the
-/// developer's real `~/.stella/commands/` (#3641). The production constructors
-/// resolve it once, in the open; the test-only `InitIo::scoped` names it.
-/// (Deliberately not an intra-doc link: `scoped` is `#[cfg(test)]`, so
-/// rustdoc cannot resolve it and `-D warnings` fails the doc gate on it.)
+/// `user_home` and `user_root` are the user tier init is allowed to touch —
+/// the OS home whose `.claude/`/`.agents/` the extension sync adopts from, and
+/// the user-global stella root (`~/.stella`) it links into and the conversion
+/// offer writes to. They ride here for the same reason `ask` does: init must
+/// not derive them. Both of the stages they feed *write files* there, so
+/// resolving them inside `init_workspace` made the blast radius an environment
+/// the caller inherits rather than a value it chooses, and no test could drive
+/// either path without touching the developer's real `~/.stella` (#3641 for
+/// the offer, #3675 for the sync's symlinks). Two paths rather than one
+/// because `STELLA_HOME` moves the root and not the home. The production
+/// constructors resolve them once, in the open; the test-only `InitIo::scoped`
+/// names them. (Deliberately not an intra-doc link: `scoped` is
+/// `#[cfg(test)]`, so rustdoc cannot resolve it and `-D warnings` fails the
+/// doc gate on it.)
 pub(crate) struct InitIo<'a> {
     emit: Box<dyn FnMut(InitLine) + 'a>,
     ask: Option<&'a dyn AskUserIo>,
+    user_home: Option<PathBuf>,
     user_root: Option<PathBuf>,
 }
 
@@ -62,6 +67,7 @@ impl<'a> InitIo<'a> {
         Self {
             emit: Box::new(emit),
             ask,
+            user_home: crate::paths::home(),
             user_root: crate::extensions::user_config_root(),
         }
     }
@@ -76,11 +82,13 @@ impl<'a> InitIo<'a> {
     pub(crate) fn scoped(
         emit: impl FnMut(InitLine) + 'a,
         ask: Option<&'a dyn AskUserIo>,
+        user_home: Option<PathBuf>,
         user_root: Option<PathBuf>,
     ) -> Self {
         Self {
             emit: Box::new(emit),
             ask,
+            user_home,
             user_root,
         }
     }
@@ -231,9 +239,18 @@ pub(crate) async fn init_workspace(
     // Adopt commands/skills/agents other code agents keep in `.claude/` and
     // `.agents/` (workspace + user scope) as symlinks into stella's own
     // directories — idempotent, never clobbers, never fatal.
+    //
+    // The user tier is the injected pair, never an ambient read: this stage
+    // creates symlinks under it (#3675).
     {
+        let user_home = io.user_home.clone();
+        let user_root = io.user_root.clone();
+        let user = user_home
+            .as_deref()
+            .zip(user_root.as_deref())
+            .map(|(home, stella_root)| crate::extensions::UserScope { home, stella_root });
         let mut step = io.step_sink();
-        crate::extensions::sync_extensions(workspace_root, &mut step);
+        crate::extensions::sync_extensions(workspace_root, user, &mut step);
     }
 
     // Then, once — and only once per workspace — offer to convert the
@@ -668,11 +685,13 @@ mod tests {
     /// coverage: the only end-to-end evidence was a manual headless run, and
     /// headless is precisely the branch that converts nothing.
     ///
-    /// The user root is named rather than resolved, so the offer cannot reach
-    /// the developer's real `~/.stella` — the failure that made this test
-    /// unwritable before `user_root` moved onto [`InitIo`]. It is a second
-    /// temp directory rather than `None` so the plumbing is exercised, not
-    /// bypassed; being empty, it contributes nothing to convert.
+    /// The user tier is named rather than resolved, so neither the offer nor
+    /// the extension sync can reach the developer's real `~/.stella` — the
+    /// failure that made this test unwritable before `user_root` moved onto
+    /// [`InitIo`] (#3641) and left it unable to claim isolation until the sync
+    /// followed (#3675). It is a second temp directory rather than `None` so
+    /// the plumbing is exercised, not bypassed; being empty, it contributes
+    /// nothing to adopt and nothing to convert.
     #[tokio::test]
     async fn init_adopts_a_claude_command_and_converts_it_when_the_offer_is_accepted() {
         let workspace = tempfile::tempdir().expect("tempdir");
@@ -693,6 +712,7 @@ mod tests {
         let mut init_io = InitIo::scoped(
             |line: InitLine| lines.push(line.text().to_string()),
             Some(&io),
+            Some(user.path().to_path_buf()),
             Some(user.path().to_path_buf()),
         );
 
@@ -715,11 +735,16 @@ mod tests {
             root.join(".stella/commands/demo.md").exists(),
             "the adopted markdown definition is never removed"
         );
-        // The whole point of the injected root: the offer wrote inside the
-        // temp tree and nowhere else.
+        // The whole point of the injected tier: the offer and the extension
+        // sync both wrote inside the temp tree and nowhere else.
         assert!(
             !user.path().join("commands").exists(),
             "an empty user root gains nothing"
+        );
+        assert!(
+            !lines.iter().any(|line| line.contains("user scope")),
+            "no user-scope line: the sync had an empty injected tier to adopt \
+             from, not the developer's home ({lines:?})"
         );
     }
 

@@ -527,8 +527,11 @@ pub struct Config {
     /// then reports numbers against it. So a role the object pins is a
     /// PUBLISHED claim, and the ordinary "any wiring failure is soft, the
     /// role just rides the worker" degradation stops being safe: it produces
-    /// a number the posture misdescribes. Hosts consult this to decide which
-    /// failures may degrade and which must refuse (#1147).
+    /// a number the posture misdescribes. Read by
+    /// `subagent::install_for_session` through `agent::seats::EnginePosture`:
+    /// a `seat_models` entry that cannot be built refuses the run instead of
+    /// riding the session's model (#1147, re-armed in #3937 after the pipeline
+    /// holding the original refusal left the workspace).
     pub engine_settings_trusted: bool,
     /// Which tools this session withholds, resolved from the `tools` section
     /// of the settings scope chain with the org-managed ceiling already

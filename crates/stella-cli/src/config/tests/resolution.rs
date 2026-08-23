@@ -75,7 +75,9 @@ fn resolved_config_carries_the_authority_computed_during_settings_load() {
 /// `tag` keeps concurrent tests off each other's directory. The returned guard
 /// must be held for as long as the `Config` is used — dropping it restores the
 /// real home mid-test.
-fn reload_fixture(tag: &str) -> (std::path::PathBuf, crate::paths::TestPathsGuard, Config) {
+pub(in crate::config) fn reload_fixture(
+    tag: &str,
+) -> (std::path::PathBuf, crate::paths::TestPathsGuard, Config) {
     let home = std::env::temp_dir().join(format!("stella-test-{tag}-{}", std::process::id()));
     let workspace = home.join("ws");
     std::fs::create_dir_all(home.join(".stella")).unwrap();
@@ -123,9 +125,12 @@ fn reload_fixture(tag: &str) -> (std::path::PathBuf, crate::paths::TestPathsGuar
 /// switches) flip without a restart. Fails to compile on a build without
 /// `reload_from_disk`.
 ///
-/// The vehicle was `enable_recap` until #3870 retired it, and is deliberately
-/// not `ignore_gitignore`: `reload_from_disk` never re-derives that one, so it
-/// would fail here. That gap is real and filed separately.
+/// The vehicle was `enable_recap` until #3870 retired it. `ignore_gitignore`
+/// is back beside the other two now that #3895 wired it: it is the field whose
+/// default is ON, so the edit flips in the direction a forgotten merge would
+/// not catch. Which fields `/reload` owes is settled exhaustively in
+/// `config::reload::completeness`; this stays the readable three-assertion
+/// witness.
 #[test]
 fn reload_from_disk_reapplies_the_settings_scope_chain() {
     // `reload_from_disk` reads the process-wide trusted-engine-config env
@@ -139,7 +144,7 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
     // The edit a running session would previously only see after a restart.
     std::fs::write(
         home.join(".stella").join("settings.json"),
-        r#"{"create_worktrees": "never", "tools": {"bash": "off"}}"#,
+        r#"{"create_worktrees": "never", "tools": {"bash": "off"}, "ignore_gitignore": "off"}"#,
     )
     .unwrap();
 
@@ -153,6 +158,11 @@ fn reload_from_disk_reapplies_the_settings_scope_chain() {
     assert!(
         !cfg.tool_policy.allows("bash"),
         "reload must re-derive the tool switches from the scope chain on disk"
+    );
+    assert!(
+        !cfg.ignore_gitignore,
+        "reload must re-derive the gitignore filter — a session told the reload \
+         succeeded kept walking ignored paths until it restarted (#3895)"
     );
 
     let _ = std::fs::remove_dir_all(&home);

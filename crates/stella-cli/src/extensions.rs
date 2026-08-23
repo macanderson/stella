@@ -294,32 +294,73 @@ fn create_symlink(_target: &Path, _dest: &Path) -> std::io::Result<()> {
     ))
 }
 
-/// The user-global stella config root (`~/.stella`), or `None`
-/// without a home directory.
+/// The user-global stella root user-scope **extensions** are loaded from
+/// (`~/.stella`), or `None` when there is no user tier to read.
+///
+/// [`crate::paths::user_extension_root`] and not
+/// [`crate::paths::stella_root`], which is what this resolved through until
+/// #3864. The two are the same value in production and diverge in a test
+/// build, where `UserPaths::extensions_visible` is false: the extension root
+/// correctly answers "no user tier" while the bare root still resolves to the
+/// developer's real `~/.stella`. So one function body resolved the user scope
+/// through two policies — skills through `memory::skill_files`'s
+/// `user_skills_dir` (correct), commands and
+/// agents through here — and an un-redirected unit test saw no user-scope
+/// skills while reading the developer's own `~/.stella/commands/` and
+/// `~/.stella/agents/`. That is the exact outcome `extensions_visible`'s doc
+/// comment says it exists to prevent.
 pub(crate) fn user_config_root() -> Option<PathBuf> {
-    crate::paths::stella_root()
+    crate::paths::user_extension_root()
 }
 
-/// Run the sync at both scopes and report through `emit` — the shared init
-/// hook (`agent::init_workspace`) calls this so `stella init` and `/init`
-/// behave identically. Quiet when there is nothing to do — except a
-/// `NotLoadable` skip (a namespace directory adopted from another agent's
-/// dirs that stella's loader could never read), which always gets a line,
-/// even in a scope where nothing else linked (issue #104: the entire point
-/// is that this shape must never go unmentioned).
-pub fn sync_extensions(workspace_root: &Path, emit: &mut dyn FnMut(String)) {
+/// The user tier [`sync_extensions`] adopts across: where the other agents
+/// keep their definitions, and where stella's own copies go.
+///
+/// Two paths and not one, because `STELLA_HOME` moves one of them and not the
+/// other: `~/.claude` and `~/.agents` hang off the OS home whatever the stella
+/// root is set to, so deriving either from the other would be right only on a
+/// default install.
+#[derive(Clone, Copy, Debug)]
+pub struct UserScope<'a> {
+    /// The OS home, whose `.claude/` and `.agents/` are the sources.
+    pub home: &'a Path,
+    /// The user-global stella root, the symlink destination.
+    pub stella_root: &'a Path,
+}
+
+/// Run the sync at the workspace scope and, when one is given, the user scope,
+/// reporting through `emit` — the shared init hook
+/// (`agent::init_workspace`) calls this so `stella init` and `/init` behave
+/// identically. Quiet when there is nothing to do — except a `NotLoadable`
+/// skip (a namespace directory adopted from another agent's dirs that stella's
+/// loader could never read), which always gets a line, even in a scope where
+/// nothing else linked (issue #104: the entire point is that this shape must
+/// never go unmentioned).
+///
+/// `user` is a **parameter** rather than an ambient read, and that is the
+/// whole of #3675: this function *creates symlinks*, so resolving the home
+/// inside its body made every test that drove init — directly or through
+/// `agent::init_workspace` — write into the developer's own
+/// `~/.stella/{commands,skills,agents}/` however carefully the workspace root
+/// was sandboxed. `None` means workspace scope only. `agent::init_workspace`
+/// passes the pair `InitIo` already carries for the conversion offer, so one
+/// resolved value feeds both instead of two ambient reads that can disagree.
+/// The same repair `#3641` made one layer up, at the layer that writes.
+pub fn sync_extensions(
+    workspace_root: &Path,
+    user: Option<UserScope<'_>>,
+    emit: &mut dyn FnMut(String),
+) {
     let mut scopes: Vec<(&str, PathBuf, Vec<PathBuf>)> = vec![(
         "workspace",
         workspace_root.join(".stella"),
         SOURCE_DIRS.iter().map(|d| workspace_root.join(d)).collect(),
     )];
-    if let Some(home) = crate::paths::home()
-        && let Some(config_root) = user_config_root()
-    {
+    if let Some(user) = user {
         scopes.push((
             "user",
-            config_root,
-            SOURCE_DIRS.iter().map(|d| home.join(d)).collect(),
+            user.stella_root.to_path_buf(),
+            SOURCE_DIRS.iter().map(|d| user.home.join(d)).collect(),
         ));
     }
 
@@ -1020,6 +1061,55 @@ mod tests {
         assert!(third.linked.is_empty(), "re-running links nothing new");
     }
 
+    /// **Witness (#3675).** `sync_extensions` symlinks into the user tier it
+    /// is *given*, and touches none at all when given none.
+    ///
+    /// The witness is the signature: on the base commit this function resolves
+    /// `paths::home()` and `user_config_root()` inside its own body, so there
+    /// is no tier to name and this does not compile — which is the defect,
+    /// because it means every test that drove `agent::init_workspace` created
+    /// symlinks under the developer's real `~/.stella/{commands,skills,agents}/`
+    /// however carefully the workspace root was sandboxed. The assertions are
+    /// what pin the behaviour once it does.
+    #[test]
+    fn sync_adopts_into_the_user_tier_it_is_given_and_none_otherwise() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().join("ws");
+        let home = tmp.path().join("home");
+        let stella_root = tmp.path().join("elsewhere/.stella");
+        write(&home.join(".claude/commands/deploy.md"), "Ship.");
+
+        let mut lines: Vec<String> = Vec::new();
+        sync_extensions(&workspace, None, &mut |line| lines.push(line));
+        assert!(
+            !stella_root.exists() && !home.join(".stella").exists(),
+            "no tier given, no tier written: {lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line.contains("user scope")),
+            "and nothing claims to have adopted one: {lines:?}"
+        );
+
+        lines.clear();
+        sync_extensions(
+            &workspace,
+            Some(UserScope {
+                home: &home,
+                stella_root: &stella_root,
+            }),
+            &mut |line| lines.push(line),
+        );
+        assert!(
+            stella_root.join("commands/deploy.md").exists(),
+            "the link lands in the NAMED root, not beside the source: {lines:?}"
+        );
+        assert!(
+            !home.join(".stella").exists(),
+            "and the root is not derived from the home — `STELLA_HOME` moves \
+             one and not the other"
+        );
+    }
+
     #[test]
     fn sync_resolves_frontmatter_name_collisions_by_source_precedence() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1293,5 +1383,62 @@ mod tests {
         assert!(list.contains("⚡ reviewer — reviews diffs"));
         let empty = CustomExtensions::default();
         assert!(empty.render_agent_list().contains("no custom agents"));
+    }
+
+    /// **Witness (#3864).** One loader, one policy: with the user extension
+    /// tier hidden, `CustomExtensions` reads no user-scope command or agent —
+    /// exactly as it already read no user-scope skill.
+    ///
+    /// The redirect installs a real root and then hides the tier, so the
+    /// assertion separates "the loader honours the policy" from "there was
+    /// nothing in that directory". Fails on the base commit: commands and
+    /// agents resolved through `paths::stella_root`, which ignores the policy
+    /// and answers with the developer's own `~/.stella` in a test build —
+    /// while skills, resolving through `paths::user_extension_root`, correctly
+    /// saw no user tier at all.
+    #[test]
+    fn a_hidden_user_tier_hides_commands_and_agents_as_it_already_hid_skills() {
+        let user = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        write(
+            &user.path().join(".stella/commands/deploy.md"),
+            "---\ndescription: ship it\n---\nDeploy $ARGUMENTS now.",
+        );
+        write(
+            &user.path().join(".stella/agents/reviewer.md"),
+            "---\nname: reviewer\ndescription: reviews\n---\nYou review.",
+        );
+        write(
+            &user.path().join(".stella/skills/sql-style/SKILL.md"),
+            &skill_md("sql-style"),
+        );
+
+        // The control: with the tier visible, all three load, so the
+        // assertions below cannot pass because the fixture is empty.
+        let _home = crate::paths::test_user_home(user.path().to_path_buf());
+        let visible = CustomExtensions::load_with_workspace_extensions(workspace.path(), false);
+        assert_eq!(visible.commands.len(), 1, "premise: the command is there");
+        assert_eq!(visible.agents.len(), 1, "premise: the agent is there");
+        assert_eq!(visible.skills.len(), 1, "premise: the skill is there");
+
+        let _hidden = crate::paths::test_extensions_visible(false);
+        let loaded = CustomExtensions::load_with_workspace_extensions(workspace.path(), false);
+        assert!(
+            loaded.commands.is_empty(),
+            "a hidden user tier must yield no commands, got {:?}",
+            loaded
+                .commands
+                .iter()
+                .map(|c| c.invocation())
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            loaded.agents.is_empty(),
+            "and no agents — `stella agents` installs into this same directory"
+        );
+        assert!(
+            loaded.skills.is_empty(),
+            "premise: skills already honoured the policy"
+        );
     }
 }
