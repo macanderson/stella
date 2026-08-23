@@ -110,12 +110,22 @@ export function SeatCard({
       },
     }));
 
-  // A bare-loop arm has no staged pipeline, so every override below it is
-  // inert — the runner never consults `roles` once the loop is settled. The
-  // controls stay visible and disabled rather than hidden: a template that
-  // loaded with both set is exactly the incoherence an operator needs to see,
+  // Every stella arm runs the raw step loop, so no staged role is consulted on
+  // any of them and every override below is inert. The staged pipeline left
+  // the workspace with stella#3865 — `stella run --pipeline classic` is refused
+  // outright — which is why the adapter publishes `stella_loop_mode` as
+  // `bare_step_loop` on every trial whatever the seat declared
+  // (`bench/harbor_adapter/stella_harbor/loop_mode.py`, stella#4023).
+  //
+  // Reading `bare_loop` here said the overrides applied to every arm that had
+  // not opted into the bare loop, which has not been true since #3865 and is
+  // the same stale premise #4412 corrected on the Python side. There is no
+  // inert/live distinction left to draw, so the card states the one fact
+  // instead of deriving a condition that is now always true.
+  //
+  // The controls stay visible and disabled rather than hidden: a template that
+  // loaded with roles set is exactly the incoherence an operator needs to see,
   // and hiding it would present a coherent form for an arm that is not.
-  const pipelineInert = seat.engine.bare_loop;
 
   return (
     <div
@@ -210,6 +220,13 @@ export function SeatCard({
               were the guard firing at a third of the allowed clock (#2411). The
               server refuses the keys by name; offering them here made every
               launch from this form fail. Bound spend at the provider key. */}
+          {/* `bare_loop` is a declaration and no longer a selector: both
+              settings run the raw step loop, because that is the only loop the
+              binary has since stella#3865. It stays on the form because the
+              declaration is still refused on a non-stella seat at parse time
+              (`arenabench/config.py`) and still recorded in a series' own
+              comparability row (`arenabench/series.py`), so an arm that meant
+              to measure the bare loop can still say so. */}
           {spec?.has_pipeline && (
             <Field label="Loop" className="max-w-[190px]">
               <SimpleSelect
@@ -217,8 +234,8 @@ export function SeatCard({
                 value={seat.engine.bare_loop ? "bare" : "pipeline"}
                 onValueChange={(v) => setEngine({ bare_loop: v === "bare" })}
                 items={[
-                  { value: "pipeline", label: "staged pipeline" },
-                  { value: "bare", label: "bare loop (--no-pipeline)" },
+                  { value: "pipeline", label: "raw step loop (undeclared)" },
+                  { value: "bare", label: "raw step loop (declared)" },
                 ]}
               />
             </Field>
@@ -253,12 +270,11 @@ export function SeatCard({
               {roleModelFallback && (
                 <span className="text-warn"> Model list unavailable ({roleModelFallback}) — free text.</span>
               )}
-              {pipelineInert && (
-                <span className="text-warn">
-                  {" "}
-                  Inert — this seat runs the bare loop, so no staged role is consulted.
-                </span>
-              )}
+              <span className="text-warn">
+                {" "}
+                Inert — every arm runs the raw step loop, so no staged role is
+                consulted.
+              </span>
             </div>
             {roles.map((role) => {
               const current = seat.engine.roles[role] ?? EMPTY_ROLE;
@@ -284,7 +300,7 @@ export function SeatCard({
                     <SimpleSelect
                       ariaLabel={`${role} model`}
                       size="sm"
-                      disabled={pipelineInert}
+                      disabled
                       value={current.model}
                       onValueChange={(model) => setRole(role, { model })}
                       items={items}
@@ -294,7 +310,7 @@ export function SeatCard({
                       type="text"
                       placeholder="inherit model"
                       title={roleModelFallback ?? undefined}
-                      disabled={pipelineInert}
+                      disabled
                       value={current.model}
                       onChange={(e) => setRole(role, { model: e.target.value })}
                       className="px-2 py-[5px] text-xs"
@@ -303,7 +319,7 @@ export function SeatCard({
                   <SimpleSelect
                     ariaLabel={`${role} effort`}
                     size="sm"
-                    disabled={pipelineInert}
+                    disabled
                     value={current.effort}
                     onValueChange={(effort) => setRole(role, { effort })}
                     items={[
@@ -314,7 +330,7 @@ export function SeatCard({
                   <SimpleSelect
                     ariaLabel={`${role} reasoning`}
                     size="sm"
-                    disabled={pipelineInert}
+                    disabled
                     value={current.reasoning}
                     onValueChange={(v) => setRole(role, { reasoning: v as RoleDraft["reasoning"] })}
                     items={INHERIT_ON_OFF}
@@ -335,12 +351,11 @@ export function SeatCard({
               Stage roster — ablate or reassign one responsibility.{" "}
               <strong>inherit</strong> leaves the shipped binding alone; it is not{" "}
               <strong>off</strong>.
-              {pipelineInert && (
-                <span className="text-warn">
-                  {" "}
-                  Inert under the bare loop, which settles every stage at once.
-                </span>
-              )}
+              <span className="text-warn">
+                {" "}
+                Inert — there is no staged pipeline left for a responsibility to
+                ablate.
+              </span>
             </div>
             {responsibilities.map((name) => {
               const current = seat.engine.responsibilities[name] ?? EMPTY_RESPONSIBILITY;
@@ -353,7 +368,7 @@ export function SeatCard({
                   <SimpleSelect
                     ariaLabel={`${name} enabled`}
                     size="sm"
-                    disabled={pipelineInert}
+                    disabled
                     value={current.enabled}
                     onValueChange={(v) =>
                       setResponsibility(name, {
@@ -365,7 +380,7 @@ export function SeatCard({
                   <SimpleSelect
                     ariaLabel={`${name} agent`}
                     size="sm"
-                    disabled={pipelineInert}
+                    disabled
                     value={current.agent}
                     onValueChange={(agent) => setResponsibility(name, { agent })}
                     items={[
