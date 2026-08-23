@@ -3,7 +3,7 @@
 //!
 //! `doc:backlog-self-driving` §3.0 is the design and this module is its wire
 //! half. [`crate::host_call`] is the same apparatus for the wrapper socket, and
-//! everything load-bearing there is carried over verbatim: a plugin **asks**
+//! everything essential there is carried over verbatim: a plugin **asks**
 //! the host for a capability and never reaches for one, an undeclared ask is
 //! refused with a code the plugin branches on, and a refusal is a value rather
 //! than a death. Only the *context* differs — the conversation is opened by a

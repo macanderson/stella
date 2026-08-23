@@ -29,7 +29,7 @@
 //! liveness lock is not held, whose workspace still exists, and which left a
 //! resume point this build can see.
 //!
-//! The load-bearing half is the stored status. Every deliberate end writes
+//! The decisive half is the stored status. Every deliberate end writes
 //! one on the way out — `Complete` when it finished, `Cancelled` when `stella
 //! daemon stop` or a Ctrl-C ended it, `Stopped` when the run ended itself by
 //! policy, `Paused` when a deck set it aside. A process the kernel took
@@ -65,7 +65,7 @@
 //! # What stops a boot loop
 //!
 //! A run that wedges the machine on resume would otherwise resume on every
-//! boot forever. Two brakes, and the second is the load-bearing one:
+//! boot forever. Two brakes, and the second is the decisive one:
 //!
 //! - The resume point is consumed by the turn that continues (#1586), so the
 //!   ordinary case self-terminates after one pass.

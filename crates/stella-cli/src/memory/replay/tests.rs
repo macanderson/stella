@@ -174,7 +174,7 @@ fn recurring_registry_lessons() -> Vec<TraceTurn> {
 
 /// Replay into a temp dir, under a **fixed** directory name.
 ///
-/// The fixed name is load-bearing for assertion 8, and finding out why is one of
+/// The fixed name is required for assertion 8, and finding out why is one of
 /// the things replaying the real loop taught us. A published record's lineage is
 /// `ctx.<set-id>.<mined-suffix>`, and `derive_set_id` falls back to the
 /// *workspace directory name* when there is no git remote — so replaying into

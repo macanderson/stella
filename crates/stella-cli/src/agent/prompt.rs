@@ -214,7 +214,7 @@ macro_rules! complexity_discipline {
 /// fix — "should have run the test suite immediately after reading the
 /// completion logic" — and estimated a test-first path at a tenth of the cost.
 ///
-/// The second sentence is the load-bearing one and is pinned separately below.
+/// The second sentence is the required one and is pinned separately below.
 /// A suite that passes is *evidence about the hypothesis*, which is what turns
 /// "am I done" from a judgement the model argues into an observation it reads
 /// — the same discipline the staged pipeline's `verify` ladder enforced on the
@@ -513,7 +513,7 @@ pub(crate) fn assemble_system_prompt(
 /// model `tool_steering!` teaches), where a stale answer costs one call
 /// instead of invalidating the session's cache.
 ///
-/// The worktree line is the load-bearing one for this repository: fleet
+/// The worktree line is the required one for this repository: fleet
 /// workers and pipeline candidates run in linked worktrees
 /// (`build_system_prompt` takes `workspace_root` for exactly that reason),
 /// and a model that `cd`s back to the primary checkout defeats the isolation.
@@ -782,9 +782,9 @@ pub(crate) fn build_pipeline_system_prompt(
 /// isolation gate excludes stored steering — memories, rules, skills, custom
 /// tools — never this block, which is computed from the live process and
 /// workspace at assembly (#2692). Lives here rather than beside its caller in
-/// `agent/tests.rs` because that file is a grandfathered god file closed to
-/// growth, and because "persona + environment, nothing appended" is this
-/// module's own contract to state.
+/// `agent/tests.rs` because that file sits close to the 1500-line ratchet,
+/// and because "persona + environment, nothing appended" is this module's own
+/// contract to state.
 #[cfg(test)]
 pub(crate) fn expected_isolated_pipeline_prompt(workspace_root: &std::path::Path) -> String {
     let mut expected = PIPELINE_SYSTEM_PROMPT.to_string();

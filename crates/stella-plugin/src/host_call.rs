@@ -725,8 +725,8 @@ pub struct ChildTurnResult {
 
 /// What one `candidate_fanout` produced.
 ///
-/// Both fields are **required** on the wire, and that is load-bearing rather
-/// than stylistic: [`HostCallOk`] is untagged and its rule is that every
+/// Both fields are **required** on the wire, and that is a hard constraint
+/// rather than stylistic: [`HostCallOk`] is untagged and its rule is that every
 /// variant's required key set must be disjoint from every other's.
 /// [`RecallResult`]'s only field defaults, so `{}` reads as a recall answer —
 /// a fan-out result whose `candidates` defaulted would be a table that decodes

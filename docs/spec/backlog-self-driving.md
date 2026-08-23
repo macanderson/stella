@@ -213,7 +213,7 @@ decides, `stella-cli` probes):
 | **`stella-cli`** (the binary) | Every new verb in §3. The issue port, the run execution, the git/forge effects, the curation writes. | Invariant 2 keeps all of it out of the engine; invariant 1 keeps the forge behind a port. |
 | **`plugins/stella-selfdriving`** (the driver) | *Policy only*: when to run, how many at once, in what order, when to stop, what to escalate. A loop that asks for declared capabilities and nothing else. | It is the piece an operator should be able to fork, replace, or write in another language without forking Stella. |
 
-The load-bearing consequence: **the judgement half becomes Stella's own agent
+The required consequence: **the judgement half becomes Stella's own agent
 loop.** `work` (§3.2) runs a unit of backlog through Stella's turn loop — the
 same path a `stella run` takes, with whatever the installed plugins add over it
 and nothing else. If Stella's
@@ -567,7 +567,7 @@ a lens **and a baseline**. So:
 - The ladder resets to `rubric` when the baseline has moved by a declared
   threshold since the sweep that exhausted it — *N* merged commits or *D* days,
   recorded as `last_clean_head` in `calibration.json`, which is already carried
-  through `Calibration::extra` and was already load-bearing enough that dropping
+  through `Calibration::extra` and was already required enough that dropping
   it broke watch mode once.
 
 A re-pass therefore yields exactly the findings the new code introduced, and
@@ -759,7 +759,7 @@ liability — so this is exactly a doctrine axis, not a rule:
   deliberately **not** the default: a system that notices breakage and says
   nothing is the worst of the three.
 
-Three orderings inside that are load-bearing:
+Three orderings inside that are required:
 
 1. **File first, always, under every policy that files at all.** The ticket is
    what makes the breakage visible and attributable *even if the fix never
@@ -927,7 +927,7 @@ drew its batch from. Both numbers are now folds of one ranking of one read.
 | The driver channel: dispatch context, `[driver]` block, `permits_call` | `stella-plugin` (wire + gate), `stella-runtime` (`src/wrapper/`, beside the existing host-call dispatch) |
 | The policy loop | `plugins/stella-selfdriving/` |
 
-**Sequencing note.** B0 → B1 → B2 is a hard chain, and B0 is now the load-bearing
+**Sequencing note.** B0 → B1 → B2 is a hard chain, and B0 is now the required
 one: it is the phase that makes a self-driving plugin able to hold any capability
 at all. It is also the smallest of the three, because the wire shapes, the
 refusal codes, the manifest gate, the consent rendering and the subprocess

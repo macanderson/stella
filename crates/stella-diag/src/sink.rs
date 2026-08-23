@@ -132,7 +132,7 @@ impl JsonlSink {
     /// 0600 because a log file is the easiest accidental egress there is —
     /// §3.2's sharper reading of invariant 3 is that *operators ship logs*.
     /// The contents are content-free by construction, and the permissions are
-    /// belt and braces.
+    /// a second, independent check.
     pub fn file(path: &Path) -> Result<Self, SinkError> {
         Ok(Self::to_writer(private::open_append(path)?))
     }

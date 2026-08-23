@@ -406,7 +406,7 @@ sequences it.
 
 ### 9.2 `judge` may not call a model — and goal mode's judge is a model call
 
-This is the one internal contradiction in §4, and it is load-bearing enough to
+This is the one internal contradiction in §4, and it is required enough to
 resolve rather than paper over.
 
 The table at §4 says `judge` "may not call a model". Four lines later, "Goal

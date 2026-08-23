@@ -8,7 +8,7 @@ have to. This module is the join — and it lives here rather than inside
 ``CloudExecutor.watch`` for two reasons. The dull one: ``cloud.py`` is within
 a hundred lines of the repository's 1500-line file-size ceiling and is not in
 the grandfather list, so the composition has to land in a sibling module
-regardless. The load-bearing one: a three-way composition wired inline into a
+regardless. The required one: a three-way composition wired inline into a
 polling loop can only be tested by driving the polling loop, and the thing
 most worth testing here is what happens on the paths that *do not* abort.
 

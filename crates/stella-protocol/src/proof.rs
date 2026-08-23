@@ -165,7 +165,7 @@ pub enum ProofStep {
     ///
     /// Emitted for the same reason [`ProofStep::VerdictDegraded`] is, one
     /// stage earlier. The fallback itself is correct by design and
-    /// load-bearing — triage must never fail a run — but it became the
+    /// required — triage must never fail a run — but it became the
     /// *common* case while staying completely invisible: across three
     /// Terminal-Bench arm runs, 27 of 34 triage calls burned the full 10s
     /// latency ceiling and returned nothing, about four and a half minutes of

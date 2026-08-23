@@ -436,7 +436,7 @@ they do talk, over reverse-RPC. The propagation value is real.
 **The recommendation is nonetheless to defer, for reasons that changed:**
 
 1. The four arguments in §9 of that document mostly still hold, but the
-   load-bearing one is now different: §7.1. Correlation is free here because
+   decisive one is now different: §7.1. Correlation is free here because
    invariant 2 already banned ambient state. `tracing`'s spans exist to
    reconstruct context that ordinary code loses; this codebase does not lose it.
 2. §5.2 is not available through `tracing`. `%value` / `?value` log anything
@@ -484,7 +484,7 @@ Per AGENTS.md, each slice needs a test that fails on the old code.
 | # | Property | Test |
 |---|---|---|
 | 1 | Content cannot enter a record | a `trybuild` compile-fail case: `diag!(info, "x", p = String::from("secret"))` **must not compile**. This is the witness for §5.2, and it is a stronger artifact than a sentinel sweep because it fails at the only moment that matters |
-| 2 | The sentinel sweep still runs | belt and braces. Retained from serve, extended workspace-wide, with the planted-leak discipline §8 of that doc learned |
+| 2 | The sentinel sweep still runs | a second, independent check. Retained from serve, extended workspace-wide, with the planted-leak discipline §8 of that doc learned |
 | 3 | Filter never gates emission | property: for any filter and any record sequence, counters and the ring are identical; only sink output differs |
 | 4 | A failing sink never fails a caller | property: a sink returning `Err` on every write leaves `emit` infallible and the turn intact |
 | 5 | The ring survives a panic | integration: panic mid-turn, assert the crash file exists, is 0600, parses as JSONL, and contains the last pre-panic record |

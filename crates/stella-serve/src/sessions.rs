@@ -413,7 +413,7 @@ impl SessionEntry {
     /// (an aborted clone may hold a dangling `tool_use` — see module docs).
     ///
     /// The core is written **before** the live slot clears, and the ordering
-    /// is load-bearing: clearing first opens a window where a concurrent
+    /// is required: clearing first opens a window where a concurrent
     /// `POST .../turns` can reserve the freed slot and snapshot the *previous*
     /// turn's history — losing this one from the next turn's transcript. With
     /// the core written first, whoever wins the freed slot reads settled

@@ -2,7 +2,7 @@
 
 A sibling of the run path's ``_secure_exec_with_credential_fd``, not a
 widening of it. The run path hard-requires a pinned ``--model`` and recomputes
-the engine posture at the process boundary; both are load-bearing there and
+the engine posture at the process boundary; both are required there and
 neither has any meaning for ``stella init``, so relaxing them to fit a setup
 command would weaken a guard that is doing real work on the path it was
 written for. What this shares instead is every property that is about *the

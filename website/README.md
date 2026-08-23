@@ -145,7 +145,7 @@ Three constraints on that job, each of which has already been paid for once:
 - **It builds on an arm runner.** The instance is a `t4g.medium`. An artifact
   built on x86 passes every test and then fails to load a native module on the
   node, at first request rather than at build.
-- **`environment: production` is load-bearing.** There is no stored AWS key.
+- **`environment: production` is required.** There is no stored AWS key.
   The job exchanges its GitHub OIDC token for a session on the
   `gha-deploy-stella` role, which trusts exactly one subject:
   `repo:macanderson/stella:environment:production`. Deleting that line does not

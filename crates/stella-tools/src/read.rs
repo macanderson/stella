@@ -82,7 +82,7 @@ const MAX_UNCHANGED_READS: u64 = 24;
 /// The refusal [`MAX_UNCHANGED_READS`] produces.
 ///
 /// **Byte-identical across calls by construction** — it names the path and the
-/// file's size, never the running tally. That is load-bearing rather than
+/// file's size, never the running tally. That is required rather than
 /// tidy: this refusal is a `ToolOutput::error`, which loop comparison does not
 /// strip a footer from, so a tally inside it would make every refusal a
 /// different string and leave a model that ignores the ceiling exactly as

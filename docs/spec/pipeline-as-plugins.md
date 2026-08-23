@@ -622,7 +622,7 @@ clauses. `[oracle]`'s command/timeout carried the evidence-gathering process —
 a benchmark run is precisely the workload the in-process bus cannot host, which
 is §6's own argument arriving intact from a completely different plugin. And
 `tamper = "artifact-identity"` transferred with no change of meaning and turned
-out to be load-bearing for a reason nobody designed it for: the recorded
+out to be required for a reason nobody designed it for: the recorded
 baseline is the "before" half of every comparison, so a worker that rewrites
 `benches/baseline.json` wins the budget without touching the code.
 

@@ -6,7 +6,7 @@
 //! # The boundary ruling, on the record (the #615 pattern)
 //!
 //! The observatory reads `.stella`-rooted artifacts and spawns nothing — that
-//! posture is load-bearing, not incidental. Serving real per-turn diffs from
+//! posture is required, not incidental. Serving real per-turn diffs from
 //! the work journal (`~/.stella/work/<workspace-id>.git`) therefore cannot
 //! mean the dashboard reading the bare repo: not by subprocess (`git` would be
 //! a whole new execution surface on a loopback server), and not by linking an

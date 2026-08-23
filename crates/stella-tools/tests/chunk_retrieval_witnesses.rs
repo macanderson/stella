@@ -194,7 +194,7 @@ fn top_scores(graph: &CodeGraph, fingerprint: &str, query: &[f32], floor: f32) -
 }
 
 /// An answer's ranking, one hit per line, for a failure message. A first
-/// keyed run that misses should say what it found instead in the same breath.
+/// keyed run that misses should say what it found instead, in the same message.
 fn render(answer: &Answer) -> String {
     if answer.hits.is_empty() {
         return "    (no hits at all)".to_string();

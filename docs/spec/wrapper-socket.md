@@ -152,7 +152,7 @@ for later stages to read.
 **May not:** run the loop itself, or reach for ambient authority. Every
 capability arrives in the request.
 
-**The invariant-7 constraint, and it is load-bearing.** Contributed context
+**The invariant-7 constraint, and it is required.** Contributed context
 rides as a *volatile* message **after** the byte-stable system-prompt prefix,
 never inside it. Prompt-cache hits are a feature, and a wrapper that could
 inject into the stable prefix would make every installed plugin a cost
@@ -333,7 +333,7 @@ host  → { "result": 1, "ok": { "frames": [ … ] } }
 plugin→ { "point": "before_turn", "body": { "context": [ … ] } }     ← ends it
 ```
 
-### What this does not change, and the reasons are the load-bearing part
+### What this does not change, and the reasons are decisive
 
 - **No ambient authority.** The plugin does not retrieve; it *asks*, and the
   host performs the retrieval, applies the gate, and returns only what the

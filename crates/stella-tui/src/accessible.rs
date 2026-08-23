@@ -25,7 +25,7 @@
 //!    views get a label-value text rendering (`ui.accessible`, read by the
 //!    view modules).
 //!
-//! The load-bearing invariant lives here rather than in the shell, because it
+//! The invariant this module exists to hold lives here rather than in the shell, because it
 //! is the one that is easy to get wrong and impossible to see: **the flush
 //! counter may only advance when `insert_before` actually wrote.** That call
 //! is a silent no-op on any non-inline viewport, so advancing the counter
@@ -165,7 +165,7 @@ pub struct Scrollback {
     last_lane: Option<AgentId>,
     /// Whether the inline viewport was actually obtained.
     ///
-    /// The load-bearing flag, and deliberately not "is accessible mode on":
+    /// The required flag, and deliberately not "is accessible mode on":
     /// `insert_before` is a silent no-op on any other viewport, so a session
     /// that asked for accessible mode and did not get an inline viewport must
     /// flush nothing at all rather than advance a counter against a write that

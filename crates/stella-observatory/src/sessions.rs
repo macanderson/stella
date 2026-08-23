@@ -70,7 +70,7 @@ fn registry_dir() -> PathBuf {
 /// bargain `sent_context`'s reconstruction fold takes: this crate re-reads
 /// artifacts instead of linking the crates that write them (see the crate
 /// README's acknowledged-copies paragraph). The semantics being copied are
-/// load-bearing: a pid that does not fit `pid_t` must read as dead — an `as`
+/// required: a pid that does not fit `pid_t` must read as dead — an `as`
 /// cast would wrap it negative, and `kill(-N, 0)` probes process *group* N,
 /// which can spuriously report alive.
 pub(crate) fn pid_alive(pid: u32) -> bool {

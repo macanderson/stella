@@ -173,8 +173,8 @@ pub(super) fn event_sender_for_run(
 /// that ordered it after the first stage would misdescribe when it entered.
 /// The stage boundary is here at all because the engine emits none —
 /// `StageKind` is the run owner's vocabulary, not the loop's (#3416) — and it
-/// lives in this module rather than at the call site because `agent.rs` is a
-/// god file closed to growth.
+/// lives in this module rather than at the call site because `agent.rs` sits
+/// close to the 1500-line ratchet.
 ///
 /// `withheld` is carried in rather than surveyed here for the same reason
 /// `recall_event` is: the answer exists long before this channel does, and

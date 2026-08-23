@@ -1,4 +1,3 @@
-
 use super::*;
 
 fn temp_credentials_path(name: &str) -> PathBuf {

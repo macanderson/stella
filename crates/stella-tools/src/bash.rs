@@ -1140,7 +1140,7 @@ mod tests {
         );
     }
 
-    /// The warning's load-bearing claim: work under the drifted target is not
+    /// The warning's required claim: work under the drifted target is not
     /// collected. An agent that read only "the graph doesn't cover it" would
     /// reasonably `cd` anyway.
     #[tokio::test]

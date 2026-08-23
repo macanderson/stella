@@ -408,7 +408,7 @@ def _discovered() -> Iterator[tuple[str, str]]:
 def _install(uv: str, venv: Path, version: str, timeout: float) -> None:
     """Build `venv` and put exactly ``harbor==version`` in it.
 
-    ``--relocatable`` is load-bearing rather than tidy: :func:`provision`
+    ``--relocatable`` is required rather than tidy: :func:`provision`
     renames this directory into place when it is finished, and uv's ordinary
     console scripts hard-code the interpreter path they were created at, so a
     moved virtualenv's ``harbor`` would be a file that exists and cannot run.

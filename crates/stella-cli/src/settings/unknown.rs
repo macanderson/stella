@@ -515,7 +515,7 @@ pub(super) const TOML_AGENTS_FIELDS: &[&str] = &[
     //
     // That is the worst shape this divergence can take. The two vocabularies
     // are deliberately separate (a JSON-only key must not look valid in TOML
-    // and vice versa), which makes every intentional difference load-bearing
+    // and vice versa), which makes every intentional difference required
     // and every accidental one invisible: nothing distinguishes "renamed on
     // purpose" from "forgotten" except a human reading both lists.
     // `AgentsSection` is now destructured against this one in

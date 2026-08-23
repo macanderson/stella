@@ -742,7 +742,7 @@ fn merge_rungs(
 /// that a reader who cannot tell a complete answer from a partial one stops
 /// looking — applies to coverage exactly as it does to length.
 ///
-/// The "not a random sample" sentence is the load-bearing one. Embedding fills
+/// The "not a random sample" sentence is the decisive one. Embedding fills
 /// in change-recency order (`stella_graph::vectors::pending`), so a partial
 /// index is not a uniform thinning of the tree; it is a prefix of it, and a
 /// caller who assumes otherwise will read a miss as evidence of absence.

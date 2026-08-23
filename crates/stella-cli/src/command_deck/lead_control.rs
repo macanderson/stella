@@ -87,7 +87,7 @@ impl LeadPause {
     /// stale control that must read as a no-op, so it is dropped rather than
     /// reported.
     ///
-    /// The status emitted here is load-bearing, not decoration: `p` is a
+    /// The status emitted here is required, not decoration: `p` is a
     /// *toggle* resolved against the row's current status, so a pause that
     /// parked the turn without painting the row would leave the next `p`
     /// sending Pause again — a lane the user could park and never release.

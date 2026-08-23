@@ -243,7 +243,7 @@ impl schemars::JsonSchema for StageName {
 mod tests {
     use super::*;
 
-    /// `ALL` is a hand-written array, and it became load-bearing the moment
+    /// `ALL` is a hand-written array, and it became essential the moment
     /// the schema stopped enumerating the twelve: the wire-contract corpus
     /// samples stage kinds *from it*, so a kind missing here is a kind nothing
     /// proves against the committed schema.

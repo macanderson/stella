@@ -198,7 +198,7 @@ vocabulary — §4); estimates (measured, §2); severity (a defect is a defect;
 severity is a routing decision the policy makes from provider fields).
 
 Anything a customer needs that is not in this struct is reachable through the
-provider's field map as opaque data, and is never load-bearing for control
+provider's field map as opaque data, and is never required for control
 flow. **If Stella branches on it, it belongs in this struct. If Stella only
 passes it through, it does not.**
 
@@ -349,7 +349,7 @@ without waiting for a Stella release.
 
 ### 4.5 The built-ins become manifests
 
-The design's load-bearing consequence: **GitHub, Linear, and Jira ship as
+The design's required consequence: **GitHub, Linear, and Jira ship as
 default manifests, not as special code paths.** They are embedded with
 `include_str!` the way seed skills already are (L-L2), and a workspace
 manifest of the same name shadows the shipped one.
@@ -669,7 +669,7 @@ makes the process something the agent cannot finish without.**
 ## 10. New failure modes, and what mitigates them
 
 Any design that makes agents file issues will make agents file too many
-issues. These are load-bearing, not caveats.
+issues. These are required, not caveats.
 
 ### 10.1 Backlog inflation
 

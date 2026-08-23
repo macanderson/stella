@@ -293,7 +293,7 @@ fn retirement_never_deletes_the_record() {
     sweep(&store, &[failing("nod_a")], AT);
 
     // Retirement writes one event and touches nothing else. The ledger is
-    // append-only at the database, so this is belt and braces — but "never
+    // append-only at the database, so this is checked twice — but "never
     // physically deletes" is a gate criterion and deserves its own assertion.
     let events = store
         .records_of_kind_in_append_order(

@@ -130,7 +130,7 @@ const LIVE_MEMORY_HASHES: &str = "temp.context_compact_live_memory_hashes";
 /// An `embedding` row is orphaned when its content hash appears on no `node`
 /// row **in any state** and matches no live `memory` revision.
 ///
-/// "In any state" — no `superseded_at` filter — is the load-bearing part. A
+/// "In any state" — no `superseded_at` filter — is the required part. A
 /// forgotten memory's node still carries its hash, and `stella memory restore`
 /// must find that node's vector still there; filtering to live nodes would make
 /// a forget-then-compact silently destroy the vector a restore needs, turning a

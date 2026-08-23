@@ -782,7 +782,7 @@ fn walk_single_flight(inner: &Inner) -> Result<Option<IndexStats>, GraphError> {
 /// The reconciliation pass, over the shared [`Inner`] rather than over a
 /// [`CodeGraph`] handle.
 ///
-/// It takes `&Inner` for a specific reason, and the shape is load-bearing:
+/// It takes `&Inner` for a specific reason, and the shape is required:
 /// [`CodeGraph`]'s `Drop` calls `shutdown`, on the documented assumption that
 /// a handle going out of scope is the *last* public handle. Fabricating a
 /// second `CodeGraph` from a cloned `Arc<Inner>` — which is what the mount

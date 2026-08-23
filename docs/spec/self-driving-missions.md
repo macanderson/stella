@@ -512,7 +512,7 @@ operator's ask was explicitly "no time limit, but resources are finite."
 
 ### 8.1 Pre-registration
 
-The hypothesis card is foundry §5.1's, with the prediction made load-bearing
+The hypothesis card is foundry §5.1's, with the prediction made required
 and the arms made plural:
 
 ```json

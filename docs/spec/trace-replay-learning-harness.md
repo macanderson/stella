@@ -218,7 +218,7 @@ Per turn, in order:
   runtime.
 - **Two replays of one trace produce byte-identical summaries, and those
   summaries carry the trace's own instants.** This is assertion 8, not a
-  comment — and the second clause is load-bearing, not emphasis.
+  comment — and the second clause is required, not emphasis.
 
   Agreement alone is not evidence of determinism: two replays sharing one
   ambient clock agree with each other while agreeing with nothing. Measured, not

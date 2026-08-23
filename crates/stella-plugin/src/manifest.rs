@@ -113,7 +113,7 @@ impl std::fmt::Display for Participation {
 /// either edge — and turns "keep the two sets identical" from a review
 /// obligation into a fact the compiler enforces.
 ///
-/// **The PascalCase is load-bearing, and the casing split from
+/// **The PascalCase is required, and the casing split from
 /// [`Participation`] is deliberate.** These five strings are not this
 /// crate's to choose: `"PreToolUse"` is already what a user types in
 /// `.stella/settings.json` to register a shell hook (README.md §Lifecycle
@@ -1255,7 +1255,7 @@ mod tests {
     /// capabilities through a `[driver]` block that the `Participation` ladder
     /// neither grants nor gates.
     ///
-    /// The load-bearing assertion is the first one: `participation = "none"` —
+    /// The required assertion is the first one: `participation = "none"` —
     /// the honest grade for a plugin that never runs inside a turn — used to
     /// make every capability unreachable, and that is the defect the phase
     /// exists to fix. The rest pin the asymmetry deliberately: no grade is

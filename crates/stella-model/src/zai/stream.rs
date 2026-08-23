@@ -115,14 +115,14 @@ pub(super) fn tool_call_input(
 /// Reasoning-only fallback: whether to surface the chain-of-thought as the
 /// answer text so the turn is never blank. Shared by both delivery paths.
 ///
-/// `calls.is_empty()` is load-bearing, not defensive. A tool-calling turn
+/// `calls.is_empty()` is required, not defensive. A tool-calling turn
 /// legitimately has empty `content` — that is the *normal* shape for every
 /// Anthropic model routed through OpenRouter, which streams `content: ""`
 /// alongside `reasoning` and the tool call. Without this guard the fallback
 /// fired on essentially every reasoning-model tool turn and published the
 /// model's private chain-of-thought as its user-visible answer. A turn that
 /// called a tool is not blank, so it never needs the fallback.
-/// `!truncated` is the second load-bearing guard. "Otherwise blank" holds
+/// `!truncated` is the second required guard. "Otherwise blank" holds
 /// for a model that FINISHED thinking and wrote no answer, not one CUT OFF
 /// mid-thought — `stella_core::driver::truncation` handles that case and can
 /// only recognize it while `text` is still empty. Promoting anyway published

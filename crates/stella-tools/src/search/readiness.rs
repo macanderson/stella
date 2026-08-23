@@ -54,7 +54,7 @@ pub struct IndexReadiness {
     pub unindexed_files: usize,
     /// True once the background pass has stopped, whatever it achieved.
     ///
-    /// The load-bearing field. A hold that outlives the pass filling it is not
+    /// The field the gate depends on. A hold that outlives the pass filling it is not
     /// a gate, it is a wedge: an unconfigured embedder, a workspace nobody
     /// indexed, an embedding backend that is down — each leaves a permanently
     /// behind index, and each must leave a perfectly usable agent.

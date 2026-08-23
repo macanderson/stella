@@ -247,7 +247,7 @@ def read_json(stream):
 
 
 def write_json(stream, document):
-    """One JSON document, on one line, flushed — the flush is load-bearing,
+    """One JSON document, on one line, flushed — the flush is required,
     see `stella-research/main.py::write_json`."""
     stream.write(json.dumps(document) + "\n")
     stream.flush()

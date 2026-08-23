@@ -59,7 +59,7 @@ use serde::{Deserialize, Serialize};
 
 /// A tracker-scoped identifier for one issue, as the tracker spells it.
 ///
-/// A string rather than a number, and that is the load-bearing choice: GitHub
+/// A string rather than a number, and that is the necessary choice: GitHub
 /// counts (`1234`), Jira does not (`STELLA-1234`), Linear does not
 /// (`ENG-42`). A numeric key would fit exactly one tracker and force every
 /// other provider to fabricate one — and a fabricated key cannot be handed
@@ -354,7 +354,7 @@ pub trait IssueProvider: Send + Sync {
     /// confined to its own adapter; a caller that spelled it first would hand
     /// every provider a string it has to un-map before it can branch.
     ///
-    /// The distinction is load-bearing rather than cosmetic: a regression sweep
+    /// The distinction is required rather than cosmetic: a regression sweep
     /// re-checks what was **completed**, and re-running a witness for something
     /// declined as stale would be measuring nothing. A provider whose tracker
     /// has no such distinction maps several canonical values onto its one

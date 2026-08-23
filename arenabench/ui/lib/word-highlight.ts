@@ -270,7 +270,7 @@ export function highlight(oldLine: string, newLine: string): [Span[], Span[]] {
  * Pairing is positional: the `k`th removal is compared with the `k`th addition,
  * and unpaired lines carry no word spans. A port of
  * `crates/stella-transcript/src/file_diff.rs::emit_change_block` — the pairing
- * is the load-bearing half, because a "smarter" similarity match that
+ * is the half that must stay correct, because a "smarter" similarity match that
  * highlighted line 1 against line 3 would be correct and unreadable.
  */
 export function highlightChangeBlock(

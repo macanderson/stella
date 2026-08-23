@@ -43,7 +43,7 @@
 //! scheduler unions with the read-only set: children mutate nothing (they
 //! run behind `ReadOnlyTools` with `write_access` hard-coded off), so
 //! sibling spawns have no observable ordering, and each child's budget is
-//! carved before it runs. The flag itself stays `false` — it is load-bearing
+//! carved before it runs. The flag itself stays `false` — it is required
 //! for the nesting fence and for permission surfaces, which is exactly why
 //! concurrency needed its own claim.
 //!
@@ -356,7 +356,7 @@ impl Tool for SpawnSubAgent {
 /// was a channel to carry them.
 ///
 /// That channel is [`ToolOutput::Ok`]'s `data`, which is specified to leave the
-/// content bytes the model reads untouched. That property is load-bearing here
+/// content bytes the model reads untouched. That property is required here
 /// rather than incidental: these values move on every call, and the loop
 /// detector compares tool-output bytes, so putting a step count or a cost in
 /// `content` would make two identical delegations look different to it. It is

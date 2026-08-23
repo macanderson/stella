@@ -73,7 +73,7 @@ const LEGACY_DOT_SELF_DRIVING_DIR: &str = ".fullauto";
 /// defaults, in one list so a caller asking "is any of this redirected?"
 /// cannot answer with a stale subset.
 ///
-/// Exact in **both** directions, and both are load-bearing. A redirecting
+/// Exact in **both** directions, and both directions are required. A redirecting
 /// variable missing from the list lets [`any_override_set`] answer `false`
 /// while resolution points elsewhere, which is how real user data gets moved
 /// out from under an override. A name on the list that redirects *nothing*
@@ -121,7 +121,7 @@ pub fn resolve_stella_home(
 /// notifications, enterprise spool, catalog): `$STELLA_DATA_DIR`, else
 /// [`stella_home`], else the current directory.
 ///
-/// The current-directory fallback is deliberate and load-bearing: a machine
+/// The current-directory fallback is deliberate and required: a machine
 /// with no discoverable home must still get a usable path rather than a
 /// panic, because every caller of this is on a best-effort telemetry or
 /// registry path that has no business failing a turn.

@@ -263,7 +263,7 @@ fn print_probes(registry: &Registry, cache: &SweepCache) {
 /// Whether this entry is out of selection because somebody **retired** it, rather
 /// than because something about it is wrong.
 ///
-/// Both halves are load-bearing. The status half is the same cut the loader itself
+/// Both halves are required. The status half is the same cut the loader itself
 /// makes (`records::registry::blocking_reason` refuses any non-`active` status), so
 /// `retracted` is exempt for the same reason `archived` is: a lifecycle status is a
 /// decision an author recorded, not a defect a reviewer must chase. The findings half
@@ -273,7 +273,7 @@ fn print_probes(registry: &Registry, cache: &SweepCache) {
 ///
 /// The tradeoff this accepts, stated out loud: editing `status` is now a way to take
 /// a refuted record out of the check. It is also a way to take it out of the prompt
-/// entirely — the loader stops selecting it in the same breath — so the edit cannot
+/// entirely — the loader stops selecting it too — so the edit cannot
 /// silence the check while keeping the claim steering, and it lands as a reviewable
 /// diff to a tracked governance file.
 fn is_retired(entry: &Entry) -> bool {

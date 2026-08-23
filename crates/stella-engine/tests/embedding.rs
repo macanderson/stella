@@ -30,7 +30,7 @@
 //! facade, which is exactly how the gap survived: `src/tests.rs` did.
 //!
 //! So this file compiles only while the facade is complete — building it *is*
-//! half the assertion. The other half is behavioral and load-bearing: both
+//! half the assertion. The other half is behavioral and required: both
 //! scenarios drive a turn that takes a real `Continue` step, which is the only
 //! way the engine reaches `persist_checkpoint` (`driver/drive.rs`) and the only
 //! way a re-query is consulted with tool evidence in its signal. A scenario
@@ -256,7 +256,7 @@ fn completed_text(outcome: TurnOutcome) -> String {
 /// only what `stella-engine` exports — then reads back the resume points its
 /// own [`CheckpointSink`] was handed.
 ///
-/// The checkpoint half is the load-bearing part (#3716). `persist_checkpoint`
+/// The checkpoint half is the required part (#3716). `persist_checkpoint`
 /// is reached only after a `Continue` step (`driver/drive.rs`), so the turn is
 /// scripted to take exactly one: tool call, dispatch, final text. That yields
 /// exactly one resume point, and `discard_checkpoint` — which runs on every

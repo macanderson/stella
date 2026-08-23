@@ -17,7 +17,7 @@ use super::{Confidence, RecordValidationError};
 ///
 /// These are the same three observations the Context Graph Protocol defines for
 /// retrieval attribution (`SPEC.md` §14, A2: `selected`, `rendered`, `cited`),
-/// spelled identically — and that identity is load-bearing enough to be gated by
+/// spelled identically — and that identity is required enough to be gated by
 /// a test (`stella-cli`'s
 /// `the_ledger_names_the_same_three_attribution_observations_as_the_protocol`,
 /// the only place that sees both this crate and `contextgraph-types`).

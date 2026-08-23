@@ -6,7 +6,7 @@
 # (`stella_runtime::wrapper::ChildTurns`, wired into the `stella run` driver's
 # `bind_installed`) a plan plugin could contribute a prompt and nothing else.
 # That host is wired for this door now, so this plugin asks for the one thing
-# #3562 named as load-bearing: one bounded turn at a declared `plan` role
+# #3562 named as required: one bounded turn at a declared `plan` role
 # intent, and nothing more.
 #
 # What it does, at the one stage of a turn where it has anything honest to

@@ -69,7 +69,7 @@ fn read_project_tier(root: &Path) -> Vec<super::roster::InstalledPlugin> {
 /// **Witness (c).** install → list → remove round-trips, and the removed
 /// plugin's hooks stop being routed.
 ///
-/// "Stop being routed" is the load-bearing half: `permits_hook` is the
+/// "Stop being routed" is the half this test exists to prove: `permits_hook` is the
 /// authoritative filter and `hook_routes` is the only thing that consults it,
 /// so a plugin absent from that list cannot be dispatched no matter what its
 /// process registers for.
@@ -315,7 +315,7 @@ fn an_untrusted_projects_plugins_do_not_load_are_not_listed_and_dispatch_no_hook
 /// plugin: it is not loaded, not listed, dispatches no hook, and `remove`
 /// reports it as not installed instead of erroring on it.
 ///
-/// The route assertion is the load-bearing one — a route is an `argv` a host
+/// The route assertion is the decisive one — a route is an `argv` a host
 /// spawns, with `${plugin_dir}` interpolated to the *link* path, so a test
 /// asserting only on the roster would pass against a build that still handed
 /// out dispatchable commands into a tree this CLI never copied. `install` has
@@ -594,7 +594,7 @@ fn plant_named(plugins_dir: &Path, dir_name: &str, manifest_name: &str) {
 ///
 /// Installing at both scopes is the ordinary case, not a contrived one:
 /// pinning a workspace to a different build of a globally installed plugin is
-/// the reason project scope exists. The load-bearing assertion is
+/// the reason project scope exists. The assertion that proves the fix is
 /// `hook_routes` **after** the removal — a `remove` that deletes the project
 /// copy, prints "removed `vera` (project)" and returns `Ok` has told the user
 /// a third party's process is gone while the user-tier copy is still

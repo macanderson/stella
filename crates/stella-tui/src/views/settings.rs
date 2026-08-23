@@ -91,7 +91,7 @@ impl SettingsPane {
 
     /// The pane to the left, or `None` at the first.
     ///
-    /// **Does not wrap**, and the `None` is load-bearing rather than tidy: the
+    /// **Does not wrap**, and the `None` is required rather than tidy: the
     /// key handler returns it unhandled so ← at the left edge keeps falling
     /// through to whatever handled it before, exactly as the two hard-coded
     /// guards it replaced did.

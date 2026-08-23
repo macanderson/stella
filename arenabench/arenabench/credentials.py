@@ -161,7 +161,7 @@ def resolve_launch_credentials(spec: MatchSpec) -> tuple[MatchSpec, list[str]]:
     to tell them apart (#2654). One implementation is the fix; this function
     is it.
 
-    Order and gap-filling are load-bearing and documented on each layer: a
+    Order and gap-filling are required and documented on each layer: a
     seat's own ``.env`` outranks the ambient environment, which outranks the
     saved credential file, which outranks this machine's Claude login. Returns
     the resolved spec and one note per seat filled from the local login, for a
