@@ -19,6 +19,8 @@
 //! row with no witness is the drift this table exists to stop, so add the
 //! test with the row.
 
+use unicode_width::UnicodeWidthStr;
+
 use crate::deck::DeckTab;
 
 /// Where a binding applies.
@@ -316,6 +318,27 @@ pub const BINDINGS: &[Binding] = &[
 /// The rows for one scope, in table order.
 pub fn in_scope(scope: Scope) -> impl Iterator<Item = &'static Binding> {
     BINDINGS.iter().filter(move |b| b.scope == scope)
+}
+
+/// The cells a surface tabulating these rows pads the key column to: the
+/// widest [`Binding::keys`] in the table.
+///
+/// Derived from the table, never spelled beside it. The `?` sheet padded to a
+/// literal 13 while `ctrl-n / ctrl-p` is 15 cells and `⇞ ⇟ · Home End` is 14,
+/// so those two rows' descriptions began left of every other row's (#4428) —
+/// the drift a second copy of a fact always reaches. A row added here now
+/// moves the column instead of breaking it.
+///
+/// Measured in terminal cells rather than `char`s, because that is what the
+/// column is: `{key:<N}` pads by `char` count, which is a different number
+/// for every wide glyph and happens to agree only for the ASCII rows.
+#[must_use]
+pub fn key_column_width() -> usize {
+    BINDINGS
+        .iter()
+        .map(|b| UnicodeWidthStr::width(b.keys))
+        .max()
+        .unwrap_or(0)
 }
 
 /// The rows the hint row carries for `tab`: the tab's hinted rows, then the
