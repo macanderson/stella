@@ -162,6 +162,79 @@ belongs in a release note, not in a footnote (§11).
 Nothing else calls `host_argv`; the seam is one function reached from one
 place, which is what makes the deletion clean.
 
+### 2.5 The graded-tree confinement does not come back either
+
+`sandbox.rs` was not the last per-command boundary to sit on the `bash`
+spawn. A pair replaced it and was then deleted after it:
+`crates/stella-tools/src/bash/confine.rs` (#2875), a literal audit of the
+command text, and `crates/stella-tools/src/bash/contain.rs` (#2931), a
+kernel-level write ban driven through Seatbelt on macOS and a private
+mount namespace on Linux. Both guarded one thing: the **graded tree** a
+best-of-N candidate delivers its work into by adoption. #3468 asked
+whether they come back, and the answer is no, for the reason §2 gives for
+`STELLA_BASH_SANDBOX` — total confinement of a shell is the boundary the
+whole process sits inside, and this repository ships no such boundary of
+its own.
+
+**What they bought was real.** Each was written after a Terminal-Bench
+trial had already paid for its absence:
+
+- On `log-summary-date-ranges`, a worker script hardcoded a path into the
+  graded tree. The write succeeded, the worker then computed the right
+  answer inside its candidate, the run aborted before adoption, and the
+  grader read the leaked wrong intermediate. A solved task scored zero.
+- On `build-cython-ext`, a worker concluded the graded tree was its own
+  workspace under another name and ran `rm -rf /app/pyknotid`, failing
+  the exact two grader tests.
+
+**Which layer covers each now.** The text-level mistake — a path copied
+out of a task statement, an `rm` aimed at the wrong tree, a redirect into
+a sibling checkout — is covered by `shell_write_audit`
+(`crates/stella-tools/src/bash.rs`), which reads the command the model
+wrote before the spawn and refuses a resolvable write target outside the
+session's scope, with `stella_core::workspace_scope` deciding what that
+scope is. That is `confine.rs`'s job with a caller that always fires:
+every `bash` call goes through it, where `confine.rs` armed only for a
+shell some host had handed a graded-tree path. Everything past what the
+command text resolves to is the container's.
+
+**What is given up.** A text audit cannot survive a computed path, and
+that is not a theoretical hole either. On `video-processing__pBadsUh` a
+worker spelled the graded tree as `chr(47) + 'app'`, read and wrote
+through it five times, and the run's whole output — 126 steps, 53.8
+minutes — was discarded by a post-hoc sealed-bytes detector. `contain.rs`
+was written for that trial specifically, and `shell_write_audit` does not
+stand in for it: the kernel refused the write, so no spelling of the path
+mattered, and nothing in this workspace refuses a write that way now. A
+worker that obfuscates a path, computes one at runtime, or runs a script
+that does either reaches whatever the process can reach — inside a
+container, the container's tree; on a laptop, the laptop. Describing the
+text audit as a replacement for an OS write ban would be the same
+overstatement §2 deleted `sandbox.rs` for making.
+
+`confine.rs`'s other half is given up for a smaller reason: it also
+refused the git operations that rewrite Stella's own `refs/worktree/stella/`
+namespace, which is where `verify_done` pinned a witness baseline. That
+namespace no longer appears anywhere in `crates/`: the staged pipeline
+that owned it went in the same deletion (#3865,
+`doc:pipeline-as-plugins` §7). A verification plugin that reintroduces a
+scorer's own refs owns protecting them on its side of the wrapper socket.
+
+**Why restoring them is not on the table.** Both modules were armed from
+one production site: `crates/stella-cli/src/candidate_ws.rs` set
+`RegistryOptions::shell_confinement` to a `ShellConfinement::graded_tree`
+once it knew a distinct graded tree existed, and the registry built the
+shell through `Bash::confined_to`. That file and the rest of
+`crates/stella-cli/src/candidate_ws/` were deleted in `a6d3db4f6`
+(#3852); `ToolRegistry::new(root)` is the whole constructor today, and
+nothing left in the tree can say which tree is graded, because nothing
+declares one. Porting the 1,456 lines back would land a boundary that
+never arms, which is the unwired code AGENTS.md § "Nothing left behind"
+exists to stop. A host that later mounts a graded tree it does not want
+written may reopen this: the claim here is that per-command confinement
+is the wrong layer for it, not that the two regressions above were
+imaginary.
+
 ---
 
 ## 3. Where to cut
