@@ -24,7 +24,6 @@ use super::*;
 /// execution row serves `child_turn`, and every child turn it runs lands on a
 /// slot no round of that door will ever claim.
 ///
-/// Both halves fail before this change, for the two reasons the issues name.
 /// `stella goal` and `stella fleet` each built `WrapperHost::recalling(..)`
 /// alone, so this call could only be answered `Unavailable` — there was no
 /// assembly to reach a plane through. And the plane pinned every child turn to

@@ -464,6 +464,10 @@ pub async fn run_goal_cmd(
     goal: &str,
     budget_limit: Option<f64>,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
+    // `--test-command`: the oracle a bound wrapper's `[oracle]` observes its
+    // flip with (#3835). Refused before this function on the raw arm, where
+    // there is no oracle to arm.
+    test_command: Option<&str>,
 ) -> Result<(), crate::failure::CliFailure> {
     // `Plugin` reads as `Raw` for every branch below except the final
     // dispatch: the wrapped arm builds the same system prompt, the same
@@ -497,6 +501,29 @@ pub async fn run_goal_cmd(
         crate::wrapper_plugin::reject_arbiter_wrapper_on_goal(resolved)
             .map_err(crate::failure::CliFailure::from)?;
     }
+    // Pinned *before* the first round, which is the whole content of the
+    // tamper claim, and pinned exactly once for the run rather than refreshed
+    // per round (#3835).
+    //
+    // Re-pinning would read as the more careful choice and is the unsafe one.
+    // What the watch covers is the artifacts the test command names — the
+    // witness the flip is observed against, not whatever files a round
+    // happened to touch — and those do not legitimately change while the loop
+    // runs. A baseline taken at the top of round 3 would vouch for a witness
+    // the worker rewrote in round 2, which is precisely the laundering the
+    // watch exists to refuse. So the finding is sticky by design: once a
+    // witness has moved under the run, no later round earns a `Clean`.
+    //
+    // The same breath as the resolve above, and for the same reason: a
+    // `--test-command` the host's parser refuses must stop the run here, not
+    // after it is paid for.
+    let candidate = match &resolved {
+        Some(_) => Some(
+            crate::wrapper_candidate::grant_shared_tree(&cfg.workspace_root, test_command)
+                .map_err(crate::failure::CliFailure::from)?,
+        ),
+        None => None,
+    };
     let provider = build_provider(cfg)?;
     let registry: std::sync::Arc<ToolRegistry> =
         std::sync::Arc::new(crate::write_dirs::registry_for(cfg));
@@ -595,7 +622,10 @@ pub async fn run_goal_cmd(
     // it empty for the same reason `run_raw_one_shot`'s does: those turns are
     // the plugin's to observe through the wrapper socket.
     let mut rounds: Vec<TurnFriction> = Vec::new();
-    let outcome = if let Some(bound) = &bound {
+    // Both are set together above, so the mismatched pairs are unreachable;
+    // matching the tuple keeps that visible rather than unwrapping a grant on
+    // the strength of having checked the wrapper — `run_raw_one_shot`'s shape.
+    let outcome = if let (Some(bound), Some(candidate)) = (&bound, &candidate) {
         goal_wrapped::run_goal_wrapped_turn(
             &*provider,
             base_tools,
@@ -612,6 +642,7 @@ pub async fn run_goal_cmd(
             recall_event,
             memory.as_mut(),
             bound,
+            candidate,
         )
         .await
     } else {

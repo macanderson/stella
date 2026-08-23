@@ -1153,9 +1153,20 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             goal,
             no_pipeline,
             pipeline,
+            test_command,
         } => {
             let pipeline_choice =
                 wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
+            // The raw goal loop runs no oracle of its own, so a
+            // `--test-command` with no `--pipeline` names a check nothing
+            // would ever run — refused rather than dropped, the same rule
+            // `stella run` applies to the same flag.
+            wrapper_plugin::reject_verification_flags_without_pipeline(
+                pipeline_choice,
+                test_command.as_deref(),
+                false,
+                false,
+            )?;
             let goal = prompt_source::resolve(
                 goal,
                 std::io::stdin().is_terminal(),
@@ -1177,7 +1188,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             }
             signals::block_on_interruptible(
                 rt()?,
-                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, pipeline_choice),
+                agent::run_goal_cmd(
+                    &cfg,
+                    &goal,
+                    cli.globals.spend_limit,
+                    pipeline_choice,
+                    test_command.as_deref(),
+                ),
             )?;
         }
         Command::Fleet {
@@ -1280,6 +1297,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &goal,
                     cli.globals.spend_limit,
                     wrapper_plugin::PipelineChoice::Raw,
+                    // `monitor`'s completion criterion is the goal verifier's,
+                    // and it names no wrapper — so there is no oracle here for
+                    // a test command to arm.
+                    None,
                 ),
             )?;
         }
