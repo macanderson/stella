@@ -23,6 +23,19 @@ pub struct GraphSnapshot {
     /// `stella-tui` cannot reach the graph store itself (it renders data given
     /// to it); the caller fills it from `stella_graph::CodeGraph::all_files`.
     pub files: Vec<String>,
+    /// Wall clock the caller spent answering this query, in milliseconds.
+    ///
+    /// `None` for a snapshot nobody timed — a synthesized demo, a scenario
+    /// fixture — and the query bar then draws nothing rather than a zero,
+    /// because "0ms" and "not measured" are different statements (#4335).
+    ///
+    /// Measured by the caller because only the caller knows what the query
+    /// cost: the deck cannot see the index at all. The driver's
+    /// `agent::graph_snapshot_focus` times its whole round-trip — opening
+    /// `codegraph.db`, reading the neighborhood and the file list, closing it
+    /// again — which is the number a reader is asking about when they wonder
+    /// whether the tab is slow.
+    pub query_ms: Option<u64>,
 }
 
 /// One node — a symbol or file. Cited by human label, never a raw UUID (L-C4).
@@ -84,6 +97,7 @@ mod tests {
             nodes: Vec::new(),
             edges: Vec::new(),
             files: files.iter().map(|s| s.to_string()).collect(),
+            query_ms: None,
         }
     }
 

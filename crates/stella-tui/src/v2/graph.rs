@@ -275,6 +275,7 @@ mod tests {
                 edge(2, 0, "imports"),
             ],
             files: Vec::new(),
+            query_ms: None,
         }
     }
 

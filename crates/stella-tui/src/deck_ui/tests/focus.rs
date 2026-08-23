@@ -99,6 +99,29 @@ fn ctrl_e_and_ctrl_k_open_the_sessions_and_context_overlays() {
     assert!(!ui.context_open, "q closes it like every overlay");
 }
 
+/// **The witness for `ctrl-a` (#4368).** The SUB-AGENTS overlay's own tests
+/// call `subagents::open` directly, so the chord the keymap advertises had
+/// nothing pressing it. It opens from any tab, and — unlike the `↓` route
+/// beside it — from a composer with a draft in it, because a ctrl-chord is
+/// never the next character of a prompt.
+#[test]
+fn ctrl_a_opens_the_sub_agents_overlay_from_any_tab() {
+    let model = lead_and_lane();
+    let mut ui = ready_ui();
+    ui.tab = DeckTab::Files;
+    ui.composer.load("half a prompt".to_string());
+
+    handle_deck_key(ctrl('a'), &model, &mut ui);
+    assert!(ui.subagents.open, "ctrl-a opens SUB-AGENTS from any tab");
+    assert_eq!(
+        ui.composer.buffer(),
+        "half a prompt",
+        "and left the draft alone"
+    );
+    handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert!(!ui.subagents.open);
+}
+
 /// **The witness for `⌫`.** At an opened lane it returns to the dispatcher
 /// and sends nothing — the lane keeps running; at the lead, with nothing to
 /// peel, it is ignored rather than reaching the turn interrupt.

@@ -242,6 +242,7 @@ async fn main() -> std::io::Result<()> {
                         }],
                         edges: vec![],
                         files: demo_graph().files,
+                        query_ms: None,
                     }));
                 }
                 // The installed-agents manager needs the real driver (disk +

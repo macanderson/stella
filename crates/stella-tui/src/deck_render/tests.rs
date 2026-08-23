@@ -411,6 +411,7 @@ fn ui_with_graph_picker(n: usize) -> DeckUi {
         }],
         edges: vec![],
         files,
+        query_ms: None,
     });
     ui.graph_picker_open = true;
     ui

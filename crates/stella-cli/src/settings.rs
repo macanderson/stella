@@ -86,6 +86,13 @@ pub use engine::*;
 pub use merge::ToolScopePolicies;
 pub(crate) use steering::SteeringCeiling;
 pub(crate) use withheld::WithheldNotice;
+// Production resolves this on the `Settings::load` path and nowhere else. It
+// is exported for tests outside this module so a fixture builds the notice
+// the loader would have built, rather than a second one from its own survey
+// of the same directories (#4463's deck witness). `#[cfg(test)]` rather than
+// an `#[allow]`: the compiler then says so the day production wants it.
+#[cfg(test)]
+pub(crate) use withheld::withheld as withheld_notice;
 
 /// One `providers.<id>` entry. Every field is optional at the schema level;
 /// which ones are *required* depends on whether the id names a built-in

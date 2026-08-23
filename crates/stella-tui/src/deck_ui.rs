@@ -1891,7 +1891,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // tabs: they quick-pick ask-user answers and must be typeable as the
     // first character of a prompt). The slash popup claims Tab first —
     // completion beats tab-cycling while the menu is open.
-    let slash = slash_matches(ui);
+    let slash = slash_matches(model, ui);
     if slash.is_empty() {
         match key.code {
             KeyCode::Tab => {
@@ -2090,8 +2090,9 @@ fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckA
 
 /// The names of the slash commands matching the composer, or empty when the
 /// popup is inactive.
-fn slash_matches(ui: &DeckUi) -> Vec<String> {
-    slash_popup_matches(&ui.composer, &ui.slash_commands)
+fn slash_matches(model: &WorkspaceModel, ui: &DeckUi) -> Vec<String> {
+    let state = crate::deck_render::palette_state(model, ui);
+    slash_popup_matches(&ui.composer, &ui.slash_commands, &state)
 }
 
 /// Slash-popup navigation: ↑/↓ choose, Tab completes into the buffer, Enter
