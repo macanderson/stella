@@ -326,9 +326,11 @@ fn the_shipped_manifest_declares_before_turn_and_one_bounded_child_turn() {
         .expect("the stage this plugin exists for");
     assert_eq!(
         plan_stage.condition.as_deref(),
-        Some("plans"),
-        "the built-in stage only runs when triage's Signal::Plans is true, \
-         and this is that boolean read exactly"
+        None,
+        "the stage this plugin exists for is unconditional (#3547): it carried \
+         `plans` — the built-in's gate on triage's Signal::Plans — and no \
+         shipping host runs a triage stage, so `plans` was published false \
+         unconditionally and this plugin was inert end to end"
     );
     assert_eq!(
         manifest.runtime.as_ref().expect("[runtime]").env,

@@ -351,13 +351,20 @@ impl ResolvedAttempt {
         invocation_root: &std::path::Path,
         dispatcher: std::sync::Arc<crate::subagent::SessionSubAgents>,
     ) -> Result<AttemptWrapper, String> {
-        let host = crate::wrapper_plugin::round_driver_host(
-            invocation_root,
-            self.resolved.manifest(),
-            dispatcher,
-        );
+        // One host per member of the selection, built from that member's own
+        // manifest: the child-turn plane reads the manifest's `[roles]` and
+        // `[loop] max_calls`, so a shared one would let a second plugin name
+        // the first's role intents (`ResolvedWrapper::serving`, #4094).
+        let bound = self.resolved.serving(|manifest| {
+            crate::wrapper_plugin::round_driver_host(
+                invocation_root,
+                manifest,
+                std::sync::Arc::clone(&dispatcher)
+                    as std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+            )
+        })?;
         Ok(AttemptWrapper {
-            bound: self.resolved.serving(host)?,
+            bound,
             candidate: self.candidate,
             task: self.task,
         })

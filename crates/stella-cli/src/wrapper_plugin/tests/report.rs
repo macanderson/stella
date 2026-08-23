@@ -63,7 +63,7 @@ fn a_scoped_report_names_its_task_on_every_line() {
         Some("build-parser"),
         OutputFormat::Text,
         &report,
-        &wrapper.gate,
+        &wrapper.gates,
         &spends,
         &fanouts,
     );
@@ -92,7 +92,7 @@ fn a_scoped_report_names_its_task_on_every_line() {
         None,
         OutputFormat::Text,
         &report,
-        &wrapper.gate,
+        &wrapper.gates,
         &spends,
         &fanouts,
     );
@@ -105,6 +105,52 @@ fn a_scoped_report_names_its_task_on_every_line() {
             "one renderer, one wording — the scope is the only difference"
         );
     }
+}
+
+/// **Witness (#4418).** The candidate sweep's line comes off the same
+/// renderer as every other wrapper line.
+///
+/// It used to format `  ! wrapper: ` by hand at the one call site, which is
+/// harmless on a one-lane door and is the copy that drifts the next time the
+/// marker or the scope tag's position moves. Asserted against
+/// [`report_lines`]' own output rather than against a literal, because a
+/// literal here would be the third copy.
+#[test]
+fn the_candidate_sweep_renders_through_the_shared_wrapper_line() {
+    let leaked = ["/tmp/ws/.stella/candidates/a: still checked out".to_string()];
+
+    let bare = super::sweep_lines(None, &leaked);
+    let roster = roster(vec![installed(WRAPPER_MANIFEST, "/tmp/budget-keeper")]);
+    let wrapper = bound(&roster, "budget-v1", &mut |_| {}).expect("the fixture binds");
+    let faults = super::report_lines(
+        None,
+        OutputFormat::Text,
+        &faulted_report(),
+        &wrapper.gates,
+        &[],
+        &[],
+    );
+    let prefix_of = |line: &str| {
+        line.split_once("wrapper: ")
+            .map(|(head, _)| format!("{head}wrapper: "))
+    };
+    assert_eq!(
+        prefix_of(&bare[0]),
+        prefix_of(&faults[0]),
+        "one marker, one producer"
+    );
+
+    let scoped = super::sweep_lines(Some("build-parser"), &leaked);
+    assert_eq!(
+        scoped[0],
+        bare[0].replace("wrapper: ", "[build-parser] wrapper: "),
+        "and the scope tag follows the marker here too"
+    );
+
+    assert!(
+        super::sweep_lines(None, &[]).is_empty(),
+        "a run that leaked nothing stays silent"
+    );
 }
 
 /// **Witness (#3774).** Which process owes the notice is decided by whether

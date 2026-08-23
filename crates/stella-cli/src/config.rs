@@ -559,11 +559,10 @@ impl Config {
             settings,
             workspace_root,
         )?;
-        cfg.hooks = if crate::enterprise_telemetry::process_free_authority_active() {
-            None
-        } else {
-            settings.hooks.clone()
-        };
+        // The operator's hooks and the installed plugins' routes, folded
+        // once — see `crate::plugin_hooks` for why the fold is here and not
+        // in a settings file.
+        cfg.hooks = crate::plugin_hooks::session_hook_plane(&cfg.workspace_root, settings);
         // The gateway's default posture is applied HERE, after resolution,
         // because it keys off the provider actually picked — not knowable
         // before this point.

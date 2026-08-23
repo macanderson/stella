@@ -847,6 +847,8 @@ fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
     const REFLECT: &str = include_str!("../../agent/reflect.rs");
     const DECK: &str = include_str!("../../command_deck/authoring.rs");
     const FORWARDER: &str = include_str!("../../command_deck/forwarder.rs");
+    const WRAPPED_ONE_SHOT: &str = include_str!("../../wrapper_plugin.rs");
+    const WRAPPED_GOAL: &str = include_str!("../../agent/goal/goal_wrapped.rs");
 
     assert!(
         AGENT.contains("TurnFriction::from_events(&collected)"),
@@ -862,9 +864,27 @@ fn the_reflecting_doors_fold_a_ledger_and_reflect_with_it() {
         .find("pub async fn run_goal_cmd")
         .map_or(GOAL.len(), |offset| door + offset);
     assert!(
-        GOAL[door..next_door].contains("TurnEvidence::with_friction("),
-        "run_raw_one_shot must reflect with the ledger it folded, not \
-         from_transcript's empty one"
+        GOAL[door..next_door].contains("TurnEvidence::with_rounds("),
+        "run_raw_one_shot must reflect with the ledgers it folded, not \
+         from_transcript's empty one — the slice constructor because its
+         wrapped arm drives one turn per hold (#3976)"
+    );
+
+    // **The wrapped arms (#3976).** Both used to leave the slot at its default
+    // and say so in a comment, so a `--pipeline` run's reflection saw no cost,
+    // no wall clock, no retries and no loop firings — the #3946 regression
+    // scoped to one path. The slice above is satisfiable by the raw arm alone,
+    // which is why each wrapped producer is named here too.
+    assert!(
+        WRAPPED_ONE_SHOT.contains("self.friction.push(friction)"),
+        "RawTurnDriver must fold each driven turn's ledger; it runs the turn \
+         through the same `run_turn` every raw door does, so the journal is \
+         reachable and leaving it unread is a choice rather than a limit"
+    );
+    assert!(
+        WRAPPED_GOAL.contains("TurnFriction::per_goal_round(&rendered.events)"),
+        "the wrapped `/goal` arm must split its journal at each round's own \
+         verdict, exactly as the raw arm does"
     );
 
     // The interactive door — one ledger for a plain prompt, a slice of them

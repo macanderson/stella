@@ -39,6 +39,13 @@ pub(super) fn announce_withheld(cfg: &Config, in_tx: &UnboundedSender<Inbound>) 
     let Some(withheld) = cfg.authority.withheld.as_ref() else {
         return;
     };
+    // The same session latch the raw door spends (#4500), so a deck that
+    // later drives a raw turn does not say this twice. Claimed after the
+    // `None` arm above, never before: a session with nothing withheld must
+    // not spend an announcement it was never owed.
+    if !crate::agent::claim_withheld_announcement() {
+        return;
+    }
     let _ = in_tx.send(Inbound::Event {
         agent: LEAD.to_string(),
         event: withheld.event(),
@@ -54,7 +61,11 @@ mod tests {
         Config::for_tests(crate::config::PROVIDERS[0].clone(), "m".to_string())
     }
 
+    /// The session latch [`announce_withheld`] spends is process state
+    /// (`agent::output`), so a test that spends it takes it first — see
+    /// `crate::agent::latch_for_withheld_test`.
     fn drain(cfg: &Config) -> Vec<Inbound> {
+        let _latch = crate::agent::latch_for_withheld_test();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         announce_withheld(cfg, &tx);
         drop(tx);
