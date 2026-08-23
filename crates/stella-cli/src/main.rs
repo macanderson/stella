@@ -146,6 +146,7 @@ mod usage_cmd;
 mod wrapper_candidate;
 mod wrapper_plugin;
 mod wrapper_recall;
+mod wrapper_test_run;
 mod write_dirs;
 
 use std::io::IsTerminal;

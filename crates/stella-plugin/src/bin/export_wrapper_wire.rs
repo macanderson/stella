@@ -10,17 +10,19 @@
 //! cargo run -p stella-plugin --features schema --bin export-wrapper-wire -- <out-dir>
 //! ```
 //!
-//! Two files land in `<out-dir>` (`docs/wire/` in the repo):
+//! Three files land in `<out-dir>` (`docs/wire/` in the repo):
 //!
 //! - `wrapper.wire.json` — every message the socket carries, in both its
 //!   fullest and its emptiest legal form, serialized by the same `Serialize`
 //!   impls the transport uses;
 //! - `wrapper.schema.json` — JSON Schema 2020-12 for the request and the
-//!   response, derived by `schemars` from the types (#3532).
+//!   response, derived by `schemars` from the types (#3532);
+//! - `wrapper.d.ts` — the same contract as TypeScript declarations, printed by
+//!   `stella_protocol::schema_export` (#4535).
 //!
-//! Neither subsumes the other and both are committed: a schema states shapes a
-//! corpus cannot show (a widened scalar, a string format), and a corpus pins
-//! the bytes a schema cannot recover.
+//! The corpus and the schema do not subsume one another and both are committed:
+//! a schema states shapes a corpus cannot show (a widened scalar, a string
+//! format), and a corpus pins the bytes a schema cannot recover.
 //! [`stella_plugin::wire_schema`] argues the split where a reader meets it.
 //!
 //! Byte-deterministic: run it twice and the second run produces no diff.
@@ -63,9 +65,18 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // Cannot fail: everything it writes is a `serde_json::Value`, which is the
-    // whole of `wire_schema::artifacts`'s signature.
-    artifacts.extend(wire_schema::artifacts());
+    match wire_schema::artifacts() {
+        Ok(schema) => artifacts.extend(schema),
+        Err(err) => {
+            eprintln!("export-wrapper-wire: {err}");
+            eprintln!(
+                "  The socket's contract would not publish. Every input to that step is a\n  \
+                 type in this crate, so the defect is in `stella_plugin::wire` or in the\n  \
+                 shared TypeScript printer — not in how the exporter was called."
+            );
+            return ExitCode::FAILURE;
+        }
+    }
 
     for (name, body) in artifacts {
         let path = out_dir.join(name);

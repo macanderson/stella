@@ -417,6 +417,11 @@ impl ResolvedAttempt {
                 manifest,
                 std::sync::Arc::clone(&dispatcher)
                     as std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+                // This attempt's own grant, so `run_test` re-runs the
+                // invocation in the worktree the attempt runs in — never the
+                // invocation root, whose tree no attempt is judged against
+                // (#4536).
+                Some(&self.candidate.grant),
             )
         })?;
         Ok(AttemptWrapper {
