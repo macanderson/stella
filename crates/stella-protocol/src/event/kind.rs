@@ -483,6 +483,39 @@ pub enum AgentEvent {
             )
         )]
         finish_reason: Option<crate::completion::FinishReason>,
+        /// The reasoning effort the dispatched request actually carried
+        /// (`CompletionRequest::effort`) — the *resolved* value, after
+        /// auto-mode and any per-model downgrade, never the configured one
+        /// (#4565).
+        ///
+        /// `None` means the request pinned no effort (or the stream predates
+        /// this field — hence `serde(default)`), and must never be read as
+        /// "effort low": absence of the pin is not a pin.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "The reasoning effort the dispatched request actually carried -- the resolved value after auto-mode and per-model downgrade, never the configured one. Absent when the request pinned no effort or the stream predates this field; absence is not a pin."
+            )
+        )]
+        effort: Option<crate::completion::ReasoningEffort>,
+        /// The output-token ceiling the dispatched request asked for
+        /// (`CompletionRequest::max_output_tokens`) — the *effective* per-call
+        /// value after the turn's standing clamp
+        /// (`output_budget_recovery`), so it can move between steps of one
+        /// turn (#4565). Paired with `finish_reason == Length` it says what
+        /// ceiling the cut-off happened at.
+        ///
+        /// `None` means the request asked for no ceiling (or the stream
+        /// predates this field — hence `serde(default)`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "The output-token ceiling the dispatched request asked for -- the effective per-call value after the turn's standing clamp, so it can move between steps of one turn. Paired with finish_reason == length it names the ceiling the cut-off happened at. Absent when the request asked for no ceiling or the stream predates this field."
+            )
+        )]
+        max_output_tokens: Option<u32>,
         /// Which sub-agent spent this call, when a sub-agent did (#4383).
         ///
         /// `None` is the lead's own call. It is stamped at the sub-agent

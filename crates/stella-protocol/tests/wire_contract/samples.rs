@@ -9,7 +9,7 @@
 //! because the proofs are the only consumers.
 
 use serde_json::json;
-use stella_protocol::completion::FinishReason;
+use stella_protocol::completion::{FinishReason, ReasoningEffort};
 use stella_protocol::delivery_event::{DeliveryDecline, DeliveryOutcome};
 use stella_protocol::event::{
     BudgetMode, BudgetScope, CiStatus, FileChangeKind, MediaJobState, MediaKind, ModelCallRole,
@@ -837,6 +837,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 // The "all optional fields present" shape must actually carry
                 // the optional field, or the sample proves nothing about it.
                 finish_reason: Some(FinishReason::Stop),
+                effort: Some(ReasoningEffort::High),
+                max_output_tokens: Some(64_000),
                 sub_agent_id: None,
             },
             AgentEvent::StepUsage {
@@ -860,6 +862,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 // ...and the "all absent" shape must omit it entirely, which
                 // is what `skip_serializing_if` promises consumers.
                 finish_reason: None,
+                effort: None,
+                max_output_tokens: None,
                 sub_agent_id: None,
             },
         ]
@@ -890,6 +894,10 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 tool_calls: 0,
                 complete: true,
                 finish_reason: Some(finish_reason),
+                // The ceiling the `Length` arm of this sweep was cut off at —
+                // the pairing the field exists for.
+                effort: None,
+                max_output_tokens: Some(64_000),
                 sub_agent_id: None,
             }),
     );
