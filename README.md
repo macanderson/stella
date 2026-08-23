@@ -22,64 +22,56 @@
   <a href="https://stella.oxagen.sh/docs/getting-started/installation"><b>Quickstart</b></a>
 </p>
 
-Ship deterministically verified code fully autonomously with Stella, a self-improving
-next generation coding agent. Stella is an open-source, bring-your-own-key (BYOK)
-coding agent that runs in your terminal. It supports nine hosted model
-providers plus any local OpenAI-compatible server, keeps canonical telemetry
-in a local SQLite database, and enforces a hard per-run budget. Telemetry leaves
-your machine only if you configure it to, by one of exactly two explicit paths:
-an enrolled Oxagen Enterprise managed install, which may export only a minimal
-operational rollup under the governed boundary described below; or a `drain`
-block in `~/.stella/cloud.json`, which `stella cloud sync` uses to POST staged
-rows to an org intake you name. Neither exists in a default install. It is built
-in Rust as a workspace of focused crates.
+Stella is an open-source, bring-your-own-key (BYOK) coding agent that runs in
+your terminal. It supports nine hosted model providers plus any local
+OpenAI-compatible server, keeps canonical telemetry in a local SQLite
+database, and enforces a hard per-run budget. Telemetry leaves your machine
+only through two explicit paths — an enrolled Oxagen Enterprise managed
+install, or a `drain` block in `~/.stella/cloud.json` — and neither exists in
+a default install. Built in Rust as a workspace of focused crates.
 
 ## Features
 
 - **BYOK, auto-detected** — Set one provider's API key and Stella detects it.
-  Pin a specific model per run or shell with `--model`.
+  Pin a model per run or shell with `--model`.
 - **Deterministic definition of done, opt-in** — `stella run --pipeline
   <plugin-id>` hands the turn to an installed verification plugin, whose
   oracle authors a test that fails on the old code and passes on the new and
   tracks that fail→pass flip itself. A green suite alone is not accepted on
   that path — but the evidence is self-reported: Stella evaluates it against
-  the plugin's declared rule and never re-runs or re-checks it. The built-in
-  staged pipeline that once ran this check itself (`--pipeline classic`) has
-  been deleted from this workspace (#3865) — that flag is refused outright,
-  naming `stella plugin install` as the remedy. Oxagen's Vera is the
-  reference verification plugin, private and not shipped in this repository.
-- **Single-threaded engine** — One deterministic step loop: plan, fan tools out
-  in parallel, observe, compact if noisy, repeat. No coordinator or multi-agent
-  swarm.
-- **Prompt-cache-native memory** — Lessons written as markdown in
-  `.stella/memories/` load once at session start into a byte-stable system
-  prompt (~0.1× input cost).
+  the plugin's declared rule and never re-runs it. The built-in staged
+  pipeline (`--pipeline classic`) has been deleted (#3865); the flag is
+  refused outright, naming `stella plugin install` as the remedy. Oxagen's
+  Vera is the reference verification plugin, private and not shipped here.
+- **Single-threaded engine** — One deterministic step loop: plan, fan tools
+  out in parallel, observe, compact if noisy, repeat. No coordinator or
+  multi-agent swarm.
+- **Prompt-cache-native memory** — Lessons in `.stella/memories/` load once at
+  session start into a byte-stable system prompt (~0.1× input cost).
 - **Code graph** — A tree-sitter symbol/import index (Rust, TS/TSX/JS, Python,
-  Go, Java, C, PHP, SQL) queried by the `stella search` command instead of
-  grepping.
-- **Local-first telemetry** — Executions, events, token/cost telemetry, and the
-  files-touched ledger stay canonical in `.stella/private/store.db`.
-  Community/default sends none of it anywhere. Only explicitly enrolled Oxagen
-  Enterprise managed mode can derive a closed, content-free operational rollup.
-- **Budget enforcement** — A `--spend-limit` flag aborts cleanly between steps,
-  never mid-tool.
-- **Goal & fleet modes** — `goal` works in judged rounds; `fleet` fans a task DAG
-  out to parallel workers that share one tree under cooperative file claims, or
-  take their own git worktree when a task opts in.
+  Go, Java, C, PHP, SQL) queried by `stella search` instead of grepping.
+- **Local-first telemetry** — Executions, events, token/cost telemetry, and
+  the files-touched ledger stay canonical in `.stella/private/store.db`.
+  Community/default sends none of it anywhere. Only enrolled Oxagen Enterprise
+  managed mode can derive a closed, content-free operational rollup.
+- **Budget enforcement** — `--spend-limit` aborts cleanly between steps, never
+  mid-tool.
+- **Goal & fleet modes** — `goal` works in judged rounds; `fleet` fans a task
+  DAG out to parallel workers that share one tree under cooperative file
+  claims, or take their own git worktree when a task opts in.
 - **Lifecycle hooks** — Shell-command hooks (`SessionStart`, `PreToolUse`,
   `PostToolUse`) configurable in `settings.json`.
 
 ## Prerequisites
 
-- **macOS or Linux**, `x86_64` or `arm64`.
-- Private persistence currently depends on Unix owner/mode and no-follow
-  primitives. Non-Unix builds fail closed for sensitive state writes; Windows
-  persistence is not currently supported or claimed.
+- **macOS or Linux**, `x86_64` or `arm64`. Private persistence depends on Unix
+  owner/mode and no-follow primitives; non-Unix builds fail closed for
+  sensitive state writes, and Windows persistence is not supported.
 - For prebuilt / Homebrew install: `curl`.
-- For building from source: **Rust 1.90+** (via [rustup](https://rustup.rs)) and `git`.
-  Building a clone of this repository uses the exact toolchain pinned in
-  `rust-toolchain.toml` (currently 1.97.0) — rustup downloads it automatically on
-  the first `cargo build`, so expect a one-time toolchain fetch.
+- For building from source: **Rust 1.90+** (via [rustup](https://rustup.rs))
+  and `git`. A clone of this repository uses the toolchain pinned in
+  `rust-toolchain.toml` (currently 1.97.0); rustup downloads it automatically
+  on the first `cargo build`.
 - An API key for any supported provider, _or_ a local OpenAI-compatible model
   server (Ollama, vLLM, LM Studio, llama.cpp).
 
@@ -122,13 +114,10 @@ cargo build --release
 
 ### Not on crates.io
 
-The `stella-*` crates are **not published to crates.io** — `publish = false` is
-set once at `[workspace.package]` in the root `Cargo.toml` and inherited by every
-member. (The [Context Graph Protocol](https://github.com/macanderson/context-graph-protocol)
-crates are now exact-version registry dependencies, so the old git-dependency
-blocker is gone; the workspace simply is not published as a crate set.)
-The `cargo install --git …` command above is therefore the only supported cargo
-path — dropping `--git` does **not** install this project.
+The `stella-*` crates are **not published to crates.io** — `publish = false`
+is set once at `[workspace.package]` in the root `Cargo.toml` and inherited by
+every member. The `cargo install --git …` command above is the only supported
+cargo path; dropping `--git` does **not** install this project.
 
 ## Set your API key
 
@@ -147,23 +136,22 @@ Stella is BYOK and auto-detects the provider from whichever keys you have set.
 | **Amazon Bedrock**     | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (+ `AWS_REGION`) | `us.anthropic.claude-sonnet-4-5-20250929-v1:0`                  |
 | **Local**              | _none_ — pass `--base-url`                    | whatever your server hosts                                                       |
 
-OpenRouter is checked first — its key is gateway-specific, so having one is a deliberate
-choice rather than an accident of your shell — and it brings a whole default posture, not
-just a default model: Kimi K3 driving at `xhigh` with thinking on, `anthropic/claude-opus-5`
-judging, `z-ai/glm-5.2` triaging, all on the one key. Every field of that composes
-underneath your own settings, so anything you configure wins. OpenRouter's slugs keep
-their vendor namespace on the wire, so pinning one on the CLI needs both halves:
-`--model openrouter/moonshotai/kimi-k3`.
+OpenRouter is checked first — its key is gateway-specific, so having one is a
+deliberate choice — and it brings a whole default posture, not just a default
+model: Kimi K3 driving at `xhigh` with thinking on, `anthropic/claude-opus-5`
+judging, `z-ai/glm-5.2` triaging, all on the one key. Every field composes
+underneath your own settings, so anything you configure wins. OpenRouter slugs
+keep their vendor namespace on the wire, so pinning one on the CLI needs both
+halves: `--model openrouter/moonshotai/kimi-k3`.
 
 ```bash
 export ANTHROPIC_API_KEY=your_key_here     # or OPENAI_API_KEY, GEMINI_API_KEY, …
 ```
 
-Bedrock is the one provider that authenticates with more than one value — SigV4
-needs an access key id *and* a secret access key, plus a session token for
-temporary credentials, and a region to build the endpoint host from. All four
-travel through the same chain as any other credential, so `stella auth set`
-stores the whole set rather than only the first:
+Bedrock is the one provider that authenticates with more than one value —
+SigV4 needs an access key id *and* a secret access key, plus a session token
+for temporary credentials, and a region. `stella auth set` stores the whole
+set:
 
 ```bash
 stella auth set bedrock                    # prompts for each, secrets masked
@@ -172,12 +160,13 @@ stella auth set bedrock --stdin \
   --field AWS_REGION=eu-central-1          # scripted equivalent
 ```
 
-Explicit credentials only: AWS profile files, SSO caches, IMDS/container roles,
-and web-identity token files are deliberately not consulted, so a Stella process
-never authenticates as whatever identity its host happens to be carrying. Bedrock
-is also checked **last** during auto-detection, and only when a secret access key
-resolves too — `AWS_ACCESS_KEY_ID` is exported in plenty of shells for reasons
-that have nothing to do with Bedrock. `--model bedrock/…` pins it regardless.
+Explicit credentials only: AWS profile files, SSO caches, IMDS/container
+roles, and web-identity token files are deliberately not consulted, so a
+Stella process never authenticates as whatever identity its host happens to be
+carrying. Bedrock is also checked **last** during auto-detection, and only
+when a secret access key resolves too — `AWS_ACCESS_KEY_ID` is exported in
+plenty of shells for reasons that have nothing to do with Bedrock.
+`--model bedrock/…` pins it regardless.
 
 Pin a provider/model per run or shell:
 
@@ -192,26 +181,26 @@ export STELLA_MODEL=openai/gpt-5.5
 stella --model local/llama3.3 --base-url http://localhost:11434/v1 chat
 ```
 
-**Z.ai GLM Coding Plan:** set `ZAI_GLM_CODING_PLAN=1` alongside `ZAI_API_KEY` to
-route through the dedicated coding endpoint.
+**Z.ai GLM Coding Plan:** set `ZAI_GLM_CODING_PLAN=1` alongside `ZAI_API_KEY`
+to route through the dedicated coding endpoint.
 
 **Credential chain** (first hit wins): `--api-key` flag → provider env var →
 `settings.json` `api_key` → `~/.stella/credentials.toml` → interactive prompt.
 
 `credentials.toml` is written by
-[`stella auth`](https://stella.oxagen.sh/docs/commands/auth) — `auth set <provider>`
-stores a key (prompted and masked unless you pass `--key`/`--stdin`), `auth list`
-shows every stored key redacted alongside the source that actually wins, and
-`auth remove <provider>` deletes one. It never prints a secret value.
+[`stella auth`](https://stella.oxagen.sh/docs/commands/auth) — `auth set
+<provider>` stores a key (prompted and masked unless you pass
+`--key`/`--stdin`), `auth list` shows every stored key redacted alongside the
+source that actually wins, and `auth remove <provider>` deletes one. It never
+prints a secret value.
 
-**Project `.env` files** — so keys can follow the project you're in, Stella
-reads `.env`, `.env.local`, and `.env.<mode>.local` (e.g. `.env.production.local`)
-from the working directory (or the nearest ancestor within the same git repo)
-into the environment at startup, most-specific file first. Template files
-(`.env.example`, `.env.sample`, `.env.dist`) and non-`.local` mode files
-(`.env.production`) are never read. **Your live shell always wins** — a value
-already exported (or `OPENROUTER_API_KEY=… stella …`) is never overwritten by a
-file, so unset a stale export if you mean to switch. Disable the whole mechanism
+**Project `.env` files** — Stella reads `.env`, `.env.local`, and
+`.env.<mode>.local` (e.g. `.env.production.local`) from the working directory
+(or the nearest ancestor within the same git repo) into the environment at
+startup, most-specific file first. Template files (`.env.example`,
+`.env.sample`, `.env.dist`) and non-`.local` mode files (`.env.production`)
+are never read. **Your live shell always wins** — an exported value is never
+overwritten by a file, so unset a stale export if you mean to switch. Disable
 with `STELLA_NO_ENV_FILE=1`; see what loaded with `STELLA_ENV_DEBUG=1`.
 
 ```bash
@@ -254,31 +243,30 @@ Prefer `api_key_env` over a literal `api_key` — settings files get committed.
 
 > **Untrusted repos can't redirect your key.** A cloned repo's project-scope
 > `.stella/settings.json` is untrusted: its credential-routing fields
-> (`base_url`, `api_key`, `api_key_env`, and `mcp.registry_url`) are **ignored**
-> unless you opt in with `STELLA_TRUST_PROJECT=1`, so a hostile repo can't
-> silently point your real API key at its own server. Cosmetic fields
-> (`name`, `default_model`, `dialect`) still apply; the user and org-managed
-> scopes are always trusted. Project hooks are gated the same way, via
-> `STELLA_PROJECT_HOOKS`, and so are **project-scope plugins**
+> (`base_url`, `api_key`, `api_key_env`, and `mcp.registry_url`) are
+> **ignored** unless you opt in with `STELLA_TRUST_PROJECT=1`, so a hostile
+> repo can't silently point your real API key at its own server. Cosmetic
+> fields (`name`, `default_model`, `dialect`) still apply; the user and
+> org-managed scopes are always trusted. Project hooks are gated the same way,
+> via `STELLA_PROJECT_HOOKS`, and so are **project-scope plugins**
 > (`<workspace>/.stella/plugins`): a plugin declares a program Stella spawns
-> and can arbitrate the agent loop, so it is strictly more powerful than a
-> hook, and one that arrived with a `git clone` is not loaded, listed, or
-> dispatched until you set `STELLA_TRUST_PROJECT=1`. Plugins you installed
-> yourself with `stella plugin install --scope user` live in `~/.stella/plugins`
-> and are unaffected.
+> and can arbitrate the agent loop, so one that arrived with a `git clone` is
+> not loaded, listed, or dispatched until you set `STELLA_TRUST_PROJECT=1`.
+> Plugins you installed yourself with `stella plugin install --scope user`
+> live in `~/.stella/plugins` and are unaffected.
 
 ### Agent engine config (`agent_engine_config`)
 
 The engine runs a configurable agent per role — **default** (the interactive /
 step-loop agent) and the pipeline's **worker**, **verifier**, **triage**,
-**research**, and **plan**.
-The `agent_engine_config` object in the same `settings.json` scope chain
-configures each one's model, gateway, system prompt, reasoning, and sampling
-parameters — and in the Command Deck, `/settings` opens the SETTINGS tab,
-whose engine-config editor covers all of it (`s` saves to user scope, `S` to
-project scope; the per-agent model pickers offer `allowed_models`, falling
-back to the catalog when that list is empty). There are no per-agent slash
-commands — the SETTINGS tab is the one place models are configured.
+**research**, and **plan**. The `agent_engine_config` object in the same
+`settings.json` scope chain configures each one's model, gateway, system
+prompt, reasoning, and sampling parameters. In the Command Deck, `/settings`
+opens the SETTINGS tab, whose engine-config editor covers all of it (`s` saves
+to user scope, `S` to project scope; the per-agent model pickers offer
+`allowed_models`, falling back to the catalog when that list is empty). There
+are no per-agent slash commands — the SETTINGS tab is the one place models are
+configured.
 
 ```jsonc
 {
@@ -299,7 +287,7 @@ commands — the SETTINGS tab is the one place models are configured.
 
     // "on" = pick the verifier automatically from allowed_models: prefer a
     // different model family than the worker's, then the highest catalog
-    // price tier. You never worry about it.
+    // price tier.
     "auto_mode": "off",
     // "on" = per-agent effort is chosen for you (verifier high, worker and
     // plan medium, triage and research low), overriding any per-agent
@@ -339,20 +327,18 @@ commands — the SETTINGS tab is the one place models are configured.
 Precedence per agent: `--model` flag > `agents.<agent>.model` >
 `pipeline_<agent>_model` > `default_model` > auto-detect. Research and plan
 end that chain at the **worker** instead of `default_model` — unset, they run
-whatever the worker runs, field by field, so a `--model` that re-points the
-worker for one invocation cannot split them onto a second model the run would
-buy without reporting. An agent's
-`provider` field routes its slug through that gateway verbatim, so the
-worker can run on your Anthropic key while the verifier routes
-`openai/gpt-5.5` through your OpenRouter key and triage hits Z.ai. Each
-adapter forwards only the parameters its wire supports (`verbosity` and
-`service_tier` are dropped where meaningless); reasoning maps to GLM's
-`thinking`, OpenRouter's `reasoning`, Anthropic extended thinking (with an
-effort-tiered budget), OpenAI `reasoning.effort`, and Gemini
-`thinkingLevel`. Custom prompts replace the built-in base instructions;
-workspace memories and rules still append. A seat model whose provider has no
-resolvable key degrades softly — that seat rides the session's model and a
-notice says so.
+whatever the worker runs, so a `--model` that re-points the worker for one
+invocation cannot split them onto a second model. An agent's `provider` field
+routes its slug through that gateway verbatim, so the worker can run on your
+Anthropic key while the verifier routes `openai/gpt-5.5` through your
+OpenRouter key and triage hits Z.ai. Each adapter forwards only the parameters
+its wire supports (`verbosity` and `service_tier` are dropped where
+meaningless); reasoning maps to GLM's `thinking`, OpenRouter's `reasoning`,
+Anthropic extended thinking (with an effort-tiered budget), OpenAI
+`reasoning.effort`, and Gemini `thinkingLevel`. Custom prompts replace the
+built-in base instructions; workspace memories and rules still append. A seat
+model whose provider has no resolvable key degrades softly — that seat rides
+the session's model and a notice says so.
 
 ## Usage
 
@@ -408,12 +394,13 @@ stella            # or: stella chat
 ```
 
 On a TTY this opens the **Command Deck** — a tabbed TUI (Session · Agents ·
-Traces · Graph · Files · Skills · MCP) with PR-style diffs and an editable prompt
-queue. `--accessible` (or `STELLA_ACCESSIBLE=1`) runs that same deck so a screen
-reader can read it: inline on your own screen, each finished message into normal
-scrollback exactly once, single-column panels, labelled rows instead of tables,
-and a spoken line whenever you change tab, overlay, or focus. `--plain` (or
-`STELLA_PLAIN=1`, or piped stdio) falls back to the line REPL.
+Traces · Graph · Files · Skills · MCP) with PR-style diffs and an editable
+prompt queue. `--accessible` (or `STELLA_ACCESSIBLE=1`) runs that same deck so
+a screen reader can read it: inline on your own screen, each finished message
+into normal scrollback exactly once, single-column panels, labelled rows
+instead of tables, and a spoken line whenever you change tab, overlay, or
+focus. `--plain` (or `STELLA_PLAIN=1`, or piped stdio) falls back to the line
+REPL.
 
 **In-chat commands** — the Command Deck and the line REPL each implement their
 own vocabulary, so the surface column says where a command actually works:
@@ -453,9 +440,9 @@ stella fleet "fix the flaky auth test" "tighten the CI cache key"   # two isolat
 stella fleet --plan .stella/fleet.toml --max-concurrency 2 --spend-limit 5.0
 ```
 
-Wave-scheduled by dependency and recorded in `.stella/private/fleet.db`. Workers
-share the repository root by default, coordinated by cooperative file claims; a
-task with `isolation = "isolated"` gets its own git worktree under
+Wave-scheduled by dependency and recorded in `.stella/private/fleet.db`.
+Workers share the repository root by default, coordinated by cooperative file
+claims; a task with `isolation = "isolated"` gets its own git worktree under
 `.stella/worktrees/` on a `fleet/<slug>-<hash>` branch instead. A plan file is
 the serde form of the fleet DAG: `[[tasks]]` entries with `id`, `title`,
 `prompt`, optional `depends_on`, and `isolation`.
@@ -486,40 +473,37 @@ stella inspect   # the exact context a past model call was sent, rebuilt from
 `--model provider/id` · `--api-key` · `--base-url` · `--spend-limit <usd>` ·
 `--accessible` · `--plain` · `--no-anim` (also as `STELLA_MODEL`,
 `STELLA_BASE_URL`, `STELLA_SPEND_LIMIT`, `STELLA_ACCESSIBLE`, `STELLA_PLAIN`,
-`STELLA_NO_ANIM`). All of them are registered with every subcommand, so they
-parse before _or_ after the subcommand token.
-`--output-format text|json|stream-json` (env `STELLA_OUTPUT_FORMAT`) is
-deliberately **not** global: it is declared by the commands that honor it —
-`stella run` and `stella fleet` — and goes after the subcommand token
-(`stella run "…" --output-format json`); interactive
-`chat` / `goal` / `monitor` modes render human-readable output. `stella run`
-runs the raw step-loop by default; `--pipeline <plugin-id>` opts into an
-installed verification plugin instead — `--pipeline classic` named the
-built-in staged pipeline that shipped this verification in-tree, but that
-crate is deleted from the workspace (#3865) and the flag is now refused
-outright, naming `stella plugin install` as the remedy; `--no-pipeline`
-remains a deprecated no-op kept parseable so no script breaks. A
-verification plugin's own `[oracle]` decides how the work is proven — a
-worked example historically ran an independent witness author against a
-fail→pass flip; that shape now lives on the plugin's side of the wrapper
-socket ([the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)
-documents it as a historical design plus the plugin path that replaces it).
+`STELLA_NO_ANIM`). All are registered with every subcommand, so they parse
+before _or_ after the subcommand token. `--output-format text|json|stream-json`
+(env `STELLA_OUTPUT_FORMAT`) is deliberately **not** global: it is declared by
+the commands that honor it — `stella run` and `stella fleet` — and goes after
+the subcommand token (`stella run "…" --output-format json`); interactive
+`chat` / `goal` / `monitor` modes render human-readable output.
+
+`stella run` runs the raw step-loop by default; `--pipeline <plugin-id>` opts
+into an installed verification plugin instead. `--pipeline classic` named the
+built-in staged pipeline, but that crate is deleted from the workspace (#3865)
+and the flag is now refused outright, naming `stella plugin install` as the
+remedy; `--no-pipeline` remains a deprecated no-op kept parseable so no script
+breaks. A verification plugin's own `[oracle]` decides how the work is proven
+([the inference pipeline](https://stella.oxagen.sh/docs/inference-pipeline)
+documents the historical design plus the plugin path that replaces it).
 `--keep-witness`/`--require-verified` are refused unconditionally now, and
 `--test-command` is refused on the raw loop but still passes through to an
 installed plugin's own `[oracle]` when one is named with `--pipeline
 <plugin-id>` — every refusal names an installed verification plugin as the
 remedy.
+
 Post-turn reflection remains enabled for one-shot text, JSON, and stream-JSON
-runs. Ephemeral automation can suppress that additional model call explicitly
-with `STELLA_DISABLE_REFLECTION=1`; the truthy values `true`, `yes`, and `on`
-are also accepted case-insensitively.
+runs. Ephemeral automation can suppress that additional model call with
+`STELLA_DISABLE_REFLECTION=1`; the truthy values `true`, `yes`, and `on` are
+also accepted case-insensitively.
 
 ## Built-in tools
 
 Eighteen built-ins, in six families — the shell, file CRUD, code search, the
 task board, sub-agent delegation, scratch state, and the environment probe.
-The first three are the working surface (the rows that touch the world outside
-the process); the rest are coordination:
+The first three are the working surface; the rest are coordination:
 
 | Tool                                                                                         | Description                                                                                                                                                                                                                             |
 | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -547,37 +531,37 @@ boundary sits outside every spawn path, so nothing can step around it. See
 
 ## Memory and context
 
-Lessons written as markdown in
-`.stella/memories/` load once at session start into a byte-stable system
-prompt, so every model call considers them at prompt-cache prices. New memories
-take effect the next session — hot-injection would invalidate the cache.
+Lessons written as markdown in `.stella/memories/` load once at session start
+into a byte-stable system prompt, so every model call considers them at
+prompt-cache prices. New memories take effect the next session — hot-injection
+would invalidate the cache.
 
 Every working turn is also recorded as an **episode** (summary, files touched,
-outcome, time window) in `.stella/private/context.db`, and `stella init` writes the
-domain taxonomy as bi-temporal facts. Recall fans out through the Context Graph
-Protocol host to
-the memory store and the code graph, fused by score under one budget.
+outcome, time window) in `.stella/private/context.db`, and `stella init`
+writes the domain taxonomy as bi-temporal facts. Recall fans out through the
+Context Graph Protocol host to the memory store and the code graph, fused by
+score under one budget.
 
 ## Telemetry
 
-Executions are recorded, best-effort, in `.stella/private/store.db`: the full event
-stream, per-model-call telemetry (tokens, cache hits, cost), and the
+Executions are recorded, best-effort, in `.stella/private/store.db`: the full
+event stream, per-model-call telemetry (tokens, cache hits, cost), and the
 Files-Touched ledger. The store is never a dependency of a turn — a session
 runs even if the file can't be opened. Query it with any SQLite client.
 
-A default install constructs no telemetry spool and no telemetry HTTP client, so
-nothing is sent anywhere. Two explicit configurations, and only these two, change
-that: Enterprise enrollment (below) and the `cloud.json` drain
-([`stella cloud sync`](https://stella.oxagen.sh/docs/commands/cloud), a separate
-pipe with its own wire contract
-and endpoint, inert unless the file carries both an `org_id` and a `drain` block).
+A default install constructs no telemetry spool and no telemetry HTTP client,
+so nothing is sent anywhere. Two explicit configurations, and only these two,
+change that: Enterprise enrollment (below) and the `cloud.json` drain
+([`stella cloud sync`](https://stella.oxagen.sh/docs/commands/cloud), a
+separate pipe with its own wire contract and endpoint, inert unless the file
+carries both an `org_id` and a `drain` block).
 
-A seat becomes enrolled only through a valid signed
-`enterprise_telemetry` document in the org-managed settings scope. That
-document binds issuer, audience, organization/workspace, expiry, the single
-`execution_rollup` event class, a managed model catalog, `process_free`
-isolation, bearer-secret references, and one endpoint that must exactly match
-the administrator's credential-free HTTPS allowlist.
+A seat becomes enrolled only through a valid signed `enterprise_telemetry`
+document in the org-managed settings scope. That document binds issuer,
+audience, organization/workspace, expiry, the single `execution_rollup` event
+class, a managed model catalog, `process_free` isolation, bearer-secret
+references, and one endpoint that must exactly match the administrator's
+credential-free HTTPS allowlist.
 
 While enrolled, only the default raw `stella run` (no `--pipeline` flag —
 `--no-pipeline` is a deprecated no-op and does not change eligibility) is
@@ -585,22 +569,23 @@ eligible. Stella rejects `--pipeline classic`, an installed wrapper plugin,
 goal, fleet, deck/chat, interactive, workspace-port, and candidate workspace
 execution paths because none of them can prove the process-free boundary: a
 wrapper, of any kind, spawns a process the boundary is drawn to exclude.
-Eligible finalized runs may export only managed organization/workspace/enrollment
-identifiers; allowlisted provider/model or `other`; outcome; duration; input and
-output token counts; cost in micro-USD; tool-call and changed-file counts; and a
-produced-output boolean. Prompts, paths, tool names/arguments/results, reasoning,
-errors, git state, memories, rules, full local events, and local execution or
-installation identifiers are excluded.
+Eligible finalized runs may export only managed
+organization/workspace/enrollment identifiers; allowlisted provider/model or
+`other`; outcome; duration; input and output token counts; cost in micro-USD;
+tool-call and changed-file counts; and a produced-output boolean. Prompts,
+paths, tool names/arguments/results, reasoning, errors, git state, memories,
+rules, full local events, and local execution or installation identifiers are
+excluded.
 
 Delivery is at-least-once from an owner-only host spool outside the workspace.
 Retained event payloads are bounded to 10,000 rows and 16 MiB; SQLite overhead
 may make the physical database larger. Startup flush is detached and never
-delays execution or process exit; `stella telemetry flush` attempts one bounded
-batch explicitly. `stella telemetry status` reports enrolled/disabled state,
-pending and stranded rows/bytes, quarantine and physical size, and durable drop,
-corruption, and rollover counters. See the
-[Telemetry documentation](https://stella.oxagen.sh/docs/telemetry) for backfill,
-retry, rollover, and server-side companion requirements.
+delays execution or process exit; `stella telemetry flush` attempts one
+bounded batch explicitly. `stella telemetry status` reports enrolled/disabled
+state, pending and stranded rows/bytes, quarantine and physical size, and
+durable drop, corruption, and rollover counters. See the
+[Telemetry documentation](https://stella.oxagen.sh/docs/telemetry) for
+backfill, retry, rollover, and server-side companion requirements.
 
 ## Lifecycle hooks
 
@@ -629,12 +614,12 @@ lifecycle events, receiving the event payload as JSON on stdin:
 
 - **`SessionStart`** — stdout is appended to the system prompt as session
   context (once per session).
-- **`PreToolUse`** — a non-zero exit blocks the tool; the model sees the hook's
-  message instead. `matcher` is a glob over the tool name.
+- **`PreToolUse`** — a non-zero exit blocks the tool; the model sees the
+  hook's message instead. `matcher` is a glob over the tool name.
 - **`PostToolUse`** — observation only, never blocks.
 
-Scopes concatenate (any scope can add a gate; none can remove another's). Hooks
-from a repo's own `.stella/settings.json` load only with
+Scopes concatenate (any scope can add a gate; none can remove another's).
+Hooks from a repo's own `.stella/settings.json` load only with
 `STELLA_PROJECT_HOOKS=1`, so cloning an untrusted repo never auto-executes its
 commands.
 
@@ -666,33 +651,32 @@ flowchart TD
 ## Design principles
 
 Eight architectural invariants hold the design together: the engine drives
-everything through ports and does no I/O, every cross-boundary type round-trips
-through `serde_json` byte-for-byte, errors are typed rather than panicked, the
-budget aborts only between steps and never mid-tool, prompts stay byte-stable so
-the provider cache keeps hitting, provider feature parity is declared and
-witness-tested rather than assumed — and Stella sends **zero telemetry
-anywhere** by default.
+everything through ports and does no I/O, every cross-boundary type
+round-trips through `serde_json` byte-for-byte, errors are typed rather than
+panicked, the budget aborts only between steps and never mid-tool, prompts
+stay byte-stable so the provider cache keeps hitting, provider feature parity
+is declared and witness-tested rather than assumed — and Stella sends **zero
+telemetry anywhere** by default.
 
 They are stated normatively, in full, in
 [AGENTS.md § Architecture: ports, not direct dependencies](AGENTS.md#architecture-ports-not-direct-dependencies).
-That is the only copy: this section is a summary and does not govern. A PR that
-breaks one of them will be asked to restructure regardless of how good the
-feature is.
+That is the only copy: this section is a summary and does not govern. A PR
+that breaks one of them will be asked to restructure regardless of how good
+the feature is.
 
-Stella is also **BYOK** — any provider key, any combination, no account. That is
-a product property rather than an architectural invariant, but it is the one
-most people want to know first.
+Stella is also **BYOK** — any provider key, any combination, no account. That
+is a product property rather than an architectural invariant, but it is the
+one most people want to know first.
 
 ## Workspace layout
 
 Twenty-six `stella-*` crates make up the workspace. The Context Graph Protocol
-(CGP) —
-the retrieval abstraction Stella's recall routes through — now lives in its own
-repository and is pulled in as registry crates pinned to exact versions in the
-root `[workspace.dependencies]`, not as workspace members.
+(CGP) — the retrieval abstraction Stella's recall routes through — lives in
+its own repository and is pulled in as registry crates pinned to exact
+versions in the root `[workspace.dependencies]`, not as workspace members.
 
-Every crate carries its own `README.md` — linked from the table below — with its
-file layout, the invariants it enforces, its gotchas, and the recipe for
+Every crate carries its own `README.md` — linked from the table below — with
+its file layout, the invariants it enforces, its gotchas, and the recipe for
 extending it.
 
 | Crate                                                | Role                                                                                                                                                                                                                                   |
@@ -729,9 +713,10 @@ Alongside the Rust workspace, the documentation site
 Fumadocs) as a **self-contained** package: its own `package.json`,
 `pnpm-lock.yaml`, and pnpm settings all sit in that directory, and the repo
 root is pure cargo. The two toolchains share no code — the only thing that
-crosses between them is the brand palette: `crates/stella-tui/src/palette.rs` is the
-hand-maintained normative source, mirrored by `website/src/app/tokens.css`
-(`--stella-*`), and the two must be edited together.
+crosses between them is the brand palette: `crates/stella-tui/src/palette.rs`
+is the hand-maintained normative source, mirrored by
+`website/src/app/tokens.css` (`--stella-*`), and the two must be edited
+together.
 
 ## Development
 
@@ -772,10 +757,11 @@ scripts/dev.sh uninstall      # remove the link
 ## Contributing
 
 Contributions are welcome. Stella is AGPL-3.0-only and dual-licensed, so a
-one-time [CLA](CLA.md) signature is required — you keep your copyright, and the
-bot walks you through it on your first PR. See [`CONTRIBUTING.md`](CONTRIBUTING.md)
-for dev setup, a tour of the crates, the witness-test contract, and style rules.
-CI runs `fmt`, `clippy -D warnings`, tests, and a release build on every PR.
+one-time [CLA](CLA.md) signature is required — you keep your copyright, and
+the bot walks you through it on your first PR. See
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, a tour of the crates, the
+witness-test contract, and style rules. CI runs `fmt`, `clippy -D warnings`,
+tests, and a release build on every PR.
 
 | You have…  | Do this                                                                                                                                                                            |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -788,8 +774,8 @@ CI runs `fmt`, `clippy -D warnings`, tests, and a release build on every PR.
 Stella is **dual-licensed**.
 
 **Open source: [AGPL-3.0-only](LICENSE).** Free to run, read, modify, and
-redistribute. In exchange, if you distribute a modified Stella — or offer one to
-users over a network — you publish your modifications under the same terms.
+redistribute. In exchange, if you distribute a modified Stella — or offer one
+to users over a network — you publish your modifications under the same terms.
 Using Stella as a coding tool on your own proprietary codebase is unaffected:
 the AGPL covers Stella itself, not the code you write with it.
 
