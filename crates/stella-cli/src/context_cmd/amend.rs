@@ -150,6 +150,11 @@ pub(crate) fn run_amend(root: &Path, needle: &str, amendment: &Amendment) -> Res
 /// wrong, and the common repair is *narrowing* — `paths = ["crates"]` down to
 /// one crate — which an append could not express at all.
 ///
+/// Empty values are dropped, so `--paths ''` clears the list rather than
+/// scoping the record to a path that is the empty string. Clap has no way to
+/// express "this flag was given no values", and a record silently scoped to
+/// `""` would match nothing while reading as scoped.
+///
 /// A record with no `[steering]` section is refused rather than given one.
 /// `Steering` has no default and cannot have one: `force` decides which channel
 /// the record rides — the cached system prefix or the volatile block — and
@@ -170,16 +175,25 @@ fn apply(record: &mut Record, amendment: &Amendment) -> Result<(), String> {
     if amendment.paths.is_some() || amendment.tasks.is_some() || amendment.keywords.is_some() {
         let applies = steering.applies_to.get_or_insert_with(AppliesTo::default);
         if let Some(paths) = &amendment.paths {
-            applies.paths = paths.clone();
+            applies.paths = kept(paths);
         }
         if let Some(tasks) = &amendment.tasks {
-            applies.tasks = tasks.clone();
+            applies.tasks = kept(tasks);
         }
         if let Some(keywords) = &amendment.keywords {
-            applies.keywords = keywords.clone();
+            applies.keywords = kept(keywords);
         }
     }
     Ok(())
+}
+
+/// The values worth keeping: trimmed, and empties dropped.
+fn kept(values: &[String]) -> Vec<String> {
+    values
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect()
 }
 
 /// One line naming a record's steering scope, for the before/after pair.

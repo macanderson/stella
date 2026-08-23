@@ -1060,6 +1060,27 @@ fn amending_paths_replaces_the_scope_rather_than_widening_it() {
         vec!["apps/web/package.json".to_string()],
         "the second amendment narrows rather than accumulating"
     );
+
+    // Clap cannot express "this flag was given no values", so the empty string
+    // is how a caller unscopes. A record scoped to `""` would match nothing
+    // while reading as scoped, which is the worse of the two answers.
+    amend::run_amend(
+        root.path(),
+        lineage,
+        &amend::Amendment {
+            paths: Some(vec![String::new()]),
+            ..amend::Amendment::default()
+        },
+    )
+    .expect("clearing is an amendment too");
+    assert!(
+        published_steering(root.path(), lineage)
+            .applies_to
+            .expect("the section survives")
+            .paths
+            .is_empty(),
+        "`--paths ''` clears rather than scoping to the empty string"
+    );
 }
 
 /// A bare amend re-stamps, which is the whole repair for a file somebody
