@@ -16,10 +16,10 @@ This document is the single source of truth for what a Context PR is, what it
 changes, and how one moves through proposal, review, publication, and
 retirement. It consolidates and supersedes earlier Context-PR drafts. It is
 consistent with, and defers to, the record semantics defined in
-[`docs/spec/adaptive-context/adaptive-context.md`](design/adaptive-context.md)
+[`docs/spec/adaptive-context/adaptive-context.md`](adaptive-context.md)
 and the frame/sharing model in
-[`docs/spec/adaptive-context/context-frame-spec.md`](design/context-frame-spec.md). Per
-[`docs/spec/adaptive-context/context-graph-protocol-build-prompt.md`](design/context-graph-protocol-build-prompt.md),
+[`docs/spec/adaptive-context/context-frame-spec.md`](context-frame-spec.md). Per
+[`docs/spec/adaptive-context/context-graph-protocol-build-prompt.md`](context-graph-protocol-build-prompt.md),
 Context PR workflows are **host policy, not protocol mechanism**: nothing in
 this document belongs in the context graph wire protocol.
 
@@ -69,7 +69,7 @@ is a **separate channel**, not a Context PR: the provider-hosted record is
 authoritative for workspace scope and is never materialized into
 `.stella/rules/*.md` unless a separate repository publication is approved.
 Workspace publication itself is deferred — see
-[`design/adaptive-context.md`](design/adaptive-context.md), "Explicitly out of
+[`adaptive-context.md`](adaptive-context.md), "Explicitly out of
 scope".
 
 ## 3. The implemented substrate
@@ -242,12 +242,12 @@ because a pattern was observed.
 ### 6.1 Format
 
 Two formats load, and which one to write is settled by
-[ADR 0011](adr/0011-context-records-are-toml.md): a **context record** is TOML;
+[ADR 0011](../../adr/0011-context-records-are-toml.md): a **context record** is TOML;
 **existing markdown rules keep loading** and are not migrated.
 
 The TOML surface — the one to write new records in — is specified by
 [`docs/context-record-examples/`](context-record-examples/) and its field schema
-by [ADR 0012](adr/0012-context-record-field-schema.md):
+by [ADR 0012](../../adr/0012-context-record-field-schema.md):
 
 ```toml
 schema = "context-record/v0.1"
@@ -336,7 +336,7 @@ Rules:
   invalidity.
 - `directive_kind` is one of the directive schema's kinds — `memory`, `fact`,
   `rule`, `preference`, `constraint`, `procedure`
-  ([`docs/design/directive-schema.md`](design/directive-schema.md)).
+  ([`docs/design/directive-schema.md`](../../design/directive-schema.md)).
 
 ### 6.2 Record hashing and immutability
 
