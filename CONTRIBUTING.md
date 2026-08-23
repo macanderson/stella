@@ -88,6 +88,7 @@ python3 ./scripts/check-typed-errors.py
 python3 ./scripts/check-dead-code-allows.py
 ./scripts/check-diagnostic-codes.sh
 ./scripts/check-bench-suites.sh
+./scripts/check-wire-paths.sh
 python3 ./scripts/gen-tokens.py --check
 python3 ./scripts/check-tokens.py
 python3 ./scripts/check-hue-separation.py

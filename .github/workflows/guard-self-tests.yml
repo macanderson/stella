@@ -172,3 +172,7 @@ jobs:
       - name: typed-errors ratchet direction
         if: ${{ !cancelled() }}
         run: ./scripts/test-typed-errors.sh
+
+      - name: wire-path guard failure directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-wire-paths.sh

@@ -21,11 +21,13 @@ name: wire-schema
 # *primary* one (`doc:wrapper-socket` §3), so a rename there breaks every
 # out-of-process plugin's parser rather than one Rust caller.
 #
-# The same path list appears in `.githooks/pre-push`, which uses it to decide
-# between `make guards-fast` and `make guards` for a push that reaches no crate.
-# Both answer the same question -- "could this diff have moved the wire
-# contract?" -- and neither is derived from the other, so they are kept in sync
-# by hand and by this comment.
+# `.githooks/pre-push` asks the same question -- "could this diff have moved the
+# wire contract?" -- to decide between `make guards-fast` and `make guards` for
+# a push that reaches no crate. It READS the list below rather than restating
+# it, through `scripts/wire-schema-paths.sh filter`; the two used to be
+# hand-maintained copies kept in agreement by a comment, which is the shape
+# #2847 abolished for the bench suites (#3836). `make wire-paths` fails if a
+# copy reappears, so an edit here reaches the hook by construction.
 on:
   pull_request:
     paths:

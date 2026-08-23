@@ -39,9 +39,9 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    dead-code-allows diagnostic-codes bench-suites tokens \
-                    hue-separation transcript-surfaces prose deck-fit-all-test \
-                    deck-paths css-vars
+                    dead-code-allows diagnostic-codes bench-suites wire-paths \
+                    tokens hue-separation transcript-surfaces prose \
+                    deck-fit-all-test deck-paths css-vars
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -320,6 +320,14 @@ wire-schema: ## Assert docs/wire/ still describes the AgentEvent wire format (#9
 .PHONY: wire-schema-update
 wire-schema-update: ## Regenerate docs/wire/ after an AgentEvent change (commit the diff!)
 	@./scripts/export-agentevent-schema.sh
+
+.PHONY: wire-paths
+wire-paths: ## Assert .githooks/pre-push derives its wire filter from wire-schema.yml (#3836)
+	@./scripts/check-wire-paths.sh
+
+.PHONY: wire-paths-test
+wire-paths-test: ## Test the wire-path guard's failure directions (hermetic; not part of `gate`)
+	@./scripts/test-wire-paths.sh
 
 .PHONY: file-size
 file-size: ## Assert no new Rust or Python file exceeds the 1500-line ratchet (#629, #825)

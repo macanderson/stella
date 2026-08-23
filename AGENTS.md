@@ -89,6 +89,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + dead-code-allows
                          #   + diagnostic-codes
                          #   + bench-suites
+                         #   + wire-paths (the hook derives wire-schema.yml's filter)
                          #   + tokens (hue clamp + no retired hex)
                          #   + hue-separation (30° OKLCH, web tokens)
                          #   + transcript-surfaces

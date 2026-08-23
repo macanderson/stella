@@ -382,6 +382,16 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-bench-suites.sh
 
+      # The same shape one workflow over: `.githooks/pre-push` chooses between
+      # `make guards-fast` and `make guards` on wire-schema.yml's `paths:`
+      # filter, and used to carry its own copy of it under a comment naming the
+      # hazard. A divergence there is silent and in the direction that
+      # misleads — the cheap rung for a diff the workflow would have called
+      # wire-touching (#3836).
+      - name: the pre-push hook derives wire-schema.yml's paths filter
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-wire-paths.sh
+
       # Also toolchain-free (shellcheck ships preinstalled on ubuntu-latest).
       # install.sh is fetched over the network and piped into `sh` by
       # strangers before Stella is installed; the guard scripts are what the
