@@ -161,7 +161,7 @@ impl Tool for TaskCreate {
                 return ToolOutput::error("field `tasks` was empty — pass at least one task");
             }
             let mut board = self.0.lock().unwrap_or_else(|p| p.into_inner());
-            let mut created = Vec::with_capacity(entries.len());
+            let mut created: Vec<String> = Vec::with_capacity(entries.len());
             for (i, entry) in entries.iter().enumerate() {
                 // A bare string is the common case and worth accepting: it is
                 // what a model reaches for when the subject says it all.
@@ -182,18 +182,10 @@ impl Tool for TaskCreate {
                     Err(e) => return e,
                 };
                 let item = board.create(subject, description, contract);
-                created.push(serde_json::json!({
-                    "id": item.id,
-                    "subject": item.subject,
-                    "status": item.status,
-                }));
+                created.push(render_line(item));
             }
             return ToolOutput::Ok {
-                content: format!(
-                    "created {} task(s) {}",
-                    created.len(),
-                    Value::Array(created)
-                ),
+                content: render_created(&created),
                 data: None,
             };
         }
@@ -209,16 +201,30 @@ impl Tool for TaskCreate {
         };
         let mut board = self.0.lock().unwrap_or_else(|p| p.into_inner());
         let item = board.create(subject, description, contract);
-        let payload = serde_json::json!({
-            "id": item.id,
-            "subject": item.subject,
-            "status": item.status,
-        });
         ToolOutput::Ok {
-            content: format!("created task {payload}"),
+            content: render_created(&[render_line(item)]),
             data: None,
         }
     }
+}
+
+/// The `task_create` confirmation: a header line, then one board row per
+/// created task, in the same `[ ] #id subject` shape `task_list` prints.
+///
+/// It used to be the created items as one JSON array on a single line. The
+/// transcript showed that line verbatim — a plan of seven tasks became
+/// `created 7 task(s) [{"id":"1","status":"pending","subject":…` cut off at
+/// the terminal's width, which is not a plan a person can read. The model
+/// lost nothing either: the id and subject are what it reads back, and the
+/// board row already carries both.
+fn render_created(lines: &[String]) -> String {
+    let mut out = format!(
+        "created {} task{}:\n",
+        lines.len(),
+        if lines.len() == 1 { "" } else { "s" }
+    );
+    out.push_str(&lines.join("\n"));
+    out
 }
 
 /// `task_list` — the whole board, one line per task.
@@ -623,7 +629,7 @@ mod tests {
             .await,
         );
         assert!(
-            out.contains("created 4 task(s)"),
+            out.starts_with("created 4 tasks:\n"),
             "unexpected output: {out}"
         );
 
@@ -649,8 +655,39 @@ mod tests {
             )
             .await,
         );
-        assert!(out.contains("created task"), "unexpected output: {out}");
+        assert_eq!(out, "created 1 task:\n[ ] #1 Just the one");
         assert_eq!(board.lock().expect("board").items().len(), 1);
+    }
+
+    /// Witness: the confirmation is the plan as a person reads it — one board
+    /// row per line — never the created items as a JSON array.
+    ///
+    /// Fails on main, where a seven-task plan came back as
+    /// `created 7 task(s) [{"id":"1","status":"pending","subject":…` on one
+    /// line, which the transcript cut off at the terminal's width.
+    #[tokio::test]
+    async fn a_created_plan_reads_as_one_row_per_task() {
+        let (board, _) = handles();
+        let out = content(
+            exec(
+                &TaskCreate(board),
+                serde_json::json!({
+                    "tasks": ["Simplify crate READMEs", "Simplify docs/spec", "Simplify docs/prompts"]
+                }),
+            )
+            .await,
+        );
+        assert_eq!(
+            out,
+            "created 3 tasks:\n\
+             [ ] #1 Simplify crate READMEs\n\
+             [ ] #2 Simplify docs/spec\n\
+             [ ] #3 Simplify docs/prompts"
+        );
+        assert!(
+            !out.contains('{'),
+            "no JSON in a confirmation a person reads: {out}"
+        );
     }
 
     /// An empty batch is a caller mistake worth naming, not a silent no-op:
@@ -734,8 +771,7 @@ mod tests {
             )
             .await,
         );
-        assert!(created.contains("\"id\":\"1\""), "{created}");
-        assert!(created.contains("\"status\":\"pending\""), "{created}");
+        assert!(created.contains("#1 Fix the redirect loop"), "{created}");
         content(
             exec(
                 &TaskCreate(board.clone()),
