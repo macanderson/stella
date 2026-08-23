@@ -169,6 +169,16 @@ fn run(workspace: &Path, base_url: &str, extra: &[&str]) -> (Option<i32>, String
         .env_remove("AWS_ACCESS_KEY_ID")
         .env_remove("AWS_SECRET_ACCESS_KEY")
         .env_remove("AWS_SESSION_TOKEN")
+        // The session's code-graph build warms a semantic index, and
+        // `stella_embed::EmbedderEnv::from_process` resolves an HTTP backend
+        // from whichever of these is set (`stella-embed/src/http.rs`). Left
+        // inherited, a developer with `VOYAGE_API_KEY` exported has this test
+        // calling api.voyageai.com on their account — which is what happened
+        // the first time it ran here.
+        .env_remove("VOYAGE_API_KEY")
+        .env_remove("STELLA_EMBED_URL")
+        .env_remove("STELLA_EMBED_MODEL")
+        .env_remove("STELLA_EMBED_API_KEY")
         .output()
         .expect("spawn stella");
 
