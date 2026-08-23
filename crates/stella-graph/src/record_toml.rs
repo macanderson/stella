@@ -45,11 +45,19 @@
 //! is deliberately not a section, for [`crate::markdown`]'s reason: the
 //! file-level vector already carries the head of the file, and a `(preamble)`
 //! symbol would name nothing a reader could cite.
+//!
+//! # Why `record_toml` and not `toml`
+//!
+//! #4492 asked for `src/toml.rs` and #4571 wrote it, which put a crate-root
+//! module beside the `toml` crate [`crate::manifest`] parses with. Nothing
+//! collided: in edition 2018+ an unqualified `toml::` inside another module
+//! resolves through the extern prelude, and the module was only ever reachable
+//! as `crate::toml`. The trap was for the next editor — a `use toml::Value;`
+//! written in `lib.rs` resolves to the local module and fails with an error
+//! that reads as a missing dependency (#4573). Renaming removes the trap
+//! rather than documenting it, and the name says what the module reads: a
+//! context record, never a build manifest.
 
-// This module shares its name with the `toml` crate `crate::manifest` parses
-// with. They do not collide — an unqualified `toml::` inside another module
-// resolves through the extern prelude, and this one is only ever
-// `crate::toml` — but reach for the full path when you touch either.
 use crate::symbol::{Symbol, SymbolKind};
 
 /// How many leading spaces a header may carry and still be recognised.
