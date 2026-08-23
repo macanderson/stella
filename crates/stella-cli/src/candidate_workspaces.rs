@@ -71,22 +71,32 @@
 //! A workspace that is not a repository, or one with no commit for `HEAD` to
 //! name, fails at `git worktree add` — which surfaces as
 //! [`CandidateFanoutError::NotCreated`], then as a `Failed` answer carrying
-//! git's own words. That is the honest outcome: best-of-N *is* "snapshot the
-//! tree N ways", and a host with nothing to snapshot cannot serve it. The
-//! alternative — copying the tree by hand — would silently drop `.gitignore`
-//! semantics, so an adoption would carry a candidate's `target/` back onto the
-//! user's tree.
+//! git's own words. That is the honest outcome for *this* substrate: what it
+//! promotes is a patch, and a patch is a statement about a commit.
+//!
+//! Copying the tree instead is the other answer, and it is a second substrate
+//! rather than a fallback here ([`copy_tree`], #1383). It is not
+//! interchangeable: a copy carries no `.gitignore` semantics, so its adoption
+//! carries a candidate's `target/` too — right where the tree is a disposable
+//! container whose ignored state the task's own tests execute, wrong where
+//! the tree is
+//! somebody's working copy. Which one a workspace gets is
+//! [`CandidateIsolation`](crate::settings::CandidateIsolation), an operator's
+//! setting that defaults to this one and is never inferred.
 //!
 //! # What is left behind, and by what
 //!
 //! Every candidate this substrate mints is registered in the plane's live
 //! table, and a wrapped run sweeps that table when it ends
-//! (`crate::wrapper_plugin::run_wrapped`). A process **killed** mid-fan-out
-//! leaks its worktrees, which is #2813's shape and is deliberately not
-//! papered over here: `stella fleet gc` cannot reclaim them either, because
-//! this substrate moves out of the `.stella/worktrees/` + `fleet/` namespace
-//! on purpose ([`WorktreeManager::with_worktrees_root`]) rather than borrow a
-//! sweeper that would then also delete checkouts it did not create.
+//! (`crate::wrapper_plugin::run_wrapped`). That table is process memory, so a
+//! process **killed** mid-fan-out used to take the only name its checkouts had
+//! with it — `stella fleet gc` cannot reclaim them either, because this
+//! substrate moves out of the `.stella/worktrees/` + `fleet/` namespace on
+//! purpose ([`WorktreeManager::with_worktrees_root`]) rather than borrow a
+//! sweeper that would then also delete checkouts it did not create. Each
+//! candidate now writes a [`record`] beside its checkout, and a later run in
+//! the same workspace names what a dead owner left rather than deleting it
+//! (#2813).
 //!
 //! [`CandidateWorkspaces`]: stella_runtime::wrapper::CandidateWorkspaces
 //! [`SubAgentSpec`]: stella_core::subagent::SubAgentSpec
@@ -379,6 +389,30 @@ impl SessionCandidateWorkspaces {
             .is_ok_and(|out| out.success)
     }
 
+    /// The subject line of the commit `oid` names, empty when git could not
+    /// say.
+    ///
+    /// Read for one question only — which worktree took a stash — and empty
+    /// rather than an error for [`ref_guard`]'s reason: a fact this host could
+    /// not read must not become an accusation.
+    async fn commit_subject(&self, dir: &Path, oid: &str) -> String {
+        self.git(dir, &["log", "-1", "--no-color", "--format=%s", oid])
+            .await
+            .map(|subject| subject.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    /// The messages of `checkout`'s **own** HEAD reflog, newest first.
+    ///
+    /// Per-worktree state (`.git/worktrees/<name>/logs/HEAD`), which is what
+    /// makes it evidence: only the process sitting in that checkout writes it,
+    /// so a ref it names is one this candidate moved onto.
+    async fn head_reflog(&self, checkout: &Path) -> String {
+        self.git(checkout, &["reflog", "show", "HEAD", "--format=%gs"])
+            .await
+            .unwrap_or_default()
+    }
+
     /// The tracked paths of the tree at `dir`, repository-relative.
     async fn tracked_paths(&self, dir: &Path) -> Vec<String> {
         self.git(dir, &["ls-files", "-z"])
@@ -405,6 +439,22 @@ impl SessionCandidateWorkspaces {
             .map(|_| ())
     }
 
+    /// What earlier runs in this workspace left behind, one line each, naming
+    /// the command that reclaims it (#2813).
+    ///
+    /// Read at the start of a wrapped run, before this run writes any record
+    /// of its own — so what it sees is only ever somebody else's, and a
+    /// concurrent fan-out's records are skipped because their owner answers
+    /// the liveness probe.
+    ///
+    /// Reporting rather than reclaiming is the whole point: a leftover
+    /// checkout is either a crash's residue or a live sibling run's, and
+    /// deleting the second on this host's own authority would destroy a
+    /// fan-out somebody is watching. See [`record`].
+    pub(crate) fn orphaned_candidates(&self) -> Vec<String> {
+        record::report(&self.repo_root.join(CANDIDATES_DIR))
+    }
+
     /// The candidate's whole change against the tree it was cut from.
     ///
     /// `--binary` so a candidate that wrote an image is adoptable rather than
@@ -413,6 +463,80 @@ impl SessionCandidateWorkspaces {
     async fn patch(&self, root: &Path) -> Result<String, String> {
         self.git(root, &["diff", "--binary", "--no-ext-diff", "HEAD"])
             .await
+    }
+
+    /// Write `checkout`'s uncommitted work out beside it, and say where.
+    ///
+    /// `Ok(None)` for a candidate that changed nothing — there is no file to
+    /// point a user at, and writing an empty one would put a path in a report
+    /// that is worth nothing to open.
+    ///
+    /// The file is named for the checkout's **slug**, not for the handle a
+    /// plugin spells. `candidate-0` is unique within one run and repeats in
+    /// the next, so a second aborted run would overwrite the first's rescued
+    /// work — which is the exact loss this exists to prevent. The slug carries
+    /// this run's scope hash ([`WorktreeManager::with_run_scope`]).
+    async fn write_patch(&self, checkout: &Path) -> Result<Option<PathBuf>, String> {
+        self.stage_intent(checkout).await?;
+        let patch = self.patch(checkout).await?;
+        if patch.trim().is_empty() {
+            return Ok(None);
+        }
+        let slug = checkout
+            .file_name()
+            .and_then(|slug| slug.to_str())
+            .ok_or_else(|| "a candidate checkout with no final path component".to_string())?;
+        let path = self
+            .repo_root
+            .join(CANDIDATES_DIR)
+            .join(format!("{slug}.patch"));
+        std::fs::write(&path, patch.as_bytes())
+            .map_err(|error| format!("{}: {error}", path.display()))?;
+        Ok(Some(path))
+    }
+
+    /// Write out every candidate still live, before anything removes it, and
+    /// say where each landed (#2651).
+    ///
+    /// Called when a run ends **abnormally** — the turn budget stopped it, the
+    /// dispatch failed, a turn aborted — which is precisely the ending where
+    /// no plugin ever got to score what these candidates did. The end-of-run
+    /// sweep then deletes the checkouts and their branches unconditionally, so
+    /// without this a candidate that solved the task is discarded with no
+    /// residue at all.
+    ///
+    /// The patch is written, never applied. Which candidate deserved to land
+    /// is the plugin's judgement, and a host that made it on an abort would be
+    /// adopting an unscored answer onto the user's tree on its own authority
+    /// — the same line [`Self::adopt`] refuses to cross when a patch does not
+    /// fit.
+    pub(crate) async fn preserve_unscored(&self) -> Vec<String> {
+        let live: Vec<(CandidateHandle, PathBuf)> = self
+            .minted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .map(|(handle, minted)| (handle.clone(), minted.worktree.path.clone()))
+            .collect();
+        let mut lines = Vec::new();
+        for (handle, checkout) in live {
+            match self.write_patch(&checkout).await {
+                Ok(Some(path)) => lines.push(format!(
+                    "the run ended before anything scored candidate {handle}; its work is \
+                     kept at {} and applies with `git apply --binary`",
+                    path.display()
+                )),
+                Ok(None) => {}
+                // Reported rather than raised, like the sweep beside it: the
+                // run is over, and a patch that would not write is a fact the
+                // user needs, not the run's exit status.
+                Err(reason) => lines.push(format!(
+                    "candidate {handle}'s work could not be written out before its \
+                     workspace was removed: {reason}"
+                )),
+            }
+        }
+        lines
     }
 }
 
@@ -464,6 +588,12 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
             &worktree.path,
             &self.tracked_paths(&layout.top).await,
         );
+        // The durable half of the live table above: what this checkout is, on
+        // disk, so a process that never reaches `remove` leaves something a
+        // later run can name (#2813). Best-effort like the two baselines —
+        // a candidate that could not be described is still one that should
+        // run.
+        let _ = record::CandidateRecord::of(handle.as_str(), &worktree, &layout.top).write();
 
         self.minted
             .lock()
@@ -484,55 +614,14 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
         workspace: &CandidateWorkspace,
         work: CandidateWork,
     ) -> Result<CandidateReport, CandidateFanoutError> {
-        let root = PathBuf::from(&workspace.root);
-        // Rooted at the candidate, and carrying the operator's `--allow-dir`
-        // grant — which is the whole reason this goes through `write_dirs`
-        // rather than `ToolRegistry::new`. See that module's own witness.
-        let registry = Arc::new(crate::write_dirs::registry_rooted_at(
+        let outcome = dispatch_candidate_turn(
             &self.cfg,
-            root.clone(),
-        ));
-        let spec = SubAgentSpec {
-            role: work.seat,
-            // The plugin's own word for the role, passed through untouched —
-            // the routing key the user's seat assignment is looked up by.
-            // `role` above is the receipt label. Nothing below may branch on
-            // this string's contents.
-            seat: Some(work.role.clone()),
-            turn_instance: work.turn_instance,
-            budget_usd: work.budget_usd,
-            // The whole capability. Every other dispatched child in this crate
-            // is read-only; a candidate that could not write would have
-            // nothing to adopt.
-            write_access: true,
-            // The session's own cap, not `SubAgentSpec`'s 16: a candidate is
-            // not a searcher summarizing for a parent, it is the work, and
-            // capping it below the turn it stands in for would make best-of-N
-            // structurally worse than the single turn it replaces.
-            max_steps: crate::agent::engine_config_for(&self.cfg).max_steps,
-            max_report_chars: CANDIDATE_REPORT_CHARS,
-            ..SubAgentSpec::read_only(work.agent_id, work.instruction)
-        };
-
-        let outcome = self
-            .sub_agents
-            .dispatch_in_workspace(
-                spec,
-                registry,
-                crate::agent::session_tool_policy(&self.cfg),
-                stella_core::ports::Principal::Plugin(self.plugin.clone()),
-            )
-            .await;
-        // A refusal is "never reached its first model call, cost exactly
-        // zero", which is the one outcome that is genuinely an error here: the
-        // plane reports every other shape to the plugin as a candidate that
-        // ran and did not finish, and a plugin can score that. It cannot score
-        // a candidate that never existed.
-        if let SubAgentOutcome::Refused { reason } = &outcome {
-            return Err(CandidateFanoutError::NotRun {
-                reason: reason.clone(),
-            });
-        }
+            &self.plugin,
+            &self.sub_agents,
+            PathBuf::from(&workspace.root),
+            work,
+        )
+        .await?;
 
         // Measured after the turn and from the tree, never from what the turn
         // said it did: the two disagree exactly when it matters. At the
@@ -586,13 +675,13 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
             reason,
         };
         let (worktree, refs_at_create, modes_at_create) = self.baseline(&workspace.handle)?;
-        let checkout = worktree.path;
+        let checkout = worktree.path.clone();
         let top = self.layout().await?.top.clone();
 
         // Before anything is written: a candidate that reached outside its own
         // tree into the shared ref namespace does not get to land, however
         // good its patch is.
-        let escaped = ref_guard::audit(self, &top, &refs_at_create, &worktree.branch).await;
+        let escaped = ref_guard::audit(self, &top, &refs_at_create, &worktree).await;
         if !escaped.is_empty() {
             return Err(fail(ref_guard::refusal(&escaped)));
         }
@@ -665,14 +754,81 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
             // no one can act on.
             return Ok(());
         };
-        self.worktrees
-            .discard(&minted.worktree)
-            .await
-            .map_err(|error| CandidateFanoutError::NotRemoved {
-                handle: workspace.handle.clone(),
-                reason: error.to_string(),
-            })
+        let discarded = self.worktrees.discard(&minted.worktree).await;
+        if discarded.is_ok() {
+            // Only once the checkout is really gone. A record dropped ahead of
+            // a failed discard would leave a leak nothing on disk names, which
+            // is the exact state the record exists to prevent.
+            record::forget(&minted.worktree.path);
+        }
+        discarded.map_err(|error| CandidateFanoutError::NotRemoved {
+            handle: workspace.handle.clone(),
+            reason: error.to_string(),
+        })
     }
+}
+
+/// Run one candidate's writing turn, rooted at `root`.
+///
+/// Shared by both substrates because the turn is the one part of a candidate
+/// that does not depend on how its tree was isolated: the same registry rooted
+/// at the same kind of directory, the same seat, the same session pool and
+/// ledger. Only what surrounds it — snapshot, measure, promote — differs (see
+/// [`copy_tree`]).
+///
+/// # Errors
+///
+/// [`CandidateFanoutError::NotRun`] for a turn that never reached its first
+/// model call and cost exactly zero. That is the one outcome that is genuinely
+/// an error: every other shape is a candidate that ran and did not finish,
+/// which a plugin can score. It cannot score one that never existed.
+async fn dispatch_candidate_turn(
+    cfg: &Config,
+    plugin: &str,
+    sub_agents: &SessionSubAgents,
+    root: PathBuf,
+    work: CandidateWork,
+) -> Result<SubAgentOutcome, CandidateFanoutError> {
+    // Rooted at the candidate, and carrying the operator's `--allow-dir`
+    // grant — which is the whole reason this goes through `write_dirs`
+    // rather than `ToolRegistry::new`. See that module's own witness.
+    let registry = Arc::new(crate::write_dirs::registry_rooted_at(cfg, root));
+    let spec = SubAgentSpec {
+        role: work.seat,
+        // The plugin's own word for the role, passed through untouched —
+        // the routing key the user's seat assignment is looked up by.
+        // `role` above is the receipt label. Nothing below may branch on
+        // this string's contents.
+        seat: Some(work.role.clone()),
+        turn_instance: work.turn_instance,
+        budget_usd: work.budget_usd,
+        // The whole capability. Every other dispatched child in this crate
+        // is read-only; a candidate that could not write would have
+        // nothing to adopt.
+        write_access: true,
+        // The session's own cap, not `SubAgentSpec`'s 16: a candidate is
+        // not a searcher summarizing for a parent, it is the work, and
+        // capping it below the turn it stands in for would make best-of-N
+        // structurally worse than the single turn it replaces.
+        max_steps: crate::agent::engine_config_for(cfg).max_steps,
+        max_report_chars: CANDIDATE_REPORT_CHARS,
+        ..SubAgentSpec::read_only(work.agent_id, work.instruction)
+    };
+
+    let outcome = sub_agents
+        .dispatch_in_workspace(
+            spec,
+            registry,
+            crate::agent::session_tool_policy(cfg),
+            stella_core::ports::Principal::Plugin(plugin.to_string()),
+        )
+        .await;
+    if let SubAgentOutcome::Refused { reason } = &outcome {
+        return Err(CandidateFanoutError::NotRun {
+            reason: reason.clone(),
+        });
+    }
+    Ok(outcome)
 }
 
 /// Sum `git diff --numstat` into `(files, lines added + removed)`.
@@ -701,8 +857,13 @@ fn numstat_totals(numstat: &str) -> (u32, u32) {
     (files, lines)
 }
 
+mod copy_tree;
 mod modes;
+mod record;
 mod ref_guard;
+mod substrate;
+
+pub(crate) use substrate::CandidateSubstrate;
 
 #[cfg(test)]
 mod tests;

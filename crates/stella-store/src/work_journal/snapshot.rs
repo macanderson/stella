@@ -142,7 +142,15 @@ impl WorkJournal {
     }
 
     /// The commit this session's snapshot lineage last wrote, if any.
-    fn snapshot_tip(&self) -> Option<String> {
+    ///
+    /// Public because it is what a turn is marked at: the head lineage carries
+    /// only reserved `.stella-journal/` blobs since the tool purge deleted its
+    /// last content writer, so a turn marked there names a tree with none of
+    /// the user's files in it (#3420). A read-only turn takes no commit here,
+    /// so two consecutive marks land on the same object and the diff between
+    /// them is empty — which is the "no row for a turn that changed nothing"
+    /// rule falling out of the lineage rather than being re-derived.
+    pub fn snapshot_tip(&self) -> Option<String> {
         self.git_snapshot(&[
             "rev-parse",
             "--verify",

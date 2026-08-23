@@ -180,7 +180,7 @@ async fn the_production_tool_stack_forwards_sub_agent_spend() {
         Vec::new(),
         std::path::PathBuf::from("."),
         Default::default(),
-        crate::agent::tool_stack::session_gate(),
+        crate::agent::tool_stack::session_gate(std::path::Path::new(".")),
         stella_core::ports::Principal::User,
     );
 
@@ -239,7 +239,7 @@ async fn the_production_tool_stack_forwards_wait_requests() {
         Vec::new(),
         std::path::PathBuf::from("."),
         Default::default(),
-        crate::agent::tool_stack::session_gate(),
+        crate::agent::tool_stack::session_gate(std::path::Path::new(".")),
         stella_core::ports::Principal::User,
     );
 
@@ -274,7 +274,7 @@ async fn the_production_tool_stack_forwards_parallel_safe_names() {
         Vec::new(),
         std::path::PathBuf::from("."),
         Default::default(),
-        crate::agent::tool_stack::session_gate(),
+        crate::agent::tool_stack::session_gate(std::path::Path::new(".")),
         stella_core::ports::Principal::User,
     );
 
@@ -325,7 +325,7 @@ async fn the_production_tool_stack_forwards_live_services() {
         Vec::new(),
         std::path::PathBuf::from("."),
         Default::default(),
-        crate::agent::tool_stack::session_gate(),
+        crate::agent::tool_stack::session_gate(std::path::Path::new(".")),
         stella_core::ports::Principal::User,
     );
 
@@ -477,7 +477,10 @@ fn the_delegate_tool_is_always_advertised_and_never_read_only() {
         stella_protocol::BudgetMode::Observed,
         None,
         crate::agent::seats::SeatProviders::new(),
-        stella_tools::policy::ToolPolicy::allow_all(),
+        super::ChildToolPosture {
+            policy: stella_tools::policy::ToolPolicy::allow_all(),
+            gate: Arc::new(stella_core::ports::NoAuthz),
+        },
     );
     assert_eq!(
         registry

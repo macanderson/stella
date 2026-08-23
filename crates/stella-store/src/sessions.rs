@@ -558,7 +558,13 @@ impl SessionRegistry {
 /// Whether `pid` is a live process. Unix: `kill(pid, 0)` (EPERM still means
 /// alive). Elsewhere: assume alive (no downgrade — better to show a stale
 /// in-progress row than to mislabel a live session as crashed).
-pub(crate) fn pid_alive(pid: u32) -> bool {
+///
+/// Public because this is the workspace's one answer to "is that process still
+/// there": the session registry downgrades a crashed session on it, and
+/// `stella-cli`'s candidate sweep decides on it whether a leftover checkout
+/// belongs to a run that is gone (#2813). Two predicates would be two answers.
+#[must_use]
+pub fn pid_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         // `pid_t` is signed: a stored pid that doesn't fit (a corrupt

@@ -93,6 +93,7 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         tools,
         ignore_gitignore,
         create_worktrees,
+        candidate_isolation,
         allowed_dirs,
         ui,
         reward,
@@ -123,6 +124,11 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
             "create_worktrees",
             Posture::Merged,
             create_worktrees != &d.create_worktrees,
+        ),
+        keyed(
+            "candidate_isolation",
+            Posture::Merged,
+            candidate_isolation != &d.candidate_isolation,
         ),
         keyed(
             "allowed_dirs",
@@ -291,6 +297,7 @@ const EVERY_KEY: &str = r#"{
   "trace_capture": "on",
   "ignore_gitignore": "off",
   "create_worktrees": "always",
+  "candidate_isolation": "copy-tree",
   "allowed_dirs": ["/srv/shared"],
   "ui": { "theme": "stella-light" },
   "reward": { "deterministic_weight": 2.0 },

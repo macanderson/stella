@@ -127,9 +127,9 @@ These changed shape in the port. Everything else kept its name.
 | `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe today because the agent set is **closed** and holds one name — `default` is a struct field, not a map key, so the per-agent table can never collide with a root field. It held six until #3908 collapsed the engine to one role; a file still naming `worker`, `verifier`, `triage`, `research` or `plan` loads and reports the key. |
 | `agent_engine_config.allowed_models` | `[models].allowed` | Promoted out of the agents block — it's a statement about models, not about any one agent. Still replaces wholesale across scopes rather than concatenating. |
 
-`trace_capture`, `create_worktrees`, and `ignore_gitignore` needed no such move: all
-three shipped straight into their `[run]` table home, so none ever had a bare-root
-JSON form to retire.
+`trace_capture`, `create_worktrees`, `candidate_isolation` and `ignore_gitignore`
+needed no such move: each shipped straight into its `[run]` table home, so none ever
+had a bare-root JSON form to retire.
 
 ## Every section, in the TOML shape
 
@@ -143,6 +143,17 @@ page is a complete reference on its own; see the linked section for the full exp
     `"always"`, `"ask"`, or `"never"` — whether a run does its work in a throwaway git
     worktree instead of your checkout. An empty string, `null`, or the key being absent
     all mean `"ask"`; anything else is a hard parse error.
+  </OptionCard>
+  <OptionCard name="run.candidate_isolation" defaultValue="worktree">
+    `"worktree"` or `"copy-tree"` — how a best-of-N fan-out isolates one candidate's
+    tree from the next. `"worktree"` cuts a git worktree per candidate and promotes the
+    winner as a patch, so a candidate cannot land anything you could not have written
+    yourself and an adoption that no longer applies refuses. `"copy-tree"` copies the
+    whole directory instead, gitignored files included, and promotes by **replacing**
+    the tree's contents with the winner's — right for a disposable benchmark container
+    whose `node_modules/` or `.venv/` the task's own tests execute, and destructive
+    anywhere else. Never selected for you. An empty string, `null`, or the key being
+    absent all mean `"worktree"`; anything else is a hard parse error.
   </OptionCard>
   <OptionCard name="run.ignore_gitignore" defaultValue="on">
     Same name as JSON, and the one toggle here that defaults **on**. See

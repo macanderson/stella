@@ -5,11 +5,10 @@
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
-use stella_core::{GapDetectionConfig, ShellInvocation, detect_tool_gaps};
 use stella_protocol::tool::ToolSchema;
 
 use super::*;
-use crate::foundry_author::{self, PROPOSED_DIR};
+use crate::foundry_gate::PROPOSED_DIR;
 
 /// The session's executor chain as the witness meets it: nothing advertised,
 /// nothing answered. `advertises` lets one test put the candidate's name on
@@ -90,49 +89,59 @@ fn staged(root: &Path, name: &str, body: &str, witness_input: Value) -> CustomTo
     }
 }
 
-/// Author a real tool from real detector output and write its staged pair
-/// into `root`, exactly as `stella tools --author` does. Returns the parsed
-/// tool the witness will be run against.
-fn authored_in(root: &Path, commands: &[&str]) -> CustomTool {
-    // Each command retyped three times: the detector's shipping
-    // `min_reuse_ratio` asks that argument sets recur, not just vary (#2378),
-    // and what this fixture needs is a proposal from the real default.
-    let history: Vec<ShellInvocation> = (0..3)
-        .flat_map(|_| commands.iter().map(|c| ShellInvocation::ok(*c)))
-        .collect();
-    let proposals = detect_tool_gaps(&history, GapDetectionConfig::default());
-    assert_eq!(proposals.len(), 1, "expected exactly one proposal");
-    let authored = foundry_author::author(&proposals[0]).expect("authorship succeeds");
-
+/// Write a staged `<name>.toml` + `<name>.sh` pair under [`PROPOSED_DIR`] and
+/// return it parsed through the exact parser discovery uses — the hand-staging
+/// protocol `stella tools --adopt` reads (#3629 retired the authoring pass that
+/// used to write these bytes; nothing about the pair's shape changed).
+fn staged_pair_in(root: &Path, name: &str, command_line: &str, witness_p1: &str) -> CustomTool {
     let staged_dir = root.join(PROPOSED_DIR);
     std::fs::create_dir_all(&staged_dir).unwrap();
-    let manifest_path = staged_dir.join(&authored.manifest_filename);
-    std::fs::write(&manifest_path, &authored.manifest_toml).unwrap();
-    let script_path = staged_dir.join(&authored.script_filename);
-    std::fs::write(&script_path, &authored.script).unwrap();
+    let script_path = staged_dir.join(format!("{name}.sh"));
+    std::fs::write(
+        &script_path,
+        format!("#!/bin/sh\nset -eu\n{command_line}\n"),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    crate::custom::parse_manifest(&authored.manifest_toml, &manifest_path)
-        .expect("authored manifest parses")
+
+    let manifest_path = staged_dir.join(format!("{name}.toml"));
+    let manifest = format!(
+        "name = \"{name}\"\n\
+         description = \"The staged capability under test.\"\n\
+         command = [\"./{PROPOSED_DIR}/{name}.sh\"]\n\
+         \n\
+         [foundry]\n\
+         authored_by = \"{}\"\n\
+         signature = \"{name} <path>\"\n\
+         occurrences = 3\n\
+         witness_input = {{ p1 = \"{witness_p1}\" }}\n\
+         \n\
+         [input_schema]\n\
+         type = \"object\"\n\
+         required = [\"p1\"]\n\
+         \n\
+         [input_schema.properties.p1]\n\
+         type = \"string\"\n",
+        crate::foundry_gate::AUTHORED_BY,
+    );
+    std::fs::write(&manifest_path, &manifest).unwrap();
+    crate::custom::parse_manifest(&manifest, &manifest_path).expect("staged manifest parses")
 }
 
-/// **The headline.** A real detector proposal, really authored, really run:
-/// the same call fails on the session's existing tool surface and answers once
-/// the authored tool is in it. That fail→pass flip is the whole proof #830
-/// asks for, and it is measured here rather than asserted.
+/// **The headline.** A staged pair, really run: the same call fails on the
+/// session's existing tool surface and answers once the staged tool is in it.
+/// That fail→pass flip is the whole proof #830 asks for, and it is measured
+/// here rather than asserted.
 #[tokio::test]
 async fn the_witness_fails_without_the_tool_and_passes_with_it() {
     let ws = tempfile::tempdir().unwrap();
     let root = ws.path();
-    // The capability: read a file's contents. The three receipts below are
-    // what a session's `bash` log would hold.
     std::fs::write(root.join("a.txt"), "alpha-contents\n").unwrap();
-    std::fs::write(root.join("b.txt"), "beta-contents\n").unwrap();
-    std::fs::write(root.join("c.txt"), "gamma-contents\n").unwrap();
-    let tool = authored_in(root, &["cat a.txt", "cat b.txt", "cat c.txt"]);
+    let tool = staged_pair_in(root, "read_a_file", "cat \"$STELLA_INPUT_P1\"", "a.txt");
 
     let chain = Chain::empty();
     let input = witness_input(&tool).expect("the manifest carries a runnable witness input");
@@ -376,43 +385,21 @@ fn a_hand_written_manifest_has_no_witness_input() {
     assert!(witness_input(&tool).is_err());
 }
 
-/// Every value the authoring pass stamps as witness input is a value the
-/// receipts actually carried — never one this code invented.
+/// The witness input a staged manifest declares survives the manifest round
+/// trip with its JSON type intact, so it still satisfies the schema that same
+/// manifest declares.
 #[test]
-fn the_witness_input_is_drawn_from_observed_arguments() {
+fn the_declared_witness_input_round_trips_through_the_manifest() {
     let ws = tempfile::tempdir().unwrap();
-    let tool = authored_in(
+    let tool = staged_pair_in(
         ws.path(),
-        &["cat notes/a.txt", "cat notes/b.txt", "cat notes/c.txt"],
+        "read_a_file",
+        "cat \"$STELLA_INPUT_P1\"",
+        "notes/a.txt",
     );
     let provenance = tool.foundry.as_ref().expect("foundry table");
     assert_eq!(provenance.authored_by, crate::foundry_gate::AUTHORED_BY);
-    let value = provenance.witness_input["p1"].as_str().expect("p1");
-    assert!(
-        ["notes/a.txt", "notes/b.txt", "notes/c.txt"].contains(&value),
-        "witness input must be an OBSERVED argument, got `{value}`"
-    );
-}
-
-/// A numeric hole keeps its JSON type through the manifest round trip, so the
-/// witness input still satisfies the schema the same manifest declares.
-#[test]
-fn a_numeric_hole_round_trips_as_a_number() {
-    let ws = tempfile::tempdir().unwrap();
-    let tool = authored_in(
-        ws.path(),
-        &[
-            "git log --oneline -5",
-            "git log --oneline -10",
-            "git log --oneline -20",
-        ],
-    );
-    let provenance = tool.foundry.as_ref().expect("foundry table");
-    assert!(
-        provenance.witness_input["p1"].is_number(),
-        "a `number` schema property needs a number witness input: {:?}",
-        provenance.witness_input
-    );
-    assert_eq!(tool.input_schema["properties"]["p1"]["type"], "number");
-    witness_input(&tool).expect("a complete numeric input is runnable");
+    assert_eq!(provenance.witness_input["p1"], "notes/a.txt");
+    assert_eq!(tool.input_schema["properties"]["p1"]["type"], "string");
+    witness_input(&tool).expect("a complete input is runnable");
 }

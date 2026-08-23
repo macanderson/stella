@@ -349,6 +349,27 @@ impl SessionDurability {
     /// Best-effort and silent, like everything else here: a turn that ended is
     /// not made less ended by an unwritable marker.
     ///
+    /// # The mark lands on the snapshot lineage, not the session head (#3420)
+    ///
+    /// `refs/stella/<session>/head` carries only reserved `.stella-journal/`
+    /// blobs: `WorkJournal::record`'s last content-writing caller was deleted
+    /// by the twelve-tool purge (#3244), and `record_checkpoint` — the only
+    /// caller left — passes an empty path slice. A turn marked there names a
+    /// tree with none of the user's files in it, so
+    /// `changed_paths_at_turn` filtered every path out and
+    /// [`crate::turn_diff::record_turn_diff`] wrote nothing.
+    /// `session_turn_diffs` was empty in production and the observatory's turn
+    /// drill was permanently blank — the same failure #2177 fixed once, reached
+    /// by a different route.
+    ///
+    /// `refs/stella/<session>/tree` is the lineage that does carry the work:
+    /// [`Self::snapshot_worktree`] commits the whole tree at every turn
+    /// boundary (#3413) and runs *before* this, so its tip is the state the
+    /// turn ended in. Marking there keeps `read_at_turn`'s content replay
+    /// working, which the diff hunks need for both sides. The head lineage
+    /// stays the fallback for a session whose snapshot never took — the mark is
+    /// then as thin as it always was, rather than absent.
+    ///
     /// Marking is also the moment the turn's workspace diff is precomputed
     /// and persisted (#1870, [`crate::turn_diff`]) — the boundary ruling that
     /// keeps the observatory a pure artifact reader lives there. `store` is
@@ -369,7 +390,7 @@ impl SessionDurability {
         // Nothing recorded means nothing to name. A session whose turns only
         // read files never commits, and marking a turn at no commit at all is
         // not a fact worth writing down.
-        let Some(tip) = journal.session_tip() else {
+        let Some(tip) = journal.snapshot_tip().or_else(|| journal.session_tip()) else {
             return;
         };
         let turn = journal.last_marked_turn().unwrap_or(0).saturating_add(1);
@@ -847,5 +868,66 @@ mod tests {
         record.mark_turn(1, &tip).unwrap();
         assert_eq!(record.read_at_turn(1, "work.txt").unwrap(), "half-done\n");
         assert_eq!(record.checkpoint().as_deref(), Some("{\"step\":7}"));
+    }
+
+    /// **The #3420 witness.** A turn that mutates a file leaves a
+    /// `session_turn_diffs` row whose hunks name the lines that moved.
+    ///
+    /// Fails on `main`: `mark_turn_end` marked the turn at `session_tip()`, the
+    /// head lineage, whose trees carry only reserved `.stella-journal/` blobs
+    /// since the twelve-tool purge took `WorkJournal::record`'s last content
+    /// writer (#3244). `changed_paths_at_turn` filtered every one of them out,
+    /// `record_turn_diff` returned early on the empty list, and the row was
+    /// never written — so the observatory's Sessions-view turn drill was blank
+    /// for every session, which reads as "this turn changed nothing" rather
+    /// than "this surface records nothing".
+    #[test]
+    fn a_turn_that_changed_a_file_leaves_a_diff_row_with_hunks() {
+        let store_dir = tempfile::tempdir().unwrap();
+        let ws = tempfile::tempdir().unwrap();
+        let journal = journal(store_dir.path(), ws.path(), "ses-diff");
+        let store = std::sync::Arc::new(stella_store::Store::open(ws.path()).expect("store"));
+
+        // The turn boundary as the drivers run it: bind takes the session
+        // baseline, the turn writes, `close_turn_boundary` snapshots, then the
+        // turn is marked.
+        std::fs::write(ws.path().join("a.txt"), "one\n").unwrap();
+        let durability = SessionDurability::default();
+        durability.bind(journal.clone());
+        std::fs::write(ws.path().join("a.txt"), "one\ntwo\n").unwrap();
+        assert!(
+            matches!(
+                durability.snapshot_worktree(),
+                WorktreeSnapshot::Measured(_)
+            ),
+            "the boundary snapshot must have run"
+        );
+        durability.mark_turn_end(&Some(store.clone()), "ses-diff", Some(7));
+
+        let row = store
+            .session_turn_diff("ses-diff", 1)
+            .expect("the store answers")
+            .expect("a turn that changed a file records a row");
+        assert!(
+            row.files.contains("a.txt") && row.files.contains("two"),
+            "the row names the file and the line that arrived: {}",
+            row.files
+        );
+
+        // Anti-vacuity, same session: a turn that changed nothing records no
+        // row, so the assertion above is about the change and not about the
+        // marking.
+        assert!(matches!(
+            durability.snapshot_worktree(),
+            WorktreeSnapshot::Measured(_)
+        ));
+        durability.mark_turn_end(&Some(store.clone()), "ses-diff", Some(8));
+        assert!(
+            store
+                .session_turn_diff("ses-diff", 2)
+                .expect("answers")
+                .is_none(),
+            "a read-only turn is still distinguishable from an unrecorded one"
+        );
     }
 }

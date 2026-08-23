@@ -65,6 +65,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_core::bus::{HookBus, HookDecision, HookEventDraft, names as hook_names};
+pub use stella_core::hooks::decision::ApprovalSubject;
 use stella_core::ports::{DispatchAdmission, DispatchGate};
 use stella_protocol::tool::ToolOutput;
 
@@ -113,11 +114,17 @@ pub const APPROVAL_TIMED_OUT_TAG: &str = "approval timed out";
 /// so it is serde round-trippable by contract (invariant #4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalRequest {
-    /// The tool whose dispatch is parked.
-    pub tool: String,
-    /// The tool's advertised `read_only` bit — `false` for a name the
-    /// registry does not know, the cautious direction.
-    pub read_only: bool,
+    /// What is parked: a tool call and its advertised `read_only` bit, or the
+    /// turn's own completion (#3486).
+    ///
+    /// This was `tool: String` plus `read_only: bool`, which made a tool name
+    /// a required field of every question — so a `Stop` hook asking at a turn
+    /// boundary could only ask by inventing a tool, and therefore did not ask
+    /// at all. `stella_core`'s enum rather than a second one here, for
+    /// [`RiskLevel`](stella_protocol::RiskLevel)'s reason one plane over: the
+    /// subject a surface renders and the subject the engine parked must be one
+    /// type, or two spellings of "what is this about" can disagree.
+    pub parked: ApprovalSubject,
     /// The gate's reason, verbatim from the `RequireApproval` decision.
     pub reason: String,
     /// The blocking chain that raised the requirement
@@ -275,8 +282,13 @@ impl ApprovalBroker {
 fn requested_payload(request: &ApprovalRequest) -> Value {
     serde_json::json!({
         "event_name": request.gate,
-        "tool": request.tool,
-        "read_only": request.read_only,
+        // `null` rather than a placeholder when the parked thing is the turn
+        // itself: a key reading `"<turn>"` would claim a tool by that name was
+        // asked about, which is the lie #3486 exists to remove from the audit
+        // trail. The key stays present so a consumer selecting on it still
+        // sees the richer emission.
+        "tool": request.parked.tool(),
+        "read_only": request.parked.read_only(),
         "reason": request.reason,
         "subject": request.subject,
         "decision": HookDecision::RequireApproval { reason: request.reason.clone() },
@@ -288,8 +300,8 @@ fn requested_payload(request: &ApprovalRequest) -> Value {
 fn resolution_payload(request: &ApprovalRequest, resolution: &str) -> Value {
     serde_json::json!({
         "event_name": request.gate,
-        "tool": request.tool,
-        "read_only": request.read_only,
+        "tool": request.parked.tool(),
+        "read_only": request.parked.read_only(),
         "reason": request.reason,
         "subject": request.subject,
         "resolution": resolution,
@@ -300,12 +312,21 @@ fn resolution_payload(request: &ApprovalRequest, resolution: &str) -> Value {
 /// the model's next move is legible (spec item 3 of #2676) — where the old
 /// dead-end was a bare "requires approval" wall.
 fn headless_refusal(request: &ApprovalRequest) -> String {
-    format!(
-        "no interactive surface is attached to answer it — grant the call via policy \
-         (`tools.{tool}` in `.stella/settings.json`) or rerun interactively; gate reason: {reason}",
-        tool = request.tool,
-        reason = request.reason,
-    )
+    match request.parked.tool() {
+        Some(tool) => format!(
+            "no interactive surface is attached to answer it — grant the call via policy \
+             (`tools.{tool}` in `.stella/settings.json`) or rerun interactively; gate reason: \
+             {reason}",
+            reason = request.reason,
+        ),
+        // No tool means no `tools.<name>` switch to point at, so the grant
+        // path is the surface itself rather than a policy line.
+        None => format!(
+            "no interactive surface is attached to answer it — rerun interactively so somebody \
+             can decide; gate reason: {reason}",
+            reason = request.reason,
+        ),
+    }
 }
 
 impl ToolRegistry {
@@ -397,8 +418,10 @@ impl ToolRegistry {
             }
             GateVerdict::RequireApproval { reason } => {
                 let request = ApprovalRequest {
-                    tool: name.to_string(),
-                    read_only: self.advertised_read_only(name),
+                    parked: ApprovalSubject::Tool {
+                        name: name.to_string(),
+                        read_only: self.advertised_read_only(name),
+                    },
                     reason,
                     gate: hook_names::TOOL_CALL_REQUESTED.to_string(),
                     subject: None,
@@ -869,8 +892,10 @@ mod tests {
     #[test]
     fn approval_request_round_trips_through_serde_json() {
         let request = ApprovalRequest {
-            tool: "bash".into(),
-            read_only: false,
+            parked: ApprovalSubject::Tool {
+                name: "bash".into(),
+                read_only: false,
+            },
             reason: "commands need a human".into(),
             gate: "command.started".into(),
             subject: Some("rm -rf build/".into()),

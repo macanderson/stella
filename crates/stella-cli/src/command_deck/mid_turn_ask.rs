@@ -347,8 +347,10 @@ mod tests {
 
     fn approval_request() -> ApprovalRequest {
         ApprovalRequest {
-            tool: "bash".into(),
-            read_only: false,
+            parked: stella_tools::registry::approval::ApprovalSubject::Tool {
+                name: "bash".into(),
+                read_only: false,
+            },
             reason: "matched rule no-destructive-shell".into(),
             gate: "command.started".into(),
             subject: Some("rm -rf build/".into()),
@@ -428,9 +430,9 @@ mod tests {
         let Some(Inbound::ApprovalAsked(carried)) = inbound.recv().await else {
             panic!("the approval must reach the deck as a card");
         };
-        assert_eq!(carried.tool, "bash");
+        assert_eq!(carried.parked.tool(), Some("bash"));
         assert!(
-            !carried.read_only,
+            !carried.parked.read_only(),
             "read_only must survive — it is what separates a read from a write, \
              and the generic AskUser card dropped it entirely"
         );

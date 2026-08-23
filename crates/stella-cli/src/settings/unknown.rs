@@ -67,6 +67,7 @@ pub(super) const ROOT_FIELDS: &[&str] = &[
     "tools",
     "ignore_gitignore",
     "create_worktrees",
+    "candidate_isolation",
     "allowed_dirs",
     "ui",
     "reward",
@@ -486,7 +487,11 @@ pub(super) const TOML_ROOT_FIELDS: &[&str] = &[
 ];
 
 const META_FIELDS: &[&str] = &["schema_version", "scope"];
-const RUN_FIELDS: &[&str] = &["create_worktrees", "ignore_gitignore"];
+const RUN_FIELDS: &[&str] = &[
+    "candidate_isolation",
+    "create_worktrees",
+    "ignore_gitignore",
+];
 /// `[workspace]` — closed, like `[run]`: a mistyped `allowed_dir` grants
 /// nothing and looks exactly like a granted directory until a tool refuses a
 /// write, which is the failure this walker exists to pre-empt.

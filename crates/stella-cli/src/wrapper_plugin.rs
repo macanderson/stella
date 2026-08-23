@@ -450,6 +450,33 @@ impl BoundWrapper {
             .map_or_else(Vec::new, |plane| plane.spends())
     }
 
+    /// What earlier runs in this workspace left behind, one line each.
+    ///
+    /// Read before this run mints anything, so every record it sees belongs to
+    /// somebody else — and a *live* sibling run's records are skipped, so what
+    /// is left is residue from a process that is gone. It names a reclaim
+    /// command and deletes nothing; see
+    /// [`crate::candidate_workspaces::SessionCandidateWorkspaces::orphaned_candidates`].
+    pub(crate) fn orphaned_candidates(&self) -> Vec<String> {
+        self.candidate_fanout
+            .as_ref()
+            .map_or_else(Vec::new, |plane| plane.workspaces().orphaned_candidates())
+    }
+
+    /// Write out every candidate this run still holds, before the sweep takes
+    /// it, and return where each landed (#2651).
+    ///
+    /// Called only on an **abnormal** ending, because on a clean one a
+    /// candidate still in the table is one the plugin looked at and did not
+    /// choose — discarding that is the whole point of best-of-N. An abort is
+    /// the ending where nothing ever scored them.
+    pub(crate) async fn preserve_candidates(&self) -> Vec<String> {
+        match &self.candidate_fanout {
+            Some(plane) => plane.workspaces().preserve_unscored().await,
+            None => Vec::new(),
+        }
+    }
+
     /// Discard every candidate workspace this run still holds, and return what
     /// would not go.
     ///
@@ -511,7 +538,7 @@ pub(crate) type SessionChildTurns = ChildTurns<Arc<dyn SubAgentDispatcher>>;
 /// The candidate fan-out plane a `stella run` session installs: the plugin's
 /// declared role intents over **this session's own** worktree substrate.
 pub(crate) type SessionCandidateFanouts =
-    CandidateFanouts<crate::candidate_workspaces::SessionCandidateWorkspaces>;
+    CandidateFanouts<crate::candidate_workspaces::CandidateSubstrate>;
 
 /// This host's child-turn plane for one installed plugin.
 ///
@@ -605,7 +632,7 @@ pub(crate) fn child_turn_plane(
 ///   Neither is overridden.
 pub(crate) fn candidate_fanout_plane(
     manifest: &stella_plugin::PluginManifest,
-    workspaces: crate::candidate_workspaces::SessionCandidateWorkspaces,
+    workspaces: crate::candidate_workspaces::CandidateSubstrate,
 ) -> SessionCandidateFanouts {
     CandidateFanouts::declare(manifest, workspaces)
         .in_turn_lane(stella_core::turn_slots::FANOUT_LANE)
@@ -663,7 +690,7 @@ pub(crate) fn session_host(
     manifest: &stella_plugin::PluginManifest,
     dispatcher: Arc<crate::subagent::SessionSubAgents>,
 ) -> WrapperHost {
-    let workspaces = crate::candidate_workspaces::SessionCandidateWorkspaces::new(
+    let workspaces = crate::candidate_workspaces::CandidateSubstrate::for_session(
         cfg,
         &manifest.name,
         Arc::clone(&dispatcher),
@@ -1063,8 +1090,27 @@ pub(crate) struct RawTurnDriver<'a> {
     /// for the turns it drives directly.
     pub(crate) controls: TurnControls,
     /// What each round's turn returned, in order — the caller's own view of a
-    /// loop the dispatcher owns.
-    pub(crate) results: Vec<Result<(), CliFailure>>,
+    /// loop the dispatcher owns. `Ok(true)` is a turn that *finished*;
+    /// `Ok(false)` is one that aborted, which is the ending
+    /// [`ended_abnormally`] is about.
+    pub(crate) results: Vec<Result<bool, CliFailure>>,
+}
+
+/// Did this run end in a way that left its candidates unscored?
+///
+/// A plugin scores what a fan-out produced and then adopts one; the end-of-run
+/// sweep deletes the rest, which is correct — a candidate the plugin looked at
+/// and passed over is meant to go. An **abort** is the other ending: the turn
+/// budget stopped the run, or a turn failed, and no plugin ever got as far as
+/// scoring anything. Everything still live then is work nobody judged, and
+/// deleting it is the silent discard #2651 measured as a solved task scoring
+/// zero.
+///
+/// Pure, and separate from the loop it governs, because it is the whole
+/// decision: read it wrong in the safe direction and a run writes a patch
+/// nobody needed; read it wrong in the other and finished work is destroyed.
+fn ended_abnormally(rounds: &[Result<bool, CliFailure>]) -> bool {
+    rounds.iter().any(|round| !matches!(round, Ok(true)))
 }
 
 #[async_trait(?Send)]
@@ -1123,7 +1169,11 @@ impl TurnDriver for RawTurnDriver<'_> {
             Ok(stella_core::TurnOutcome::Aborted { reason, .. }) => observed(false, reason.clone()),
             Err(failure) => observed(false, failure.to_string()),
         };
-        self.results.push(outcome.map(|_| ()));
+        // Whether the turn *finished*, not merely whether it returned: an
+        // abort on the turn budget is `Ok`, and it is exactly the ending after
+        // which nothing scored the candidates a plugin fanned out
+        // ([`ended_abnormally`], #2651).
+        self.results.push(outcome.map(|_| turn.completed));
         DrivenTurn {
             outcome: turn,
             // The host's own comparison, over artifacts it pinned before the
@@ -1157,6 +1207,13 @@ pub(crate) async fn run_wrapped(
     mut driver: RawTurnDriver<'_>,
 ) -> Result<(), CliFailure> {
     let format = driver.format;
+    // Before anything is minted, so what this names is only ever a run that is
+    // already over (#2813). Nothing is deleted: a leftover checkout is either
+    // a crash's residue or a live sibling's, and only the person reading can
+    // tell this host which.
+    for orphan in bound.orphaned_candidates() {
+        eprintln!("  ! wrapper: {orphan}");
+    }
     let input = RoundInput {
         goal: goal.to_string(),
         signals,
@@ -1174,7 +1231,19 @@ pub(crate) async fn run_wrapped(
     // Whatever a plugin's last point spent has no turn left to fold it in, so
     // this driver folds it (#3576). See `settle_plugin_child_spend`.
     settle_plugin_child_spend(driver.registry, &mut *driver.budget);
+    // Before the pop, so the whole run is judged rather than every round but
+    // its last.
+    let aborted = report.is_err() || ended_abnormally(&driver.results);
     let last = driver.results.pop();
+    // A run that ended before anything scored its candidates keeps their work
+    // as patches, because the sweep below deletes checkouts and branches
+    // unconditionally (#2651). Written, never applied: which candidate
+    // deserved to land is the plugin's judgement, and it never made one.
+    if aborted {
+        for kept in bound.preserve_candidates().await {
+            eprintln!("  ! wrapper: {kept}");
+        }
+    }
     // The end-of-run sweep, and it runs on both arms below because a dispatch
     // that failed is exactly the run most likely to have left workspaces
     // behind. Failures are printed rather than raised: the work is done, and
@@ -1197,7 +1266,7 @@ pub(crate) async fn run_wrapped(
             // A round always runs, so `results` always has an entry; an empty
             // one would mean the dispatcher returned without driving anything,
             // which is a report about the wrapper and not about the work.
-            last.unwrap_or(Ok(()))
+            last.unwrap_or(Ok(true)).map(|_| ())
         }
         Err(error) => Err(CliFailure::from(error.to_string())),
     }

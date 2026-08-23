@@ -194,7 +194,11 @@ impl SessionSpec {
     /// deployment does not authorize tool calls" is a decision a reviewer
     /// can see, never the absence of a value (#2716). The CLI's
     /// `agent::tool_stack::session_gate` is the same one function on the
-    /// other surface.
+    /// other surface — and since #3482 it returns an installed plugin's
+    /// accepted grant when the workspace has one. This surface does not,
+    /// because a served session has no workspace of its own to read a roster
+    /// from: the embedding host supplies the gate, and a host that installs
+    /// plugins supplies one that knows about them.
     #[must_use]
     pub fn default_gate() -> Arc<dyn AuthzGate> {
         Arc::new(NoAuthz)

@@ -1353,7 +1353,11 @@ async fn a_custom_tool_needing_approval_asks_the_sessions_responder() {
             &self,
             request: &crate::registry::approval::ApprovalRequest,
         ) -> crate::registry::approval::ApprovalResponse {
-            assert_eq!(request.tool, "my_tool", "the card names the custom tool");
+            assert_eq!(
+                request.parked.tool(),
+                Some("my_tool"),
+                "the card names the custom tool"
+            );
             self.asked.fetch_add(1, Ordering::SeqCst);
             self.answer.clone()
         }
