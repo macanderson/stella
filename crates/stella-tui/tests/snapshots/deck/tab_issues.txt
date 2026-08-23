@@ -17,7 +17,7 @@
    ↵ open · c comment · s status · p to prompt
 
  w start work   on the selected issue → stella drafts the plan from the issue and the graph, and waits for your approval before touching code
- ↑↓ select · w start work · n new issue · / search tracker · r refresh · ]/[ page · space pick · x close / reopen
+ ↑↓ select · w start work · n new issue · / search tracker · r refresh · ]/[ page · space pick · p send to prompt · x close / reopen
 
 
 

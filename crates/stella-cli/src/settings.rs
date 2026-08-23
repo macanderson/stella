@@ -204,14 +204,6 @@ pub struct Settings {
     /// sighted. Last-wins across scopes, like `enable_recap`.
     #[serde(default)]
     pub ignore_gitignore: Option<Toggle>,
-    /// `on` (the default when the key is absent) = the command deck runs a
-    /// background watcher on the workspace's current-branch PR: it spawns a
-    /// fix sub-agent when CI fails or the PR goes conflicted, and merges the
-    /// PR once CI is green and it is mergeable. `off` disables the watcher —
-    /// the PR monitor still feeds the footer cell, it just never acts.
-    /// Last-wins across scopes, like `ignore_gitignore`.
-    #[serde(default)]
-    pub autofix_prs: Option<Toggle>,
     /// `always` / `ask` / `never` — whether a run does its work in a throwaway
     /// git worktree instead of the working tree. Absent, null, or empty means
     /// `ask`, and the question is put once, at triage, only when the run is
@@ -714,12 +706,6 @@ impl Settings {
     /// restores the unfiltered walk.
     pub fn ignore_gitignore(&self) -> bool {
         self.ignore_gitignore.is_none_or(Toggle::is_on)
-    }
-
-    /// `on` by default; only an explicit `"autofix_prs": "off"` in the scope
-    /// chain disables the deck's PR autofix watcher.
-    pub fn autofix_prs(&self) -> bool {
-        self.autofix_prs.is_none_or(Toggle::is_on)
     }
 
     /// The resolved reward policy for this workspace (#1043). An absent
