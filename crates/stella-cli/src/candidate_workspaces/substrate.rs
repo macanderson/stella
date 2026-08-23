@@ -25,6 +25,14 @@
 //! mid-session would be wrong" — which is the same fact this read states
 //! directly, with one reader instead of a field every surface carries.
 //!
+//! Reading the scope chain a second time is what
+//! [`Settings::load`](crate::settings::Settings::load) is already built for:
+//! its trust refusals and format notices are latched process-wide, so the
+//! several loads one launch performs speak once between them. The alternative —
+//! a narrow re-reader like `Settings::load_tool_scopes` — would skip the
+//! project trust boundary and `stella.toml`, which is the wrong trade for a
+//! value that decides whether a promotion overwrites a tree.
+//!
 //! [`Config`]: crate::config::Config
 
 use std::sync::Arc;
