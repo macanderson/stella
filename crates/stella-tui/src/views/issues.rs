@@ -21,6 +21,7 @@ use crate::deck_ui::{DeckUi, IssueField, IssuesMode, IssuesPanel};
 use crate::envelope::{EntityHit, IssueRow};
 use crate::render::scroll_window_start;
 use crate::theme;
+use stella_tui_theme::token;
 
 /// Most hit rows the type-ahead popup shows before it scrolls.
 const TYPEAHEAD_MAX_ROWS: usize = 8;
@@ -31,26 +32,27 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // `loaded_page`, not `page`: the header describes the rows on screen, and
     // `page` has already moved to whatever the last `]` asked for — which is a
     // different number whenever that fetch failed or is still in flight.
-    let title = if ui.issues.loaded_page > 0 {
-        format!(
-            " ISSUES — {} listed · page {} ",
-            ui.issues.rows.len(),
-            ui.issues.loaded_page + 1
-        )
-    } else {
-        format!(" ISSUES — {} listed ", ui.issues.rows.len())
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(theme::panel_rule());
-    let inner = block.inner(area);
-    block.render(area, buf);
+    let inner = area;
     if inner.width == 0 || inner.height == 0 {
         return;
     }
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
 
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    // `loaded_page`, not `page`: the header describes the rows on screen,
+    // and `page` has already moved to whatever the last `]` asked for.
+    let mut head = vec![
+        Span::styled(" backlog", text),
+        Span::styled(format!(" · {} listed", ui.issues.rows.len()), muted),
+    ];
+    if ui.issues.loaded_page > 0 {
+        head.push(Span::styled(
+            format!(" · page {}", ui.issues.loaded_page + 1),
+            muted,
+        ));
+    }
+    let mut lines: Vec<Line<'static>> = vec![Line::from(head)];
     // The session's own PR, above whatever mode the tab is in — it is a fact
     // about this session, not about the list, so a search or a half-filled
     // create form must not hide it.
@@ -100,7 +102,10 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             lines.push(Line::default());
             render_list(&ui.issues, ui.accessible, inner, &mut lines);
         }
-        IssuesMode::Browse => render_list(&ui.issues, ui.accessible, inner, &mut lines),
+        IssuesMode::Browse => {
+            render_list(&ui.issues, ui.accessible, inner, &mut lines);
+            render_detail(&ui.issues, inner.width as usize, &mut lines);
+        }
     }
 
     // Notice line (op outcomes, errors, the no-tracker hint) + key footer.
@@ -108,8 +113,19 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     if let Some(notice) = &ui.issues.notice {
         lines.push(Line::from(Span::styled(
             format!("  {}{notice}", if ui.issues.busy { "◌ " } else { "" }),
-            Style::default().fg(theme::ACCENT),
+            Style::new().fg(token::GOLD),
         )));
+    }
+    if ui.issues.mode == IssuesMode::Browse {
+        lines.push(Line::from(vec![
+            Span::styled(" w", Style::new().fg(token::GOLD)),
+            Span::styled(" start work", Style::new().fg(token::GOLD)),
+            Span::styled(
+                "   on the selected issue → stella drafts the plan from the issue and the graph, \
+                 and waits for your approval before touching code",
+                dim,
+            ),
+        ]));
     }
     lines.push(footer(ui.issues.mode));
 
@@ -202,7 +218,9 @@ fn render_list(
         }
         return;
     }
-    let reserved = lines.len() + 3; // header lines already pushed + notice/footer
+    // Header lines already pushed, the detail pane, the notice and the two
+    // footer rows.
+    let reserved = lines.len() + DETAIL_ROWS + 4;
     let visible = (inner.height as usize).saturating_sub(reserved).max(1);
     let selected = issues.sel.min(issues.rows.len() - 1);
     let first = scroll_window_start(issues.rows.len(), selected, visible);
@@ -244,18 +262,22 @@ fn issue_record(row: &IssueRow, selected: bool, width: usize) -> Line<'static> {
     )
 }
 
-/// One issue row: `▸ ● #KEY [state] title · assignee · labels` — `●` marks a
-/// multiselect pick, `▸` the cursor.
+/// One issue row: `▸ ▶ KEY  title   state   assignee · labels   age` — the
+/// state's glyph (SPEC 9.4: `▶` in progress, `○` open or triage, `✓` done,
+/// `◇` blocked) beside the key, `●` marking a multiselect pick, `▸` the
+/// cursor.
 fn issue_line(row: &IssueRow, selected: bool, picked: bool, width: usize) -> Line<'static> {
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
     let marker = if selected { "▸ " } else { "  " };
     let pick = if picked { "● " } else { "  " };
-    let mut key_style = theme::accent();
-    let mut body_style = Style::default().fg(theme::INK);
-    let mut dim_style = theme::muted();
+    let (glyph, glyph_style) = state_mark(&row.state);
+    let mut key_style = Style::new().fg(token::GOLD);
+    let mut body_style = text;
     if selected {
-        key_style = key_style.add_modifier(Modifier::REVERSED);
-        body_style = body_style.add_modifier(Modifier::REVERSED);
-        dim_style = dim_style.add_modifier(Modifier::REVERSED);
+        key_style = key_style.bg(token::HL).add_modifier(Modifier::BOLD);
+        body_style = body_style.bg(token::HL);
     }
     let mut tail = String::new();
     if let Some(assignee) = &row.assignee {
@@ -264,17 +286,117 @@ fn issue_line(row: &IssueRow, selected: bool, picked: bool, width: usize) -> Lin
     if !row.labels.is_empty() {
         tail.push_str(&format!(" · {}", row.labels.join(", ")));
     }
-    let head = format!("{marker}{pick}{} ", row.key);
-    let state = format!("[{}] ", row.state);
+    let age = row
+        .updated_at
+        .as_deref()
+        .map(|u| u.get(..10).unwrap_or(u).to_string())
+        .unwrap_or_default();
+    let head = format!("{marker}{pick}");
+    let key = format!("{:<10}", row.key);
+    let state = format!("  {}", row.state);
     let budget = width
-        .saturating_sub(head.chars().count() + state.chars().count() + tail.chars().count())
+        .saturating_sub(
+            head.chars().count()
+                + 2
+                + key.chars().count()
+                + state.chars().count()
+                + tail.chars().count()
+                + age.chars().count()
+                + 3,
+        )
         .max(8);
-    Line::from(vec![
-        Span::styled(head, key_style),
-        Span::styled(state, dim_style),
-        Span::styled(truncate(&row.title, budget), body_style),
-        Span::styled(tail, dim_style),
-    ])
+    let title = truncate(&row.title, budget);
+    let mut spans = vec![
+        Span::styled(head, Style::new().fg(token::GOLD)),
+        Span::styled(format!("{glyph} "), glyph_style),
+        Span::styled(key, key_style),
+        Span::styled(title.clone(), body_style),
+        Span::styled(state, glyph_style),
+        Span::styled(tail, muted),
+    ];
+    if !age.is_empty() {
+        let used: usize = spans.iter().map(Span::width).sum();
+        if used + age.chars().count() + 1 < width {
+            spans.push(Span::raw(
+                " ".repeat(width - used - age.chars().count() - 1),
+            ));
+        } else {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(age, dim));
+    }
+    Line::from(spans)
+}
+
+/// The glyph and tone for a tracker state word (SPEC 9.4).
+fn state_mark(state: &str) -> (char, Style) {
+    let lower = state.to_ascii_lowercase();
+    if lower.contains("progress") || lower.contains("started") {
+        ('▶', Style::new().fg(token::GOLD))
+    } else if lower.contains("block") {
+        ('◇', Style::new().fg(token::RED))
+    } else if lower.contains("done") || lower.contains("closed") || lower.contains("merged") {
+        ('✓', Style::new().fg(token::DIM))
+    } else {
+        ('○', Style::new().fg(token::MUTED))
+    }
+}
+
+/// Rows the detail pane spends under the list.
+const DETAIL_ROWS: usize = 5;
+
+/// The selected issue, in full: key and title, then assignee, labels, the
+/// tracker URL and when it last moved — the fields the one-line row
+/// truncates. SPEC 9.4's linked-plan and evidence lines have no producer
+/// yet (#4336).
+fn render_detail(issues: &IssuesPanel, width: usize, lines: &mut Vec<Line<'static>>) {
+    let Some(row) = issues.selected() else {
+        return;
+    };
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+    let (glyph, glyph_style) = state_mark(&row.state);
+    lines.push(Line::default());
+    lines.push(Line::from(vec![
+        Span::styled(format!(" {glyph} "), glyph_style),
+        Span::styled(row.key.clone(), Style::new().fg(token::GOLD)),
+        Span::styled(
+            format!("  {}", truncate(&row.title, width.saturating_sub(20))),
+            text,
+        ),
+    ]));
+    let mut facts: Vec<Span<'static>> = vec![Span::raw("   ")];
+    facts.push(Span::styled(row.state.clone(), glyph_style));
+    if let Some(assignee) = &row.assignee {
+        facts.push(Span::styled(" · assignee ", dim));
+        facts.push(Span::styled(assignee.clone(), muted));
+    }
+    if !row.labels.is_empty() {
+        facts.push(Span::styled(" · ", dim));
+        facts.push(Span::styled(row.labels.join(", "), muted));
+    }
+    if let Some(updated) = &row.updated_at {
+        facts.push(Span::styled(" · updated ", dim));
+        facts.push(Span::styled(updated.clone(), muted));
+    }
+    lines.push(Line::from(facts));
+    if !row.url.is_empty() {
+        lines.push(Line::from(vec![
+            Span::raw("   "),
+            Span::styled(truncate(&row.url, width.saturating_sub(4)), dim),
+        ]));
+    }
+    lines.push(Line::from(vec![
+        Span::styled("   ↵", muted),
+        Span::styled(" open · ", dim),
+        Span::styled("c", muted),
+        Span::styled(" comment · ", dim),
+        Span::styled("s", muted),
+        Span::styled(" status · ", dim),
+        Span::styled("p", muted),
+        Span::styled(" to prompt", dim),
+    ]));
 }
 
 /// The create form. Returns the line index of the active field (for the
@@ -465,38 +587,34 @@ fn footer(mode: IssuesMode) -> Line<'static> {
     let pairs: &[(&str, &str)] = match mode {
         IssuesMode::Browse => &[
             ("↑↓", "select"),
-            ("space", "pick"),
-            ("r", "refresh"),
-            ("/", "search"),
-            ("]/[", "page"),
-            ("o", "open"),
-            ("p", "to prompt"),
-            ("n", "new"),
-            ("c", "comment"),
-            ("x", "close/reopen"),
-            ("s", "status"),
             ("w", "start work"),
+            ("n", "new issue"),
+            ("/", "search tracker"),
+            ("r", "refresh"),
+            ("]/[", "page"),
+            ("space", "pick"),
+            ("x", "close / reopen"),
         ],
-        IssuesMode::SearchTracker => &[("type", "query"), ("enter", "search"), ("esc", "back")],
+        IssuesMode::SearchTracker => &[("type", "query"), ("↵", "search"), ("esc", "back")],
         IssuesMode::Create => &[
-            ("tab/⇧tab", "field"),
-            ("type", "@ or a first letter opens the picker"),
+            ("tab", "field"),
+            ("@", "opens the picker"),
             ("ctrl+s", "create"),
             ("esc", "cancel"),
         ],
         IssuesMode::Comment | IssuesMode::SetStatus => {
-            &[("type", "text"), ("enter", "send"), ("esc", "cancel")]
+            &[("type", "text"), ("↵", "send"), ("esc", "cancel")]
         }
     };
-    let mut spans = vec![Span::raw("  ")];
-    for (key, desc) in pairs {
-        spans.push(Span::styled(
-            format!(" {key} "),
-            Style::default()
-                .fg(theme::VIOLET)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(format!("{desc}  "), theme::muted()));
+    let key = Style::new().fg(token::MUTED);
+    let dim = Style::new().fg(token::DIM);
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (k, desc)) in pairs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", dim));
+        }
+        spans.push(Span::styled((*k).to_string(), key));
+        spans.push(Span::styled(format!(" {desc}"), dim));
     }
     Line::from(spans)
 }
@@ -553,14 +671,14 @@ mod tests {
         let text =
             |line: Line<'_>| -> String { line.spans.iter().map(|s| s.content.clone()).collect() };
         let selected = text(issue_line(&row, true, false, 120));
-        assert!(selected.starts_with("▸   ENG-42"), "{selected}");
-        assert!(selected.contains("[In Progress]"), "{selected}");
+        assert!(selected.starts_with("▸   ▶ ENG-42"), "{selected}");
+        assert!(selected.contains("  In Progress"), "{selected}");
         assert!(selected.contains("mona@example.com"), "{selected}");
         assert!(selected.contains("bug, ci"), "{selected}");
         let plain = text(issue_line(&row, false, false, 120));
-        assert!(plain.starts_with("    ENG-42"), "{plain}");
+        assert!(plain.starts_with("    ▶ ENG-42"), "{plain}");
         // A multiselect pick shows its marker whether or not it is the cursor.
         let picked = text(issue_line(&row, false, true, 120));
-        assert!(picked.starts_with("  ● ENG-42"), "{picked}");
+        assert!(picked.starts_with("  ● ▶ ENG-42"), "{picked}");
     }
 }

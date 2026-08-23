@@ -92,10 +92,11 @@ fn one_agent() -> WorkspaceModel {
 // ───────────────────────────────── GRAPH ─────────────────────────────────
 
 /// The node list's block title, and the detail panel's — one per pane, and
-/// both on their pane's top border row, so a two-column layout puts them on
-/// the same terminal row and a stacked one cannot.
-const GRAPH_LIST: &str = " nodes · ";
-const GRAPH_DETAIL: &str = "engine step driver";
+/// both on their pane's last interior row — the list's legend and the
+/// coupling panel's caption — so a two-column layout puts them on the same
+/// terminal row and a stacked one cannot.
+const GRAPH_LIST: &str = "right column = edge count";
+const GRAPH_DETAIL: &str = "high coupling = blast radius";
 
 fn graph_ui(accessible: bool) -> DeckUi {
     let mut ui = deck_ui(DeckTab::Graph, accessible);
@@ -126,8 +127,8 @@ fn the_graph_tab_still_splits_side_by_side_by_default() {
 
 // ───────────────────────────────── SKILLS ────────────────────────────────
 
-const SKILLS_INSTALLED: &str = " Installed — ";
-const SKILLS_SEARCH: &str = " Registry search ";
+const SKILLS_INSTALLED: &str = " installed ·";
+const SKILLS_SEARCH: &str = " registry ·";
 
 fn skills_ui(accessible: bool) -> DeckUi {
     let mut ui = deck_ui(DeckTab::Skills, accessible);
@@ -156,17 +157,15 @@ fn the_skills_tab_stacks_its_panes_in_accessible_mode() {
     assert_linear(&frame, SKILLS_INSTALLED, SKILLS_SEARCH);
 }
 
+/// SPEC 9.2 stacks the two sources under one search box on every frame, so
+/// the ordinary deck already reads linearly and accessible mode changes
+/// nothing here.
 #[test]
-fn the_skills_tab_still_splits_side_by_side_by_default() {
+fn the_skills_tab_is_stacked_by_default_too() {
     let model = one_agent();
     let mut ui = skills_ui(false);
     let frame = rows(&model, &mut ui, W, H);
-    assert_both_present(&frame, SKILLS_INSTALLED, SKILLS_SEARCH);
-    assert!(
-        shares_a_row(&frame, SKILLS_INSTALLED, SKILLS_SEARCH),
-        "an ordinary session keeps the two-column skills manager:\n{}",
-        frame.join("\n")
-    );
+    assert_linear(&frame, SKILLS_INSTALLED, SKILLS_SEARCH);
 }
 
 // ────────────────────────────── SESSION RAIL ─────────────────────────────

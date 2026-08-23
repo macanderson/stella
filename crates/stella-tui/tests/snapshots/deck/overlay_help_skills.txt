@@ -4,16 +4,16 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION AGENTS TRACES GRAPH FILES   SKILLS   MCP ISSUES SETTINGS                                                                                       stella*
-┌ Installed — 4 (user + project) ─────────────┌ help — SKILLS · esc close ───────────────────────────────────────┐─────────────────────────────────────────────┐
-│  [x] release-checklist v3  (project·workspac│                                                                  │                                             │
-│▸ [x] rust-review v2/4  (user·user)  Review R│  SKILLS tab                                                      │                                             │
-│  [ ] sql-tuning v1  (user·installed)  Read a│  ← →           switch panes                                      │o search                                     │
-│  [x] bench-rig-access v1  (project·auto)  Re│  ↑ ↓           select a skill                                    │                                             │
-│                                             │  space         enable / disable                                  │                                             │
-│                                             │  e             edit the selected skill                           │                                             │
-│                                             │  p             pin / unpin                                       │                                             │
-│                                             │  n             new skill — drafted by the LLM                    │                                             │
-│                                             │  ctrl-o        preview                                           │                                             │
+╭─────────────────────────────────────────────┌ help — SKILLS · esc close ───────────────────────────────────────┐─────────────────────────────────────────────╮
+│ ⌕                                           │                                                                  │                        installed + registry │
+╰─────────────────────────────────────────────│  SKILLS tab                                                      │─────────────────────────────────────────────╯
+ installed · 4                                │  ← →           switch panes                                      │
+╭─────────────────────────────────────────────│  ↑ ↓           select a skill                                    │─────────────────────────────────────────────╮
+│  [x] release-checklist        v3 · project  │  space         enable / disable                                  │                                             │
+│▸ [x] rust-review              v2/4 · user   │  e             edit the selected skill                           │                                             │
+│  [ ] sql-tuning               v1 · user   Re│  p             pin / unpin                                       │                                             │
+│ learned from traces · 1   stella wrote these│  n             new skill — drafted by the LLM                    │                                             │
+│  [x] bench-rig-access         learned   Reac│  ctrl-o        preview                                           │                                             │
 │                                             │  ctrl-x ×2     delete (press twice to confirm)                   │                                             │
 │                                             │  type          search skills                                     │                                             │
 │                                             │                                                                  │                                             │
@@ -34,11 +34,11 @@
 │                                             │  letter & arrow hotkeys apply while the prompt box is empty      │                                             │
 │                                             │                                                                  │                                             │
 │                                             │  model                                                           │                                             │
-│                                             │  worker        zai/glm-5.2-air · answering                       │                                             │
-│                                             │                                                                  │                                             │
-│                                             │  machine                                                         │                                             │
-└─────────────────────────────────────────────│  engine        3 active · 3 total                                │─────────────────────────────────────────────┘
- space on/off · ctrl+o preview · ctrl+x×2 dele│  cpu           42%                                               │
+╰─────────────────────────────────────────────│  worker        zai/glm-5.2-air · answering                       │─────────────────────────────────────────────╯
+ registry · web · type a term, ↵ searches     │                                                                  │
+                                              │  machine                                                         │
+ space on/off · ctrl+o preview · e edit · p pi│  engine        3 active · 3 total                                │
+ 4 installed · 1 learned · 3 enabled          │  cpu           42%                                               │
                                               │  mem           148M                                              │
 >>>                                           └──────────────────────────────────────────────────────────────────┘
  ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands

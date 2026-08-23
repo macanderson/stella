@@ -37,6 +37,11 @@ use crate::theme;
 pub(crate) use entry::{EntryView, entry_lines, reasoning_is_live, streaming_lines};
 pub(crate) use row::*;
 
+/// The usable interior width of a single-border panel.
+pub(crate) fn inner_width(area: Rect) -> usize {
+    area.width.saturating_sub(2) as usize
+}
+
 /// The usable interior height of a single-border panel.
 pub(crate) fn inner_height(area: Rect) -> usize {
     area.height.saturating_sub(2) as usize
@@ -238,14 +243,15 @@ pub(crate) fn render_ask_user(
 /// ever leaving the frame.
 pub(crate) const SLASH_POPUP_MAX_ROWS: usize = 8;
 
-/// Where the slash popup floats: anchored to the composer's left edge,
+/// Where the command palette floats: anchored to the composer's left edge,
 /// opening upward, tall enough for the matches (capped at
-/// [`SLASH_POPUP_MAX_ROWS`]) and clamped to the frame on small terminals. The
-/// `+2` reserves the two border rows — the key hints ride the top border and
-/// the scroll affordance the bottom one, so no interior row is chrome.
+/// [`SLASH_POPUP_MAX_ROWS`]) plus its own hint row, and clamped to the frame
+/// on small terminals. The `+3` reserves the two border rows and the hint row
+/// under the matches — the key hints ride the top border, so no interior row
+/// but the hint is chrome (SPEC 10).
 pub(crate) fn slash_popup_area(root: Rect, composer: Rect, matches: usize) -> Rect {
-    let h = ((matches.min(SLASH_POPUP_MAX_ROWS) as u16) + 2).min(root.height);
-    let w = root.width.min(56);
+    let h = ((matches.min(SLASH_POPUP_MAX_ROWS) as u16) + 3).min(root.height);
+    let w = root.width.saturating_sub(2).min(96);
     Rect {
         x: composer.x,
         y: composer.y.saturating_sub(h),
@@ -269,21 +275,35 @@ pub(crate) fn scroll_window_start(len: usize, selected: usize, visible: usize) -
     (selected + 1).saturating_sub(visible).min(len - visible)
 }
 
-/// The floating slash-command menu: each row is `/<name>` followed by its
-/// one-line effect description, dimmed; user-authored commands keep their
-/// `SlashKind` glyph. The selected row carries the mandatory `▸` marker
-/// glyph *plus* the background tint — the golden suite strips style, so a
-/// style-only selection would be invisible to it. Key hints ride the top
-/// border, dim and right-aligned. Shared by the single-session REPL and the
-/// deck (both anchor it above their composer).
+/// The command palette (SPEC 10, rendering `08-command-palette`):
+///
+/// ```text
+/// ╭ / commands  6 of 129 · fuzzy ──────────────── ↑↓ move · ↵ run ╮
+/// │ /gates          show the gate board                ◐ 2/5 green │
+/// │ /gate rerun     rerun one gate                         ⇥ <name> │
+/// │ ⚡ /fix-bug      fix a bug end to end                            │
+/// │ ▲1 ▼3                                                           │
+/// ╰────────────────────────────────────────────────────────────────╯
+/// ```
+///
+/// Each row is the command in gold — the typed prefix lit bright, the rest
+/// gold — its one-line effect dim, and a live value on the right when the
+/// model has one (`/inbox · 3 unread`). The selected row carries the `▸`
+/// marker *plus* the highlight ground: the golden suite strips style, so a
+/// style-only selection would be invisible to it. User-authored commands keep
+/// their `SlashKind` glyph.
 ///
 /// `live` overrides descriptions with values read from the model at render
-/// time (`/inbox — 29 unread`), keyed by command name — computed by the
-/// caller each frame, never cached in view state.
+/// time, keyed by command name — computed by the caller each frame, never
+/// cached in view state.
 ///
 /// When more commands match than fit, the rows window around `selected` so
-/// arrow-key navigation always keeps the highlight visible, and the bottom
-/// border shows how many rows are hidden above (`▲`) / below (`▼`).
+/// arrow-key navigation always keeps the highlight visible, and the hint row
+/// says how many are hidden above (`▲`) and below (`▼`).
+///
+/// The renderings' `relevant now` section — commands ranked by session state
+/// — and the per-domain groups have no producer yet (#4338); the match list
+/// is the composer's fuzzy ranking as it stands.
 pub(crate) fn render_slash_popup(
     menu: &SlashMenu,
     selected: usize,
@@ -291,57 +311,92 @@ pub(crate) fn render_slash_popup(
     area: Rect,
     buf: &mut Buffer,
 ) {
+    use stella_tui_theme::token;
     ratatui::widgets::Clear.render(area, buf);
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let gold = Style::new().fg(token::GOLD);
+    let lit = Style::new()
+        .fg(token::GOLD_BRIGHT)
+        .add_modifier(Modifier::BOLD);
+
     let total = menu.matches.len();
     let selected = selected.min(total.saturating_sub(1));
-    let visible = inner_height(area).max(1);
+    // The hint row keeps the last interior row.
+    let visible = inner_height(area).saturating_sub(1).max(1);
     let first = scroll_window_start(total, selected, visible);
     let last = (first + visible).min(total);
-    let lines: Vec<Line<'static>> = menu.matches[first..last]
+    let inner_w = inner_width(area);
+    let query = menu.query.trim_start_matches('/').to_ascii_lowercase();
+
+    let mut lines: Vec<Line<'static>> = menu.matches[first..last]
         .iter()
         .enumerate()
         .map(|(offset, c)| {
             let is_sel = first + offset == selected;
             let marker = if is_sel { "▸ " } else { "  " };
-            let description = live
+            let live_value = live
                 .iter()
                 .find(|(name, _)| *name == c.name)
-                .map(|(_, live_desc)| live_desc.clone())
-                .unwrap_or_else(|| c.description.clone());
-            let mut line = Line::from(vec![
-                Span::styled(marker.to_string(), theme::accent()),
-                Span::styled(format!("{} ", c.kind.glyph()), theme::accent()),
-                Span::styled(format!("{:<12}", c.name), theme::accent()),
-                Span::styled(description, Style::new().fg(theme::TEXT_TERTIARY)),
-            ]);
+                .map(|(_, v)| v.clone());
+            let description = c.description.clone();
+            // The typed prefix lights up inside the name — `/ga` → `/ga`tes.
+            let name = c.name.clone();
+            let bare = name.trim_start_matches('/').to_ascii_lowercase();
+            let (head, tail) = if !query.is_empty() && bare.starts_with(&query) {
+                let cut = 1 + query.len();
+                (name[..cut].to_string(), name[cut..].to_string())
+            } else {
+                (String::new(), name.clone())
+            };
+            let mut spans = vec![Span::styled(marker.to_string(), gold)];
+            if c.kind != crate::composer::SlashKind::Builtin {
+                spans.push(Span::styled(format!("{} ", c.kind.glyph()), muted));
+            }
+            if !head.is_empty() {
+                spans.push(Span::styled(head.clone(), lit));
+            }
+            let pad = 16usize.saturating_sub(head.chars().count() + tail.chars().count());
+            spans.push(Span::styled(format!("{tail}{}", " ".repeat(pad)), gold));
+            spans.push(Span::styled(format!(" {description}"), dim));
+            if let Some(value) = live_value {
+                let used: usize = spans.iter().map(Span::width).sum();
+                if used + value.chars().count() + 1 < inner_w {
+                    spans.push(Span::raw(
+                        " ".repeat(inner_w - used - value.chars().count() - 1),
+                    ));
+                    spans.push(Span::styled(value, muted));
+                }
+            }
+            let mut line = Line::from(spans);
             if is_sel {
-                line.style = line.style.bg(theme::SELECT_BG);
+                line.style = Style::new().bg(token::HL);
             }
             line
         })
         .collect();
     let hidden_above = first;
     let hidden_below = total.saturating_sub(last);
-    let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::accent())
-        .title(format!(" / commands · {total} "))
-        .title(
-            Line::from(Span::styled(
-                " ↑↓ move · ↵ run · esc close ",
-                theme::muted(),
-            ))
-            .alignment(ratatui::layout::Alignment::Right),
-        );
+    let mut hint = vec![Span::raw(" ")];
     if hidden_above > 0 || hidden_below > 0 {
-        block = block.title_bottom(
-            Line::from(Span::styled(
-                format!(" ▲{hidden_above} ▼{hidden_below} "),
-                theme::muted(),
-            ))
-            .alignment(ratatui::layout::Alignment::Right),
-        );
+        hint.push(Span::styled(
+            format!("▲{hidden_above} ▼{hidden_below}"),
+            dim,
+        ));
+    } else {
+        hint.push(Span::styled("⇥ completes · esc closes", dim));
     }
+    lines.push(Line::from(hint));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::new().fg(token::RULE))
+        .title(Line::from(vec![
+            Span::styled(" / commands", gold),
+            Span::styled(format!("  {} of {total} · fuzzy ", last - first), muted),
+        ]))
+        .title(Line::from(Span::styled(" ↑↓ move · ↵ run · esc ", dim)).right_aligned());
     Paragraph::new(Text::from(lines))
         .block(block)
         .render(area, buf);

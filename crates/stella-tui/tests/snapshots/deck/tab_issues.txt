@@ -4,41 +4,41 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION AGENTS TRACES GRAPH FILES SKILLS MCP   ISSUES   SETTINGS                                                                                       stella*
-┌ ISSUES — 3 listed ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  ⇢ #981 open · CI … running                                                                                                                                  │
-│                                                                                                                                                              │
-│    #874 [open] Command-deck render golden tests · dev · enhancement, area:tui                                                                                │
-│▸   #826 [open] run_deck event-loop pty harness · enhancement                                                                                                 │
-│    #689 [closed] Surface per-server MCP tool truncation · dev · bug                                                                                          │
-│                                                                                                                                                              │
-│   ↑↓ select   space pick   r refresh   / search   ]/[ page   o open   p to prompt   n new   c comment   x close/reopen   s status   w start work             │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ backlog · 3 listed
+  ⇢ #981 open · CI … running
+
+    ○ #874      Command-deck render golden tests  open · dev · enhancement, area:tui                                                                 2026-01-14
+▸   ○ #826      run_deck event-loop pty harness  open · enhancement                                                                                  2026-01-14
+    ✓ #689      Surface per-server MCP tool truncation  closed · dev · bug                                                                           2026-01-14
+
+ ○ #826  run_deck event-loop pty harness
+   open · enhancement · updated 2026-01-14T09:30:00Z
+   https://github.com/example/repo/issues/826
+   ↵ open · c comment · s status · p to prompt
+
+ w start work   on the selected issue → stella drafts the plan from the issue and the graph, and waits for your approval before touching code
+ ↑↓ select · w start work · n new issue · / search tracker · r refresh · ]/[ page · space pick · x close / reopen
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 >>>
  ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands

@@ -1,13 +1,19 @@
-//! SKILLS tab — the filesystem-first skills manager.
+//! SKILLS tab — the filesystem-first skills manager, SPEC 9.2.
 //!
-//! Two panes, switched with ←/→: **Installed** (the manage list — activate,
-//! disable, uninstall, edit, pin) and **Registry search** (`npx skills find` →
-//! install). The driver owns the skills on disk (both scopes), their
-//! enabled/version/pin state, and the npx registry; this view renders the
-//! [`crate::envelope::SkillsView`] read-model it pushes and draws the scope /
-//! create / edit / pin overlays. Every color comes from [`crate::theme`]; the
-//! content is a deterministic function of `(ui.skills)` so buffer tests stay
-//! byte-stable.
+//! One search box over two sources: the **installed** list (activate, disable,
+//! uninstall, edit, pin — with the skills stella learned from its own traces
+//! in their own section) and the **registry** (`npx skills find` → install).
+//! ←/→ move the keyboard between the two. The driver owns the skills on disk
+//! (both scopes), their enabled/version/pin state, and the npx registry; this
+//! view renders the [`crate::envelope::SkillsView`] read-model it pushes and
+//! draws the scope / create / edit / pin overlays. The list draws in the v2
+//! vocabulary ([`stella_tui_theme::token`]); the overlays still draw in
+//! [`crate::theme`] until their own restyle. The content is a deterministic
+//! function of `(ui.skills)` so buffer tests stay byte-stable.
+//!
+//! The renderings' per-skill economics (`18× · 0.9k` tokens per inject) and
+//! the registry's signature status have no producer yet (#4337); both are
+//! elided rather than drawn with a stand-in.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -17,25 +23,34 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::{DeckUi, SkillPrompt, SkillsFocus};
+use crate::envelope::SkillRow;
 use crate::syntax::{self, HighlightSpans as _};
 use crate::theme;
+use stella_tui_theme::token;
 
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
-    // Two panes over a status line.
-    let bands = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(area);
-    // Side by side normally; stacked in accessible mode, so a rendered row
-    // carries the installed list or the registry search, never a slice of each
-    // (#1258). ←/→ still switch focus between them — this changes where they
-    // sit, not how they work.
-    let panes = if ui.accessible {
-        Layout::vertical([Constraint::Percentage(55), Constraint::Percentage(45)]).split(bands[0])
+    // SPEC 9.2: one search box over both sources, then the installed rows
+    // (learned ones in their own section), then the registry's answer, then
+    // the keys and the counts. Stacked on every frame, so accessible mode
+    // needs no second layout (#1258).
+    let hits = ui.skills.hits.len();
+    let registry_h = if ui.skills.focus == SkillsFocus::Search || hits > 0 || ui.skills.searching {
+        (hits as u16 + 4).clamp(4, area.height / 2)
     } else {
-        Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).split(bands[0])
+        2
     };
+    let bands = Layout::vertical([
+        Constraint::Length(3),          // the search box
+        Constraint::Min(4),             // installed (+ learned)
+        Constraint::Length(registry_h), // registry
+        Constraint::Length(2),          // keys · counts
+    ])
+    .split(area);
 
-    render_installed(ui, panes[0], buf);
-    render_search(ui, panes[1], buf);
-    render_status(ui, bands[1], buf);
+    render_search_box(ui, bands[0], buf);
+    render_installed(ui, bands[1], buf);
+    render_search(ui, bands[2], buf);
+    render_status(ui, bands[3], buf);
 
     // Overlays (scope picker / create / creating spinner / edit / pin) float
     // above the panes. The creating overlay animates off the deck clock.
@@ -49,22 +64,88 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     }
 }
 
-/// The manage pane: one row per installed skill with its enabled box, pinned
-/// version, scope + origin, and description.
+fn rounded() -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::new().fg(token::BORDER))
+}
+
+/// Installed rows matching the live query — every row when it is empty.
+fn matching<'a>(ui: &'a DeckUi) -> Vec<(usize, &'a SkillRow)> {
+    let needle = ui.skills.query.trim().to_lowercase();
+    ui.skills
+        .view
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            needle.is_empty()
+                || row.name.to_lowercase().contains(&needle)
+                || row.description.to_lowercase().contains(&needle)
+        })
+        .collect()
+}
+
+/// The one search box: its query hits the installed list and the registry
+/// together. The caret draws while the box has the keyboard.
+fn render_search_box(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+    let focused = ui.skills.focus == SkillsFocus::Search;
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let mut spans = vec![
+        Span::styled(" ⌕ ", Style::new().fg(token::GOLD)),
+        Span::styled(ui.skills.query.clone(), Style::new().fg(token::TEXT)),
+    ];
+    if focused {
+        spans.push(Span::styled("▌", Style::new().fg(token::TEXT)));
+    }
+    let right = match (ui.skills.searching, ui.skills.hits.len()) {
+        (true, _) => "installed + registry · searching… ".to_string(),
+        (false, 0) => "installed + registry ".to_string(),
+        (false, n) => format!("installed + registry · web · {n} hits "),
+    };
+    let used: usize = spans.iter().map(Span::width).sum();
+    let inner_w = area.width.saturating_sub(2) as usize;
+    if used + right.chars().count() < inner_w {
+        spans.push(Span::raw(
+            " ".repeat(inner_w - used - right.chars().count()),
+        ));
+        spans.push(Span::styled(right, if focused { muted } else { dim }));
+    }
+    Paragraph::new(Line::from(spans))
+        .block(rounded())
+        .render(area, buf);
+}
+
+/// The installed section: a heading with the match count, then one row per
+/// skill — enabled box, name, version, scope, description. Skills stella
+/// wrote itself (origin `auto`) list under their own `learned from traces`
+/// heading (SPEC 9.2).
 fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let focused = ui.skills.focus == SkillsFocus::Installed;
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
     let rows = &ui.skills.view.rows;
-    let title = format!(" Installed — {} (user + project) ", rows.len());
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(if focused {
-            theme::accent()
-        } else {
-            theme::rule()
-        })
-        .title(title);
-    let inner = block.inner(area);
-    block.render(area, buf);
+    let shown = matching(ui);
+    let learned: Vec<&(usize, &SkillRow)> =
+        shown.iter().filter(|(_, r)| r.origin == "auto").collect();
+    let authored: Vec<&(usize, &SkillRow)> =
+        shown.iter().filter(|(_, r)| r.origin != "auto").collect();
+
+    let mut head = vec![
+        Span::styled(" installed", text),
+        Span::styled(format!(" · {}", rows.len()), muted),
+    ];
+    if !ui.skills.query.trim().is_empty() {
+        head.push(Span::styled(format!(" · {} match", shown.len()), muted));
+    }
+    let bands = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
+    Paragraph::new(Line::from(head)).render(bands[0], buf);
+    let block = rounded();
+    let inner = block.inner(bands[1]);
+    block.render(bands[1], buf);
     if inner.height == 0 || inner.width == 0 {
         return;
     }
@@ -73,163 +154,195 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         let hint = if ui.skills.view.busy {
             "loading…"
         } else {
-            "no skills installed — press → to search the registry and add one"
+            "no skills installed — type to search the registry, ↵ installs"
         };
         Paragraph::new(hint)
-            .style(theme::muted())
+            .style(muted)
+            .alignment(Alignment::Center)
+            .render(centered_row(inner), buf);
+        return;
+    }
+    if shown.is_empty() {
+        Paragraph::new("nothing installed matches")
+            .style(muted)
             .alignment(Alignment::Center)
             .render(centered_row(inner), buf);
         return;
     }
 
-    let visible = inner.height as usize;
     let sel = ui.skills.sel.min(rows.len() - 1);
-    let start = window_start(rows.len(), sel, visible);
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for (i, row) in rows.iter().enumerate().skip(start).take(visible) {
-        let is_sel = i == sel && focused;
+    let width = inner.width as usize;
+    let row_line = |(i, row): &(usize, &SkillRow)| -> Line<'static> {
+        let is_sel = *i == sel && focused;
         let marker = if is_sel { "▸ " } else { "  " };
         let boxed = if row.enabled { "[x] " } else { "[ ] " };
         let box_style = if row.enabled {
-            Style::default().fg(theme::ACCENT)
+            Style::new().fg(token::GOLD)
         } else {
-            theme::muted()
+            dim
         };
         let ver = if row.latest > row.version {
-            format!(" v{}/{}", row.version, row.latest)
+            format!("v{}/{}", row.version, row.latest)
         } else {
-            format!(" v{}", row.version)
+            format!("v{}", row.version)
         };
-        let meta = format!("  ({}·{})", row.scope.label(), row.origin);
-        // Description fills whatever width remains, truncated char-safe.
-        // Count *chars*, not bytes: the selected marker "▸ " is 4 bytes but 2
-        // columns, so a byte count made the description column jump two cells
-        // narrower the moment a row was selected.
+        let meta = if row.origin == "auto" {
+            " learned ".to_string()
+        } else {
+            format!(" {ver} · {} ", row.scope.label())
+        };
+        let name = format!("{:<24}", row.name);
         let used = marker.chars().count()
             + boxed.chars().count()
-            + row.name.chars().count()
-            + ver.chars().count()
+            + name.chars().count()
             + meta.chars().count();
-        let desc_room = (inner.width as usize).saturating_sub(used + 3);
+        let desc_room = width.saturating_sub(used + 3);
         let desc = if desc_room >= 6 && !row.description.is_empty() {
             format!("  {}", truncate(&row.description, desc_room))
         } else {
             String::new()
         };
         let mut line = Line::from(vec![
-            Span::styled(marker, Style::default().fg(theme::ACCENT)),
+            Span::styled(marker, Style::new().fg(token::GOLD)),
             Span::styled(boxed, box_style),
-            Span::styled(row.name.clone(), theme::body()),
-            Span::styled(ver, theme::muted()),
-            Span::styled(meta, theme::muted()),
-            Span::styled(desc, theme::muted()),
+            Span::styled(name, text),
+            Span::styled(
+                meta,
+                if row.origin == "auto" {
+                    Style::new().fg(token::GOLD)
+                } else {
+                    muted
+                },
+            ),
+            Span::styled(desc, muted),
         ]);
         if is_sel {
-            line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+            line.style = Style::new().bg(token::HL);
         }
-        lines.push(line);
+        line
+    };
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let budget = inner.height as usize;
+    // Window the authored rows around the selection; the learned section
+    // follows, and is itself windowed to what is left.
+    let learned_rows = if learned.is_empty() {
+        0
+    } else {
+        (learned.len() + 1).min(budget / 2)
+    };
+    let authored_budget = budget.saturating_sub(learned_rows).max(1);
+    let sel_pos = authored.iter().position(|(i, _)| *i == sel).unwrap_or(0);
+    let start = window_start(authored.len(), sel_pos, authored_budget);
+    for entry in authored.iter().skip(start).take(authored_budget) {
+        lines.push(row_line(entry));
+    }
+    if !learned.is_empty() && lines.len() < budget {
+        lines.push(Line::from(vec![
+            Span::styled(" learned from traces", text),
+            Span::styled(format!(" · {}", learned.len()), muted),
+            Span::styled("   stella wrote these after repeated wins", dim),
+        ]));
+        let room = budget.saturating_sub(lines.len());
+        let lsel = learned.iter().position(|(i, _)| *i == sel).unwrap_or(0);
+        let lstart = window_start(learned.len(), lsel, room.max(1));
+        for entry in learned.iter().skip(lstart).take(room) {
+            lines.push(row_line(entry));
+        }
     }
     Paragraph::new(lines).render(inner, buf);
 }
 
-/// The registry-search pane: the live query line, then the last search's hits.
+/// The registry section: the last search's hits, each with its install
+/// count, and the install affordance on the selected one.
 fn render_search(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let focused = ui.skills.focus == SkillsFocus::Search;
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(if focused {
-            theme::accent()
-        } else {
-            theme::rule()
-        })
-        .title(" Registry search ");
-    let inner = block.inner(area);
-    block.render(area, buf);
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+    let bands = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).split(area);
+    let mut head = vec![
+        Span::styled(" registry", text),
+        Span::styled(" · web", muted),
+    ];
+    if ui.skills.searching {
+        head.push(Span::styled(" · searching…", muted));
+    } else if !ui.skills.hits.is_empty() {
+        head.push(Span::styled(
+            format!(" · {} results", ui.skills.hits.len()),
+            muted,
+        ));
+    } else {
+        head.push(Span::styled(" · type a term, ↵ searches", dim));
+    }
+    Paragraph::new(Line::from(head)).render(bands[0], buf);
+    if bands[1].height == 0 || ui.skills.hits.is_empty() {
+        return;
+    }
+    let block = rounded();
+    let inner = block.inner(bands[1]);
+    block.render(bands[1], buf);
     if inner.height == 0 || inner.width == 0 {
         return;
     }
 
+    let visible = (inner.height as usize).saturating_sub(1).max(1);
+    let sel = ui
+        .skills
+        .search_sel
+        .min(ui.skills.hits.len().saturating_sub(1));
+    let start = window_start(ui.skills.hits.len(), sel, visible);
+    // The most-installed hit anchors the popularity bar's full width.
+    let peak = ui
+        .skills
+        .hits
+        .iter()
+        .map(|h| h.installs_rank)
+        .max()
+        .unwrap_or(0);
+    let width = inner.width as usize;
     let mut lines: Vec<Line<'static>> = Vec::new();
-    // Query line with a block caret when this pane is focused.
-    let caret = if focused { "▌" } else { "" };
-    lines.push(Line::from(vec![
-        Span::styled("find: ", theme::muted()),
-        Span::styled(ui.skills.query.clone(), theme::body()),
-        Span::styled(caret.to_string(), Style::default().fg(theme::ACCENT)),
-    ]));
-    if ui.skills.searching {
-        lines.push(Line::from(Span::styled("working…", theme::muted())));
-    }
-    lines.push(Line::default());
-
-    if ui.skills.hits.is_empty() && !ui.skills.searching {
-        lines.push(Line::from(Span::styled(
-            "type a term and press ⏎ to search",
-            theme::muted(),
-        )));
-    } else {
-        let header_rows = lines.len();
-        let visible = (inner.height as usize).saturating_sub(header_rows).max(1);
-        let sel = ui
-            .skills
-            .search_sel
-            .min(ui.skills.hits.len().saturating_sub(1));
-        let start = window_start(ui.skills.hits.len(), sel, visible);
-        // The most-installed hit anchors the popularity bar's full width.
-        let peak = ui
-            .skills
-            .hits
-            .iter()
-            .map(|h| h.installs_rank)
-            .max()
-            .unwrap_or(0);
-        let width = inner.width as usize;
-        for (i, hit) in ui.skills.hits.iter().enumerate().skip(start).take(visible) {
-            let is_sel = i == sel && focused;
-            let marker = if is_sel { "▸ " } else { "  " };
-            // Right column: an amber popularity bar + the dim installs metric,
-            // both empty when the registry printed no count.
-            let bar = popularity_bar(hit.installs_rank, peak);
-            let metric = hit.installs.clone();
-            let bar_w = bar.chars().count();
-            let metric_w = metric.chars().count();
-            // Widths: bar, one gap before the metric, and one gap before the bar.
-            let right_w = if metric.is_empty() {
-                0
-            } else {
-                bar_w + usize::from(bar_w > 0) + metric_w + 1
-            };
-            let name =
-                truncate_skill_id(&hit.id, width.saturating_sub(marker.len() + right_w).max(4));
-            let pad = width
-                .saturating_sub(marker.len() + name.chars().count() + right_w)
-                .max(1);
-            let mut spans = vec![
-                Span::styled(marker, Style::default().fg(theme::ACCENT)),
-                Span::styled(name, theme::body()),
-                Span::styled(" ".repeat(pad), theme::muted()),
-            ];
-            if !bar.is_empty() {
-                spans.push(Span::styled(
-                    format!("{bar} "),
-                    Style::default().fg(theme::ACCENT),
-                ));
-            }
-            if !metric.is_empty() {
-                spans.push(Span::styled(metric, theme::muted()));
-            }
-            let mut line = Line::from(spans);
-            if is_sel {
-                line = line.style(Style::default().add_modifier(Modifier::REVERSED));
-            }
-            lines.push(line);
+    for (i, hit) in ui.skills.hits.iter().enumerate().skip(start).take(visible) {
+        let is_sel = i == sel && focused;
+        let marker = if is_sel { "▸ " } else { "  " };
+        let bar = popularity_bar(hit.installs_rank, peak);
+        let metric = hit.installs.clone();
+        let install = if is_sel { "↵ install" } else { "" };
+        let right_w = bar.chars().count()
+            + usize::from(!bar.is_empty())
+            + metric.chars().count()
+            + usize::from(!metric.is_empty())
+            + install.chars().count()
+            + 2;
+        let name = truncate_skill_id(&hit.id, width.saturating_sub(marker.len() + right_w).max(4));
+        let pad = width
+            .saturating_sub(marker.len() + name.chars().count() + right_w)
+            .max(1);
+        let mut spans = vec![
+            Span::styled(marker, Style::new().fg(token::GOLD)),
+            Span::styled(name, text),
+            Span::raw(" ".repeat(pad)),
+        ];
+        if !bar.is_empty() {
+            spans.push(Span::styled(
+                format!("{bar} "),
+                Style::new().fg(token::GOLD),
+            ));
         }
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            "ctrl+o preview · ⏎ install",
-            theme::muted(),
-        )));
+        if !metric.is_empty() {
+            spans.push(Span::styled(format!("{metric} "), muted));
+        }
+        spans.push(Span::styled(install, Style::new().fg(token::GOLD)));
+        let mut line = Line::from(spans);
+        if is_sel {
+            line.style = Style::new().bg(token::HL);
+        }
+        lines.push(line);
     }
+    lines.push(Line::from(Span::styled(
+        " installs land disabled until you preview and enable",
+        dim,
+    )));
     Paragraph::new(lines).render(inner, buf);
 }
 
@@ -251,24 +364,54 @@ fn popularity_bar(rank: u64, peak: u64) -> String {
     s
 }
 
-/// The bottom status / legend line.
+/// The bottom two rows: the keys (or the transient status), then the counts.
 fn render_status(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
-    let legend = match ui.skills.focus {
-        SkillsFocus::Installed => {
-            "space on/off · ctrl+o preview · ctrl+x×2 delete · e edit · p pin · n new · → search"
-        }
-        SkillsFocus::Search => {
-            "⏎ search / install · ↑/↓ pick · ctrl+o preview · ← installed · Tab leaves"
-        }
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let keys: &[(&str, &str)] = match ui.skills.focus {
+        SkillsFocus::Installed => &[
+            ("space", "on/off"),
+            ("ctrl+o", "preview"),
+            ("e", "edit"),
+            ("p", "pin"),
+            ("n", "new from prompt"),
+            ("ctrl+x ctrl+x", "delete"),
+            ("→", "search"),
+        ],
+        SkillsFocus::Search => &[
+            ("type", "query"),
+            ("↵", "search / install"),
+            ("↑↓", "pick"),
+            ("ctrl+o", "preview"),
+            ("←", "installed"),
+        ],
     };
-    let line = match &ui.skills.status {
+    let first = match &ui.skills.status {
         Some(status) => Line::from(Span::styled(
             format!(" {status}"),
-            theme::body().fg(theme::ACCENT),
+            Style::new().fg(token::GOLD),
         )),
-        None => Line::from(Span::styled(format!(" {legend}"), theme::muted())),
+        None => {
+            let mut spans = vec![Span::raw(" ")];
+            for (i, (k, desc)) in keys.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::styled(" · ", dim));
+                }
+                spans.push(Span::styled((*k).to_string(), muted));
+                spans.push(Span::styled(format!(" {desc}"), dim));
+            }
+            Line::from(spans)
+        }
     };
-    Paragraph::new(line).render(area, buf);
+    let rows = &ui.skills.view.rows;
+    let learned = rows.iter().filter(|r| r.origin == "auto").count();
+    let enabled = rows.iter().filter(|r| r.enabled).count();
+    let counts = Line::from(vec![
+        Span::styled(format!(" {} installed", rows.len()), muted),
+        Span::styled(format!(" · {learned} learned"), muted),
+        Span::styled(format!(" · {enabled} enabled"), muted),
+    ]);
+    Paragraph::new(vec![first, counts]).render(area, buf);
 }
 
 /// Draw the active overlay centered over the panes. `now_ms` is the deck

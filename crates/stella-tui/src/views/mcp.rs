@@ -22,12 +22,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Paragraph, Widget, Wrap};
 
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
 use crate::envelope::{McpSearchOutcome, McpServerDetail, McpServerInfo};
 use crate::theme;
+use stella_tui_theme::token;
 
 /// The ctrl+o inspector overlay.
 mod detail;
@@ -170,34 +171,35 @@ impl McpTabState {
 pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let state = &ui.mcp;
     let connected = state.servers.iter().filter(|s| s.connected).count();
-    // Truncation is a session-level fact, so it belongs in the title rather
-    // than only on the row: an operator scanning tabs should not have to open
-    // this one to learn the model is short some tools.
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+
+    // Truncation is a session-level fact, so it belongs in the header rather
+    // than only on the row: an operator scanning tabs should not have to
+    // open this one to learn the model is short some tools.
     let truncated = state.servers.iter().filter(|s| s.dropped_tools > 0).count();
     let dropped: usize = state.servers.iter().map(|s| s.dropped_tools).sum();
-    let title = if truncated == 0 {
-        format!(
-            " MCP — {} configured / {} connected ",
-            state.servers.len(),
-            connected
-        )
-    } else {
-        format!(
-            " MCP — {} configured / {} connected / {truncated} truncated, {dropped} tools dropped ",
-            state.servers.len(),
-            connected
-        )
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(theme::panel_rule());
-    let inner = block.inner(area);
-    block.render(area, buf);
+    let mut head = vec![
+        Span::styled(" servers", text),
+        Span::styled(
+            format!(" · {} · {connected} connected", state.servers.len()),
+            muted,
+        ),
+    ];
+    if truncated > 0 {
+        head.push(Span::styled(
+            format!(" · {truncated} truncated, {dropped} tools dropped"),
+            Style::new().fg(token::RED),
+        ));
+    }
 
-    let mut lines: Vec<Line> = Vec::new();
+    let mut lines: Vec<Line> = vec![Line::from(head)];
     match state.mode {
-        McpMode::Browse => render_browse(state, &mut lines, inner.width as usize),
+        McpMode::Browse => {
+            render_browse(state, &mut lines, area.width.saturating_sub(4) as usize);
+            render_browse_tail(state, &mut lines);
+        }
         McpMode::Search => render_search(state, &mut lines),
         McpMode::Auth => render_auth(state, &mut lines),
     }
@@ -206,15 +208,16 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     lines.push(Line::default());
     if let Some(status) = &state.status {
         lines.push(Line::from(Span::styled(
-            format!("  {status}"),
-            Style::default().fg(theme::ACCENT),
+            format!(" {status}"),
+            Style::new().fg(token::GOLD),
         )));
     }
     lines.push(footer(state.mode));
+    let _ = dim;
 
     Paragraph::new(lines)
         .wrap(Wrap { trim: false })
-        .render(inner, buf);
+        .render(area, buf);
 
     // The inspector is the topmost surface — drawn over the list it describes,
     // after it, so it is never clipped by the list's own layout.
@@ -230,15 +233,11 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
 const NAME_COLUMN: usize = 22;
 
 fn render_browse(state: &McpTabState, lines: &mut Vec<Line<'static>>, width: usize) {
+    let muted = Style::new().fg(token::MUTED);
     if state.servers.is_empty() {
         lines.push(Line::from(Span::styled(
-            "  No MCP servers configured.",
-            theme::muted(),
-        )));
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            "  Press s to search a registry, then Enter to install one.",
-            theme::muted(),
+            "  no MCP servers configured · s searches the registry, ↵ installs",
+            muted,
         )));
         return;
     }
@@ -247,6 +246,32 @@ fn render_browse(state: &McpTabState, lines: &mut Vec<Line<'static>>, width: usi
         lines.push(headline(server, selected));
         lines.push(subline(server, selected, width));
     }
+}
+
+/// What follows the server rows: how a login works (only when a row offers
+/// one), then the registry line. Apart from [`render_browse`] so the list
+/// stays two rows per server for the tests that count them.
+fn render_browse_tail(state: &McpTabState, lines: &mut Vec<Line<'static>>) {
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    // How a login works, once, under the list — only when a row offers one.
+    if state
+        .servers
+        .iter()
+        .any(|s| s.enabled && !s.connected && s.oauth == Some(false))
+    {
+        lines.push(Line::from(Span::styled(
+            "  login opens the browser · returns via stella:// deep link · token stays in keychain",
+            dim,
+        )));
+    }
+    lines.push(Line::default());
+    lines.push(Line::from(vec![
+        Span::styled(" registry", Style::new().fg(token::TEXT)),
+        Span::styled(" · web · ", muted),
+        Span::styled("s", muted),
+        Span::styled(" search · new servers land disabled · the handshake shows capabilities before first enable", dim),
+    ]));
 }
 
 /// One server's name for a surface with no room for a second row — the
@@ -272,85 +297,88 @@ pub fn compact_heading(server: &McpServerInfo) -> String {
     }
 }
 
-/// A server's first row: selection marker, enable glyph, name, transport,
-/// connection state, and the badges that qualify it.
+/// A server's first row: selection marker, state glyph, name, transport,
+/// tool count, connection state, and the badges that qualify it.
+///
+/// SPEC 9.3: the dot is gold when connected and dim when not; `oauth ✓` is
+/// the one green on the row, `not connected` the one red, and `o login` is
+/// gold because pressing it is stella acting.
 fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
     let marker = if selected { "▸ " } else { "  " };
-    // Enabled/disabled glyph.
-    let (enabled_glyph, enabled_style) = if server.enabled {
-        ("●", Style::default().fg(theme::SUCCESS_BRIGHT))
+    let (dot, dot_style) = if server.enabled && server.connected {
+        ("●", Style::new().fg(token::GOLD))
     } else {
-        ("○", theme::muted())
+        ("○", dim)
     };
     let name_style = if selected {
-        Style::default()
-            .fg(theme::INK)
-            .bg(theme::SELECT_BG)
-            .add_modifier(Modifier::BOLD)
+        text.bg(token::HL).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme::INK).add_modifier(Modifier::BOLD)
+        text
     };
     // The publisher's name headlines when there is one; the alias is the
     // routing token, so it never disappears — it moves to the sub-line.
     let heading = server.title.clone().unwrap_or_else(|| server.name.clone());
     let pad = NAME_COLUMN.saturating_sub(heading.chars().count());
 
+    let tools = format!(
+        "{} {}",
+        server.tool_count,
+        if server.tool_count == 1 {
+            "tool"
+        } else {
+            "tools"
+        }
+    );
     // Connection / health.
     let conn = if !server.enabled {
-        Span::styled("disabled", theme::muted())
+        Span::styled("disabled", dim)
     } else if server.connected {
         let label = server.health.clone().unwrap_or_else(|| "live".to_string());
-        Span::styled(label, Style::default().fg(theme::SUCCESS))
+        Span::styled(label, muted)
     } else {
-        Span::styled("not connected", Style::default().fg(theme::WARNING_BRIGHT))
+        Span::styled("not connected", Style::new().fg(token::RED))
     };
 
     let mut spans = vec![
-        Span::raw(marker),
-        Span::styled(enabled_glyph, enabled_style),
+        Span::styled(marker.to_string(), Style::new().fg(token::GOLD)),
+        Span::styled(dot, dot_style),
         Span::raw(" "),
         Span::styled(heading, name_style),
         Span::raw(" ".repeat(pad + 1)),
-        Span::styled(format!("{:<5}", server.kind), theme::muted()),
+        Span::styled(format!("{:<5}", server.kind), muted),
+        Span::raw("  "),
+        Span::styled(format!("{tools:<9}"), text),
         Span::raw("  "),
         conn,
     ];
     if !server.auth_fields.is_empty() {
         spans.push(Span::styled(
             format!("  ⚿ {}", server.auth_fields.join(",")),
-            Style::default().fg(theme::VIOLET),
+            muted,
         ));
     }
     // OAuth state for http servers: logged in (green) or available (`o`).
     match server.oauth {
-        Some(true) => spans.push(Span::styled(
-            "  ⚿ oauth ✓",
-            Style::default().fg(theme::SUCCESS),
-        )),
-        Some(false) => spans.push(Span::styled("  ⚿ oauth: o to log in", theme::muted())),
+        Some(true) => spans.push(Span::styled("  oauth ✓", Style::new().fg(token::GREEN))),
+        Some(false) => spans.push(Span::styled("  o login", Style::new().fg(token::GOLD))),
         None => {}
     }
-    spans.push(Span::styled(
-        format!("  · {} tools", server.tool_count),
-        theme::muted(),
-    ));
-    // WARNING, not DANGER: the server is healthy and its kept tools route.
-    // Same colour as `not connected` because the consequence is the same
-    // shape — the model has less surface than the operator expects.
+    // The dropped count is red: the model has less surface than the
+    // operator expects, which is a failure of the row's promise.
     if server.dropped_tools > 0 {
         spans.push(Span::styled(
             format!("  · {} dropped past cap", server.dropped_tools),
-            Style::default().fg(theme::WARNING_BRIGHT),
+            Style::new().fg(token::RED),
         ));
     }
     if server.calls > 0 {
-        spans.push(Span::styled(
-            format!("  · {}×", server.calls),
-            Style::default().fg(theme::ACCENT),
-        ));
+        spans.push(Span::styled(format!("  · {}×", server.calls), muted));
     }
     if server.candidate_safe {
-        spans.push(Span::styled("  · candidate-safe", theme::muted()));
+        spans.push(Span::styled("  · candidate-safe", dim));
     }
     Line::from(spans)
 }
@@ -369,9 +397,9 @@ fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {
 /// ctrl+o away.
 fn subline(server: &McpServerInfo, selected: bool, width: usize) -> Line<'static> {
     let style = if selected {
-        Style::default().fg(theme::ACCENT)
+        Style::new().fg(token::MUTED)
     } else {
-        theme::muted()
+        Style::new().fg(token::DIM)
     };
     const INDENT: usize = 6;
     let mut spans = vec![Span::raw(" ".repeat(INDENT))];
@@ -381,7 +409,7 @@ fn subline(server: &McpServerInfo, selected: bool, width: usize) -> Line<'static
     if server.title.is_some() {
         let prefix = format!("{}  ·  ", server.name);
         used += prefix.chars().count();
-        spans.push(Span::styled(prefix, theme::muted()));
+        spans.push(Span::styled(prefix, Style::new().fg(token::DIM)));
     }
     let body = match server.description.as_deref() {
         Some(desc) if !desc.trim().is_empty() => desc.trim(),
@@ -409,9 +437,9 @@ fn truncate(text: &str, max: usize) -> String {
 
 fn render_search(state: &McpTabState, lines: &mut Vec<Line<'static>>) {
     let query_line = Line::from(vec![
-        Span::styled("  search ", theme::accent()),
-        Span::styled(state.query.clone(), Style::default().fg(theme::INK)),
-        Span::styled("▏", Style::default().fg(theme::ACCENT)),
+        Span::styled(" ⌕ ", Style::new().fg(token::GOLD)),
+        Span::styled(state.query.clone(), Style::new().fg(token::TEXT)),
+        Span::styled("▌", Style::new().fg(token::TEXT)),
     ]);
     lines.push(query_line);
     lines.push(Line::default());
@@ -526,32 +554,32 @@ fn prompt_line(label: &str, value: &str, active: bool, mask: bool) -> Line<'stat
 fn footer(mode: McpMode) -> Line<'static> {
     let pairs: &[(&str, &str)] = match mode {
         McpMode::Browse => &[
-            ("↑↓", "select"),
+            ("↵", "tools"),
             ("ctrl+o", "inspect"),
-            ("e/␣", "enable/disable"),
-            ("s", "search registry"),
             ("a", "auth"),
-            ("o", "oauth login"),
+            ("o", "login"),
+            ("e", "enable"),
             ("x", "remove"),
             ("r", "refresh"),
+            ("s", "search"),
         ],
         McpMode::Search => &[
             ("type", "query"),
             ("↑↓", "results"),
-            ("enter", "search/install"),
+            ("↵", "search / install"),
             ("esc", "back"),
         ],
-        McpMode::Auth => &[("enter", "next/save"), ("esc", "cancel")],
+        McpMode::Auth => &[("↵", "next / save"), ("esc", "cancel")],
     };
-    let mut spans = vec![Span::raw("  ")];
-    for (key, desc) in pairs {
-        spans.push(Span::styled(
-            format!(" {key} "),
-            Style::default()
-                .fg(theme::VIOLET)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(format!("{desc}  "), theme::muted()));
+    let key = Style::new().fg(token::MUTED);
+    let dim = Style::new().fg(token::DIM);
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (k, desc)) in pairs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", dim));
+        }
+        spans.push(Span::styled((*k).to_string(), key));
+        spans.push(Span::styled(format!(" {desc}"), dim));
     }
     Line::from(spans)
 }
