@@ -219,8 +219,9 @@ pub fn consent_text(manifest: &PluginManifest) -> String {
 fn loop_say(manifest: &PluginManifest) -> Vec<String> {
     let grant = &manifest.loop_grant;
     let mut lines = vec![format!(
-        "Say in your turn loop: {}",
-        grade_sentence(grant.participation)
+        "Say in your turn loop: {}{}",
+        grade_sentence(grant.participation),
+        what_a_none_grade_is(manifest)
     )];
 
     if grant.hooks.is_empty() {
@@ -811,6 +812,35 @@ fn configuration_changes(manifest: &PluginManifest) -> Vec<String> {
     lines
 }
 
+/// What a `none`-grade package *is*, once the manifest has been asked.
+///
+/// A grade of `none` says one thing — this never runs inside a turn — and
+/// three different kinds of package satisfy it. The ladder is orthogonal to
+/// which one this is (`doc:pipeline-as-plugins` §10), so the sentence is
+/// decided here from the tables the manifest actually declares rather than
+/// asserted by [`grade_sentence`]:
+///
+/// - **A content bundle** ships tools, skills or records, and that is said,
+///   because it is what a user is accepting.
+/// - **A host** declares `[driver]`. [`driver_say`] already prints what it
+///   drives and what it may do to the repository between turns, in full, two
+///   lines below — so adding "content bundle" here would have the prompt
+///   contradict itself, which is what it did between #3637 and #3537.
+/// - **Neither**: a `none`-grade package whose whole substance is its
+///   capability list. Saying nothing extra is the honest answer; the list is
+///   immediately below and it is the entire risk.
+///
+/// Pure, like everything in this module: manifest fields only, no I/O.
+fn what_a_none_grade_is(manifest: &PluginManifest) -> &'static str {
+    if manifest.loop_grant.participation != Participation::None || manifest.driver.is_some() {
+        return "";
+    }
+    if manifest.tools.is_empty() && manifest.skills.is_empty() && manifest.records.is_empty() {
+        return "";
+    }
+    ". It is a content bundle"
+}
+
 /// `1 tool` / `2 tools` — a count that agrees in number with its noun.
 fn count(n: usize, noun: &str) -> String {
     if n == 1 {
@@ -821,12 +851,19 @@ fn count(n: usize, noun: &str) -> String {
 }
 
 /// What each grade means, in the user's terms rather than the ladder's.
+///
+/// **The grade, and only the grade.** `none` used to end "It is a content
+/// bundle (skills, commands, agents, tools)", which is a claim about what the
+/// package *ships* rather than about its say in a turn, and the ladder cannot
+/// see the difference: a content bundle and a host both have zero say
+/// (#3537). `plugins/stella-selfdriving` is graded `none`, ships no skills, no
+/// tools and no records, and asks for `bash`, `write_file` and an EC2 rig — so
+/// a user reading top-down was told "content bundle" and then handed the
+/// widest grant in the tree. [`loop_say`] decides that clause from the
+/// manifest now, because the manifest is what knows.
 fn grade_sentence(participation: Participation) -> &'static str {
     match participation {
-        Participation::None => {
-            "none — it never runs inside a turn. It is a content bundle (skills, \
-             commands, agents, tools)"
-        }
+        Participation::None => "none — it never runs inside a turn",
         Participation::Observer => {
             "observer — it may watch everything your turns do, and change none of it"
         }

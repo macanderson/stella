@@ -20,11 +20,15 @@
 #    host cannot enumerate every benchmark anyone will budget, so the oracle
 #    declares the names it reports and a check may read nothing else.
 #
-# What did NOT fit and was left as friction rather than widened: the numbers
-# are non-negative integers, so a fractional or signed budget must be declared
-# in an integer unit. This oracle reports **percent of baseline** — 100 is
-# unchanged, 105 is five percent slower, an improvement is below 100 — which
-# costs the sub-percent resolution a microbenchmark might want (#3488).
+# The unit is the plugin's own choice, by design (#3488). A budget literal is
+# a non-negative whole number, so an oracle with a fractional or signed
+# quantity states it in an integer unit it picks and reports. This one reports
+# **percent of baseline** — 100 is unchanged, 105 is five percent slower, 97 is
+# three percent faster. A microbenchmark wanting sub-percent resolution reports
+# per-mille or basis points instead and writes the matching literal here; what
+# it may not do is write `<= 0.5`, because a float in the gate that decides
+# whether a turn may end brings `NaN`, which makes every comparison false and
+# would silently satisfy this budget.
 name = "perf-budget"
 description = "Holds a finished turn open until the benchmarks are inside their budget."
 
