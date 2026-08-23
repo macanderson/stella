@@ -19,8 +19,8 @@ source docs and, where relevant, in the current Stella code.
 
 **That bundle has been superseded** and removed from the tree (it remains in
 git history). The current specification is
-[`../design/adaptive-context.md`](../design/adaptive-context.md), with phases in
-[`../design/adaptive-context-plan.md`](../design/adaptive-context-plan.md).
+[`../spec/adaptive-context/adaptive-context.md`](../spec/adaptive-context/adaptive-context.md), with phases in
+[`../spec/adaptive-context/adaptive-context-plan.md`](../spec/adaptive-context/adaptive-context-plan.md).
 References to the old plan/lifecycle pair in ADRs 0001–0009 are left as written:
 they are accurate records of what was decided and why, and rewriting them to
 cite a document that did not exist at the time would falsify the record.

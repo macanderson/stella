@@ -6,7 +6,7 @@
 # from the workspace in #3865, so the clause is dead. Do not re-run this plan
 # against the current tree.
 #
-# Source: docs/design/serve-surface.md (2026-07-20). Builds the headless engine
+# Source: docs/spec/serve-surface.md (2026-07-20). Builds the headless engine
 # service (Option B of oxagen ADR-033) so Oxagen drives the Rust core over HTTP/SSE.
 #
 # Run from the stella repo root, on a FEATURE BRANCH (shared-tree commits land on
