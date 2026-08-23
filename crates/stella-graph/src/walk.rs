@@ -319,6 +319,47 @@ mod tests {
         );
     }
 
+    /// #4050's repro, end to end: a workspace opened in a *subdirectory* of a
+    /// repository walks under the rules that apply there. Before this, the
+    /// subdirectory hosted no `.git`, so no rules were consulted and
+    /// `generated/gen.rs` — a directory the repository's own `.gitignore`
+    /// names — was walked, indexed, and then embedded on the user's bill.
+    #[test]
+    fn a_workspace_in_a_subdirectory_walks_under_its_repositorys_rules() {
+        let ws = TempDir::new().unwrap();
+        let repo = ws.path();
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["init", "--quiet"])
+            .status()
+            .expect("git must be runnable in the test environment");
+        assert!(status.success(), "git init failed");
+        // Not on DENY_DIRS: the deny-list cannot stand in for this.
+        fs::write(repo.join(".gitignore"), "generated/\n").unwrap();
+
+        let workspace = repo.join("crates/foo");
+        fs::create_dir_all(workspace.join("generated")).unwrap();
+        fs::write(workspace.join("generated/gen.rs"), "fn g() {}\n").unwrap();
+        fs::create_dir_all(workspace.join("src")).unwrap();
+        fs::write(workspace.join("src/main.rs"), "fn main() {}\n").unwrap();
+
+        let files: Vec<String> = walk_indexable(&workspace)
+            .iter()
+            .map(|p| {
+                p.strip_prefix(&workspace)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert_eq!(
+            files,
+            vec!["src/main.rs".to_string()],
+            "the repository's `generated/` rule reaches the subdirectory it owns"
+        );
+    }
+
     /// The deny-list is not superseded by the rules — it is the answer where
     /// there are no rules to consult. A workspace that is not a repository
     /// must still skip a vendored bundle.

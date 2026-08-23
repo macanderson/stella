@@ -1,5 +1,19 @@
 //! Resolving the values a provider needs *beyond* its one API key.
 //!
+//! # Why the file is not called `aux.rs`
+//!
+//! `AUX` is one of Windows' reserved device names, and git refuses to write a
+//! path containing one at all: `git checkout` of this repository failed with
+//! `invalid path 'crates/stella-cli/src/config/aux.rs'` and exited 128 before
+//! a single file reached disk. Nothing downstream of the checkout ran — not
+//! the build, not a test, not a contributor's editor. The first run of
+//! `.github/workflows/windows-check.yml` found it (#3550), which is the whole
+//! reason that workflow exists: this tree carried `#[cfg(not(unix))]` bodies
+//! for as long as it has existed, and no compiler had ever looked at them.
+//!
+//! The same applies to `con`, `prn`, `nul`, `com1`–`com9` and `lpt1`–`lpt9`,
+//! with or without an extension.
+//!
 //! `config.rs` owns the one-key chain — CLI flag, env var (+aliases), the
 //! anonymous-FD handoff, `~/.stella/credentials.toml`, an interactive prompt.
 //! Bedrock is the only provider today that needs more than one value, and it

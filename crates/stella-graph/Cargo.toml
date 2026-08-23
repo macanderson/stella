@@ -39,6 +39,7 @@ tree-sitter-sequel = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
 tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-php = { workspace = true, optional = true }
 toml.workspace = true
 # `workspace_ignore` answers a non-repository workspace by handing `root` to
@@ -61,6 +62,7 @@ default = [
   "lang-go",
   "lang-java",
   "lang-c",
+  "lang-cpp",
   "lang-php",
 ]
 lang-rust = ["dep:tree-sitter-rust"]
@@ -72,6 +74,10 @@ lang-sql = ["dep:tree-sitter-sequel"]
 lang-go = ["dep:tree-sitter-go"]
 lang-java = ["dep:tree-sitter-java"]
 lang-c = ["dep:tree-sitter-c"]
+# C++ has its own grammar rather than sharing C's: the C parser cannot read a
+# class body, a template, or a namespace, so those degrade to error nodes and
+# every symbol inside them is lost (#3184).
+lang-cpp = ["dep:tree-sitter-cpp"]
 lang-php = ["dep:tree-sitter-php"]
 
 [dev-dependencies]

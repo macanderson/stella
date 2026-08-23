@@ -3,8 +3,8 @@
 The shipping binary. `[[bin]] name = "stella"` over [`src/main.rs`](src/main.rs) —
 the clap surface, the credential/settings/provider resolution that has to happen
 before a turn can start, and the composition root that hands `stella-core` its
-ports and drives `stella-fleet`, `stella-tui`, an installed wrapper plugin over
-`stella-runtime`'s `TurnWrapper` socket, and `stella-media`.
+ports and drives `stella-fleet`, `stella-tui`, and an installed wrapper plugin
+over `stella-runtime`'s `TurnWrapper` socket.
 
 This crate is **wiring, not decisions**. Anything that could be a pure function
 over owned data belongs in `stella-core`; a provider's wire dialect in

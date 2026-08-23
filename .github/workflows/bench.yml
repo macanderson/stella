@@ -161,6 +161,16 @@ jobs:
         if: steps.scope.outputs.changed == 'true'
         run: uv run --with pytest --no-project pytest -q bench/evidence/frontier/tests
 
+      # The wire-capture proxy. Same `--no-project` reasoning as its
+      # neighbours — it is standard-library only, which is what lets the
+      # instrument that decides what a paid match's raw transcript says stay
+      # testable without the harness. Added by #3754: nothing ran this suite
+      # before, which is how a silent 200-with-an-empty-stream stall reached
+      # main and contaminated two trials before anyone read the JSONL by hand.
+      - name: wirelog — pytest
+        if: steps.scope.outputs.changed == 'true'
+        run: uv run --with pytest --no-project pytest -q bench/wirelog/tests
+
       # ArenaBench is being prepared for ejection into its own repository and
       # carries its own workflow at arenabench/.github/workflows/ci.yml, which
       # becomes active the moment that folder becomes a repo root. Until the

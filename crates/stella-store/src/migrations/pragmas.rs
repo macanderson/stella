@@ -103,9 +103,9 @@ impl Durability {
 /// Backing off lets the loser observe the settled WAL file instead.
 ///
 /// Only first opens are affected: once the file is WAL the pragma is a no-op
-/// and takes no lock. `stella-media`'s journal already does exactly this
-/// (`initialize_journal_database`) — the main store never got the same
-/// treatment (#617 item 8).
+/// and takes no lock. The main store never got this treatment (#617 item 8);
+/// the one place that already did it was `stella-media`'s journal, which left
+/// the workspace with that crate (#3236).
 ///
 /// WAL also means a read-only caller (`stella stats`) is never blocked by a
 /// live session's writes; the `synchronous`/`fullfsync` pair is chosen by

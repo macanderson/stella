@@ -374,6 +374,17 @@ fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {
             Style::new().fg(token::RED),
         ));
     }
+    // The byte budget is the other wall, and the row says which one this
+    // server hit. Same red, different word: "past cap" is the tool COUNT,
+    // "over budget" the schema BYTES — a server that trips this one is
+    // usually nowhere near the count, so a reader given only the first
+    // sentence goes looking at the wrong limit (#4441).
+    if server.trimmed_tools > 0 {
+        spans.push(Span::styled(
+            format!("  · {} trimmed over budget", server.trimmed_tools),
+            Style::new().fg(token::RED),
+        ));
+    }
     if server.calls > 0 {
         spans.push(Span::styled(format!("  · {}×", server.calls), muted));
     }
@@ -676,6 +687,34 @@ mod tests {
         assert!(text.contains("disabled"), "{text}");
         assert!(text.contains("12 dropped past cap"), "{text}");
         assert!(text.contains("Authorization"), "{text}");
+    }
+
+    /// **The witness (#4441).** The byte budget is on the row, in its own
+    /// words. Both walls at once on one server, because the failure this
+    /// replaces was a row that could only ever name the count cap: a server
+    /// that blew the byte budget and nothing else read as perfectly healthy
+    /// the moment the connect notice scrolled away.
+    #[test]
+    fn a_row_names_which_wall_the_server_hit() {
+        let over_budget = McpServerInfo {
+            trimmed_tools: 4,
+            ..stripe()
+        };
+        let text = rows(&[over_budget]).join("\n");
+        assert!(text.contains("4 trimmed over budget"), "{text}");
+        assert!(
+            !text.contains("past cap"),
+            "the byte budget is not the count cap: {text}"
+        );
+
+        let both = McpServerInfo {
+            dropped_tools: 12,
+            trimmed_tools: 4,
+            ..stripe()
+        };
+        let text = rows(&[both]).join("\n");
+        assert!(text.contains("12 dropped past cap"), "{text}");
+        assert!(text.contains("4 trimmed over budget"), "{text}");
     }
 
     #[test]

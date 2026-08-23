@@ -13,6 +13,8 @@ use std::os::unix::fs::PermissionsExt;
 
 use super::*;
 
+mod reservation;
+
 // manifest parsing
 
 const HAPPY: &str = r#"

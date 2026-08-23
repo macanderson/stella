@@ -25,6 +25,23 @@ use stella_graph::FileVector;
 /// while still amortising the round trip across a warm-up pass.
 pub const EMBED_BATCH: usize = 32;
 
+/// Whole-file embedding requests kept in flight at once.
+///
+/// The file rung batched correctly and issued strictly serially: one request,
+/// awaited, then the next scan. On this repository 1716 files at
+/// [`EMBED_BATCH`] is 54 round trips end to end, paid at session start and in
+/// `stella init` while nothing overlaps — and this rung runs *before* the
+/// chunk rung, so its latency is additive to the pass the first prompt waits
+/// on (#4190).
+///
+/// The same number as the chunk rung's `CHUNK_EMBED_CONCURRENCY`
+/// (`super::engine`) and for the same reason: it bounds how much of a
+/// provider's rate limit one background pass may claim, and every embedding
+/// endpoint documents a concurrency well above it. It bears on cost only
+/// through wall clock — every file is still embedded and stored exactly once,
+/// in scan order, whatever this number is.
+const FILE_EMBED_CONCURRENCY: usize = 8;
+
 /// **There is no ceiling on how much of a workspace gets indexed.** Every
 /// pass — `stella init`'s eager one and [`super::backfill`]'s background one —
 /// embeds every pending file, and the number of files in the workspace is the
@@ -87,10 +104,10 @@ pub enum WarmOutcome {
 /// Same render, same table, same `(file_id, fingerprint)` keying — the work is
 /// free from every later session's perspective.
 ///
-/// Batched rather than one big pass: each round asks for at most one
-/// request's worth of pending files, so the blocking file reads stay bounded
-/// between awaits and a pass killed halfway has committed every batch before
-/// it.
+/// Windowed rather than one big pass: each round asks for at most
+/// [`FILE_EMBED_CONCURRENCY`] requests' worth of pending files, so the
+/// blocking file reads stay bounded between awaits and a pass killed halfway
+/// has committed every request that had already landed.
 #[cfg(test)]
 pub async fn warm_file_vectors(root: &Path, embedder: &dyn Embedder, limit: usize) -> WarmOutcome {
     warm_file_vectors_with_progress(root, embedder, limit, &mut |_| {}).await
@@ -160,7 +177,12 @@ pub(super) async fn warm_opened<P: FnMut(usize) + ?Sized>(
     let mut embedded = 0usize;
     let mut unreadable = 0usize;
     while embedded < limit {
-        let want = EMBED_BATCH.min(limit - embedded);
+        // One scan per *window*, not per request: the pending set is re-asked
+        // only once every request from the previous window has settled, so a
+        // file cannot be handed out twice and paid for twice. The window is
+        // what the loop can hold in flight, and asking for less than that
+        // would leave the concurrency below unfillable.
+        let want = (EMBED_BATCH * FILE_EMBED_CONCURRENCY).min(limit - embedded);
         let scan = match graph.files_pending_embedding(&fingerprint, want) {
             Ok(scan) => scan,
             Err(error) => {
@@ -181,14 +203,22 @@ pub(super) async fn warm_opened<P: FnMut(usize) + ?Sized>(
         if scan.files.is_empty() {
             break;
         }
-        if let Err(error) = embed_batch(graph, embedder, &fingerprint, &scan.files).await {
+        // Committed per request rather than per window, so `embedded` is what
+        // actually reached the store even when a later request in the same
+        // window fails. The loop then re-scans and the abandoned files come
+        // back as pending — which is only true because a batch is stored
+        // whole or not at all.
+        let mut committed = 0usize;
+        let outcome =
+            embed_window(graph, embedder, &fingerprint, &scan.files, &mut committed).await;
+        embedded += committed;
+        progress(embedded);
+        if let Err(error) = outcome {
             return WarmOutcome::Failed {
                 embedded,
                 reason: error.to_string(),
             };
         }
-        embedded += scan.files.len();
-        progress(embedded);
     }
 
     let total = graph.file_count().unwrap_or(0);
@@ -221,34 +251,98 @@ pub enum EmbedError {
     GraphWrite(String),
 }
 
-/// Embed one batch and commit it — the single place a file's vector comes
-/// into existence, shared by the lazy query pass and the eager `init` pass so
-/// there is one render, one table and one fingerprint discipline.
-async fn embed_batch(
+/// Embed one window of pending files and commit each request's rows as they
+/// land — the single place a whole-file vector comes into existence, shared by
+/// the eager `init` pass and the background one, so there is one render, one
+/// table and one fingerprint discipline.
+///
+/// `window` is cut into [`EMBED_BATCH`]-sized requests and up to
+/// [`FILE_EMBED_CONCURRENCY`] of them are in flight at once (#4190). Unlike
+/// the chunk rung ([`super::engine`]), one file is one vector, so the batches
+/// were already full before this — what was missing was only the overlap.
+///
+/// **Each response carries the ordinal of the request it answers.**
+/// `buffer_unordered` yields results as they *complete*, so pairing the Nth
+/// completion with the Nth batch would file one request's vectors against
+/// whichever files happened to be in a slower one. Nothing would fail: every
+/// file still gets a well-formed vector of the right width, and the only
+/// symptom is a semantic index that answers with the wrong files. It is the
+/// same misattribution `HttpEmbedder::embed` refuses one layer down when it
+/// routes rows by their `index` rather than by arrival order (#4189).
+///
+/// `committed` counts the files whose vectors reached the store, and is
+/// advanced as they do rather than at the end: a request that fails must not
+/// erase the durable work of the ones that already succeeded, and the caller's
+/// re-scan finds the rest still pending.
+async fn embed_window(
     graph: &stella_graph::CodeGraph,
     embedder: &dyn Embedder,
     fingerprint: &str,
-    batch: &[stella_graph::PendingEmbed],
+    window: &[stella_graph::PendingEmbed],
+    committed: &mut usize,
 ) -> Result<(), EmbedError> {
-    let texts: Vec<String> = batch.iter().map(|p| p.text.clone()).collect();
-    let embeddings = embedder
-        .embed(&texts)
-        .await
-        .map_err(|error| EmbedError::Embedder(error.to_string()))?;
-    let rows: Vec<FileVector> = batch
-        .iter()
-        .zip(embeddings)
-        .map(|(pending, embedding)| FileVector {
-            path: pending.path.clone(),
-            content_sha256: pending.content_sha256.clone(),
-            vector: embedding.vector,
-        })
+    use futures_util::stream::{self, StreamExt};
+
+    // Each request owns its texts rather than borrowing `window`. A borrow
+    // travelling through these futures puts a higher-ranked lifetime on the
+    // background pass's `tokio::spawn` in `stella-cli`, where it fails as
+    // "implementation of `Send` is not general enough" pointing at a spawn
+    // that mentions none of this — the same reason the chunk rung's
+    // `NeededChunk` owns its text.
+    let requests: Vec<(usize, Vec<String>)> = window
+        .chunks(EMBED_BATCH)
+        .enumerate()
+        .map(|(ordinal, batch)| (ordinal, batch.iter().map(|p| p.text.clone()).collect()))
         .collect();
-    graph
-        .store_file_vectors(fingerprint, &rows)
-        // A write failure here is not recoverable by continuing: the next
-        // batch would be written into the same broken store and the pass
-        // would report success having stored nothing.
-        .map_err(|error| EmbedError::GraphWrite(error.to_string()))
-        .map(|_| ())
+
+    let mut in_flight = stream::iter(requests.into_iter().map(|(ordinal, texts)| async move {
+        embedder
+            .embed(&texts)
+            .await
+            .map(|embeddings| (ordinal, embeddings))
+    }))
+    .buffer_unordered(FILE_EMBED_CONCURRENCY);
+
+    while let Some(result) = in_flight.next().await {
+        let (ordinal, embeddings) =
+            result.map_err(|error| EmbedError::Embedder(error.to_string()))?;
+
+        // The ordinal names the request, so this is the same slice the texts
+        // were cut from — the one arithmetic that has to agree with
+        // `requests` above, and it agrees by construction.
+        let start = ordinal * EMBED_BATCH;
+        let batch = &window[start..(start + EMBED_BATCH).min(window.len())];
+
+        // `zip` would silently drop the tail of a short response, leaving
+        // those files pending forever while the pass reported success — the
+        // caller's loop would re-scan them and pay for them again every round.
+        // The trait's contract is one vector per text; naming the breach beats
+        // spinning on it.
+        if embeddings.len() != batch.len() {
+            return Err(EmbedError::Embedder(format!(
+                "the embedder returned {} vectors for {} files",
+                embeddings.len(),
+                batch.len()
+            )));
+        }
+
+        let rows: Vec<FileVector> = batch
+            .iter()
+            .zip(embeddings)
+            .map(|(pending, embedding)| FileVector {
+                path: pending.path.clone(),
+                content_sha256: pending.content_sha256.clone(),
+                vector: embedding.vector,
+            })
+            .collect();
+        graph
+            .store_file_vectors(fingerprint, &rows)
+            // A write failure here is not recoverable by continuing: the next
+            // batch would be written into the same broken store and the pass
+            // would report success having stored nothing.
+            .map_err(|error| EmbedError::GraphWrite(error.to_string()))?;
+        *committed += batch.len();
+    }
+
+    Ok(())
 }

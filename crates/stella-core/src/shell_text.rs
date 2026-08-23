@@ -1,15 +1,17 @@
 //! Reading a shell command as *text* — never running one.
 //!
-//! Two questions live here, and they are one subject: how a command splits
-//! into words and separators, and what the resulting shape says about whether
-//! the command does any work at all.
+//! Three questions live here, and they are one subject: how a command splits
+//! into words and separators, what the resulting shape says about whether the
+//! command does any work at all, and whether it writes to the filesystem.
 //!
 //! It sits in `stella-core` rather than beside the shell tool because **two
 //! planes ask the same question of the same string**. The `bash` tool asks it
 //! per call, to append an advisory to a result
 //! (`stella_tools::bash::sleep_advisory`); the engine asks it per turn, over
 //! the calls already sitting in the transcript, to decide whether the turn is
-//! stalling ([`crate::driver`]'s stall rung). `stella-tools` depends on
+//! stalling ([`crate::driver`]'s stall rung) and whether a shell command
+//! invalidated a file the already-read digest still names
+//! ([`crate::compaction::read_digest`]). `stella-tools` depends on
 //! `stella-core`, so one implementation can serve both — and the alternative
 //! was a second copy of the operator list, which is the failure this splitter
 //! was extracted to end in the first place: four near-copies had accumulated
@@ -35,10 +37,10 @@
 /// deliberately **not** operator words — they neither end a command nor start
 /// one, and `stella-tools`' `redirect_target` reads them as ordinary words.
 ///
-/// Neither are the paren words [`shell_words`] emits (`(`, `)`, `$(`). They
-/// are word boundaries, not separators: `(` *introduces* a command, and a
-/// consumer that treated it as one would read `echo (cd /outside` as a
-/// directory change the shell never performs.
+/// Neither are the substitution words [`shell_words`] emits (`(`, `)`, `$(`
+/// and the backtick). They are word boundaries, not separators: `(`
+/// *introduces* a command, and a consumer that treated it as one would read
+/// `echo (cd /outside` as a directory change the shell never performs.
 pub fn is_operator_word(word: &str) -> bool {
     matches!(word, ";" | "&" | "&&" | "|" | "||" | "\n")
 }
@@ -57,7 +59,8 @@ pub fn is_operator_word(word: &str) -> bool {
 /// The subshell parens split for the same reason and are emitted the same
 /// way, `$(` as one opener; unlike the operators they are not
 /// [`is_operator_word`]s, because `(` starts a command rather than ending
-/// one.
+/// one. An unquoted backtick is the other spelling of that opener and splits
+/// with them (#4409).
 pub fn shell_words(command: &str) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -116,6 +119,28 @@ pub fn shell_words(command: &str) -> Vec<String> {
                 } else {
                     String::from(c)
                 });
+            }
+            // A backtick is the older spelling of `$(`, and the body between
+            // a pair of them is a command like any other. Left glued to the
+            // word beside it, the whole substitution was a single word —
+            // `` `cd /outside` `` split as `["`cd", "/outside`"]`, so no word
+            // ever equalled `cd` and every consumer that reads command
+            // position was blind to it (#4409), the same defect the parens
+            // had before #3619.
+            //
+            // Both ends emit the same word, because the two are the same
+            // character and telling them apart is a parity question belonging
+            // to whoever is tracking command position, not to a splitter.
+            // Quoted, it is text: a backtick inside `'…'` or `"…"` stays in
+            // its word, which keeps this on the module's "better a missed
+            // note than a wrong one" side — a double-quoted substitution does
+            // run, and is deliberately not seen.
+            '`' if !in_single && !in_double => {
+                if has_word {
+                    words.push(std::mem::take(&mut cur));
+                    has_word = false;
+                }
+                words.push(String::from(c));
             }
             '\\' if !in_single => {
                 // Keep the escape literal (covers `\|`, `\"`, …); we don't
@@ -205,15 +230,7 @@ fn sleep_arg_seconds(arg: &str) -> Option<u64> {
 /// text in library code.
 pub fn bare_sleep_seconds(command: &str) -> Option<u64> {
     let words = shell_words(command);
-    let mut segments: Vec<&[String]> = Vec::new();
-    let mut start = 0;
-    for (i, w) in words.iter().enumerate() {
-        if is_operator_word(w) {
-            segments.push(&words[start..i]);
-            start = i + 1;
-        }
-    }
-    segments.push(&words[start..]);
+    let segments = segments(&words);
 
     let mut total_secs = 0u64;
     let mut saw_sleep = false;
@@ -231,9 +248,156 @@ pub fn bare_sleep_seconds(command: &str) -> Option<u64> {
     saw_sleep.then_some(total_secs)
 }
 
+/// Split a tokenized command at its [`is_operator_word`] separators, so each
+/// slice is one command with its arguments. Shared by the two classifiers
+/// below, which both reason per command rather than per line.
+fn segments(words: &[String]) -> Vec<&[String]> {
+    let mut out: Vec<&[String]> = Vec::new();
+    let mut start = 0;
+    for (i, w) in words.iter().enumerate() {
+        if is_operator_word(w) {
+            out.push(&words[start..i]);
+            start = i + 1;
+        }
+    }
+    out.push(&words[start..]);
+    out
+}
+
+/// Commands whose whole job is to write, move or remove a file. Every entry
+/// mutates on its ordinary invocation, with no flag needed to make it do so —
+/// which is what lets the classifier below key on the command word alone.
+const WRITING_COMMANDS: &[&str] = &[
+    "cp", "dd", "install", "ln", "mv", "patch", "rm", "rsync", "tee", "touch", "truncate",
+];
+
+/// Formatters: they rewrite the files they are pointed at, so a digested path
+/// appearing as an argument is a path whose bytes have moved. A reviewed list
+/// rather than a pattern, because "it looks like a formatter" is not something
+/// a command word can be asked.
+const FORMATTING_COMMANDS: &[&str] = &[
+    "autopep8",
+    "black",
+    "clang-format",
+    "dprint",
+    "gofmt",
+    "prettier",
+    "rustfmt",
+    "yapf",
+];
+
+/// `git` subcommands that write into the working tree. `log`, `status`,
+/// `diff`, `show` and the rest are absent on purpose: this list is what
+/// separates a `git` call that changes a file from the many that read one.
+const WRITING_GIT_SUBCOMMANDS: &[&str] = &[
+    "am",
+    "apply",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "merge",
+    "mv",
+    "pull",
+    "rebase",
+    "reset",
+    "restore",
+    "revert",
+    "rm",
+    "stash",
+    "switch",
+];
+
+/// The words of every segment of `command` that matches a shape known to
+/// write to the filesystem — the candidate names of what it wrote — or an
+/// empty vector when no segment does.
+///
+/// **This is a text shape, not a resolution.** Nothing here decides which
+/// file was written; it decides that *a* file was, and hands back the words a
+/// caller can compare against the paths it cares about. Parsing arbitrary
+/// shell to extract written paths is not soundly decidable, so a caller using
+/// this to invalidate cached knowledge must treat a match as "this may have
+/// changed" and take the over-invalidating side of every doubt (#3827).
+///
+/// Three shapes qualify, each one a whole segment:
+///
+/// - an output redirection — a word beginning with `>`, which covers `>`,
+///   `>>` and both glued to their target. A leading file descriptor (`2>`)
+///   deliberately does not qualify: `cmd 2>&1` tokenizes to `… 2> & 1` here,
+///   and reading that as a write would make every command that captures
+///   stderr look like a mutation;
+/// - a command word in this module's reviewed `WRITING_COMMANDS` or
+///   `FORMATTING_COMMANDS` list, or
+///   `sed`/`perl` carrying an in-place flag (`-i`, `-i.bak`);
+/// - `git` with a subcommand in `WRITING_GIT_SUBCOMMANDS`, or `cargo fmt`.
+///
+/// What it deliberately misses, because no reading of the command text can
+/// see it: a build or generator step that rewrites a file as a side effect
+/// (`make`, `cargo build` on a `build.rs` that writes into the tree), and a
+/// mutation whose target is named by a directory or by nothing at all
+/// (`git checkout .`, `cargo fmt` over the whole workspace) — those return
+/// their own words, which name no digested path, so a caller matching on
+/// paths will not invalidate anything (#4444).
+#[must_use]
+pub fn mutating_segment_words(command: &str) -> Vec<String> {
+    let words = shell_words(command);
+    segments(&words)
+        .into_iter()
+        .filter(|segment| segment_writes(segment))
+        .flat_map(<[String]>::to_vec)
+        .collect()
+}
+
+/// Whether one command-with-arguments matches a writing shape. The command
+/// word is read through its basename, so `/usr/bin/sed` and `sed` classify
+/// alike, and leading `VAR=value` assignments are skipped the way a shell
+/// skips them.
+fn segment_writes(segment: &[String]) -> bool {
+    if segment.iter().any(|word| word.starts_with('>')) {
+        return true;
+    }
+    let mut rest = segment
+        .iter()
+        .skip_while(|word| is_assignment_word(word))
+        .map(String::as_str);
+    let Some(command) = rest.next().map(basename) else {
+        return false;
+    };
+    let args: Vec<&str> = rest.collect();
+    match command {
+        "sed" | "perl" => args.iter().any(|arg| arg.starts_with("-i")),
+        "git" => args
+            .first()
+            .is_some_and(|sub| WRITING_GIT_SUBCOMMANDS.contains(sub)),
+        "cargo" => args.first() == Some(&"fmt"),
+        other => WRITING_COMMANDS.contains(&other) || FORMATTING_COMMANDS.contains(&other),
+    }
+}
+
+/// Whether a word is a leading `NAME=value` environment assignment rather
+/// than the command. Deliberately strict about the name: `sed -i 's/a=b/c/'`
+/// must not have its pattern mistaken for one.
+fn is_assignment_word(word: &str) -> bool {
+    let Some((name, _)) = word.split_once('=') else {
+        return false;
+    };
+    !name.is_empty()
+        && name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// The last `/`-separated component of a word, which is the word itself when
+/// it carries no separator. Pure text: it neither resolves nor normalizes a
+/// path, and `..` or a trailing slash come back as they were written.
+#[must_use]
+pub fn basename(word: &str) -> &str {
+    word.rsplit('/').next().unwrap_or(word)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{bare_sleep_seconds, is_operator_word, shell_words};
+    use super::{
+        bare_sleep_seconds, basename, is_operator_word, mutating_segment_words, shell_words,
+    };
 
     #[test]
     fn shell_words_splits_operators_attached_to_a_word_in_core() {
@@ -262,6 +426,28 @@ mod tests {
             shell_words(r"find . \( -name x \)"),
             ["find", ".", r"\(", "-name", "x", r"\)"]
         );
+    }
+
+    /// The other command-substitution spelling, which stayed glued to its
+    /// word long after the parens stopped: `` `cd /outside` `` tokenized as
+    /// `["`cd", "/outside`"]`, so nothing downstream could see the `cd` at
+    /// all (#4409).
+    #[test]
+    fn a_backtick_substitution_splits_like_a_subshell() {
+        assert_eq!(
+            shell_words("`cd /outside`"),
+            ["`", "cd", "/outside", "`"],
+            "an unquoted backtick opens and closes a substitution"
+        );
+        assert_eq!(
+            shell_words("out=`cd /x && pwd`"),
+            ["out=", "`", "cd", "/x", "&&", "pwd", "`"]
+        );
+        assert_eq!(shell_words("echo `date`"), ["echo", "`", "date", "`"]);
+        // Quoted or escaped, it is text and stays inside the word.
+        assert_eq!(shell_words("echo '`cd /x`'"), ["echo", "`cd /x`"]);
+        assert_eq!(shell_words("echo \"`date`\""), ["echo", "`date`"]);
+        assert_eq!(shell_words(r"echo \`date\`"), ["echo", r"\`date\`"]);
     }
 
     #[test]
@@ -322,6 +508,69 @@ mod tests {
         // silently counting as zero.
         assert_eq!(bare_sleep_seconds("sleep m"), None);
         assert_eq!(bare_sleep_seconds("sleep later"), None);
+    }
+
+    /// The shapes #3827 names, each one classified by its command word or its
+    /// redirection rather than by anything about the path it carries.
+    #[test]
+    fn a_writing_command_hands_back_its_own_words() {
+        for command in [
+            "sed -i 's/a/b/' src/alpha.rs",
+            "sed -i.bak 's/a/b/' src/alpha.rs",
+            "cat > src/alpha.rs",
+            "echo x >> src/alpha.rs",
+            "mv src/alpha.rs src/beta.rs",
+            "cp src/beta.rs src/alpha.rs",
+            "rm src/alpha.rs",
+            "git checkout src/alpha.rs",
+            "git stash",
+            "rustfmt src/alpha.rs",
+            "cargo fmt",
+            "/usr/bin/sed -i 's/a/b/' src/alpha.rs",
+            "RUST_LOG=debug rustfmt src/alpha.rs",
+        ] {
+            assert!(
+                !mutating_segment_words(command).is_empty(),
+                "{command} writes to the filesystem"
+            );
+        }
+        assert_eq!(
+            mutating_segment_words("cargo test && mv src/alpha.rs src/beta.rs"),
+            ["mv", "src/alpha.rs", "src/beta.rs"],
+            "only the writing segment's words come back"
+        );
+    }
+
+    /// The direction that costs something: a read-only command classified as
+    /// a write drops knowledge the caller had every right to keep. Capturing
+    /// stderr is the shape to get right, because `2>&1` tokenizes across the
+    /// `&` and its leading `2>` must not read as a redirection to a file.
+    #[test]
+    fn a_read_only_command_writes_nothing() {
+        for command in [
+            "cargo test",
+            "cargo test 2>&1",
+            "cargo build --workspace",
+            "git status",
+            "git diff src/alpha.rs",
+            "git log --oneline -5",
+            "rg -n 'fn main' src/alpha.rs",
+            "sed -n '1,50p' src/alpha.rs",
+            "ls -la src",
+            "cat src/alpha.rs",
+        ] {
+            assert!(
+                mutating_segment_words(command).is_empty(),
+                "{command} must not read as a write"
+            );
+        }
+    }
+
+    #[test]
+    fn a_word_is_named_by_its_last_component() {
+        assert_eq!(basename("crates/stella-core/src/alpha.rs"), "alpha.rs");
+        assert_eq!(basename("alpha.rs"), "alpha.rs");
+        assert_eq!(basename("/abs/alpha.rs"), "alpha.rs");
     }
 
     /// The expensive direction: anything doing real work beside the sleep

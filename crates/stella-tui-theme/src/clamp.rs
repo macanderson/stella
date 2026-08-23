@@ -145,12 +145,17 @@ pub const fn is_resting_gold(r: u8, g: u8, b: u8) -> bool {
     is_gold_role(r, g, b) && 100 * (b as u32) <= GOLD_BLUE_PCT * (r as u32)
 }
 
-/// Hue in degrees `[0, 360)`, or `None` for an achromatic colour.
+/// sRGB hue in degrees `[0, 360)`, or `None` for an achromatic colour.
 ///
-/// The standard conversion. `None` when all three channels are equal, where
-/// hue is undefined — a gray, which has no business claiming a metal.
+/// The standard sRGB (HSV) conversion, and named for that space on purpose:
+/// [`crate::oklch`] carries a second hue function measuring a different one,
+/// and the two answer different questions. This one serves the gold-lift
+/// anchor below, whose [`LIFT_HUE_TOLERANCE_DEG`] was cut in sRGB against the
+/// gold this palette ships; the separation law is OKLCH and lives there.
+/// `None` when all three channels are equal, where hue is undefined — a gray,
+/// which has no business claiming a metal.
 #[must_use]
-pub fn hue_degrees(r: u8, g: u8, b: u8) -> Option<f64> {
+pub fn srgb_hue_degrees(r: u8, g: u8, b: u8) -> Option<f64> {
     let (rf, gf, bf) = (f64::from(r), f64::from(g), f64::from(b));
     let max = rf.max(gf).max(bf);
     let min = rf.min(gf).min(bf);
@@ -202,7 +207,7 @@ pub fn is_lift_of(lift: (u8, u8, u8), base: (u8, u8, u8)) -> bool {
     if !is_gold_role(lr, lg, lb) || !is_gold_role(br, bg, bb) {
         return false;
     }
-    let (Some(lh), Some(bh)) = (hue_degrees(lr, lg, lb), hue_degrees(br, bg, bb)) else {
+    let (Some(lh), Some(bh)) = (srgb_hue_degrees(lr, lg, lb), srgb_hue_degrees(br, bg, bb)) else {
         return false;
     };
     hue_distance(lh, bh) <= LIFT_HUE_TOLERANCE_DEG && lightness(lr, lg, lb) > lightness(br, bg, bb)

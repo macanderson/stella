@@ -244,13 +244,17 @@ pub(crate) fn render_ask_user(
 pub(crate) const SLASH_POPUP_MAX_ROWS: usize = 8;
 
 /// Where the command palette floats: anchored to the composer's left edge,
-/// opening upward, tall enough for the matches (capped at
+/// opening upward, tall enough for its interior rows (capped at
 /// [`SLASH_POPUP_MAX_ROWS`]) plus its own hint row, and clamped to the frame
 /// on small terminals. The `+3` reserves the two border rows and the hint row
 /// under the matches — the key hints ride the top border, so no interior row
 /// but the hint is chrome (SPEC 10).
-pub(crate) fn slash_popup_area(root: Rect, composer: Rect, matches: usize) -> Rect {
-    let h = ((matches.min(SLASH_POPUP_MAX_ROWS) as u16) + 3).min(root.height);
+///
+/// `rows` counts group headings as well as matches ([`display_rows`]): a
+/// sectioned browse list that sized itself on matches alone would clip its
+/// last commands behind their own captions.
+pub(crate) fn slash_popup_area(root: Rect, composer: Rect, rows: usize) -> Rect {
+    let h = ((rows.min(SLASH_POPUP_MAX_ROWS) as u16) + 3).min(root.height);
     let w = root.width.saturating_sub(2).min(96);
     Rect {
         x: composer.x,
@@ -258,6 +262,32 @@ pub(crate) fn slash_popup_area(root: Rect, composer: Rect, matches: usize) -> Re
         width: w,
         height: h,
     }
+}
+
+/// One interior row of the command palette: a group heading, or the match at
+/// that index in [`SlashMenu::matches`].
+///
+/// The selection is an index into the *matches*, and the scroll window is
+/// over the *rows*, so the two are different coordinates and the popup keeps
+/// them apart by name rather than by arithmetic (#4338).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum PopupRow {
+    Heading(String),
+    Command(usize),
+}
+
+/// The palette's interior rows: every match, with its section heading above
+/// it. `sections` is ascending and every index is in range (both guaranteed
+/// by [`SlashMenu::filter_with`]), so a heading lands exactly once.
+pub(crate) fn display_rows(menu: &SlashMenu) -> Vec<PopupRow> {
+    let mut rows = Vec::with_capacity(menu.matches.len() + menu.sections.len());
+    for index in 0..menu.matches.len() {
+        if let Some((_, heading)) = menu.sections.iter().find(|(at, _)| *at == index) {
+            rows.push(PopupRow::Heading(heading.clone()));
+        }
+        rows.push(PopupRow::Command(index));
+    }
+    rows
 }
 
 /// The first visible row of a scrolling list of `len` rows that shows
@@ -301,9 +331,15 @@ pub(crate) fn scroll_window_start(len: usize, selected: usize, visible: usize) -
 /// arrow-key navigation always keeps the highlight visible, and the hint row
 /// says how many are hidden above (`▲`) and below (`▼`).
 ///
-/// The renderings' `relevant now` section — commands ranked by session state
-/// — and the per-domain groups have no producer yet (#4338); the match list
-/// is the composer's fuzzy ranking as it stands.
+/// With no query typed, the list is sectioned: [`SlashMenu::sections`] puts
+/// `relevant now · <why>` over the commands the session's own state makes
+/// worth reaching for, then a heading per [`crate::composer::SlashDomain`]
+/// group (#4338). A typed query drops the headings — grouping a three-row
+/// result buries the rows under their own captions — and keeps the flat
+/// ranking, in which a relevant command still leads its rank.
+///
+/// The renderings' `recent` section is still absent: it needs per-workspace
+/// persistence, which the deck has no store for (#4338).
 pub(crate) fn render_slash_popup(
     menu: &SlashMenu,
     selected: usize,
@@ -322,18 +358,34 @@ pub(crate) fn render_slash_popup(
 
     let total = menu.matches.len();
     let selected = selected.min(total.saturating_sub(1));
+    // Headings occupy rows of their own, so the window is over the display
+    // list rather than over the matches — a section boundary must not push
+    // the highlight off the bottom edge.
+    let rows = display_rows(menu);
+    let selected_row = rows
+        .iter()
+        .position(|row| *row == PopupRow::Command(selected))
+        .unwrap_or(0);
     // The hint row keeps the last interior row.
     let visible = inner_height(area).saturating_sub(1).max(1);
-    let first = scroll_window_start(total, selected, visible);
-    let last = (first + visible).min(total);
+    let first = scroll_window_start(rows.len(), selected_row, visible);
+    let last = (first + visible).min(rows.len());
     let inner_w = inner_width(area);
     let query = menu.query.trim_start_matches('/').to_ascii_lowercase();
 
-    let mut lines: Vec<Line<'static>> = menu.matches[first..last]
+    let mut lines: Vec<Line<'static>> = rows[first..last]
         .iter()
-        .enumerate()
-        .map(|(offset, c)| {
-            let is_sel = first + offset == selected;
+        .map(|row| {
+            let index = match row {
+                // A heading is chrome: dim, indented under the border, and
+                // never selectable — the selection walks commands only.
+                PopupRow::Heading(text) => {
+                    return Line::from(Span::styled(format!(" {text}"), muted));
+                }
+                PopupRow::Command(index) => *index,
+            };
+            let c = menu.matches[index];
+            let is_sel = index == selected;
             let marker = if is_sel { "▸ " } else { "  " };
             let live_value = live
                 .iter()
@@ -375,8 +427,15 @@ pub(crate) fn render_slash_popup(
             line
         })
         .collect();
-    let hidden_above = first;
-    let hidden_below = total.saturating_sub(last);
+    let hidden_above = rows[..first]
+        .iter()
+        .filter(|row| matches!(row, PopupRow::Command(_)))
+        .count();
+    let hidden_below = rows[last..]
+        .iter()
+        .filter(|row| matches!(row, PopupRow::Command(_)))
+        .count();
+    let shown = total - hidden_above - hidden_below;
     let mut hint = vec![Span::raw(" ")];
     if hidden_above > 0 || hidden_below > 0 {
         hint.push(Span::styled(
@@ -394,7 +453,7 @@ pub(crate) fn render_slash_popup(
         .border_style(Style::new().fg(token::RULE))
         .title(Line::from(vec![
             Span::styled(" / commands", gold),
-            Span::styled(format!("  {} of {total} · fuzzy ", last - first), muted),
+            Span::styled(format!("  {shown} of {total} · fuzzy "), muted),
         ]))
         .title(Line::from(Span::styled(" ↑↓ move · ↵ run · esc ", dim)).right_aligned());
     Paragraph::new(Text::from(lines))

@@ -39,9 +39,16 @@
 //! Command position is read from the word *before* the `cd`, so it is only as
 //! good as the splitter's word boundaries. `(`, `)` and `$(` became words of
 //! their own in #3619, which is what lets the glued `(cd /outside; ls)` read
-//! the same as the spaced `( cd /outside )`. A backtick substitution
-//! (`` `cd /outside` ``) is still one word and still missed. Every miss here
-//! is silence, never a wrong note.
+//! the same as the spaced `( cd /outside )`; the unquoted backtick joined them
+//! in #4409, so `` `cd /outside` `` reads like `$(cd /outside)`. A backtick
+//! inside double quotes still runs and is still missed, which is the module's
+//! posture rather than an oversight: every miss here is silence, never a wrong
+//! note.
+//!
+//! Those same words bound how far a command's arguments reach
+//! ([`ends_argument_reach`]), which is a separate question from where a
+//! command begins and was answered wrongly for as long as only the separators
+//! were consulted (#4408).
 
 use std::path::Path;
 
@@ -49,6 +56,28 @@ use std::path::Path;
 /// [`stella_core::shell_text`] where they now live so the engine's stall rung
 /// and these advisories read one implementation (#2022).
 pub(super) use stella_core::shell_text::{is_operator_word, shell_words};
+
+/// Does `word` end the reach of the command whose arguments are being read?
+///
+/// [`is_operator_word`] answers the *separator* half — `;`, `&&`, a newline,
+/// each of which ends one command and begins the next — and it was the whole
+/// bound until `( mv src /etc/passwd )` showed what the other half costs. The
+/// splitter emits `(`, `)`, `$(` and the backtick as words of their own
+/// (#3619, #4409); none of them can be an argument, so
+/// [`super::segment_args`] read the closing paren as `mv`'s last positional
+/// and the real write target was never checked at all (#4408). A substitution
+/// bounds reach for the same reason and in the safe direction: the target of
+/// `` cp a `pwd`/b `` is a path no text scan can resolve, and stopping at the
+/// backtick skips it rather than refusing the unresolvable `/b`.
+///
+/// Deliberately a **reach** bound rather than a widening of
+/// [`is_operator_word`]. `(` must keep introducing a command
+/// ([`introduces_a_command`]), and a `(` that separated instead would read
+/// `echo (cd /outside` as a directory change the shell never performs — the
+/// false warning `a_paren_in_data_does_not_promote_a_cd` pins.
+pub(super) fn ends_argument_reach(word: &str) -> bool {
+    is_operator_word(word) || matches!(word, "(" | ")" | "$(" | "`")
+}
 
 /// One pending heredoc: the delimiter that ends its body, and whether `<<-`
 /// asked for leading tabs to be ignored on that terminator line.
@@ -296,11 +325,17 @@ fn next_word_is_a_command(word: &str, word_is_a_command: bool) -> bool {
 ///
 /// `$(` is here beside `(` because a command substitution runs its body the
 /// same way a subshell does — `out=$(cd /outside && pwd)` really does leave
-/// the session root.
+/// the session root. The backtick is that same substitution written the older
+/// way (#4409), and it is the one entry that also appears at the *end* of what
+/// it opened: a closing backtick is the same character as an opening one. That
+/// costs nothing, because this predicate only promotes a word that is itself
+/// in command position, and the word before a closing backtick never is —
+/// `` echo `date` cd /outside `` stays silent, while `` `cd /outside` `` and
+/// `` out=`cd /outside` `` are seen.
 fn introduces_a_command(word: &str) -> bool {
     matches!(
         word,
-        "if" | "then" | "elif" | "else" | "while" | "until" | "do" | "{" | "(" | "$(" | "!"
+        "if" | "then" | "elif" | "else" | "while" | "until" | "do" | "{" | "(" | "$(" | "!" | "`"
     )
 }
 
@@ -539,6 +574,54 @@ mod tests {
         }
         // The in-root glued form stays silent, and names no `/outside;`.
         assert_eq!(cd_escape_target("(cd .; ls)", &root), None);
+    }
+
+    /// #4409 witness: the older spelling of the same substitution. Until the
+    /// splitter learned the backtick, `` `cd /outside` `` was two words —
+    /// `` `cd `` and `` /outside` `` — so no word ever equalled `cd` and the
+    /// detector had nothing to look at, exactly as the glued paren had before
+    /// #3619.
+    #[test]
+    fn a_backtick_substitution_is_still_an_escape() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for command in [
+            "`cd /outside`",
+            "`cd /outside && pwd`",
+            "out=`cd /outside && pwd`",
+            "ls; `cd /outside`",
+        ] {
+            assert_eq!(
+                cd_escape_target(command, &root).as_deref(),
+                Some("/outside"),
+                "{command} escapes the root and must still warn"
+            );
+        }
+        // The in-root form stays silent, and names no `/outside\``.
+        assert_eq!(cd_escape_target("`cd .`", &root), None);
+    }
+
+    /// The over-suppression counterpart of the backtick form. A *closing*
+    /// backtick is the same character as an opening one, so a predicate that
+    /// promoted it unconditionally would read the word after any substitution
+    /// as a command; the command-position requirement is what stops that, and
+    /// a quoted backtick is text like any other quoted paren.
+    #[test]
+    fn a_backtick_in_data_does_not_promote_a_cd() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for command in [
+            "echo `date` cd /outside",
+            "echo '`cd /outside`'",
+            "echo \"`cd /outside`\"",
+            "echo `cd /outside`",
+        ] {
+            assert_eq!(
+                cd_escape_target(command, &root),
+                None,
+                "{command} must stay silent"
+            );
+        }
     }
 
     /// The over-suppression counterpart of the glued form: a paren that is

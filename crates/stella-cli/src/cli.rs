@@ -180,12 +180,15 @@ pub(crate) struct GlobalArgs {
     )]
     pub(crate) allow_dir: Vec<String>,
 
-    /// Hard USD spend limit for the whole session
+    /// Hard USD spend limit for the whole invocation
     ///
-    /// Scoped to the session, not the turn: enforced mode aborts cleanly
+    /// Scoped to the invocation, not the turn: enforced mode aborts cleanly
     /// (never mid-tool) once cumulative spend across every turn and goal round
-    /// exceeds this. Omit to meter spend for the cost summary without ever
-    /// blocking (observed mode).
+    /// exceeds this. `stella self-driving drive` honours it the same way,
+    /// across every turn it spawns — triage, work and retry alike — and stops
+    /// before starting one it cannot pay for, reporting *budget reached*
+    /// rather than *finished*. Omit to meter spend for the cost summary
+    /// without ever blocking (observed mode).
     #[arg(long, global = true, env = "STELLA_SPEND_LIMIT", value_parser = parse_spend_limit)]
     pub(crate) spend_limit: Option<f64>,
 
@@ -540,41 +543,47 @@ pub(crate) enum Command {
         /// contributes context before the turn, gathers evidence after it, and
         /// its declared rule — evaluated by Stella, never by the plugin —
         /// decides whether another turn runs. The id is recorded on the
-        /// execution row, so two variants can be compared. `classic` names the
-        /// built-in staged pipeline; omitted, the raw step-loop runs with
-        /// nothing over it (the default since #3381).
+        /// execution row, so two variants can be compared. Omitted, the raw
+        /// step-loop runs with nothing over it (the default since #3381).
+        /// `classic` named the built-in staged pipeline and is refused
+        /// outright: that pipeline was deleted from the workspace (#3865), and
+        /// the refusal names `stella plugin install` as the remedy.
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
 
-        /// Test command the pipeline's verify stage runs deterministically
-        /// (e.g. "cargo test -p my-crate"). Arms the fail→pass flip oracle:
-        /// a change that flips a failing test to passing is proven done.
-        /// Omitted, the pipeline's witness stage is the remaining oracle,
-        /// and a turn that reaches neither is reported unverified — not
-        /// passed. Refused without `--pipeline classic` or `--pipeline
-        /// <variant>` — nothing on the raw loop consumes it (#3696).
+        /// Test command an installed wrapper plugin's own `[oracle]` runs
+        /// deterministically (e.g. "cargo test -p my-crate"). Arms that
+        /// plugin's fail→pass flip check: a change that flips a failing test
+        /// to passing is proven done, and the plugin reports the evidence.
+        /// Refused on the raw loop — nothing there consumes it (#3696), and
+        /// since #3865 there is no built-in stage left to hand it to; pass
+        /// `--pipeline <variant>` naming an installed plugin instead.
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
 
         /// Keep the authored witness test as a file in your working tree.
-        /// By default the witness is scaffolding: it proves this run's goal
-        /// inside the candidate workspace and is discarded with it, so an
-        /// already-satisfied test is never left behind in your test tree.
-        /// Pass this to promote it to a real test you can commit.
-        /// Pipeline-only: refused without `--pipeline classic` (#3696).
+        /// The witness was scaffolding: it proved a run's goal inside the
+        /// candidate workspace and was discarded with it, so an
+        /// already-satisfied test was never left behind in your test tree,
+        /// and this promoted it to a real test you could commit.
+        ///
+        /// Refused unconditionally since #3865 deleted the staged pipeline
+        /// that authored the witness — there is nothing on any resolution for
+        /// it to keep. A verification plugin owns its own witness files;
+        /// install one (`stella plugin install`) and ask it.
         #[arg(long)]
         keep_witness: bool,
 
         /// Exit non-zero unless the run was actually verified.
         ///
-        /// The default is deliberately advisory: a run nothing could prove
-        /// reports `status: "unverified"` (label, JSON `reason`, recap, audit
-        /// row) and still exits 0, because with no --test-command that is the
-        /// ordinary outcome and flipping it would break every existing script.
-        /// Pass this in a delivery gate that must not ship unproven work — it
-        /// turns "completed but unproven" into a failure exactly like a
-        /// refuted verification. Pipeline-only: refused without `--pipeline
-        /// classic` (#3696).
+        /// Refused unconditionally since #3865. It turned "completed but
+        /// unproven" into a failure exactly like a refuted verification, and
+        /// both of those were verdicts the built-in staged pipeline reached;
+        /// the raw loop reaches neither, so there is no standing for this flag
+        /// to read. A run's JSON `status` is `completed` or `aborted` (see
+        /// `agent::summary`) — a delivery gate that must not ship unproven
+        /// work wants a verification plugin (`stella plugin install`) and
+        /// `--pipeline <variant>` naming it.
         #[arg(long)]
         require_verified: bool,
 

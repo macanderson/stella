@@ -71,7 +71,7 @@ use crate::registry::Tool;
 mod words;
 
 use stella_core::shell_text::bare_sleep_seconds;
-use words::{cd_escape_target, is_operator_word, shell_words};
+use words::{cd_escape_target, shell_words};
 
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 /// Byte cap on one `bash` result before head+tail elision
@@ -271,15 +271,20 @@ fn redirect_target(word: &str) -> Option<&str> {
     Some(rest.strip_prefix('|').unwrap_or(rest))
 }
 
-/// This command's own arguments: everything up to the next operator.
+/// This command's own arguments: everything up to the word that ends its
+/// reach.
 ///
 /// A pipeline or `&&` ends a command's reach — without that bound,
 /// `rm x && cd /tmp` would read `/tmp` as something `rm` was about to delete.
+/// So does a subshell or substitution boundary, which is the half
+/// [`words::ends_argument_reach`] added: `( mv src /etc/passwd )` put the
+/// closing paren after the real target, the `rfind` below picked `)` as the
+/// last positional, and `/etc/passwd` was never checked (#4408).
 fn segment_args(words: &[String], command_index: usize) -> Vec<&str> {
     words[command_index + 1..]
         .iter()
         .map(String::as_str)
-        .take_while(|word| !is_operator_word(word))
+        .take_while(|word| !words::ends_argument_reach(word))
         .collect()
 }
 
@@ -548,12 +553,10 @@ impl Tool for Bash {
         cmd.stderr(std::process::Stdio::piped());
         // Reap the direct child if the driving future is dropped (tokio keeps
         // it running by default). A backstop only — it does NOT reach the
-        // grandchildren the shell spawned, which is what the unix
-        // `GroupKillGuard` below is for; this is what covers the non-unix
-        // build, where that guard does not exist.
+        // grandchildren the shell spawned, which is what the `GroupKillGuard`
+        // below is for, on every platform since #3550.
         cmd.kill_on_drop(true);
         // New process group so we can kill the whole tree on timeout.
-        #[cfg(unix)]
         crate::exec::detach_into_own_process_group(&mut cmd);
 
         let child = match cmd.spawn() {
@@ -564,11 +567,9 @@ impl Tool for Bash {
         };
 
         // Capture pid before the capped wait takes ownership.
-        #[cfg(unix)]
         let pid = child.id().unwrap_or(0) as i32;
         // Cancellation backstop: a dropped future (Esc, the engine's tool
-        // timeout, a fleet stop) must not leave the setsid'd group running.
-        #[cfg(unix)]
+        // timeout, a fleet stop) must not leave the detached group running.
         let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
         let timeout = Duration::from_secs(timeout_secs);
@@ -584,7 +585,6 @@ impl Tool for Bash {
         .await
         {
             Ok(Ok(output)) => {
-                #[cfg(unix)]
                 guard.disarm();
                 output
             }
@@ -595,7 +595,6 @@ impl Tool for Bash {
             }
             Err(_) => {
                 // Timeout — kill the process group.
-                #[cfg(unix)]
                 guard.kill_now();
                 return ToolOutput::classified_error(
                     stella_protocol::ErrorClass::Timeout,

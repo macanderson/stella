@@ -109,8 +109,12 @@ silent quality regression.
   relevant/irrelevant score distributions on a real corpus, and no such
   measurement exists yet for these backends on code. The shipped value is
   deliberately permissive and its job is to drop the obviously-unrelated tail
-  from an ordered list, not to certify anything. Measuring it per model is
-  tracked work.
+  from an ordered list, not to certify anything. The measurement is written
+  and reproducible — `crates/stella-tools/tests/relevance_calibration.rs`,
+  `#[ignore]`d because it needs a real key and a full embedding pass — and
+  running it once per backend is what turns this paragraph into a number
+  (#3096). It lives in `stella-tools` rather than here so this crate's own
+  tests stay hermetic and its leaf status is untouched.
 
 ## God files — do not add lines
 

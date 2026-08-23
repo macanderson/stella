@@ -31,17 +31,37 @@ request body carries no credential.
 
 One JSON object per exchange, one line each:
 
-    {"ts", "label", "method", "path", "status", "duration_ms",
-     "request_headers", "request_body", "response_body", "response_sse_events"}
+    {"ts", "label", "method", "path", "status", "duration_ms", "ttfb_ms",
+     "request_headers", "response_headers", "request_body", "response_body",
+     "response_sse_events"}
 
 A streaming (SSE) response is captured twice: `response_body` holds the raw
 `text/event-stream` bytes, and `response_sse_events` holds the decoded `data:`
 payloads in order, which is the form worth reading.
+
+**A stalled upstream fails fast and loudly (#3754).** A single connection
+used to carry one 1800s socket timeout for its entire life, so an upstream
+that returned a 200 status and then never wrote a body byte held the
+exchange — and a trial's whole budget — for up to that long; two such stalls
+silently contaminated a paid benchmark match before anyone read the raw
+transcript. `--idle-timeout` (default `DEFAULT_IDLE_TIMEOUT_S`) now bounds
+*each* read: it re-arms on every byte, so a slow-but-progressing stream is
+unaffected and only a genuine gap trips it. `--total-timeout` (default
+`DEFAULT_TOTAL_TIMEOUT_S`) is the independent ceiling a trickle of chunks
+just under the idle timeout apart would otherwise dodge. `ttfb_ms` records
+time-to-response-headers separately from `duration_ms`, and `response_headers`
+carries the upstream's own headers, so a stall can be attributed after the
+fact: fast headers with a long duration means the body stalled, not the
+connection. At exit, `print_stall_summary` writes one line to stderr —
+exchange count, how many ran past `--stall-threshold`, how many returned an
+HTTP 200 with zero bytes — so an operator learns about contamination before
+analysing results, not after.
 """
 
 from __future__ import annotations
 
 import argparse
+import atexit
 import http.client
 import json
 import ssl
@@ -51,6 +71,25 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+
+#: Seconds a single upstream read may go without producing a byte before the
+#: exchange is aborted. Short by design: re-arms on every byte received, so
+#: only a genuine gap trips it — a stream that keeps sending small chunks,
+#: however slowly overall, is unaffected.
+DEFAULT_IDLE_TIMEOUT_S = 60.0
+
+#: Ceiling on one exchange's total wall-clock, independent of the idle
+#: timeout above: a trickle of chunks each arriving just under the idle
+#: timeout apart would otherwise never trip it. Generous, because a
+#: genuinely slow-but-progressing stream (long reasoning before the first
+#: token) must not be killed by it.
+DEFAULT_TOTAL_TIMEOUT_S = 1800.0
+
+#: Duration past which an exchange counts toward the end-of-run stall
+#: summary. Reporting only — independent of the two enforcement timeouts
+#: above, and matches the threshold #3754's own measurement used to flag the
+#: three contaminating calls.
+DEFAULT_STALL_THRESHOLD_S = 60.0
 
 #: Headers whose values are credentials. Forwarded upstream, never written.
 REDACTED_HEADERS = {
@@ -77,6 +116,42 @@ HOP_BY_HOP = {
 }
 
 _write_lock = threading.Lock()
+
+_stats_lock = threading.Lock()
+#: Process-wide exchange counters feeding `print_stall_summary` (#3754).
+#: Mutated only through `_record_stat`, under `_stats_lock`.
+_stats = {"total": 0, "stalled": 0, "zero_stream": 0}
+
+
+def _record_stat(duration_ms: int, empty_stream: bool, stall_threshold_s: float) -> None:
+    """Fold one completed exchange into the process-wide stall counters."""
+    with _stats_lock:
+        _stats["total"] += 1
+        if duration_ms > stall_threshold_s * 1000:
+            _stats["stalled"] += 1
+        if empty_stream:
+            _stats["zero_stream"] += 1
+
+
+def print_stall_summary(stall_threshold_s: float = DEFAULT_STALL_THRESHOLD_S) -> str | None:
+    """Print the end-of-run stall digest to stderr and return the line.
+
+    Registered as an `atexit` hook in `main()` so it fires on a normal exit,
+    `KeyboardInterrupt`, or a signal-driven shutdown alike — the operator
+    must learn about contamination before analysing results, not after
+    (#3754). Returns `None`, printing nothing, if no exchange was proxied.
+    """
+    with _stats_lock:
+        stats = dict(_stats)
+    if stats["total"] == 0:
+        return None
+    line = (
+        f"wirelog: {stats['total']} exchanges, {stats['stalled']} over "
+        f"{stall_threshold_s:.0f}s, {stats['zero_stream']} returned an "
+        f"empty stream (HTTP 200, 0 bytes)"
+    )
+    print(line, file=sys.stderr)
+    return line
 
 
 def _redact(headers) -> dict[str, str]:
@@ -111,6 +186,9 @@ class Handler(BaseHTTPRequestHandler):
     upstream_tls: bool = True
     label: str = ""
     out_path: Path | None = None
+    idle_timeout: float = DEFAULT_IDLE_TIMEOUT_S
+    total_timeout: float = DEFAULT_TOTAL_TIMEOUT_S
+    stall_threshold: float = DEFAULT_STALL_THRESHOLD_S
 
     def log_message(self, fmt, *args):  # noqa: A003 - stdlib hook name
         pass  # the JSONL is the log; stderr noise would drown the run
@@ -126,28 +204,54 @@ class Handler(BaseHTTPRequestHandler):
         forward["Host"] = self.upstream_host
         forward["Accept-Encoding"] = "identity"  # log readable bytes, not gzip
 
+        # `timeout` here is the IDLE timeout (#3754): http.client applies it
+        # as the socket timeout, which governs each individual recv — it
+        # re-arms on every byte, so it bounds a gap, not the exchange as a
+        # whole. The independent, generous `total_timeout` ceiling is
+        # enforced by hand in the streaming loop below.
         if self.upstream_tls:
             conn = http.client.HTTPSConnection(
                 self.upstream_host,
                 self.upstream_port,
                 context=ssl.create_default_context(),
-                timeout=1800,
+                timeout=self.idle_timeout,
             )
         else:
             conn = http.client.HTTPConnection(
-                self.upstream_host, self.upstream_port, timeout=1800
+                self.upstream_host, self.upstream_port, timeout=self.idle_timeout
             )
 
         try:
             conn.request(self.command, self.path, body=body, headers=forward)
             upstream = conn.getresponse()
+        except TimeoutError as exc:
+            conn.close()
+            message = (
+                f"wirelog idle timeout ({self.idle_timeout:.0f}s) waiting "
+                f"for response headers: {exc}"
+            )
+            self.send_response(504)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(message.encode())
+            self._record(body, b"", 504, started, message)
+            return
         except Exception as exc:
+            conn.close()
             self.send_response(502)
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(f"wirelog upstream error: {exc}".encode())
             self._record(body, b"", 502, started, str(exc))
             return
+
+        # Headers are in hand: this is the point time-to-first-byte measures
+        # from `started`, distinct from the eventual `duration_ms` — a fast
+        # ttfb next to a huge duration means the body stalled, not the
+        # connection (the exact shape of the two contaminating stalls #3754
+        # reports, both HTTP 200 with zero bytes).
+        ttfb_ms = round((time.time() - started) * 1000)
+        upstream_headers = dict(upstream.getheaders())
 
         self.send_response(upstream.status)
         for key, value in upstream.getheaders():
@@ -160,9 +264,24 @@ class Handler(BaseHTTPRequestHandler):
         # Stream through: the client must see bytes as the upstream produces
         # them, or a streaming agent's own timing is distorted by the proxy.
         collected = bytearray()
+        stall_error = None
         try:
             while True:
-                chunk = upstream.read(8192)
+                if time.time() - started > self.total_timeout:
+                    stall_error = (
+                        f"wirelog total timeout ({self.total_timeout:.0f}s) "
+                        "exceeded — upstream kept sending within the idle "
+                        "window but never finished"
+                    )
+                    break
+                try:
+                    chunk = upstream.read(8192)
+                except TimeoutError as exc:
+                    stall_error = (
+                        f"wirelog idle timeout ({self.idle_timeout:.0f}s) "
+                        f"waiting for a body byte: {exc}"
+                    )
+                    break
                 if not chunk:
                     break
                 collected.extend(chunk)
@@ -176,9 +295,30 @@ class Handler(BaseHTTPRequestHandler):
             pass
         finally:
             conn.close()
-            self._record(body, bytes(collected), upstream.status, started, None)
+            self._record(
+                body,
+                bytes(collected),
+                upstream.status,
+                started,
+                stall_error,
+                ttfb_ms=ttfb_ms,
+                response_headers=upstream_headers,
+            )
 
-    def _record(self, req: bytes, resp: bytes, status: int, started, error) -> None:
+    def _record(
+        self,
+        req: bytes,
+        resp: bytes,
+        status: int,
+        started,
+        error,
+        *,
+        ttfb_ms: int | None = None,
+        response_headers: dict[str, str] | None = None,
+    ) -> None:
+        duration_ms = round((time.time() - started) * 1000)
+        _record_stat(duration_ms, status == 200 and len(resp) == 0, self.stall_threshold)
+
         if not self.out_path:
             return
         try:
@@ -201,8 +341,10 @@ class Handler(BaseHTTPRequestHandler):
             "method": self.command,
             "path": self.path,
             "status": status,
-            "duration_ms": round((time.time() - started) * 1000),
+            "duration_ms": duration_ms,
+            "ttfb_ms": ttfb_ms,
             "request_headers": _redact(self.headers),
+            "response_headers": _redact(response_headers) if response_headers else None,
             "request_body": request_body,
             "response_body": response_body,
             "response_sse_events": sse,
@@ -228,6 +370,27 @@ def main() -> int:
     ap.add_argument("--label", required=True, help="which arm this listener serves")
     ap.add_argument("--out", required=True, help="JSONL transcript path")
     ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument(
+        "--idle-timeout",
+        type=float,
+        default=DEFAULT_IDLE_TIMEOUT_S,
+        help="seconds a single upstream read may stall before the exchange "
+        "is aborted (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--total-timeout",
+        type=float,
+        default=DEFAULT_TOTAL_TIMEOUT_S,
+        help="ceiling on one exchange's total wall-clock, independent of "
+        "--idle-timeout (default: %(default)s)",
+    )
+    ap.add_argument(
+        "--stall-threshold",
+        type=float,
+        default=DEFAULT_STALL_THRESHOLD_S,
+        help="duration past which an exchange counts toward the end-of-run "
+        "stall summary (default: %(default)s)",
+    )
     args = ap.parse_args()
 
     split = urlsplit(args.upstream)
@@ -243,12 +406,21 @@ def main() -> int:
     Handler.upstream_port = split.port or (443 if Handler.upstream_tls else 80)
     Handler.label = args.label
     Handler.out_path = out
+    Handler.idle_timeout = args.idle_timeout
+    Handler.total_timeout = args.total_timeout
+    Handler.stall_threshold = args.stall_threshold
+
+    # Registered before serve_forever so the digest prints on every exit path
+    # — normal, Ctrl-C, or a signal-driven shutdown — not just the one this
+    # function happens to catch (#3754).
+    atexit.register(print_stall_summary, args.stall_threshold)
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.daemon_threads = True
     print(
         f"wirelog[{args.label}] {args.host}:{args.port} -> {args.upstream} "
-        f"logging to {out}",
+        f"logging to {out} (idle-timeout={args.idle_timeout:.0f}s, "
+        f"total-timeout={args.total_timeout:.0f}s)",
         flush=True,
     )
     try:

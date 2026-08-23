@@ -133,6 +133,7 @@ mod tests {
                 },
             ],
             files: vec!["driver.rs".into(), "src/lib.rs".into()],
+            query_ms: None,
         }
     }
 
@@ -225,6 +226,7 @@ mod tests {
             }],
             edges: vec![],
             files: vec![],
+            query_ms: None,
         });
         let text = draw(&mut ui, 100, 24);
         assert!(
@@ -249,6 +251,7 @@ mod tests {
                 .collect(),
             edges: vec![],
             files: vec![],
+            query_ms: None,
         };
         let mut ui = DeckUi::default();
         ui.graph = Some(snapshot);

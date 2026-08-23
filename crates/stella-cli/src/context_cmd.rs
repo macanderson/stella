@@ -9,6 +9,7 @@
 //! stella context review              # what was proposed, and what the probe says
 //! stella context keep <id>           # publish it as a record the engine loads
 //! stella context edit <id>           # publish your wording instead
+//! stella context amend <handle>      # change a published record's scope, and re-stamp it
 //! stella context ignore <id>         # decline it, with a cooldown
 //! stella context list                # what currently steers this workspace
 //! stella context validate            # re-probe every claim, on demand
@@ -40,6 +41,7 @@ use colored::Colorize;
 
 use stella_core::ingest::record::{ContextFile, Proposal};
 
+mod amend;
 mod explain;
 mod govern;
 mod propose;
@@ -91,6 +93,33 @@ pub enum ContextCmd {
         /// Also approve this record to block matching tool calls.
         #[arg(long)]
         enforce: bool,
+    },
+
+    /// Change a published record's scope or precedence, and re-stamp its
+    /// identity. With no flags it re-stamps a file somebody hand-edited.
+    ///
+    /// Scope is the field most likely to need amending after publication,
+    /// because a scope defect is invisible until the record meets its
+    /// neighbours — a `paths = ["crates"]` record at the default precedence
+    /// suspends every invariant record under `crates/`. Enforcement is NOT
+    /// amendable here: `stella context promote` governs it with an approver,
+    /// a reason, and a ledger event.
+    Amend {
+        /// The record's `^handle` (the caret is optional) or its lineage id.
+        rule: String,
+        /// New precedence — higher wins a conflict, and loses its place last
+        /// when the channel budget is short.
+        #[arg(long)]
+        precedence: Option<u32>,
+        /// Replace `applies_to.paths`. Repeat for each; `--paths ''` clears.
+        #[arg(long = "paths", value_name = "GLOB")]
+        paths: Option<Vec<String>>,
+        /// Replace `applies_to.tasks`. Repeat for each.
+        #[arg(long = "tasks", value_name = "TASK")]
+        tasks: Option<Vec<String>>,
+        /// Replace `applies_to.keywords`. Repeat for each.
+        #[arg(long = "keywords", value_name = "WORD")]
+        keywords: Option<Vec<String>>,
     },
 
     /// Decline a proposal. Records negative evidence and a re-proposal cooldown,
@@ -189,6 +218,22 @@ pub fn run_context(cmd: &ContextCmd) -> Result<(), String> {
             statement,
             enforce,
         } => review::run_keep(&root, candidate, Some(statement), *enforce),
+        ContextCmd::Amend {
+            rule,
+            precedence,
+            paths,
+            tasks,
+            keywords,
+        } => amend::run_amend(
+            &root,
+            rule,
+            &amend::Amendment {
+                precedence: *precedence,
+                paths: paths.clone(),
+                tasks: tasks.clone(),
+                keywords: keywords.clone(),
+            },
+        ),
         ContextCmd::Ignore {
             candidate,
             reason,

@@ -961,6 +961,188 @@ fn a_tampered_promotion_ledger_fails_validate() {
     );
 }
 
+// #4264 — amending a published record's scope
+
+/// The published record's steering, read straight off the file.
+fn published_steering(root: &Path, lineage: &str) -> stella_core::ingest::record::Steering {
+    let path = root.join(RULES_DIR).join(format!("{lineage}.toml"));
+    let file: stella_core::ingest::ContextFile =
+        toml::from_str(&std::fs::read_to_string(&path).expect("readable")).expect("parses");
+    file.records[0]
+        .steering
+        .clone()
+        .expect("a steering section")
+}
+
+/// **Witness (#4264).** A published record's precedence can be changed through
+/// the CLI, and the file that comes back verifies its own identity.
+///
+/// Fails on base twice over: there was no `amend` verb at all, so the only
+/// route was a hand-edit — and a hand-edit strands `record_hash`, because
+/// `Record::stamp` is a two-pass hash over an RFC 8785 preimage and every
+/// other `stamp()` call site is a publish path. Scope is exactly the field
+/// that needs amending after publication: `read-crate-readme-first` was
+/// published with `paths = ["crates"]` and suspended eight invariant records
+/// across the whole crate tree.
+#[test]
+fn amending_precedence_republishes_a_record_that_verifies() {
+    let root = workspace();
+    review::run_keep(root.path(), "pkg-manager", None, false).expect("publish");
+    let lineage = "ctx.acme.web.pkg-manager";
+    assert_eq!(
+        published_steering(root.path(), lineage).precedence,
+        Some(60),
+        "the control: the proposal published at 60"
+    );
+
+    amend::run_amend(
+        root.path(),
+        "pkg-manager",
+        &amend::Amendment {
+            precedence: Some(20),
+            ..amend::Amendment::default()
+        },
+    )
+    .expect("amend succeeds");
+
+    assert_eq!(
+        published_steering(root.path(), lineage).precedence,
+        Some(20),
+        "the change reaches the published file"
+    );
+
+    let registry = load_registry(root.path());
+    let entry = registry.by_handle("pkg-manager").expect("still loaded");
+    assert!(
+        entry.record.findings.iter().all(|finding| !matches!(
+            finding,
+            stella_core::records::RecordFinding::HashMismatch { .. }
+                | stella_core::records::RecordFinding::IdentityStamped
+        )),
+        "the amended file must carry an identity that recomputes: {:?}",
+        entry.record.findings
+    );
+    validate::run_validate(root.path(), QueryFormat::Text).expect("and it validates");
+}
+
+/// Scope is replaced, not appended: the common repair is narrowing a record
+/// that matched too much, which an append could not express.
+#[test]
+fn amending_paths_replaces_the_scope_rather_than_widening_it() {
+    let root = workspace();
+    review::run_keep(root.path(), "pkg-manager", None, false).expect("publish");
+    let lineage = "ctx.acme.web.pkg-manager";
+
+    amend::run_amend(
+        root.path(),
+        "^pkg-manager",
+        &amend::Amendment {
+            paths: Some(vec!["apps/web/**".to_string()]),
+            ..amend::Amendment::default()
+        },
+    )
+    .expect("the caret is optional");
+    amend::run_amend(
+        root.path(),
+        lineage,
+        &amend::Amendment {
+            paths: Some(vec!["apps/web/package.json".to_string()]),
+            ..amend::Amendment::default()
+        },
+    )
+    .expect("and the lineage id resolves too");
+
+    let applies = published_steering(root.path(), lineage)
+        .applies_to
+        .expect("scoped now");
+    assert_eq!(
+        applies.paths,
+        vec!["apps/web/package.json".to_string()],
+        "the second amendment narrows rather than accumulating"
+    );
+
+    // Clap cannot express "this flag was given no values", so the empty string
+    // is how a caller unscopes. A record scoped to `""` would match nothing
+    // while reading as scoped, which is the worse of the two answers.
+    amend::run_amend(
+        root.path(),
+        lineage,
+        &amend::Amendment {
+            paths: Some(vec![String::new()]),
+            ..amend::Amendment::default()
+        },
+    )
+    .expect("clearing is an amendment too");
+    assert!(
+        published_steering(root.path(), lineage)
+            .applies_to
+            .expect("the section survives")
+            .paths
+            .is_empty(),
+        "`--paths ''` clears rather than scoping to the empty string"
+    );
+}
+
+/// A bare amend re-stamps, which is the whole repair for a file somebody
+/// already hand-edited — the case that has no other remedy at all.
+#[test]
+fn a_bare_amend_restamps_a_hand_edited_record() {
+    let root = workspace();
+    review::run_keep(root.path(), "pkg-manager", None, false).expect("publish");
+    let lineage = "ctx.acme.web.pkg-manager";
+    let path = root.path().join(RULES_DIR).join(format!("{lineage}.toml"));
+
+    // The hand-edit the issue describes: a real change, and a stored hash that
+    // now describes bytes which no longer exist.
+    let edited = std::fs::read_to_string(&path)
+        .expect("readable")
+        .replace("precedence = 60", "precedence = 10");
+    std::fs::write(&path, edited).expect("hand-edit");
+    let stranded = load_registry(root.path());
+    assert!(
+        stranded
+            .by_handle("pkg-manager")
+            .expect("still loaded")
+            .record
+            .findings
+            .iter()
+            .any(|f| matches!(f, stella_core::records::RecordFinding::HashMismatch { .. })),
+        "the control: a hand-edit strands the stored hash"
+    );
+
+    amend::run_amend(root.path(), "pkg-manager", &amend::Amendment::default())
+        .expect("a bare amend re-stamps");
+
+    let repaired = load_registry(root.path());
+    assert!(
+        repaired
+            .by_handle("pkg-manager")
+            .expect("still loaded")
+            .record
+            .findings
+            .is_empty(),
+        "and nothing is left to report: {:?}",
+        repaired.by_handle("pkg-manager").unwrap().record.findings
+    );
+    assert_eq!(
+        published_steering(root.path(), lineage).precedence,
+        Some(10),
+        "the hand-editor's change is kept — this repairs the identity, not the edit"
+    );
+}
+
+/// A name nothing publishes is refused with the names that are, rather than
+/// silently doing nothing.
+#[test]
+fn amending_an_unknown_record_names_what_is_published() {
+    let root = workspace();
+    review::run_keep(root.path(), "pkg-manager", None, false).expect("publish");
+    let err =
+        amend::run_amend(root.path(), "no-such-rule", &amend::Amendment::default()).unwrap_err();
+    assert!(err.contains("no record named no-such-rule"), "{err}");
+    assert!(err.contains("^pkg-manager"), "and names one that is: {err}");
+}
+
 /// §11: blocking needs a real enforcer — a record with no guard keys cannot
 /// be promoted to blocking, whatever the approvals say.
 #[test]

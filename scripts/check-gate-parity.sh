@@ -144,6 +144,7 @@ step_command() {
   dead-code-allows) echo 'check-dead-code-allows' ;;
   tokens) echo 'check-tokens' ;;
   hue-separation) echo 'check-hue-separation' ;;
+  contrast) echo 'check-contrast' ;;
   transcript-surfaces) echo 'check-transcript-surfaces' ;;
   prose) echo 'check-prose' ;;
   deck-paths) echo 'check-deck-paths' ;;

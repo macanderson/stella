@@ -2,14 +2,18 @@
 """Guard the 30-degree hue-separation law on the *web* side of the colour system.
 
 The law is one sentence — **no two chromatic roles may sit within 30° of each
-other, and nothing may sit within 30° of the accent** — and until now it was
+other, and nothing may sit within 30° of the accent** — and until #4071 it was
 enforced on exactly one surface. `crates/stella-tui/src/theme/tests.rs` measures
-it in OKLCH over the terminal palette; the web surfaces had no check at all.
-`crates/stella-cli/tests/design_token_parity.rs` holds the eight instrument
-surfaces to the same *values*, but it has no notion of hue, so the argument that
-keeps the warning distinguishable from the gold identity lived entirely in a
-prose comment — on the exact surface where the collision was once diagnosed with
-the wrong instrument for two releases (#4071).
+it in OKLCH over the terminal palette; the web surfaces had no check at all, and
+the argument that keeps the warning distinguishable from the gold identity lived
+entirely in a prose comment — on the exact surface where the collision was once
+diagnosed with the wrong instrument for two releases.
+
+This is the token JSON's side of it. Two Rust suites hold the same law from the
+other side: `crates/stella-tui/src/theme/tests.rs` over the terminal palette and
+`crates/stella-cli/tests/design_token_parity.rs` over the eight instrument
+surfaces as they are actually declared, which is what catches a stylesheet that
+has drifted from the JSON this script reads.
 
 This is the second ruler for that law, so the whole design question is how to
 stop it becoming a *different* ruler. Two rulers measuring one rule is the
@@ -26,10 +30,17 @@ script fails by name on the next gate run instead of quietly measuring a
 different space. That includes the floor: 30 is not typed as a threshold
 anywhere in here, it is read out of the assertions that already enforce it.
 
-The extraction is deliberately brittle in the safe direction. If `hue_deg` is
-lifted out of `theme/tests.rs` — which #4071's definition of done contemplates —
-this script fails saying it could not find the function, which is a handoff to
-whoever moved it, not a silent pass.
+The extraction is deliberately brittle in the safe direction. If `hue_deg` moves
+again, this script fails saying it could not find the function, which is a
+handoff to whoever moved it rather than a silent pass — and that is exactly what
+happened when #4071 lifted it out of `theme/tests.rs`.
+
+The floor is read the same way, out of `SEPARATION_FLOOR_DEG` beside the
+conversion. It used to be inferred from the shape of the Rust assertions, which
+worked only while every surface spelled the number inline — and one of them
+spelled a different number: `design_token_parity` held the same law to 20° while
+`theme/tests.rs` held it to 30°, so the stricter figure was never the law and
+the looser one was never enforced. There is one constant now, and this reads it.
 
 ## What is measured
 
@@ -80,7 +91,11 @@ TOKENS_CSS = REPO / "design" / "tokens" / "stella-tokens.css"
 
 # The Rust implementation this script is a second copy of. Everything numeric
 # below is checked against it before a single angle is computed.
-OKLCH_SOURCE = REPO / "crates" / "stella-tui" / "src" / "theme" / "tests.rs"
+#
+# It moved here from `crates/stella-tui/src/theme/tests.rs` when #4071 collapsed
+# the two Rust transcriptions of Ottosson's matrices onto one — which is the
+# move the extractor below was built to fail on, and did.
+OKLCH_SOURCE = REPO / "crates" / "stella-tui-theme" / "src" / "oklch.rs"
 
 # Every numeric literal in `hue_deg`, in source order: the sRGB transfer
 # function, then Björn Ottosson's linear-sRGB -> LMS matrix, then LMS -> Oklab's
@@ -144,11 +159,15 @@ SCHEMES = {
 # asks it to keep carrying. If the palette moves under that argument, the
 # argument is wrong, and this is what says so.
 #
-# The Observatory's `--warn` derivation quotes four more figures of the same
-# kind and they are deliberately not pinned here yet: that file is prose about
-# three schemes, one of which (`prefers-color-scheme:light`) declares values
-# that live nowhere in the token system, so a claim table over it would be
-# asserting things this guard cannot measure. See #4071's follow-up.
+# The Observatory's `--warn` derivation quotes seven more figures of the same
+# kind, and they are pinned in Rust rather than here — by
+# `every_stated_hue_angle_in_the_observatory_matches_the_computation` in
+# `crates/stella-cli/tests/design_token_parity.rs`, which already reads that
+# file's declarations and so can measure the values the prose argues about. The
+# palette's own doc-comment angles are pinned the same way by
+# `every_stated_hue_angle_matches_the_computation` in
+# `crates/stella-tui/src/theme/tests.rs`. Three tables, one shape, each beside
+# the surface it reads.
 CLAIMS = (
     ("web-dark", "identity", "ok", "63.1°", OKLCH_SOURCE),
     ("web-dark", "identity", "bad", "78.0°", OKLCH_SOURCE),
@@ -210,16 +229,13 @@ def check_ruler(source: str) -> float:
             "OKLCH_LITERALS and the conversion in this file together."
         )
 
-    floors = {
-        m
-        for m in re.findall(
-            r"(?:\bsep|hue_separation\([^)]*\))\s*>=\s*(\d+(?:\.\d+)?)", source
-        )
-    }
+    floors = set(
+        re.findall(r"SEPARATION_FLOOR_DEG\s*:\s*f64\s*=\s*(\d+(?:\.\d+)?)", source)
+    )
     if len(floors) != 1:
         raise GuardError(
-            f"{OKLCH_SOURCE.relative_to(REPO)} states "
-            f"{len(floors) or 'no'} separation floor(s) {sorted(floors)}; this "
+            f"{OKLCH_SOURCE.relative_to(REPO)} declares "
+            f"{len(floors) or 'no'} `SEPARATION_FLOOR_DEG` {sorted(floors)}; this "
             "script reads the floor from there rather than declaring one, so it "
             "needs exactly one."
         )
@@ -357,9 +373,12 @@ def main() -> int:
         for line in failures:
             print(f"check-hue-separation: FAIL — {line}", file=sys.stderr)
         print(
-            "check-hue-separation: the law is stated in "
-            f"{OKLCH_SOURCE.relative_to(REPO)} and enforced on the terminal "
-            "palette there; this is the same law on the web tokens.",
+            "check-hue-separation: the ruler and the floor live in "
+            f"{OKLCH_SOURCE.relative_to(REPO)}; the same law is enforced on the "
+            "terminal palette by crates/stella-tui/src/theme/tests.rs and on "
+            "the instrument surfaces by "
+            "crates/stella-cli/tests/design_token_parity.rs. This is it on the "
+            "web tokens.",
             file=sys.stderr,
         )
         return 1

@@ -970,3 +970,27 @@ fn a_restored_backlog_entry_the_deck_never_mirrored_survives_an_esc_steer() {
         "the delivered prompt is claimed; the entry the deck never showed stays parked"
     );
 }
+
+/// **The guard (#4338).** Every command the palette's relevance rule can
+/// promote is a command this deck actually offers.
+///
+/// The rule lives in `stella-tui` and names commands by string, because
+/// "`/plan` matters while a turn runs" is a fact about the vocabulary, not
+/// about a data structure. That is a second copy of those names, so it is
+/// held to the same discipline as the keymap's witness table: a name in the
+/// rule that no command answers to is a row the palette would silently never
+/// promote, and it fails here rather than going unnoticed on screen.
+#[test]
+fn every_command_a_relevance_rule_can_name_is_a_real_one() {
+    let vocabulary: Vec<&str> = super::skills::DECK_BUILTINS
+        .iter()
+        .map(|(name, ..)| *name)
+        .collect();
+    for name in stella_tui::composer::palette::rule_command_names() {
+        assert!(
+            vocabulary.contains(&name),
+            "the palette's relevance rule names `{name}`, which the deck does not offer: \
+             {vocabulary:?}"
+        );
+    }
+}

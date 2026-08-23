@@ -1922,6 +1922,10 @@ async fn period_three_cycle_with_no_progress_steers_then_aborts() {
             short_cycle_repeats: 2,
             stagnation_threshold: 0, // disabled: this test isolates the cycle check
             interleaved_repeat_threshold: 0, // likewise (#1851)
+            // Disabled: this case isolates another detector (#4042).
+            monotonic_sweep_threshold: 0,
+            // Irrelevant here: the stall rung is the driver's, not `detect_loop`'s.
+            stall_steer_threshold_secs: 0,
         },
         ..EngineConfig::default()
     };

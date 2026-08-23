@@ -724,16 +724,35 @@ pub(crate) fn replace_record(
     set_id: &str,
     record: &stella_core::ingest::record::Record,
 ) -> Result<(), String> {
-    let file = stella_core::ingest::record::ContextFile {
-        schema: stella_core::ingest::record::SCHEMA_TAG.to_string(),
-        set_id: set_id.to_string(),
-        ingest_run_id: None,
-        defaults: None,
-        records: vec![record.clone()],
-        proposals: Vec::new(),
-    };
+    replace_context_file(
+        path,
+        &stella_core::ingest::record::ContextFile {
+            schema: stella_core::ingest::record::SCHEMA_TAG.to_string(),
+            set_id: set_id.to_string(),
+            ingest_run_id: None,
+            defaults: None,
+            records: vec![record.clone()],
+            proposals: Vec::new(),
+        },
+    )
+}
+
+/// Rewrite a published context file whole, durably.
+///
+/// The write [`replace_record`] performs, over a file the caller has read,
+/// changed and kept intact — its `set_id`, its `[defaults]` header and any
+/// sibling records included. `stella context amend` needs that: rebuilding the
+/// file from one resolved record would silently drop the other two.
+///
+/// Durable (temp + fsync + rename) for the same reason: this is Git-tracked
+/// governance, and a crash mid-write must not leave a truncated record where a
+/// reviewed one stood.
+pub(crate) fn replace_context_file(
+    path: &Path,
+    file: &stella_core::ingest::record::ContextFile,
+) -> Result<(), String> {
     let body =
-        toml::to_string_pretty(&file).map_err(|e| format!("cannot serialize the record: {e}"))?;
+        toml::to_string_pretty(file).map_err(|e| format!("cannot serialize the record: {e}"))?;
     stella_store::durable::write_atomic_preserving_mode(
         path,
         body.as_bytes(),

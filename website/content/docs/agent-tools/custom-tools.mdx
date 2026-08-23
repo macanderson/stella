@@ -72,14 +72,21 @@ Every field, in the shape the manifest parser accepts:
     The name the model sees. Must match `^[a-z][a-z0-9_]{1,63}$` — a lowercase
     letter followed by 1–63 more of `[a-z0-9_]`. A name that collides with a
     built-in is skipped with a diagnostic rather than shadowing it, and so is
-    every name listed in the catalog's two retired-name constants —
-    `run_tests`, `graph_query`, `grep` and the rest of those lists. The model
+    every name stella has ever dispatched and retired — `run_tests`,
+    `graph_query`, `web_fetch`, `grep`, `screenshot` and the rest. The model
     still carries those names' priors, and an operator's
     `"tools": {"run_tests": "off"}` written when that built-in existed would
-    otherwise start addressing your manifest instead of nothing. Those lists
-    are not yet the complete history of names stella has dispatched — see
-    [#3853](https://github.com/macanderson/stella/issues/3853) — so a name that
-    is accepted today is not proof it was never a built-in.
+    otherwise start addressing your manifest instead of nothing.
+
+    That reservation set was reconstructed from the tool catalog's own git
+    history rather than assembled by memory
+    ([#3853](https://github.com/macanderson/stella/issues/3853)), so it is the
+    dispatch names stella actually shipped, plus the handful it named to the
+    model in prose without ever shipping. If your name is refused, pick
+    another; if you believe a refusal is wrong, the two constants are
+    `RETIRED_TOOL_NAMES` and `RETIRED_NAMES_TOO_AMBIGUOUS_TO_SCAN` in
+    `crates/stella-tools/src/catalog.rs`, and each carries the argument for
+    its own entries.
   </OptionCard>
   <OptionCard name="description" required>
     What the tool does, advertised to the model. An empty description is an

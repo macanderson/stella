@@ -24,9 +24,14 @@
 //! Every number is a count of edges the index already holds; no model is
 //! consulted, which is what the footer's `$0.00` states.
 //!
-//! The renderings' `q free-form query` and `12ms` have no producer here yet:
-//! the picker re-roots on a file name only, and the snapshot carries no
-//! timing (#4335). Both are elided rather than drawn with a stand-in.
+//! The rendering's `12ms` is [`GraphSnapshot::query_ms`], measured by the
+//! driver and drawn only when it is there — a demo snapshot nobody timed
+//! carries `None` and the bar simply omits it.
+//!
+//! The renderings' `q free-form query` still has no producer: the picker
+//! re-roots on a file name only, and there is no `WorkspaceInput` for a
+//! symbol or free-text query the CGP host could answer (#4335). It is elided
+//! rather than drawn with a stand-in.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -115,7 +120,13 @@ pub fn render(
     if !snapshot.files.is_empty() {
         query.push(Span::styled("   / files", dim));
     }
-    let right = format!("{} nodes · det ", snapshot.nodes.len());
+    // `438 nodes · 12ms · det`. The timing is drawn only when the caller
+    // measured one: a snapshot nobody timed (a demo, a scenario fixture)
+    // says nothing rather than claiming `0ms` (#4335).
+    let right = match snapshot.query_ms {
+        Some(ms) => format!("{} nodes · {ms}ms · det ", snapshot.nodes.len()),
+        None => format!("{} nodes · det ", snapshot.nodes.len()),
+    };
     let used: usize = query.iter().map(Span::width).sum();
     let inner_w = bands[0].width.saturating_sub(2) as usize;
     if used + right.chars().count() < inner_w {
