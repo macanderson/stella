@@ -468,6 +468,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             effective_budget_tokens: 120_000,
             calibration_factor: 1.0,
             estimated_input_tokens: 900,
+            stall_seconds_requested: Some(900),
             compiled_frame: Some(CompiledContextFrameBuilt {
                 compiled_frame_id: "cfr_1".into(),
                 frame_hash: "sha256:cc".into(),
@@ -484,6 +485,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             effective_budget_tokens: 0,
             calibration_factor: 0.0,
             estimated_input_tokens: 0,
+            stall_seconds_requested: Some(900),
             compiled_frame: None,
         },
         AgentEvent::Verdict {
@@ -975,6 +977,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 effective_budget_tokens: 1,
                 calibration_factor: 1.0,
                 estimated_input_tokens: 10,
+                stall_seconds_requested: Some(900),
                 compiled_frame: None,
             }),
     );

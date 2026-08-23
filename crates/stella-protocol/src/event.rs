@@ -1048,6 +1048,25 @@ pub enum AgentEvent {
         calibration_factor: f64,
         /// Sum of block token costs, pre-call (the engine's raw estimate).
         estimated_input_tokens: u64,
+        /// The pure-`sleep` seconds this turn has **asked for** across the
+        /// detector's window, as of this step — the number the stall rung
+        /// (`stella_core::driver::loop_escalation`) decides on, recorded
+        /// rather than thrown away once it has decided (#3621).
+        ///
+        /// Requested, never executed: it is read off the calls' own text so
+        /// the same transcript classifies the same way every step, which is
+        /// what keeps the rung deterministic (invariant #2). A call killed by
+        /// the shell's own timeout still contributes its full request, so
+        /// this is an upper bound on wall clock. Executed seconds are already
+        /// derivable from `ToolResult.duration_ms`, and the gap between the
+        /// two is the signal — see #3624.
+        ///
+        /// `None` is "this emitter did not classify", not "zero seconds": the
+        /// replay/reconstruction path rebuilds a receipt from stored messages
+        /// with no detector window around it, and a reader must not count that
+        /// as a turn that slept for nothing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stall_seconds_requested: Option<u64>,
         /// This manifest's identity as a **compiled context frame** — ADR 0006
         /// as amended: the compiled frame is this manifest extended, not a
         /// parallel aggregate, so its id and hash are fields here rather than a

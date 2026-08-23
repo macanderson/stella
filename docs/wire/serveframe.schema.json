@@ -1040,6 +1040,15 @@
             "role": {
               "$ref": "#/$defs/ModelCallRole"
             },
+            "stall_seconds_requested": {
+              "description": "The pure-`sleep` seconds this turn has **asked for** across the\ndetector's window, as of this step — the number the stall rung\n(`stella_core::driver::loop_escalation`) decides on, recorded\nrather than thrown away once it has decided (#3621).\n\nRequested, never executed: it is read off the calls' own text so\nthe same transcript classifies the same way every step, which is\nwhat keeps the rung deterministic (invariant #2). A call killed by\nthe shell's own timeout still contributes its full request, so\nthis is an upper bound on wall clock. Executed seconds are already\nderivable from `ToolResult.duration_ms`, and the gap between the\ntwo is the signal — see #3624.\n\n`None` is \"this emitter did not classify\", not \"zero seconds\": the\nreplay/reconstruction path rebuilds a receipt from stored messages\nwith no detector window around it, and a reader must not count that\nas a turn that slept for nothing.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "step": {
               "format": "uint",
               "minimum": 0,

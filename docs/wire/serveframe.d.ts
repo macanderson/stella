@@ -559,6 +559,26 @@ export type AgentEvent = {
   model: string;
   provider: string;
   role: ModelCallRole;
+  /**
+   * The pure-`sleep` seconds this turn has **asked for** across the
+   * detector's window, as of this step — the number the stall rung
+   * (`stella_core::driver::loop_escalation`) decides on, recorded
+   * rather than thrown away once it has decided (#3621).
+   *
+   * Requested, never executed: it is read off the calls' own text so
+   * the same transcript classifies the same way every step, which is
+   * what keeps the rung deterministic (invariant #2). A call killed by
+   * the shell's own timeout still contributes its full request, so
+   * this is an upper bound on wall clock. Executed seconds are already
+   * derivable from `ToolResult.duration_ms`, and the gap between the
+   * two is the signal — see #3624.
+   *
+   * `None` is "this emitter did not classify", not "zero seconds": the
+   * replay/reconstruction path rebuilds a receipt from stored messages
+   * with no detector window around it, and a reader must not count that
+   * as a turn that slept for nothing.
+   */
+  stall_seconds_requested?: number | null;
   step: number;
   /**
    * Monotonic per session — groups the steps of one `run_turn`.

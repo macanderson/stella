@@ -1197,6 +1197,7 @@ mod tests {
             effective_budget_tokens: 100_000,
             calibration_factor: 1.0,
             estimated_input_tokens: 4_200,
+            stall_seconds_requested: None,
             compiled_frame: None,
         });
         assert_eq!(bridge.cx.turn, Some(3));

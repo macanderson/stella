@@ -242,6 +242,7 @@ fn manifest(role: ModelCallRole, call_seq: u64, model: &str) -> AgentEvent {
         effective_budget_tokens: 100_000,
         calibration_factor: 1.0,
         estimated_input_tokens: 40,
+        stall_seconds_requested: None,
         compiled_frame: None,
     }
 }
