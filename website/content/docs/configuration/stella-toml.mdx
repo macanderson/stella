@@ -118,13 +118,13 @@ scope          = "project"   # "user" | "managed" | "project"
 
 ## What moved, and why
 
-Four things changed shape in the port. Everything else kept its name.
+These changed shape in the port. Everything else kept its name.
 
 | settings.json | stella.toml | Why |
 | --- | --- | --- |
 | `enable_recap` (bare root key) | `[run].recap` | TOML attaches a bare key to whatever `[table]` precedes it — move one line in the file and it silently reassigns. Every scalar gets a table home; there are no bare keys at the document root. |
 | `agent_engine_config` | `[agents]` | Shorter, and the JSON name described the Rust struct rather than the thing it configures. |
-| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe today because the agent set is **closed** — `default`, `worker`, `verifier`, `triage`, `research`, `plan` are struct fields, not map keys, so a per-agent table can never collide with a root field. |
+| `agent_engine_config.agents.<name>` | `[agents.<name>]` | One nesting level removed. Safe today because the agent set is **closed** and holds one name — `default` is a struct field, not a map key, so the per-agent table can never collide with a root field. It held six until #3908 collapsed the engine to one role; a file still naming `worker`, `verifier`, `triage`, `research` or `plan` loads and reports the key. |
 | `agent_engine_config.allowed_models` | `[models].allowed` | Promoted out of the agents block — it's a statement about models, not about any one agent. Still replaces wholesale across scopes rather than concatenating. |
 
 `trace_capture`, `create_worktrees`, and `ignore_gitignore` needed no such move: all
@@ -351,6 +351,198 @@ per_usd = 0.05   # price a dollar of spend at a tenth of the default
 `deterministic_weight`, and the verdict call that produced that tier no longer runs, so the
 weight steered nothing. A file that still sets it loads normally and reports the key as
 unrecognized.
+
+### `[self_driving]`
+
+What [`stella self-driving`](/docs/commands/self-driving) signs its work with, which checks
+may block a merge, how it proves a change when CI cannot, how it decides where two operators
+would decide differently, and what vocabulary it places an issue in.
+
+Read from the **project** file alone. The loop resolves `<repo>/stella.toml` directly instead
+of through the scope merge, so a `[self_driving]` block in `~/.stella/stella.toml` parses
+without complaint and steers nothing. A project file the loop cannot parse prints a warning
+and the loop runs on its defaults — a typo in a section a run may never reach is not a reason
+to refuse to start. Everything here defaults, so a repository that writes none of it still
+gets a working loop.
+
+#### `[self_driving.attribution]`
+
+What the loop appends to what it writes, and how it names branches and pull requests. It
+travels with the repository and an installed plugin may rewrite it, so a downstream
+distribution signs in its own name without forking.
+
+<CardGrid size="sm">
+  <OptionCard name="self_driving.attribution.commit" defaultValue="created by stella*">
+    Footer on every commit message the loop causes to be written.
+  </OptionCard>
+  <OptionCard name="self_driving.attribution.pull_request" defaultValue="created by stella*">
+    Footer on every pull request description it opens.
+  </OptionCard>
+  <OptionCard name="self_driving.attribution.issue" defaultValue="created by stella*">
+    Footer on every issue it files.
+  </OptionCard>
+  <OptionCard name="self_driving.attribution.issue_comment" defaultValue="created by stella*">
+    Footer on every issue comment it posts.
+  </OptionCard>
+  <OptionCard name="self_driving.attribution.branch_prefix" defaultValue="stella/">
+    Namespace for every branch it creates. A prefix that does not end in `/` is used
+    verbatim rather than corrected — some teams namespace with `-`. An **empty** prefix is
+    read as unset and falls back to the default: an unnamespaced branch is indistinguishable
+    from a human's ref, and it is also what `stella fleet gc` would believe it owned.
+  </OptionCard>
+  <OptionCard name="self_driving.attribution.title_prefix" defaultValue="stella self-driving:">
+    Prefix on the **title** of every pull request it opens, so an autonomous one is
+    distinguishable in the list where a maintainer actually triages. Deliberately not applied
+    to commit messages: those follow Conventional Commits, and a prefix in front of
+    `fix(stella-cli):` would break the scope. An already-prefixed title is left alone, so
+    re-opening a pull request for the same issue cannot stack it twice.
+  </OptionCard>
+</CardGrid>
+
+A footer lands after the body's last non-blank character, separated by a blank line and a
+`---` rule; trailing whitespace on the body is normalized first, so two callers whose bodies
+differ only in how they ended produce identical output. Setting a surface's string to `""`
+suppresses its footer and leaves the body untouched. The separator itself is fixed.
+
+```toml title="stella.toml"
+[self_driving.attribution]
+commit        = "created by the acme delivery bot"
+pull_request  = "created by the acme delivery bot"
+issue         = ""                                  # file issues unsigned
+branch_prefix = "bot/"
+title_prefix  = "auto:"
+```
+
+#### `[self_driving.merge]`
+
+Which checks are allowed to block a merge. Filtering to a repository's *required* contexts is
+necessary and not sufficient: a required check fails identically whether the code is wrong or
+the billing account is suspended, and only one of those is fixable by a pull request.
+
+<CardGrid size="sm">
+  <OptionCard name="self_driving.merge.ignore_checks" defaultValue="[]">
+    Checks that never block, whatever their history. The operator's escape hatch — automatic
+    detection needs several commits of evidence, and somebody who already knows their deploy
+    provider is suspended should not have to wait for the loop to infer it.
+  </OptionCard>
+  <OptionCard name="self_driving.merge.stuck_after" defaultValue="3">
+    Consecutive failing base commits after which a check is treated as unwinnable. `0`
+    disables the inference, leaving only `ignore_checks`.
+  </OptionCard>
+</CardGrid>
+
+#### `[self_driving.verify]`
+
+How to prove a change when CI cannot. A repository whose remote checks cannot go green — a
+suspended account, an exhausted quota — still has a test suite. Running it on this machine is
+a weaker signal than a clean CI run and a far stronger one than nothing.
+
+<CardGrid size="sm">
+  <OptionCard name="self_driving.verify.command" defaultValue="unset">
+    The command that proves a change, run in the work worktree. Absent means detect it from
+    the project's own tooling.
+  </OptionCard>
+  <OptionCard name="self_driving.verify.timeout_secs" defaultValue="1800">
+    Seconds before the command is abandoned — long enough for a monorepo suite, short enough
+    that a wedged process does not hold the loop overnight.
+  </OptionCard>
+</CardGrid>
+
+#### `[self_driving.doctrine]`
+
+How the loop decides, where two operators would decide differently. These are judgements
+about a team's norms rather than facts about the code, which is why they are declared instead
+of compiled in: the person who starts the loop is the person who decides how it decides, and
+that is only true if what it will do is legible before it does it.
+
+<CardGrid size="sm">
+  <OptionCard name="self_driving.doctrine.foreign_breakage" defaultValue="file_and_adopt">
+    What to do about breakage the loop did not cause. `file_and_adopt` files it and then
+    fixes it at the top of the queue; `file_and_wait` leaves the fix to a human; `ignore`
+    does neither. Adopting is the default because a red base blocks this loop exactly as hard
+    as it blocks its author, so a loop that files and waits has handed its throughput to
+    somebody else's response time.
+  </OptionCard>
+  <OptionCard name="self_driving.doctrine.contention" defaultValue="defer">
+    How much weight another actor's apparent work carries. `defer` treats any sign — a branch,
+    a worktree, a held ledger claim — as reason to leave the issue alone; `claims_only`
+    defers on a held claim and reads branches and worktrees as advisory; `proceed` claims
+    regardless.
+  </OptionCard>
+  <OptionCard name="self_driving.doctrine.abandon_escalated" defaultValue="false">
+    Whether an escalated pull request is abandoned so the loop can carry on, rather than
+    parking it. A pull request a human must look at is usually a sign the loop should stop
+    making more of them.
+  </OptionCard>
+</CardGrid>
+
+#### `[self_driving.triage]`
+
+The vocabulary the loop places issues in — which labels mean urgent, which mean "this is ours
+to work", which mean "this is not". It lives here rather than in the tracker manifest because
+these are *this operator's* judgements about their own backlog, not how a tracker spells a
+concept every tracker has; two teams on one GitHub can want different ladders.
+
+<CardGrid size="sm">
+  <OptionCard name="self_driving.triage.priorities" defaultValue='["P0", "P1", "P2", "P3"]'>
+    The urgency rungs, most urgent first. Position in the list **is** the rank.
+  </OptionCard>
+  <OptionCard name="self_driving.triage.defect_kinds" defaultValue='["bug", "triage"]'>
+    Labels meaning "this loop works this".
+  </OptionCard>
+  <OptionCard name="self_driving.triage.excluded_kinds" defaultValue='["enhancement", "feature", "documentation", "question"]'>
+    Labels meaning "this loop does not work this". Named explicitly rather than inferred from
+    "not a defect kind": an issue labelled `enhancement` has been judged and excluded, while
+    an issue labelled only `P0` has been judged on one axis and not the other, and only the
+    first may be dropped silently.
+  </OptionCard>
+</CardGrid>
+
+Each list defaults on its own, and declaring one **replaces** it wholesale rather than adding
+to it — a partial override would leave you unable to *remove* a built-in you disagree with.
+
+```toml title="stella.toml"
+[self_driving.triage]
+priorities   = ["Sev1", "Sev2", "Sev3"]
+defect_kinds = ["defect"]
+```
+
+**An issue carrying no rung is not ranked last.** It is separated out as unassessed, and the
+loop spends a turn triaging it before claiming any work — so a `Sev1` filed thirty seconds
+ago with no labels yet does not sort beneath a `Sev3` from March. That turn judges the issue
+against the workspace's [context records](/docs/commands/context), which means the
+ladder is changed by publishing and retiring records rather than by editing code. A turn that
+cannot place an issue in the declared vocabulary labels it for a human instead of meeting it
+again on the next pass. The design behind this is `doc:backlog-self-driving` §3.2.
+
+### `[issues]`
+
+Which tracker is active, and where its vocabulary lives. Two fields and no more: *which*
+tracker is a stella-level decision and belongs in `stella.toml`; *how that tracker spells
+things* is the tracker's own vocabulary and belongs in its manifest, which this points at.
+Collapsing them would leave a workspace spanning two trackers nowhere to put the second one's
+words. Read from the project file alone, like `[self_driving]`.
+
+<CardGrid size="sm">
+  <OptionCard name="issues.provider" defaultValue="github">
+    The provider id. `github` is the only one with a built-in vocabulary today; any other
+    name warns and falls back to GitHub's until you declare the manifest.
+  </OptionCard>
+  <OptionCard name="issues.manifest" defaultValue=".stella/issues/<provider>.toml">
+    Path to the provider's manifest, relative to the workspace root. An absent **file** is
+    the built-in defaults for that provider rather than an error, so a workspace that has
+    configured nothing still works.
+  </OptionCard>
+</CardGrid>
+
+```toml title="stella.toml"
+[issues]
+provider = "github"
+manifest = ".stella/issues/github.toml"
+```
+
+What the manifest holds, and the three resolutions stella branches on, are covered in
+[Which tracker, and how it talks](/docs/commands/self-driving#which-tracker-and-how-it-talks).
 
 ### `[authority]` — managed scope only
 
