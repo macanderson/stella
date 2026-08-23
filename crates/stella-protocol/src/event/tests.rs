@@ -1119,6 +1119,7 @@ fn step_manifest_preserves_block_order_and_the_effective_budget() {
         effective_budget_tokens: 136_363,
         calibration_factor: 1.1,
         estimated_input_tokens: 1290,
+        stall_seconds_requested: Some(900),
         compiled_frame: None,
     };
     let value = serde_json::to_value(&event).unwrap();
@@ -1180,6 +1181,7 @@ fn a_manifest_carrying_a_compiled_frame_round_trips() {
         effective_budget_tokens: 1,
         calibration_factor: 1.0,
         estimated_input_tokens: 1,
+        stall_seconds_requested: Some(900),
         compiled_frame: Some(crate::CompiledContextFrameBuilt {
             compiled_frame_id: "cf_abc".into(),
             frame_hash: "sha256:abc".into(),

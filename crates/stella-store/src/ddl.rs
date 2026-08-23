@@ -622,6 +622,9 @@ pub(crate) const STEP_MANIFEST_DDL: &str = "CREATE TABLE IF NOT EXISTS step_mani
 /// with the decision that was made. This is the increment-1 header only: the
 /// per-zone cache columns (spec §7) are NOT built yet, and when they are they
 /// arrive as an additive migration on top of this shape.
+/// `stall_seconds_requested` is the stall rung's own number (v30, #3621): the
+/// pure-`sleep` seconds the turn had asked for as of this step. NULL is "this
+/// emitter did not classify", never zero seconds.
 /// PRIMARY KEY (execution_id, turn_instance, step, call_seq): one receipt per
 /// model call, not per step — a step can carry the worker call plus the
 /// auxiliary calls that ride it (v13).
@@ -638,6 +641,7 @@ pub(crate) const STEP_RECEIPT_DDL: &str = "CREATE TABLE IF NOT EXISTS step_recei
        estimated_input_tokens INTEGER NOT NULL,
        compiled_frame_id TEXT,
        frame_hash TEXT,
+       stall_seconds_requested INTEGER,
        PRIMARY KEY (execution_id, turn_instance, step, call_seq)
      );";
 
