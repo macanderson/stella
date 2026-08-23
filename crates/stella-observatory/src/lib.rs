@@ -310,10 +310,9 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         // and the api-provider / model-provider split — beside the bindings
         // the run's own receipts recorded.
         "/api/model-card" => {
-            let (Some(provider), Some(slug)) = (
-                query_param(query, "provider"),
-                query_param(query, "slug"),
-            ) else {
+            let (Some(provider), Some(slug)) =
+                (query_param(query, "provider"), query_param(query, "slug"))
+            else {
                 return Response::error("400 Bad Request", "missing ?provider=&slug=");
             };
             model_card::model_card(&provider, &slug)

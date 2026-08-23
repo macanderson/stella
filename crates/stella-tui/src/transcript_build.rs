@@ -390,7 +390,8 @@ impl RunBuilder {
                 kind: note_kind(event),
                 summary,
                 detail: Vec::new(),
-                before_step: step, inspect: None,
+                before_step: step,
+                inspect: None,
             });
         }
     }

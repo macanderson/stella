@@ -509,6 +509,92 @@ mod tests {
     }
 
     #[test]
+    fn a_step_usage_row_becomes_a_metering_note_with_an_anchor() {
+        let journal = vec![
+            json!({
+                "type": "step_usage", "ts": 0, "step": 3, "role": "worker",
+                "provider": "openrouter", "upstream_provider": "anthropic",
+                "model": "claude-fable-5", "input_tokens": 3_200,
+                "output_tokens": 410, "cached_input_tokens": 29_100,
+                "cache_write_tokens": 1_200, "duration_ms": 8_400,
+                "cost_usd": 0.0134, "retries": 0,
+            }),
+            json!({
+                "type": "tool_start", "ts": 1, "call_id": "c1", "name": "bash",
+                "body": "{\"command\": \"true\"}",
+            }),
+            json!({
+                "type": "tool_result", "ts": 2, "call_id": "c1", "ok": true, "body": "",
+            }),
+        ];
+        let run = build_run(&execution(), &journal);
+        let turn = &run.turns[0];
+        assert_eq!(turn.notes.len(), 1);
+        let note = &turn.notes[0];
+        // The gateway names its upstream: the arrow is what lets a trace say
+        // which vendor's silicon served the call, not just which API was
+        // dialled.
+        assert!(
+            note.summary.contains("openrouter→anthropic"),
+            "{}",
+            note.summary
+        );
+        assert!(note.summary.contains("claude-fable-5"));
+        let anchor = note
+            .inspect
+            .as_ref()
+            .expect("a metered call is inspectable");
+        assert_eq!(anchor.step, 3);
+        assert_eq!(anchor.role, "worker");
+        // The call's figures land on the tool step it requested, so the turn
+        // rollup sums them exactly once.
+        assert_eq!(turn.steps[0].accounting.tokens_in, 3_200);
+        assert_eq!(turn.steps[0].accounting.cached_in, 29_100);
+        assert_eq!(run.rollup().micros, 13_400);
+    }
+
+    #[test]
+    fn metered_turns_do_not_double_count_the_execution_cost() {
+        // `execution()` carries cost_usd 0.0061; the metered figure must win,
+        // because it is the per-call measurement of the same money.
+        let journal = vec![
+            json!({
+                "type": "step_usage", "ts": 0, "step": 1, "role": "worker",
+                "provider": "zai", "model": "glm-5.2", "input_tokens": 10,
+                "output_tokens": 5, "cached_input_tokens": 0,
+                "cost_usd": 0.002, "duration_ms": 100, "retries": 0,
+            }),
+            json!({
+                "type": "tool_start", "ts": 1, "call_id": "c1", "name": "bash",
+                "body": "{}",
+            }),
+            json!({"type": "tool_result", "ts": 2, "call_id": "c1", "ok": true, "body": ""}),
+        ];
+        let run = build_run(&execution(), &journal);
+        assert_eq!(run.rollup().micros, 2_000);
+    }
+
+    #[test]
+    fn a_final_answer_calls_usage_reaches_the_rollup_without_a_tool_step() {
+        let journal = vec![
+            json!({
+                "type": "tool_start", "ts": 0, "call_id": "c1", "name": "bash",
+                "body": "{}",
+            }),
+            json!({"type": "tool_result", "ts": 1, "call_id": "c1", "ok": true, "body": ""}),
+            json!({
+                "type": "step_usage", "ts": 2, "step": 2, "role": "worker",
+                "provider": "zai", "model": "glm-5.2", "input_tokens": 700,
+                "output_tokens": 90, "cached_input_tokens": 0,
+                "cost_usd": 0.001, "duration_ms": 900, "retries": 0,
+            }),
+        ];
+        let run = build_run(&execution(), &journal);
+        assert_eq!(run.rollup().tokens_in, 700);
+        assert_eq!(run.rollup().tokens_out, 90);
+    }
+
+    #[test]
     fn the_execution_cost_survives_the_conversion_to_micros() {
         let journal = vec![
             json!({"type":"tool_start","ts":0,"call_id":"c","name":"bash","body":"{}"}),
