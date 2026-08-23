@@ -206,8 +206,10 @@ pub(super) fn open_raw_turn(
 /// Process-scoped because a session **is** a process for every door that
 /// reaches [`open_raw_turn`]: `stella run` and `stella goal` are one run per
 /// invocation, and the interactive REPL is one loop inside one. The deck's
-/// boot announcement ([`crate::command_deck::steering`]) shares it, so a deck
-/// that later drives a raw turn does not say it twice.
+/// boot announcement (`command_deck::steering::announce_withheld`, named in
+/// prose rather than linked because that module is private and an intra-doc
+/// link to it does not resolve) shares it, so a deck that later drives a raw
+/// turn does not say it twice.
 ///
 /// A static rather than a field on [`crate::settings::WithheldNotice`] because
 /// that type is `Copy` and rides a `Serialize`/`Deserialize`/`Eq`
