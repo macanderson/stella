@@ -515,12 +515,39 @@ class CloudExecutor:
             target.write_bytes(body)
             fetched += 1
         if artifacts:
-            fetched += self._fetch_prefix(f"runs/{run_id}/", dest, out=out)
+            # A gated watch already pulled every settled job's whole prefix
+            # into `dest/<label>/` as it finished (`.gate_watch.GateWatch`).
+            # Route this run-level pass onto the same label directories
+            # rather than the raw job-id ones, so the two writers land on one
+            # tree instead of two full byte copies of every job (#3400).
+            labels = {str(job["id"]): str(job["label"]) for job in jobs}
+            fetched += self._fetch_prefix(
+                f"runs/{run_id}/", dest, out=out, relabel=labels
+            )
         return fetched
 
     def _fetch_prefix(
-        self, prefix: str, dest: Path, *, out: Callable[[str], None]
+        self,
+        prefix: str,
+        dest: Path,
+        *,
+        out: Callable[[str], None],
+        relabel: Mapping[str, str] | None = None,
     ) -> int:
+        """Download every object under ``prefix``, skipping what is already there.
+
+        ``relabel`` rewrites a key's first path segment (a job id) to that
+        job's label, so a key already fetched by a per-job caller — the gate
+        watcher's settlement fetch — lands in the same directory this pass
+        would otherwise duplicate it into. Non-job-scoped keys (the run's
+        ``match.toml``, ``jobs.json``, the ``trials/`` slices) have no entry
+        in ``relabel`` and pass through with their key's own path.
+
+        A target that already exists at the size S3 reports costs this pass
+        one ``list_objects_v2`` page and no ``get_object`` — the LIST is
+        unavoidable (this call must still discover what changed), the GET is
+        what the redundant download was spending (#3400).
+        """
         s3 = self._client("s3")
         bucket = self.bucket()
         count = 0
@@ -532,7 +559,16 @@ class CloudExecutor:
                 relative = key.removeprefix(prefix)
                 if not relative or relative.endswith("/"):
                     continue
+                if relabel:
+                    head, sep, rest = relative.partition("/")
+                    label = relabel.get(head)
+                    if label is not None and sep:
+                        relative = f"{label}/{rest}"
                 target = dest / relative
+                size = entry.get("Size")
+                if target.exists() and (size is None or target.stat().st_size == size):
+                    count += 1
+                    continue
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(
                     s3.get_object(Bucket=bucket, Key=key)["Body"].read()
