@@ -65,8 +65,9 @@ use serde::{Deserialize, Deserializer, Serialize};
 use stella_protocol::candidate::CandidateHandle;
 use stella_protocol::completion::CompletionMessage;
 
-use crate::manifest::{Oracle, PluginManifest};
+use crate::manifest::PluginManifest;
 use crate::observed::ObservedEvidence;
+use crate::oracle::Oracle;
 use crate::wrapper::{Signal, SignalKind, StageName};
 
 /// The version every message on this wire carries.
@@ -475,7 +476,7 @@ impl BeforeTurnResponse {
 /// never inside it: prompt-cache hits are a feature, and a wrapper that could
 /// inject into the stable prefix would make every installed plugin a per-turn
 /// cost regression for every user who installed it. That is the same
-/// discipline `crates/stella-cli/src/agent.rs::build_system_prompt` and
+/// discipline `crates/stella-cli/src/agent/prompt.rs::build_system_prompt` and
 /// `crates/stella-cli/src/memory.rs` already hold for recalled context.
 ///
 /// So this type carries no placement field. There is no `Placement::System`

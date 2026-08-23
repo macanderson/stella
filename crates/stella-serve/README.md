@@ -92,7 +92,8 @@ host  ──POST /v1/turns──►  stella-serve  ──►  Session (dedicated
 | [`src/frame.rs`](src/frame.rs) | The wire vocabulary: `ServerFrame`, `TurnOutcomeWire`, `ToolResultIn`, `ProviderResultIn`, `ProviderErrorWire`. Every wire-shape change starts here. |
 | [`src/goal.rs`](src/goal.rs) | Judged multi-round runs (#1297): `GoalRun`, and the round loop driven over the same step driver a single turn uses. |
 | [`src/subagents.rs`](src/subagents.rs) | Sub-agents (#1297): the operator's `SubAgentPolicy`, the dispatcher that runs a child on the same remoted ports, and the `delegate` tool layered over the host's stack. |
-| [`src/server.rs`](src/server.rs) | `serve` — accept loop, bearer auth, the connection fold (one record per connection), route classification, the turn registry, and a rustdoc list of the operational limits the deployment must supply. |
+| [`src/server.rs`](src/server.rs) | `serve` — accept loop, bearer auth, the connection fold (one record per connection), route classification, and a rustdoc list of the operational limits the deployment must supply. |
+| [`src/state.rs`](src/state.rs) | What the transport serves out of (#3734): `ServerState`, the `Entry` one live turn owns, and the turn registry's three rules — admission under `MAX_LIVE_TURNS`, reclamation of a finished turn nobody streamed, and the unguessable id a registration mints. Split out of `src/server.rs` before that file crossed the 1500-line ceiling it had eight lines of headroom against. |
 | [`src/routes.rs`](src/routes.rs) | The endpoint handlers and the wire types they parse — the five `/v1/turns` routes (including `cancel`), `/healthz`, `/v1/metrics`, `/v1/calibration`, and the host-supplied ceilings (`max_steps`, `reverse_request_timeout_ms`). |
 | [`src/extensions.rs`](src/extensions.rs) | `ServeExtension` — the operator's per-turn hook plane (#1298), and the argument for why registration is operator-only and no route reaches it. |
 | [`src/calibration.rs`](src/calibration.rs) | The per-provider token-drift state and the `GET /v1/calibration` body: what the engine estimated against what the provider billed. |
@@ -346,6 +347,11 @@ access are needed; the suites either bind `127.0.0.1:0` or use no socket at all.
   result reports real input usage and reads the gap back from
   `GET /v1/calibration`, including that two providers sharing a model name keep
   separate rows.
+- [`tests/route_docs.rs`](tests/route_docs.rs) holds
+  [`src/server.rs`](src/server.rs)'s endpoint table to the `Route` enum in both
+  directions (#3758): every declared route appears in the table, and the table
+  names no path nothing routes. The table had silently dropped two live routes,
+  and a website page citing it as a source of truth inherited the undercount.
 - Unit tests live beside the code in [`src/frame.rs`](src/frame.rs) (wire
   round-trips, including that a legacy `aborted` payload without `cost_usd` still
   deserializes), [`src/server.rs`](src/server.rs) (the step-cap and deadline

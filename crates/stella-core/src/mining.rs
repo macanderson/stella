@@ -15,9 +15,11 @@ const STOPWORDS: &[&str] = &[
     "would", "should", "did",
 ];
 
-/// Terms dropped by [`score_terms`] ONLY — the low-selectivity coding
-/// vocabulary that appears in nearly every prompt a coding agent ever sees and
-/// therefore discriminates between no two skills.
+/// Terms dropped by [`score_terms`] ONLY — the low-selectivity vocabulary
+/// that appears in nearly every prompt a coding agent ever sees and therefore
+/// discriminates between no two skills: the generic coding words, the English
+/// function words that survive [`STOPWORDS`], and the two words this corpus
+/// puts in every skill description it has (`user`, `agent`).
 ///
 /// Deliberately **not** added to [`STOPWORDS`], because that constant is also
 /// consulted by [`terms`], which is the **id space**: every mined lesson's
@@ -34,13 +36,32 @@ const STOPWORDS: &[&str] = &[
 /// `SelectionConfig`'s two-shared-term corroboration floor on their own and
 /// injecting a dead-code-removal skill into a turn-loop debugging turn. The
 /// floor was never the defect; what it counted was.
+///
+/// The function words joined it the same way (#4384). [`STOPWORDS`] was
+/// written for the miners' lesson text and stops at 43 entries, so `they`,
+/// `its`, `itself`, `such` and their neighbours reached the score at full
+/// strength — and cleared the same corroboration floor in pairs. Session
+/// `ses-1787465453163-60967` recorded the selections verbatim: a TUI
+/// keybinding turn drew `source-command-update-docs` on `terms: source, such`
+/// and `find-skills` on `terms: agent, they`, and a PR-watcher turn drew
+/// `ultra-audit` on `terms: its, itself, number, user`.
+///
+/// A hand list is the cheap answer, not the durable one: what makes `user`
+/// and `agent` noise is that *every* installed skill's description carries
+/// them, which is a property of the corpus and would be measured by IDF over
+/// it rather than declared here. That is its own change — this one stops the
+/// misfires the trace shows.
 const SCORING_STOPWORDS: &[&str] = &[
     "code", "find", "fix", "add", "make", "use", "used", "using", "get", "set", "run", "check",
     "problem", "issue", "bug", "error", "test", "tests", "file", "files", "function", "method",
     "line", "lines", "change", "update", "new", "old", "work", "works", "need", "want", "help",
     "please", "can", "could", "how", "what", "why", "does", "any", "all", "some", "more", "most",
     "just", "also", "one", "two", "there", "here", "out", "off", "way", "thing", "things", "about",
-    "like", "look", "see", "show", "tell", "give", "take", "know", "think",
+    "like", "look", "see", "show", "tell", "give", "take", "know", "think", "they", "them",
+    "their", "theirs", "its", "itself", "she", "her", "hers", "herself", "him", "his", "himself",
+    "our", "ours", "your", "yours", "yourself", "such", "these", "those", "each", "every",
+    "another", "other", "others", "both", "same", "who", "whom", "whose", "been", "being",
+    "having", "very", "quite", "rather", "still", "even", "user", "agent",
 ];
 
 /// Split text into lowercased, de-stopped terms (>2 chars) for lexical
@@ -348,8 +369,8 @@ mod tests {
     }
 
     /// #3688: generic coding vocabulary is dropped from the *scoring* space
-    /// and kept in the *id* space. Both halves matter — dropping them from
-    /// `terms` would re-tokenize every minted `<slug>-<hash8>`.
+    /// and kept in the *id* space — dropping it from `terms` would re-tokenize
+    /// every minted `<slug>-<hash8>`.
     #[test]
     fn score_terms_drops_generic_coding_words_that_the_id_space_keeps() {
         let text = "find a problem with stellas turn loop code";

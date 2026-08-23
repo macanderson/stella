@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Guard: every `uses:` in .github/workflows/ must name a 40-hex commit SHA.
+# Guard: every `uses:` under .github/ must name a 40-hex commit SHA.
 #
 # Before this guard, 34 of 34 action references were floating tags or branches,
 # and .github/dependabot.yml claimed the opposite. A tag is mutable: the owner
@@ -19,15 +19,35 @@
 # Matching is anchored to a `uses:` *key* rather than a bare substring, because
 # `statuses: write` (cla.yml) ends in "uses:" and a naive grep flags it.
 #
+# `.github/actions/<name>/action.yml` is scanned alongside the workflows, and
+# for the same reason: a composite action's own `uses:` steps run with whatever
+# secrets and OIDC permissions the calling job holds, so a workflow with every
+# reference pinned can still call `./.github/actions/deploy` into an action
+# that pulls `some/action@main` (#4288). Each root is skipped on its own — a
+# repository with workflows and no composite actions must still pass.
+#
 # Uses portable POSIX tools so it runs on a bare CI runner (no ripgrep).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+# A test seam: the hermetic suite points the scan at a fixture tree rather than
+# at this repository (scripts/test-action-pins.sh).
+if [ "${1:-}" = "--fixture-root" ]; then
+  repo_root="$2"
+fi
 cd "$repo_root"
 
-workflows=".github/workflows"
-if [ ! -d "$workflows" ]; then
-  echo "check-action-pins: no $workflows directory; skipping."
+roots=""
+present=""
+for root in .github/workflows .github/actions; do
+  roots="$roots $root"
+  if [ -d "$root" ]; then
+    present="$present $root"
+  fi
+done
+
+if [ -z "$present" ]; then
+  echo "check-action-pins: no$roots directory; skipping."
   exit 0
 fi
 
@@ -36,14 +56,21 @@ uses_key='^[[:space:]]*-?[[:space:]]*uses:[[:space:]]'
 # A correctly pinned value: <action>@<40 lowercase hex>, then EOL or a comment.
 pinned='uses:[[:space:]]*[^[:space:]]+@[0-9a-f]{40}([[:space:]]|$)'
 
-all_uses="$(grep -rnE "$uses_key" "$workflows" || true)"
+# shellcheck disable=SC2086 # word-split on purpose: $present is a root list.
+all_uses="$(grep -rnE "$uses_key" $present || true)"
 
 if [ -z "$all_uses" ]; then
   echo "check-action-pins: no 'uses:' references found; skipping."
   exit 0
 fi
 
-unpinned="$(printf '%s\n' "$all_uses" | grep -vE "$pinned" || true)"
+# A local reference — `uses: ./.github/actions/<name>` — has nothing to pin: it
+# resolves inside the checked-out commit, so it moves only when this repository
+# moves. It is exempt from the SHA requirement, and its *contents* are covered
+# because .github/actions is a scan root above.
+local_ref='uses:[[:space:]]*\./'
+
+unpinned="$(printf '%s\n' "$all_uses" | grep -vE "$pinned" | grep -vE "$local_ref" || true)"
 
 if [ -n "$unpinned" ]; then
   echo "check-action-pins: these 'uses:' references are not pinned to a commit SHA:" >&2
@@ -64,10 +91,13 @@ if [ -n "$unpinned" ]; then
   exit 1
 fi
 
-total="$(printf '%s\n' "$all_uses" | wc -l | tr -d '[:space:]')"
+external="$(printf '%s\n' "$all_uses" | grep -vE "$local_ref" || true)"
+total="$(printf '%s\n' "$external" | grep -c . || true)"
+total="$(printf '%s' "$total" | tr -d '[:space:]')"
 
 # Not fatal: a missing tag comment is a readability problem, not a security one.
-no_comment="$(printf '%s\n' "$all_uses" | grep -vE '@[0-9a-f]{40}[[:space:]]*#' || true)"
+# A local reference has no tag to name, so it is not asked for one.
+no_comment="$(printf '%s\n' "$external" | grep -vE '@[0-9a-f]{40}[[:space:]]*#' || true)"
 
 # The verdict is already decided; the writes below are best-effort. SIGPIPE is
 # ignored and each write's failure discarded, so a reader that closed the pipe

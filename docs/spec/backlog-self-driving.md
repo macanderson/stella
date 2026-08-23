@@ -722,13 +722,26 @@ things" field. So:
 
 | Belongs in `[self_driving.doctrine]` | Belongs in a context record |
 |---|---|
-| Closed enums and numbers a **pure machine** branches on — `foreign_breakage`, `contention`, `queue_order`, `abandon_escalated`, the `deliver` ceilings | Prose instruction for the **judgement half** — "prefer the architecturally sound option", "match the neighbourhood", "no new dependencies casually" |
+| Closed enums and numbers a **pure machine** branches on — `foreign_breakage`, `contention`, `abandon_escalated` | Prose instruction for the **judgement half** — "prefer the architecturally sound option", "match the neighbourhood", "no new dependencies casually" |
 | No model ever reads it. An operator's declared preference becomes *testable*: you can assert `FileAndWait` does not adopt, and the assertion cannot be talked out of. | Already has a home (`.stella/rules/*.toml`, `doc:context-pr`), already governed, already versioned. |
 
 The test is invariant 5's: **does a caller branch on it?** A pure machine
 branching on a closed enum belongs; a sentence a model reads does not. A
 `[self_driving.doctrine]` field that wants to say something prose-shaped **is** a
 context record, and the answer to that request is a pointer, not a field.
+
+Two axes this table used to name are deliberately absent, and both absences say
+something about where a knob belongs. **Queue order** is not an operator's to
+declare: the ranking is `backlog::ranked_keys` over
+`stella_autonomy::priority::TriagePolicy`, whose `ladder`, `defect_kinds` and
+`excluded_kinds` are the vocabulary an operator already has for it, and a second
+one in `[self_driving.doctrine]` would be two answers to one question. **The
+`deliver` ceilings** are not declared at all: `batch_ceiling` and
+`parallel_ceiling` live on the AIMD `Calibration`/`Limits` types
+(`crates/stella-autonomy/src/lib.rs`) and are *moved by the controller* in
+response to what the loop survives. Putting them in a doctrine block would imply
+an operator can pin them, which is the opposite of how AIMD works — `Limits` is
+where an operator bounds the range.
 
 #### The loop exhausts its permitted channels before it parks
 

@@ -367,6 +367,49 @@ printf '{"point":"drive","body":{"next":{"halt":{"reason":"unreachable"}}}}\n'
     );
 }
 
+/// **A driver that asks and then walks away is named as such** (#3794): it was
+/// served, it exited cleanly, and it never wrote a `next`.
+///
+/// The distinction is the whole point of the variant. Silence from a driver
+/// that asked for nothing is `NoResponse` — the test below this one — and
+/// silence from one that was mid-errand names the errand, so its author is
+/// pointed at the ask it abandoned rather than at the session in general. The
+/// case was unreachable before this: the loop had already drained every
+/// complete message the framer held by the time stdout ended, so the trailing
+/// parse that raised `UnansweredCall` could only ever see `None`, and this
+/// script was answered `NoResponse`.
+#[tokio::test]
+async fn a_driver_that_asks_and_then_ends_without_a_next_names_what_it_abandoned() {
+    let gate = gate(
+        grant_of(DRIVING_MANIFEST),
+        DEFAULT_DRIVER_MAX_CALLS,
+        Box::new(Serves),
+    );
+
+    // Asks, and exits without ever reading the answer. Its stdout closes with
+    // the ask as the last thing it said.
+    let script = r#"
+read -r request
+printf '%s\n' '{"call":"backlog_next","id":1}'
+"#;
+
+    let failed = driver(script, Arc::clone(&gate), Duration::from_secs(10))
+        .drive(DriveRequest::new("cycle-79"))
+        .await
+        .expect_err("an abandoned session is not a decision");
+
+    match &failed {
+        DriverError::UnansweredCall { call, .. } => {
+            assert_eq!(
+                *call,
+                DriverCall::BacklogNext,
+                "the errand the driver walked away from is the one it is named by"
+            );
+        }
+        other => panic!("the failure is named, not collapsed into another one: {other}"),
+    }
+}
+
 /// A driver that exits without a `next` has decided nothing, and the transport
 /// refuses to invent one.
 ///

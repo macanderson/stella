@@ -86,6 +86,46 @@ fn hang_streams_answer_unary(unary_body: &'static str) -> String {
     format!("http://{addr}")
 }
 
+/// The other server shape wiremock cannot express, and the mirror image of
+/// [`hang_streams_answer_unary`]: a streaming request gets an empty 200 (the
+/// latch-arming shape), and the non-streaming request that follows gets a
+/// complete HTTP head — including a `content-length` promising far more than
+/// is sent — then a few body bytes and silence, the socket held open.
+///
+/// The head arriving is the whole point: `send()` returns, so the stall lands
+/// inside `response.text()` instead. `connection: close` on the stream
+/// response keeps the client from pooling that socket and sending the unary
+/// request down a connection this server has stopped reading, which would
+/// move the stall back into `send()` and prove nothing.
+fn empty_streams_stall_the_unary_body() -> String {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr");
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for conn in listener.incoming() {
+            let Ok(mut socket) = conn else { break };
+            let request = read_request(&mut socket);
+            if request.contains("\"stream\":true") {
+                let _ = socket.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\
+                      content-length: 0\r\nconnection: close\r\n\r\n",
+                );
+                let _ = socket.flush();
+            } else {
+                let _ = write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
+                     content-length: 4096\r\n\r\n{{\"choices\":"
+                );
+                let _ = socket.flush();
+                held.push(socket);
+            }
+        }
+    });
+    format!("http://{addr}")
+}
+
 /// The #2686 witness: a stream that hangs before its first byte fails the
 /// attempt at the first-byte deadline — retryably, so the ordinary retry
 /// machinery re-drives it — and that retry completes as a non-streaming
@@ -302,6 +342,47 @@ async fn a_unary_read_timeout_is_terminal_never_a_retry_storm() {
     assert!(
         error.is_retryable(),
         "a streaming header stall generated nothing and must stay retryable: {error:?}"
+    );
+}
+
+/// The same classification, one read later. The test above pins `send()`,
+/// where a whole-response delay lands; the unary read bound also covers the
+/// **body**, and `complete_unary_attempt` routes `text()`'s failure through
+/// the same classifier for the same reason — a timeout there consumed the
+/// bound and the identical re-issue would consume it again. Nothing pinned
+/// that hunk, so a refactor could put the body read back on retryable
+/// `Transport` and re-create #547's storm with every test green (#2756).
+///
+/// Driven end-to-end through the fallback: an empty stream arms the latch,
+/// the retry goes unary, and its body stalls after the head.
+#[tokio::test]
+async fn a_unary_body_read_timeout_is_terminal_never_a_retry_storm() {
+    let base_url = empty_streams_stall_the_unary_body();
+    let provider = ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2")
+        .with_base_url(base_url)
+        .with_unary_read_timeout(Duration::from_millis(120));
+
+    let armed = provider
+        .complete(plain_request())
+        .await
+        .expect_err("an empty stream is a fault, never an empty Ok");
+    assert!(
+        armed.to_string().contains("non-streaming"),
+        "the latch must arm before the unary path can be reached: {armed}"
+    );
+
+    let error = provider
+        .complete(plain_request())
+        .await
+        .expect_err("a body that stops mid-read must fault, not hang");
+    assert!(
+        matches!(error, ProviderError::Terminal(_)),
+        "a unary BODY read timeout must be Terminal, got {error:?}"
+    );
+    assert!(
+        !error.is_retryable(),
+        "a retryable body-read timeout re-issues the identical too-long \
+         request until the budget dies (#547): {error:?}"
     );
 }
 

@@ -6,45 +6,9 @@
 //! and prove the end-to-end verdicts on actual worktrees and branches.
 
 use super::*;
-use crate::git::{GitError, GitOutput, SystemGitCli, WorktreeManager};
-use async_trait::async_trait;
-use std::sync::{Arc, Mutex};
+use crate::git::test_support::ScriptedGit;
+use crate::git::{GitOutput, SystemGitCli, WorktreeManager};
 use tokio::process::Command;
-
-// ---------------------------------------------------------------- fakes
-
-type GitHandler = Box<dyn Fn(&[String]) -> GitOutput + Send + Sync>;
-
-/// A [`GitCli`] that records every invocation and answers via a closure.
-struct ScriptedGit {
-    calls: Arc<Mutex<Vec<Vec<String>>>>,
-    handler: GitHandler,
-}
-
-impl ScriptedGit {
-    fn new(handler: impl Fn(&[String]) -> GitOutput + Send + Sync + 'static) -> Self {
-        Self {
-            calls: Arc::new(Mutex::new(Vec::new())),
-            handler: Box::new(handler),
-        }
-    }
-
-    fn calls(&self) -> Vec<Vec<String>> {
-        self.calls.lock().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-}
-
-#[async_trait]
-impl GitCli for ScriptedGit {
-    async fn run(&self, _repo: &Path, args: &[&str]) -> Result<GitOutput, GitError> {
-        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        self.calls
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(owned.clone());
-        Ok((self.handler)(&owned))
-    }
-}
 
 /// The porcelain listing of a repo with the main checkout, one fleet
 /// worktree, and one hand-made worktree outside the fleet namespace.

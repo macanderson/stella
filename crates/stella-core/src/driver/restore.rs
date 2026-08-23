@@ -30,6 +30,23 @@
 //! applies a paid summary purely to *shrink* the context a resumed session
 //! reloads — growing it back with restored content would spend headroom the
 //! tripped budget no longer has, for a turn that is already over.
+//!
+//! # When the summarizer's own request overflows
+//!
+//! The summarizer is a model call over the rendered span, so a span large
+//! enough to be worth folding is a request large enough to be rejected for
+//! its size. That rejection used to land in the ordinary provider-failure
+//! arm — context left intact, latch incremented — and it was the one branch
+//! `super::overflow_recovery` could not repair: the call that exists to
+//! shrink the transcript was refused for being too big, and the turn aborted
+//! two rungs later (#2751). The older head of the render is now dropped and
+//! the summarizer re-asked, bounded by [`SUMMARIZER_OVERFLOW_ATTEMPTS`]. The
+//! dropped content is lost *unsummarized*, so the splice marker says so —
+//! the model must not read a summary as covering history it never saw.
+//! Nothing about the splice bounds changes, which is what keeps the
+//! transcript well-paired: the span replaced is the same `start..end` the
+//! Tool-message walks chose, only what the summary was written from is
+//! smaller.
 
 use stella_protocol::{
     AgentEvent, CompletionMessage, CompletionRequest, CompletionResult, MessageRole,
@@ -55,6 +72,26 @@ use crate::{AccountedCall, AccountedCallError, run_accounted_call};
 /// first visible token (#2503), and an empty summary here trips the give-up
 /// latch that disables compaction for the rest of the turn.
 const SUMMARY_OUTPUT_CONTRACT: u32 = 1_200;
+
+/// How many summarizer dispatches one over-budget step may make while the
+/// summarizer's *own* request keeps overflowing: the original plus two
+/// head-dropping retries, the bound the comparator's reactive ladder uses
+/// (#2751, quoted in #2680). Each rejected attempt is billed through
+/// `run_accounted_call`'s `UsageIncomplete` observer like any other, so this
+/// is a spend bound as much as a latency one — and one step of a turn that
+/// is already recovering must not spend more than a handful of calls proving
+/// the span cannot be summarized.
+pub(super) const SUMMARIZER_OVERFLOW_ATTEMPTS: u8 = 3;
+
+/// The summarizer's two-message request over an already-rendered span. Built
+/// per dispatch rather than cloned, because a head-dropping retry (#2751)
+/// sends a *different* span than the attempt before it.
+fn summary_request(rendered: &str) -> Vec<CompletionMessage> {
+    vec![
+        CompletionMessage::system(crate::summarize::SUMMARIZE_SYSTEM),
+        CompletionMessage::user(rendered),
+    ]
+}
 
 /// The synthetic `call_id` restoration replays carry — the
 /// `driver::waiting::PARKED_CALL_ID` shape: it never enters the transcript,
@@ -128,22 +165,44 @@ impl<'a> Engine<'a> {
             rendered.push_str("\n\n[PreCompact hook instructions]\n");
             rendered.push_str(extra);
         }
-        let summary_messages = vec![
-            CompletionMessage::system(crate::summarize::SUMMARIZE_SYSTEM),
-            CompletionMessage::user(&rendered),
-        ];
         // The written contract plus room to think (#2503): `max_output_tokens`
         // is one number on the wire and a reasoning model bills its thinking
         // against it, so `effort: Low` alone bounds the reasoning budget
         // without zeroing it.
         let cap = with_reasoning_headroom(SUMMARY_OUTPUT_CONTRACT);
-        // Kept only because a starved retry could change the outcome — the
-        // same one-`Vec`-copy trade `metered_raw_call` makes for a management
-        // prompt it might have to re-send (#2128).
-        let retry = starved_retry_cap(Some(cap)).map(|raised| (raised, summary_messages.clone()));
         let mut outcome = self
-            .dispatch_summarizer(summary_messages, cap, step, budget, events)
+            .dispatch_summarizer(summary_request(&rendered), cap, step, budget, events)
             .await;
+        // The one branch reactive overflow recovery could not repair (#2751):
+        // the call that exists to shrink the transcript is itself rejected as
+        // too large, and the old code recorded it as an ordinary summarizer
+        // failure, left the context intact, and let the turn abort two rungs
+        // later. Dropping the older head of the render is the only lever left
+        // — the dropped content is lost unsummarized, which is what
+        // `head_dropped` makes the splice marker say. Bounded at
+        // [`SUMMARIZER_OVERFLOW_ATTEMPTS`] dispatches, and `drop_span_head`
+        // refuses a drop that would not shrink the request, so the loop
+        // terminates on its own as well.
+        let mut head_dropped = false;
+        let mut attempts = 1u8;
+        while attempts < SUMMARIZER_OVERFLOW_ATTEMPTS
+            && matches!(
+                &outcome,
+                Err(AccountedCallError::Provider(
+                    stella_protocol::ProviderError::ContextOverflow { .. }
+                ))
+            )
+        {
+            let Some(shorter) = crate::summarize::drop_span_head(&rendered) else {
+                break;
+            };
+            rendered = shorter;
+            head_dropped = true;
+            attempts += 1;
+            outcome = self
+                .dispatch_summarizer(summary_request(&rendered), cap, step, budget, events)
+                .await;
+        }
         // What a superseded starved attempt already spent. Every arm below
         // adds it, because the retry is a real paid call: reporting only the
         // surviving attempt's cost would understate the turn by exactly what
@@ -157,12 +216,13 @@ impl<'a> Engine<'a> {
         // short of room, which one retry fixes. A retry that also comes back
         // empty falls through to the empty-summary arm below, which is where
         // that failure is recorded (#2503).
-        if let (Ok(result), Some((raised, summary_messages))) = (&outcome, retry)
+        if let Ok(result) = &outcome
             && starved_of_output(result)
+            && let Some(raised) = starved_retry_cap(Some(cap))
         {
             superseded_cost = result.cost_usd;
             outcome = self
-                .dispatch_summarizer(summary_messages, raised, step, budget, events)
+                .dispatch_summarizer(summary_request(&rendered), raised, step, budget, events)
                 .await;
         }
         let result = match outcome {
@@ -180,6 +240,7 @@ impl<'a> Engine<'a> {
                         end,
                         before_tokens,
                         text,
+                        head_dropped,
                         compaction_budget,
                         factor,
                         events,
@@ -189,7 +250,9 @@ impl<'a> Engine<'a> {
             }
             // A silent 0.0 hid a failing summarizer that re-fired every step
             // until the provider hard-failed. Surface it and count it toward
-            // the give-up latch.
+            // the give-up latch. A `ContextOverflow` reaching here has already
+            // spent the head-dropping ladder above, so it is a span whose
+            // newest half the summarizer still will not accept.
             Err(AccountedCallError::Provider(e)) => {
                 health.record_failure();
                 let _ = events.send(AgentEvent::Error {
@@ -247,6 +310,7 @@ impl<'a> Engine<'a> {
             end,
             before_tokens,
             text,
+            head_dropped,
             compaction_budget,
             factor,
             events,
@@ -344,6 +408,7 @@ impl<'a> Engine<'a> {
         end: usize,
         before_tokens: u64,
         text: &str,
+        head_dropped: bool,
         compaction_budget: u64,
         factor: f64,
         events: &EventSender,
@@ -361,9 +426,19 @@ impl<'a> Engine<'a> {
             .flat_map(|m| m.tool_results.iter())
             .map(|r| crate::receipts::tool_result_block_id(&r.output))
             .collect();
+        // A summary written from a head-dropped render covers less than the
+        // span it replaces, and the model has no other way to learn that
+        // (#2751). Named inside the marker's brackets so every consumer that
+        // recognises the marker by its prefix is unaffected.
+        let dropped = if head_dropped {
+            "; the oldest part of that history exceeded the summarizer's own context window \
+             and is not covered by this summary"
+        } else {
+            ""
+        };
         let summary = CompletionMessage::user(format!(
             "{SUMMARY_MARKER_PREFIX} to fit context — full detail was compacted away; \
-             re-read files or re-run tools for specifics]\n\n{text}"
+             re-read files or re-run tools for specifics{dropped}]\n\n{text}"
         ));
         messages.splice(start..end, std::iter::once(summary));
         let _ = events.send(AgentEvent::Compaction {

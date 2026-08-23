@@ -443,6 +443,26 @@ mod tests {
         assert_eq!(dx.counters().warn, 1);
     }
 
+    /// **[`Dx::with_ring`]'s own witness** (#3711). `Dx::new` always installs
+    /// `Ring::default()` and the field is private, so this is the only way any
+    /// caller can give a handle a bound other than §7.4's — and nothing in the
+    /// workspace called it, so the claim in its doc comment was untested.
+    ///
+    /// The assertion is the one that distinguishes a substituted ring from the
+    /// default: a handle at the default bound would hold all four of these and
+    /// drop none.
+    #[test]
+    fn a_substituted_ring_holds_to_its_own_bound() {
+        let dx = Dx::disabled().with_ring(Ring::new(2, crate::ring::MAX_BYTES));
+        for _ in 0..4 {
+            diag!(&dx, warn, "test.bounded");
+        }
+
+        let stats = dx.ring().stats();
+        assert_eq!(stats.held, 2, "the substituted bound is what holds");
+        assert_eq!(stats.dropped, 2, "the overflow is counted, not silent");
+    }
+
     /// Pins the level-to-field mapping in [`CounterSnapshot::at`] — nothing
     /// else in the workspace calls it, so a mis-wired arm would otherwise
     /// ship green.

@@ -334,7 +334,7 @@ def match_from_toml(data: dict[str, Any], *, match_id: str | None = None) -> Mat
             # engine was that a match cannot lie about which one it used.
             problems.append(
                 f"{where}: bare_loop applies only to a stella seat — "
-                f"{agent!r} has no staged pipeline to switch off"
+                f"{agent!r} is a different agent entirely"
             )
         if engine.tool_set and agent and agent != "stella":
             # The same refusal, for the same reason, on the knob that arrived

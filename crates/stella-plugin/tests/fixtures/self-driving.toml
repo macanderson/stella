@@ -14,6 +14,34 @@
 name = "stella-selfdriving"
 description = "The autonomous delivery loop: picks work, ships it, and stewards the rig it runs on."
 
+# What it does *outside* a turn, which is the half `[loop]` cannot say. A grade
+# says how much say a plugin has inside a turn; this says what it may do to the
+# repository between them — and the loop §10 describes does all five families:
+# it ranks and files issues, runs Stella against them in a worktree, opens and
+# merges pull requests, sweeps for findings, and proposes tools and records.
+[driver]
+calls = [
+  "backlog_next",
+  "backlog_claim",
+  "backlog_file",
+  "backlog_close",
+  "backlog_link",
+  "work_start",
+  "work_status",
+  "work_abandon",
+  "deliver_open",
+  "deliver_observe",
+  "deliver_next",
+  "deliver_merge",
+  "sweep_audit",
+  "sweep_regress",
+  "sweep_meta",
+  "curate_propose",
+  "curate_list",
+  "curate_accept",
+]
+max_calls = 64
+
 [loop]
 participation = "arbiter"
 hooks = ["Stop", "PreToolUse", "PostToolUse"]

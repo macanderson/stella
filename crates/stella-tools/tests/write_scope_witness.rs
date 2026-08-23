@@ -114,6 +114,58 @@ async fn a_read_of_a_sibling_worktree_is_refused() {
     assert!(message.contains("worktrees"), "{message}");
 }
 
+/// **The witness for #3618.** The shell audit's read fence scans the command
+/// with its non-executed regions removed, so a hidden path that appears only
+/// as *data* — a heredoc body, a `#` comment — does not refuse a command that
+/// reads nothing. The same path as a real argument is still refused, which is
+/// the half that keeps this from being a hole rather than a narrowing.
+///
+/// Fails before this change: the fence walked every word of the raw command
+/// text, so both of the first two commands were refused for a path the shell
+/// never opens — and the agent could not diagnose it, because the path it was
+/// refused for was one it never asked for.
+#[tokio::test]
+async fn a_hidden_path_that_is_only_data_does_not_refuse_the_command() {
+    let dir = workspace_with_a_worktree();
+    let ctx = ToolCtx::bare(dir.path().to_path_buf());
+
+    for (label, command) in [
+        (
+            "a heredoc body",
+            "cat > note.txt <<'EOF'\nsee .stella/worktrees/sibling-task/secret.rs\nEOF",
+        ),
+        (
+            "a comment",
+            "echo built # unlike .stella/worktrees/sibling-task/secret.rs",
+        ),
+    ] {
+        let out = stella_tools::bash::Bash::new(None)
+            .execute(&serde_json::json!({ "command": command }), &ctx)
+            .await;
+        assert!(
+            !out.is_error(),
+            "{label} naming a hidden path reads nothing and must not be refused: {out:?}"
+        );
+    }
+    assert!(
+        dir.path().join("note.txt").exists(),
+        "the heredoc command must have actually run"
+    );
+
+    // The complement, and the reason this is a narrowing rather than a hole:
+    // the same path as a real argument is still refused.
+    let out = stella_tools::bash::Bash::new(None)
+        .execute(
+            &serde_json::json!({
+                "command": "cat .stella/worktrees/sibling-task/secret.rs"
+            }),
+            &ctx,
+        )
+        .await;
+    let message = message(&out);
+    assert!(message.contains("worktrees"), "{message}");
+}
+
 /// Reading anything else is untouched — the asymmetry is the whole design.
 #[tokio::test]
 async fn reading_the_session_tree_is_unaffected() {

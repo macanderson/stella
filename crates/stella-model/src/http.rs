@@ -476,9 +476,14 @@ pub(crate) const HTTP_OVERLOADED: u16 = 529;
 ///   request is refused). [`forbidden_hint`] distinguishes credits/billing,
 ///   model-not-enabled, and bare permission refusal so the three don't read
 ///   as one undifferentiated "credentials failed" message (issue #250).
-/// - 402 → non-retryable `Terminal`, called out explicitly as a billing
-///   failure (some gateways use Payment Required for out-of-credits rather
-///   than folding it into a 403).
+/// - 402 → three failures share the status and get three classifications:
+///   a refused *output ceiling* is non-retryable `OutputBudgetExceeded`
+///   (the engine clamps and re-asks); a balance committed to the caller's
+///   own concurrent calls ("retry after in-flight requests settle") is
+///   retryable `RateLimited`; a bare out-of-credit body is non-retryable
+///   `Terminal`, called out explicitly as a billing failure (some gateways
+///   use Payment Required for out-of-credits rather than folding it into a
+///   403).
 /// - 429 → retryable `RateLimited` carrying the Retry-After hint.
 /// - 529 → retryable `Overloaded` carrying the Retry-After hint. Anthropic
 ///   and Z.ai return this non-standard status to shed load, and it is the
@@ -529,17 +534,14 @@ pub(crate) fn classify_http_status(
             ))
         }
         StatusCode::PAYMENT_REQUIRED => {
-            // Two different failures share this status, and only one is
+            // Three different failures share this status, and only one is
             // terminal. "Out of credit" ends the turn; "you asked for a
             // ceiling you cannot afford" is repaired by asking for less,
             // and terminating on it is what killed three bench runs whose
             // balance could still have funded dozens of ordinary calls.
+            let haystack = reason.as_deref().unwrap_or(body).to_lowercase();
             if affordable_output_tokens(body, reason.as_deref()).is_some()
-                || reason
-                    .as_deref()
-                    .unwrap_or(body)
-                    .to_lowercase()
-                    .contains("fewer max_tokens")
+                || haystack.contains("fewer max_tokens")
             {
                 return ProviderError::OutputBudgetExceeded {
                     message: format!(
@@ -547,6 +549,23 @@ pub(crate) fn classify_http_status(
                          402){reason_suffix}"
                     ),
                     affordable_output_tokens: affordable_output_tokens(body, reason.as_deref()),
+                };
+            }
+            // The third: the balance is committed to the caller's *other*
+            // calls, and the provider itself says to wait ("Retry after
+            // in-flight requests settle"). Keyed on the clause the way the
+            // affordability arm keys on `fewer max_tokens`. Classified as
+            // the 429 it behaves like so it reaches the retry ladder and
+            // the parked wait — as `Terminal` it aborted turns mid-flight
+            // and told the user the account was out of credit while the
+            // same key funded further calls a minute later (#4380).
+            if haystack.contains("in-flight requests") {
+                return ProviderError::RateLimited {
+                    message: format!(
+                        "{label} deferred the request until its in-flight calls settle (HTTP \
+                         402){reason_suffix}"
+                    ),
+                    retry_after_ms,
                 };
             }
             ProviderError::Terminal(format!(

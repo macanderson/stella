@@ -100,6 +100,7 @@ mod evidence;
 mod host_call;
 mod manifest;
 mod observed;
+mod oracle;
 mod package;
 mod program;
 mod progressive;
@@ -140,11 +141,11 @@ pub use host_call::{
     HostCallOk, HostCallOutcome, HostCallRefusal, HostCallRequest, HostCallResponse, PluginMessage,
     RecallArgs, RecallFrame, RecallResult, RunTestArgs,
 };
-pub use manifest::{
-    FlipPolicy, HookEvent, LoopGrant, Oracle, OracleCommand, OracleProcess, OracleProcessSource,
-    Participation, PluginManifest, Role, Subloop, TamperPolicy,
-};
+pub use manifest::{HookEvent, LoopGrant, Participation, PluginManifest, Role, Subloop};
 pub use observed::ObservedEvidence;
+pub use oracle::{
+    FlipPolicy, Oracle, OracleCommand, OracleProcess, OracleProcessSource, TamperPolicy,
+};
 pub use package::{
     ContributionKind, KindMismatch, PackageListing, PackageMismatch, RecordContribution,
     RecordEnforcement, SkillContribution, ToolContribution,

@@ -237,6 +237,25 @@ struct WriterState<'a> {
     writer: &'a mut Option<tokio::task::JoinHandle<std::io::Result<()>>>,
 }
 
+/// What a point's read loop accumulates for the caller to read once it ends.
+///
+/// One value rather than three out-parameters: every one of these is only
+/// meaningful *after* `converse` returns, and the caller reads all three
+/// together to decide which failure a silent plugin was.
+struct PointTrace<'a> {
+    /// Everything the plugin wrote to stderr, which is where its reason
+    /// usually is.
+    stderr_seen: &'a mut Vec<u8>,
+    /// Bytes read across both streams, checked against [`MAX_CAPTURE_BYTES`]
+    /// at ingest.
+    read: &'a mut usize,
+    /// The last host call this point served, if any (#3794). Read only when
+    /// the plugin exited cleanly with no response: an ask and then silence is
+    /// an abandoned point, and silence with no ask is
+    /// [`WrapperError::NoResponse`].
+    served_call: &'a mut Option<stella_plugin::HostCall>,
+}
+
 impl SubprocessWrapper {
     /// Declare a wrapper process.
     ///
@@ -428,6 +447,11 @@ impl SubprocessWrapper {
 
         let mut stderr_seen = Vec::new();
         let mut read = 0usize;
+        // The last host call this point served, if any. Read only on the path
+        // where the plugin never answered: a plugin that asked and then went
+        // silent abandoned the point, which is a different failure from one
+        // that had nothing to say — see `WrapperError::UnansweredCall`.
+        let mut served_call = None;
         let settled = tokio::time::timeout(self.timeout, async {
             let response = self
                 .converse(
@@ -435,8 +459,11 @@ impl SubprocessWrapper {
                     &mut stderr,
                     writer_state,
                     channel.as_ref(),
-                    &mut stderr_seen,
-                    &mut read,
+                    PointTrace {
+                        stderr_seen: &mut stderr_seen,
+                        read: &mut read,
+                        served_call: &mut served_call,
+                    },
                 )
                 .await?;
             // `converse` has dropped the sender, so the writer has shut stdin
@@ -530,9 +557,19 @@ impl SubprocessWrapper {
         }
 
         let Some(response) = response else {
-            return Err(WrapperError::NoResponse {
-                program: self.program.clone(),
-                stderr: bounded(&stderr_seen, OUTPUT_EXCERPT_CHARS),
+            // The child exited cleanly and said nothing that ends the point.
+            // Which failure that is depends on whether it had asked the host
+            // for something first: an ask and then silence is an abandoned
+            // point, and naming the call is what tells its author where.
+            return Err(match served_call {
+                Some(call) => WrapperError::UnansweredCall {
+                    program: self.program.clone(),
+                    call,
+                },
+                None => WrapperError::NoResponse {
+                    program: self.program.clone(),
+                    stderr: bounded(&stderr_seen, OUTPUT_EXCERPT_CHARS),
+                },
             });
         };
         if response.protocol_version() > PROTOCOL_VERSION {
@@ -577,9 +614,13 @@ impl SubprocessWrapper {
         stderr: &mut tokio::process::ChildStderr,
         mut writer_state: WriterState<'_>,
         channel: Option<&super::host_call::PointChannel<'_>>,
-        stderr_seen: &mut Vec<u8>,
-        read: &mut usize,
+        trace: PointTrace<'_>,
     ) -> Result<Option<WrapperResponse>, WrapperError> {
+        let PointTrace {
+            stderr_seen,
+            read,
+            served_call,
+        } = trace;
         // Whether a conversation was ever open, decided once and fixed for the
         // whole call: `writer_state.frames` only ever moves from `Some` to
         // `None` below (a send failure), never the reverse, so this is
@@ -717,25 +758,20 @@ impl SubprocessWrapper {
                             // means.
                             writer_state.frames = None;
                         }
+                        // Served, and the point is still open. If stdout ends
+                        // before a response arrives, this is the call the
+                        // plugin abandoned it after.
+                        *served_call = Some(asked);
                     }
                 }
             }
         }
-        // EOF with bytes still buffered: one last parse, so a plugin that
-        // answered without a trailing newline and exited is read exactly as it
-        // always was.
-        self.take_message(&mut framer)?.map_or(Ok(None), |message| {
-            match message {
-                PluginMessage::Response(response) => Ok(Some(response)),
-                // A call as the very last thing the plugin said: it asked and
-                // then closed its own stdout, so no answer could be read even
-                // if one were written.
-                PluginMessage::Call(call) => Err(WrapperError::UnansweredCall {
-                    program: self.program.clone(),
-                    call: call.call(),
-                }),
-            }
-        })
+        // Stdout ended. Nothing is left to parse: `Framer` completes a value
+        // the moment its nesting depth returns to zero rather than on a
+        // newline, and the drain above runs until `take` yields `None`, so any
+        // message the child finished writing was already taken inside the
+        // loop. The caller decides what the silence means.
+        Ok(None)
     }
 
     /// Take the next complete message the framer has assembled, if there is one.

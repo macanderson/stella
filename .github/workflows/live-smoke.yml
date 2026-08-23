@@ -9,11 +9,15 @@
 # Deliberately NOT wired to `pull_request`/`push`: every armed provider
 # spends real money on every run, so this only fires on a manual trigger or
 # the weekly schedule below. `cargo test`'s own default run (CI's `ci.yml`,
-# any local `cargo test --workspace`) never touches this suite unless
-# `STELLA_LIVE_SMOKE=1` is set — see `live_smoke_enabled` in the test file.
-# A provider whose secret isn't configured here skips that one test cleanly
-# (see `armed_key`) rather than failing the job — so this workflow is safe to
-# run with any subset of the secrets below configured.
+# any local `cargo test --workspace`) never touches this suite: every live
+# call is `#[ignore]`d, which is why the run below passes `-- --ignored`.
+#
+# Every secret below is REQUIRED for a green run. A provider whose secret is
+# absent used to skip that one test and still report `ok`, so a run that
+# contacted nothing was indistinguishable from nine endpoints accepting the
+# shape stella sends (#3856). A named smoke that cannot run now fails and
+# says which credential it wanted. To exercise a subset deliberately, name
+# it: `-- --ignored anthropic_smoke`.
 #
 # A red run on a configured provider needs a human read of the failure, not
 # an assumption: this suite deliberately does NOT auto-classify a failure
@@ -26,8 +30,8 @@
 # re-triggering.
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions ->
-# Repository secrets) — add only the ones for the providers you want this
-# job to actually exercise; every other provider's test just skips:
+# Repository secrets) — every one of them, or the provider whose credential
+# is missing fails the job by name:
 #
 #   ANTHROPIC_API_KEY       - Anthropic Messages API (also settles the
 #                             top-level `cache_control` question — see the
@@ -57,10 +61,6 @@
 #   VERTEX_PROJECT_ID       - required alongside GCP_SERVICE_ACCOUNT_KEY
 #   VERTEX_LOCATION         - optional; the test defaults to "global" if
 #                             this secret is absent/empty
-#
-# None of these secrets are required for the workflow itself to run — with
-# zero configured, every live-* test skips and the job still goes green
-# (it's the same clean no-op the local default is).
 name: live-smoke
 
 on:
@@ -131,4 +131,4 @@ jobs:
           AWS_REGION: ${{ secrets.AWS_REGION }}
           VERTEX_PROJECT_ID: ${{ secrets.VERTEX_PROJECT_ID }}
           VERTEX_LOCATION: ${{ secrets.VERTEX_LOCATION }}
-        run: cargo test -p stella-model --test live_smoke -- --nocapture --test-threads=1
+        run: cargo test -p stella-model --test live_smoke -- --ignored --nocapture --test-threads=1

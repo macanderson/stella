@@ -16,7 +16,9 @@
 //! exhausted-ladder breaker feedback. The terminal event pair itself is
 //! emitted by `Engine::settle_model_call_failure`, which may first recover
 //! the turn instead — forced compaction for a context overflow (#2680), a
-//! provider fallback for an exhausted ladder (#2679). The park honors invariant 6's spirit the
+//! provider fallback for an exhausted ladder or a spent compaction ladder
+//! (#2679, #2770) — or settle it as no failure at all, when the park ended
+//! because a person pressed Esc (#2743). The park honors invariant 6's spirit the
 //! same way `driver/waiting.rs` does: the wait sits between model attempts,
 //! never mid-tool, and the budget's deadline bounds it from the outside.
 
@@ -58,6 +60,15 @@ struct RateLimitPark<'e, 'a> {
     engine: &'e Engine<'a>,
     budget: &'e BudgetGuard,
     events: &'e EventSender,
+    /// Set when [`Self::park_tick`] ended a park because the soft-stop latch
+    /// was set. Read once the ladder returns, to tell a turn a person stopped
+    /// from one the provider failed (#2743).
+    ///
+    /// The supervisor is the only thing that knows *why* it aborted, and it
+    /// is engine-side, so recording the answer here is what keeps
+    /// [`ParkDirective`] a bare instruction and `crate::retry` free of the
+    /// steering latch it must not learn about.
+    soft_stopped: bool,
 }
 
 impl ParkSupervisor for RateLimitPark<'_, '_> {
@@ -91,6 +102,7 @@ impl ParkSupervisor for RateLimitPark<'_, '_> {
             .steering
             .is_some_and(|steering| steering.soft_stop_requested())
         {
+            self.soft_stopped = true;
             return ParkDirective::Abort;
         }
         // The per-chunk keep-alive (#2677): a multi-minute wait announces
@@ -189,8 +201,11 @@ impl<'a> Engine<'a> {
             engine: self,
             budget,
             events,
+            soft_stopped: false,
         };
-        match retry_with_backoff_observed(
+        // Bound rather than matched in place, so the future holding
+        // `&mut park` is dropped before the soft-stop answer is read below.
+        let ladder = retry_with_backoff_observed(
             &self.config.retry_policy,
             self.sleeper,
             attempt,
@@ -226,8 +241,9 @@ impl<'a> Engine<'a> {
             },
             &mut park,
         )
-        .await
-        {
+        .await;
+        let soft_stopped = park.soft_stopped;
+        match ladder {
             Ok(outcome) => {
                 cancel_guard.disarm();
                 // Call-outcome feedback (#2673): a committed step closes the
@@ -241,6 +257,17 @@ impl<'a> Engine<'a> {
                 cancel_guard.disarm();
                 let reasons =
                     std::mem::take(&mut *attempt_reasons.lock().unwrap_or_else(|p| p.into_inner()));
+                // The park ended because a person pressed Esc, so `error` is
+                // the parked rate limit or overload the wait was going to
+                // outlast — a fact about the provider, not the reason the
+                // turn is ending (#2743). Reported as a failure it
+                // misclassified a user decision in telemetry, and gave a
+                // mid-park Esc a different ending from a step-boundary one.
+                // Checked before the breaker below for the same reason: this
+                // ladder did not exhaust, so it is no evidence of ill health.
+                if soft_stopped {
+                    return Err(ModelCallFailure::SoftStopped);
+                }
                 // A context overflow is withheld from the terminal events and
                 // the breaker: the caller may still recover it, and an
                 // oversized request is the engine's accounting miss, not
