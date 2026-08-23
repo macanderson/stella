@@ -388,7 +388,7 @@ pub(crate) enum CurrentValue {
     /// that has since been deleted.
     Edited(Option<String>),
     /// The tier's `stella.toml` could not be resolved or read, so nothing is
-    /// claimed either way. Distinct from [`Self::Edited(None)`]: "the key is
+    /// claimed either way. Distinct from [`Edited(None)`](Self::Edited): "the key is
     /// gone" and "we could not look" are different facts, and reporting the
     /// second as the first would tell a user their config had been edited when
     /// it may not have been.

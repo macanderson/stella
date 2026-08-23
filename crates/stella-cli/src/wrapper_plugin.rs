@@ -267,7 +267,7 @@ pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'stat
 /// and that child reaches this same decision in its own process under
 /// `Foreground`. So the launcher's question is not "am I running the turn?" but
 /// "will the child's own copy reach the terminal?", which is
-/// [`Posture::relays_child_console`]:
+/// [`crate::daemon::detach::Posture::relays_child_console`]:
 ///
 /// - `Attached` — it will, live, over the stream the parent writes to. The
 ///   parent stays silent or the user reads the line twice (the double-print
