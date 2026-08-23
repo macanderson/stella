@@ -139,14 +139,6 @@ page is a complete reference on its own; see the linked section for the full exp
 ### `[run]`
 
 <CardGrid size="md">
-  <OptionCard name="run.recap" defaultValue="off">
-    Was the bare `enable_recap`. See
-    [The end-of-run recap](/docs/configuration/settings#the-end-of-run-recap).
-  </OptionCard>
-  <OptionCard name="run.trace_capture" defaultValue="off">
-    Same name as JSON. See
-    [Trajectory trace capture](/docs/configuration/settings#trajectory-trace-capture).
-  </OptionCard>
   <OptionCard name="run.create_worktrees" defaultValue="ask">
     `"always"`, `"ask"`, or `"never"` — whether a run does its work in a throwaway git
     worktree instead of your checkout. An empty string, `null`, or the key being absent
@@ -160,10 +152,37 @@ page is a complete reference on its own; see the linked section for the full exp
 
 ```toml title="stella.toml"
 [run]
-recap          = "on"
-trace_capture  = "off"
 create_worktrees = "ask"
 ignore_gitignore = "on"
+```
+
+`run.recap` and `run.trace_capture` were **retired** in #3870: both renderers read the
+built-in staged pipeline's verdict types and left the workspace with that crate (#3865).
+Setting either is not a typo and is not reported as one — the config walker names the key
+and says what it used to do.
+
+### `[workspace]`
+
+Facts about the tree this config belongs to, rather than how one run behaves. Its own
+section for exactly that reason: `allowed_dirs` states what the workspace *is*.
+
+<CardGrid size="md">
+  <OptionCard name="workspace.allowed_dirs">
+    Directories outside the workspace root that the write tools may touch. Relative
+    entries resolve against the **workspace root**, never the directory you launched
+    from, so a committed entry means the same directory for every teammate. Blank
+    entries are dropped rather than read as a grant of the root itself, and a
+    directory that does not exist yet is carried through unchanged.
+  </OptionCard>
+</CardGrid>
+
+This list and the `--allow-dir` flag (`STELLA_ALLOW_DIR`) are **additive**, not
+last-wins: a directory added on the command line widens the project's scope for that
+invocation rather than replacing what the file grants.
+
+```toml title="stella.toml"
+[workspace]
+allowed_dirs = ["../shared-fixtures", "/opt/vendor-src"]
 ```
 
 ### `[providers]`
@@ -255,6 +274,21 @@ entry runs on the session's model.
 ```toml title="stella.toml"
 [seats]
 "vera/verifier" = "anthropic/claude-fable-5"
+```
+
+### `[plugins]`
+
+The per-plugin retraction switches — one `name = "on" | "off"` entry per installed
+plugin, the same shape JSON carries. An absent entry means the plugin runs; `"off"`
+withholds it without uninstalling it, which is what you want when a plugin is
+misbehaving mid-task and reinstalling it later should be a no-op.
+
+Keys are plugin ids, so like `[seats]` this is an **open** map: it cannot join
+`[agents]`, whose closed name set is what makes that table's flattening safe.
+
+```toml title="stella.toml"
+[plugins]
+vera = "off"
 ```
 
 ### `[tools]`
@@ -570,9 +604,12 @@ keys — which is why comment loss was the risk this whole format port was built
 
 Phase 1 — the format port covered on this page — is complete. `docs/spec/config-system/DESIGN.md`
 lays out five further phases that are **design only**, not yet functional: wrapper-stage
-toggles, an open (non-four-name) agent set with per-agent tool scope, `[models]` pin /
+toggles, per-agent tool scope over an agent set wider than the engine's, `[models]` pin /
 track_latest policy, provider fallback (`provider_preference`), and declarative
-`[integrations.<id>]` blocks for tools with interchangeable backends. None of those keys do
+`[integrations.<id>]` blocks for tools with interchangeable backends. The engine's own set
+is no longer the four names that phrase was written against: #3908 collapsed it to one role
+(`[agents.default]`), and the open, user-chosen half of the problem is already answered for
+plugin-declared roles by `[seats]`. None of those keys do
 anything if you write them today — read the design doc on GitHub if you want the plan before
 it ships:
 [`docs/spec/config-system/DESIGN.md`](https://github.com/macanderson/stella/blob/main/docs/spec/config-system/DESIGN.md).
@@ -587,7 +624,10 @@ schema_version = 1
 scope          = "project"
 
 [run]
-recap = "on"
+create_worktrees = "ask"
+
+[workspace]
+allowed_dirs = ["../shared-fixtures"]
 
 [providers.zai]
 base_url      = "https://api.z.ai/api/coding/paas/v4"
@@ -602,8 +642,11 @@ default_model = "zai/glm-5.2"
 auto_mode     = "on"
 
 [tools]
-task      = "off"
+delegate  = "off"
 task_list = "on"
+
+[plugins]
+vera = "off"
 
 [[hooks.PreToolUse]]
 matcher = "mcp__github__push_files"

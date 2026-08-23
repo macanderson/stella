@@ -362,7 +362,11 @@ jobs:
           STELLA_MODEL: anthropic/claude-fable-5
           STELLA_OUTPUT_FORMAT: json
           STELLA_SPEND_LIMIT: "3"
-        run: stella run --test-command "cargo test --workspace" "${{ inputs.task }}" > result.json
+        # `--test-command` arms an installed verification plugin's own oracle,
+        # so it needs the `--pipeline <variant>` that names one. On the raw
+        # loop it is refused rather than silently ignored: drop both flags for
+        # an unverified run.
+        run: stella run --pipeline my-verifier --test-command "cargo test --workspace" "${{ inputs.task }}" > result.json
 
       - name: Summarize
         if: always()
