@@ -55,9 +55,10 @@ impl DeckTab {
 
     /// The tab-bar label. Deck tab labels are UPPERCASE by convention —
     /// every tab added later must follow (e.g. `SKILLS`, `MCP`).
-    /// `Agents` renders as AGENTS: the executions dashboard paired with the
-    /// installed-agents view. `Settings` is the home of all config — it hosts
-    /// the `agent_engine_config` editor.
+    /// `Agents` renders as AGENTS: the installed-agents list, and nothing
+    /// else since the executions dashboard was removed (#4342) — running
+    /// lanes are the SUB-AGENTS overlay. `Settings` is the home of all
+    /// config — it hosts the `agent_engine_config` editor.
     pub fn title(self) -> &'static str {
         match self {
             DeckTab::Session => "SESSION",
