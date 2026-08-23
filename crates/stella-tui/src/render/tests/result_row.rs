@@ -205,7 +205,6 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
     let files = vec![FileState {
         path: "src/x.rs".into(),
         kind: FileChangeKind::Modified,
-        latest_diff: Some(diff_text.to_string()),
         added,
         removed,
         recent_diffs: [crate::model::RememberedDiff {
@@ -334,7 +333,7 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
 ///   at all despite knowing one. (Its other defect, a fabricated `+0 −0` over a
 ///   real edit, is the one #4156 removed from the head row.)
 /// * A "fix" that reached for the patch it does not have — falling back to the
-///   file's `latest_diff`, or recounting a rendered hunk — fails the second: no
+///   file's newest diff, or recounting a rendered hunk — fails the second: no
 ///   diff ground may be painted for a mutation with no diff.
 ///
 /// The third assertion is the body. A successful file tool's own prose is never
@@ -354,7 +353,6 @@ fn a_measured_change_with_no_patch_states_its_size_and_invents_no_diff() {
         kind: FileChangeKind::Modified,
         // No patch anywhere on the path — not on the mutation, not as a
         // fallback — so nothing the row could reach for would produce one.
-        latest_diff: None,
         added: 3,
         removed: 1,
         recent_diffs: [crate::model::RememberedDiff {

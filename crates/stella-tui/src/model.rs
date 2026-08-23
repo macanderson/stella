@@ -25,6 +25,7 @@ use stella_protocol::{
 
 use std::collections::VecDeque;
 
+mod diff_budget;
 pub mod entry;
 mod error_rows;
 pub mod file_state;
@@ -33,8 +34,7 @@ pub mod recall;
 mod summarize;
 mod turn;
 
-#[cfg(test)]
-pub use file_state::DIFF_HISTORY;
+pub use diff_budget::DIFF_TEXT_BUDGET;
 // Re-exported flat, so `crate::model::TranscriptEntry` still resolves and the
 // split moved no call site — same discipline as `file_state` and `turn` below
 // (#4217). `entry`'s module doc carries why the seam is declarations-vs-logic.
@@ -132,10 +132,12 @@ pub struct SessionModel {
     /// deltas are accumulated into the trailing entry rather than producing
     /// one line per token.
     pub transcript: Vec<TranscriptEntry>,
-    /// Files the agent touched, in first-touched order, each retaining the
-    /// latest diff that rode its `FileChange` event (L-T5 — there is no
-    /// second data path for diffs). Capped at [`MAX_TRACKED_FILES`]; the
-    /// least-recently-touched path is evicted to admit a new one.
+    /// Files the agent touched, in first-touched order, each retaining every
+    /// diff that rode its `FileChange` events (L-T5 — there is no second data
+    /// path for diffs). Capped at [`MAX_TRACKED_FILES`] rows; the
+    /// least-recently-touched path is evicted to admit a new one. The diff
+    /// *text* is bounded separately and in bytes by [`DIFF_TEXT_BUDGET`],
+    /// because a count of paths never bounded a count of bytes (#4365).
     ///
     /// Outlives the conversation: [`Self::reset_conversation`] keeps this and
     /// the two fields below, because a `/clear` does not un-write the bytes on
@@ -147,6 +149,8 @@ pub struct SessionModel {
     pub files_evicted: u32,
     /// Monotonic touch counter stamping [`FileState::touched_seq`].
     file_touch_seq: u64,
+    /// The bound on remembered diff text, in bytes — see [`mod@diff_budget`].
+    diff_budget: diff_budget::DiffBudget,
     /// Measured changes no transcript row has claimed yet, and the rule for
     /// which row may claim one — see [`mod@inline_diff`].
     claims: inline_diff::ClaimWindow,
@@ -302,6 +306,12 @@ impl SessionModel {
     /// retained files would rank every surviving path above every new one and
     /// evict newest-first.
     ///
+    /// `diff_budget` crosses for the same reason and is the sharper case: it
+    /// is the accounting of the text `files` still holds, so resetting it
+    /// under a retained ledger would leave the session believing it holds
+    /// nothing while holding everything — a bound that reads as satisfied
+    /// because it forgot what it was bounding.
+    ///
     /// Written as a destructure-and-restore so the default for a field added
     /// later is to RESET — new conversation state is the common case, and it
     /// then needs no edit here; a new *file-ledger* field is what has to be
@@ -311,12 +321,14 @@ impl SessionModel {
             files,
             files_evicted,
             file_touch_seq,
+            diff_budget,
             per_call_producer_seen,
             ..
         } = std::mem::take(self);
         self.files = files;
         self.files_evicted = files_evicted;
         self.file_touch_seq = file_touch_seq;
+        self.diff_budget = diff_budget;
         self.per_call_producer_seen = per_call_producer_seen;
     }
 
@@ -567,8 +579,7 @@ impl SessionModel {
                 // Exactly one row may claim it: the last, whose post-state the
                 // diff actually describes. Earlier rows give up their reference
                 // and degrade to naming their change, the same degradation
-                // `DIFF_HISTORY` aging and `MAX_TRACKED_FILES` eviction already
-                // have. Per-call measurement makes this the rarer path rather
+                // `MAX_TRACKED_FILES` eviction already has. Per-call measurement makes this the rarer path rather
                 // than the only one — two measured calls hold two distinct
                 // seqs and neither supersedes the other.
                 self.supersede_inline_diffs(&diff);
@@ -1358,29 +1369,33 @@ impl SessionModel {
     ) {
         self.file_touch_seq += 1;
         let touched_seq = self.file_touch_seq;
-        if let Some(existing) = self.files.iter_mut().find(|f| f.path == path) {
+        let seq = if let Some(existing) = self.files.iter_mut().find(|f| f.path == path) {
             existing.touched_seq = touched_seq;
-            if kind.is_mutation() {
-                existing.kind = kind;
-                existing.latest_diff = diff.clone();
-                existing.changes += 1;
-                existing.added += added;
-                existing.removed += removed;
-                existing.remember_diff(diff, added, removed);
-                let seq = existing.changes;
-                self.claims.record(path, seq);
-            } else {
+            if !kind.is_mutation() {
                 existing.reads += 1;
+                return;
             }
+            existing.kind = kind;
+            existing.changes += 1;
+            existing.added += added;
+            existing.removed += removed;
+            existing.remember_diff(diff, added, removed);
+            existing.changes
         } else {
-            if self.files.len() >= MAX_TRACKED_FILES && file_state::evict_lru(&mut self.files) {
+            if self.files.len() >= MAX_TRACKED_FILES
+                && let Some(evicted) = file_state::evict_lru(&mut self.files)
+            {
+                // The victim's text leaves with it, so the budget must stop
+                // counting bytes nothing holds any more — otherwise a session
+                // that sweeps a tree spends its whole budget on paths the
+                // ledger has already dropped.
+                self.diff_budget.forget(&evicted);
                 self.files_evicted += 1;
             }
             let mutation = kind.is_mutation();
             let mut state = FileState {
                 path: path.to_string(),
                 kind,
-                latest_diff: diff.clone(),
                 added: if mutation { added } else { 0 },
                 removed: if mutation { removed } else { 0 },
                 recent_diffs: VecDeque::new(),
@@ -1390,9 +1405,22 @@ impl SessionModel {
             };
             if mutation {
                 state.remember_diff(diff, added, removed);
-                self.claims.record(path, state.changes);
             }
             self.files.push(state);
+            if !mutation {
+                return;
+            }
+            1
+        };
+        self.claims.record(path, seq);
+        // Take the new text into the byte budget, and release whatever oldest
+        // text that pushes out. A released row keeps its measured `+N −M` and
+        // loses only the diff (`FileState::release_text`).
+        let bytes = diff.as_ref().map_or(0, String::len);
+        for (path, seq) in self.diff_budget.record(path, seq, bytes) {
+            if let Some(file) = self.files.iter_mut().find(|f| f.path == path) {
+                file.release_text(seq);
+            }
         }
     }
 }
