@@ -248,25 +248,44 @@ pub(crate) fn classic_removed_message() -> String {
 /// (#3381), or `None` when it was not.
 ///
 /// A pure function returning data rather than printing directly, matching
-/// [`crate::engine_config::effort_notices`]'s shape: [`PipelineChoice::resolve`]
-/// stays a plain decision a unit test can call without capturing stderr, and
-/// each door prints the line at most once **to the user's terminal** —
-/// `arena.rs`, which never supervises, at the one place it reads `no_pipeline`
-/// off its parsed args; `main.rs`'s `Run`/`Goal`/`Fleet` arms print it only
-/// after their `Posture`'s early-return, so it fires in whichever single
-/// process actually runs the turn, not in the parent that re-execs an
-/// `Attached`/`Detached` launch's argv verbatim into a supervised child (that
-/// child reaches this same call independently, and its `Foreground` posture
-/// is what prints it — once, on its own stderr, which `Supervised::follow`
-/// then relays back live under `Attached`). Printing it before that
-/// early-return used to mean the parent printed it on its own account and the
-/// re-exec'd child printed it again on the same relayed stream, doubling the
-/// most common invocation's notice.
+/// [`crate::engine_config::effort_notices`]'s shape, so
+/// [`PipelineChoice::resolve`] stays a plain decision a unit test can call
+/// without capturing stderr. `arena.rs` never supervises and calls this
+/// directly; a door that can supervise asks [`no_pipeline_notice_for`] instead,
+/// which adds the posture rule.
 pub(crate) fn no_pipeline_deprecation_notice(no_pipeline: bool) -> Option<&'static str> {
     no_pipeline.then_some(
         "--no-pipeline is deprecated and does nothing: the raw step-loop is the default now. \
          Pass --pipeline <variant> to run an installed wrapper plugin.",
     )
+}
+
+/// The notice this process owes, given how it meets the supervisor — `None`
+/// when another process's copy is the one the user will read.
+///
+/// A supervising door re-execs its own argv verbatim into a supervised child,
+/// and that child reaches this same decision in its own process under
+/// `Foreground`. So the launcher's question is not "am I running the turn?" but
+/// "will the child's own copy reach the terminal?", which is
+/// [`Posture::relays_child_console`]:
+///
+/// - `Attached` — it will, live, over the stream the parent writes to. The
+///   parent stays silent or the user reads the line twice (the double-print
+///   #3381's audit round fixed).
+/// - `Detached` — it will not. `detach::release` drops the handle without
+///   following the console, so the child's stderr lands in the run's log file
+///   and the launching terminal is told nothing. The parent prints, and the
+///   line in the log is that run's own record rather than a second copy of
+///   this one (#3774).
+/// - `Foreground` — there is no child; this process is the one that runs.
+pub(crate) fn no_pipeline_notice_for(
+    posture: crate::daemon::detach::Posture,
+    no_pipeline: bool,
+) -> Option<&'static str> {
+    if posture.relays_child_console() {
+        return None;
+    }
+    no_pipeline_deprecation_notice(no_pipeline)
 }
 
 /// Refuse an arbiter-grade wrapper plugin on `stella goal`'s pre-flight rung,

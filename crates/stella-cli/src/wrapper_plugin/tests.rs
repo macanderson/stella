@@ -180,6 +180,47 @@ fn the_deprecation_notice_fires_only_when_no_pipeline_was_passed() {
     assert!(notice.contains("--pipeline"), "{notice}");
 }
 
+/// **Witness (#3774).** Which process owes the notice is decided by whether
+/// the child's own copy is relayed back, not by whether there is a child.
+///
+/// `Detached` supervises exactly as `Attached` does, and that is the whole
+/// defect: gating on `supervises()` alone left the launching terminal of a
+/// `--detach` run with nothing, because `detach::release` never follows the
+/// child's console and the child's copy went to a log file. The two asserts
+/// on the same posture are what separate the fix from the bug — a rule that
+/// answered "does this process supervise?" cannot tell these two apart.
+#[test]
+fn a_detached_launcher_owes_the_notice_and_an_attached_one_does_not() {
+    use crate::daemon::detach::Posture;
+
+    assert!(Posture::Detached.supervises());
+    assert_eq!(
+        no_pipeline_notice_for(Posture::Detached, true),
+        no_pipeline_deprecation_notice(true),
+        "nothing relays a detached child's stderr, so the launcher says it"
+    );
+
+    assert!(Posture::Attached.supervises());
+    assert_eq!(
+        no_pipeline_notice_for(Posture::Attached, true),
+        None,
+        "the child's own copy is relayed live, so a second one would double it"
+    );
+
+    assert_eq!(
+        no_pipeline_notice_for(Posture::Foreground, true),
+        no_pipeline_deprecation_notice(true),
+        "there is no child at all"
+    );
+    for posture in [Posture::Foreground, Posture::Attached, Posture::Detached] {
+        assert_eq!(
+            no_pipeline_notice_for(posture, false),
+            None,
+            "the flag was not passed, so nothing is owed under any posture"
+        );
+    }
+}
+
 /// **Witness (#3832, finding 1).** An arbiter-grade wrapper used to reach
 /// `stella goal`'s round loop and only discover it could not be driven
 /// after `WrapperDispatch::run` had already billed
