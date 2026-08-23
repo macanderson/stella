@@ -755,7 +755,7 @@ fn host_spool_path_rejects_workspace_and_symlinked_data_roots() {
 #[test]
 fn only_the_managed_settings_snapshot_can_supply_enrollment() {
     let _env = crate::test_env::lock();
-    let _restore = EnvRestore::capture(&["HOME", "STELLA_MANAGED_SETTINGS"]);
+    let _restore = EnvRestore::capture(&["STELLA_MANAGED_SETTINGS"]);
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let workspace = dir.path().join("workspace");
@@ -768,8 +768,8 @@ fn only_the_managed_settings_snapshot_can_supply_enrollment() {
     )
     .unwrap();
     let absent_managed = dir.path().join("absent-managed.json");
+    let _home = crate::test_env::home_sandbox(&home);
     unsafe {
-        std::env::set_var("HOME", &home);
         std::env::set_var("STELLA_MANAGED_SETTINGS", &absent_managed);
     }
     let settings = Settings::load(&workspace).unwrap();
@@ -795,7 +795,7 @@ fn managed_settings_reject_symlinks_and_group_or_other_writable_files() {
     use std::os::unix::fs::PermissionsExt;
 
     let _env = crate::test_env::lock();
-    let _restore = EnvRestore::capture(&["HOME", "STELLA_MANAGED_SETTINGS"]);
+    let _restore = EnvRestore::capture(&["STELLA_MANAGED_SETTINGS"]);
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let workspace = dir.path().join("workspace");
@@ -804,8 +804,8 @@ fn managed_settings_reject_symlinks_and_group_or_other_writable_files() {
     let managed = dir.path().join("managed.json");
     std::fs::write(&managed, "{}").unwrap();
     std::fs::set_permissions(&managed, std::fs::Permissions::from_mode(0o666)).unwrap();
+    let _home = crate::test_env::home_sandbox(&home);
     unsafe {
-        std::env::set_var("HOME", &home);
         std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
     }
     assert!(Settings::load(&workspace).is_err());
@@ -1119,7 +1119,6 @@ fn enrolled_host_can_flush_and_its_credentials_stay_scrubbed_from_spawns() {
 fn finalization_stays_successful_when_telemetry_host_state_is_rejected() {
     let _env = crate::test_env::lock();
     let _restore = EnvRestore::capture(&[
-        "HOME",
         "STELLA_MANAGED_SETTINGS",
         "STELLA_DATA_DIR",
         "STELLA_TEST_VERIFY_SECRET",
@@ -1155,8 +1154,10 @@ fn finalization_stays_successful_when_telemetry_host_state_is_rejected() {
         .unwrap(),
     )
     .unwrap();
+    // `home_sandbox` clears every home override, so the narrower
+    // `STELLA_DATA_DIR` this test does want is set after it, not before.
+    let _home = crate::test_env::home_sandbox(&home);
     unsafe {
-        std::env::set_var("HOME", &home);
         std::env::set_var("STELLA_MANAGED_SETTINGS", &managed_path);
         std::env::set_var("STELLA_DATA_DIR", workspace.join("model-visible-data"));
         std::env::set_var(
