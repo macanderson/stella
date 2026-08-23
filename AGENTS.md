@@ -190,13 +190,23 @@ looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and
 non-unix body in the tree — `rootfd.rs`'s and `durable_write.rs`'s string
 resolvers, and the Job Object half of `exec::GroupKillGuard` (#3550) — was
 code no toolchain here or in CI ever parsed. It runs
-`cargo clippy -p stella-tools -p stella-runtime --all-targets` on a Windows
-runner, on the paths that reach those two crates. It deliberately does not
-run the tests: Stella ships no Windows binary and the suite has never run
-there, so a green compile is the honest claim it can make, and making it a
-test run is its own decision (#3497). Not a required check, and its own file
-rather than a job in `ci.yml` for the reason `wire-schema.yml` has one — a
-Windows runner is minutes a diff touching neither crate has no use for.
+`cargo clippy -p stella-tools -p stella-runtime` on a Windows runner, on the
+paths that reach those two crates — the shipping code, deliberately not
+`--all-targets`, because several `#[cfg(test)]` bodies import
+`std::os::unix::fs::PermissionsExt` unconditionally and would fail the job on
+a fixture rather than on the platform split. Those fixtures are #3497's
+subject. It also does not run the tests: Stella ships no Windows binary and
+the suite has never run there, so a green compile is the honest claim it can
+make. Not a required check, and its own file rather than a job in `ci.yml`
+for the reason `wire-schema.yml` has one — a Windows runner is minutes a diff
+touching neither crate has no use for.
+
+Its first run paid for itself: `git checkout` failed before the build, on
+`crates/stella-cli/src/config/aux.rs` — `AUX` is a Windows device name, so
+the repository was unclonable there and had been for as long as that module
+existed. `reserved-paths` (`scripts/check-reserved-paths.sh`) is the fast
+half of that finding, because a failed checkout reports one bad path per run
+and there were two.
 
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that

@@ -14,15 +14,20 @@ name: windows-check
 # owns `rootfd`, `durable_write` and `exec`; `stella-runtime`'s two wrapper
 # transports arm that guard — plus their tests, on a real MSVC runner.
 #
-# `cargo clippy --all-targets`, not `cargo check`: `--all-targets` reaches the
-# `#[cfg(test)]` bodies, which is where a platform-conditional test would
-# otherwise rot unseen, and clippy at `-D warnings` holds the Windows arm to
-# the same bar as the rest of the tree.
+# `cargo clippy`, and deliberately **not** `--all-targets`. The shipping code
+# is what carries the platform split, and it is what this can honestly claim
+# today: `--all-targets` pulls in `#[cfg(test)]` bodies that import
+# `std::os::unix::fs::PermissionsExt` unconditionally
+# (`stella-tools/src/validate.rs`, `src/custom/tests.rs`), so it fails on the
+# test fixtures rather than on anything #3550 changed. Those fixtures are
+# #3497's subject — tests that are `#[cfg(unix)]`, or assume unix, and so
+# prove nothing on Windows — and widening this job to `--all-targets` is the
+# check that lands with that work, not before it.
 #
-# It deliberately does not run the tests. Stella ships no Windows binary and
-# the suite has never been run there, so a green *compile* is the honest claim
-# this can make today; making it a test run is a separate decision with its own
-# backlog of platform-conditional fixtures (#3497).
+# Clippy rather than `check` so the Windows arm is held to `-D warnings` like
+# the rest of the tree. It does not run the tests: Stella ships no Windows
+# binary and the suite has never run there, so a green compile is the claim,
+# and a test run is #3497's decision to make.
 #
 # Its own file rather than a job in ci.yml for the reason wire-schema.yml has
 # one: ci.yml's required job is what every PR waits on, and a Windows runner is
@@ -78,4 +83,4 @@ jobs:
 
       - name: clippy on the crates that carry a platform split
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
-        run: cargo clippy -p stella-tools -p stella-runtime --all-targets -- -D warnings
+        run: cargo clippy -p stella-tools -p stella-runtime -- -D warnings
