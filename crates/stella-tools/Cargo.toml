@@ -56,6 +56,23 @@ toml.workspace = true
 # compiling with no second entry below.
 futures-util.workspace = true
 
+# The Job Object API behind `exec::GroupKillGuard`'s Windows arm (#3550) —
+# `CreateJobObjectW`, `AssignProcessToJobObject`, `TerminateJobObject`. It is
+# the standard binding crate for kernel32, it is already in `Cargo.lock` at
+# this version by way of `tokio`/`mio`/`rustix`, so it adds no package to the
+# dependency graph, and it is MIT OR Apache-2.0 (`cargo deny check licenses`
+# passes unchanged). A `cfg(windows)` target dependency, so no unix build
+# resolves or compiles it. Feature-gated to the four modules the guard names:
+# `Win32_Security` is required because `CreateJobObjectW` takes a
+# `SECURITY_ATTRIBUTES` pointer, which this passes as null.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "fs", "io-util"] }
 # Property tests for foundry authorship and the approval precedence ladder.

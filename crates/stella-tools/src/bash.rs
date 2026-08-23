@@ -548,12 +548,10 @@ impl Tool for Bash {
         cmd.stderr(std::process::Stdio::piped());
         // Reap the direct child if the driving future is dropped (tokio keeps
         // it running by default). A backstop only — it does NOT reach the
-        // grandchildren the shell spawned, which is what the unix
-        // `GroupKillGuard` below is for; this is what covers the non-unix
-        // build, where that guard does not exist.
+        // grandchildren the shell spawned, which is what the `GroupKillGuard`
+        // below is for, on every platform since #3550.
         cmd.kill_on_drop(true);
         // New process group so we can kill the whole tree on timeout.
-        #[cfg(unix)]
         crate::exec::detach_into_own_process_group(&mut cmd);
 
         let child = match cmd.spawn() {
@@ -564,11 +562,9 @@ impl Tool for Bash {
         };
 
         // Capture pid before the capped wait takes ownership.
-        #[cfg(unix)]
         let pid = child.id().unwrap_or(0) as i32;
         // Cancellation backstop: a dropped future (Esc, the engine's tool
-        // timeout, a fleet stop) must not leave the setsid'd group running.
-        #[cfg(unix)]
+        // timeout, a fleet stop) must not leave the detached group running.
         let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
         let timeout = Duration::from_secs(timeout_secs);
@@ -584,7 +580,6 @@ impl Tool for Bash {
         .await
         {
             Ok(Ok(output)) => {
-                #[cfg(unix)]
                 guard.disarm();
                 output
             }
@@ -595,7 +590,6 @@ impl Tool for Bash {
             }
             Err(_) => {
                 // Timeout — kill the process group.
-                #[cfg(unix)]
                 guard.kill_now();
                 return ToolOutput::classified_error(
                     stella_protocol::ErrorClass::Timeout,

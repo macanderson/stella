@@ -195,7 +195,8 @@ struct ReadState {
 /// last looked — the read→edit drift signal (#331).
 ///
 /// Every method takes `(root, path)` and keys on the absolute path the pair
-/// resolves to (see [`normalized_key`]), so `root` must be the directory
+/// resolves to (see `normalized_key`, which is private so this names it
+/// rather than linking it), so `root` must be the directory
 /// `path` is relative to — the one `ToolCtx::resolve_for_read` or
 /// `resolve_for_write` returned, not the session root, which for a
 /// `--allow-dir` path names a different file.

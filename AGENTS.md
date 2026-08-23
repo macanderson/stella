@@ -183,6 +183,20 @@ hand; `make main-red-hold-test` covers it, blocking branch included. Reporting
 becomes holding only when a maintainer adds it to main's required checks —
 a repository setting, not a file in this tree.
 
+A seventh, `windows-check.yml`, is the only compiler in this project that
+looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and
+`release.yml`'s matrix is two Apple targets and two Linux ones, so every
+non-unix body in the tree — `rootfd.rs`'s and `durable_write.rs`'s string
+resolvers, and the Job Object half of `exec::GroupKillGuard` (#3550) — was
+code no toolchain here or in CI ever parsed. It runs
+`cargo clippy -p stella-tools -p stella-runtime --all-targets` on a Windows
+runner, on the paths that reach those two crates. It deliberately does not
+run the tests: Stella ships no Windows binary and the suite has never run
+there, so a green compile is the honest claim it can make, and making it a
+test run is its own decision (#3497). Not a required check, and its own file
+rather than a job in `ci.yml` for the reason `wire-schema.yml` has one — a
+Windows runner is minutes a diff touching neither crate has no use for.
+
 **Cite a document by its id, not its path.** Every document under `docs/` that
 anything cites carries frontmatter with a stable `id`, and a citation names that
 id — `doc:context-reuse §4`. Moving the file cannot break it. A document with no

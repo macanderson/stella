@@ -5,11 +5,11 @@
 //!
 //! Each hook action runs as `bash -c <command>` in the workspace root, with
 //! the event payload piped in as JSON on stdin, bounded by the action's
-//! clamped timeout. The spawn is `setsid`'d into its own process group, so a
-//! timeout — or a dropped future — kills the whole tree
-//! ([`crate::exec::GroupKillGuard`]), not just the `bash` that fronts it;
-//! `kill_on_drop` backs that up for the direct child and is what covers the
-//! non-unix build. A hung hook can stall its own timeout window, never the
+//! clamped timeout. The spawn is detached into its own group — a `setsid`
+//! session on unix, a Job Object on Windows (#3550) — so a timeout, or a
+//! dropped future, kills the whole tree ([`crate::exec::GroupKillGuard`]) and
+//! not just the `bash` that fronts it; `kill_on_drop` backs that up for the
+//! direct child. A hung hook can stall its own timeout window, never the
 //! session, and nothing it spawned outlives that window.
 
 use std::process::Stdio;
@@ -46,18 +46,15 @@ impl HookRunner for ShellHookRunner {
         // hook that backgrounds work (`some-watcher &`) leaves grandchildren
         // that `kill_on_drop` cannot reach, and a timed-out hook must not
         // leak them into the rest of the session.
-        #[cfg(unix)]
         crate::exec::detach_into_own_process_group(&mut command);
         let mut child = command.spawn().map_err(|e| HookExecError::SpawnFailed {
             command: action.command.clone(),
             message: e.to_string(),
         })?;
         // Capture the pid before the capped wait takes ownership.
-        #[cfg(unix)]
         let pid = child.id().unwrap_or(0) as i32;
         // Cancellation backstop: a dropped future (the session ending mid-hook)
-        // must not leave the setsid'd group running.
-        #[cfg(unix)]
+        // must not leave the detached group running.
         let mut guard = crate::exec::GroupKillGuard::arm(pid);
 
         // Feed the payload on a DETACHED task and let the timeout-bounded
@@ -91,12 +88,9 @@ impl HookRunner for ShellHookRunner {
             // in-flight wait future reap the direct child via
             // `kill_on_drop`.
             Err(_) => {
-                #[cfg(unix)]
-                {
-                    // Disarms and SIGKILLs the group in one step, guarding on
-                    // a real pid: kill(-0, …) would hit Stella's OWN group.
-                    guard.kill_now();
-                }
+                // Disarms and kills the group in one step, guarding on a real
+                // pid: kill(-0, …) would hit Stella's OWN group.
+                guard.kill_now();
                 Err(HookExecError::TimedOut {
                     command: action.command.clone(),
                     timeout_ms,
@@ -109,10 +103,7 @@ impl HookRunner for ShellHookRunner {
                 message: format!("could not collect hook output: {e}"),
             }),
             Ok(Ok(output)) => {
-                #[cfg(unix)]
-                {
-                    guard.disarm();
-                }
+                guard.disarm();
                 Ok(HookExecResult {
                     exit_code: output.status.code().unwrap_or(-1),
                     stdout: String::from_utf8_lossy(&output.stdout).to_string(),
