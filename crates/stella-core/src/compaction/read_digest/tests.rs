@@ -386,7 +386,8 @@ fn a_malformed_call_input_is_skipped_not_unwrapped() {
 }
 
 /// The digest survives the retention pass path too — pass 0 ages results
-/// regardless of the budget, and an aged result is just as lost to the model.
+/// before the budget passes engage, and an aged result is just as lost to the
+/// model.
 #[test]
 fn a_result_aged_by_the_retention_pass_is_digested() {
     let mut messages = transcript(&[
@@ -394,10 +395,12 @@ fn a_result_aged_by_the_retention_pass_is_digested() {
         ("c2", "src/mid.rs"),
         ("c3", "src/new.rs"),
     ]);
-    // A budget nothing breaches, so only the age-based pass can fire.
+    // Past half the budget, so pass 0 fires (#4381), but under the budget
+    // itself, so only the age-based pass can.
+    let budget = crate::estimator::estimate_conversation_tokens(&messages) * 3 / 2;
     compact_and_digest(
         &mut messages,
-        u64::MAX,
+        budget,
         Some(RetentionPolicy {
             keep_recent_steps: 1,
         }),

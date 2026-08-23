@@ -4,18 +4,19 @@
 //! outgrows its budget:
 //!
 //! 0. **Tool-result retention** (#1285): tool results older than a horizon of
-//!    tool-bearing steps are middle-out aged *regardless of the budget*. The
-//!    budget passes below fire only near the context ceiling — 96k–150k
+//!    tool-bearing steps are middle-out aged *before* the budget passes
+//!    engage. Those passes fire only near the context ceiling — 96k–150k
 //!    tokens — which on a long trial is the very end of exactly the runs they
 //!    should have been shaping from the middle (the measured cost: 4× more
 //!    input per step than a comparator that holds its standing context flat).
 //!    An old tool output has usually been consumed within a few steps; past
 //!    the horizon its head and tail carry the framing and the errors, and the
 //!    stub says how to get the rest back. Aging fires only once at least
-//!    `RETENTION_MIN_RECLAIM_CHARS` are reclaimable, so the prompt-cache
-//!    prefix is mutated only when the rewrite buys real bytes, not once per
-//!    step (the same discipline as the budget hysteresis below — invariant
-//!    7, #372).
+//!    `RETENTION_MIN_RECLAIM_CHARS` are reclaimable **and** the conversation
+//!    is at least `RETENTION_TRIGGER_BUDGET_DIVISOR`-th of the way into its
+//!    budget, so the prompt-cache prefix is mutated only when the rewrite
+//!    buys real bytes in a conversation big enough to need them (the same
+//!    discipline as the budget hysteresis below — invariant 7, #372, #4381).
 //!
 //! The budget passes:
 //!
@@ -272,6 +273,30 @@ pub(crate) fn elide_truncated_partial(content: &str) -> Option<String> {
 /// hysteresis — invariant 7).
 const RETENTION_MIN_RECLAIM_CHARS: usize = 12_000;
 
+/// How far into its budget a conversation must be before the retention pass
+/// is allowed to rewrite anything: `budget_tokens / this`, i.e. half.
+///
+/// The reclaim floor above prices the rewrite in *bytes reclaimed* and stops
+/// there, which prices only one side of the trade. The other side is the
+/// prompt-cache miss the rewrite causes, and that scales with the whole
+/// conversation behind the rewrite point — so the same 12 KB batch is a good
+/// trade near the ceiling and a bad one in a conversation using a quarter of
+/// its window. Measured (#4381, execution 242 of session
+/// `ses-1787465453163-60967`): a 163 014-token budget, context never above
+/// 42 K, five pass-0 firings saving 4–8 K tokens each and re-billing 137 K at
+/// the miss rate, with 90–97% cache hits on every step between them.
+///
+/// Half, because that is the widest band that still leaves pass 0 the job
+/// #1285 gave it. The budget passes trigger at the full budget and reclaim to
+/// seven-eighths of it, so gating retention anywhere near them would make it
+/// a duplicate of pass 3; gating it at half leaves the entire 50–100% band —
+/// which is where a long turn's standing context actually accumulates — for
+/// retention to shape, and charges nothing at all to a turn that never gets
+/// there. A conversation below half its budget has room for the bytes it is
+/// carrying, and paying a full prefix invalidation to take some of them back
+/// buys nothing it needs yet.
+const RETENTION_TRIGGER_BUDGET_DIVISOR: u64 = 2;
+
 /// The bytes one aged payload retains: both kept ends plus the elision
 /// marker. What aging reclaims from a payload is its length minus this.
 const AGE_RETAINED_CHARS: usize = 2 * AGE_KEEP_CHARS + AGE_ELISION_MARKER.len();
@@ -280,10 +305,16 @@ const AGE_RETAINED_CHARS: usize = 2 * AGE_KEEP_CHARS + AGE_ELISION_MARKER.len();
 /// recent tool-bearing steps keep their results verbatim.
 ///
 /// Results in older Tool messages are middle-out aged (`age_content`) once
-/// at least `RETENTION_MIN_RECLAIM_CHARS` of them are reclaimable —
-/// independent of the conversation's total size, which is what distinguishes
-/// this from the budget passes: they fire near the context ceiling, this
-/// shapes the standing context from the middle of a long turn.
+/// two conditions hold together: at least `RETENTION_MIN_RECLAIM_CHARS` of
+/// them are reclaimable, and the conversation already occupies at least
+/// `budget_tokens / RETENTION_TRIGGER_BUDGET_DIVISOR`.
+///
+/// The second condition is what relates this pass to the budget without
+/// making it one of the budget passes. They fire *at* the ceiling and reclaim
+/// down from it; this one starts working at half the budget, so it still
+/// shapes the standing context from the middle of a long turn — the whole
+/// point of #1285 — while a conversation nowhere near its ceiling keeps a
+/// byte-stable prefix and its prompt-cache hits (#4381).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetentionPolicy {
     /// Tool messages within this distance of the newest one are never touched
@@ -293,7 +324,9 @@ pub struct RetentionPolicy {
 }
 
 /// Pass 0: age every large tool result older than the policy's horizon,
-/// gated on [`RETENTION_MIN_RECLAIM_CHARS`]. Returns `(aged, aged_blocks,
+/// gated on [`RETENTION_MIN_RECLAIM_CHARS`] and on the conversation having
+/// reached [`RETENTION_TRIGGER_BUDGET_DIVISOR`]-th of `budget_tokens`.
+/// Returns `(aged, aged_blocks,
 /// rewrites, tokens_saved)`; block ids are captured before mutation so the
 /// report cites the identity the previous step's manifest recorded (§6.2),
 /// and each rewrite's replacement record is captured right after it (#1667) —
@@ -306,7 +339,15 @@ pub struct RetentionPolicy {
 fn age_stale_tool_results(
     messages: &mut [CompletionMessage],
     policy: RetentionPolicy,
+    current_tokens: u64,
+    budget_tokens: u64,
 ) -> (usize, Vec<String>, Vec<CompactionRewrite>, u64) {
+    // The budget precondition, before the transcript is walked at all: this
+    // runs on every step, and a conversation with room to spare must cost
+    // nothing here beyond the comparison.
+    if current_tokens <= budget_tokens / RETENTION_TRIGGER_BUDGET_DIVISOR {
+        return (0, Vec::new(), Vec::new(), 0);
+    }
     let tool_positions: Vec<usize> = messages
         .iter()
         .enumerate()
@@ -417,13 +458,13 @@ pub fn compact_measured(
     retention: Option<RetentionPolicy>,
 ) -> (u64, Option<CompactionReport>) {
     let before_tokens = estimate_conversation_tokens(messages);
-    // Pass 0: age-based retention, before — and independent of — the budget
-    // comparison. Its savings feed the comparison, so a retention pass that
-    // shrinks the transcript under budget also spares it the budget passes'
-    // deeper rewrites this step.
+    // Pass 0: age-based retention, before the budget comparison and on its own
+    // (lower) trigger. Its savings feed the comparison, so a retention pass
+    // that shrinks the transcript under budget also spares it the budget
+    // passes' deeper rewrites this step.
     let (retention_aged, retention_aged_blocks, retention_rewrites, retention_saved) =
         match retention {
-            Some(policy) => age_stale_tool_results(messages, policy),
+            Some(policy) => age_stale_tool_results(messages, policy, before_tokens, budget_tokens),
             None => (0, Vec::new(), Vec::new(), 0),
         };
     let current_tokens = before_tokens.saturating_sub(retention_saved);
