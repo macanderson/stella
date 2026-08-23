@@ -113,6 +113,12 @@ fn tab_list_spans(active: DeckTab) -> Vec<Span<'static>> {
 /// The SESSION tab's breadcrumb: `SESSION  ▸ plan · task 3 wire dedup digest
 /// · 2/6`, or `SESSION  ▸ no plan yet` (SPEC 5 item 2).
 ///
+/// At an opened lane it is the **agent path** instead — `SESSION  ▸ lead ▸
+/// sub:2 · running · ⌫ back` — because the plan is the lead's and a reader
+/// inside a lane needs to know where they are and how to get out more than
+/// they need the lead's step count. The path is [`WorkspaceModel::ancestry`],
+/// the same tree `⌫` walks.
+///
 /// The plan carries no revision number yet — the `r3` of the renderings is a
 /// plan-graph fact this deck does not fold (#4333) — so the strip names the
 /// plan by its state word when it is not simply running.
@@ -127,6 +133,25 @@ fn breadcrumb_spans(model: &WorkspaceModel, ui: &DeckUi) -> Vec<Span<'static>> {
         Span::raw("  "),
         Span::styled(format!("{} ", glyph::COLLAPSED), dim),
     ];
+    if let Some(lane) = model.agents.get(ui.focused).filter(|a| a.is_subagent()) {
+        let path = model.ancestry(ui.focused);
+        for (i, id) in path.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::styled(format!(" {} ", glyph::COLLAPSED), dim));
+            }
+            let last = i + 1 == path.len();
+            spans.push(Span::styled((*id).clone(), if last { text } else { muted }));
+        }
+        spans.push(Span::styled(" · ", dim));
+        spans.push(Span::styled(
+            lane.status.label().to_string(),
+            Style::new().fg(crate::theme::status_color(lane.status)),
+        ));
+        spans.push(Span::styled(" · ", dim));
+        spans.push(Span::styled("⌫", muted));
+        spans.push(Span::styled(" back", dim));
+        return spans;
+    }
     let Some(plan) = plan_of(model, ui).filter(|p| !p.is_empty()) else {
         spans.push(Span::styled("no plan yet", dim));
         return spans;
@@ -169,21 +194,31 @@ pub fn render_hint_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mu
     let sep = Span::styled(" · ", dim);
 
     let pending = model.queue.pending();
-    let running = model
-        .agents
-        .get(ui.focused)
-        .is_some_and(|a| a.status == crate::AgentStatus::Running);
+    let focused = model.agents.get(ui.focused);
+    let running = focused.is_some_and(|a| a.status == crate::AgentStatus::Running);
+    let lane = focused.filter(|a| a.is_subagent());
 
     let mut spans = vec![Span::raw(" "), Span::styled("⏎", key)];
+    // At an opened lane `⏎` steers that lane (`dispatch::route`) and the
+    // queue is the lead's, so the hint names the lane rather than promising
+    // a queue the key does not touch.
     spans.push(Span::styled(
-        match (pending, ui.dispatch_held) {
-            (0, _) => " queue".to_string(),
-            (n, true) => format!(" queue · {n} held"),
-            (n, false) => format!(" queue · {n} queued"),
+        match (lane, pending, ui.dispatch_held) {
+            (Some(l), _, _) if l.status.is_active() || l.status == crate::AgentStatus::Paused => {
+                format!(" steer {}", l.meta.id)
+            }
+            (Some(l), _, _) => format!(" ask the lead about {}", l.meta.id),
+            (None, 0, _) => " queue".to_string(),
+            (None, n, true) => format!(" queue · {n} held"),
+            (None, n, false) => format!(" queue · {n} queued"),
         },
         dim,
     ));
-    if running {
+    if lane.is_some() {
+        spans.push(sep.clone());
+        spans.push(Span::styled("⌫", key));
+        spans.push(Span::styled(" back", dim));
+    } else if running {
         spans.push(sep.clone());
         spans.push(Span::styled("esc", key));
         spans.push(Span::styled(" steer", dim));
@@ -282,6 +317,55 @@ mod tests {
         assert!(row.contains("task 3 wire dedup digest"), "{row}");
         assert!(row.contains("2/3"), "{row}");
         assert!(row.trim_end().ends_with("stella*"), "{row}");
+    }
+
+    /// At an opened lane the tab row is the agent path — where the reader is
+    /// and the key out — and the hint row names the lane `⏎` steers.
+    #[test]
+    fn at_a_lane_the_tab_row_is_the_agent_path() {
+        let mut model = planned_model();
+        model.apply_inbound(&Inbound::Register(
+            AgentMeta::new("sub:2", "task 2", 0)
+                .with_role("subagent")
+                .with_parent("lead"),
+        ));
+        model.apply_inbound(&Inbound::Status {
+            agent: "sub:2".into(),
+            status: crate::AgentStatus::Running,
+        });
+        let mut ui = DeckUi {
+            tab: DeckTab::Session,
+            ..Default::default()
+        };
+        ui.focus_agent(1);
+        let area = Rect::new(0, 0, 100, 1);
+        let mut buf = Buffer::empty(area);
+        render_tab_row(&model, &ui, area, &mut buf);
+        let row = text(&buf);
+        assert!(
+            row.contains("SESSION  ▸ lead ▸ sub:2 · running · ⌫ back"),
+            "{row}"
+        );
+        assert!(
+            !row.contains("plan"),
+            "the lead's plan is not this lane's: {row}"
+        );
+
+        let mut buf = Buffer::empty(area);
+        render_hint_row(&model, &ui, area, &mut buf);
+        let hint = text(&buf);
+        assert!(hint.contains("⏎ steer sub:2"), "{hint}");
+        assert!(hint.contains("⌫ back"), "{hint}");
+        assert!(!hint.contains("esc steer"), "{hint}");
+
+        model.apply_inbound(&Inbound::Status {
+            agent: "sub:2".into(),
+            status: crate::AgentStatus::Done,
+        });
+        let mut buf = Buffer::empty(area);
+        render_hint_row(&model, &ui, area, &mut buf);
+        let hint = text(&buf);
+        assert!(hint.contains("⏎ ask the lead about sub:2"), "{hint}");
     }
 
     /// Every other tab draws the list, active tab padded, wordmark right.
