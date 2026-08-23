@@ -4,7 +4,7 @@ import { HeroTerminal } from "@/components/command-deck";
 import { AnimatedLockup } from "@/components/animated-lockup";
 import { Mark } from "@/components/brand";
 import { InstallBlock } from "@/components/install-block";
-import { PROVIDER_CATALOG } from "@/components/provider-cards";
+import { PROVIDER_CATALOG } from "@/components/provider-catalog";
 import { REPO_URL, SITE_URL } from "@/lib/site";
 
 // The root layout's metadata is titled/described for the docs section it

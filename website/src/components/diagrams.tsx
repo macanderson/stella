@@ -1,3 +1,4 @@
+import { DIAGRAM_DESCRIPTIONS } from "@/components/diagram-descriptions";
 /**
  * Inline-SVG diagrams for the docs.
  *
@@ -201,7 +202,7 @@ export function HeroFlowDiagram() {
       className="sdg"
       viewBox="0 0 720 190"
       role="img"
-      aria-label="Your prompt flows through stella to the provider you chose; telemetry stays on your machine."
+      aria-label={DIAGRAM_DESCRIPTIONS.HeroFlowDiagram}
     >
       <title>How Stella fits together</title>
       <Defs />
@@ -223,7 +224,7 @@ export function RecallLoopDiagram() {
       className="sdg"
       viewBox="0 0 720 200"
       role="img"
-      aria-label="Memories and the code graph feed the recall block, the model works, citations and reflections feed back into the stores."
+      aria-label={DIAGRAM_DESCRIPTIONS.RecallLoopDiagram}
     >
       <title>The context loop</title>
       <Defs />
@@ -255,7 +256,7 @@ export function FleetFanoutDiagram() {
       className="sdg"
       viewBox="0 0 720 180"
       role="img"
-      aria-label="A pinned base commit fans out to isolated worktree branches; finished branches converge on your review."
+      aria-label={DIAGRAM_DESCRIPTIONS.FleetFanoutDiagram}
     >
       <title>Fleet fan-out over git worktrees</title>
       <Defs />
@@ -297,7 +298,7 @@ export function QuickstartDiagram() {
       className="sdg"
       viewBox="0 0 720 132"
       role="img"
-      aria-label="Four steps: install, authenticate, init, run."
+      aria-label={DIAGRAM_DESCRIPTIONS.QuickstartDiagram}
     >
       <title>From empty shell to first change</title>
       <Defs />
@@ -335,7 +336,7 @@ export function CredentialChainDiagram() {
       className="sdg"
       viewBox="0 0 720 228"
       role="img"
-      aria-label="Five credential sources tried in order — flag, environment variable, settings.json, credentials.toml, interactive prompt — and the first one that resolves is used."
+      aria-label={DIAGRAM_DESCRIPTIONS.CredentialChainDiagram}
     >
       <title>The credential chain</title>
       <Defs />
@@ -382,7 +383,7 @@ export function SettingsCascadeDiagram() {
       className="sdg"
       viewBox="0 0 720 216"
       role="img"
-      aria-label="Org-managed, project, and user settings merge per key into the effective settings; the org layer is a ceiling that lower scopes can narrow but never re-open."
+      aria-label={DIAGRAM_DESCRIPTIONS.SettingsCascadeDiagram}
     >
       <title>How settings scopes merge</title>
       <Defs />
@@ -414,7 +415,7 @@ export function PermissionGateDiagram() {
       className="sdg"
       viewBox="0 0 720 200"
       role="img"
-      aria-label="A tool call passes through the PreToolUse hook and the permission rules; allowed calls execute and fire PostToolUse, denied calls come back to the model as a refusal."
+      aria-label={DIAGRAM_DESCRIPTIONS.PermissionGateDiagram}
     >
       <title>How a tool call is gated</title>
       <Defs />
@@ -462,7 +463,7 @@ export function EngineOwnershipDiagram() {
       className="sdg"
       viewBox="0 0 720 232"
       role="img"
-      aria-label="Your app keeps keys, tools, and data; the engine keeps the loop, compaction, and retries. Only requests and results cross between them."
+      aria-label={DIAGRAM_DESCRIPTIONS.EngineOwnershipDiagram}
     >
       <title>What the engine owns, and what never leaves your app</title>
       <Defs />
@@ -524,7 +525,7 @@ export function EngineTestHarnessDiagram() {
       className="sdg"
       viewBox="0 0 720 196"
       role="img"
-      aria-label="One host drives either your real gateway or a scripted reply function; both exercise the identical agent loop, but only one of them spends money."
+      aria-label={DIAGRAM_DESCRIPTIONS.EngineTestHarnessDiagram}
     >
       <title>The same host, with and without a model</title>
       <Defs />
@@ -555,7 +556,7 @@ export function EngineGateDiagram() {
       className="sdg"
       viewBox="0 0 720 244"
       role="img"
-      aria-label="One committed task set runs through both Stella and Claude Code; the comparison produces a blocking loop-correctness verdict and an advisory quality delta."
+      aria-label={DIAGRAM_DESCRIPTIONS.EngineGateDiagram}
     >
       <title>Two engines, one task set, two kinds of exit</title>
       <Defs />
@@ -595,7 +596,7 @@ export function LoopVerdictDiagram() {
       className="sdg"
       viewBox="0 0 720 224"
       role="img"
-      aria-label="Four verdicts checked in order: solved, silent death, zero work, ran but unsolved. The middle two — a turn that did nothing — are the ones that fail the gate."
+      aria-label={DIAGRAM_DESCRIPTIONS.LoopVerdictDiagram}
     >
       <title>The loop-correctness verdict ladder</title>
       <Defs />
@@ -644,7 +645,7 @@ export function TelemetryFlowDiagram() {
       className="sdg"
       viewBox="0 0 720 196"
       role="img"
-      aria-label="Each session turn writes a receipt into .stella/ on your disk, which stella stats and the observatory read back. No arrow leaves the machine."
+      aria-label={DIAGRAM_DESCRIPTIONS.TelemetryFlowDiagram}
     >
       <title>Where telemetry goes</title>
       <Defs />
@@ -678,7 +679,7 @@ export function McpTopologyDiagram() {
       className="sdg"
       viewBox="0 0 720 252"
       role="img"
-      aria-label="At session start Stella connects to each configured MCP server — stdio servers as local subprocesses, http servers as remote endpoints — and merges their tools into one namespaced tool set. A server that fails to connect within ten seconds is skipped, and the session continues without its tools."
+      aria-label={DIAGRAM_DESCRIPTIONS.McpTopologyDiagram}
     >
       <title>How MCP servers reach the agent</title>
       <Defs />
@@ -755,7 +756,7 @@ export function HookLifecycleDiagram() {
       className="sdg"
       viewBox="0 0 720 224"
       role="img"
-      aria-label="Three hooks fire across a turn: SessionStart, whose stdout becomes context; PreToolUse, whose non-zero exit blocks the tool; and PostToolUse, whose exit status is ignored. Only PreToolUse can stop anything."
+      aria-label={DIAGRAM_DESCRIPTIONS.HookLifecycleDiagram}
     >
       <title>The three hook points on a turn</title>
       <Defs />
@@ -800,7 +801,7 @@ export function SingleThreadDiagram() {
       className="sdg"
       viewBox="0 0 720 226"
       role="img"
-      aria-label="A swarm is a coordinator and four agents joined by many edges, every one of them a handoff that summarizes. Stella is one ordered loop — plan, act, observe, compact — with a single return edge and one transcript."
+      aria-label={DIAGRAM_DESCRIPTIONS.SingleThreadDiagram}
     >
       <title>A swarm, and one deterministic loop, at the same scale</title>
       <Defs />
@@ -883,7 +884,7 @@ export function EventContractDiagram() {
       className="sdg"
       viewBox="0 0 720 232"
       role="img"
-      aria-label="Each line is parsed alone. An unrecognized event type is inert — skip it and keep reading. A recognized type whose body does not fit is a real error and must fail loudly."
+      aria-label={DIAGRAM_DESCRIPTIONS.EventContractDiagram}
     >
       <title>The two rules a conforming client follows</title>
       <Defs />
@@ -932,7 +933,7 @@ export function BudgetGuardDiagram() {
       className="sdg"
       viewBox="0 0 720 220"
       role="img"
-      aria-label="A plan meets the scope review first, which stops it before the first edit at zero cost. Steps that get past it are metered between steps and stages, never inside a tool call, so a spend-limit abort never leaves a half-applied edit."
+      aria-label={DIAGRAM_DESCRIPTIONS.BudgetGuardDiagram}
     >
       <title>The two places a run is stopped</title>
       <Defs />
@@ -982,7 +983,7 @@ export function CostChainDiagram() {
       className="sdg"
       viewBox="0 0 720 246"
       role="img"
-      aria-label="Five commands, each narrowing the question: stats for which model and how much, observe for which run, inspect for which call, inspect with a step for what it was sent, and diff for what changed since the previous call."
+      aria-label={DIAGRAM_DESCRIPTIONS.CostChainDiagram}
     >
       <title>From a dollar figure down to the exact bytes</title>
       <Defs />
@@ -1035,7 +1036,7 @@ export function ClaimLockDiagram() {
       className="sdg"
       viewBox="0 0 720 218"
       role="img"
-      aria-label="Two tasks declaring the same path meet a shared claim table. The first holds the path for its attempt and runs; the second fails its dispatch by name, in under a second, with the rival identified."
+      aria-label={DIAGRAM_DESCRIPTIONS.ClaimLockDiagram}
     >
       <title>Claims: one shared tree, one lock table</title>
       <Defs />
@@ -1087,7 +1088,7 @@ export function EngineSequenceDiagram() {
       className="sdg"
       viewBox="0 0 720 346"
       role="img"
-      aria-label="Your app starts a turn. The engine asks it to run a model call and waits for the result, then asks it to run a tool and waits again, then reports the turn complete. Every outbound call is made by your app; the engine only asks."
+      aria-label={DIAGRAM_DESCRIPTIONS.EngineSequenceDiagram}
     >
       <title>One turn, as a sequence</title>
       <Defs />
@@ -1158,7 +1159,7 @@ export function EnginePathsDiagram() {
       className="sdg"
       viewBox="0 0 720 382"
       role="img"
-      aria-label="Six ways a session starts. stella, stella run, stella goal and stella fleet can bind an installed wrapper plugin, which contributes context before the turn and gathers evidence after it before calling the engine's turn loop. stella --plain and stella-serve take no wrapper: the plain REPL drives run_turn, and stella-serve drives run_step itself. Every path ends in the same step loop."
+      aria-label={DIAGRAM_DESCRIPTIONS.EnginePathsDiagram}
     >
       <title>Six doors, one step loop underneath</title>
       <Defs />
