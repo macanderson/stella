@@ -558,21 +558,7 @@ pub(crate) fn session_detail(
             }))
         },
     )?);
-    out["agents"] = Value::Array(session_group(
-        conn,
-        id,
-        "SELECT u.agent, count(*), max(u.ts)
-         FROM agent_uses u
-         WHERE u.execution_id IN (SELECT id FROM executions WHERE session_id = ?1)
-         GROUP BY u.agent ORDER BY count(*) DESC",
-        |r| {
-            Ok(json!({
-                "agent": r.get::<_, String>(0)?,
-                "uses": r.get::<_, i64>(1)?,
-                "last_used": r.get::<_, String>(2)?,
-            }))
-        },
-    )?);
+    out["agents"] = session_agents(conn, id)?;
     out["memory"] = Value::Array(session_group(
         conn,
         id,
@@ -905,6 +891,71 @@ fn fold_turn_extras(conn: &Connection, id: &str, turns: &mut [Value]) -> Result<
         turn["reflection"] = reflections.get(&execution).cloned().unwrap_or(Value::Null);
     }
     Ok(())
+}
+
+/// The AGENTS panel for one session: installed agent definitions counted by
+/// name, and every `task` delegation collapsed into one group (#3822).
+///
+/// Both writers share `agent_uses.agent`, and they mint it from different name
+/// spaces: an installed definition (`reviewer`) recurs and is worth counting,
+/// while a delegation's id is slugged from the model's own description and is
+/// unique by construction. Grouped by name alone, a session that leaned on one
+/// agent eight times and a session that delegated eight research questions
+/// rendered as the same shape — and the panel got less useful the more the
+/// agent delegated.
+///
+/// A delegation group therefore reports `agent: null` and a `distinct` count
+/// of the ids behind it: the ids are the model's prose, and eight of them
+/// listed as eight agents is the noise this fixes.
+///
+/// `kind` is a v30 column, so a store an older binary wrote has no way to
+/// answer the question. That falls back to the ungrouped shape with
+/// `kind: null` — *unknown*, which is the honest reading and keeps the panel
+/// populated. `session_group`'s degrade-to-empty would blank a panel that
+/// works today.
+fn session_agents(conn: &Connection, id: &str) -> Result<Value, DbError> {
+    let discriminated = session_group(
+        conn,
+        id,
+        "SELECT u.kind,
+                CASE WHEN u.kind = 'delegation' THEN NULL ELSE u.agent END AS name,
+                count(*), count(DISTINCT u.agent), max(u.ts)
+         FROM agent_uses u
+         WHERE u.execution_id IN (SELECT id FROM executions WHERE session_id = ?1)
+         GROUP BY u.kind, name ORDER BY count(*) DESC",
+        |r| {
+            Ok(json!({
+                "kind": r.get::<_, String>(0)?,
+                "agent": r.get::<_, Option<String>>(1)?,
+                "uses": r.get::<_, i64>(2)?,
+                "distinct": r.get::<_, i64>(3)?,
+                "last_used": r.get::<_, String>(4)?,
+            }))
+        },
+    )?;
+    if !discriminated.is_empty() {
+        return Ok(Value::Array(discriminated));
+    }
+    // Empty means either "no agent ran" or "this store predates the column",
+    // and the pre-v30 shape answers both correctly: no rows, or the rows with
+    // their kind unknown.
+    Ok(Value::Array(session_group(
+        conn,
+        id,
+        "SELECT u.agent, count(*), max(u.ts)
+         FROM agent_uses u
+         WHERE u.execution_id IN (SELECT id FROM executions WHERE session_id = ?1)
+         GROUP BY u.agent ORDER BY count(*) DESC",
+        |r| {
+            Ok(json!({
+                "kind": Value::Null,
+                "agent": r.get::<_, String>(0)?,
+                "uses": r.get::<_, i64>(1)?,
+                "distinct": 1,
+                "last_used": r.get::<_, String>(2)?,
+            }))
+        },
+    )?))
 }
 
 /// Run one session-bound query collecting every row; a missing table or

@@ -164,6 +164,23 @@ struct Layout {
     prefix: PathBuf,
 }
 
+/// One candidate's checkout, plus the two facts about the repository that are
+/// only knowable at the moment it was cut.
+///
+/// Both are baselines rather than descriptions of what anything *should* be:
+/// they say what this candidate was handed, so adoption can ask what the
+/// candidate itself changed. See [`ref_guard`] and [`modes`].
+#[derive(Debug)]
+struct Minted {
+    worktree: Worktree,
+    /// Every shared ref of the repository and its value. Compared at adoption
+    /// against the namespace as it stands then.
+    refs: ref_guard::RefSnapshot,
+    /// The permission bits `git worktree add` could not reproduce, stamped
+    /// onto the checkout so the candidate sees the tree the user has.
+    modes: modes::ModeRecord,
+}
+
 /// One session's candidate substrate: the repository it snapshots, the
 /// dispatcher it borrows turns from, and the handles it has minted.
 pub(crate) struct SessionCandidateWorkspaces {
@@ -194,10 +211,11 @@ pub(crate) struct SessionCandidateWorkspaces {
     /// sessions install this substrate and never fan out — `session_host`
     /// builds one on every `--pipeline` run.
     layout: tokio::sync::OnceCell<Layout>,
-    /// Handle → the checkout it addresses. The substrate's own bookkeeping,
-    /// deliberately not on [`CandidateWorkspace`]: a branch name is something
-    /// a plugin cannot act on, so it has no business holding it.
-    minted: Mutex<HashMap<CandidateHandle, Worktree>>,
+    /// Handle → the checkout it addresses and what the repository looked like
+    /// when it was minted. The substrate's own bookkeeping, deliberately not
+    /// on [`CandidateWorkspace`]: a branch name is something a plugin cannot
+    /// act on, so it has no business holding it.
+    minted: Mutex<HashMap<CandidateHandle, Minted>>,
     /// Monotonic, so two fan-outs in one run cannot mint the same handle.
     next: AtomicU32,
 }
@@ -283,7 +301,30 @@ impl SessionCandidateWorkspaces {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(handle)
-            .map(|worktree| worktree.path.clone())
+            .map(|minted| minted.worktree.path.clone())
+            .ok_or_else(|| CandidateFanoutError::NotAdopted {
+                handle: handle.clone(),
+                reason: "this host minted no workspace under that handle".to_string(),
+            })
+    }
+
+    /// The checkout, the ref namespace and the modes recorded when `handle`
+    /// was minted — everything adoption compares the candidate against.
+    fn baseline(
+        &self,
+        handle: &CandidateHandle,
+    ) -> Result<(Worktree, ref_guard::RefSnapshot, modes::ModeRecord), CandidateFanoutError> {
+        self.minted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(handle)
+            .map(|minted| {
+                (
+                    minted.worktree.clone(),
+                    minted.refs.clone(),
+                    minted.modes.clone(),
+                )
+            })
             .ok_or_else(|| CandidateFanoutError::NotAdopted {
                 handle: handle.clone(),
                 reason: "this host minted no workspace under that handle".to_string(),
@@ -313,6 +354,38 @@ impl SessionCandidateWorkspaces {
                 out.stderr.trim()
             ))
         }
+    }
+
+    /// Every ref of the repository at `dir` and its object id, one per line.
+    async fn for_each_ref(&self, dir: &Path) -> Result<ref_guard::RefSnapshot, String> {
+        self.git(dir, &["for-each-ref", "--format=%(objectname) %(refname)"])
+            .await
+            .map(|output| ref_guard::RefSnapshot::parse(&output))
+    }
+
+    /// Is `maybe_ancestor` reachable from `descendant`?
+    ///
+    /// `merge-base --is-ancestor` answers by exit status, so this cannot go
+    /// through [`Self::git`], which reads a non-zero exit as a failure. A git
+    /// invocation that failed for any other reason answers `false`, which is
+    /// the direction that never invents an escape ([`ref_guard`]'s contract).
+    async fn is_ancestor(&self, dir: &Path, maybe_ancestor: &str, descendant: &str) -> bool {
+        SystemGitCli
+            .run(
+                dir,
+                &["merge-base", "--is-ancestor", maybe_ancestor, descendant],
+            )
+            .await
+            .is_ok_and(|out| out.success)
+    }
+
+    /// The tracked paths of the tree at `dir`, repository-relative.
+    async fn tracked_paths(&self, dir: &Path) -> Vec<String> {
+        self.git(dir, &["ls-files", "-z"])
+            .await
+            .as_deref()
+            .map(modes::nul_separated)
+            .unwrap_or_default()
     }
 
     /// Stage every unignored change as intent-to-add, so `git diff` sees files
@@ -346,7 +419,8 @@ impl SessionCandidateWorkspaces {
 #[async_trait]
 impl CandidateWorkspaces for SessionCandidateWorkspaces {
     async fn create(&self, label: &str) -> Result<CandidateWorkspace, CandidateFanoutError> {
-        let prefix = self.layout().await?.prefix.clone();
+        let layout = self.layout().await?.clone();
+        let prefix = layout.prefix.clone();
         let ordinal = self.next.fetch_add(1, Ordering::Relaxed);
         // The handle a plugin will spell back, and deliberately not the
         // directory name: the slug carries a hash of a run scope this host
@@ -374,10 +448,34 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
         let root = worktree.path.join(&prefix);
         let root = root.canonicalize().unwrap_or(root);
         let root = root.to_string_lossy().into_owned();
+
+        // The two baselines, read now because neither can be reconstructed
+        // later: what the shared ref namespace held before this candidate
+        // could touch it, and the permission bits `git worktree add` did not
+        // reproduce in the checkout it just made.
+        //
+        // Both are best-effort. A repository whose refs this host could not
+        // read audits nothing at adoption rather than refusing a candidate on
+        // the reading, and a mode it could not stamp is one the patch will
+        // carry as far as git can.
+        let refs = self.for_each_ref(&layout.top).await.unwrap_or_default();
+        let modes = modes::stamp_unrepresentable(
+            &layout.top,
+            &worktree.path,
+            &self.tracked_paths(&layout.top).await,
+        );
+
         self.minted
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(handle.clone(), worktree);
+            .insert(
+                handle.clone(),
+                Minted {
+                    worktree,
+                    refs,
+                    modes,
+                },
+            );
         Ok(CandidateWorkspace { handle, root })
     }
 
@@ -487,14 +585,32 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
             handle: workspace.handle.clone(),
             reason,
         };
-        let checkout = self.checkout(&workspace.handle)?;
+        let (worktree, refs_at_create, modes_at_create) = self.baseline(&workspace.handle)?;
+        let checkout = worktree.path;
         let top = self.layout().await?.top.clone();
+
+        // Before anything is written: a candidate that reached outside its own
+        // tree into the shared ref namespace does not get to land, however
+        // good its patch is.
+        let escaped = ref_guard::audit(self, &top, &refs_at_create, &worktree.branch).await;
+        if !escaped.is_empty() {
+            return Err(fail(ref_guard::refusal(&escaped)));
+        }
+
         // Re-staged rather than trusted from `work`: a plugin may have run its
         // own tests in this workspace through `run_test`, and anything that
         // produced an unignored file since then is part of what it chose.
         self.stage_intent(&checkout).await.map_err(&fail)?;
         let patch = self.patch(&checkout).await.map_err(&fail)?;
+        // The candidate's own view of the tree, and which of its directories
+        // the apply is about to create — both read before the patch lands,
+        // because afterwards neither question can be asked.
+        let tracked = self.tracked_paths(&checkout).await;
+        let created_dirs = modes::directories_adoption_will_create(&top, &tracked);
         if patch.trim().is_empty() {
+            // A pure `chmod` is not a diff — git records `100644` and `100755`
+            // and nothing else — so an empty patch still has modes to deliver.
+            modes::replay_changed(&checkout, &top, &tracked, &modes_at_create, &[]);
             return Ok(());
         }
 
@@ -527,11 +643,17 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
         )
         .await
         .map_err(&fail)?;
+
+        // The half the patch could not carry, delivered from the candidate's
+        // own tree now that the bytes are down. Best-effort by contract: the
+        // apply already happened and cannot be un-happened, so a `chmod` that
+        // fails is a partially faithful delivery, never an absent one.
+        modes::replay_changed(&checkout, &top, &tracked, &modes_at_create, &created_dirs);
         Ok(())
     }
 
     async fn remove(&self, workspace: &CandidateWorkspace) -> Result<(), CandidateFanoutError> {
-        let Some(worktree) = self
+        let Some(minted) = self
             .minted
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -544,7 +666,7 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
             return Ok(());
         };
         self.worktrees
-            .discard(&worktree)
+            .discard(&minted.worktree)
             .await
             .map_err(|error| CandidateFanoutError::NotRemoved {
                 handle: workspace.handle.clone(),
@@ -578,6 +700,9 @@ fn numstat_totals(numstat: &str) -> (u32, u32) {
     }
     (files, lines)
 }
+
+mod modes;
+mod ref_guard;
 
 #[cfg(test)]
 mod tests;

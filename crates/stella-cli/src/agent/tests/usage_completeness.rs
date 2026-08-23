@@ -123,10 +123,14 @@ fn cancelled_closeout_is_incomplete_even_when_every_write_succeeds() {
         true,
     ));
     assert!(!store.execution_usage_complete(execution_id).unwrap());
-    assert!(
-        store
-            .execution_rollup(execution_id, root.path())
-            .unwrap()
-            .is_none()
-    );
+    // The flag is what keeps a cancelled turn out of the enterprise export
+    // (`pending_enterprise_export_page` gates on it). The *rollup* stopped
+    // being that gate in #4171: it arrives carrying the flag, because a
+    // project total that reads a cancelled turn's real spend as zero is worse
+    // than one that reads it as a floor.
+    let rollup = store
+        .execution_rollup(execution_id, root.path())
+        .unwrap()
+        .expect("a cancelled turn rolls up as a floor");
+    assert!(!rollup.usage_complete, "and is marked as one");
 }

@@ -40,7 +40,8 @@
 //!
 //! The second is this: the registry already builds one context per call and
 //! already owns the ledger, so a clone rides along beside the bus with no new
-//! host step at all, and [`ToolCtx::record_agent_use`] serves any future tool.
+//! host step at all, and [`ToolCtx::record_agent_delegation`] serves any
+//! future tool.
 //! Attribution is not the contract-gated vocabulary `emit` is — a row names
 //! its own recorder and is drained per execution either way — so it needs no
 //! allowlist. A [`ToolCtx::bare`] context has no ledger and records nothing,
@@ -441,15 +442,22 @@ impl ToolCtx {
         true
     }
 
-    /// Record one agent invocation this call is responsible for, against the
+    /// Record one **delegation** this call is responsible for, against the
     /// session ledger the persistence layer drains per execution.
+    ///
+    /// `agent_id` is the child id the caller minted for this delegation, which
+    /// is a different name space from an installed definition's name — see
+    /// [`crate::agent_use`]. There is no version parameter for the same
+    /// reason: a delegated child is minted here rather than loaded from a
+    /// versioned file on disk, so the recorded 1 is the ledger's convention
+    /// for an un-versioned agent and never a pin the caller chose.
     ///
     /// Returns whether it was recorded — `false` only for a context with no
     /// ledger ([`Self::bare`]), the same reported-drop shape as
     /// [`Self::emit`]. A tool that mints a child agent should call this
     /// **before** the dispatch it describes, so a turn cancelled mid-child
     /// still carries the evidence that the child existed.
-    pub fn record_agent_use(&self, agent: &str, version: u32, reason: &str) -> bool {
+    pub fn record_agent_delegation(&self, agent_id: &str, reason: &str) -> bool {
         let Some(ledger) = &self.agent_uses else {
             return false;
         };
@@ -457,9 +465,10 @@ impl ToolCtx {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .record(crate::agent_use::AgentUseEvent {
-                agent: agent.to_string(),
-                version,
+                agent: agent_id.to_string(),
+                version: 1,
                 reason: reason.to_string(),
+                kind: crate::agent_use::AgentUseKind::Delegation,
             });
         true
     }

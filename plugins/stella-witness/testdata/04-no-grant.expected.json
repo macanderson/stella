@@ -3,8 +3,7 @@
   "body": {
     "protocol_version": 1,
     "evidence": {
-      "flip": "unobservable",
-      "measurements": {}
+      "flip": "unobservable"
     }
   }
 }

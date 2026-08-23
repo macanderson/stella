@@ -6,7 +6,8 @@
       "flip": "not-attempted",
       "measurements": {
         "met": 1
-      }
+      },
+      "detail": "Verifier feedback: the change fixes the loop and a regression test now covers it"
     }
   }
 }

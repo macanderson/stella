@@ -6,7 +6,8 @@
       "flip": "not-attempted",
       "measurements": {
         "met": 0
-      }
+      },
+      "detail": "Verifier feedback: add a regression test for the retry budget"
     }
   }
 }

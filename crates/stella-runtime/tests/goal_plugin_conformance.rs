@@ -76,7 +76,7 @@ fn argv(manifest: &PluginManifest) -> Vec<String> {
         .expect("a plugin the host spawns declares [runtime]")
         .argv
         .iter()
-        .map(|arg| arg.replace("${plugin_dir}", &dir))
+        .map(|arg| stella_plugin::expand_plugin_dir(arg, Path::new(&dir)))
         .collect()
 }
 
@@ -158,6 +158,8 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
             &name,
             &golden_path,
             &WrapperResponse::BeforeTurn(response.clone()),
+            // Nothing in a before_turn contribution is wall clock.
+            |_| {},
         );
 
         assert!(
@@ -289,10 +291,14 @@ fn the_shipped_manifest_declares_both_points_and_the_arbiter_grant_they_need() {
     assert_eq!(manifest.loop_grant.calls, vec![HostCall::ChildTurn]);
     assert_eq!(
         manifest.loop_grant.max_calls,
+        Some(1),
+        "main.py asks the host for exactly one thing, once, every after_turn"
+    );
+    assert_eq!(
+        manifest.loop_grant.max_child_turns,
         Some(8),
-        "main.py asks once per round, but ChildTurns spends this number as a whole-run \
-         ceiling (not a per-point one), so the honest ask mirrors max_holds + 1 rounds — \
-         see plugin.toml's header"
+        "ChildTurns never resets between rounds, so an arbiter asking once in each of \
+         max_holds + 1 rounds needs that many for the whole run (#3839)"
     );
 
     let requirements = manifest

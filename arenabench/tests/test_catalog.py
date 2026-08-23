@@ -119,7 +119,7 @@ class TestLiveSources:
         whose rows vanished is exactly the one a reader would not think to
         check.
         """
-        for module in sorted((stella_checkout / cat._CATALOG_REL).glob("*.rs")):
+        for module in sorted((stella_checkout / sut.CATALOG_SEED_REL).glob("*.rs")):
             source = module.read_text(encoding="utf-8")
             assert cat.parse_catalog(source), (
                 f"{module.name} parsed to zero entries — the parser in "
@@ -129,7 +129,7 @@ class TestLiveSources:
     def test_the_real_posture_yields_benchmarked_slugs(
         self, stella_checkout: Path
     ) -> None:
-        source = (stella_checkout / cat._POSTURE_REL).read_text(encoding="utf-8")
+        source = (stella_checkout / sut.POSTURE_REL).read_text(encoding="utf-8")
         benchmarked = cat.parse_benchmarked_slugs(source)
         assert "claude-sonnet-5" in benchmarked
 

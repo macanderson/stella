@@ -122,6 +122,18 @@ struct Usage {
     avg_first_step: Option<f64>,
     failures: u64,
     fail_rate: f64,
+    /// Whether the census found this name in the schema list the measured runs
+    /// advertised, as opposed to only in their tool traffic.
+    ///
+    /// Deserialized without a `serde(default)` on purpose. Every claim below
+    /// that a tool *was advertised* used to be inferred from the row merely
+    /// existing, while the census's own direct answer sat one field away
+    /// unread (#4420) — the same defect class as #3846, where a page said no
+    /// measurement existed and the fixture it was generated from held one. A
+    /// default would restore exactly that: a fixture missing the field would
+    /// silently read `false` and the pages would go on stating advertisement
+    /// as fact. A fixture that cannot answer must fail to parse instead.
+    in_schema: bool,
 }
 
 fn load_fixture() -> Fixture {
@@ -393,6 +405,28 @@ impl UsageEvidence<'_> {
             UsageEvidence::Unmeasured => None,
         }
     }
+
+    /// Whether the census recorded this tool in the schema list the measured
+    /// runs advertised, or `None` when it holds no row to answer from.
+    ///
+    /// Read off [`Usage::in_schema`] rather than inferred from the row
+    /// existing (#4420). The two answers differ: a row with `in_schema:
+    /// false` is a name the census saw *on the wire* without finding it among
+    /// the schemas those runs offered, which is a fact about the run, not
+    /// about the catalog. `None` is the third state and is genuinely an
+    /// inference from absence — no row means the census has nothing to say
+    /// either way, and the prose that consumes it says so.
+    ///
+    /// A former-name set answers `true` if any of its rows does: the tool was
+    /// offered under one of the names it has answered to, which is what the
+    /// sentence on the page claims.
+    fn advertised(&self) -> Option<bool> {
+        match self {
+            UsageEvidence::Current(usage) => Some(usage.in_schema),
+            UsageEvidence::Former(rows) => Some(rows.iter().any(|(_, u)| u.in_schema)),
+            UsageEvidence::Unmeasured => None,
+        }
+    }
 }
 
 /// The census rows for `name`, falling back to the names it dispatched under
@@ -526,9 +560,23 @@ fn usage_comment(name: &str, fixture: &Fixture) -> String {
         UsageEvidence::Current(usage) => usage,
     };
     if usage.calls == 0 {
+        // The advertisement half is the census's `in_schema`, not the row's
+        // existence (#4420). A row that answers `false` is one the census saw
+        // in tool traffic without finding among the advertised schemas, so
+        // "advertised and chosen zero times" would be the page asserting the
+        // opposite of its own evidence.
+        let offering = if usage.in_schema {
+            format!("`{name}` was advertised and chosen zero times")
+        } else {
+            format!(
+                "`{name}` was chosen zero times, and the census did not find this name \
+                 among the schemas those runs advertised either — so it may never have \
+                 been on the menu to choose from"
+            )
+        };
         return format!(
             "Never called. Across {trials} trials and {calls} model calls \
-             (census of {captured}), `{name}` was advertised and chosen zero times. \
+             (census of {captured}), {offering}. \
              That is a fact about the tool menu, not a defect in the tool — see #3032, \
              which this page is input to.",
             trials = p.census_trials_scanned,
@@ -536,9 +584,21 @@ fn usage_comment(name: &str, fixture: &Fixture) -> String {
             captured = p.captured,
         );
     }
+    // Calls without advertisement is a real observation and reads as a
+    // contradiction unless it is stated: the name was on the wire in runs
+    // whose advertised schema list the census could not find it in.
+    let unadvertised = if usage.in_schema {
+        String::new()
+    } else {
+        format!(
+            "\nThe census did not find `{name}` among the schemas those runs advertised, \
+             only in their tool traffic — so these calls were made under a name the run \
+             itself did not declare."
+        )
+    };
     format!(
         "Measured {captured} across {trials} trials / {model_calls} model calls:\n\
-         {row}\n\
+         {row}{unadvertised}\n\
          A measurement, not a contract: it ages, the schema above does not.",
         captured = p.captured,
         trials = p.census_trials_scanned,
@@ -569,8 +629,15 @@ fn example_comment(name: &str, fixture: &Fixture) -> String {
                      from, so it never had the chance to be called"
                 )
             }
-            UsageEvidence::Current(usage) if usage.calls == 0 => {
+            // Advertisement is asserted from the census's own `in_schema`
+            // note, never from the row existing (#4420).
+            UsageEvidence::Current(usage) if usage.calls == 0 && usage.in_schema => {
                 "no call to record: it was advertised and never called".to_string()
+            }
+            UsageEvidence::Current(usage) if usage.calls == 0 => {
+                "no call to record: it was never called, and the census did not find \
+                 this name among the schemas those runs advertised either"
+                    .to_string()
             }
             UsageEvidence::Current(usage) => format!(
                 "{calls} calls in the wider census, but none in the \
@@ -724,9 +791,18 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
     // on that measurement — and a tool the census never advertised under any
     // of its names is not counted at all, because "no row" is not a zero
     // (#3846).
+    //
+    // Both halves of that sentence are now asserted rather than inferred: the
+    // zero from `calls()`, the advertisement from the census's own `in_schema`
+    // note (#4420). Before, a row whose `in_schema` said `false` counted
+    // toward a figure the prose below calls "advertised" — the row's mere
+    // existence standing in for evidence that was sitting unread.
     let never_called = entries
         .iter()
-        .filter(|entry| usage_evidence(entry.name, fixture).calls() == Some(0))
+        .filter(|entry| {
+            let evidence = usage_evidence(entry.name, fixture);
+            evidence.calls() == Some(0) && evidence.advertised() == Some(true)
+        })
         .count();
 
     let mut out = String::new();
@@ -774,9 +850,10 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
         "**Examples are observed, not written.** They come from {source}, \
          captured {captured} over {rows} call/result pairs across {tasks} tasks. \
          {observed} of {count} tools carry a real example; the rest say so. \
-         {never_called} tools were never called once across {trials} trials and \
-         {model_calls} model calls — the most interesting fact on those pages, and \
-         input to #3032.\n\n",
+         {never_called} tools were advertised and never called once across {trials} \
+         trials and {model_calls} model calls — the most interesting fact on those \
+         pages, and input to #3032. Advertisement is the census's own `in_schema` \
+         column, not the presence of a row (#4420).\n\n",
         source = p.source,
         captured = p.captured,
         rows = p.corpus_rows,
@@ -1028,6 +1105,106 @@ fn a_renamed_tools_page_reports_the_measurement_under_its_former_name() {
     assert!(
         unmeasured.contains("No usage measurement"),
         "ask_question.toml carries no row under any name and must say so:\n{unmeasured}"
+    );
+}
+
+/// Every advertisement claim on a page comes from the census's `in_schema`
+/// column, not from the row existing.
+///
+/// The failure this pins is the one #3846 pinned one field over: a sentence of
+/// fact the fixture it was generated from disagrees with. The generator wrote
+/// `in_schema` per tool and `Usage` did not deserialize it, so *every* page
+/// saying a tool "was advertised" was inferring that from row presence while
+/// the direct evidence sat unread (#4420). No live catalog row carries
+/// `in_schema: false` today — the two that do, `create_witness_test` and `sh`,
+/// are not tools this catalog declares — so the flip is applied to a live
+/// row's copy here rather than waiting for one to arrive.
+#[test]
+fn an_advertisement_claim_reads_the_censuss_in_schema_column() {
+    /// A live tool with calls, and one with none, in the committed fixture —
+    /// the two shapes whose prose asserts advertisement.
+    fn pick(fixture: &Fixture, called: bool) -> String {
+        catalog::CATALOG
+            .iter()
+            .map(|entry| entry.name)
+            .find(|name| {
+                fixture
+                    .usage
+                    .get(*name)
+                    .is_some_and(|usage| (usage.calls > 0) == called && usage.in_schema)
+            })
+            .unwrap_or_else(|| {
+                panic!("the fixture holds no advertised live row with calls={called}")
+            })
+            .to_string()
+    }
+
+    let mut fixture = load_fixture();
+    let with_calls = pick(&fixture, true);
+    let never_called = pick(&fixture, false);
+
+    // As committed: both are advertised, and neither page hedges.
+    let advertised = usage_comment(&with_calls, &fixture);
+    assert!(
+        !advertised.contains("did not find"),
+        "an advertised row must not carry the unadvertised clause:\n{advertised}"
+    );
+    let zero = usage_comment(&never_called, &fixture);
+    assert!(
+        zero.contains(&format!(
+            "`{never_called}` was advertised and chosen zero times"
+        )),
+        "an advertised zero-call row states it plainly:\n{zero}"
+    );
+    assert!(
+        example_comment(&never_called, &fixture).contains("it was advertised and never called"),
+        "the example block states the same fact from the same column"
+    );
+
+    // Flip the column and nothing else. Every clause that asserted
+    // advertisement has to change; on the code before #4420 none of them did,
+    // because none of them could see this field.
+    for name in [&with_calls, &never_called] {
+        fixture
+            .usage
+            .get_mut(name.as_str())
+            .expect("the row just read still exists")
+            .in_schema = false;
+    }
+
+    let unadvertised = usage_comment(&with_calls, &fixture);
+    assert!(
+        unadvertised.contains(&format!(
+            "The census did not find `{with_calls}` among the schemas those runs advertised"
+        )),
+        "a row with calls but no schema entry must say so rather than reporting the \
+         calls as if the tool had been on the menu:\n{unadvertised}"
+    );
+
+    let zero = usage_comment(&never_called, &fixture);
+    assert!(
+        !zero.contains("was advertised and chosen zero times"),
+        "a zero-call row the census never found in a schema list may not claim it was \
+         advertised:\n{zero}"
+    );
+    assert!(
+        zero.contains("may never have been on the menu to choose from"),
+        "the honest clause replaces it:\n{zero}"
+    );
+    let example = example_comment(&never_called, &fixture);
+    assert!(
+        !example.contains("it was advertised and never called"),
+        "the example block asserts from the same column:\n{example}"
+    );
+
+    // And the index's headline count, which the prose calls "advertised and
+    // never called once", drops both flipped rows.
+    let entries: Vec<&ToolEntry> = catalog::CATALOG.iter().collect();
+    let committed = render_index(&entries, &load_fixture());
+    let flipped = render_index(&entries, &fixture);
+    assert_ne!(
+        committed, flipped,
+        "flipping `in_schema` on a live row must change what the index counts"
     );
 }
 

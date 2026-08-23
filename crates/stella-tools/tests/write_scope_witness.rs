@@ -468,6 +468,79 @@ async fn the_shell_audit_refuses_a_resolvable_write_outside_the_scope() {
     );
 }
 
+/// #4408 witness: a subshell puts a `)` after the real write target, and the
+/// audit read *that* as the last positional.
+///
+/// `mv` is a last-positional command, so the fence takes the final argument
+/// within the command's reach. Reach was bounded at the separators alone
+/// (`;`, `&&`, a newline), and `)` is not one — so `( mv a /outside/b )`
+/// checked `)`, which resolves inside the session tree, and never looked at
+/// `/outside/b` at all. The spaced form tokenized this way on `main` well
+/// before #3619 made the glued `(cd` match; #3619 is only what surfaced it.
+#[tokio::test]
+async fn the_shell_audit_reads_past_a_subshell_paren_to_the_real_target() {
+    let session = tempfile::tempdir().expect("session");
+    let outside = tempfile::tempdir().expect("outside");
+    let victim = outside.path().join("precious.txt");
+    let ctx = ToolCtx::bare(session.path().to_path_buf());
+
+    for command in [
+        format!("( mv src/a.rs {} )", victim.display()),
+        format!("(mv src/a.rs {})", victim.display()),
+        format!("( cp src/a.rs {} )", victim.display()),
+        format!("( rm -f {} )", victim.display()),
+        format!("if true; then ( mv src/a.rs {} ); fi", victim.display()),
+    ] {
+        std::fs::write(&victim, "do not overwrite\n").expect("write victim");
+        let out = stella_tools::bash::Bash::new(None)
+            .execute(&serde_json::json!({ "command": command }), &ctx)
+            .await;
+        let message = message(&out);
+        assert!(
+            message.contains("outside this session's writable directories"),
+            "`{command}` must be refused, got: {message}"
+        );
+        assert!(
+            victim.exists(),
+            "`{command}` must be refused before the shell runs"
+        );
+    }
+}
+
+/// The over-refusal counterpart of the bound above: stopping a command's
+/// reach at a paren or a substitution must not start refusing ordinary work.
+///
+/// The substitution cases are the ones that would bite. `` cp a `pwd`/out ``
+/// names a target no text scan can resolve, and the reach bound is what keeps
+/// the fence from reading the tail `/out` — an absolute-looking path that is
+/// not one — as a write outside the tree.
+#[tokio::test]
+async fn a_bounded_reach_does_not_refuse_ordinary_subshell_work() {
+    let session = tempfile::tempdir().expect("session");
+    std::fs::create_dir_all(session.path().join("src")).expect("mkdir");
+    let ctx = ToolCtx::bare(session.path().to_path_buf());
+
+    for command in [
+        "( mv src/a.rs src/b.rs )",
+        "(cd src && mv a.rs b.rs)",
+        "( rm -f build/stale.o )",
+        "cp src/a.rs `pwd`/src/c.rs",
+        "cp src/a.rs $(pwd)/src/c.rs",
+        "mv src/a.rs `dirname src/b.rs`/d.rs",
+    ] {
+        let out = stella_tools::bash::Bash::new(None)
+            .execute(&serde_json::json!({ "command": command }), &ctx)
+            .await;
+        if let stella_protocol::tool::ToolOutput::Error { message, .. } = &out {
+            assert!(
+                !message.contains("outside this session's writable directories")
+                    && !message.contains("worktrees"),
+                "the audit must not refuse `{command}`: {message}"
+            );
+        }
+    }
+}
+
 /// A redirect creates a file whatever the command around it is, so the audit
 /// reads it as a write.
 #[tokio::test]

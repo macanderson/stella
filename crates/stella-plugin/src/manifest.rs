@@ -184,7 +184,7 @@ pub struct LoopGrant {
     /// [`LoopGrant::permits_hook`] is for hooks.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub calls: Vec<HostCall>,
-    /// The most host calls per point the plugin asks for.
+    /// The most host calls **per point** the plugin asks for.
     ///
     /// **An ask, never an authority** — the [`LoopGrant::max_holds`] discipline,
     /// one layer down. A conversation can hang where a single exchange could
@@ -192,8 +192,38 @@ pub struct LoopGrant {
     /// (`stella_runtime::wrapper::DEFAULT_HOST_MAX_CALLS`) and a spent allowance
     /// refuses further calls *to the plugin* rather than killing it. Absent
     /// means "the host's ceiling", never "unbounded".
+    ///
+    /// Per point is the whole of it: the gate is fresh on every `before_turn` /
+    /// `after_turn` dispatch, because a plugin that spent its calls researching
+    /// `before_turn` must still be able to ask when `after_turn` arrives. The
+    /// **whole-run** budget a `child_turn` spends against is
+    /// [`Self::max_child_turns`], which is a different number for a different
+    /// reason (#3839).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_calls: Option<u32>,
+    /// The `child_turn`s **for the whole run** the plugin asks for.
+    ///
+    /// **Its own key rather than a second meaning for [`Self::max_calls`]**, and
+    /// the two differ in the axis they bound rather than only in size (#3839).
+    /// `max_calls` is per point conversation and resets; this never resets,
+    /// because what it bounds is how much of the user's money a plugin may
+    /// spend, and a per-point reading of that is no bound at all across N
+    /// rounds. An arbiter-grade plugin that holds rounds open and asks once per
+    /// round is the case where they diverge: `plugins/stella-goal` asks for one
+    /// call per point and eight turns per run, and before this key existed the
+    /// honest `max_calls = 1` capped its *second round's* verifier turn at
+    /// `AllowanceSpent`.
+    ///
+    /// An ask, never an authority — clamped against
+    /// `stella_runtime::wrapper::DEFAULT_HOST_MAX_CHILD_TURNS`.
+    ///
+    /// Absent falls back to [`Self::max_calls`], which is the only reading that
+    /// keeps a manifest written before the split honest: that number is the one
+    /// a human consented to, and the host's job is to clamp an ask down rather
+    /// than to widen one nobody made. Absent on *both* means "the host's
+    /// ceiling", never "unbounded".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_child_turns: Option<u32>,
     /// The widest `candidate_fanout` the plugin asks for.
     ///
     /// **Its own key rather than a second meaning for [`Self::max_calls`]**,
@@ -561,9 +591,9 @@ impl PluginManifest {
             Some(0) => return Err(ManifestError::ZeroMaxCalls),
             _ => {}
         }
-        // The fan-out width gets `max_calls`'s two rules against its *own*
-        // capability rather than against the list as a whole: a plugin that
-        // declares `recall` and a fan-out width has written a number that
+        // The per-capability ceilings get `max_calls`'s two rules against their
+        // *own* capability rather than against the list as a whole: a plugin
+        // that declares `recall` and a fan-out width has written a number that
         // bounds nothing, which is the manifest that quietly does nothing one
         // more time.
         match grant.max_fanout_width {
@@ -571,6 +601,13 @@ impl PluginManifest {
                 return Err(ManifestError::MaxFanoutWidthRequiresFanout);
             }
             Some(0) => return Err(ManifestError::ZeroMaxFanoutWidth),
+            _ => {}
+        }
+        match grant.max_child_turns {
+            Some(_) if !grant.calls.contains(&HostCall::ChildTurn) => {
+                return Err(ManifestError::MaxChildTurnsRequiresChildTurn);
+            }
+            Some(0) => return Err(ManifestError::ZeroMaxChildTurns),
             _ => {}
         }
 
@@ -1061,6 +1098,7 @@ mod tests {
             before_turn_stages: Vec::new(),
             calls: vec![HostCall::Recall],
             max_calls: None,
+            max_child_turns: None,
             max_fanout_width: None,
             max_holds: None,
         };

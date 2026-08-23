@@ -35,10 +35,10 @@
 /// deliberately **not** operator words — they neither end a command nor start
 /// one, and `stella-tools`' `redirect_target` reads them as ordinary words.
 ///
-/// Neither are the paren words [`shell_words`] emits (`(`, `)`, `$(`). They
-/// are word boundaries, not separators: `(` *introduces* a command, and a
-/// consumer that treated it as one would read `echo (cd /outside` as a
-/// directory change the shell never performs.
+/// Neither are the substitution words [`shell_words`] emits (`(`, `)`, `$(`
+/// and the backtick). They are word boundaries, not separators: `(`
+/// *introduces* a command, and a consumer that treated it as one would read
+/// `echo (cd /outside` as a directory change the shell never performs.
 pub fn is_operator_word(word: &str) -> bool {
     matches!(word, ";" | "&" | "&&" | "|" | "||" | "\n")
 }
@@ -57,7 +57,8 @@ pub fn is_operator_word(word: &str) -> bool {
 /// The subshell parens split for the same reason and are emitted the same
 /// way, `$(` as one opener; unlike the operators they are not
 /// [`is_operator_word`]s, because `(` starts a command rather than ending
-/// one.
+/// one. An unquoted backtick is the other spelling of that opener and splits
+/// with them (#4409).
 pub fn shell_words(command: &str) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
     let mut cur = String::new();
@@ -116,6 +117,28 @@ pub fn shell_words(command: &str) -> Vec<String> {
                 } else {
                     String::from(c)
                 });
+            }
+            // A backtick is the older spelling of `$(`, and the body between
+            // a pair of them is a command like any other. Left glued to the
+            // word beside it, the whole substitution was a single word —
+            // `` `cd /outside` `` split as `["`cd", "/outside`"]`, so no word
+            // ever equalled `cd` and every consumer that reads command
+            // position was blind to it (#4409), the same defect the parens
+            // had before #3619.
+            //
+            // Both ends emit the same word, because the two are the same
+            // character and telling them apart is a parity question belonging
+            // to whoever is tracking command position, not to a splitter.
+            // Quoted, it is text: a backtick inside `'…'` or `"…"` stays in
+            // its word, which keeps this on the module's "better a missed
+            // note than a wrong one" side — a double-quoted substitution does
+            // run, and is deliberately not seen.
+            '`' if !in_single && !in_double => {
+                if has_word {
+                    words.push(std::mem::take(&mut cur));
+                    has_word = false;
+                }
+                words.push(String::from(c));
             }
             '\\' if !in_single => {
                 // Keep the escape literal (covers `\|`, `\"`, …); we don't
@@ -262,6 +285,28 @@ mod tests {
             shell_words(r"find . \( -name x \)"),
             ["find", ".", r"\(", "-name", "x", r"\)"]
         );
+    }
+
+    /// The other command-substitution spelling, which stayed glued to its
+    /// word long after the parens stopped: `` `cd /outside` `` tokenized as
+    /// `["`cd", "/outside`"]`, so nothing downstream could see the `cd` at
+    /// all (#4409).
+    #[test]
+    fn a_backtick_substitution_splits_like_a_subshell() {
+        assert_eq!(
+            shell_words("`cd /outside`"),
+            ["`", "cd", "/outside", "`"],
+            "an unquoted backtick opens and closes a substitution"
+        );
+        assert_eq!(
+            shell_words("out=`cd /x && pwd`"),
+            ["out=", "`", "cd", "/x", "&&", "pwd", "`"]
+        );
+        assert_eq!(shell_words("echo `date`"), ["echo", "`", "date", "`"]);
+        // Quoted or escaped, it is text and stays inside the word.
+        assert_eq!(shell_words("echo '`cd /x`'"), ["echo", "`cd /x`"]);
+        assert_eq!(shell_words("echo \"`date`\""), ["echo", "`date`"]);
+        assert_eq!(shell_words(r"echo \`date\`"), ["echo", r"\`date\`"]);
     }
 
     #[test]

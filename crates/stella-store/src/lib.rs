@@ -144,6 +144,7 @@ mod test_env;
 mod tests;
 mod tool_calls;
 
+pub mod agent_uses;
 pub mod cache_gaps;
 pub mod cache_trend;
 pub mod catalog;
@@ -182,6 +183,7 @@ use migrations::{
     initialize_store_pragmas,
 };
 
+pub use agent_uses::{AgentUseRow, KIND_DEFINITION, KIND_DELEGATION};
 pub use cache_gaps::CacheCallGap;
 pub use catalog::CatalogStore;
 pub use drain::{
@@ -396,18 +398,6 @@ pub struct RuleRow {
     pub contents: String,
     /// Opaque label naming the writer (extension/provider id).
     pub source: String,
-}
-
-/// One agent-invocation row for the `agent_uses` log: which installed agent
-/// definition (by name), at which pinned version, was invoked under an
-/// execution — with a short free-text reason when one was available. The
-/// timestamp column defaults to the insert time; the ledger drains per
-/// execution, so insert time is invocation-accurate to within the turn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AgentUseRow {
-    pub agent: String,
-    pub version: u32,
-    pub reason: String,
 }
 
 /// One skill-invocation row for the `skill_usage` log — the analogue of
@@ -633,16 +623,16 @@ impl Store {
     /// responsible would leave every other one serving a hole.
     ///
     /// It is safe — with one visible wrinkle — to run against a workspace
-    /// another process is actively writing. The sweep re-folds `tool_calls`
-    /// from the `events` log, which is idempotent; it never stamps an
-    /// outcome, so a *live* turn in another process is not declared dead
-    /// (see [`Store::reconcile_interrupted_executions`]). The wrinkle: a call
-    /// announced but not yet returned re-folds as an abandoned error until
-    /// its `tool_result` lands and re-opens it, so another session's
-    /// in-flight call can briefly render as failed. And it costs nothing in
-    /// the overwhelmingly common case: the `executions_unfinished` partial
-    /// index holds only unclosed rows, so "is anything unclosed?" is an empty
-    /// index probe and no write happens at all.
+    /// another process is actively writing. The re-fold of `tool_calls` from
+    /// the `events` log is idempotent, and an outcome is stamped only on an
+    /// execution whose owning session the registry proves is gone, so a
+    /// *live* turn in another process is never declared dead (see
+    /// [`Store::settle_orphaned_executions`]). The wrinkle: a call announced
+    /// but not yet returned re-folds as an abandoned error until its
+    /// `tool_result` lands and re-opens it, so another session's in-flight
+    /// call can briefly render as failed. And it costs nothing in the common
+    /// case: the `executions_unfinished` partial index holds only unclosed
+    /// rows, so "is anything unclosed?" is an empty index probe.
     ///
     /// Failure is swallowed on purpose. Recovery of *observability* must
     /// never be the reason a workspace cannot be opened — the store is
@@ -659,7 +649,7 @@ impl Store {
             Some(workspace_root.to_path_buf()),
             Some(db_path.as_path()),
         )?;
-        let _ = store.reconcile_interrupted_executions();
+        let _ = store.recover_unfinished_at_open();
         Ok(store)
     }
 
@@ -932,22 +922,6 @@ impl Store {
         Ok(())
     }
 
-    /// Record non-aggregated agent invocations from one execution. One
-    /// transaction — see [`Self::record_files_touched`].
-    pub fn record_agent_uses(&self, execution_id: i64, uses: &[AgentUseRow]) -> Result<()> {
-        let mut conn = self.lock();
-        let tx = conn.transaction()?;
-        for row in uses {
-            tx.execute(
-                "INSERT INTO agent_uses (execution_id, agent, version, reason) \
-                 VALUES (?, ?, ?, ?)",
-                params![execution_id, row.agent, row.version as i64, row.reason],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
-    }
-
     /// Record the skills applied in one execution — one row per skill at its
     /// pinned version, never aggregated (see [`SkillUsageRow`]). The analogue
     /// of [`Self::record_agent_uses`] for the SKILLS tab. One transaction —
@@ -1172,8 +1146,22 @@ impl Store {
 
     /// Assemble the user-tier [`usage::ExecutionRollupRow`] for one execution
     /// from this project store (executions + telemetry + tool_calls +
-    /// files_touched). Returns `None` if the execution id is unknown. Reads
-    /// only — safe for both live finalize and `stella usage sync` backfill.
+    /// files_touched). Returns `None` if the execution id is unknown or the
+    /// turn has not finished. Reads only — safe for both live finalize and
+    /// `stella usage sync` backfill.
+    ///
+    /// **An incomplete execution rolls up as a floor, not as nothing** (#4171).
+    /// This used to also require `usage_complete = 1 AND usage_status =
+    /// 'complete'`, so a turn with sixty-eight accounted calls and one attempt
+    /// that reported no usage contributed `$0.00` to every project total
+    /// instead of "at least $2.40". `cost_usd` is already the lower bound —
+    /// `finish_execution_accounted` stores `MAX(reported, RECEIPTS_TOTAL_USD)`
+    /// — so the number was there the whole time and only the gate withheld it.
+    /// [`usage::ExecutionRollupRow::usage_complete`] carries the verdict out
+    /// with the row instead — the conjunction the WHERE used to be, so `true`
+    /// still means exactly what it meant before. That is the same bargain
+    /// `stella-cli`'s `persistence` already strikes one level down: a flagged
+    /// lower bound is recoverable information, silence is not.
     pub fn execution_rollup(
         &self,
         execution_id: i64,
@@ -1183,9 +1171,8 @@ impl Store {
         let base = conn
             .query_row(
                 "SELECT kind, prompt, provider, model, COALESCE(outcome, ''), cost_usd, started_at, \
-                        usage_complete \
-                 FROM executions WHERE id = ?1 AND finished_at IS NOT NULL \
-                   AND usage_complete = 1 AND usage_status = 'complete'",
+                        usage_complete AND usage_status = 'complete' \
+                 FROM executions WHERE id = ?1 AND finished_at IS NOT NULL",
                 params![execution_id],
                 |r| {
                     Ok((
@@ -1292,7 +1279,12 @@ impl Store {
     }
 
     /// Roll one execution up into the user-tier aggregate. Best-effort: a
-    /// missing execution returns `Ok(false)` and never fails a turn.
+    /// missing or unfinished execution returns `Ok(false)` and never fails a
+    /// turn.
+    ///
+    /// An execution whose accounting is short still syncs, carrying its
+    /// `usage_complete` flag so the hub knows the figure is a floor — see
+    /// [`Store::execution_rollup`] for why a lower bound beats silence.
     pub fn sync_to_usage(
         &self,
         execution_id: i64,
@@ -1304,11 +1296,11 @@ impl Store {
         // healed by this turn. Best-effort — the rollup below still runs.
         let _ = self.replicate_telemetry_to_usage(usage, workspace_root);
         match self.execution_rollup(execution_id, workspace_root)? {
-            Some(rollup) if rollup.usage_complete => {
+            Some(rollup) => {
                 usage.sync_execution(&rollup)?;
                 Ok(true)
             }
-            Some(_) | None => Ok(false),
+            None => Ok(false),
         }
     }
 

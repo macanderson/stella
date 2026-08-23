@@ -597,9 +597,9 @@ const PLUGIN_CANDIDATE_FANOUT_SLOT: u32 = 2;
 ///   dispatcher behind it carves from the session's sub-agent pool
 ///   ([`crate::subagent::session_pool_limit_usd`]), so "unbounded ask" is
 ///   still a bounded spend.
-/// - **The host's own ceiling stands.** `[loop] max_calls` is the plugin's ask
-///   and [`stella_runtime::wrapper::DEFAULT_HOST_MAX_CHILD_TURNS`] the
-///   authority; neither is overridden here.
+/// - **The host's own ceiling stands.** `[loop] max_child_turns` is the
+///   plugin's ask and [`stella_runtime::wrapper::DEFAULT_HOST_MAX_CHILD_TURNS`]
+///   the authority; neither is overridden here.
 pub(crate) fn child_turn_plane(
     manifest: &stella_plugin::PluginManifest,
     dispatcher: Arc<dyn SubAgentDispatcher>,
@@ -824,7 +824,7 @@ pub(crate) fn resolve(
 /// has its stdin shut and waits for an answer that never comes (#3561).
 /// Say so when this host will fund less than the manifest asked for (#3841).
 ///
-/// `[loop] max_holds` and `max_calls` are **asks, never authorities** — the
+/// `[loop] max_holds` and `max_child_turns` are **asks, never authorities** — the
 /// host's own ceilings are what actually bound the spend, and that is the
 /// right way round: a plugin that could raise its own ceiling by declaring a
 /// bigger number would be setting the user's budget for them.
@@ -855,7 +855,15 @@ fn warn_narrowed_ceilings(manifest: &stella_plugin::PluginManifest, warn: &mut d
             DEFAULT_HOST_MAX_HOLDS + 1
         ));
     }
-    if let Some(asked) = manifest.loop_grant.max_calls
+    // The same number `ChildTurns::declare` reads, resolved the same way: the
+    // whole-run key when the manifest has one, and the per-point number for a
+    // manifest written before the two were split (#3839). Asking a different
+    // question here than the plane asks is how a notice comes to describe a
+    // clamp that did not happen.
+    if let Some(asked) = manifest
+        .loop_grant
+        .max_child_turns
+        .or(manifest.loop_grant.max_calls)
         && asked > DEFAULT_HOST_MAX_CHILD_TURNS
     {
         warn(format!(
