@@ -146,6 +146,11 @@ pub(crate) struct RawRunSummary {
     /// even on a quiet turn because the envelope's key set is the versioned
     /// contract.
     pub(crate) files_touched: serde_json::Value,
+    /// What this checkout's trust gate held back, or `null` (#4465). Folded
+    /// from the turn's own `SteeringWithheld` event, so this and the
+    /// `stream-json` carrier of the same fact are one event read twice.
+    /// Present on every raw summary for the same reason `files_touched` is.
+    pub(crate) withheld: serde_json::Value,
 }
 
 /// The REPL's productized command names — reserved: a custom definition can

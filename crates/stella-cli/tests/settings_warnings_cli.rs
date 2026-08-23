@@ -272,6 +272,28 @@ fn run_stream_json(
     home: &tempfile::TempDir,
     extra_env: &[(&str, &str)],
 ) -> Output {
+    run_machine_readable(dir, home, "stream-json", extra_env)
+}
+
+/// The same run under `--output-format json`, which answers on one summary
+/// object rather than a line per event (#4465). The turn aborts on the dead
+/// base URL either way; the summary is printed for an abort exactly as it is
+/// for a completion, which is the point — a harness that only ever sees failed
+/// runs still learns its checkout was not steering them.
+fn run_json(
+    dir: &tempfile::TempDir,
+    home: &tempfile::TempDir,
+    extra_env: &[(&str, &str)],
+) -> Output {
+    run_machine_readable(dir, home, "json", extra_env)
+}
+
+fn run_machine_readable(
+    dir: &tempfile::TempDir,
+    home: &tempfile::TempDir,
+    format: &str,
+    extra_env: &[(&str, &str)],
+) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
         .args([
@@ -285,7 +307,7 @@ fn run_stream_json(
             "0.05",
             "run",
             "--output-format",
-            "stream-json",
+            format,
             "say hi and stop",
         ])
         .current_dir(dir.path())
@@ -352,6 +374,55 @@ fn an_untrusted_checkouts_withheld_steering_reaches_the_event_stream() {
             .count(),
         1,
         "one notice per run: {stdout}"
+    );
+}
+
+/// **Witness (#4465).** The other machine format answers too. #3616 put the
+/// counts on `stream-json` and left `--output-format json` with no `withheld`
+/// key at all, so a harness reading the summary alone — the shape most scripts
+/// use — could not tell an untrusted checkout from a trusted one.
+///
+/// A process test rather than a unit one for the reason this file exists:
+/// `summary::withheld` is pure over a slice of events, and would stay green
+/// with the emit in `output::open_raw_turn` deleted. What is proved here is
+/// that the event this fold reads is actually in the journal the envelope is
+/// built from.
+#[test]
+fn an_untrusted_checkouts_withheld_steering_reaches_the_json_summary() {
+    let (dir, home) = steering_workspace();
+    let output = run_json(&dir, &home, &[]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|err| panic!("summary did not parse ({err}) — stdout was:\n{stdout}"));
+
+    let withheld = &summary["withheld"];
+    assert_eq!(
+        withheld["withheld_by"], "project_untrusted",
+        "the summary must name the authority, because it decides the remedy: {summary}"
+    );
+    assert_eq!(withheld["memories"], 1, "counts, in the summary: {summary}");
+    assert_eq!(withheld["records"], 1, "counts, in the summary: {summary}");
+    assert!(
+        !withheld.to_string().contains("SECRET-MARKER-BODY")
+            && !withheld.to_string().contains("00-marker"),
+        "counts, never content or filenames — the same rule the other two carriers are \
+         held to, for the same reason: {withheld}"
+    );
+}
+
+/// The silent arm on the summary: nothing was suppressed, so the key is
+/// `null` rather than a zeroed object claiming a suppression that cost
+/// nothing.
+#[test]
+fn a_trusted_checkouts_json_summary_reports_no_withholding() {
+    let (dir, home) = steering_workspace();
+    let output = run_json(&dir, &home, &[("STELLA_TRUST_PROJECT", "1")]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let summary: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|err| panic!("summary did not parse ({err}) — stdout was:\n{stdout}"));
+    assert!(
+        summary["withheld"].is_null(),
+        "a trusted workspace loaded its steering and is owed no notice: {summary}"
     );
 }
 
