@@ -44,12 +44,40 @@
 //! inside double quotes still runs and is still missed, which is the module's
 //! posture rather than an oversight: every miss here is silence, never a wrong
 //! note.
+//!
+//! Those same words bound how far a command's arguments reach
+//! ([`ends_argument_reach`]), which is a separate question from where a
+//! command begins and was answered wrongly for as long as only the separators
+//! were consulted (#4408).
+
 use std::path::Path;
 
 /// The command-text splitter and its operator predicate, re-exported from
 /// [`stella_core::shell_text`] where they now live so the engine's stall rung
 /// and these advisories read one implementation (#2022).
 pub(super) use stella_core::shell_text::{is_operator_word, shell_words};
+
+/// Does `word` end the reach of the command whose arguments are being read?
+///
+/// [`is_operator_word`] answers the *separator* half — `;`, `&&`, a newline,
+/// each of which ends one command and begins the next — and it was the whole
+/// bound until `( mv src /etc/passwd )` showed what the other half costs. The
+/// splitter emits `(`, `)`, `$(` and the backtick as words of their own
+/// (#3619, #4409); none of them can be an argument, so
+/// [`super::segment_args`] read the closing paren as `mv`'s last positional
+/// and the real write target was never checked at all (#4408). A substitution
+/// bounds reach for the same reason and in the safe direction: the target of
+/// `` cp a `pwd`/b `` is a path no text scan can resolve, and stopping at the
+/// backtick skips it rather than refusing the unresolvable `/b`.
+///
+/// Deliberately a **reach** bound rather than a widening of
+/// [`is_operator_word`]. `(` must keep introducing a command
+/// ([`introduces_a_command`]), and a `(` that separated instead would read
+/// `echo (cd /outside` as a directory change the shell never performs — the
+/// false warning `a_paren_in_data_does_not_promote_a_cd` pins.
+pub(super) fn ends_argument_reach(word: &str) -> bool {
+    is_operator_word(word) || matches!(word, "(" | ")" | "$(" | "`")
+}
 
 /// One pending heredoc: the delimiter that ends its body, and whether `<<-`
 /// asked for leading tabs to be ignored on that terminator line.
