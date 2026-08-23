@@ -3,10 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ? lead  ·  needs input   0:00:00
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
 └─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
      model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
      ⚒ search_code trigger
@@ -15,31 +12,34 @@
      model glm-5.2-air · ctx 3.0k/200k · spend $0.00
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
-┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│    ⋯ ctrl+o for provenance and budget                                                                                ││Refactor the automations store into a…│
-│                                                                                                                      ││○ 1. extract types                    │
-│── PLAN ──────────────────────────────────────────────────────────────────────────────────────────────────────────────││○ 2. move hooks                       │
-│                                                                                                                      ││○ 3. update 9 imports                 │
-│  Planning the automations cluster: list, editor, triggers, workflows.                                                ││                                      │
-│                                                                                                                      ││                                      │
-│☰  plan  4/7  ·  Wire the triggers API                                                                                ││                                      │
-│                                                                                                                      ││                                      │
-│── EXECUTE ──────────────────────────────┌ approval ──────────────────────────── ⏎ deny with these words · esc back ┐─││                                      │
-│                                         │bash  mutating                                                            │ ││                                      │
-│ │ ⊙ apps/app/automations/page.tsx       │  rm -rf build/                                                           │ ││                                      │
-│ │ ⎿ 312 lines                           │                                                                          │s││                                      │
-│                                         │gate    command.started                                                   │ ││                                      │
-│☰  plan  5/7  ·  Workflows canvas        │reason  matched rule no-destructive-shell                                 │ ││                                      │
-│                                         │                                                                          │ ││                                      │
-│⏸ plan  Refactor the automations store in│  denying — say why (the model is told, verbatim):                        │ ││                                      │
-│                                         │  use the staging bucket instead▏                                         │ ││                                      │
-└─────────────────────────────────────────└──────────────────────────────────────────────────────────────────────────┘ ┘└────────────────────── /plan reads it ┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
-✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
+── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
+    symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
+    memory  event-log REPL                                                                                                                90 tok
+    ⋯ ctrl+o for provenance and budget
+
+── PLAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Planning the automations cluster: list, editor, triggers, workflows.
+
+☰  plan  4/7  ·  Wire the triggers API
+
+── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ │ ⊙ apps/app/automations/page.tsx        ┌ approval ──────────────────────────── ⏎ deny with these words · esc back ┐
+ │ ⎿ 312 lines                            │bash  mutating                                                            │                       42ms
+                                          │  rm -rf build/                                                           │
+☰  plan  5/7  ·  Workflows canvas         │                                                                          │
+                                          │gate    command.started                                                   │
+⏸ plan  Refactor the automations store int│reason  matched rule no-destructive-shell                                 │
+                                          │                                                                          │
+                                          │  denying — say why (the model is told, verbatim):                        │
+                                          │  use the staging bucket instead▏                                         │
+                                          └──────────────────────────────────────────────────────────────────────────┘
+
+
+
 >>>
- ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+ ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

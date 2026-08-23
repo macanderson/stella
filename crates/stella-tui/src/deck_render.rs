@@ -12,9 +12,8 @@ use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
-use ratatui::symbols;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Tabs, Widget};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use unicode_width::UnicodeWidthChar;
 
@@ -60,13 +59,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         return;
     }
 
-    // tab bar (bordered, exactly 3 rows) | content | trace strip (2 rows) |
-    // run progress bar |
-    // composer | composer footer | statline. The progress bar is always present
-    // (idle collapses it to a flat track). The composer grows with its
-    // soft-wrapped content up to a cap, then scrolls to keep the cursor visible;
-    // its text width is the frame minus the 4-column `>>> ` prefix and the
-    // 1-column scroll gutter.
+    // SPEC 5, top to bottom: tab row (one row, the breadcrumb on SESSION) |
+    // content | composer | keybinding hint row | status bar. `v2::frame`
+    // carries the account of the v1 chrome this replaced. The composer grows
+    // with its soft-wrapped content up to a cap, then scrolls to keep the
+    // cursor visible; its text width is the frame minus the 4-column `>>> `
+    // prefix and the 1-column scroll gutter.
     let text_w = (area.width as usize).saturating_sub(PROMPT_PREFIX_W + COMPOSER_GUTTER_W);
     let c_layout = composer_layout(&ui.composer, text_w.max(1));
     let composer_h = c_layout.rows.len().clamp(1, DECK_COMPOSER_MAX_ROWS) as u16;
@@ -80,19 +78,18 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         .is_some();
     let statline_h = if has_diagnosis { 2 } else { 1 };
     let bands = Layout::vertical([
-        Constraint::Length(3),          // tab bar
+        Constraint::Length(1),          // tab row / breadcrumb
         Constraint::Min(1),             // active view
-        Constraint::Length(2),          // trace micro-summary strip (rule + line)
-        Constraint::Length(1),          // run progress bar
+        Constraint::Length(1),          // air above the prompt
         Constraint::Length(composer_h), // composer
-        Constraint::Length(1),          // composer footer (keys + line counter)
-        Constraint::Length(statline_h), // statline (label over value[, diagnosis])
+        Constraint::Length(1),          // keybinding hint row
+        Constraint::Length(statline_h), // status bar (+ diagnosis)
     ])
     .split(area);
 
     let tab = ui.tab;
     guarded_band(buf, bands[0], "tab bar", |b| {
-        render_tab_bar(tab, bands[0], b)
+        crate::v2::frame::render_tab_row(model, ui, bands[0], b)
     });
 
     let content = bands[1];
@@ -108,22 +105,16 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         DeckTab::Settings => views::settings::render(model, ui, content, b),
     });
 
-    guarded_band(buf, bands[2], "traces", |b| {
-        render_trace_strip(model, bands[2], b)
+    guarded_band(buf, bands[3], "composer", |b| {
+        render_composer(&c_layout, bands[3], b)
     });
-    guarded_band(buf, bands[3], "progress", |b| {
-        crate::progress::render(model, ui, bands[3], b)
+    guarded_band(buf, bands[4], "hints", |b| {
+        crate::v2::frame::render_hint_row(model, ui, bands[4], b)
     });
-    guarded_band(buf, bands[4], "composer", |b| {
-        render_composer(&c_layout, bands[4], b)
+    guarded_band(buf, bands[5], "statline", |b| {
+        crate::v2::status_bar::render_band(model, ui, bands[5], b)
     });
-    guarded_band(buf, bands[5], "footer", |b| {
-        footer::render_composer_footer(model, ui, &c_layout, bands[5], b)
-    });
-    guarded_band(buf, bands[6], "statline", |b| {
-        crate::v2::status_bar::render_band(model, ui, bands[6], b)
-    });
-    let composer_cursor = composer_cursor_position(&c_layout, bands[4]);
+    let composer_cursor = composer_cursor_position(&c_layout, bands[3]);
 
     // Floating popups sit above the chrome: the slash menu anchors to the
     // composer; the queue editor centers over the content.
@@ -131,7 +122,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let slash_open = slash.as_ref().is_some_and(|m| !m.is_empty());
     if let Some(menu) = slash.filter(|m| !m.is_empty()) {
         let selected = ui.slash_selected.min(menu.matches.len().saturating_sub(1));
-        let popup = slash_popup_area(area, bands[4], menu.matches.len());
+        let popup = slash_popup_area(area, bands[3], menu.matches.len());
         // Live values in descriptions, read from the model at render time —
         // never cached in `DeckUi` (D3).
         let live = slash_live_hints(model, ui);
@@ -282,39 +273,6 @@ fn slash_live_hints(model: &WorkspaceModel, ui: &DeckUi) -> Vec<(String, String)
         )),
     }
     hints
-}
-
-/// The deck's tab navigation bar.
-///
-/// Built from ratatui's own [`Tabs`] inside a full-border [`Block`]: the labels
-/// occupy the single inner row, which is exactly the 3 rows the deck layout
-/// reserves for the bar. Overflow clips on the right (at narrow widths the
-/// rightmost tabs fall off) — the selected tab is always drawn because the
-/// layout never scrolls, matching the previous bar's behaviour at deck widths.
-fn render_tab_bar(tab: DeckTab, area: Rect, buf: &mut Buffer) {
-    let labels: Vec<&str> = DeckTab::ALL.iter().map(|t| t.title()).collect();
-    let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::panel_rule());
-    // The corner wordmark: the brand riding the top border row, which holds
-    // nothing but rule characters — zero rows of chrome spent. Dropped on
-    // narrow frames rather than crowding the border.
-    if area.width >= 44 {
-        // SPEC 3.3: `stella*`, white word plus gold asterisk. The retired
-        // `✦ stella` lockup spent the four-pointed star on the brand, where
-        // SPEC 4 needs it for the `skill` event head — one glyph cannot be
-        // both an identity and a state.
-        let mut mark = stella_tui_theme::wordmark::spans().to_vec();
-        mark.push(Span::raw(" "));
-        block = block.title_top(Line::from(mark).right_aligned());
-    }
-    let tabs = Tabs::new(labels)
-        .select(tab.index())
-        .style(theme::muted())
-        .highlight_style(theme::accent())
-        .divider(symbols::line::VERTICAL)
-        .block(block);
-    Widget::render(tabs, area, buf);
 }
 
 // The queue editor popup lives in `views::queue_popup` (split out beside the
@@ -1021,56 +979,6 @@ fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     Paragraph::new(lines).block(block).render(popup, buf);
 }
 
-/// The deck-wide transcript micro-summary strip: a hairline rule with, under
-/// it, one dimmed line summarizing the NEWEST entry of the cross-agent trace
-/// ([`WorkspaceModel::trace`]) — a glanceable "what just happened" on every
-/// tab, refreshed naturally every frame. Sits directly above the composer
-/// chrome (two rows: rule + summary).
-fn render_trace_strip(model: &WorkspaceModel, area: Rect, buf: &mut Buffer) {
-    if area.height == 0 {
-        return;
-    }
-    let rule: String = "─".repeat(area.width as usize);
-    Paragraph::new(Line::from(Span::styled(rule, theme::rule())))
-        .render(Rect { height: 1, ..area }, buf);
-    if area.height < 2 {
-        return;
-    }
-    // A fixed left anchor so the live summary reads as a labeled "latest
-    // activity" status line rather than words floating loose under the
-    // transcript box — the churn of streaming trace rows is what made the
-    // strip look like a leak. The anchor stays put; only the value moves.
-    let anchor = Span::styled(" ▸ ", Style::default().fg(theme::TEXT_TERTIARY));
-    let line = match model.trace.rows.back() {
-        Some(row) => Line::from(vec![
-            anchor,
-            // The kind keeps its colour (scannable); the summary stays dim so
-            // the strip never competes with the transcript or the prompt.
-            Span::styled(
-                row.kind.label(),
-                Style::default().fg(theme::trace_kind_color(row.kind)),
-            ),
-            Span::styled("  ", Style::default()),
-            Span::styled(
-                truncate_chars(&row.summary, (area.width as usize).saturating_sub(12)),
-                Style::default().fg(theme::TEXT_TERTIARY),
-            ),
-        ]),
-        None => Line::from(vec![
-            anchor,
-            Span::styled("no activity yet", Style::default().fg(theme::TEXT_TERTIARY)),
-        ]),
-    };
-    Paragraph::new(line).render(
-        Rect {
-            y: area.y + 1,
-            height: 1,
-            ..area
-        },
-        buf,
-    );
-}
-
 /// Cap on the deck composer's visible rows — it grows with the prompt up to
 /// this, then scrolls (with a gutter indicator) to keep the cursor row in view.
 const DECK_COMPOSER_MAX_ROWS: usize = 4;
@@ -1183,7 +1091,6 @@ fn render_scroll_gutter(first: usize, visible: usize, total: usize, area: Rect, 
 mod help;
 use help::render_help;
 
-mod footer;
 mod parked;
 
 #[cfg(test)]

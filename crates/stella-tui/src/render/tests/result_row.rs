@@ -19,6 +19,7 @@
 //! siblings, which landed in #4169. Nothing here re-tests it.
 
 use super::*;
+use ratatui::style::Color;
 use crate::v2::transcript_source as v2;
 use stella_tui_theme::token;
 

@@ -16,17 +16,15 @@
 //! on panic. The deck's own closures do capture `&mut DeckUi`, and the
 //! argument for those lives with the boundary in `panel_guard`.
 
-use std::ops::Range;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use crate::composer::SlashMenu;
-use crate::model::{AskUserPrompt, FileState, Hud, InlineDiffRef, OpenPark};
-use crate::textline::{self, budget_mode_label, stage_label};
+use crate::model::{AskUserPrompt, FileState, InlineDiffRef};
 
 mod entry;
 // `pub(crate)` for `wrap_one_indent` alone: the startup-notice dialog
@@ -45,195 +43,9 @@ pub(crate) fn inner_height(area: Rect) -> usize {
     area.height.saturating_sub(2) as usize
 }
 
-/// The usable interior width of a single-border panel.
-pub(crate) fn inner_width(area: Rect) -> usize {
-    area.width.saturating_sub(2) as usize
-}
-
 // Word-aware line wrapping (pre-wrap so scroll math stays line-exact, L-T4)
 
 // Panels
-
-/// Rows the stat box claims: border, the stage line, border.
-pub(crate) const HUD_H: u16 = 3;
-
-/// The stat box: stage, model and the live cost of the turn.
-///
-/// Cost here reads *per turn*, matching the composer's cell and the `✓ cost`
-/// line — it used to print `hud.spent_usd` raw, which on the deck is the
-/// session-cumulative gauge, so the "spend" in this box, the SPEND cell in the
-/// statline, and the `◇ spend` rows in the transcript were three different
-/// renderings of two different quantities under one word.
-///
-/// The four resource readings — cpu, context, spend, cache — live on the
-/// statline's own meter row, not here. They were briefly duplicated in this
-/// box as a second set of gauges; two renderings of the same four numbers, in
-/// two different bar glyphs, on one frame is worse than either alone.
-///
-/// `parked` is the live parked-wait chip (#2007): the open wait and how long
-/// it has been running, from [`crate::deck::AgentEntry::live_park`]. It belongs
-/// on this box rather than in the transcript because it is *current state*, and
-/// a transcript is a log of things that happened — the ⏳ row already written
-/// to scrollback must keep reading as history after the wake, not freeze
-/// holding a counter that stopped. The elapsed arrives as a plain number so
-/// this stays a pure function of its arguments: it reads no clock, which is
-/// also what lets a golden frame pin it.
-pub(crate) fn render_hud(
-    hud: &Hud,
-    parked: Option<(&OpenPark, u64)>,
-    area: Rect,
-    buf: &mut Buffer,
-) {
-    let label = Style::new().fg(theme::TEXT_TERTIARY);
-    let mut spans: Vec<Span<'static>> = vec![
-        Span::styled("stage ", label),
-        Span::styled(
-            hud.stage
-                .as_ref()
-                .map_or("—", |s| stage_label(s))
-                .to_string(),
-            Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled("   model ", label),
-        Span::styled(
-            hud.model.clone().unwrap_or_else(|| "—".to_string()),
-            Style::new().fg(theme::INK),
-        ),
-        Span::styled("   turn ", label),
-        Span::styled(
-            textline::fmt_cost(hud.turn_spent_usd()),
-            Style::new()
-                .fg(spend_color(hud))
-                .add_modifier(Modifier::BOLD),
-        ),
-    ];
-    if let Some(limit) = hud.limit_usd {
-        spans.push(Span::styled(format!(" / ${limit:.2}"), label));
-    }
-    if let Some(mode) = hud.budget_mode {
-        spans.push(Span::styled(
-            format!("  ·  {}", budget_mode_label(mode)),
-            label,
-        ));
-    }
-    if hud.complete {
-        spans.push(Span::styled(
-            "   ✓ complete",
-            Style::new().fg(theme::OK).add_modifier(Modifier::BOLD),
-        ));
-    }
-    // The live park, when there is one. Elapsed against the deadline is the
-    // whole point: the transcript row states the *budget* ("up to 1800s") and
-    // then sits motionless for half an hour, so a park that started ten
-    // seconds ago and one twenty-nine minutes into its deadline used to read
-    // identically — and a genuinely wedged engine read like both.
-    if let Some((park, elapsed_ms)) = parked {
-        spans.push(Span::styled(
-            "   ⏳ parked ",
-            Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::styled(
-            format!(
-                "{} / {}",
-                clock_ms(elapsed_ms),
-                clock_ms(park.deadline_secs.saturating_mul(1000))
-            ),
-            Style::new().fg(theme::ACCENT),
-        ));
-        spans.push(Span::styled(
-            format!(" · {}", park_subject(&park.description)),
-            label,
-        ));
-    }
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::panel_rule())
-        .title(Span::styled(" stella ", theme::panel_title()));
-    Paragraph::new(Line::from(spans))
-        .block(block)
-        .render(area, buf);
-}
-
-/// `M:SS`, minutes growing past two digits, rolling to `H:MM:SS` past an hour
-/// — the parked-wait chip's clock.
-///
-/// Both halves of the chip render through this so elapsed and deadline are
-/// always comparable at a glance; a `4:12 / 30:00` where the two sides used
-/// different units would be worse than no countdown at all.
-fn clock_ms(ms: u64) -> String {
-    let secs = ms / 1000;
-    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
-    if h > 0 {
-        format!("{h}:{m:02}:{s:02}")
-    } else {
-        format!("{m}:{s:02}")
-    }
-}
-
-/// The park's subject, capped for a single-line stat box.
-///
-/// The full description already sits one row away in the transcript's ⏳ entry,
-/// so this only has to say *which* wait is running; a tool free to write a
-/// paragraph must not be able to push the clock off the box.
-fn park_subject(description: &str) -> String {
-    const MAX: usize = 40;
-    let flat = description.replace(['\n', '\r'], " ");
-    let flat = flat.trim();
-    if flat.chars().count() <= MAX {
-        flat.to_string()
-    } else {
-        let head: String = flat.chars().take(MAX - 1).collect();
-        format!("{head}…")
-    }
-}
-
-/// The transcript panel for a caller that already materialized just the
-/// visible window (the deck's fold cache clones ≤ one viewport of lines per
-/// frame instead of the whole history); `total` sizes the title. `hint`, when
-/// set, renders as a dim bottom title — the contextual "what can I press
-/// here" line the deck varies with the transcript's interaction state.
-pub(crate) fn render_transcript_window(
-    visible: Vec<Line<'static>>,
-    window: Range<usize>,
-    total: usize,
-    following: bool,
-    hint: Option<&str>,
-    area: Rect,
-    buf: &mut Buffer,
-) {
-    let title = if following {
-        format!(" transcript · {total} lines · following ")
-    } else {
-        format!(
-            " transcript · {}-{} / {total} ",
-            window.start.min(total),
-            window.end.min(total)
-        )
-    };
-    // The title carries its OWN style. A ratatui title with none inherits the
-    // border's, and the border is the deliberately-below-3.0 hairline — so
-    // `transcript · 0-23 / 38`, the one label that says where in the history
-    // you are, rendered at 1.26:1 and could not be read at all. The seam stays
-    // quiet (it is decoration); the words on it do not.
-    let mut block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::panel_rule())
-        .title(Span::styled(title, theme::panel_title()));
-    if let Some(hint) = hint {
-        block = block.title_bottom(
-            Line::from(Span::styled(
-                format!(" {hint} "),
-                Style::new().fg(theme::TEXT_TERTIARY),
-            ))
-            .right_aligned(),
-        );
-    }
-    // No wrap: one logical line per row keeps the scroll math line-exact
-    // (L-T4); overflow is clipped horizontally, not reflowed.
-    Paragraph::new(Text::from(visible))
-        .block(block)
-        .render(area, buf);
-}
 
 // The scope gate's renderer is the modal plan-review dialog
 // (`crate::views::scope_dialog`) — the band it replaced lived here.
@@ -614,20 +426,6 @@ pub(crate) fn resolve_inline_delta_total(
     refs.iter()
         .filter_map(|dref| resolve_inline_delta(dref, files))
         .reduce(|(a1, r1), (a2, r2)| (a1 + a2, r1 + r2))
-}
-
-/// Cost tone: green until the turn approaches its budget, then warning, then
-/// danger. Compared against the *turn* figure, because `limit_usd` is the
-/// guard's per-turn limit — matching it against the session-cumulative gauge
-/// (as this did) meant the tone flipped to red partway through a session and
-/// stayed there regardless of what the turn in flight actually cost.
-fn spend_color(hud: &Hud) -> Color {
-    let spent = hud.turn_spent_usd();
-    match hud.limit_usd {
-        Some(limit) if limit > 0.0 && spent >= limit => theme::BAD,
-        Some(limit) if limit > 0.0 && spent >= limit * 0.8 => theme::WARN,
-        _ => theme::OK,
-    }
 }
 
 #[cfg(test)]

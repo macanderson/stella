@@ -3,10 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ? lead  ·  needs input   0:00:00
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
 └─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
      model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
      ⚒ search_code trigger
@@ -15,31 +12,34 @@
      model glm-5.2-air · ctx 3.0k/200k · spend $0.00
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
-┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────┐┌ PLAN ○ pending approval 0/3 ─────────┐
-│    ⋯ ctrl+o for provenance and budget     ┌ models  resolved routing ───────────────────────────────── esc close ┐   ││Refactor the automations store into a…│
-│                                           │session   glm-5.2                                                     │   ││○ 1. extract types                    │
-│── PLAN ───────────────────────────────────│auto      model off · effort on · thinking off                        │───││○ 2. move hooks                       │
-│                                           │                                                                      │   ││○ 3. update 9 imports                 │
-│  Planning the automations cluster: list, e│lead      zai/glm-5.2-air                                             │   ││                                      │
-│                                           │          medium · thinking on · from default_model                   │   ││                                      │
-│☰  plan  4/7  ·  Wire the triggers API     │think     z-ai/glm-5.2                                    unassigned  │   ││                                      │
-│                                           │          low · thinking off · from agents.triage.model               │   ││                                      │
-│── EXECUTE ────────────────────────────────│research  zai/glm-5.2-air                                             │───││                                      │
-│                                           │          low · thinking off · from default_model                     │   ││                                      │
-│ │ ⊙ apps/app/automations/page.tsx         │plan      zai/glm-5.2-air                                             │   ││                                      │
-│ │ ⎿ 312 lines                             │          medium · thinking on · from default_model                   │2ms││                                      │
-│                                           │work      zai/glm-5.2-air                                     served  │   ││                                      │
-│☰  plan  5/7  ·  Workflows canvas          │          medium · thinking on · from default_model                   │   ││                                      │
-│                                           │verify    anthropic/claude-opus-5                         unassigned  │   ││                                      │
-│⏸ plan  Refactor the automations store into│          high  (effort_auto replaced "max") · thinking on            │   ││                                      │
-│                                           │          from pipeline_verifier_model                                │   ││                                      │
-└───────────────────────────────────────────└──────────────────────────────────────────────────────────────────────┘an ┘└────────────────────── /plan reads it ┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
-✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
+── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
+    symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
+    memory  event-log REPL                                                                                                                90 tok
+    ⋯ ctrl+o for provenance and budget
+
+── PLAN ────────────────────────────────────┌ models  resolved routing ───────────────────────────────── esc close ┐────────────────────────────────────────────
+                                            │session   glm-5.2                                                     │
+  Planning the automations cluster: list, ed│auto      model off · effort on · thinking off                        │
+                                            │                                                                      │
+☰  plan  4/7  ·  Wire the triggers API      │lead      zai/glm-5.2-air                                             │
+                                            │          medium · thinking on · from default_model                   │
+── EXECUTE ─────────────────────────────────│think     z-ai/glm-5.2                                    unassigned  │────────────────────────────────────────────
+                                            │          low · thinking off · from agents.triage.model               │
+ │ ⊙ apps/app/automations/page.tsx          │research  zai/glm-5.2-air                                             │
+ │ ⎿ 312 lines                              │          low · thinking off · from default_model                     │                         42ms
+                                            │plan      zai/glm-5.2-air                                             │
+☰  plan  5/7  ·  Workflows canvas           │          medium · thinking on · from default_model                   │
+                                            │work      zai/glm-5.2-air                                     served  │
+⏸ plan  Refactor the automations store into │          medium · thinking on · from default_model                   │
+                                            │verify    anthropic/claude-opus-5                         unassigned  │
+                                            │          high  (effort_auto replaced "max") · thinking on            │
+                                            │          from pipeline_verifier_model                                │
+                                            └──────────────────────────────────────────────────────────────────────┘
+
+
+
 >>>
- ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+ ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

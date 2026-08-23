@@ -1,12 +1,10 @@
-//! Session tab — the focused agent's REPL surface: identity header, the stat
-//! box with its vitals gauges, any pending gate card, the transcript, and the
-//! right-hand rail carrying PLAN
-//! ([`crate::views::plan_rail`]).
+//! Session tab — the focused agent's REPL surface: any pending gate card,
+//! then the transcript at full width (SPEC 5).
 //!
-//! It **reuses** the shared renderers (`render_hud`, `render_transcript`,
-//! `render_ask_user`, `entry_lines`), just scoped to whichever agent
-//! `ui.focused` points at. No transcript rendering is duplicated — there is
-//! one implementation of "draw a session".
+//! It **reuses** the shared renderers (`render_ask_user`, `entry_lines`),
+//! just scoped to whichever agent `ui.focused` points at. No transcript
+//! rendering is duplicated — there is one implementation of "draw a
+//! session".
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -16,12 +14,10 @@ use ratatui::widgets::{Paragraph, Widget};
 
 use std::collections::{HashMap, HashSet};
 
-use crate::deck::{AgentEntry, WorkspaceModel};
+use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
 use crate::model::TranscriptEntry;
-use crate::render::{
-    inner_height, inner_width, render_ask_user, render_hud, render_transcript_window,
-};
+use crate::render::render_ask_user;
 use crate::theme;
 use crate::transcript_nav::TurnDigest;
 
@@ -159,62 +155,29 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // gates, because it is the same kind of thing — work parked on an answer.
     let dispatch_h: u16 = if ui.pending_dispatch.is_some() { 7 } else { 0 };
 
-    // The nested subagent blocks (D5), directly under the lead's identity
-    // header. 0 when there are none or the focused lane is itself a
-    // subagent. Full-width rows, so in accessible mode nothing here ever
-    // shares a rendered row with the transcript.
+    // The nested subagent blocks (D5). 0 when there are none or the focused
+    // lane is itself a subagent. Full-width rows, so in accessible mode
+    // nothing here ever shares a rendered row with the transcript.
     let subs_h = crate::views::subagents::band_height(model, ui);
 
-    let hud_h = crate::render::HUD_H;
-
-    // PLAN lives in the right-hand rail ([`crate::views::plan_rail`]) and is up
-    // for the whole session. Too narrow for a column — or accessible mode,
-    // where a side-by-side column reads as interleaved lines (#1258) — stacks
-    // it above the transcript instead, sized against the rows the gates left.
-    // Nothing is dropped.
-    let split_rail = crate::views::plan_rail::rail_visible(ui.accessible, area.width);
-    let claimed = 1 + subs_h + hud_h + ask_h + hunk_h + dispatch_h;
-    let stacked_plan_h = if split_rail {
-        0
-    } else {
-        crate::views::plan_rail::stacked_plan_height(area.height.saturating_sub(claimed))
-    };
-
+    // SPEC 5: the transcript gets the full width and no border. The identity
+    // header, the stage box and the PLAN rail the v1 tab stacked around it
+    // are gone — `v2::frame` names where each of their facts went.
     let bands = Layout::vertical([
-        Constraint::Length(1),              // identity header
-        Constraint::Length(subs_h),         // nested subagent rows (0 = none)
-        Constraint::Length(hud_h),          // stat box (+1 row for the vitals gauges)
-        Constraint::Length(ask_h),          // pending ask-user (0 = collapsed)
-        Constraint::Length(hunk_h),         // pending hunk review (0 = collapsed)
-        Constraint::Length(dispatch_h),     // mid-turn routing (0 = collapsed)
-        Constraint::Length(stacked_plan_h), // PLAN, when stacked (0 = in the rail)
-        Constraint::Min(1),                 // transcript (+ right rail on a wide frame)
+        Constraint::Length(subs_h),     // nested subagent rows (0 = none)
+        Constraint::Length(ask_h),      // pending ask-user (0 = collapsed)
+        Constraint::Length(hunk_h),     // pending hunk review (0 = collapsed)
+        Constraint::Length(dispatch_h), // mid-turn routing (0 = collapsed)
+        Constraint::Min(1),             // transcript
     ])
     .split(area);
 
-    // On a frame that can afford it, the two panels move sideways into a
-    // quarter-width column: vertical rows are the scarce resource on a
-    // terminal and columns usually are not, so the rail costs the transcript
-    // some right-margin clipping instead of costing it whole rows.
-    let (transcript_area, rail_area) = if split_rail {
-        let cols = Layout::horizontal([
-            Constraint::Min(1),
-            Constraint::Length(crate::views::plan_rail::rail_width(area.width)),
-        ])
-        .split(bands[7]);
-        (cols[0], Some(cols[1]))
-    } else {
-        (bands[7], None)
-    };
-
-    render_header(agent, model.now_ms, bands[0], buf);
     if subs_h > 0 {
-        crate::views::subagents::render(model, ui, bands[1], buf);
+        crate::views::subagents::render(model, ui, bands[0], buf);
     }
-    render_hud(&sm.hud, agent.live_park(model.now_ms), bands[2], buf);
     if let Some(prompt) = &sm.pending_ask_user {
         let answered = ui.ask_answered.contains(&agent.meta.id);
-        render_ask_user(prompt, answered, bands[3], buf);
+        render_ask_user(prompt, answered, bands[1], buf);
     }
     if let Some(proposal) = &sm.pending_hunk_review {
         let answered = ui.hunk_answered.contains(&agent.meta.id);
@@ -222,26 +185,19 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             proposal,
             ui.hunk_marks.get(&agent.meta.id),
             answered,
-            bands[4],
+            bands[2],
             buf,
         );
     }
     if let Some(pending) = &ui.pending_dispatch {
-        crate::views::dispatch_card::render(pending, bands[5], buf);
+        crate::views::dispatch_card::render(pending, bands[3], buf);
     }
-    let animate = !ui.no_anim;
-    match rail_area {
-        Some(rail) => crate::views::plan_rail::render(sm, model.now_ms, animate, rail, buf),
-        None => {
-            // Stacked: the same panel, full width.
-            crate::views::plan_rail::render_plan(&sm.plan, model.now_ms, animate, bands[6], buf);
-        }
-    }
+    let transcript_area = bands[4];
 
     // Transcript: fold through the incremental cache (settled entries fold
     // once; only the streaming tail re-folds per frame), then reuse the
     // line-exact scroll window over the cached rows.
-    let width = inner_width(transcript_area);
+    let width = transcript_area.width as usize;
     let empty = HashSet::new();
     let expanded_set = ui.expanded.get(&agent.meta.id).unwrap_or(&empty);
     // The plan is memoized on [`FoldPlanKey`] (taken out of `ui` so the
@@ -277,7 +233,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         flushed,
     );
     ui.session_plan = Some((plan_key, plan));
-    let height = inner_height(transcript_area);
+    let height = transcript_area.height as usize;
     let total = ui.session_fold.total();
 
     // A selection move from the key handler lands here, where visual-row
@@ -303,7 +259,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     let window = ui.session_scroll.window(total, height);
     let mut visible = ui.session_fold.window_lines(window.clone());
     if let Some(sel) = ui.session_selected {
-        // A quiet warm background lift on the selected entry's rows.
+        // A quiet background lift on the selected entry's rows.
         for r in ui.session_fold.rows_of(sel) {
             if window.contains(&r)
                 && let Some(line) = visible.get_mut(r - window.start)
@@ -319,12 +275,13 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     if ui.search.open && !ui.search.query.is_empty() {
         highlight_matches(&mut visible, &ui.search.query);
     }
-    // Contextual help, keyed to the transcript's interaction state: every
-    // mode advertises its own way out (ctrl+o/Esc collapse the expand-all
-    // overlay, Esc clears a highlight) and the resting state teaches the
-    // scroll verbs (↑ scrolls; ⌘/⌃ ] and ⌘/⌃ [ jump to the ends).
+    render_transcript_rows(visible, transcript_area, buf);
+
+    // The transcript's interaction state, when it has one, on the row under
+    // the transcript: the search bar with its match count, and the way out of
+    // a fold-all / expand-all overlay. The resting state says nothing — the
+    // hint row under the composer already teaches the verbs.
     let hint = if ui.search.open {
-        // A search bar with no match count is a search bar you cannot trust.
         let pos = if ui.search.hits.is_empty() {
             if ui.search.query.is_empty() {
                 "type to search".to_string()
@@ -334,35 +291,34 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         } else {
             format!("{}/{}", ui.search.cursor + 1, ui.search.hits.len())
         };
-        format!(
-            "find: {}▏ · {pos} · ⏎ next · ⌃P prev · Esc close",
+        Some(format!(
+            "find: {}▏ · {pos} · ⏎ next · ⌃P prev · esc close",
             ui.search.query
-        )
+        ))
     } else if ui.fold_all_turns {
-        "turns folded · ⌃Z or Esc unfolds · ⌃F find".to_string()
+        Some("turns folded · ⌃Z or esc unfolds".to_string())
     } else if ui.transcript_expand_all {
-        "all expanded · ⌃O or Esc collapses".to_string()
-    } else if ui.session_selected.is_some() {
-        "⌃O expand · ⌃Z fold turn · ⌃N next failure · Esc clears".to_string()
+        Some("all expanded · ⌃O or esc collapses".to_string())
     } else {
-        // `↑` selects the newest message, it does not scroll — the scroll
-        // verbs are the page keys (see `handle_session_key`, which claims
-        // ↑/↓ for the highlight whenever the transcript has any entries).
-        //
-        // `/plan` is advertised here rather than only in help because the rail
-        // is a *summary*: a reader who wants a step's full text has to be
-        // told, once, that there is a way to get it.
-        "↑ select · ⇞⇟ scroll · ⌃F find · ⌃N failure · ⌃Z fold · ⌃O expand · /plan".to_string()
+        None
     };
-    render_transcript_window(
-        visible,
-        window,
-        total,
-        ui.session_scroll.follow,
-        Some(&hint),
-        transcript_area,
-        buf,
-    );
+    if let Some(hint) = hint
+        && let Some(last) = transcript_area.rows().last()
+    {
+        Paragraph::new(Line::from(Span::styled(
+            format!(" {hint}"),
+            Style::new().fg(theme::TEXT_TERTIARY),
+        )))
+        .render(last, buf);
+    }
+}
+
+/// The transcript body: one logical line per row, clipped rather than
+/// reflowed so the scroll math stays line-exact (L-T4). No border — SPEC 5
+/// gives the transcript the whole width, and the turn rules are its
+/// structure.
+fn render_transcript_rows(visible: Vec<Line<'static>>, area: Rect, buf: &mut Buffer) {
+    Paragraph::new(ratatui::text::Text::from(visible)).render(area, buf);
 }
 
 /// Light every occurrence of `query` inside the rows on screen.
@@ -412,42 +368,6 @@ fn highlight_matches(lines: &mut [Line<'static>], query: &str) {
     }
 }
 
-/// The one-line identity header: `▶ lead · running   0:00:00`. The trailing
-/// slot is the **per-turn wall clock** — live while a turn is in flight, else
-/// the last turn's held duration (zero before any turn), formatted `h:mm:ss`
-/// and always present.
-fn render_header(agent: &AgentEntry, now_ms: u64, area: Rect, buf: &mut Buffer) {
-    let st = agent.status;
-    let line = Line::from(vec![
-        Span::styled(
-            format!(" {} ", theme::status_glyph(st)),
-            Style::new().fg(theme::status_color(st)),
-        ),
-        Span::styled(agent.meta.id.clone(), theme::accent()),
-        Span::styled("  ·  ", theme::rule()),
-        Span::styled(
-            st.label().to_string(),
-            Style::new().fg(theme::status_color(st)),
-        ),
-        Span::raw("   "),
-        // The clock is a reading, not a brand mark — dim it so the header's
-        // one accent is the agent's name.
-        Span::styled(
-            fmt_hms(agent.turn_clock_ms(now_ms)),
-            Style::new().fg(theme::TEXT_TERTIARY),
-        ),
-    ]);
-    Paragraph::new(line).render(area, buf);
-}
-
-/// Format a millisecond duration as `h:mm:ss` — hours un-padded, minutes and
-/// seconds zero-padded to two digits. Drives the per-turn header clock.
-fn fmt_hms(ms: u64) -> String {
-    let secs = ms / 1000;
-    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
-    format!("{h}:{m:02}:{s:02}")
-}
-
 /// Shown when there are no agents at all.
 fn empty_state(area: Rect, buf: &mut Buffer) {
     if area.height == 0 {
@@ -476,7 +396,7 @@ mod tests {
     use super::*;
     use crate::envelope::{AgentMeta, Inbound};
     use crate::model::{FileState, MAX_TRANSCRIPT_ENTRIES, SessionModel};
-    use stella_protocol::{AgentEvent, ScopeProposal, TaskItem, TaskStatus};
+    use stella_protocol::{AgentEvent, ScopeProposal};
 
     /// Flatten a `Buffer` to plain text (content, not ANSI — the crate-wide
     /// render-test convention).
@@ -960,141 +880,6 @@ mod tests {
         );
     }
 
-    fn task(id: &str, subject: &str, status: TaskStatus, owner: Option<&str>) -> TaskItem {
-        TaskItem {
-            id: id.into(),
-            subject: subject.into(),
-            description: None,
-            status,
-            owner: owner.map(str::to_string),
-            contract: None,
-        }
-    }
-
-    /// The board reaches the frame as the rail's plan steps — every one, by
-    /// name. The old strip showed `☑ 0/2 ▸ Fix the auth redirect` and
-    /// suppressed the rest: a reader saw how many steps there were, never
-    /// what they said.
-    #[test]
-    fn the_board_reaches_the_frame_as_named_plan_steps() {
-        let mut model = WorkspaceModel::new();
-        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
-        let area = Rect::new(0, 0, 120, 24);
-
-        // No plan: the panel is still up, and says so rather than vanishing.
-        let mut ui = DeckUi::default();
-        let mut buf = Buffer::empty(area);
-        render(&model, &mut ui, area, &mut buf);
-        let text = buffer_text(&buf);
-        assert!(text.contains("PLAN"), "the panel is unconditional:\n{text}");
-        assert!(text.contains("no plan yet"), "…and honest:\n{text}");
-
-        model.apply_inbound(&Inbound::Event {
-            agent: "lead".into(),
-            event: stella_protocol::AgentEvent::TaskUpdate {
-                tasks: vec![
-                    task(
-                        "1",
-                        "Fix the auth redirect",
-                        TaskStatus::InProgress,
-                        Some("lead"),
-                    ),
-                    task("2", "Ship the fix", TaskStatus::Pending, None),
-                ],
-            },
-        });
-        let mut buf = Buffer::empty(area);
-        render(&model, &mut ui, area, &mut buf);
-        let text = buffer_text(&buf);
-        assert!(
-            text.contains("working 0/2"),
-            "the plan states itself:\n{text}"
-        );
-        assert!(text.contains("Fix the auth redirect"), "{text}");
-        assert!(
-            text.contains("Ship the fix"),
-            "every step is listed, not just the active one:\n{text}"
-        );
-
-        // An empty snapshot clears the board.
-        model.apply_inbound(&Inbound::Event {
-            agent: "lead".into(),
-            event: stella_protocol::AgentEvent::TaskUpdate { tasks: vec![] },
-        });
-        let mut buf = Buffer::empty(area);
-        render(&model, &mut ui, area, &mut buf);
-        let text = buffer_text(&buf);
-        // Assert on the panel, not the bare subject: the board update is also
-        // a transcript row, and that row legitimately survives a cleared
-        // board — the scrollback is a record, the rail is a state.
-        assert!(
-            text.contains("no plan yet"),
-            "a cleared board empties the rail:\n{text}"
-        );
-    }
-
-    /// **The headline of this change.** On the terminal size the deck is most
-    /// often run at, the rail must cost the transcript columns rather than
-    /// rows — it used to spend seven of a 24-row frame on a band that, on the
-    /// most common turn shape, had nothing to report.
-    #[test]
-    fn the_rail_spends_columns_on_the_plan_not_rows() {
-        let mut model = WorkspaceModel::new();
-        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
-        let area = Rect::new(0, 0, 80, 24);
-        let mut ui = DeckUi::default();
-        let mut buf = Buffer::empty(area);
-        render(&model, &mut ui, area, &mut buf);
-        // header(1) + stat box(3) = 4 of the 24 rows, and PLAN costs COLUMNS
-        // rather than rows.
-        assert_eq!(
-            ui.metrics.session_height, 18,
-            "the transcript must own every row the rail does not"
-        );
-    }
-
-    /// The rail is columns, not rows — and it is up whenever there are columns
-    /// to spare, not only when something has gone wrong.
-    #[test]
-    fn the_rail_is_up_wherever_the_frame_can_afford_a_column() {
-        let mut model = WorkspaceModel::new();
-        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
-        model.apply_inbound(&Inbound::Event {
-            agent: "lead".into(),
-            event: stella_protocol::AgentEvent::TaskUpdate {
-                tasks: vec![task(
-                    "1",
-                    "Fix the auth redirect",
-                    TaskStatus::Pending,
-                    None,
-                )],
-            },
-        });
-
-        // Wide: side by side.
-        let wide = Rect::new(0, 0, 120, 24);
-        let mut ui = DeckUi::default();
-        let mut buf = Buffer::empty(wide);
-        render(&model, &mut ui, wide, &mut buf);
-        let text = buffer_text(&buf);
-        assert!(text.contains("PLAN"), "{text}");
-        assert!(
-            text.contains("Fix the auth redirect"),
-            "with the step named, not just a count:\n{text}"
-        );
-
-        // Too narrow for a column: the SAME panel, stacked. The old rail
-        // simply disappeared here, which taught readers that its absence meant
-        // nothing was happening.
-        let narrow = Rect::new(0, 0, 70, 30);
-        let mut ui = DeckUi::default();
-        let mut buf = Buffer::empty(narrow);
-        render(&model, &mut ui, narrow, &mut buf);
-        let text = buffer_text(&buf);
-        assert!(text.contains("PLAN"), "stacked, never dropped:\n{text}");
-        assert!(text.contains("Fix the auth redirect"), "{text}");
-    }
-
     /// A settled turn of `tools` calls against `path`, `failures` of them
     /// failing, whose successful output is the distinctive `folded_away_body`.
     fn model_with_one_turn(prompt: &str, tools: usize, failures: usize) -> SessionModel {
@@ -1275,47 +1060,6 @@ mod tests {
                 .all(|s| s.style.fg == Some(theme::MUTED)),
             "which the unmatched fragments keep untouched"
         );
-    }
-
-    #[test]
-    fn fmt_hms_formats_zero_sub_minute_and_over_an_hour() {
-        // Always h:mm:ss, hours un-padded, minutes/seconds zero-padded.
-        assert_eq!(fmt_hms(0), "0:00:00"); // the at-rest, pre-turn readout
-        assert_eq!(fmt_hms(45_000), "0:00:45"); // < 1 min
-        assert_eq!(fmt_hms(65_000), "0:01:05"); // rolls into minutes
-        assert_eq!(fmt_hms(3_600_000), "1:00:00"); // exactly one hour
-        assert_eq!(fmt_hms(3_661_000), "1:01:01"); // > 1 hr
-        assert_eq!(fmt_hms(45_296_000), "12:34:56"); // multi-hour, sub-ms floored
-    }
-
-    #[test]
-    fn header_shows_the_turn_clock_not_the_word_stella() {
-        // The header shows the turn clock's h:mm:ss readout, not a workspace-name
-        // title — which in the stella repo would literally read "stella".
-        let mut model = WorkspaceModel::new();
-        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "stella", 0)));
-        // A plain event flips the agent to `Running` (so the label reads
-        // "running") without starting a turn — the clock stays at zero.
-        model.apply_inbound(&Inbound::Event {
-            agent: "lead".into(),
-            event: AgentEvent::Text {
-                text: "working".into(),
-            },
-        });
-        let area = Rect::new(0, 0, 80, 1);
-        let mut buf = Buffer::empty(area);
-        render_header(&model.agents[0], model.now_ms, area, &mut buf);
-
-        let text = buffer_text(&buf);
-        assert!(
-            !text.contains("stella"),
-            "the word `stella` is gone from the header:\n{text}"
-        );
-        assert!(
-            text.contains("0:00:00"),
-            "the turn clock reads zero before any turn:\n{text}"
-        );
-        assert!(text.contains("running"), "status label intact:\n{text}");
     }
 
     /// Refresh must commit its cache key only after the fold loop finishes.

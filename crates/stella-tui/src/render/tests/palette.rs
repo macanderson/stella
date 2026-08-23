@@ -8,6 +8,7 @@
 //! inside the brand family.
 
 use super::*;
+use ratatui::style::Color;
 
 /// Every colour a transcript row emits must come from the palette.
 ///

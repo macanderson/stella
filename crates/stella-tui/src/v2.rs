@@ -18,6 +18,7 @@
 //! this line is a defect, not a shortcut — `no_hex_literals_in_v2_render_code`
 //! in `tests/v2_status_bar.rs` is what says so.
 
+pub mod frame;
 pub mod graph;
 pub mod status_bar;
 pub mod status_source;

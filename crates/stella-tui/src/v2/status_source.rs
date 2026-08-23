@@ -62,7 +62,7 @@ impl StatusSource {
 
         Self {
             worker: worker_slug(model),
-            stage: stage_word(focused.and_then(|a| a.model.hud.stage.as_ref())),
+            stage: stage_cell(model.now_ms, focused),
             // Window occupancy is the latest call's prompt size, not the
             // session's cumulative input — the same read `ctx_item` makes, and
             // for the same reason: cumulative input dwarfs the window after a
@@ -138,6 +138,37 @@ fn worker_slug(model: &WorkspaceModel) -> String {
         .and_then(|role| model.role_pins.get(&role))
         .map(vendor_slug)
         .unwrap_or_else(|| "—".into())
+}
+
+/// The stage cell: the stage word, or — while the turn is parked on a wait
+/// (#2007) — `parked ⏳ 0:10 / 30:00`, elapsed against the deadline.
+///
+/// The park rode the v1 stage box, which the v2 frame deleted; a parked turn
+/// and a working one must still read differently on every frame, and the
+/// stage cell is the one that says what the run is doing right now. The
+/// elapsed comes from `now_ms` on the model rather than a clock, so the bar
+/// stays a pure projection.
+fn stage_cell(now_ms: u64, focused: Option<&crate::deck::AgentEntry>) -> String {
+    if let Some((park, elapsed_ms)) = focused.and_then(|a| a.live_park(now_ms)) {
+        return format!(
+            "parked ⏳ {} / {}",
+            clock_ms(elapsed_ms),
+            clock_ms(park.deadline_secs.saturating_mul(1000))
+        );
+    }
+    stage_word(focused.and_then(|a| a.model.hud.stage.as_ref()))
+}
+
+/// `M:SS`, rolling to `H:MM:SS` past an hour — both halves of the park clock
+/// render through this so elapsed and deadline are always comparable.
+fn clock_ms(ms: u64) -> String {
+    let secs = ms / 1000;
+    let (h, m, s) = (secs / 3600, (secs % 3600) / 60, secs % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
 }
 
 /// The stage as SPEC 5 writes it: one lowercase word.
@@ -258,6 +289,33 @@ mod tests {
     fn a_contributed_stage_keeps_its_own_word() {
         let stage = stella_protocol::StageName::new("Vera Verify");
         assert_eq!(stage_word(Some(&stage)), "vera verify");
+    }
+
+    /// #2007's rendering half, re-homed from the deleted stage box: a parked
+    /// turn states elapsed against its deadline, and the cell moves between
+    /// two frames with no event in between.
+    #[test]
+    fn a_parked_turn_counts_up_against_its_deadline_on_the_stage_cell() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.now_ms = 1_000;
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::TurnParked {
+                description: "CI for branch main settles".into(),
+                poll_interval_secs: 30,
+                deadline_secs: 1_800,
+            },
+        });
+        model.now_ms = 11_000;
+        let early = StatusSource::project(&model, &DeckUi::default()).stage;
+        assert_eq!(early, "parked ⏳ 0:10 / 30:00");
+        model.now_ms = 1_753_000;
+        let late = StatusSource::project(&model, &DeckUi::default()).stage;
+        assert_eq!(late, "parked ⏳ 29:12 / 30:00");
+        model.now_ms = 4_401_000;
+        let hour = StatusSource::project(&model, &DeckUi::default()).stage;
+        assert_eq!(hour, "parked ⏳ 1:13:20 / 30:00");
     }
 
     /// The default deck projects a drawable status: no NaN into the meter.

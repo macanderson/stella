@@ -3,9 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ SESSION   AGENTS   TRACES GRAPH FILES SKILLS MCP ISSUES SETTINGS                                                                                       stella*
   EXECUTIONS  │  INSTALLED AGENTS   ←/→
 ┌ Executions — 3 active / 3 total · ✦ 1 lead · ◆ 2 sub ────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │Agent              Goal                 Status       Ctx%   Cost      $/hr      Elapsed  CPU%   MEM     In/Out         Cache  Warmth  Activity                │
@@ -36,10 +34,12 @@
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
-✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
+
 >>>
- ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0110  ·  1 line  ·  queue empty
+ ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▎░░░░░░░░░░░ 3% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

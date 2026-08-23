@@ -3,10 +3,7 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
-┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────stella* ┐
-│ SESSION │ AGENTS │ TRACES │ GRAPH │ FILES │ SKILLS │ MCP │ ISSUES │ SETTINGS                                                                                 │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
- ? lead  ·  needs input   0:00:00
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
 · subagent sub:auth · status needs input · elapsed 5:12
 · model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
 · last tool search_code trigger
@@ -15,19 +12,22 @@
 · model glm-5.2-air · ctx 3.0k/200k · spend $0.00
 · last tool none yet
 · returns watch CI + open PR → lead inbox
-┌ stella ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│stage execute   model —   turn $0.0390 / $2.50  ·  observed                                                                                                   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-┌ PLAN ○ pending approval 0/3 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│Refactor the automations store into a shared workspace package                                                                                                │
-│○ 1. extract types                                                                                                                                            │
-│  +2 more                                                                                                                                                     │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── /plan reads it ┘
-┌ transcript · 22 lines · following ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                                                                                              │
-│☰  plan  4/7  ·  Wire the triggers API                                                                                                                        │
-│                                                                                                                                                              │
-│── EXECUTE ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────│
+── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
+    symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
+    memory  event-log REPL                                                                                                                90 tok
+    ⋯ ctrl+o for provenance and budget
+
+── PLAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Planning the automations cluster: list, editor, triggers, workflows.
+
+☰  plan  4/7  ·  Wire the triggers API
+
+── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ │ ⊙ apps/app/automations/page.tsx
 ┌ question ──────────────────────────────────────────────────────────────────────────────────────── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐
 │from the `research-child` sub-agent                                                                                                                           │
 │                                                                                                                                                              │
@@ -37,9 +37,9 @@
 │  [ ] Bearer token                                                                                                                                            │
 │  [ ] Type your own answer                                                                                                                                    │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- ▸ stage  Refactor the automations store into a shared workspace package
-✓ plan   ▸ execute ████████████░░░░░░░░░░░░ 50%   · verify
+
+
+
 >>>
- ⌘⏎ new line  ·  ⏎ queue (never blocks)  ·  ! shell  ·  / commands                                                      turn $0.0390  ·  1 line  ·  queue empty
+ ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help
