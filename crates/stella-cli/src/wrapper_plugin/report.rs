@@ -143,15 +143,15 @@ pub(super) fn spend_lines(spends: &[ChildTurnSpend]) -> Vec<String> {
 /// One line per candidate fan-out this host performed, naming what the plugin
 /// asked for, what it got, and what the difference cost.
 ///
-/// [`spend_lines`]' sibling, and the one that matters more: a fan-out is the
-/// largest spend a plugin can cause on a single host call — N *writing* worker
-/// turns — so a run that printed child turns and not these would be visible
-/// about the cheap spend and silent about the expensive one.
+/// A fan-out is the largest spend a plugin can cause on a single host call —
+/// N *writing* worker turns — so a run that printed [`spend_lines`]' child
+/// turns and not these would be visible about the cheap spend and silent
+/// about the expensive one.
 ///
-/// The clamp is stated rather than hidden. "asked 8, ran 3" and "asked 3, ran
-/// 3" are different facts about a plugin and only the host knows which one
-/// happened, so the requested width is printed whenever it differs from what
-/// ran — which is also how a user discovers that
+/// "asked 8, ran 3" and "asked 3, ran 3" are different facts about a plugin
+/// and only the host knows which one happened, so the requested width is
+/// printed whenever it differs from what ran — which is also how a user
+/// discovers that
 /// [`stella_runtime::wrapper::DEFAULT_HOST_MAX_FANOUT_WIDTH`] is why a plugin
 /// scored fewer candidates than its README promised.
 ///
