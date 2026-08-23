@@ -814,7 +814,7 @@ class StellaAgent(BaseInstalledAgent):
     #: What ``stella init`` built, per :mod:`code_graph`. Declared, because an
     #: attribute that exists only when one stdout line matched is one no
     #: reader trusts — which is how it went unread entirely (#3087).
-    _code_graph_summary: dict[str, str]
+    _code_graph_summary: dict[str, Any]
 
     def __init__(self, *args: Any, agent_timeout_sec: Any = None, **kwargs: Any):
         """Accept Harbor's per-trial agent deadline, and keep it off the base.
