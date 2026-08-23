@@ -738,6 +738,127 @@ async fn a_mid_run_user_rewind_is_not_a_ref_escape() {
     );
 }
 
+/// **#4478's stash half.** A candidate's `git stash` pushes onto the one
+/// stack the user pops from, and the reachability probe cannot see it: a stash
+/// commit is built *on* the candidate's tip, so it is a descendant rather than
+/// an ancestor. Attributed by the branch git itself recorded in the stash
+/// commit instead.
+#[tokio::test]
+async fn a_candidate_that_stashes_is_refused_adoption() {
+    let dir = repo();
+    let root = dir.path();
+    let subject = substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    let checkout = PathBuf::from(&candidate.root);
+    std::fs::write(checkout.join("seed.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+    git(&checkout, &["stash", "-q"]);
+
+    let error = subject.adopt(&candidate).await.unwrap_err();
+    match &error {
+        CandidateFanoutError::NotAdopted { reason, .. } => assert!(
+            reason.contains("refs/stash"),
+            "the refusal must name the stack the candidate pushed onto: {reason}"
+        ),
+        other => panic!("expected NotAdopted, got {other:?}"),
+    }
+}
+
+/// The control for the test above: the **user** stashing in their own checkout
+/// while a fan-out is in flight names their own branch, so it costs no
+/// candidate its adoption.
+#[tokio::test]
+async fn a_mid_run_user_stash_is_not_a_ref_escape() {
+    let dir = repo();
+    let root = dir.path();
+    let subject = substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    std::fs::write(
+        PathBuf::from(&candidate.root).join("answer.txt"),
+        "the candidate's answer\n",
+    )
+    .unwrap();
+
+    // The user, in their own checkout, parks their work.
+    std::fs::write(root.join("seed.txt"), "one\ntwo\nthree\nmine\n").unwrap();
+    git(root, &["stash", "-q"]);
+
+    subject.adopt(&candidate).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("answer.txt")).unwrap(),
+        "the candidate's answer\n",
+        "the user's own stash is the user's own action"
+    );
+}
+
+/// **#4478's deletion half — the false refusal it removes.** A deletion
+/// carries no value to attribute, and until this a candidate lost its adoption
+/// because the user tidied up a branch while the fan-out ran.
+#[tokio::test]
+async fn a_mid_run_user_branch_deletion_is_not_a_ref_escape() {
+    let dir = repo();
+    let root = dir.path();
+    git(root, &["branch", "doomed"]);
+    let subject = substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    std::fs::write(
+        PathBuf::from(&candidate.root).join("answer.txt"),
+        "the candidate's answer\n",
+    )
+    .unwrap();
+
+    // The user deletes one of their own branches. The candidate never touched
+    // it, and nothing in the candidate's own worktree state says otherwise.
+    git(root, &["branch", "-D", "doomed"]);
+
+    subject.adopt(&candidate).await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("answer.txt")).unwrap(),
+        "the candidate's answer\n",
+        "a branch the candidate never sat on is not the candidate's to answer for"
+    );
+}
+
+/// The other side of the same probe: a candidate that checked a shared branch
+/// out — the observed escape — and then deleted it is still refused, because
+/// its own per-worktree HEAD reflog names the ref.
+#[tokio::test]
+async fn a_candidate_that_deletes_a_branch_it_checked_out_is_refused() {
+    let dir = repo();
+    let root = dir.path();
+    git(root, &["branch", "other"]);
+    let subject = substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    let checkout = PathBuf::from(&candidate.root);
+    let own_branch = git(&checkout, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    git(
+        &checkout,
+        &["checkout", "-q", "--ignore-other-worktrees", "other"],
+    );
+    git(
+        &checkout,
+        &[
+            "checkout",
+            "-q",
+            "--ignore-other-worktrees",
+            own_branch.trim(),
+        ],
+    );
+    git(&checkout, &["branch", "-D", "other"]);
+
+    let error = subject.adopt(&candidate).await.unwrap_err();
+    match &error {
+        CandidateFanoutError::NotAdopted { reason, .. } => assert!(
+            reason.contains("refs/heads/other"),
+            "the refusal must name the ref: {reason}"
+        ),
+        other => panic!("expected NotAdopted, got {other:?}"),
+    }
+}
+
 /// **#4390's mode half, tightening (#2935).** Git records exactly `100644` and
 /// `100755`, so a candidate that generates a private key and `chmod 600`s it
 /// had that half of its work dropped by `git apply`.

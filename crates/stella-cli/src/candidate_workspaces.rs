@@ -379,6 +379,30 @@ impl SessionCandidateWorkspaces {
             .is_ok_and(|out| out.success)
     }
 
+    /// The subject line of the commit `oid` names, empty when git could not
+    /// say.
+    ///
+    /// Read for one question only — which worktree took a stash — and empty
+    /// rather than an error for [`ref_guard`]'s reason: a fact this host could
+    /// not read must not become an accusation.
+    async fn commit_subject(&self, dir: &Path, oid: &str) -> String {
+        self.git(dir, &["log", "-1", "--no-color", "--format=%s", oid])
+            .await
+            .map(|subject| subject.trim().to_string())
+            .unwrap_or_default()
+    }
+
+    /// The messages of `checkout`'s **own** HEAD reflog, newest first.
+    ///
+    /// Per-worktree state (`.git/worktrees/<name>/logs/HEAD`), which is what
+    /// makes it evidence: only the process sitting in that checkout writes it,
+    /// so a ref it names is one this candidate moved onto.
+    async fn head_reflog(&self, checkout: &Path) -> String {
+        self.git(checkout, &["reflog", "show", "HEAD", "--format=%gs"])
+            .await
+            .unwrap_or_default()
+    }
+
     /// The tracked paths of the tree at `dir`, repository-relative.
     async fn tracked_paths(&self, dir: &Path) -> Vec<String> {
         self.git(dir, &["ls-files", "-z"])
@@ -586,13 +610,13 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
             reason,
         };
         let (worktree, refs_at_create, modes_at_create) = self.baseline(&workspace.handle)?;
-        let checkout = worktree.path;
+        let checkout = worktree.path.clone();
         let top = self.layout().await?.top.clone();
 
         // Before anything is written: a candidate that reached outside its own
         // tree into the shared ref namespace does not get to land, however
         // good its patch is.
-        let escaped = ref_guard::audit(self, &top, &refs_at_create, &worktree.branch).await;
+        let escaped = ref_guard::audit(self, &top, &refs_at_create, &worktree).await;
         if !escaped.is_empty() {
             return Err(fail(ref_guard::refusal(&escaped)));
         }
