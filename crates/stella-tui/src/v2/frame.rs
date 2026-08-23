@@ -157,7 +157,9 @@ fn plan_of<'a>(model: &'a WorkspaceModel, ui: &DeckUi) -> Option<&'a Plan> {
 /// only time the key steers, and a hint for a key that would do nothing is a
 /// hint the reader learns to ignore. The queue depth rides the `⏎ queue` hint
 /// when there is one: the hint says what `⏎` does, the count says what it has
-/// already done.
+/// already done. `↓ N sub-agents` draws only while lanes exist, for the same
+/// reason — it is the one place the SESSION tab says the lanes are there,
+/// now that nothing stacks above the transcript for them.
 pub fn render_hint_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     if area.width == 0 || area.height == 0 {
         return;
@@ -185,6 +187,15 @@ pub fn render_hint_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mu
         spans.push(sep.clone());
         spans.push(Span::styled("esc", key));
         spans.push(Span::styled(" steer", dim));
+    }
+    let lanes = model.subagent_count();
+    if lanes > 0 {
+        spans.push(sep.clone());
+        spans.push(Span::styled("↓", key));
+        spans.push(Span::styled(
+            format!(" {lanes} sub-agent{}", if lanes == 1 { "" } else { "s" }),
+            dim,
+        ));
     }
     for (k, label) in [
         ("^N", " failure"),

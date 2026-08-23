@@ -25,7 +25,7 @@
 │                                             │  /             slash commands — ↑↓ pick · tab completes · ⏎ runs │                                             │
 │                                             │  ctrl-v        paste — a copied image is attached to the prompt  │                                             │
 │                                             │  ctrl-t        open the queue editor                             │                                             │
-│                                             │  ctrl-a        SUB-AGENTS — dispatched lanes: stop · pause · rest│                                             │
+│                                             │  ctrl-a / ↓    SUB-AGENTS — ↑↓ pick a lane · →↵ open it · ^x^x ki│                                             │
 │                                             │  ctrl-s        PLAN — every step of the approved plan, in full   │                                             │
 │                                             │  >text         steer the running turn — lands at the next step bo│                                             │
 │                                             │  esc           steer: your draft + queue go INTO the running turn│                                             │
@@ -41,5 +41,5 @@
  4 installed · 1 learned · 3 enabled          │  engine        3 active · 3 total                                │
                                               │  cpu           42%                                               │
 >>>                                           │  mem           148M                                              │
- ⏎ queue · ^N failure · ^Z fold turn · ^O expa└──────────────────────────────────────────────────────────────────┘
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fo└──────────────────────────────────────────────────────────────────┘
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

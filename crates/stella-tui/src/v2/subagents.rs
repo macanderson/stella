@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The SUB-AGENTS overlay (`ctrl-a`, `/subagents`): every lane the lead has
-//! dispatched, with controls.
+//! The SUB-AGENTS overlay (`↓` from an empty prompt, `ctrl-a`, `/subagents`):
+//! every lane the lead has dispatched, with controls. It is the only place
+//! the lanes are drawn — the SESSION tab stacks nothing above the transcript
+//! for them.
 //!
 //! ```text
 //! ╭ sub-agents · 2 running · 1 paused ─────────────────────────────────────╮
@@ -13,7 +15,7 @@
 //! │   ◆ sub:3  paused · 1:02 · moonshotai/kimi-k3 · effort high · $0.03    │
 //! │     Simplify the crate READMEs.                                        │
 //! │     paused after edit_file crates/stella-core/README.md                │
-//! ╰ ↑↓ select · ↵ focus · s stop · p pause/resume · r restart · esc ───────╯
+//! ╰ ↑↓ select · →↵ open · l lead · ^x^x kill · p pause · r restart · esc ──╯
 //! ```
 //!
 //! Three rows per lane. The head is its vitals — status, clock, model, the
@@ -26,13 +28,22 @@
 //! humanized one-liner is the most a row quotes.
 //!
 //! The verbs ride the wire the old AGENTS dashboard used
-//! ([`WorkspaceInput::Control`], #4334): `s` stops, `p` pauses a running lane
-//! and resumes a paused one, `r` restarts from the lane's retained spec, and
-//! `⏎` focuses the lane's transcript on the SESSION tab. The lane list is
-//! [`WorkspaceModel::agents`] filtered to sub-agents, in registration order,
-//! so the keys and the paint agree on which row is which.
+//! ([`WorkspaceInput::Control`], #4334): `ctrl-x` twice kills (`s` too, for
+//! the hand that knows the old key), `p` pauses a running lane and resumes a
+//! paused one, `r` restarts from the lane's retained spec, and `→` or `⏎`
+//! opens the lane — focuses its transcript on the SESSION tab, where the
+//! composer steers it and Esc steers or stops it, as for the lead. `l` is
+//! the way back to the lead. The lane list is [`WorkspaceModel::agents`]
+//! filtered to sub-agents, in registration order, so the keys and the paint
+//! agree on which row is which.
+//!
+//! Kill takes two presses because it is the one verb here with no undo: a
+//! stopped worker's turn future is dropped, and Restart begins again from
+//! the spec, not from where it was. The first press arms and the footer says
+//! so; any other key disarms — the same shape the queue editor's clear-all
+//! and the SKILLS uninstall use.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -40,7 +51,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
 use stella_tui_theme::token;
 
-use crate::deck::{AgentEntry, WorkspaceModel};
+use crate::deck::{AgentEntry, DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckAction, DeckUi};
 use crate::envelope::{AgentControl, AgentMeta, AgentStatus, WorkspaceInput};
 use crate::model::TranscriptEntry;
@@ -50,11 +61,31 @@ use crate::views::cards;
 /// Rows one lane spends, plus one blank between lanes.
 const ROWS_PER_LANE: usize = 4;
 
-/// The overlay's own state: whether it is up, and the selected row.
+/// The overlay's own state: whether it is up, the selected row, and whether
+/// the first `ctrl-x` of a kill has been pressed.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SubagentsOverlay {
     pub open: bool,
     pub sel: usize,
+    /// `ctrl-x` was pressed once on the selected lane; the next `ctrl-x`
+    /// kills it, any other key disarms.
+    pub kill_armed: bool,
+}
+
+/// `↓` from an empty composer on the Session tab opens the overlay when
+/// there are lanes to list — `↑`'s mirror (the queue editor). `None` lets
+/// the key fall through: with no lanes an empty session scrolls as it always
+/// did, and with text in the composer `↓` is cursor motion. Gated on *full*
+/// composer emptiness, chips included, like `↑`.
+pub fn down_opens(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Option<DeckAction> {
+    if ui.tab == DeckTab::Session
+        && ui.composer.is_empty()
+        && model.subagent_count() > 0
+        && matches!(key.code, KeyCode::Down)
+    {
+        return Some(open(ui));
+    }
+    None
 }
 
 /// The lanes the overlay lists, in registration order.
@@ -218,12 +249,14 @@ fn input_of(lane: &AgentEntry, name: &str) -> String {
 pub fn open(ui: &mut DeckUi) -> DeckAction {
     ui.subagents.open = true;
     ui.subagents.sel = 0;
+    ui.subagents.kill_armed = false;
     DeckAction::Handled
 }
 
-/// The overlay's keys: ↑/↓ select, `⏎` focus the lane's transcript, `s`
-/// stop, `p` pause a running lane / resume a paused one, `r` restart,
-/// Esc/`q` close. Modal: every other key is swallowed.
+/// The overlay's keys: ↑/↓ select, `→`/`⏎` open the lane (focus its
+/// transcript), `l` back to the lead, `ctrl-x` twice (or `s`) stop, `p`
+/// pause a running lane / resume a paused one, `r` restart, Esc/`←`/`q`
+/// close. Modal: every other key is swallowed.
 pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     let rows = lanes(model);
     let count = rows.len();
@@ -235,8 +268,11 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
             control,
         })
     };
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    // The kill arm survives exactly one key: the second `ctrl-x`.
+    let armed = std::mem::take(&mut ui.subagents.kill_armed);
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
+        KeyCode::Esc | KeyCode::Left | KeyCode::Char('q') => {
             ui.subagents.open = false;
             DeckAction::Handled
         }
@@ -250,10 +286,26 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
             }
             DeckAction::Handled
         }
-        KeyCode::Enter => match selected {
+        KeyCode::Enter | KeyCode::Right => match selected {
             Some((idx, _)) => {
                 ui.subagents.open = false;
                 ui.focus_agent(idx);
+                DeckAction::Handled
+            }
+            None => DeckAction::Handled,
+        },
+        KeyCode::Char('l') => {
+            ui.subagents.open = false;
+            if let Some(idx) = model.agents.iter().position(|a| !a.is_subagent()) {
+                ui.focus_agent(idx);
+            }
+            DeckAction::Handled
+        }
+        KeyCode::Char('x') if ctrl => match selected {
+            Some((_, lane)) if lane.status.is_terminal() => DeckAction::Handled,
+            Some((_, lane)) if armed => control(lane, AgentControl::Stop),
+            Some(_) => {
+                ui.subagents.kill_armed = true;
                 DeckAction::Handled
             }
             None => DeckAction::Handled,
@@ -379,18 +431,23 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         }
     }
     title.push(Span::raw(" "));
+    let footer = if ui.subagents.kill_armed {
+        Span::styled(
+            " ctrl-x again kills the selected lane · any other key keeps it ",
+            Style::new().fg(token::RED).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled(
+            " ↑↓ select · →↵ open · l lead · ^x^x kill · p pause/resume · r restart · esc ",
+            dim,
+        )
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(token::BORDER))
         .title(Line::from(title))
-        .title_bottom(
-            Line::from(Span::styled(
-                " ↑↓ select · ↵ focus · s stop · p pause/resume · r restart · esc ",
-                dim,
-            ))
-            .right_aligned(),
-        );
+        .title_bottom(Line::from(footer).right_aligned());
     Paragraph::new(lines).block(block).render(popup, buf);
 }
 
@@ -575,6 +632,110 @@ mod tests {
         );
     }
 
+    /// **The witness for the arrow-key way in.** `↓` on an empty composer
+    /// opens the overlay when lanes exist and falls through when none do;
+    /// inside it `→` opens the selected lane like `⏎`, `←` closes like Esc,
+    /// and `l` goes back to the lead.
+    #[test]
+    fn down_opens_the_overlay_and_the_arrows_walk_in_and_out() {
+        let mut ui = DeckUi {
+            tab: DeckTab::Session,
+            ..DeckUi::default()
+        };
+        let empty = model_with(&[]);
+        assert_eq!(
+            down_opens(key(KeyCode::Down), &empty, &mut ui),
+            None,
+            "no lanes: `↓` is the transcript's"
+        );
+        let model = model_with(&[("sub:1", AgentStatus::Running)]);
+        assert_eq!(
+            down_opens(key(KeyCode::Down), &model, &mut ui),
+            Some(DeckAction::Handled)
+        );
+        assert!(ui.subagents.open);
+        handle_key(key(KeyCode::Right), &model, &mut ui);
+        assert!(!ui.subagents.open, "`→` opens the lane");
+        assert_eq!(ui.focused, 1);
+
+        ui.composer.load("draft".to_string());
+        assert_eq!(
+            down_opens(key(KeyCode::Down), &model, &mut ui),
+            None,
+            "with text in the composer `↓` is cursor motion"
+        );
+        ui.composer.clear();
+        down_opens(key(KeyCode::Down), &model, &mut ui);
+        handle_key(key(KeyCode::Char('l')), &model, &mut ui);
+        assert!(!ui.subagents.open);
+        assert_eq!(ui.focused, 0, "`l` focuses the lead");
+
+        down_opens(key(KeyCode::Down), &model, &mut ui);
+        handle_key(key(KeyCode::Left), &model, &mut ui);
+        assert!(!ui.subagents.open, "`←` closes without moving focus");
+    }
+
+    /// **The witness for `ctrl-x ctrl-x`.** The first press arms and sends
+    /// nothing; the second sends the stop for the selected lane. Any other
+    /// key between them disarms, and a finished lane never arms.
+    #[test]
+    fn ctrl_x_twice_kills_the_selected_lane_and_any_other_key_disarms() {
+        let model = model_with(&[
+            ("sub:1", AgentStatus::Running),
+            ("sub:2", AgentStatus::Done),
+        ]);
+        let mut ui = DeckUi::default();
+        open(&mut ui);
+        let ctrl_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+
+        assert_eq!(handle_key(ctrl_x, &model, &mut ui), DeckAction::Handled);
+        assert!(ui.subagents.kill_armed, "the first press arms");
+        assert_eq!(
+            handle_key(ctrl_x, &model, &mut ui),
+            DeckAction::Send(WorkspaceInput::Control {
+                agent: "sub:1".into(),
+                control: AgentControl::Stop,
+            }),
+            "the second press kills"
+        );
+        assert!(!ui.subagents.kill_armed);
+
+        handle_key(ctrl_x, &model, &mut ui);
+        handle_key(key(KeyCode::Up), &model, &mut ui);
+        assert!(!ui.subagents.kill_armed, "another key disarms");
+        assert_eq!(
+            handle_key(ctrl_x, &model, &mut ui),
+            DeckAction::Handled,
+            "…so the next ctrl-x only arms again"
+        );
+
+        ui.subagents.kill_armed = false;
+        handle_key(key(KeyCode::Down), &model, &mut ui);
+        handle_key(ctrl_x, &model, &mut ui);
+        assert!(!ui.subagents.kill_armed, "a finished lane never arms");
+    }
+
+    /// The armed state is visible: the footer says the next ctrl-x kills.
+    #[test]
+    fn the_footer_says_so_while_a_kill_is_armed() {
+        let model = model_with(&[("sub:1", AgentStatus::Running)]);
+        let mut ui = DeckUi::default();
+        open(&mut ui);
+        ui.subagents.kill_armed = true;
+        let area = Rect::new(0, 0, 100, 12);
+        let mut buf = Buffer::empty(area);
+        render(&model, &ui, area, &mut buf);
+        let text: String = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("ctrl-x again kills"), "{text}");
+    }
+
     /// A finished lane takes no stop; the key is swallowed rather than sent.
     #[test]
     fn a_finished_lane_cannot_be_stopped() {
@@ -626,7 +787,7 @@ mod tests {
         assert!(text.contains("reading docs/spec/a.md"), "{text}");
         assert!(!text.contains('{'), "no JSON reaches the overlay:\n{text}");
         assert!(
-            text.contains("s stop · p pause/resume · r restart"),
+            text.contains("^x^x kill · p pause/resume · r restart"),
             "{text}"
         );
     }

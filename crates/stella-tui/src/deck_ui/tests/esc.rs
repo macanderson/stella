@@ -24,6 +24,43 @@ fn stop_lead() -> DeckAction {
     })
 }
 
+/// Esc at a sub-agent lane the user opened from the overlay steers THAT lane
+/// with the draft alone: the queue is the lead's backlog and stays where it
+/// is. With no draft it is the lane's stop.
+#[test]
+fn esc_at_an_opened_lane_steers_the_draft_into_that_lane_and_leaves_the_queue() {
+    let mut model = running_model();
+    model.apply_inbound(&Inbound::Register(
+        AgentMeta::new("sub:2", "task 2", 0).with_role("subagent"),
+    ));
+    model.apply_inbound(&Inbound::Status {
+        agent: "sub:2".into(),
+        status: AgentStatus::Running,
+    });
+    model.queue.enqueue("queued for the lead".to_string(), 0);
+    let mut ui = ready_ui();
+    ui.focus_agent(1);
+    ui.composer.load("use the parser".to_string());
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Steer {
+            agent: "sub:2".into(),
+            texts: vec!["use the parser".into()],
+        })
+    );
+    assert_eq!(model.queue.pending(), 1, "the lead's backlog is untouched");
+    let mut ui = ready_ui();
+    ui.focus_agent(1);
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Control {
+            agent: "sub:2".into(),
+            control: AgentControl::Stop,
+        }),
+        "the queue alone is not something to say to a lane"
+    );
+}
+
 #[test]
 fn esc_stops_a_running_turn_and_arms_the_double_press() {
     let model = running_model();

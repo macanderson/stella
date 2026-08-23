@@ -965,11 +965,14 @@ pub async fn run_deck_session(
                         dispatch.release();
                         text
                     }
-                    // A steer whose turn ended before this recv read it.
-                    Some(WorkspaceInput::Steer { texts, .. }) if !texts.is_empty() => {
-                        dispatch.release();
-                        match steer::steer_at_rest(&mut queue, texts) {
-                            Some(first) => first,
+                    // A steer at a worker, or one whose lead turn ended
+                    // before this recv read it — see `steer::steer_idle`.
+                    Some(WorkspaceInput::Steer { agent, texts }) if !texts.is_empty() => {
+                        match steer::steer_idle(&agent, &subs, &mut queue, texts, &in_tx) {
+                            Some(first) => {
+                                dispatch.release();
+                                first
+                            }
                             None => continue 'session,
                         }
                     }
@@ -1685,8 +1688,8 @@ pub async fn run_deck_session(
                         // Esc with something to say — see `steer`.
                         Some(WorkspaceInput::Steer { agent, texts }) if agent == LEAD =>
                             steer::steer_lead(&steering, &mut queue, texts),
-                        Some(WorkspaceInput::Steer { texts, .. }) =>
-                            steer::steer_worker(&mut queue, texts),
+                        Some(WorkspaceInput::Steer { agent, texts }) =>
+                            steer::steer_worker(&subs, &mut queue, &agent, texts, &in_tx),
                         // An explicit front-insert stays a front-insert even
                         // if a turn started before it arrived — the deck's
                         // queue view already shows it first.

@@ -67,7 +67,7 @@ fn deck_renders_every_tab_with_real_content() {
     assert_eq!(model.agents.len(), 3, "scenario registered 3 agents");
 
     let cases = [
-        (DeckTab::Session, "lead"),
+        (DeckTab::Session, "Wire the triggers API"),
         (DeckTab::Agents, "installed"),
         (DeckTab::Traces, "Which auth guard"),
         (DeckTab::Graph, "run_turn"),
@@ -86,8 +86,9 @@ fn deck_renders_every_tab_with_real_content() {
     }
 
     // The redesigned chrome, on the same scripted session (D1/D2/D5): the
-    // single-line status bar, the unified stage stepper, and the nested
-    // subagent rows under the lead's header.
+    // single-line status bar, the unified stage stepper, and the hint that
+    // the dispatched lanes are a `↓` away — nothing stacks above the
+    // transcript for them.
     //
     // The needles are values now, not micro-labels. SPEC 5 replaced the
     // two-row labeled statline (MODEL / CONTEXT / SPEND over their values)
@@ -96,21 +97,24 @@ fn deck_renders_every_tab_with_real_content() {
     // `used/window`, which is why `/200k` goes with it.
     let session = render_tab(&model, DeckTab::Session, 190, 44);
     for needle in [
-        "ctx ",     // the context meter's inline label (SPEC 5)
-        "saved ",   // cache savings, the one cache number a reader acts on
-        "? help",   // the right-pinned help affordance
-        "stella*",  // the wordmark on the tab row (SPEC 3.3)
-        "⏎ queue",  // the hint row under the composer (SPEC 5)
-        "◆",        // a nested subagent's identity mark
-        "subagent", // its dim role word
-        "returns:", // its contract line
+        "ctx ",      // the context meter's inline label (SPEC 5)
+        "saved ",    // cache savings, the one cache number a reader acts on
+        "? help",    // the right-pinned help affordance
+        "stella*",   // the wordmark on the tab row (SPEC 3.3)
+        "⏎ queue",   // the hint row under the composer (SPEC 5)
+        "sub-agent", // …and its `↓ N sub-agents` hint: the lanes exist
     ] {
         assert!(
             session.contains(needle),
             "the SESSION chrome should show {needle:?}, got:\n{session}"
         );
     }
-
+    for needle in ["└─ ◆", "returns:"] {
+        assert!(
+            !session.contains(needle),
+            "no sub-agent band may stack above the transcript ({needle:?}):\n{session}"
+        );
+    }
     // Each floating card over the same scenario (D3–D6), with its
     // load-bearing copy.
     // Each floating card over the same scenario, with its load-bearing copy.

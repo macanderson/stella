@@ -4,14 +4,6 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-└─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
-     model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
-     ⚒ search_code trigger
-     returns: wire automations triggers API → lead inbox
-└─ ◆ sub:ci  subagent · running                                                                                                                             5:12
-     model glm-5.2-air · ctx 3.0k/200k · spend $0.00
-     ⚒ no tool calls yet
-     returns: watch CI + open PR → lead inbox
 ── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 ◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
@@ -32,7 +24,15 @@
 
 ☰  plan  5/7  ·  Workflows canvas
 
-⏸ plan  Refactor the automations store into a shared┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
+
+
+
+
+
+
+
+                                                    ┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐
                                                     │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │
                                                     │new cap $                                             │
                                                     │the cap applies when the driver's budget stream folds │
@@ -41,5 +41,5 @@
 
 
 >>>
- ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

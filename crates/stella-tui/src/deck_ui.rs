@@ -1905,6 +1905,11 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         return DeckAction::Handled;
     }
 
+    // `↓` from an empty composer opens the SUB-AGENTS overlay — `↑`'s mirror.
+    if let Some(action) = crate::v2::subagents::down_opens(key, model, ui) {
+        return action;
+    }
+
     // `←` from an empty composer on the Session tab opens the SESSIONS
     // overlay — every running stella session on this machine, grouped by
     // status. `→` opens the CONTEXT overlay (this session's active skills +

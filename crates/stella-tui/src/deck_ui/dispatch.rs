@@ -82,9 +82,21 @@ fn carries_its_own_intent(text: &str) -> bool {
 /// sees the card: it is simply the next turn. That is the same boundary the
 /// driver enforces on its side (`SteeringTap::is_settling`), which is what
 /// keeps the two layers agreeing about what "still running" means.
+///
+/// A prompt typed at a **running sub-agent lane** — the user opened it from
+/// the SUB-AGENTS overlay — is a steer at that lane, sent as one, whatever
+/// the policy: queueing it for the lead, the card's other routes, and a
+/// sidecar are all things a lane cannot do.
 pub fn route(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> Option<WorkspaceInput> {
     let focused = model.agents.get(ui.focused);
     let running = focused.is_some_and(|a| a.status == crate::AgentStatus::Running);
+    if let Some(lane) = focused.filter(|a| running && a.is_subagent()) {
+        let text = text.trim_start().trim_start_matches('>').trim().to_string();
+        return Some(WorkspaceInput::Steer {
+            agent: lane.meta.id.clone(),
+            texts: vec![text],
+        });
+    }
     if !running || carries_its_own_intent(&text) {
         return Some(WorkspaceInput::Enqueue { text });
     }
@@ -296,6 +308,32 @@ mod tests {
             Some("add the tests"),
             "the card holds the user's words verbatim"
         );
+    }
+
+    /// **The witness for steering an opened lane.** A prompt typed at a
+    /// running sub-agent lane is a steer at that lane — no card, no `>`
+    /// needed, marker stripped if typed — because the card's other routes
+    /// are the lead's and a lane has none of them.
+    #[test]
+    fn a_prompt_at_a_running_lane_is_a_steer_at_that_lane() {
+        let mut model = model_with_lead(crate::AgentStatus::WaitingInput);
+        model.apply_inbound(&Inbound::Register(
+            AgentMeta::new("sub:2", "task 2", 0).with_role("subagent"),
+        ));
+        model.apply_inbound(&Inbound::Status {
+            agent: "sub:2".into(),
+            status: crate::AgentStatus::Running,
+        });
+        let mut ui = DeckUi::default();
+        ui.focus_agent(1);
+        assert_eq!(
+            route(&mut ui, &model, "> narrow it to the parser".into()),
+            Some(WorkspaceInput::Steer {
+                agent: "sub:2".into(),
+                texts: vec!["narrow it to the parser".into()],
+            })
+        );
+        assert!(ui.pending_dispatch.is_none(), "no card at a lane");
     }
 
     /// …and at rest it does not. An idle agent's next prompt is just its next

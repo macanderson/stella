@@ -140,8 +140,8 @@ pub(crate) fn mini_fraction_bar(
     ]
 }
 
-/// Format a millisecond span as `m:ss` (the elapsed each subagent block
-/// shows — `crate::views::subagents`).
+/// Format a millisecond span as `m:ss` (the clock on each lane in the
+/// SUB-AGENTS overlay — `crate::v2::subagents`).
 pub(crate) fn fmt_mss(ms: u64) -> String {
     let secs = ms / 1000;
     format!("{}:{:02}", secs / 60, secs % 60)
