@@ -24,8 +24,8 @@
 //!
 //! The hazard predates the tool-class rows below: six of those seven shipped
 //! before them. It is not guarded, because nothing here knows the terminal's
-//! ambiguous-width setting
-//! — a real fix means asking the terminal, not asserting a number.
+//! ambiguous-width setting — a real fix means asking the terminal, not
+//! asserting a number.
 
 /// Done, pass. Green.
 pub const DONE: char = '✓';
