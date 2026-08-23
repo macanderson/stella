@@ -133,7 +133,9 @@ impl CandidateRecord {
 ///
 /// Silent about a record that is already gone: removal is what the end-of-run
 /// sweep does to everything, and a second pass must not report a failure no
-/// one can act on ([`super::SessionCandidateWorkspaces::remove`]'s contract).
+/// one can act on ([`CandidateWorkspaces::remove`]'s contract).
+///
+/// [`CandidateWorkspaces::remove`]: stella_runtime::wrapper::CandidateWorkspaces::remove
 pub(super) fn forget(checkout: &Path) {
     if let Some(path) = path_for(checkout) {
         let _ = std::fs::remove_file(path);

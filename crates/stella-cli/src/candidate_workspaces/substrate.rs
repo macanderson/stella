@@ -18,7 +18,7 @@
 //! # Why the setting is read here and not carried on [`Config`]
 //!
 //! It is read once, at the moment the only code that can act on it is built,
-//! and it is acted on immediately: after [`Self::for_session`] returns there is
+//! and it is acted on immediately: after `for_session` returns there is
 //! a substrate, and no later value could change what it is. A field on
 //! [`Config`] would therefore have to declare itself
 //! `StartupOnly` to `/reload`'s completeness ledger — "re-deriving this
