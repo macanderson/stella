@@ -91,7 +91,7 @@
 //!
 //! **The two metering records are the exception, and they earn it** (#4383).
 //! `StepUsage` and `UsageIncomplete` carry a `sub_agent_id`, stamped by
-//! [`child_sender`]. The bracket cannot answer for them, because independent
+//! `child_sender`. The bracket cannot answer for them, because independent
 //! delegates are dispatched *concurrently*: several children's events
 //! interleave on the parent's one stream, so no `Started`/`Finished` pair
 //! encloses any particular call. Until the field existed, a turn's whole cost
