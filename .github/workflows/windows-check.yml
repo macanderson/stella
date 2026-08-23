@@ -12,7 +12,14 @@ name: windows-check
 #
 # So this compiles the two crates that carry a platform split — `stella-tools`
 # owns `rootfd`, `durable_write` and `exec`; `stella-runtime`'s two wrapper
-# transports arm that guard — plus their tests, on a real MSVC runner.
+# transports arm that guard — on a real MSVC runner.
+#
+# Its reach is wider than those two names: `-D warnings` travels to every
+# workspace crate they pull in, which is how it found a `cfg(unix)`-only
+# parameter left unread in `stella-store`. That is the job working, not a
+# scope error — a platform arm nobody compiles is the same defect wherever it
+# sits, and these two crates are simply the entry point that reaches the ones
+# holding the splits.
 #
 # `cargo clippy`, and deliberately **not** `--all-targets`. The shipping code
 # is what carries the platform split, and it is what this can honestly claim
