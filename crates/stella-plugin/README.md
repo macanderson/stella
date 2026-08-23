@@ -199,9 +199,17 @@ before it crosses.
 ## Layout
 
 - `src/manifest.rs` — the types (`PluginManifest`, `LoopGrant`,
-  `Participation`, `HookEvent`, `Oracle`, `Subloop`, `Role`), parsing, and
-  every cross-field validation rule, each documented on the `ManifestError`
-  variant that enforces it.
+  `Participation`, `HookEvent`, `Subloop`, `Role`), parsing, and every
+  **cross-block** validation rule — a grade against a block, a block against
+  another block — each documented on the `ManifestError` variant that
+  enforces it. A rule true of one block whatever else the manifest says lives
+  with that block's own module instead.
+- `src/oracle.rs` (#3730) — the `[oracle]` block: `Oracle`, `OracleCommand`,
+  `FlipPolicy`, `TamperPolicy`, the `OracleProcess` resolution across
+  `[oracle] command` and `[runtime]`, and the block's own load rules. Split
+  out of `manifest.rs` on the rule every other block here already follows,
+  before that file reached the 1500-line ceiling it had 17 lines of headroom
+  against.
 - `src/wrapper.rs` — the `[wrapper]` block: `Wrapper`, `WrapperStage`, the
   **open** `StageName` vocabulary over the closed `HostStage` twelve (#3963 —
   a manifest may contribute a stage under its own word, and the load checks

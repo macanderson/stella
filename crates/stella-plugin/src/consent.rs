@@ -44,7 +44,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ManifestError;
 use crate::host_call::HostCall;
-use crate::manifest::{OracleProcessSource, Participation, PluginManifest};
+use crate::manifest::{Participation, PluginManifest};
+use crate::oracle::OracleProcessSource;
 use crate::wire::{WIRE_FIELDS, WrapperPoint};
 
 /// How bad one honest call of a tool is — re-exported from
