@@ -552,12 +552,7 @@ impl Tool for Bash {
         cmd.kill_on_drop(true);
         // New process group so we can kill the whole tree on timeout.
         #[cfg(unix)]
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
+        crate::exec::detach_into_own_process_group(&mut cmd);
 
         let child = match cmd.spawn() {
             Ok(c) => c,
