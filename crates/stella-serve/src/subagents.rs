@@ -51,7 +51,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use stella_core::ports::{ReadOnlyTools, ToolExecutor};
+use stella_core::ports::{DispatchAdmission, ReadOnlyTools, ToolExecutor, admit_dispatch};
 use stella_core::subagent::{
     SubAgentDispatcher, SubAgentHost, SubAgentOutcome, SubAgentSpec, push_sub_agent_spend,
 };
@@ -407,10 +407,25 @@ impl ToolExecutor for DelegatingTools<'_> {
         contracts
     }
 
+    /// `delegate` is dispatched HERE, never through the inner executor, so the
+    /// inner executor's `tool.call.requested` chain would never see it — the
+    /// #2793 hole, on the served surface (#3843). The shared gate closes it:
+    /// the same entry every remoted tool passes through, run before a child is
+    /// spawned, with a `modify` decision's rewritten input honoured — which is
+    /// why the gate runs before the `prompt`/`description` reads below rather
+    /// than beside the dispatch. Names this wrapper does not own fall through
+    /// ungated on purpose: the inner executor gates them itself, and gating
+    /// twice would run one deployment's policy twice for one call.
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
         if name != DELEGATE_TOOL || self.inner.schemas().iter().any(|s| s.name == DELEGATE_TOOL) {
             return self.inner.execute(name, input).await;
         }
+        let admitted = admit_dispatch(self.dispatch_gate(), name, input).await;
+        let input = match &admitted {
+            DispatchAdmission::Admit => input,
+            DispatchAdmission::AmendedInput(amended) => amended,
+            DispatchAdmission::Refuse(refusal) => return refusal.clone(),
+        };
         let Some(prompt) = input
             .get("prompt")
             .and_then(Value::as_str)
@@ -472,6 +487,16 @@ impl ToolExecutor for DelegatingTools<'_> {
     /// claiming it needs a witness on the remoted dispatch path first.
     fn parallel_safe_names(&self) -> std::collections::HashSet<String> {
         self.inner.parallel_safe_names()
+    }
+
+    /// Forwarded: the gate belongs to the base of the chain
+    /// ([`crate::remote::RemoteToolExecutor`], which owns the session's hook
+    /// plane), and `execute` above reads it back through this accessor. It is
+    /// also what a decorator composed *over* this one needs — the default
+    /// `None` reads as "no gate governs this executor", which is wrong for a
+    /// wrapper.
+    fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+        self.inner.dispatch_gate()
     }
 }
 
@@ -540,6 +565,8 @@ fn slug(description: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::*;
 
     /// A host executor claiming one parallel-safe name.
@@ -572,6 +599,210 @@ mod tests {
                 reason: "not in this test".into(),
             }
         }
+    }
+
+    /// A host executor that *is* the chain's base: it answers one fixed
+    /// admission and counts how many times it was asked.
+    struct GatedHost {
+        admission: DispatchAdmission,
+        admits: std::sync::atomic::AtomicUsize,
+        advertises_delegate: bool,
+    }
+
+    impl GatedHost {
+        fn new(admission: DispatchAdmission) -> Self {
+            Self {
+                admission,
+                admits: std::sync::atomic::AtomicUsize::new(0),
+                advertises_delegate: false,
+            }
+        }
+
+        fn admits(&self) -> usize {
+            self.admits.load(std::sync::atomic::Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait]
+    impl ToolExecutor for GatedHost {
+        fn schemas(&self) -> Vec<ToolSchema> {
+            if self.advertises_delegate {
+                vec![DelegatingTools::delegate_schema()]
+            } else {
+                Vec::new()
+            }
+        }
+        async fn execute(&self, _name: &str, _input: &Value) -> ToolOutput {
+            // A base gates its own dispatches inside `execute`, which is what
+            // makes double-gating from above a real hazard rather than a
+            // theoretical one.
+            self.admits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            ToolOutput::Ok {
+                content: "the host ran it".to_string(),
+                data: None,
+            }
+        }
+        fn dispatch_gate(&self) -> Option<&dyn stella_core::ports::DispatchGate> {
+            Some(self)
+        }
+    }
+
+    #[async_trait]
+    impl stella_core::ports::DispatchGate for GatedHost {
+        async fn admit(&self, _name: &str, _input: &Value) -> DispatchAdmission {
+            self.admits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.admission.clone()
+        }
+    }
+
+    /// A dispatcher that records the instruction of every child it was asked
+    /// for — "no child was dispatched" is the assertion a policy refusal owes.
+    #[derive(Default)]
+    struct RecordingDispatcher {
+        dispatched: Mutex<Vec<String>>,
+    }
+
+    impl RecordingDispatcher {
+        fn instructions(&self) -> Vec<String> {
+            self.dispatched
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl SubAgentDispatcher for RecordingDispatcher {
+        async fn dispatch(&self, spec: SubAgentSpec) -> SubAgentOutcome {
+            self.dispatched
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(spec.instruction.clone());
+            SubAgentOutcome::Completed(stella_core::subagent::SubAgentReport {
+                summary: "done".to_string(),
+                truncated: false,
+                cost_usd: 0.0,
+                steps: 1,
+                absorbed_messages: 2,
+            })
+        }
+    }
+
+    fn delegating<'a>(
+        host: &'a GatedHost,
+        dispatcher: &Arc<RecordingDispatcher>,
+    ) -> DelegatingTools<'a> {
+        DelegatingTools::new(
+            host,
+            Arc::clone(dispatcher) as Arc<dyn SubAgentDispatcher>,
+            4,
+            stella_core::subagent::SubAgentSpendLedger::default(),
+        )
+    }
+
+    /// **Witness (#3843).** An extension policy that denies `delegate` is
+    /// honoured on the served surface: the refusal is what the model sees and
+    /// no child is dispatched. Before this change the engine-side `delegate`
+    /// arm ran without consulting the inner executor's chain at all, so a
+    /// deployment that had banned delegation still got children.
+    #[tokio::test]
+    async fn a_denied_delegate_dispatches_no_child() {
+        let refusal = ToolOutput::classified_error(
+            stella_protocol::ErrorClass::RefusedByPolicy,
+            "`delegate` was denied by an extension policy: not on this deployment",
+        );
+        let host = GatedHost::new(DispatchAdmission::Refuse(refusal.clone()));
+        let dispatcher = Arc::new(RecordingDispatcher::default());
+        let tools = delegating(&host, &dispatcher);
+
+        let output = tools
+            .execute(
+                DELEGATE_TOOL,
+                &serde_json::json!({ "prompt": "read the code" }),
+            )
+            .await;
+
+        assert_eq!(
+            output, refusal,
+            "the policy's refusal is what the model sees"
+        );
+        assert!(
+            dispatcher.instructions().is_empty(),
+            "a denied delegate must never spawn a child"
+        );
+    }
+
+    /// A `modify` decision rewrites the call the child actually runs, which is
+    /// why the gate runs before the `prompt` is read rather than beside the
+    /// dispatch.
+    #[tokio::test]
+    async fn a_modified_delegate_runs_on_the_policys_input() {
+        let host = GatedHost::new(DispatchAdmission::AmendedInput(
+            serde_json::json!({ "prompt": "read the code, and only the code" }),
+        ));
+        let dispatcher = Arc::new(RecordingDispatcher::default());
+        let tools = delegating(&host, &dispatcher);
+
+        tools
+            .execute(
+                DELEGATE_TOOL,
+                &serde_json::json!({ "prompt": "read the code" }),
+            )
+            .await;
+
+        assert_eq!(
+            dispatcher.instructions(),
+            vec!["read the code, and only the code".to_string()],
+            "the child runs the input the policy rewrote, not the one the model sent"
+        );
+    }
+
+    /// A name the host owns is gated exactly once — by the host, inside its
+    /// own `execute`. Gating it here as well would run one deployment's
+    /// policy twice for one call, which on the CLI side means asking a human
+    /// twice.
+    #[tokio::test]
+    async fn a_name_the_host_owns_is_gated_exactly_once() {
+        let host = GatedHost::new(DispatchAdmission::Admit);
+        let dispatcher = Arc::new(RecordingDispatcher::default());
+        let tools = delegating(&host, &dispatcher);
+
+        tools
+            .execute("echo", &serde_json::json!({ "text": "hi" }))
+            .await;
+
+        assert_eq!(
+            host.admits(),
+            1,
+            "a forwarded name passes the chain once, at the base that owns it"
+        );
+        assert!(dispatcher.instructions().is_empty());
+    }
+
+    /// A host that advertises its own `delegate` keeps it: the wrapper
+    /// forwards rather than claiming the name, so the host's executor gates
+    /// and runs it.
+    #[tokio::test]
+    async fn a_host_owned_delegate_is_forwarded_rather_than_claimed() {
+        let mut host = GatedHost::new(DispatchAdmission::Admit);
+        host.advertises_delegate = true;
+        let dispatcher = Arc::new(RecordingDispatcher::default());
+        let tools = delegating(&host, &dispatcher);
+
+        let output = tools
+            .execute(
+                DELEGATE_TOOL,
+                &serde_json::json!({ "prompt": "read the code" }),
+            )
+            .await;
+
+        assert!(matches!(output, ToolOutput::Ok { .. }));
+        assert!(
+            dispatcher.instructions().is_empty(),
+            "the host's own delegate is the host's to run"
+        );
     }
 
     /// The wrapper sits between the served engine and the host's executor, so
