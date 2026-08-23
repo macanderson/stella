@@ -1178,7 +1178,7 @@ pub(crate) async fn run_turn(
     );
     // Recall's frames, then this run's own opening stage boundary — see
     // `output::open_raw_turn` for the ordering and for why it lives there.
-    output::open_raw_turn(&tx, recall_event);
+    output::open_raw_turn(&tx, recall_event, cfg.authority.withheld.as_ref());
 
     // Mid-turn fallback (#2679): on an exhausted retry ladder the engine
     // re-resolves the worker role through this session router.

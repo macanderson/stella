@@ -1045,6 +1045,11 @@ impl SessionModel {
             | AgentEvent::BudgetDenied { .. }
             | AgentEvent::RetriesExhausted { .. }
             | AgentEvent::PolicyDecision { .. } => {}
+            // A session-level fact established before the turn opened, not a
+            // step of it: the plain surface prints it from
+            // `textline::event_line`, and the deck's own transcript has no
+            // entry for it yet.
+            AgentEvent::SteeringWithheld { .. } => {}
         }
         self.evict_transcript_overflow();
     }

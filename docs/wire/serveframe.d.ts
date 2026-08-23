@@ -665,6 +665,14 @@ export type AgentEvent = {
   cost_usd: number;
   model: string;
   type: "run_complete";
+} | {
+  agents: number;
+  commands: number;
+  memories: number;
+  records: number;
+  skills: number;
+  type: "steering_withheld";
+  withheld_by: Withholder;
 };
 
 /**
@@ -2221,6 +2229,17 @@ export interface VerdictEvidence {
    */
   summary: string;
 }
+
+/**
+ * Which authority held a workspace's steering back
+ * ([`AgentEvent::SteeringWithheld`], #2302/#3616).
+ *
+ * Two causes resolve one refusal, and they are not interchangeable: they have
+ * different remedies, and one of them the user cannot lift at all. A harness
+ * that folded them together would tell an operator to set a flag they have
+ * already set.
+ */
+export type Withholder = "project_untrusted" | "managed_ceiling";
 
 /**
  * One frame emitted by the engine toward the host over the outbound stream.

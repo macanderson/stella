@@ -1283,8 +1283,9 @@ fn an_untrusted_workspace_names_the_steering_it_withheld() {
     assert_eq!(withheld.agents, 0);
 
     let untrusted = Some(super::withheld::Withholder::ProjectUntrusted);
-    let line = super::withheld::notice(&workspace, untrusted)
-        .expect("an untrusted workspace with steering on disk is owed a notice");
+    let line = super::withheld::withheld(&workspace, untrusted)
+        .expect("an untrusted workspace with steering on disk is owed a notice")
+        .line(&workspace);
     // The whole inventory in one assertion: singular/plural per count, and the
     // two empty categories omitted rather than reported as `0 commands`.
     assert!(
@@ -1298,23 +1299,24 @@ fn an_untrusted_workspace_names_the_steering_it_withheld() {
     );
 
     assert!(
-        super::withheld::notice(&workspace, None).is_none(),
+        super::withheld::withheld(&workspace, None).is_none(),
         "a workspace that got its steering is owed no notice"
     );
     let bare = dir.path().join("bare");
     std::fs::create_dir_all(&bare).unwrap();
     assert!(
-        super::withheld::notice(&bare, untrusted).is_none(),
+        super::withheld::withheld(&bare, untrusted).is_none(),
         "a repo with no steering must not warn about a suppression that cost it nothing"
     );
 
     // The managed ceiling withholds the same steering and takes a different
     // remedy, because it is the one the user cannot lift.
-    let managed = super::withheld::notice(
+    let managed = super::withheld::withheld(
         &workspace,
         Some(super::withheld::Withholder::ManagedCeiling),
     )
-    .expect("a managed ceiling withholds the same steering");
+    .expect("a managed ceiling withholds the same steering")
+    .line(&workspace);
     assert!(managed.contains("authority.project_prompts"), "{managed}");
     assert!(
         !managed.contains("set STELLA_TRUST_PROJECT=1"),

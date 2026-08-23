@@ -320,4 +320,13 @@ agent_event_tags! {
             site: "stella-cli/src/arena.rs::observe (run terminator, latches SessionOutcome::Completed)",
         },
         &[Surface::Observatory];
+    // What the trust gate held back (#2302's harness half, #3616). `Surfaced`
+    // and not `Behavioral`: nothing in the engine branches on it — the
+    // steering was already withheld by the time this says so — and rendering
+    // is exactly the realized value. The observatory journal names it in its
+    // own whitelist, so the claim below is checkable rather than decorative,
+    // and the TUI renders it the way it renders every variant.
+    SteeringWithheld => "steering_withheld",
+        ConsumerPosture::Surfaced,
+        &[Surface::Observatory];
 }

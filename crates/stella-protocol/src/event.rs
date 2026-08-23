@@ -249,6 +249,26 @@ pub enum PolicyKind {
     SecretDetected,
 }
 
+/// Which authority held a workspace's steering back
+/// ([`AgentEvent::SteeringWithheld`], #2302/#3616).
+///
+/// Two causes resolve one refusal, and they are not interchangeable: they have
+/// different remedies, and one of them the user cannot lift at all. A harness
+/// that folded them together would tell an operator to set a flag they have
+/// already set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum Withholder {
+    /// This process was not told to trust the repository. The remedy is the
+    /// operator's own — trusting the checkout lifts it.
+    ProjectUntrusted,
+    /// The org-managed scope pins project prompts off. A **ceiling**: it holds
+    /// whether or not the checkout is trusted, and no environment variable
+    /// lifts it.
+    ManagedCeiling,
+}
+
 mod call_role;
 pub mod consumers;
 mod payload;
@@ -1268,6 +1288,29 @@ absence of a sibling key."
     /// terminal events and emitted its own in their place — which is a
     /// two-way connection between the engine and one of its callers.
     RunComplete { model: String, cost_usd: f64 },
+    /// The workspace's own steering — memories, rules and published context
+    /// records, skills, commands, agents — was on disk and was **not** loaded,
+    /// because the authority in `withheld_by` refused it (#2302, #3616).
+    ///
+    /// Emitted once per run, before the turn opens, and only when something
+    /// was actually held back: a notice every repository sees is one nobody
+    /// reads. It is the machine-readable twin of the stderr line, so a harness
+    /// running `--output-format stream-json` learns that this session was not
+    /// steered by the repository it is sitting in without scraping the human
+    /// channel.
+    ///
+    /// **Counts only** — never a filename, never a body, never the workspace
+    /// path. The withheld text is repository-controlled, and a refusal that
+    /// echoed it would be the exfiltration channel the refusal exists to
+    /// prevent.
+    SteeringWithheld {
+        withheld_by: Withholder,
+        memories: usize,
+        records: usize,
+        skills: usize,
+        commands: usize,
+        agents: usize,
+    },
     /// An event whose `"type"` this binary does not recognize — almost always
     /// one emitted by a NEWER stella than the one reading. The whole original
     /// JSON object is preserved in `payload` (tag included), so a proxy,

@@ -1312,6 +1312,17 @@ export interface VerdictEvidence {
 }
 
 /**
+ * Which authority held a workspace's steering back
+ * ([`AgentEvent::SteeringWithheld`], #2302/#3616).
+ *
+ * Two causes resolve one refusal, and they are not interchangeable: they have
+ * different remedies, and one of them the user cannot lift at all. A harness
+ * that folded them together would tell an operator to set a flag they have
+ * already set.
+ */
+export type Withholder = "project_untrusted" | "managed_ceiling";
+
+/**
  * One event in the turn's stream. Every stage boundary emits an event;
  * nothing user-visible is derived from internal state that isn't also in
  * this stream.
@@ -2130,6 +2141,18 @@ export type AgentEvent = {
    */
   ts?: number;
   type: "run_complete";
+} | {
+  agents: number;
+  commands: number;
+  memories: number;
+  records: number;
+  skills: number;
+  /**
+   * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
+   */
+  ts?: number;
+  type: "steering_withheld";
+  withheld_by: Withholder;
 };
 
 /**
@@ -2177,4 +2200,5 @@ export type KnownTypeTag =
   | "candidate_delivery"
   | "error"
   | "turn_complete"
-  | "run_complete";
+  | "run_complete"
+  | "steering_withheld";

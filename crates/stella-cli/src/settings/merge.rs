@@ -455,7 +455,9 @@ impl Settings {
     /// rules and records, skills, commands, agents — which lives outside
     /// `settings.json` and so is suppressed at its own load sites; this is the
     /// one place that holds the resolved verdict *and* runs before any of them,
-    /// so it is where [`super::withheld::notice`] is spoken too (#2302).
+    /// so it is where [`super::withheld::withheld`] is resolved too — spoken on
+    /// stderr here, and recorded on [`AuthorityPolicy::withheld`] for the
+    /// event stream (#2302, #3616).
     pub fn load(workspace_root: &Path) -> Result<Self, String> {
         if filesystem_settings_disabled() {
             return Ok(Self::default());
@@ -482,7 +484,7 @@ impl Settings {
             project_json
         };
         let trust = project_trust();
-        let merged = Self::merge_captured_scopes(&user, &managed, &project, trust);
+        let mut merged = Self::merge_captured_scopes(&user, &managed, &project, trust);
 
         // One launch loads the chain several times over — `Config::load`,
         // `settings_check::validate_at_launch`, `discover_configured_providers`
@@ -592,17 +594,25 @@ impl Settings {
         // would announce the opposite of what the session got. The managed
         // block goes along so the line can name a remedy that works on the arm
         // it is actually on: the ceiling is not lifted by trusting the repo.
-        if announce
-            && let Some(line) = super::withheld::notice(
-                workspace_root,
-                super::withheld::withholder(
-                    merged.authority_policy.project_prompts_allowed,
-                    merged.managed_authority.as_ref(),
-                ),
-            )
+        let withheld = super::withheld::withheld(
+            workspace_root,
+            super::withheld::withholder(
+                merged.authority_policy.project_prompts_allowed,
+                merged.managed_authority.as_ref(),
+            ),
+        );
+        if let Some(withheld) = &withheld
+            && announce
         {
-            eprintln!("{line}");
+            eprintln!("{}", withheld.line(workspace_root));
         }
+        // The same refusal, carried rather than reprinted: a harness reading
+        // `--output-format stream-json` gets it as an event once the turn's
+        // channel exists (#3616). Set outside the `announce` latch, which is
+        // about printing one line per process and not about what this load
+        // resolved — the chain is loaded several times per launch and every
+        // one of them must hand back the same verdict.
+        merged.authority_policy.withheld = withheld;
         Ok(merged)
     }
 
