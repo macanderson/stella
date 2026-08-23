@@ -429,8 +429,17 @@ pub(crate) const STALL_STEER_PREFIX: &str = "[stuck-loop warning] this turn is s
 /// refused by policy, erroring before it slept — still contributes its full
 /// request, so this is an upper bound on wall clock and not a measurement of
 /// it. That is why [`stall_steer_text`] says "asked for" and claims nothing
-/// about what the clock was actually charged; whether the *threshold* should
-/// discount such a call is the open question in #3624. Any call carrying a
+/// about what the clock was actually charged.
+///
+/// **The threshold does not discount such a call, and that is decided rather
+/// than inherited (#3624).** Skipping errored calls reads the same transcript
+/// text and stays as deterministic, but it goes blind on the worst real
+/// shape: three `sleep 300`s that `bash` killed at its own 120s timeout burn
+/// 360s of wall clock and would count zero. Clamping to the call's own
+/// timeout would teach `stella-core` a tool's parameter name and its default,
+/// which is exactly what matching on a `command` string avoids. What is left
+/// can only steer *early*, on a rung that carries no abort and warns once per
+/// turn. Any call carrying a
 /// `command` string counts, so the shell tool and the shell-shaped custom
 /// tools are covered without `stella-core` learning a tool's name; the
 /// classifier is strict enough (`stella_core::shell_text::bare_sleep_seconds`
