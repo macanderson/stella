@@ -143,6 +143,41 @@ pub(super) struct AuditEntry {
     pub subject: Option<String>,
     /// What happened, in a sentence a person can read.
     pub outcome: String,
+    /// The drive session that wrote this, when one is open.
+    ///
+    /// `run_id` names the *cycle* run the shell daemon opened, and a `drive`
+    /// process — which opens none — wrote `unassigned` on every line, so
+    /// nothing on disk could tell two drives apart or say which of twenty
+    /// launches a `claimed` belonged to. Minted once per process by
+    /// [`begin_session`]; absent (and omitted from the line) for the one-shot
+    /// verbs, whose records still fold into the session around them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// The writing process, so a reader can ask the OS whether the session
+    /// is still alive instead of guessing from the journal's age.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+}
+
+/// The identity of this process's drive session, set once.
+static SESSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Open a session for this process: every record written after this carries
+/// the returned id and this process's pid.
+///
+/// `sd-<unix seconds>-<pid>`: sortable by launch, unique on one machine, and
+/// readable in a journal without a lookup. Idempotent — a second call returns
+/// the id the first minted.
+pub(super) fn begin_session() -> String {
+    SESSION
+        .get_or_init(|| {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            format!("sd-{secs}-{}", std::process::id())
+        })
+        .clone()
 }
 
 /// Record an action: print it, then append it.
@@ -170,6 +205,8 @@ pub(super) fn record(st: &LoopState, action: Action, subject: Option<&str>, outc
         action,
         subject,
         outcome: outcome.to_owned(),
+        session_id: SESSION.get().cloned(),
+        pid: SESSION.get().map(|_| std::process::id()),
     };
 
     if let Err(error) = append(st, &entry) {
@@ -245,6 +282,8 @@ mod tests {
             action: Action::PrOpened,
             subject: Some("4021".into()),
             outcome: "opened for #3591, ci in progress".into(),
+            session_id: None,
+            pid: None,
         };
 
         let json = serde_json::to_string(&entry).expect("serialize");
@@ -254,6 +293,42 @@ mod tests {
         // The action is a token, not a word inside the sentence.
         assert!(json.contains(r#""action":"pr_opened""#), "{json}");
         assert!(json.contains(r#""subject":"4021""#), "{json}");
+        // A one-shot verb writes the line it always wrote: no session fields.
+        assert!(!json.contains("session_id"), "{json}");
+    }
+
+    /// A line written before sessions existed still reads — the reader must
+    /// never drop a journal because an older build wrote part of it.
+    #[test]
+    fn a_pre_session_line_still_deserializes() {
+        let back: AuditEntry = serde_json::from_str(
+            r#"{"at":"2026-08-23T04:20:02Z","run_id":"unassigned","action":"claimed","subject":"1180","outcome":"taken off the ranked queue"}"#,
+        )
+        .expect("deserialize");
+        assert_eq!(back.session_id, None);
+        assert_eq!(back.pid, None);
+    }
+
+    /// A session-stamped line carries the id and pid as fields, and the id is
+    /// stable for the life of the process.
+    #[test]
+    fn a_stamped_entry_names_its_session_and_pid() {
+        let id = begin_session();
+        assert_eq!(id, begin_session(), "minted once");
+        assert!(id.starts_with("sd-"), "{id}");
+        assert!(id.ends_with(&format!("-{}", std::process::id())), "{id}");
+        let entry = AuditEntry {
+            at: "2026-08-19T21:00:00Z".into(),
+            run_id: id.clone(),
+            action: Action::Claimed,
+            subject: Some("1180".into()),
+            outcome: "taken off the ranked queue".into(),
+            session_id: Some(id.clone()),
+            pid: Some(std::process::id()),
+        };
+        let json = serde_json::to_string(&entry).expect("serialize");
+        assert!(json.contains(&format!(r#""session_id":"{id}""#)), "{json}");
+        assert!(json.contains(r#""pid":"#), "{json}");
     }
 
     /// The screen line is short-form time; the record keeps the full stamp.

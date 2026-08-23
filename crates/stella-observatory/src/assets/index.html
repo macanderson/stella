@@ -1182,6 +1182,58 @@ footer b{color:var(--identity);font-weight:600}
   <!-- ══ CONFIG ════════════════════════════════════════════════════════ -->
   <!-- ══ SELF_DRIVING ══════════════════════════════════════════════════════ -->
   <section data-tab="self-driving" id="panel-self-driving" role="tabpanel" aria-labelledby="tab-self-driving" tabindex="0">
+    <!-- The agents view: drawn by /assets/self_driving.js from
+         /api/self-driving-sessions. The cycle ledger the shell daemon wrote
+         keeps its panels below, under its own heading. -->
+    <div class="sd-updated" id="sd-updated"></div>
+    <div class="sd-hero" id="sd-hero"></div>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="kick">Right now · one card per live agent process</div>
+        <h2>Agents <span id="sd-live-count"></span></h2>
+        <div id="sd-live"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Ranked backlog · as the loop last saw it · P0 first, oldest first within a rung</div>
+        <h2>Queue by priority</h2>
+        <div id="sd-queue"></div>
+      </div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="kick">Issues fixed against lessons learned and applied · by day</div>
+        <h2>Delivery &amp; learning</h2>
+        <div id="sd-chart"></div>
+      </div>
+      <div class="card">
+        <div class="kick">Claimed → changed → PR opened → merged · every session on this machine</div>
+        <h2>Yield</h2>
+        <div id="sd-funnel"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="kick">Every session on a shared clock · how many agents were running at once</div>
+      <h2>Session timeline</h2>
+      <div id="sd-gantt"></div>
+    </div>
+    <div class="grid cols-2">
+      <div class="card">
+        <div class="kick">Every <code>drive</code> session on this machine · newest first · select one</div>
+        <h2>Sessions</h2>
+        <div class="scroll-y-tall" id="sd-sessions"></div>
+      </div>
+      <div class="card">
+        <div class="kick" id="sd-detail-kick">Nothing selected</div>
+        <h2 id="sd-detail-title">Session detail</h2>
+        <div class="scroll-y-tall" id="sd-detail"></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="kick">Adaptive context · what the loop kept from its turns, and how often it was rendered into a later prompt</div>
+      <h2>Lessons</h2>
+      <div id="sd-lessons"></div>
+    </div>
+    <div class="kick" style="margin:var(--sp3) 0 var(--sp1)">Cycle ledger · the shell daemon's audit cycles</div>
     <div class="grid kpis" id="fa-kpis"></div>
     <div class="grid cols-2">
       <div class="card">
@@ -3926,6 +3978,9 @@ async function loadTab(tab, force) {
       // cached "● running, 3s ago" that is actually twenty minutes old would be
       // worse than no panel at all.
       renderSelfDriving(await api("/api/self-driving") ?? {});
+      // The agents view rides the same never-cached fetch cadence; it is a
+      // separate script so its charts and motion stay reviewable on their own.
+      if (window.SelfDriving) await window.SelfDriving.load(force);
     } else if (tab === "config") {
       const data = cached ?? await api("/api/config");
       lazyCache[key] = data;
@@ -4254,5 +4309,6 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) refr
    comes back, so the timer is released outright rather than left armed. */
 addEventListener("pagehide", stopPolling);
 </script>
+<script src="/assets/self_driving.js"></script>
 </body>
 </html>

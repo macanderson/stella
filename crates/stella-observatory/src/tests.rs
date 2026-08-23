@@ -437,8 +437,14 @@ fn empty_workspace_degrades_to_empty_payloads_not_errors() {
 /// The route table and the embedded page must not drift apart. A route
 /// nothing fetches is dead weight that still drags in its dependencies —
 /// one sat unconsumed for exactly that long once (#640).
+///
+/// "The page" is `index.html` plus every script it loads from `/assets/`:
+/// the self-driving agents view fetches its two routes from
+/// `self_driving.js`, and a guard that read only the HTML would call a
+/// consumed route dead.
 #[test]
 fn every_served_route_is_fetched_by_the_embedded_page() {
+    let page = format!("{INDEX_HTML}\n{SELF_DRIVING_JS}");
     // Route-table arms are `"/api/<name>" => …`; the same literal
     // appearing as a call argument (tests, 404 fixtures) has no `=>`.
     let routes: Vec<&str> = include_str!("lib.rs")
@@ -461,8 +467,8 @@ fn every_served_route_is_fetched_by_the_embedded_page() {
         // whose next character actually ends the path — the page writes
         // `"/api/x"`, `` `/api/x` `` or `/api/x?…`.
         let needle = format!("/api/{route}");
-        let fetched = INDEX_HTML.match_indices(needle.as_str()).any(|(at, _)| {
-            INDEX_HTML[at + needle.len()..]
+        let fetched = page.match_indices(needle.as_str()).any(|(at, _)| {
+            page[at + needle.len()..]
                 .chars()
                 .next()
                 .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '-')
