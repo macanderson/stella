@@ -1174,6 +1174,19 @@ pub(crate) struct RawTurnDriver<'a> {
     /// What each round's turn returned, in order — the caller's own view of a
     /// loop the dispatcher owns.
     pub(crate) results: Vec<Result<(), CliFailure>>,
+    /// One friction ledger per turn this driver drove, in order (#3976).
+    ///
+    /// Borrowed, like the conversation and the budget beside it, because the
+    /// caller reflects with it after the dispatch returns and the dispatcher
+    /// owns the loop in between.
+    ///
+    /// **It covers the turns this driver drove and nothing else.** A plugin's
+    /// own model calls are bought through the host-call channel at its points,
+    /// which run *between* these turns; they are reported by
+    /// [`BoundWrapper::child_spends`] and are deliberately not folded in here,
+    /// because a ledger built from this host's journal would describe them as
+    /// steps of a turn they were not part of.
+    pub(crate) friction: &'a mut Vec<crate::memory::TurnFriction>,
 }
 
 #[async_trait(?Send)]
@@ -1187,6 +1200,10 @@ impl TurnDriver for RawTurnDriver<'_> {
         // *this* turn, and a fold shared across rounds would report the first
         // round's tools as the third round's (#3552).
         let facts = crate::turn_facts::TurnFacts::new();
+        // One ledger per round, for `facts`' reason: friction is a fact about
+        // *this* turn, and a fold shared across rounds would report the first
+        // round's retries as the third's (#3552, #3976).
+        let mut friction = crate::memory::TurnFriction::default();
         let outcome = crate::agent::run_turn(
             self.provider,
             self.base_tools,
@@ -1206,14 +1223,15 @@ impl TurnDriver for RawTurnDriver<'_> {
             Some(self.session),
             self.recall_event.take(),
             self.memory.as_deref_mut(),
-            // No friction ledger for a wrapped round (#3946): this host does
-            // not reflect on it. The plugin drives the turn and observes its
-            // own events through the socket, so a ledger folded here would go
-            // nowhere — unlike `facts` above, which the wrapper protocol
-            // actually reports back.
-            None,
+            // The host folds what it does see (#3976). This driver runs the
+            // turn through the same `run_turn` every raw door uses, so its
+            // journal is reachable and the caller reflects with it; the
+            // plugin's own model calls are not in it, and the field's doc says
+            // so where a reader meets it.
+            Some(&mut friction),
         )
         .await;
+        self.friction.push(friction);
 
         // `Some` in every arm, including the aborted one: this host *does*
         // observe both facts, and a turn that aborted after two tool calls made
