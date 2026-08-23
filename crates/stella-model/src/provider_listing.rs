@@ -106,9 +106,9 @@ async fn get_json(
 /// [`get_json`] with the bounds as parameters, so tests can exercise the cap
 /// and the deadline without a 16 MiB fixture or a 20-second wait.
 ///
-/// The body is accumulated chunk by chunk under `max_bytes` — the same shape
-/// as `stella-media`'s `download_bytes`: an honest `Content-Length` over the
-/// cap costs zero bytes, and the chunk loop catches a missing or lying one.
+/// The body is accumulated chunk by chunk under `max_bytes`: an honest
+/// `Content-Length` over the cap costs zero bytes, and the chunk loop catches
+/// a missing or lying one.
 /// `deadline` covers the whole request; the per-read bound `http::client`
 /// carries cannot see total elapsed time.
 async fn get_json_bounded(

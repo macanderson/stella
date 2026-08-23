@@ -346,9 +346,10 @@ pub enum RouterError {
     AllProvidersUnavailable { role: Role },
 
     /// `Embed`/`Vision`/`Image`/`Video` have no default resolution in this
-    /// router — those roles are served by their own crates (`stella-context`
-    /// embeds locally, `stella-media` routes by media kind), not by the
-    /// chat-model scenario defaults. Never invent a fake default; pin
+    /// router — `Embed` is served by `stella-context` embedding locally, and
+    /// the generation roles by whatever surface a user brings for them
+    /// (nothing in this workspace generates media since #3236). Neither is a
+    /// chat-model scenario default. Never invent a fake default; pin
     /// explicitly via `RoleTable::pin` if you need one.
     #[error(
         "no default model available for role `{role:?}` — pin one explicitly with RoleTable::pin"

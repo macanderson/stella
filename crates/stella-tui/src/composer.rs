@@ -31,6 +31,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use stella_protocol::{Attachment, AttachmentKind};
 use unicode_width::UnicodeWidthChar;
 
+pub mod palette;
+
+pub use palette::{PaletteState, RelevantNow, SlashDomain};
+
 /// Below this many lines a paste is inserted inline; at or above it, the
 /// paste collapses to a chip. Small on purpose (L-T3).
 pub const DEFAULT_PASTE_LINE_THRESHOLD: usize = 6;
@@ -129,6 +133,10 @@ pub struct SlashCommand {
     pub name: String,
     pub description: String,
     pub kind: SlashKind,
+    /// What the command is about — the palette's browse groups (#4338).
+    /// Defaults to [`SlashDomain::Session`], so a caller that has not
+    /// classified its vocabulary gets one group rather than a wrong one.
+    pub domain: SlashDomain,
 }
 
 impl SlashCommand {
@@ -138,13 +146,21 @@ impl SlashCommand {
             name: name.into(),
             description: description.into(),
             kind: SlashKind::Builtin,
+            domain: SlashDomain::default(),
         }
+    }
+
+    /// The same command, filed under `domain`.
+    #[must_use]
+    pub fn in_domain(self, domain: SlashDomain) -> Self {
+        Self { domain, ..self }
     }
 
     /// A custom command/skill loaded from a definition file — the ⚡ rows.
     pub fn custom(name: impl Into<String>, description: impl Into<String>) -> Self {
         Self {
             kind: SlashKind::Custom,
+            domain: SlashDomain::Custom,
             ..Self::new(name, description)
         }
     }
@@ -402,7 +418,14 @@ impl Composer {
     /// The slash-menu view over `commands`, or `None` when the buffer is not
     /// a slash query. Active only when the whole buffer is a single `/`-word
     /// (no spaces yet) with no committed chips.
-    pub fn slash_menu<'a>(&self, commands: &'a [SlashCommand]) -> Option<SlashMenu<'a>> {
+    ///
+    /// `state` orders the result ([`SlashMenu::filter_with`]). Pass
+    /// [`PaletteState::default`] from a surface with no session to read.
+    pub fn slash_menu<'a>(
+        &self,
+        commands: &'a [SlashCommand],
+        state: &PaletteState,
+    ) -> Option<SlashMenu<'a>> {
         if !self.chips.is_empty() {
             return None;
         }
@@ -410,7 +433,7 @@ impl Composer {
         if !q.starts_with('/') || q.contains(char::is_whitespace) {
             return None;
         }
-        Some(SlashMenu::filter(commands, q))
+        Some(SlashMenu::filter_with(commands, q, state))
     }
 }
 
@@ -591,17 +614,43 @@ pub fn split_row_at(row: &str, col: usize) -> (String, Option<char>, String) {
 pub struct SlashMenu<'a> {
     pub query: String,
     pub matches: Vec<&'a SlashCommand>,
+    /// Headings the palette draws above [`Self::matches`], as
+    /// `(index of the first match under it, heading)`. Ascending, and only
+    /// ever populated for the browse list — see [`Self::filter_with`].
+    pub sections: Vec<(usize, String)>,
 }
 
 impl<'a> SlashMenu<'a> {
-    /// Fuzzy filter over `commands`, matching name then description: a
-    /// name-prefix match ranks first, a name-substring match second, a
-    /// description-substring match third — stable within each rank, so the
-    /// caller's vocabulary order survives. An empty query (just `/`) matches
-    /// everything. Case-insensitive on the ASCII fold; command names are
-    /// ASCII slugs, so the cheap fold is exact for every name the CLI
-    /// actually registers.
+    /// [`Self::filter_with`] against a session with nothing to say.
+    ///
+    /// The plain REPL's composer has no plan, no lanes and no inbox to read,
+    /// so it gets the ranking it always had rather than a relevance block
+    /// derived from zeroes.
     pub fn filter(commands: &'a [SlashCommand], query: &str) -> Self {
+        Self::filter_with(commands, query, &PaletteState::default())
+    }
+
+    /// Fuzzy filter over `commands`, ordered by what the session is doing.
+    ///
+    /// Matching is unchanged and decides *what appears*: a name-prefix match
+    /// ranks first, a name-substring match second, a description-substring
+    /// match third. An empty query (just `/`) matches everything.
+    /// Case-insensitive on the ASCII fold; command names are ASCII slugs, so
+    /// the cheap fold is exact for every name the CLI actually registers.
+    ///
+    /// `state` decides *the order*, and the two cases are deliberately
+    /// different surfaces rather than one compromise (#4338):
+    ///
+    /// - **The browse list** (an empty query — the palette just opened) is
+    ///   sectioned: [`palette::relevant_now`]'s commands first under one
+    ///   heading that says why, then a group per [`SlashDomain`]. Thirty
+    ///   rows in vocabulary order is a list you read; six groups is a menu
+    ///   you use.
+    /// - **A typed query** stays one flat ranked list with no headings —
+    ///   grouping a three-row result buries the rows under their own
+    ///   captions — but a relevant command still leads *within its rank*, so
+    ///   `/pl` mid-turn opens on `/plan`.
+    pub fn filter_with(commands: &'a [SlashCommand], query: &str, state: &PaletteState) -> Self {
         let needle = query.trim_start_matches('/').to_ascii_lowercase();
         let rank = |c: &SlashCommand| -> Option<u8> {
             let name = c.name.trim_start_matches('/').to_ascii_lowercase();
@@ -615,14 +664,60 @@ impl<'a> SlashMenu<'a> {
                 None
             }
         };
+        let relevant = palette::relevant_now(state);
+        // Where a command sits in the relevance block, or past every one of
+        // them. `usize::MAX` rather than an `Option` so it sorts last with
+        // no second comparison.
+        let relevance = |c: &SlashCommand| -> usize {
+            relevant
+                .as_ref()
+                .and_then(|r| r.commands.iter().position(|n| *n == c.name))
+                .unwrap_or(usize::MAX)
+        };
+
         let mut ranked: Vec<(u8, &SlashCommand)> = commands
             .iter()
             .filter_map(|c| rank(c).map(|r| (r, c)))
             .collect();
-        ranked.sort_by_key(|(r, _)| *r); // stable: vocabulary order within a rank
+
+        if !needle.is_empty() {
+            // Stable within a key, so the vocabulary order survives among
+            // commands the session says nothing about.
+            ranked.sort_by_key(|(r, c)| (*r, relevance(c)));
+            return Self {
+                query: query.to_string(),
+                matches: ranked.into_iter().map(|(_, c)| c).collect(),
+                sections: Vec::new(),
+            };
+        }
+
+        // The browse list: relevance block, then a group per domain.
+        ranked.sort_by_key(|(_, c)| (relevance(c), c.domain.order()));
+        let matches: Vec<&SlashCommand> = ranked.into_iter().map(|(_, c)| c).collect();
+
+        let mut sections = Vec::new();
+        let promoted = relevant.as_ref().map_or(0, |r| {
+            matches
+                .iter()
+                .filter(|c| r.commands.iter().any(|n| *n == c.name))
+                .count()
+        });
+        if let Some(relevant) = relevant.as_ref()
+            && promoted > 0
+        {
+            sections.push((0, format!("relevant now · {}", relevant.reason)));
+        }
+        let mut group = None;
+        for (i, command) in matches.iter().enumerate().skip(promoted) {
+            if group != Some(command.domain) {
+                group = Some(command.domain);
+                sections.push((i, command.domain.label().to_string()));
+            }
+        }
         Self {
             query: query.to_string(),
-            matches: ranked.into_iter().map(|(_, c)| c).collect(),
+            matches,
+            sections,
         }
     }
 
@@ -634,9 +729,17 @@ impl<'a> SlashMenu<'a> {
 /// The names of the slash commands currently matching the composer, or empty
 /// when the popup should be inactive. Owned strings so a caller can keep
 /// mutating its own UI state while acting on them.
-pub fn slash_popup_matches(composer: &Composer, slash_commands: &[SlashCommand]) -> Vec<String> {
+///
+/// `state` must be the same one the frame is drawn with: this list is what
+/// the selection index means, so a key handler ordering it differently from
+/// the renderer would run the row *above* the one highlighted.
+pub fn slash_popup_matches(
+    composer: &Composer,
+    slash_commands: &[SlashCommand],
+    state: &PaletteState,
+) -> Vec<String> {
     composer
-        .slash_menu(slash_commands)
+        .slash_menu(slash_commands, state)
         .map(|m| m.matches.iter().map(|c| c.name.clone()).collect())
         .unwrap_or_default()
 }
@@ -824,6 +927,121 @@ mod tests {
         assert!(c.chips().is_empty());
     }
 
+    /// The vocabulary with domains, for the palette tests.
+    fn classified_commands() -> Vec<SlashCommand> {
+        vec![
+            SlashCommand::new("/help", "show help").in_domain(SlashDomain::Session),
+            SlashCommand::new("/clear", "clear the transcript").in_domain(SlashDomain::Session),
+            SlashCommand::new("/plan", "the plan").in_domain(SlashDomain::Plan),
+            SlashCommand::new("/budget", "set the spend cap").in_domain(SlashDomain::Plan),
+            SlashCommand::new("/diff", "open the diff viewer").in_domain(SlashDomain::Code),
+            SlashCommand::custom("/fix-bug", "fix a bug end to end"),
+        ]
+    }
+
+    /// **The witness (#4338).** The browse list opens on what the session
+    /// makes relevant, under a heading that says why, then one group per
+    /// domain — not thirty rows in vocabulary order.
+    #[test]
+    fn the_browse_list_leads_with_relevance_then_groups_by_domain() {
+        let cmds = classified_commands();
+        let state = PaletteState {
+            turn_running: true,
+            ..PaletteState::default()
+        };
+        let mut c = Composer::new();
+        c.insert_char('/');
+        let menu = c.slash_menu(&cmds, &state).expect("slash menu active");
+
+        let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(
+            &names[..2],
+            &["/plan", "/budget"],
+            "the running turn's commands lead: {names:?}"
+        );
+        assert_eq!(
+            menu.sections.first(),
+            Some(&(0, "relevant now · a turn is running".to_string())),
+            "the heading says why: {:?}",
+            menu.sections
+        );
+        assert_eq!(
+            menu.sections[1..].to_vec(),
+            vec![
+                (2, "session".to_string()),
+                (4, "workspace".to_string()),
+                (5, "custom".to_string()),
+            ],
+            "one heading per remaining group, in domain order"
+        );
+    }
+
+    /// A quiet session has no relevance block at all — the list is the domain
+    /// groups alone, with no heading claiming a reason that does not exist.
+    #[test]
+    fn a_quiet_browse_list_is_groups_only() {
+        let cmds = classified_commands();
+        let mut c = Composer::new();
+        c.insert_char('/');
+        let menu = c
+            .slash_menu(&cmds, &PaletteState::default())
+            .expect("slash menu active");
+        assert!(
+            !menu.sections.iter().any(|(_, h)| h.starts_with("relevant")),
+            "nothing to be relevant about: {:?}",
+            menu.sections
+        );
+        assert_eq!(menu.sections.first().map(|(at, _)| *at), Some(0));
+        let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["/help", "/clear", "/plan", "/budget", "/diff", "/fix-bug"],
+            "domain order, vocabulary order within a group"
+        );
+    }
+
+    /// A typed query keeps one flat ranked list — but a relevant command
+    /// leads its rank, so `/b` mid-turn opens on `/budget` rather than on
+    /// whatever the vocabulary happened to list first.
+    #[test]
+    fn a_typed_query_promotes_the_relevant_match_without_headings() {
+        let cmds = classified_commands();
+        let state = PaletteState {
+            turn_running: true,
+            ..PaletteState::default()
+        };
+        let mut c = Composer::new();
+        for ch in "/p".chars() {
+            c.insert_char(ch);
+        }
+        let menu = c.slash_menu(&cmds, &state).expect("slash menu active");
+        assert!(menu.sections.is_empty(), "no headings under a query");
+        let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(
+            names.first(),
+            Some(&"/plan"),
+            "the prefix match still leads: {names:?}"
+        );
+        assert_eq!(
+            names.iter().position(|n| *n == "/budget"),
+            Some(2),
+            "and the relevant one leads its own (weaker) rank: {names:?}"
+        );
+
+        // Idle, the same query is the plain fuzzy ranking: `/budget` sits
+        // where the vocabulary put it, behind the two rows above it.
+        let idle = c
+            .slash_menu(&cmds, &PaletteState::default())
+            .expect("slash menu active");
+        let idle_names: Vec<&str> = idle.matches.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(idle_names.first(), Some(&"/plan"));
+        assert_eq!(
+            idle_names.iter().position(|n| *n == "/budget"),
+            Some(3),
+            "relevance is what moved it: {idle_names:?}"
+        );
+    }
+
     #[test]
     fn slash_menu_fuzzy_ranks_name_prefix_over_substring_over_description() {
         let cmds = commands();
@@ -831,7 +1049,9 @@ mod tests {
         for ch in "/f".chars() {
             c.insert_char(ch);
         }
-        let menu = c.slash_menu(&cmds).expect("slash menu active");
+        let menu = c
+            .slash_menu(&cmds, &PaletteState::default())
+            .expect("slash menu active");
         let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
         // `/files` starts with the query; `/diff` merely contains it — the
         // prefix match must lead.
@@ -845,7 +1065,9 @@ mod tests {
         for ch in "/transcript".chars() {
             c.insert_char(ch);
         }
-        let menu = c.slash_menu(&cmds).expect("slash menu active");
+        let menu = c
+            .slash_menu(&cmds, &PaletteState::default())
+            .expect("slash menu active");
         let names: Vec<&str> = menu.matches.iter().map(|m| m.name.as_str()).collect();
         // No name contains "transcript"; `/clear`'s description does.
         assert_eq!(names, vec!["/clear"]);
@@ -856,7 +1078,7 @@ mod tests {
         let cmds = commands();
         let mut c = Composer::new();
         c.insert_char('/');
-        let menu = c.slash_menu(&cmds).unwrap();
+        let menu = c.slash_menu(&cmds, &PaletteState::default()).unwrap();
         assert_eq!(menu.matches.len(), cmds.len());
     }
 
@@ -867,7 +1089,7 @@ mod tests {
         for ch in "/models ".chars() {
             c.insert_char(ch);
         }
-        assert!(c.slash_menu(&cmds).is_none());
+        assert!(c.slash_menu(&cmds, &PaletteState::default()).is_none());
     }
 
     #[test]
@@ -882,7 +1104,7 @@ mod tests {
         let mut c = Composer::with_paste_threshold(2);
         c.paste("a\nb\nc");
         c.insert_char('/');
-        assert!(c.slash_menu(&cmds).is_none());
+        assert!(c.slash_menu(&cmds, &PaletteState::default()).is_none());
     }
 
     #[test]

@@ -55,10 +55,13 @@ pub(crate) struct TurnFlags {
     pub(crate) upstream_pin: Vec<String>,
     /// `--allow-dir` — extra directories a write tool may touch.
     pub(crate) allow_dir: Vec<String>,
-    /// `--spend-limit` — the USD ceiling, per turn.
+    /// `--spend-limit` — the USD ceiling for the whole run.
     ///
-    /// Per turn rather than per run, which is what it already meant here: each
-    /// turn is its own `stella run` session with this ceiling.
+    /// Read as the run's cap, never a child turn's (#4353). What each child is
+    /// handed is what [`super::budget::RunBudget`] has left of it, so a
+    /// caller that reaches for this field directly and passes it to a turn is
+    /// re-introducing the defect: ten issues under `--spend-limit 30` spending
+    /// thirty dollars each, plus a triage turn per issue on top.
     pub(crate) spend_limit: Option<f64>,
     /// `--turn-timeout` — wall-clock seconds one turn may spend.
     pub(crate) turn_timeout: Option<Duration>,

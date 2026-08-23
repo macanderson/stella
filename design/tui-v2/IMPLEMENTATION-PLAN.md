@@ -67,7 +67,7 @@ Acceptance: snapshot of a Rust diff with add and remove rows; a call-counter tes
 ### P3: plan panel and task contracts
 
 - Breadcrumb strip plus `tab` expand.
-- Task list with per-task economics, running-task card, `⑂` drift rows, footer counts (SPEC 7.3).
+- Task list with per-task economics, running-task card, `⌥` drift rows, footer counts (SPEC 7.3).
 - Task zoom view: contract, evidence, planned vs actual lanes from `[:NEXT]` and `[:THEN]`, spend strip, action row (SPEC 7.5).
 - Enforce the contract rule: diff-producing tasks require at least one check; read-only tasks must not.
 

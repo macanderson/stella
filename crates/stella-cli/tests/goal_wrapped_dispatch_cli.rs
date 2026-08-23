@@ -37,6 +37,16 @@ const VARIANT: &str = "goal-fixture-v1";
 /// `WrapperDispatch::run` drives exactly one internal turn — the property
 /// `run_goal_wrapped_turn` depends on (`DispatchReport::rounds == 1`) rather
 /// than guesses at.
+///
+/// It is also the only shape this door accepts, which is worth knowing before
+/// reading the `--test-command` assertions below: `[requirements]` is refused
+/// below `participation = "arbiter"`
+/// (`ManifestError::RequirementsRequireArbiter`) and `stella goal` refuses
+/// arbiter grade outright (#3832), so no plugin on this door can carry an
+/// `[oracle]` for the host's tamper finding to qualify. What #3835 wired here
+/// is the grant and the watch that feed such an oracle; a run that *decides*
+/// on one is not reachable from this door until those two rules stop
+/// contradicting.
 const PLUGIN_TOML: &str = r#"
 name = "goal-fixture"
 [loop]
@@ -102,6 +112,25 @@ fn install_fixture_wrapper(workspace: &Path) -> PathBuf {
     std::fs::set_permissions(&script, perms).expect("chmod +x");
     dir.join("rounds.log")
 }
+
+/// The witness the run is judged against, named by [`TEST_COMMAND`].
+///
+/// It has to exist on disk before the run: `TamperWatch::pin` records a
+/// baseline of things that *were there*, and an absent artifact is left out of
+/// the watch entirely rather than pinned as missing — which would leave the
+/// watch empty, the finding `NotChecked`, and the verdict undecided for a
+/// reason that has nothing to do with what this test is about.
+fn install_witness(workspace: &Path) {
+    let tests = workspace.join("tests");
+    std::fs::create_dir_all(&tests).expect("tests dir");
+    std::fs::write(tests.join("witness_flip.sh"), "#!/bin/sh\nexit 1\n").expect("the witness");
+}
+
+/// The oracle `--test-command` arms, and the one artifact the host pins from
+/// it. `sh <path>` names its file syntactically, which is the only shape
+/// `wrapper_candidate::named_artifacts` will watch — `cargo test --test x`
+/// names `x`, not `tests/x.rs`, and the host does not guess.
+const TEST_COMMAND: &str = "sh tests/witness_flip.sh";
 
 /// One SSE completion, in the shape `stella-model`'s shared chat-completions
 /// adapter parses (`crates/stella-model/src/zai/tests.rs`'s
@@ -194,6 +223,7 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
     // credentials file to find.
     let home = tempfile::tempdir().expect("stella home");
     let rounds_log = install_fixture_wrapper(workspace.path());
+    install_witness(workspace.path());
     let server = mock_two_round_goal_loop().await;
 
     let child = Command::new(env!("CARGO_BIN_EXE_stella"))
@@ -210,6 +240,8 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
             "do the thing, then stop",
             "--pipeline",
             VARIANT,
+            "--test-command",
+            TEST_COMMAND,
         ])
         .current_dir(workspace.path())
         .env("STELLA_HOME", home.path())
@@ -279,12 +311,35 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
             call.contains("\"point\":\"before_turn\""),
             "logged call was not a before_turn request: {call}"
         );
+        // **Witness (#3835).** Every round carries the grant over the tree it
+        // runs in, with `--test-command` parsed into the plan the plugin's
+        // oracle would run. This door sent `candidate: None` before, and
+        // `Option::None` is skipped on the wire — so the field is simply
+        // absent in the old binary's request, and a plugin had no root to read
+        // and no test to run.
+        assert!(
+            call.contains("\"candidate\":"),
+            "a goal round must hand the plugin the tree it runs in: {call}"
+        );
+        assert!(
+            call.contains("\"program\":\"sh\"") && call.contains("witness_flip.sh"),
+            "the grant carries the parsed test plan the oracle observes with: {call}"
+        );
     }
+
+    // The tamper finding the host now pins beside that grant is not
+    // observable from here, and the reason is a fact about this door rather
+    // than about the wiring: a finding only changes a verdict through an
+    // `[oracle]`, an oracle needs `[requirements]`, `[requirements]` needs
+    // `participation = "arbiter"`, and this door refuses arbiter grade
+    // (#3832). `crates/stella-cli/src/wrapper_candidate.rs`'s own tests are
+    // where `Clean` and `Tampered` are witnessed.
 
     // The execution row this goal run opened names the wrapper that drove
     // it, and the store shows two rounds' worth of turn_instance under that
-    // one row — the goal loop's own round math (worker even slot, verifier
-    // the odd slot beside it), advancing exactly as it does on the raw arm.
+    // one row — the goal loop's own round math (`stella_core::turn_slots`'
+    // worker lane, with the verifier lane beside it), advancing exactly as it
+    // does on the raw arm.
     let conn = rusqlite::Connection::open(store_path(workspace.path())).expect("open store.db");
     let (execution_id, variant): (i64, Option<String>) = conn
         .query_row(
@@ -310,6 +365,15 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
     assert!(
         turn_instances.len() >= 4,
         "two goal rounds (worker + verifier each) must claim four distinct turn_instance \
-         slots (0,1,2,3) under the one execution row the wrapper drove: {turn_instances:?}"
+         slots under the one execution row the wrapper drove: {turn_instances:?}"
+    );
+    // Round 1 is worker lane 0 / verifier lane 1; round 2 is the next slot of
+    // each, which is four along rather than two — the two slots between them
+    // are the host's own lanes, reserved so a wrapper plugin's child turns can
+    // run beside this loop without overwriting a round (#3833).
+    assert!(
+        turn_instances.starts_with(&[0, 1, 4, 5]),
+        "goal rounds must allocate through `stella_core::turn_slots`' worker and verifier \
+         lanes: {turn_instances:?}"
     );
 }

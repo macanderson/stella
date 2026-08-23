@@ -2504,15 +2504,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "roxmltree"
-version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
-dependencies = [
- "memchr",
-]
-
-[[package]]
 name = "rpassword"
 version = "7.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2909,7 +2900,7 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "stella-autonomy"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "proptest",
  "serde",
@@ -2919,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "stella-cli"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "clap",
@@ -2961,6 +2952,7 @@ dependencies = [
  "stella-transcript",
  "stella-tty",
  "stella-tui",
+ "stella-tui-theme",
  "tempfile",
  "tokio",
  "toml",
@@ -2971,7 +2963,7 @@ dependencies = [
 
 [[package]]
 name = "stella-context"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -2988,7 +2980,7 @@ dependencies = [
 
 [[package]]
 name = "stella-core"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3006,7 +2998,7 @@ dependencies = [
 
 [[package]]
 name = "stella-diag"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "proptest",
  "serde",
@@ -3017,14 +3009,14 @@ dependencies = [
 
 [[package]]
 name = "stella-diff"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "stella-embed"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3038,7 +3030,7 @@ dependencies = [
 
 [[package]]
 name = "stella-engine"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "serde",
@@ -3050,7 +3042,7 @@ dependencies = [
 
 [[package]]
 name = "stella-fleet"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3069,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "stella-graph"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "contextgraph-types",
@@ -3086,6 +3078,7 @@ dependencies = [
  "toml",
  "tree-sitter",
  "tree-sitter-c",
+ "tree-sitter-cpp",
  "tree-sitter-go",
  "tree-sitter-java",
  "tree-sitter-javascript",
@@ -3098,11 +3091,11 @@ dependencies = [
 
 [[package]]
 name = "stella-home"
-version = "0.9.159"
+version = "0.9.162"
 
 [[package]]
 name = "stella-mcp"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3123,30 +3116,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "stella-media"
-version = "0.9.159"
-dependencies = [
- "async-trait",
- "base64 0.23.1",
- "libc",
- "reqwest",
- "roxmltree",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "stella-protocol",
- "stella-store",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "wiremock",
- "zeroize",
-]
-
-[[package]]
 name = "stella-model"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3170,7 +3141,7 @@ dependencies = [
 
 [[package]]
 name = "stella-observatory"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "libc",
  "rusqlite",
@@ -3192,14 +3163,14 @@ dependencies = [
 
 [[package]]
 name = "stella-parity"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "stella-serve",
 ]
 
 [[package]]
 name = "stella-plugin"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "proptest",
  "serde",
@@ -3211,7 +3182,7 @@ dependencies = [
 
 [[package]]
 name = "stella-protocol"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "schemars",
@@ -3223,7 +3194,7 @@ dependencies = [
 
 [[package]]
 name = "stella-runtime"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3243,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "stella-serve"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "proptest",
@@ -3261,7 +3232,7 @@ dependencies = [
 
 [[package]]
 name = "stella-store"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "base64 0.23.1",
  "libc",
@@ -3278,7 +3249,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tools"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3304,7 +3275,7 @@ dependencies = [
 
 [[package]]
 name = "stella-transcript"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "proptest",
  "serde",
@@ -3324,11 +3295,11 @@ dependencies = [
 
 [[package]]
 name = "stella-tty"
-version = "0.9.159"
+version = "0.9.162"
 
 [[package]]
 name = "stella-tui"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "arboard",
  "crossterm",
@@ -3353,7 +3324,7 @@ dependencies = [
 
 [[package]]
 name = "stella-tui-theme"
-version = "0.9.159"
+version = "0.9.162"
 dependencies = [
  "ratatui",
 ]
@@ -3855,6 +3826,16 @@ name = "tree-sitter-c"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a9b2eb57a55fed6b00812912e730b7a275cf4fe98bfd6a5d76263d4438371728"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-cpp"
+version = "0.23.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df2196ea9d47b4ab4a31b9297eaa5a5d19a0b121dceb9f118f6790ad0ab94743"
 dependencies = [
  "cc",
  "tree-sitter-language",

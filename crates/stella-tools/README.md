@@ -308,11 +308,17 @@ construct through `ToolRegistry::new` in a fresh tempdir, so tool counts
 depend on nothing in the host environment. The suites under [`tests/`](tests/)
 exercise the crate through its public surface only —
 [`tests/approval_witness.rs`](tests/approval_witness.rs) is the #2676 approval
-flow, and [`tests/chunk_retrieval_witnesses.rs`](tests/chunk_retrieval_witnesses.rs)
-is the one suite here that needs a credential. It is `#[ignore]`d until
-`VOYAGE_API_KEY` (or `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`) resolves, so a
-plain `cargo test` reports it as `ignored, <reason>` rather than as a pass it
-never earned; run it with `-- --ignored`. The foundry
+flow. Two suites need a credential:
+[`tests/chunk_retrieval_witnesses.rs`](tests/chunk_retrieval_witnesses.rs) (the
+three #3089 retrieval witnesses) and
+[`tests/relevance_calibration.rs`](tests/relevance_calibration.rs) (the #3096
+score-distribution measurement the three relevance constants are set from —
+run it with `--nocapture`, since its output *is* the result). Both are
+`#[ignore]`d until `VOYAGE_API_KEY` (or `STELLA_EMBED_URL` +
+`STELLA_EMBED_MODEL`) resolves, so a plain `cargo test` reports them as
+`ignored, <reason>` rather than as a pass they never earned, and both panic
+rather than pass when asked for with `-- --ignored` and no backend answers.
+The foundry
 carries property tests (every detector proposal must author and round-trip
 through the real manifest parser), as does the approval precedence ladder.
 

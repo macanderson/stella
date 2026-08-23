@@ -133,6 +133,23 @@ hand-written table; #4066 added the generator and emitted `generated.rs`
 beside it; the two landed 41 seconds apart with no textual conflict, leaving
 one palette defined twice (#4083, #4058).
 
+## Two hue functions, named for their spaces
+
+`src/oklch.rs` is the OKLCH ruler the 30° separation law is measured with,
+plus `SEPARATION_FLOOR_DEG` — the floor itself, stated once. Three suites read
+it: `stella-tui`'s `theme::tests` over the terminal palette, `stella-cli`'s
+`design_token_parity` over the eight instrument surfaces, and
+`scripts/check-hue-separation.py`, which holds its own Python port to this
+file's literals and refuses to run if they have moved. It lives here because
+this crate is a near-leaf every surface can already link; it was two Rust
+transcriptions of Ottosson's matrices held to two different floors until #4071.
+
+`clamp::srgb_hue_degrees` is a different metric for a different job — the
+gold-lift anchor's 3° tolerance was cut in sRGB against the gold this palette
+ships, and it stays there. Both are named for the space they measure, because
+one of them being named for the job is how a reader concluded the two were
+copies of each other.
+
 ## Consumers
 
 - `stella-tui`: `src/v2/` — the v2 widgets, starting with the single-line

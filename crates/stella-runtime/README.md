@@ -137,13 +137,17 @@ builds its `HostCallGate` with `.with_child_turns(..)` over the session's own
 declaring `[loop] calls = ["child_turn"]` and a `[roles.<name>]` gets a real
 turn, read-only, attributed to the seat its tier resolves to, with what it
 spent printed beside what it was refused
-(`crates/stella-cli/src/wrapper_plugin.rs`). `stella goal` builds no such
-plane at all — its `WrapperHost` serves `recall` only — because the fixed
-`turn_instance` slot `stella run`'s one-shot worker can afford would collide
-with a goal round's own even/odd worker/verifier slots (#3833); a wrapper
-that named `child_turn` there would be answered `Unavailable`, exactly like
-naming the `verifier` tier is answered on `stella run`. Two more limits
-stand on the door that does attach the plane: the `verifier`
+(`crates/stella-cli/src/wrapper_plugin.rs`). `stella goal` and `stella fleet`
+reach it too, through `wrapper_plugin::round_driver_host` (#3833, #3882).
+Neither could while the plane pinned every child turn to one fixed
+`turn_instance`: `stella run`'s one-shot worker can afford that, but both of
+those doors run several rounds under **one** execution row, so a fixed slot
+collided with whichever round landed on it and a wrapper naming `child_turn`
+there was answered `Unavailable`. `ChildTurns::in_turn_lane` is the
+allocation that lifts it — `stella_core::turn_slots` partitions
+`turn_instance` by residue, so a plane counting only its own calls can never
+land where a door's rounds will, without either counter knowing the other's.
+Two more limits stand on every door that attaches the plane: the `verifier`
 tier is deliberately bound to no seat, so a plugin naming it is answered
 `Unavailable` rather than having its call attributed to a role the host never
 made (`ChildTurns::with_seat` is how a driver that wants it owns the claim);

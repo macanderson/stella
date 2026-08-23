@@ -93,3 +93,76 @@ fn slash_popup_survives_a_selection_past_the_filtered_end() {
         "short list shows no scroll affordance:\n{text}"
     );
 }
+
+/// **The witness (#4338).** The browse list draws its headings: `relevant
+/// now` with the reason that put those rows on top, then one per domain
+/// group. The headings are rows of their own, so the popup has to be sized
+/// and windowed over them — a list sized on matches alone clipped its tail
+/// behind its own captions.
+#[test]
+fn the_browse_popup_draws_the_relevance_heading_and_the_domain_groups() {
+    use crate::composer::{PaletteState, SlashDomain};
+    let cmds = vec![
+        SlashCommand::new("/plan", "the plan").in_domain(SlashDomain::Plan),
+        SlashCommand::new("/clear", "reset").in_domain(SlashDomain::Session),
+        SlashCommand::new("/diff", "the diff").in_domain(SlashDomain::Code),
+    ];
+    let state = PaletteState {
+        turn_running: true,
+        ..PaletteState::default()
+    };
+    let menu = SlashMenu::filter_with(&cmds, "/", &state);
+    let rows = crate::render::display_rows(&menu);
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 72,
+        height: (rows.len() as u16) + 3,
+    };
+    let mut buf = Buffer::empty(area);
+    render_slash_popup(&menu, 0, &[], area, &mut buf);
+    let text = buffer_text(&buf);
+    assert!(
+        text.contains("relevant now · a turn is running"),
+        "the heading says why:\n{text}"
+    );
+    assert!(
+        text.contains("session"),
+        "the domain groups are named:\n{text}"
+    );
+    assert!(text.contains("workspace"), "{text}");
+    // Every command still renders — the headings took rows, not commands.
+    for name in ["/plan", "/clear", "/diff"] {
+        assert!(text.contains(name), "{name} missing:\n{text}");
+    }
+    assert!(
+        !text.contains('\u{25b2}') && !text.contains('\u{25bc}'),
+        "everything fit, so no scroll affordance:\n{text}"
+    );
+}
+
+/// A typed query draws no headings at all: three rows under three captions
+/// is a worse list than three rows.
+#[test]
+fn a_queried_popup_draws_no_headings() {
+    use crate::composer::SlashDomain;
+    let cmds = vec![
+        SlashCommand::new("/plan", "the plan").in_domain(SlashDomain::Plan),
+        SlashCommand::new("/clear", "reset").in_domain(SlashDomain::Session),
+    ];
+    let menu = SlashMenu::filter(&cmds, "/pl");
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 72,
+        height: (SLASH_POPUP_MAX_ROWS as u16) + 3,
+    };
+    let mut buf = Buffer::empty(area);
+    render_slash_popup(&menu, 0, &[], area, &mut buf);
+    let text = buffer_text(&buf);
+    assert!(text.contains("/plan"), "{text}");
+    assert!(
+        !text.contains("turn"),
+        "no group headings under a query:\n{text}"
+    );
+}

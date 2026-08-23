@@ -54,7 +54,7 @@ a default install. Built in Rust as a workspace of focused crates.
 - **Prompt-cache-native memory** — Lessons in `.stella/memories/` load once at
   session start into a byte-stable system prompt (~0.1× input cost).
 - **Code graph** — A tree-sitter symbol/import index (Rust, TS/TSX/JS, Python,
-  Go, Java, C, PHP, SQL) queried by `stella search` instead of grepping.
+  Go, Java, C, C++, PHP, SQL) queried by `stella search` instead of grepping.
 - **Local-first telemetry** — Executions, events, token/cost telemetry, and
   the files-touched ledger stay canonical in `.stella/private/store.db`.
   Community/default sends none of it anywhere. Only enrolled Oxagen Enterprise
@@ -699,9 +699,8 @@ extending it.
 | [`stella-mcp`](crates/stella-mcp/README.md)                 | MCP client (stdio + HTTP, protocol `2025-06-18`) merging external tools into the registry                                                                                                                                              |
 | [`stella-protocol`](crates/stella-protocol/README.md)       | Zero-logic, zero-I/O stability contract: shared serde types + the `Provider`/tool ports                                                                                                                                                |
 | [`stella-context`](crates/stella-context/README.md)         | The context plane: reflection-memory recall + embedding index, episodes, bi-temporal facts                                                                                                                                             |
-| [`stella-graph`](crates/stella-graph/README.md)             | Tree-sitter symbol + import-edge indexer (Rust/Python/JS/TS/TSX/SQL/Go/Java/C/PHP)                                                                                                                                                     |
+| [`stella-graph`](crates/stella-graph/README.md)             | Tree-sitter symbol + import-edge indexer (Rust/Python/JS/TS/TSX/SQL/Go/Java/C/C++/PHP)                                                                                                                                                     |
 | [`stella-fleet`](crates/stella-fleet/README.md)             | The multi-agent fleet behind `stella fleet`: DAG planner + wave scheduling, a shared tree with cooperative file claims by default, opt-in git-worktree isolation per task                                                              |
-| [`stella-media`](crates/stella-media/README.md)             | Multimodal generation behind one `MediaProvider` port                                                                                                                                                                                 |
 | [`stella-tui`](crates/stella-tui/README.md)                 | The Command Deck — a pure event-fold core + thin crossterm shell                                                                                                                                                                       |
 | [`stella-observatory`](crates/stella-observatory/README.md) | The Observatory — `stella observe`'s loopback-only telemetry dashboard over the local SQLite stores                                                                                                                                    |
 | [`stella-serve`](crates/stella-serve/README.md)             | A separate headless binary (not part of the `stella` CLI): drives the engine over a wire protocol so a host process runs the Rust core, remoting every model and tool call back — the engine holds no ambient authority                |

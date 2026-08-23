@@ -180,12 +180,15 @@ pub(crate) struct GlobalArgs {
     )]
     pub(crate) allow_dir: Vec<String>,
 
-    /// Hard USD spend limit for the whole session
+    /// Hard USD spend limit for the whole invocation
     ///
-    /// Scoped to the session, not the turn: enforced mode aborts cleanly
+    /// Scoped to the invocation, not the turn: enforced mode aborts cleanly
     /// (never mid-tool) once cumulative spend across every turn and goal round
-    /// exceeds this. Omit to meter spend for the cost summary without ever
-    /// blocking (observed mode).
+    /// exceeds this. `stella self-driving drive` honours it the same way,
+    /// across every turn it spawns — triage, work and retry alike — and stops
+    /// before starting one it cannot pay for, reporting *budget reached*
+    /// rather than *finished*. Omit to meter spend for the cost summary
+    /// without ever blocking (observed mode).
     #[arg(long, global = true, env = "STELLA_SPEND_LIMIT", value_parser = parse_spend_limit)]
     pub(crate) spend_limit: Option<f64>,
 
@@ -680,6 +683,18 @@ pub(crate) enum Command {
         /// is unchanged either way.
         #[arg(long, value_name = "VARIANT")]
         pipeline: Option<String>,
+
+        /// The oracle a wrapper plugin's `[oracle]` observes the flip with.
+        ///
+        /// One command for the whole goal run, not per round: it names the
+        /// witness the run is judged against, and a witness that changed
+        /// between rounds is the tampering the host is watching for. It
+        /// crosses the host's closed runner vocabulary before reaching a
+        /// plugin, and the artifacts it names are pinned once before the
+        /// first round. Refused rather than silently ignored unless
+        /// `--pipeline` names a wrapper that can honor it (#3835).
+        #[arg(long, value_name = "CMD")]
+        test_command: Option<String>,
     },
 
     /// Watch CI for a branch or PR and fix it until green

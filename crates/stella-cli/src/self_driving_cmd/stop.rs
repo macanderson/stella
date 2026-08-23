@@ -79,6 +79,47 @@ pub(super) fn caught() -> Option<Interrupt> {
     }
 }
 
+/// `stella self-driving stop` — write the flag [`parked`] reads.
+///
+/// The verb exists because the file did and nothing wrote it: an operator had
+/// to `touch` a path they learned from a parked run's audit line, which is a
+/// path they can only learn *after* the loop is already parked. `root` is the
+/// loop's durable state directory — the one `LoopState` resolved, unless a
+/// caller names another because they are stopping a loop rooted somewhere
+/// else (a second clone, another machine's shared state root).
+///
+/// **Idempotent, and it says which case it was.** Asking a parked loop to park
+/// is not an error, and reporting it as one would make a supervisor script
+/// treat a successful stop as a failure. The distinction is still worth
+/// printing: "already asked" tells an operator whose loop is still working
+/// that the flag is not what is holding it.
+///
+/// Resuming is deleting the file, and the output names it. That is a verb this
+/// does not have, deliberately: nothing latches the flag, so `rm` is the whole
+/// operation and a second subcommand would only be a spelling of it.
+pub(super) fn request(root: &Path) -> Result<(), String> {
+    let path = stop_file(root);
+    let already = path.exists();
+    if !already {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!("cannot create the loop state dir {}: {e}", parent.display())
+            })?;
+        }
+        std::fs::write(&path, "")
+            .map_err(|e| format!("cannot write the stop flag {}: {e}", path.display()))?;
+    }
+    let display = path.display();
+    if already {
+        println!("stop already requested: {display}");
+    } else {
+        println!("stop requested: {display}");
+    }
+    println!("  the loop parks at its next boundary; it does not abandon a turn in flight");
+    println!("  delete that file to put it back to work — nothing latches the request");
+    Ok(())
+}
+
 /// Start watching for SIGINT and SIGTERM, and latch the first one.
 ///
 /// A thread with a runtime of its own, because `drive` is synchronous: there is
@@ -163,6 +204,42 @@ mod tests {
         assert!(
             !parked(&durable),
             "dropping the flag must resume the loop with no resume signal"
+        );
+    }
+
+    /// **Witness (#4457).** The verb writes the flag the loop reads, so an
+    /// operator asking a loop to stop and the loop noticing are one operation
+    /// rather than two spellings that can drift.
+    ///
+    /// Fails on the base, where the flag had a reader and no writer: #3942
+    /// taught `observe` to see the file and left `touch` — against a path an
+    /// operator could only learn from a parked run's audit line, which is a
+    /// line they can only read once the loop is already parked — as the way to
+    /// create it.
+    #[test]
+    fn the_stop_verb_writes_the_flag_the_loop_reads() {
+        let dir = tempfile::tempdir().expect("state dir");
+        let durable = super::super::state::LoopState {
+            dir: dir.path().to_path_buf(),
+            repo_root: dir.path().to_path_buf(),
+        };
+        assert!(!parked(&durable), "the control: a fresh loop is not parked");
+
+        request(&durable.dir).expect("the verb writes the flag");
+        assert!(
+            parked(&durable),
+            "what the verb wrote must be what `observe` reads"
+        );
+
+        // Asking twice is not an error. A supervisor that re-issues the stop
+        // must not read a successful stop as a failure.
+        request(&durable.dir).expect("asking a parked loop to park is not an error");
+        assert!(parked(&durable));
+
+        std::fs::remove_file(stop_file(&durable.dir)).expect("drop the flag");
+        assert!(
+            !parked(&durable),
+            "and the verb latches nothing the deletion cannot undo"
         );
     }
 

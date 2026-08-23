@@ -3,8 +3,8 @@
 The shipping binary. `[[bin]] name = "stella"` over [`src/main.rs`](src/main.rs) —
 the clap surface, the credential/settings/provider resolution that has to happen
 before a turn can start, and the composition root that hands `stella-core` its
-ports and drives `stella-fleet`, `stella-tui`, an installed wrapper plugin over
-`stella-runtime`'s `TurnWrapper` socket, and `stella-media`.
+ports and drives `stella-fleet`, `stella-tui`, and an installed wrapper plugin
+over `stella-runtime`'s `TurnWrapper` socket.
 
 This crate is **wiring, not decisions**. Anything that could be a pure function
 over owned data belongs in `stella-core`; a provider's wire dialect in
@@ -101,10 +101,13 @@ Specific changes this crate is the far end of:
   `dispatch_in_workspace`), so there is still one sub-agent pool and one spend
   ledger over one session's money — only the registry is per-candidate, which
   is forced: N candidates run concurrently in N trees and a registry's `root`
-  is what every path fence resolves against. And `stella goal` installs no
-  fan-out plane, exactly as it installs no `child_turn` plane, because that
-  loop's own even/odd receipt slots (#3833) own the low `turn_instance`
-  values.
+  is what every path fence resolves against. `stella goal` and `stella fleet`
+  install no fan-out plane, and since #3833 that is a decision about the
+  capability rather than about receipt keys: a fan-out is N *writing* worker
+  turns plus an adoption, and both doors already have a writer in the tree, so
+  an adoption landing mid-loop would apply a diff over a tree the loop is
+  still mutating. Both doors do serve `child_turn`
+  (`wrapper_plugin::round_driver_host`).
 - **Resolving a wrapper and serving it are two moments, deliberately.**
   `bind_installed` finds the plugin and declares its transport *before* the
   provider is built, so `--pipeline` naming nothing installed fails as a typo

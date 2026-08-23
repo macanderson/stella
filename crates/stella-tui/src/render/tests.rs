@@ -30,6 +30,7 @@ mod mutation_diff_e2e;
 mod palette;
 mod result_row;
 mod slash;
+mod steering;
 mod thinking;
 mod tool_output;
 
@@ -214,6 +215,14 @@ fn sample_entries() -> Vec<TranscriptEntry> {
         TranscriptEntry::Error {
             message: "boom".into(),
             retryable: false,
+        },
+        TranscriptEntry::SteeringWithheld {
+            withheld_by: stella_protocol::Withholder::ProjectUntrusted,
+            memories: 3,
+            records: 1,
+            skills: 0,
+            commands: 2,
+            agents: 1,
         },
         TranscriptEntry::Complete {
             receipt: Default::default(),

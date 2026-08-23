@@ -114,6 +114,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-changelog-roll.sh
 
+      - name: contrast ratchet direction
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-contrast.sh
+
       - name: dead-code ratchet direction
         if: ${{ !cancelled() }}
         run: ./scripts/test-dead-code-allows.sh

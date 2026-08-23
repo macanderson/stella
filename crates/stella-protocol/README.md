@@ -32,7 +32,7 @@ call through `&dyn Provider` without linking a single vendor adapter.
 ```
 stella-protocol ← stella-core ← stella-cli / stella-tui …
        ↑ also: stella-model (implements Provider), stella-tools, stella-store,
-         stella-mcp, stella-media, stella-fleet, stella-runtime, stella-engine,
+         stella-mcp, stella-fleet, stella-runtime, stella-engine,
          stella-serve, stella-observatory, stella-plugin (HookEvent only)
 ```
 
