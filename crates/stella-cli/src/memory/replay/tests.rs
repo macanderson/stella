@@ -898,6 +898,61 @@ async fn the_committed_corpus_builds_a_memory_a_skill_a_rule_and_a_tool() {
     assert!(!summary.tools.is_empty(), "tools: {summary:?}");
 }
 
+/// **Witness (#2359).** `turns-to-first` is a measurement for all four
+/// classes, not two measurements and a placeholder.
+///
+/// `first_skill_turn` used to be set to the *total turn count* whenever any
+/// skill existed on disk at the end, and `first_rule_turn` did not exist. So
+/// the report printed `skill 10` on a ten-turn corpus however early the skill
+/// was promoted, in the same row as two genuinely measured numbers, and a
+/// reader comparing two corpora would draw a conclusion from a field that only
+/// ever reported "the last turn". Fails on the old code for exactly that
+/// reason: the strict inequality below is an equality there.
+#[tokio::test]
+async fn turns_to_first_is_measured_for_every_class_not_placed() {
+    let corpus = committed_corpus();
+    let (summary, _dir) = replay(&corpus).await;
+
+    let skill = summary
+        .first_skill_turn
+        .expect("the committed corpus builds a skill");
+    let rule = summary
+        .first_rule_turn
+        .expect("the committed corpus publishes a rule");
+    assert!(
+        skill < summary.turns,
+        "a skill promoted mid-corpus is reported where it happened, not at the \
+         end: skill {skill} of {} turns",
+        summary.turns
+    );
+    // The rule on this corpus genuinely lands on its last turn, so the same
+    // strict inequality would assert a fact about the fixture rather than
+    // about the metric. What the rule half witnesses is that the class is
+    // reported at all: the row below has three classes on the old code.
+    assert!(rule <= summary.turns, "{summary:?}");
+
+    let rendered = summary.render();
+    assert!(
+        rendered.contains(&format!("skill {skill}, rule {rule}")),
+        "and all four classes are named in the row: {rendered}"
+    );
+}
+
+/// A class that never appeared is an em dash, never a number: "never" and "on
+/// the last turn" are different statements.
+#[tokio::test]
+async fn a_class_that_never_appeared_renders_as_a_dash() {
+    let barren = trace("no artifacts", one_task_each(vec![turn(T0, "a lesson")]));
+    let (summary, _dir) = replay(&barren).await;
+    assert_eq!(summary.first_skill_turn, None, "{summary:?}");
+    assert_eq!(summary.first_rule_turn, None, "{summary:?}");
+    assert!(
+        summary.render().contains("skill —, rule —"),
+        "{}",
+        summary.render()
+    );
+}
+
 /// `make replay-learning`'s entry point — prints the §6 summary for the
 /// committed corpus.
 ///

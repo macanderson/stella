@@ -1,21 +1,29 @@
 ---
 id: prompt-witness-author
 title: "witness_author — the effective prompt"
-status: living
+status: archived
 ---
 
 # `witness_author`
 
-Writing the witness test that arms the flip oracle for the staged pipeline's
-built-in path: it authors a test that must **fail on the current code** and
-**pass once the goal is met**, and that fail→pass flip is what credits the
-work — genuinely, host-run: this stage's model writes the test, but Stella
-itself executes it and watches the flip. This mechanism is being extracted
-into an installable verification plugin (Oxagen's Vera is the reference one,
-`doc:pipeline-as-plugins`, #3511); once it lands, this guarantee does not
-automatically transfer — a plugin's oracle reports its own evidence and
-Stella does not re-run it. This page documents the in-tree, host-run
-mechanism as it exists today.
+**This page documents the pre-#3865 staged pipeline, kept for reference; the
+shape lives in a verification plugin now (Vera, not the open-source
+`plugins/stella-witness`, which is the flip oracle only — see
+[witness-repair.md](witness-repair.md)).** `stella-pipeline` was deleted in
+#3865, so `crates/stella-pipeline/src/pipeline/witness_stage.rs` and every
+symbol this page cites dispatch from no code in this tree — see
+`docs/prompts/README.md § Half of this set is history`.
+
+Writing the witness test that armed the flip oracle for the staged pipeline's
+built-in path: it authored a test that had to **fail on the current code**
+and **pass once the goal was met**, and that fail→pass flip is what credited
+the work — genuinely, host-run: this stage's model wrote the test, but Stella
+itself executed it and watched the flip. This mechanism was extracted into an
+installable verification plugin (Oxagen's Vera is the reference one,
+`doc:pipeline-as-plugins`, #3511), which does not carry the same guarantee
+automatically — a plugin's oracle reports its own evidence and Stella does
+not re-run it. This page documents the in-tree, host-run mechanism as it
+existed before #3865, not a live path.
 
 The stage is **demand-driven and runs after execution** — once the warrant has
 read the executed diff and found something worth proving. The canonical stage
@@ -157,9 +165,11 @@ cost the run. It degrades — never panics, never aborts — when:
   that panics, #1789);
 - the author produces no parseable `TEST_COMMAND`.
 
-The witness is **scaffolding for one run**: it lives in the candidate workspace
-and is discarded with it, so an already-satisfied test is never left behind in
-the project's test tree. `stella run --keep-witness` promotes it instead.
+The witness was **scaffolding for one run**: it lived in the candidate
+workspace and was discarded with it, so an already-satisfied test was never
+left behind in the project's test tree. `stella run --keep-witness` used to
+promote it instead; the flag is refused unconditionally since #3865, naming
+`stella plugin install` as the remedy.
 
 ## Related
 

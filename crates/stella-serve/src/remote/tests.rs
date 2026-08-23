@@ -199,6 +199,44 @@ async fn a_tool_call_the_host_never_answers_still_reports_an_outcome() {
     );
 }
 
+/// #3167 witness: a reverse-request deadline is classified `Timeout`, and the
+/// message bytes are exactly what they were before classification — the loop
+/// detector and prompt cache compare these bytes. Fails on the pre-#3167
+/// tree, where `class` is always `None`.
+#[tokio::test]
+async fn a_reverse_request_deadline_is_classified_timeout_with_unchanged_message_bytes() {
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let sink = crate::backlog::FrameSink::new(
+        tx,
+        crate::backlog::FrameBacklog::new(crate::backlog::DEFAULT_MAX_QUEUED_FRAMES),
+    );
+    let pending = Pending::new(
+        crate::observe::null_observer(),
+        TurnRef::new("turn-remotetest-timeout-class"),
+    );
+    let timeout = std::time::Duration::from_millis(20);
+    let port = RemoteToolExecutor::new(
+        Vec::new(),
+        std::sync::Arc::new(stella_core::ports::NoAuthz),
+        stella_core::ports::Principal::Host("test".to_string()),
+        sink,
+        pending,
+        timeout,
+        None,
+    );
+    let output = port.execute("echo", &serde_json::json!({})).await;
+    assert_eq!(
+        output,
+        ToolOutput::classified_error(
+            stella_protocol::ErrorClass::Timeout,
+            format!(
+                "serve host did not answer the `echo` tool call within {timeout:?} \
+                 (reverse-request deadline)"
+            ),
+        )
+    );
+}
+
 /// A fresh, connected reverse-RPC channel triple: the pending registry, a
 /// frame receiver a test can drain, and the sink both new ports
 /// (#1288) are constructed over.

@@ -134,17 +134,11 @@ FONT_CHAIN = [
         ],
         [],
     ),
-    # The Halfwidth and Fullwidth Forms block — the deck's `WRITE` glyph is the
-    # fullwidth `＋` (U+FF0B, `stella_tui_theme::glyph::WRITE`), and none of the
-    # faces above carry it. GNU FreeFont does on Debian; macOS ships it in
-    # Arial Unicode.
-    (
-        [
-            Path("/usr/share/fonts/truetype/freefont/FreeMono.ttf"),
-            Path("/Library/Fonts/Arial Unicode.ttf"),
-        ],
-        [Path("/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf")],
-    ),
+    # A Halfwidth and Fullwidth Forms tier (GNU FreeFont / Arial Unicode) used
+    # to sit here for the deck's `WRITE` glyph alone — U+FF0B, absent from
+    # every face above. #4482 retired that character for the native `+`
+    # (U+002B, `stella_tui_theme::glyph::WRITE`), which JetBrains Mono itself
+    # carries, so nothing in this vocabulary reaches this deep any more.
 ]
 
 # The output frame. 1080p by default; `--size` overrides it for a 4K or 6K

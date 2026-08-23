@@ -12,6 +12,8 @@
 //! seams ("casual Gemini use → direct adapter",
 //! Vertex is the enterprise path).
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,11 +22,16 @@ use stella_protocol::{
     MessageRole, ProviderError, ReasoningEffort, ToolCall, ToolCallObserver,
 };
 
+mod unary;
+
+pub(crate) use unary::GoogleUnaryCall;
+
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
 use crate::provider::Provider;
 use crate::sse::SseDecoder;
+use crate::stream_recovery::{StreamFault, StreamRecovery};
 
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -52,6 +59,19 @@ pub struct GeminiProvider {
     /// only if the slug is absent from the catalog — the same posture as the
     /// other adapters, never a silent hard-coded zero.
     pricing: Option<Pricing>,
+    /// The streaming→non-streaming fallback latch (#2686, extended to this
+    /// dialect by #2746): armed when a stream hangs before its first byte or
+    /// comes back empty, consulted per attempt so the retry of a faulted
+    /// attempt goes out as a plain `generateContent` call. See
+    /// [`crate::stream_recovery`].
+    recovery: StreamRecovery,
+    /// The client the unary fallback dispatches through — [`http::unary_client`]'s
+    /// 600s bound, because a non-streaming call has no first token to reset
+    /// the per-read clock (#547).
+    unary_client: reqwest::Client,
+    /// [`http::FIRST_BYTE_TIMEOUT`] in production; a field so the hung-stream
+    /// path is testable in milliseconds.
+    first_byte_deadline: Duration,
 }
 
 impl GeminiProvider {
@@ -73,6 +93,9 @@ impl GeminiProvider {
             base_url: DEFAULT_BASE_URL.to_string(),
             model,
             pricing,
+            recovery: StreamRecovery::default(),
+            unary_client: http::unary_client(),
+            first_byte_deadline: http::FIRST_BYTE_TIMEOUT,
         }
     }
 
@@ -82,6 +105,42 @@ impl GeminiProvider {
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
         self
+    }
+
+    /// Shrink the first-byte deadline so the hung-stream fallback is testable
+    /// in milliseconds instead of 90 seconds of wall clock.
+    #[cfg(test)]
+    pub(crate) fn with_first_byte_deadline(mut self, deadline: Duration) -> Self {
+        self.first_byte_deadline = deadline;
+        self
+    }
+
+    /// Shrink the unary read bound so the non-streaming path is testable in
+    /// milliseconds instead of ten minutes. Separate from
+    /// [`Self::with_first_byte_deadline`] because the two bounds guard
+    /// different halves of the fallback: that one the stream's first byte,
+    /// this one the whole unary generation — head and body alike, which is
+    /// what lets a test stall the response *body*.
+    #[cfg(test)]
+    pub(crate) fn with_unary_read_timeout(mut self, timeout: Duration) -> Self {
+        self.unary_client = reqwest::Client::builder()
+            .read_timeout(timeout)
+            .build()
+            .expect("the test client builds");
+        self
+    }
+
+    /// The endpoint for one delivery path. The two Google surfaces differ
+    /// only in the method they name: `streamGenerateContent?alt=sse` for SSE,
+    /// plain `generateContent` for the unary fallback — the request body and
+    /// the response shape are identical.
+    fn endpoint(&self, stream: bool) -> String {
+        let method = if stream {
+            "streamGenerateContent?alt=sse"
+        } else {
+            "generateContent"
+        };
+        format!("{}/models/{}:{method}", self.base_url, self.model)
     }
 }
 
@@ -605,9 +664,14 @@ impl Provider for GeminiProvider {
 
 impl GeminiProvider {
     /// Shared body of [`Provider::complete_ref`] and
-    /// [`Provider::complete_observed_ref`]. The request has always been a
-    /// streaming one (`streamGenerateContent?alt=sse`); the only difference
+    /// [`Provider::complete_observed_ref`]. The only difference between them
     /// is whether anything is told about the parts as they land.
+    ///
+    /// Streams by default, but consults the fallback latch first: the retry
+    /// of an attempt whose stream hung before its first byte or came back
+    /// empty goes out as a plain `generateContent` call for the same payload
+    /// instead (#2686, #2746) — see [`unary`] for that path, which `vertex.rs`
+    /// shares.
     async fn complete_inner(
         &self,
         req: CompletionRequestRef<'_>,
@@ -620,13 +684,23 @@ impl GeminiProvider {
             tools: to_gemini_tools(req.tools),
             generation_config: build_generation_config(req),
         };
+        let call = GoogleUnaryCall {
+            label: "Gemini",
+            model: &self.model,
+            pricing: self.pricing.as_ref(),
+            recovery: &self.recovery,
+        };
+        if self.recovery.use_unary() {
+            let request = self
+                .unary_client
+                .post(self.endpoint(false))
+                .header("x-goog-api-key", self.api_key.reveal());
+            return call.complete(request, &body).await;
+        }
 
         let response = self
             .client
-            .post(format!(
-                "{}/models/{}:streamGenerateContent?alt=sse",
-                self.base_url, self.model
-            ))
+            .post(self.endpoint(true))
             .header("x-goog-api-key", self.api_key.reveal())
             .json(&body)
             .send()
@@ -637,8 +711,15 @@ impl GeminiProvider {
             return Err(classify_google_error("Gemini", response, &self.model).await);
         }
 
-        let (text, tool_calls, usage, finish_reason) =
-            aggregate_gemini_stream("Gemini", response, observer, self.pricing.as_ref()).await?;
+        let (text, tool_calls, usage, finish_reason) = aggregate_gemini_stream(
+            "Gemini",
+            response,
+            observer,
+            self.pricing.as_ref(),
+            self.first_byte_deadline,
+        )
+        .await
+        .map_err(|fault| self.recovery.absorb(fault))?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         Ok(CompletionResult {
             text,
@@ -653,36 +734,188 @@ impl GeminiProvider {
     }
 }
 
-/// Aggregate a `streamGenerateContent?alt=sse` response. Unlike the OpenAI
-/// dialects there is no fragment reassembly: each `functionCall` part
-/// arrives whole (args already a JSON object), and text parts are plain
-/// deltas. Thought-summary parts (`thought: true`) are excluded from the
-/// answer text; a part's `thoughtSignature` is preserved by riding inside
-/// the minted call id (see [`SIGNATURE_SEPARATOR`]).
+/// Everything one assembled `generateContent` response yields, and the rules
+/// for folding a chunk into it.
+///
+/// One type, two callers: [`aggregate_gemini_stream`] feeds it every SSE
+/// frame, and the unary fallback ([`unary`]) feeds it the single JSON object
+/// `generateContent` returns — which is the same shape as one streamed chunk.
+/// Sharing the fold is what keeps the two delivery paths from disagreeing
+/// about call-id minting, thought-part exclusion, or usage normalization.
+#[derive(Default)]
+pub(crate) struct GeminiAssembly {
+    pub(crate) text: String,
+    pub(crate) tool_calls: Vec<ToolCall>,
+    pub(crate) usage: CompletionUsage,
+    /// Whether any chunk carried `usageMetadata`, which is what
+    /// `CompletionUsage::reported` means.
+    pub(crate) usage_seen: bool,
+    /// Reported on the final chunk's candidate; last assignment wins.
+    pub(crate) finish_raw: Option<String>,
+}
+
+impl GeminiAssembly {
+    /// Fold one chunk in. Unlike the OpenAI dialects there is no fragment
+    /// reassembly: each `functionCall` part arrives whole (args already a
+    /// JSON object), and text parts are plain deltas. Thought-summary parts
+    /// (`thought: true`) are excluded from the answer text; a part's
+    /// `thoughtSignature` is preserved by riding inside the minted call id
+    /// (see [`SIGNATURE_SEPARATOR`]).
+    pub(crate) fn absorb(
+        &mut self,
+        chunk: GeminiStreamChunk,
+        label: &str,
+        observer: Option<&dyn ToolCallObserver>,
+    ) -> Result<(), ProviderError> {
+        if let Some(err) = chunk.error {
+            return Err(err.into_provider_error(label));
+        }
+        if let Some(u) = chunk.usage_metadata {
+            self.usage_seen = true;
+            self.usage.input_tokens = u.prompt_token_count;
+            self.usage.output_tokens = u.candidates_token_count + u.thoughts_token_count;
+            self.usage.cached_input_tokens = u.cached_content_token_count;
+        }
+        for candidate in chunk.candidates {
+            if let Some(reason) = candidate.finish_reason {
+                self.finish_raw = Some(reason);
+            }
+            let Some(content) = candidate.content else {
+                continue;
+            };
+            for part in content.parts {
+                if let Some(call) = part.function_call {
+                    let ordinal = self.tool_calls.len();
+                    let call_id = match &part.thought_signature {
+                        Some(sig) => format!("call_{ordinal}{SIGNATURE_SEPARATOR}{sig}"),
+                        None => format!("call_{ordinal}"),
+                    };
+                    // A no-argument call omits `args` on the wire, which
+                    // deserializes to `Value::Null` (the field is
+                    // `#[serde(default)]`). That is an empty object, not
+                    // the malformed-call sentinel — a downstream tool
+                    // deserializing its input as an object must not be
+                    // handed `null`, and `driver.rs::execute_with_repair`
+                    // must not mistake a valid no-arg call for broken JSON.
+                    let input = if call.args.is_null() {
+                        serde_json::json!({})
+                    } else {
+                        call.args
+                    };
+                    let tool_call = ToolCall {
+                        call_id,
+                        name: call.name,
+                        input,
+                    };
+                    // Announced whole, with no parse gate: unlike the
+                    // OpenAI dialects there is no fragment reassembly
+                    // here, so `args` is already a `Value` and the call
+                    // is complete the moment its part arrives. The
+                    // announcement is a clone of the exact value pushed,
+                    // so what the observer sees is byte-identical to
+                    // what the completion returns, as the trait requires.
+                    if let Some(observer) = observer {
+                        observer.tool_call_streamed(&tool_call);
+                    }
+                    self.tool_calls.push(tool_call);
+                } else if let Some(t) = part.text
+                    && !part.thought
+                {
+                    // Thought-summary parts stay silent, matching
+                    // anthropic and zai: the deck renders the answer,
+                    // not the model's reasoning.
+                    if let Some(observer) = observer {
+                        observer.text_delta(&t);
+                    }
+                    self.text.push_str(&t);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Close the assembly out into the adapter's result parts, once a
+    /// terminal `finishReason` has been seen.
+    pub(crate) fn finish(
+        mut self,
+    ) -> (String, Vec<ToolCall>, CompletionUsage, Option<FinishReason>) {
+        let finish_reason =
+            map_gemini_finish_reason(self.finish_raw.as_deref(), !self.tool_calls.is_empty());
+        self.usage.reported = self.usage_seen;
+        (self.text, self.tool_calls, self.usage, finish_reason)
+    }
+}
+
+/// Aggregate a `streamGenerateContent?alt=sse` response.
+///
+/// The error type is [`StreamFault`] rather than a bare `ProviderError`,
+/// because the caller needs one extra bit: whether the fault is
+/// **fallback-eligible** — the stream hung before its first byte, or ended
+/// with nothing accumulated at all — which is what arms the
+/// [`crate::stream_recovery::StreamRecovery`] latch so the retry of this
+/// attempt goes out as a plain `generateContent` call (#2686, #2746). Every
+/// other failure (a mid-stream death with content already salvaged, an
+/// in-band error frame) keeps its existing classification.
 pub(crate) async fn aggregate_gemini_stream(
     label: &str,
     response: reqwest::Response,
     observer: Option<&dyn ToolCallObserver>,
     pricing: Option<&Pricing>,
-) -> Result<(String, Vec<ToolCall>, CompletionUsage, Option<FinishReason>), ProviderError> {
+    first_byte: Duration,
+) -> Result<(String, Vec<ToolCall>, CompletionUsage, Option<FinishReason>), StreamFault> {
     let mut decoder = SseDecoder::new();
-    let mut text = String::new();
-    let mut usage = CompletionUsage::default();
-    let mut tool_calls: Vec<ToolCall> = Vec::new();
-    // Reported on the final chunk's candidate; last assignment wins.
-    let mut finish_raw: Option<String> = None;
-    let mut usage_seen = false;
+    let mut assembly = GeminiAssembly::default();
+    // Anything at all having arrived, including a frame this adapter does not
+    // model: a keep-alive is proof the streaming path works, so a stall after
+    // one is a mid-stream death, not the buffering proxy the fallback exists
+    // for.
+    let mut anything_arrived = false;
+    // The first body read runs against the (shorter) first-byte deadline
+    // rather than the inter-fragment idle bound: a response that has sent its
+    // headers and then not one body byte is a buffering proxy, not a thinking
+    // model (#2686).
+    let mut awaiting_first_chunk = true;
     let mut stream = response.bytes_stream();
 
-    // `next_with_timeout` bounds each read by `STREAM_IDLE_TIMEOUT` (a silent
-    // stream surfaces as a retryable Transport error, not an unbounded hang)
-    // and `push_bytes` reassembles multi-byte UTF-8 characters split across
-    // chunk boundaries — decoding each chunk in isolation would spuriously
-    // abort a CJK/emoji stream with `Malformed`.
-    while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
-        .await
-        .map_err(|e| http::attach_partial(e, &usage, &text, pricing))?
-    {
+    // `push_bytes` reassembles multi-byte UTF-8 characters split across chunk
+    // boundaries — decoding each chunk in isolation would spuriously abort a
+    // CJK/emoji stream with `Malformed`.
+    loop {
+        let idle = if awaiting_first_chunk {
+            first_byte
+        } else {
+            http::STREAM_IDLE_TIMEOUT
+        };
+        let chunk = match http::next_stream_read(&mut stream, idle).await {
+            http::StreamRead::Item(chunk) => chunk,
+            http::StreamRead::End => break,
+            // A transport fault (reset, TLS error) is NOT fallback-eligible:
+            // it says nothing about the streaming path specifically, and the
+            // ordinary retry may well succeed over the same stream.
+            http::StreamRead::Failed(message) => {
+                return Err(StreamFault::ineligible(http::attach_partial(
+                    ProviderError::transport(message),
+                    &assembly.usage,
+                    &assembly.text,
+                    pricing,
+                )));
+            }
+            http::StreamRead::Idle => {
+                let error = if awaiting_first_chunk {
+                    http::hung_before_first_byte(label, idle)
+                } else {
+                    ProviderError::transport(format!(
+                        "stream idle timeout: no data for {}s",
+                        idle.as_secs()
+                    ))
+                };
+                return Err(StreamFault {
+                    fallback_eligible: !anything_arrived,
+                    error: http::attach_partial(error, &assembly.usage, &assembly.text, pricing),
+                });
+            }
+        };
+        awaiting_first_chunk = false;
         decoder
             .push_bytes(&chunk)
             .map_err(|e| ProviderError::Malformed(e.to_string()))?;
@@ -691,74 +924,12 @@ pub(crate) async fn aggregate_gemini_stream(
             if data.is_empty() || data == "[DONE]" {
                 continue;
             }
+            anything_arrived = true;
             let parsed: GeminiStreamChunk = match serde_json::from_str(data) {
                 Ok(v) => v,
                 Err(_) => continue, // tolerate keep-alive/ping frames
             };
-            if let Some(err) = parsed.error {
-                return Err(err.into_provider_error(label));
-            }
-            if let Some(u) = parsed.usage_metadata {
-                usage_seen = true;
-                usage.input_tokens = u.prompt_token_count;
-                usage.output_tokens = u.candidates_token_count + u.thoughts_token_count;
-                usage.cached_input_tokens = u.cached_content_token_count;
-            }
-            for candidate in parsed.candidates {
-                if let Some(reason) = candidate.finish_reason {
-                    finish_raw = Some(reason);
-                }
-                let Some(content) = candidate.content else {
-                    continue;
-                };
-                for part in content.parts {
-                    if let Some(call) = part.function_call {
-                        let ordinal = tool_calls.len();
-                        let call_id = match &part.thought_signature {
-                            Some(sig) => format!("call_{ordinal}{SIGNATURE_SEPARATOR}{sig}"),
-                            None => format!("call_{ordinal}"),
-                        };
-                        // A no-argument call omits `args` on the wire, which
-                        // deserializes to `Value::Null` (the field is
-                        // `#[serde(default)]`). That is an empty object, not
-                        // the malformed-call sentinel — a downstream tool
-                        // deserializing its input as an object must not be
-                        // handed `null`, and `driver.rs::execute_with_repair`
-                        // must not mistake a valid no-arg call for broken JSON.
-                        let input = if call.args.is_null() {
-                            serde_json::json!({})
-                        } else {
-                            call.args
-                        };
-                        let tool_call = ToolCall {
-                            call_id,
-                            name: call.name,
-                            input,
-                        };
-                        // Announced whole, with no parse gate: unlike the
-                        // OpenAI dialects there is no fragment reassembly
-                        // here, so `args` is already a `Value` and the call
-                        // is complete the moment its part arrives. The
-                        // announcement is a clone of the exact value pushed,
-                        // so what the observer sees is byte-identical to
-                        // what the completion returns, as the trait requires.
-                        if let Some(observer) = observer {
-                            observer.tool_call_streamed(&tool_call);
-                        }
-                        tool_calls.push(tool_call);
-                    } else if let Some(t) = part.text
-                        && !part.thought
-                    {
-                        // Thought-summary parts stay silent, matching
-                        // anthropic and zai: the deck renders the answer,
-                        // not the model's reasoning.
-                        if let Some(observer) = observer {
-                            observer.text_delta(&t);
-                        }
-                        text.push_str(&t);
-                    }
-                }
-            }
+            assembly.absorb(parsed, label, observer)?;
         }
     }
 
@@ -771,19 +942,22 @@ pub(crate) async fn aggregate_gemini_stream(
     // retryable Transport error so the existing retry machinery handles it,
     // upholding #362's "never commit a truncated Ok" promise (mirrors
     // anthropic/openai/zai). `label` — not a literal — is what makes vertex.rs,
-    // which reuses this aggregator, report against its own name.
-    if finish_raw.is_none() {
-        return Err(http::attach_partial(
-            http::stream_ended_before_terminal(label, "a terminal finishReason"),
-            &usage,
-            &text,
-            pricing,
-        ));
+    // which reuses this aggregator, report against its own name. When NOTHING
+    // arrived it is the other broken-stream shape #2686 names — a 200 with an
+    // empty stream — and is fallback-eligible.
+    if assembly.finish_raw.is_none() {
+        return Err(StreamFault {
+            fallback_eligible: !anything_arrived,
+            error: http::attach_partial(
+                http::stream_ended_before_terminal(label, "a terminal finishReason"),
+                &assembly.usage,
+                &assembly.text,
+                pricing,
+            ),
+        });
     }
 
-    let finish_reason = map_gemini_finish_reason(finish_raw.as_deref(), !tool_calls.is_empty());
-    usage.reported = usage_seen;
-    Ok((text, tool_calls, usage, finish_reason))
+    Ok(assembly.finish())
 }
 
 /// Normalize Gemini's `finishReason` vocabulary onto the provider-neutral

@@ -151,6 +151,7 @@ impl WrapperStage {
 /// manifest author to discover it from a run that quietly did nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum HostStage {
     /// Classify the task and name what must be researched.
     Triage,
@@ -384,6 +385,7 @@ pub const MAX_CONTRIBUTED_STAGE_LEN: usize = 32;
 /// `stella_protocol::StageName`: a value that does not survive its own round
 /// trip is what invariant 4 forbids.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum StageName {
     /// A boundary this host emits.
     Host(HostStage),
@@ -395,6 +397,14 @@ pub enum StageName {
     /// contract [`WrapperStage::condition`] documents for conditions.
     ///
     /// [`PluginManifest::from_toml_str`]: crate::PluginManifest::from_toml_str
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "A stage the manifest contributed, under its own word. Never one of \
+                           the host's own boundary names, and checked at manifest load for \
+                           being dispatchable, renderable, and distinguishable from them."
+        )
+    )]
     Contributed(String),
 }
 
@@ -609,6 +619,7 @@ impl<'de> Deserialize<'de> for StageName {
 /// [`FlipOutcome::was_observed`]: stella_protocol::FlipOutcome::was_observed
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Signal {
     /// Boolean, host: a `--test-command` is configured for this run.
     TestCommand,

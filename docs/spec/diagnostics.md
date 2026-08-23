@@ -83,7 +83,7 @@ kind of statement — so it gets split between the plane that is easiest to reac
 | **Presentation** | *What should the human see?* | 682 `println!` in `stella-cli`, the TUI | built |
 | **Diagnostic** | *Why did the program behave this way?* | — | **missing** |
 
-Two consequences follow, and they are the whole design brief:
+This is the whole design brief:
 
 1. **The new plane must not duplicate the first.** A second stream carrying what
    `AgentEvent` already carries would be a weaker parallel authority — the exact
@@ -137,8 +137,8 @@ Each has already rejected an obvious approach.
 
 ## 4. What breaks when `observe/` scales from one crate to seventeen
 
-The shipped design is right. Four things in it do not survive the jump, and this
-is the entire delta:
+The shipped design is right. What follows is the entire delta at workspace
+scale:
 
 | # | Holds at crate scope | Breaks at workspace scope | Fixed in |
 |---|---|---|---|
@@ -400,8 +400,9 @@ domain plane stays the source of truth and the diagnostic plane points at it.
 
 ## 9. Retiring the 71 `eprintln!`s and ratcheting the 625 discards
 
-Design without a migration path is a wish. Both halves are ratchets, because a
-625-site cleanup as one heroic PR is not reviewable and will not land.
+Design without a migration path is a wish. The discards and the `eprintln!`s
+are each retired by their own ratchet, because a 625-site cleanup as one
+heroic PR is not reviewable and will not land.
 
 **The discards.** An extension trait makes naming the loss the same length as
 dropping it:

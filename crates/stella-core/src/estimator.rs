@@ -409,21 +409,6 @@ impl Calibration {
         let implied = (budget_f / sized).clamp(CALIBRATION_MIN_FACTOR, CALIBRATION_MAX_FACTOR);
         ((budget_f / implied) as u64, implied)
     }
-
-    /// [`estimate_message_tokens`] corrected by the current factor.
-    ///
-    /// Slope-only by construction: the fitted intercept is a **per-request**
-    /// overhead, and adding it to each message would multiply it by the
-    /// message count. Nothing outside this module's own tests calls this
-    /// today, which is why the distinction costs nothing.
-    pub fn calibrated_message_tokens(&self, message: &CompletionMessage) -> u64 {
-        (estimate_message_tokens(message) as f64 * self.factor()).ceil() as u64
-    }
-
-    /// [`estimate_conversation_tokens`] corrected by the current factor.
-    pub fn calibrated_conversation_tokens(&self, messages: &[CompletionMessage]) -> u64 {
-        (estimate_conversation_tokens(messages) as f64 * self.factor()).ceil() as u64
-    }
 }
 
 /// Per-model calibration state, keyed by the model string the provider
@@ -770,22 +755,6 @@ mod tests {
         }
         assert_eq!(cal.samples(), 0);
         assert_eq!(cal.factor(), 1.0);
-    }
-
-    #[test]
-    fn calibrated_estimates_scale_the_raw_heuristic() {
-        let mut cal = Calibration::new();
-        for _ in 0..5 {
-            cal.record(1000, 2000);
-        }
-        let msg = CompletionMessage::user("a".repeat(3500));
-        let raw = estimate_message_tokens(&msg);
-        assert_eq!(cal.calibrated_message_tokens(&msg), raw * 2);
-        let convo = vec![CompletionMessage::system("sys"), msg];
-        assert_eq!(
-            cal.calibrated_conversation_tokens(&convo),
-            (estimate_conversation_tokens(&convo) as f64 * 2.0).ceil() as u64
-        );
     }
 
     #[test]

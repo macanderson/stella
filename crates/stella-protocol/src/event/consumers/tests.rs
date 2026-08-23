@@ -40,8 +40,9 @@ fn the_ledger_row_count_equals_the_tag_count() {
 #[test]
 fn unclassified_rows_are_a_down_only_debt() {
     // A ratchet, not a budget. Equality on purpose: lowering MAX_UNCLASSIFIED
-    // is the point of #2703 and should show as a diff, and raising it means a
-    // variant was filed away unread — the move the ledger exists to prevent.
+    // was the point of #2703 and #4501 and had to show as a diff, and raising
+    // it means a variant was filed away unread — the move the ledger exists to
+    // prevent.
     let actual = unclassified_count();
     assert_eq!(
         actual, MAX_UNCLASSIFIED,
@@ -49,6 +50,29 @@ fn unclassified_rows_are_a_down_only_debt() {
          If you classified a signal, lower the constant in the same commit. \
          If you added a variant and reached for Unclassified, classify it \
          instead — the ceiling only moves down."
+    );
+}
+
+/// #4501: every wire tag names a real consumer, so no shipped row holds
+/// [`ConsumerPosture::Unclassified`].
+///
+/// Distinct from the ratchet above, which only says the count and the constant
+/// agree — it was green at 32 and would be green at 32 again. This one names
+/// the number the census reached, so a later PR that adds a variant and
+/// re-opens the debt has to argue for it here.
+#[test]
+fn no_shipped_row_is_unclassified() {
+    let unaudited: Vec<&str> = SIGNAL_CONSUMERS
+        .iter()
+        .filter(|row| matches!(row.posture, ConsumerPosture::Unclassified { .. }))
+        .map(|row| row.type_tag)
+        .collect();
+    assert!(
+        unaudited.is_empty(),
+        "#4501 censused every row; these are unaudited again: {unaudited:?}. \
+         Read what consumes the signal and declare Behavioral / Surfaced / \
+         RecordedOnly — `scripts/check-consumer-sites.sh` then holds a \
+         Behavioral row's site to naming live code."
     );
 }
 
@@ -76,6 +100,11 @@ fn the_exemplar_rows_show_each_posture_in_use() {
     // The three postures a real row can hold are each exercised by the
     // shipped ledger, so none of them is dead code the compiler keeps alive
     // and no test ever reaches.
+    //
+    // `Unclassified` is deliberately absent: #4501 emptied it, and
+    // `unclassified_rows_are_a_down_only_debt` above is what now pins that at
+    // zero. The negative controls below still construct the variant, so it is
+    // exercised without any shipped row having to hold it.
     let posture = |tag: &str| {
         SIGNAL_CONSUMERS
             .iter()
@@ -91,10 +120,6 @@ fn the_exemplar_rows_show_each_posture_in_use() {
     assert!(matches!(
         posture("proof"),
         ConsumerPosture::RecordedOnly { .. }
-    ));
-    assert!(matches!(
-        posture("stage"),
-        ConsumerPosture::Unclassified { .. }
     ));
 }
 

@@ -1,0 +1,11 @@
+# Down-only ratchet for #3167: every `ToolOutput::error(` construction is
+# either classified (`ToolOutput::classified_error(class, msg)`, #3145) or
+# accounted for here.
+#
+# Each line is `<crate> <count>` -- the number of still-unclassified sites in
+# that crate. A crate may shrink its count; it may never grow it, and a crate
+# absent from this file must be at zero. Regenerate with
+# `make tool-error-class-update`, which refuses to raise a number.
+#
+# This file is meant to reach empty -- see #3167 for the remaining sweep.
+# Do not add a crate here to turn the gate green; classify the sites instead.

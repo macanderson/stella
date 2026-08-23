@@ -373,3 +373,48 @@ async fn a_host_can_requery_its_context_plane_through_the_facade_alone() {
         "the answered block is appended to the transcript verbatim: {messages:?}"
     );
 }
+
+/// Stand-ins for the five hook-plane names #3768 declared permanently outside
+/// the closure rule. They exist only to be collided with.
+mod hook_plane {
+    pub struct Hooks;
+    pub struct HookRunner;
+    pub struct HookBus;
+    pub struct HookDecision;
+    pub struct HookEventDraft;
+}
+
+/// The closure rule's other half: what must stay *out*.
+///
+/// The rule says a host names nothing but `stella_engine::` paths to fill
+/// every builder argument, and `Engine::with_hooks` / `Engine::with_bus` are
+/// the two arguments it deliberately cannot fill (`src/lib.rs`, "The hook
+/// plane is the wrong layer, by design"). A declaration in prose is a
+/// reviewer's note; this module is the guard.
+mod the_exclusion_is_enforced {
+    use super::hook_plane::*;
+    use stella_engine::*;
+
+    /// Each name below resolves today because exactly one glob import
+    /// provides it. Re-export any of them from `stella-engine` and both globs
+    /// provide it, and the line becomes `E0659: ambiguous` — this test stops
+    /// compiling, which is the assertion. Nothing here runs anything; the
+    /// build is the check.
+    ///
+    /// The annotations are what does the work: a bare `HookBus` would resolve
+    /// in the value namespace, where a re-exported field-carrying struct is
+    /// not a candidate at all and the collision never happens. Naming each
+    /// one as a **type** asks the question in the namespace a re-export
+    /// actually lands in — traits (`HookRunner`) included.
+    #[test]
+    fn the_hook_plane_is_still_outside_the_facade() {
+        // Through the facade's own glob, so the import above is live and the
+        // collision below is a real question rather than a dead one.
+        let _config: EngineConfig = EngineConfig::default();
+        let _hooks: Hooks = Hooks;
+        let _runner: HookRunner = HookRunner;
+        let _bus: HookBus = HookBus;
+        let _decision: HookDecision = HookDecision;
+        let _draft: HookEventDraft = HookEventDraft;
+    }
+}

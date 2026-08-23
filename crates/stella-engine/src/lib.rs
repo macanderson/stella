@@ -142,11 +142,9 @@
 //! and was closed as speculative. Nothing below adds a capability; each entry
 //! makes an already-reachable one writable.
 //!
-//! ## Declared exclusions
+//! ## The hook plane is the wrong layer, by design
 //!
-//! Two of [`Engine`]'s builder methods are deliberately **not** closed over,
-//! declared here rather than left as a silence a reader has to notice
-//! (invariant 10's discipline, pointed at a re-export list):
+//! Two of [`Engine`]'s builder methods are deliberately **not** closed over:
 //!
 //! - **[`Engine::with_hooks`]** (`stella_core::hooks::{Hooks, HookRunner}`)
 //!   and **`Engine::with_bus`** (`stella_core::bus::HookBus`). Their closure
@@ -155,12 +153,29 @@
 //!   `HookEventDraft` — an extension surface whose whole purpose is to
 //!   *execute* things, fronted by a crate that inherits `stella-core`'s
 //!   I/O-free posture. The supported host-extension door is
-//!   `stella-runtime`'s wrapper socket (#3380), which lives one layer above
-//!   this facade precisely because two of its four points do I/O. A host
-//!   wanting either plane links `stella-runtime`, not this crate.
+//!   `stella-runtime`'s wrapper socket (#3380,
+//!   `stella_runtime::wrapper::WrapperDispatch::bind`), which lives one layer
+//!   above this facade precisely because two of its four points do I/O.
 //!
-//! Tracked in #3768. Re-opening the question is a `stella-runtime` decision
-//! before it is a re-export list edit.
+//! #3768 asked whether that is a permanent exclusion, whether the observer
+//! half (`with_bus`) should cross, or whether both should. **The answer is
+//! the first**, and this is the decision rather than a gap someone has yet to
+//! close. Closing over either method would let a host reach the engine's
+//! shell-execution authority by naming `stella_engine::` paths alone, which
+//! is the one thing a facade over an I/O-free engine must not make look
+//! ordinary.
+//!
+//! Nothing is stranded by that. `stella-serve` — the embedded host this crate
+//! exists for, and the one that would have been the observer half's first
+//! caller — already links `stella-core` directly and mints its bus from
+//! `stella_core::bus::HookBus` (`stella-serve/src/extensions.rs`,
+//! `session.rs`). A host that wants the plane takes the dependency that
+//! carries it and says so in its own manifest.
+//!
+//! Enforced rather than declared: `tests/embedding.rs`'s
+//! `the_hook_plane_is_still_outside_the_facade` stops compiling the moment
+//! any of `Hooks`, `HookRunner`, `HookBus`, `HookDecision` or
+//! `HookEventDraft` becomes reachable through `stella_engine::*`.
 
 #![forbid(unsafe_code)]
 

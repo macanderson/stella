@@ -112,6 +112,7 @@ pub struct TurnPrelude {
     messages: Vec<CompletionMessage>,
     role: Option<String>,
     scope: Vec<String>,
+    witness: Vec<String>,
 }
 
 impl TurnPrelude {
@@ -140,6 +141,26 @@ impl TurnPrelude {
     #[must_use]
     pub fn scope(&self) -> &[String] {
         &self.scope
+    }
+
+    /// Workspace-relative paths the wrapper will judge its flip against, for
+    /// the host to snapshot **before it runs the turn** and re-check after
+    /// (#3587).
+    ///
+    /// The union across every stage that contributed to this round, in
+    /// first-seen order, exactly as [`Self::scope`] is unioned and for the same
+    /// reason: two stages naming one artifact are asking for one watch, and a
+    /// list that repeats it says nothing extra.
+    ///
+    /// A host that pins these is answering a question the invocation could not:
+    /// `cargo test --test flip` names `flip`, and `tests/flip.rs` is cargo's
+    /// convention rather than anything in the argv. A host that ignores them
+    /// reports [`TamperFinding::NotChecked`](stella_plugin::TamperFinding),
+    /// which is a refusal to credit rather than a pass, so ignoring them is
+    /// safe and useless in the same measure.
+    #[must_use]
+    pub fn witness(&self) -> &[String] {
+        &self.witness
     }
 
     /// The contributions, as the volatile messages they are.
@@ -599,6 +620,7 @@ impl WrapperDispatch {
             messages: Vec::new(),
             role: None,
             scope: Vec::new(),
+            witness: Vec::new(),
         };
 
         let mut published: Vec<PublishedSignal> = Vec::new();
@@ -672,6 +694,14 @@ impl WrapperDispatch {
                 for path in admitted.scope() {
                     if !prelude.scope.iter().any(|seen| seen == path) {
                         prelude.scope.push(path.clone());
+                    }
+                }
+                // The same union, for the same reason, over the artifacts the
+                // host will vouch for (#3587). Two stages naming one witness
+                // are asking for one watch.
+                for path in admitted.witness() {
+                    if !prelude.witness.iter().any(|seen| seen == path) {
+                        prelude.witness.push(path.clone());
                     }
                 }
                 published.extend(admitted.published().iter().copied());

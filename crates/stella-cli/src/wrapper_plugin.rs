@@ -86,8 +86,12 @@
 //! cannot be added to a gate afterwards — the two halves are therefore separate
 //! moments, not one function with an `Option` in it.
 //!
-//! And two scope limits: a plugin's `Unmet` does not fail the process
-//! (#3554), and only this driver of `doc:wrapper-socket` §6's three exists
+//! And two scope limits. A plugin's `Unmet` fails the process only under
+//! `--require-verdict`, which `stella run` alone offers — the door where an
+//! exit status is a delivery gate. `stella goal` and `stella fleet` drive
+//! wrappers too and take no such flag yet (#3554 shipped the gate on the
+//! one-shot door; see `verdict_gate` for what the default is defending). And
+//! only this driver of `doc:wrapper-socket` §6's three exists
 //! (#3551). `--pipeline <variant>` itself now reaches every door that takes
 //! it — `stella run` here, `stella goal` per judged round
 //! (`crate::agent::goal::goal_wrapped`), and `stella fleet` per worker
@@ -162,6 +166,9 @@ use candidates::ended_abnormally;
 /// Every `! wrapper:` line a run prints, in one renderer.
 mod report;
 use report::{report_to, sweep_lines};
+/// Whether a wrapper's conclusion decides the run's exit status (#3554).
+mod verdict_gate;
+use verdict_gate::verdict_refusal;
 // The renderers `report_to` composes internally. Nothing in the shipped binary
 // calls them directly — only this module's tests do, through `super::` — so the
 // re-export is `#[cfg(test)]` rather than an `#[allow(unused_imports)]`: the
@@ -378,6 +385,28 @@ pub(crate) fn reject_arbiter_wrapper_on_goal(resolved: &ResolvedWrapper) -> Resu
 /// passes it through; `keep_witness`/`require_verified` remain pipeline-only
 /// today and are refused on `Plugin` exactly as on `Raw`, both naming an
 /// installed verification wrapper plugin as the remedy.
+/// Refuse `--require-verdict` where nothing declares a verdict (#3554).
+///
+/// Unlike the three flags below, this one is honored — on
+/// [`PipelineChoice::Plugin`], where a bound wrapper's `judge` reaches an
+/// `Outcome` the flag can read. On the raw loop there is no wrapper and no
+/// verdict, so accepting it would be the silent drop CLAUDE.md forbids: the
+/// caller asked for a delivery gate and would get an unconditional exit `0`.
+pub(crate) fn reject_require_verdict_without_wrapper(
+    choice: PipelineChoice<'_>,
+    require_verdict: bool,
+) -> Result<(), String> {
+    if !require_verdict || !choice.is_raw() {
+        return Ok(());
+    }
+    Err(
+        "--require-verdict has no verdict to read on the raw loop (no --pipeline): only an \
+         installed wrapper plugin declares one. Install one (see `stella plugin install`) and \
+         pass --pipeline <variant> naming it."
+            .to_string(),
+    )
+}
+
 pub(crate) fn reject_verification_flags_without_pipeline(
     choice: PipelineChoice<'_>,
     test_command: Option<&str>,
@@ -1212,6 +1241,13 @@ pub(crate) struct RawTurnDriver<'a> {
 #[async_trait(?Send)]
 impl TurnDriver for RawTurnDriver<'_> {
     async fn run_turn(&mut self, prelude: TurnPrelude) -> DrivenTurn {
+        // Before the turn, which is the whole of what "authoring time" means
+        // here: the artifacts this round's stages declared are pinned at the
+        // identity they have now, so the comparison after the turn is about
+        // the work (#3587). Per round rather than once, because a wrapper may
+        // declare more as it learns more; already-pinned artifacts keep their
+        // first baseline, so a later round cannot launder an earlier rewrite.
+        self.watch.pin_declared(prelude.witness());
         // Invariant 7, at the one call site that spends it: `into_messages`
         // hands back user messages, and they are appended *after* the
         // byte-stable system prefix the conversation already opens with.
@@ -1288,23 +1324,28 @@ impl TurnDriver for RawTurnDriver<'_> {
 
 /// Drive one wrapper plugin around as many raw turns as its verdict asks for.
 ///
-/// Returns the last round's result — the run's exit status is the turn's, not
-/// the wrapper's verdict. That is deliberate for this slice: `--require-verified`
-/// is the flag that turns "completed but unproven" into a failure, and it is
-/// wired to the staged pipeline's ladder rather than to a plugin's rule. Making
-/// a plugin's `Unmet` fail the process is a separate decision with its own
-/// blast radius — a third party's manifest failing a user's build wants an
-/// explicit flag, not a side effect of installing something — and it is #3554.
+/// Returns the last round's result, and — under `require_verdict` — the
+/// wrapper's own conclusion on top of it (#3554). Without the flag a
+/// `DispatchReport` whose outcome is `Unmet` is printed and exits `0`, which
+/// is deliberate: installing a third party's manifest must not by itself gain
+/// the power to fail somebody's build. `crate::wrapper_plugin::verdict_gate`
+/// carries the argument and the wording.
+///
+/// The turn's own failure wins when both fire. A run that aborted has a more
+/// specific thing to say than "the wrapper was not satisfied", and the wrapper
+/// was very likely not satisfied *because* it aborted.
 ///
 /// # Errors
 ///
-/// The turn's own failure, or a wrapper whose declared stage order could not be
-/// resolved — which a validated manifest cannot hit.
+/// The turn's own failure, a wrapper whose declared stage order could not be
+/// resolved — which a validated manifest cannot hit — or, under
+/// `require_verdict`, an outcome that is not `Met`.
 pub(crate) async fn run_wrapped(
     bound: &BoundWrapper,
     goal: &str,
     signals: SignalValues,
     candidate: Option<stella_plugin::CandidateGrant>,
+    require_verdict: bool,
     mut driver: RawTurnDriver<'_>,
 ) -> Result<(), CliFailure> {
     let format = driver.format;
@@ -1369,7 +1410,11 @@ pub(crate) async fn run_wrapped(
             // A round always runs, so `results` always has an entry; an empty
             // one would mean the dispatcher returned without driving anything,
             // which is a report about the wrapper and not about the work.
-            last.unwrap_or(Ok(true)).map(|_| ())
+            last.unwrap_or(Ok(true))?;
+            match verdict_refusal(require_verdict, &report.outcome) {
+                Some(refusal) => Err(CliFailure::from(refusal)),
+                None => Ok(()),
+            }
         }
         Err(error) => Err(CliFailure::from(error.to_string())),
     }

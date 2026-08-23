@@ -50,6 +50,7 @@ use crate::wire::{EvidenceProvenance, EvidenceSet, FlipObservation, TamperFindin
 /// Nothing here is a verdict, and nothing here is a fact only the host holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ObservedEvidence {
     /// What the wrapper saw of the fail→pass flip.
     pub flip: FlipObservation,
@@ -78,6 +79,15 @@ pub struct ObservedEvidence {
     ///
     /// A plugin that has nothing to add leaves it absent, and the correction is
     /// exactly what it was.
+    #[cfg_attr(
+        feature = "schema",
+        schemars(
+            description = "What this wrapper's own process wants the next round told, in its own \
+                           words. Advisory: it never decides a verdict, it only rides onto the \
+                           correction a held-open round renders. Absent when there is nothing to \
+                           add."
+        )
+    )]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }

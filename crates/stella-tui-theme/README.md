@@ -9,9 +9,9 @@ use stella_tui_theme::{glyph, token, wordmark};
 Span::styled(format!("{} gate types", glyph::GATE), Style::new().fg(token::GOLD));
 ```
 
-Seventeen tokens (SPEC 3.1), the hue clamp that holds them (SPEC 3.2), sixteen
-state glyphs (SPEC 4), the `stella*` wordmark (SPEC 3.3), and the 16-color
-fallback for terminals without truecolor (SPEC 3.5).
+Seventeen tokens (SPEC 3.1), the hue clamp that holds them (SPEC 3.2), the
+state glyph vocabulary (SPEC 4), the `stella*` wordmark (SPEC 3.3), and the
+16-color fallback for terminals without truecolor (SPEC 3.5).
 
 ## What is enforced, and why it is a crate
 

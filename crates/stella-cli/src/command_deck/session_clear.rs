@@ -299,36 +299,11 @@ pub(super) fn cleared_workers_note(live_lanes: &[String]) -> Option<String> {
     ))
 }
 
-/// Close out the execution a mid-turn `/clear` interrupted. It is recorded
-/// as `cancelled` — the clear drops the turn future exactly as a cancel does,
-/// so the outcome label matches the thing that happened — and a failed store
-/// write is surfaced rather than swallowed, because a clear that quietly lost
-/// its telemetry row leaves a hole in the session's journal that nothing else
-/// would report.
-///
-/// Lives here rather than inline in the driver's `TurnEnd::Cleared` arm: the
-/// arm is in a god file closed to growth, and the closeout is `/clear`'s own
-/// business.
-pub(super) fn close_cleared_execution(
-    execution: Option<&(Arc<Store>, i64)>,
-    registry: &ToolRegistry,
-    cleared_cost: f64,
-    in_tx: &UnboundedSender<Inbound>,
-) {
-    let Some((store, id)) = execution else {
-        return;
-    };
-    if agent::record_execution_end(store, *id, registry, "cancelled", cleared_cost, false) {
-        return;
-    }
-    let _ = in_tx.send(Inbound::Event {
-        agent: LEAD.to_string(),
-        event: AgentEvent::Error {
-            message: "store write failed — this cleared execution was not recorded".to_string(),
-            retryable: true,
-        },
-    });
-}
+// The closeout a mid-turn `/clear` owes its execution used to live here as
+// `close_cleared_execution`. It is `super::dropped_turn` now: a clear and a
+// cancel drop the turn future the same way, owe the store the same
+// `cancelled` row, and — since #2807 — owe the guard the same correction from
+// it, so one function does both and the noun is a parameter.
 
 #[cfg(test)]
 mod tests {

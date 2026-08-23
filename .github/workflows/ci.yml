@@ -429,6 +429,10 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-typed-errors.py
 
+      - name: no new unclassified ToolOutput::error( site (#3167)
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-tool-error-class.py
+
       - name: every dead-code suppression says why
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-dead-code-allows.py

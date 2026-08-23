@@ -119,6 +119,29 @@ impl StreamRecovery {
             .state
             .compare_exchange(PROBING, next, Ordering::AcqRel, Ordering::Acquire);
     }
+
+    /// Route a [`StreamFault`] back into the retry ladder — the one call
+    /// every streaming adapter makes at the end of its aggregation.
+    ///
+    /// An eligible fault (hung before its first byte / empty stream) arms the
+    /// latch, so the caller's retry of this attempt goes out unary, and its
+    /// error stays retryable `Transport`: the ordinary retry machinery both
+    /// drives that switch and bills this discarded attempt through its
+    /// `UsageIncomplete` observer, exactly like every other doomed attempt.
+    /// The message names the switch only when THIS fault armed the latch, so
+    /// an error never promises a fallback some other attempt already made.
+    pub(crate) fn absorb(&self, fault: StreamFault) -> ProviderError {
+        if fault.fallback_eligible && self.note_stream_fault() {
+            return match fault.error {
+                ProviderError::Transport { message, partial } => ProviderError::Transport {
+                    message: format!("{message}; retrying this attempt as a non-streaming request"),
+                    partial,
+                },
+                other => other,
+            };
+        }
+        fault.error
+    }
 }
 
 #[cfg(test)]

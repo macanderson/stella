@@ -126,20 +126,28 @@ impl Tool for SaveState {
     async fn execute(&self, input: &Value, _ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         let (key, content) = match (str_field(input, "key"), str_field(input, "content")) {
             (Ok(k), Ok(c)) => (k, c),
-            (Err(m), _) | (_, Err(m)) => return ToolOutput::error(m),
+            (Err(m), _) | (_, Err(m)) => {
+                return ToolOutput::classified_error(stella_protocol::ErrorClass::InvalidInput, m);
+            }
         };
         if content.len() > MAX_SAVE_BYTES {
-            return ToolOutput::error(format!(
-                "content is {} bytes; save_state caps at {MAX_SAVE_BYTES}. Save the \
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::InvalidInput,
+                format!(
+                    "content is {} bytes; save_state caps at {MAX_SAVE_BYTES}. Save the \
                      artifact in smaller keyed pieces, or keep it in the workspace and \
                      reference it by path.",
-                content.len()
-            ));
+                    content.len()
+                ),
+            );
         }
         let path = match self.0.resolve(key) {
             Ok(p) => p,
             Err(message) => {
-                return ToolOutput::error(message);
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    message,
+                );
             }
         };
         match std::fs::write(&path, content) {
@@ -157,7 +165,10 @@ impl Tool for SaveState {
                     data: None,
                 }
             }
-            Err(e) => ToolOutput::error(format!("failed to save {key}: {e}")),
+            Err(e) => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
+                format!("failed to save {key}: {e}"),
+            ),
         }
     }
 }
@@ -192,13 +203,19 @@ impl Tool for GetState {
         let key = match str_field(input, "key") {
             Ok(k) => k,
             Err(message) => {
-                return ToolOutput::error(message);
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    message,
+                );
             }
         };
         let path = match self.0.resolve(key) {
             Ok(p) => p,
             Err(message) => {
-                return ToolOutput::error(message);
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    message,
+                );
             }
         };
         let offset = input.get("offset").and_then(Value::as_u64).unwrap_or(0);
@@ -210,14 +227,18 @@ impl Tool for GetState {
         let mut file = match std::fs::File::open(&path) {
             Ok(f) => f,
             Err(_) => {
-                return ToolOutput::error(format!(
-                    "no state saved under {key:?} — list_state shows what exists"
-                ));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::NotFound,
+                    format!("no state saved under {key:?} — list_state shows what exists"),
+                );
             }
         };
         let total = file.metadata().map(|m| m.len()).unwrap_or(0);
         if let Err(e) = file.seek(SeekFrom::Start(offset)) {
-            return ToolOutput::error(format!("seek failed on {key}: {e}"));
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
+                format!("seek failed on {key}: {e}"),
+            );
         }
         let mut buf = vec![0u8; limit];
         let mut read = 0usize;
@@ -226,7 +247,10 @@ impl Tool for GetState {
                 Ok(0) => break,
                 Ok(n) => read += n,
                 Err(e) => {
-                    return ToolOutput::error(format!("read failed on {key}: {e}"));
+                    return ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::Environment,
+                        format!("read failed on {key}: {e}"),
+                    );
                 }
             }
             if read == buf.len() {
@@ -273,7 +297,10 @@ impl Tool for ListState {
         let entries = match std::fs::read_dir(self.0.path()) {
             Ok(e) => e,
             Err(e) => {
-                return ToolOutput::error(format!("scratch dir unreadable: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("scratch dir unreadable: {e}"),
+                );
             }
         };
         for entry in entries.flatten() {
@@ -330,13 +357,19 @@ impl Tool for DeleteState {
         let key = match str_field(input, "key") {
             Ok(k) => k,
             Err(message) => {
-                return ToolOutput::error(message);
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    message,
+                );
             }
         };
         let path = match self.0.resolve(key) {
             Ok(p) => p,
             Err(message) => {
-                return ToolOutput::error(message);
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    message,
+                );
             }
         };
         match std::fs::remove_file(&path) {
@@ -344,7 +377,41 @@ impl Tool for DeleteState {
                 content: format!("deleted {key}"),
                 data: None,
             },
-            Err(_) => ToolOutput::error(format!("no state saved under {key:?} — nothing deleted")),
+            Err(_) => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::NotFound,
+                format!("no state saved under {key:?} — nothing deleted"),
+            ),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The #3167 witness: `get_state`'s "no such key" refusal renders the
+    /// exact prose it always has — the loop detector and the prompt cache
+    /// compare those bytes — but now carries the honest
+    /// [`stella_protocol::ErrorClass::NotFound`] instead of the `class: None`
+    /// every scratch refusal shared before this sweep classified them.
+    #[tokio::test]
+    async fn an_unsaved_key_keeps_its_prose_and_gains_a_class() {
+        let dir = Arc::new(ScratchDir::new().unwrap());
+        let out = GetState(dir)
+            .execute(
+                &json!({"key": "never-saved"}),
+                &crate::ctx::ToolCtx::bare(std::env::temp_dir()),
+            )
+            .await;
+        match out {
+            ToolOutput::Error { message, class } => {
+                assert_eq!(
+                    message,
+                    "no state saved under \"never-saved\" — list_state shows what exists"
+                );
+                assert_eq!(class, Some(stella_protocol::ErrorClass::NotFound));
+            }
+            other => panic!("expected an error, got {other:?}"),
         }
     }
 }

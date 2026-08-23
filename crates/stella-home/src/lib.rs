@@ -261,19 +261,11 @@ pub fn resolve_workspace_state_root(
 /// reason to fall back to the working directory, because that would install
 /// third-party code into whatever repository happened to be open.
 ///
-/// Nothing calls this wrapper yet. `stella-cli`'s plugin loader calls the
-/// pure half, [`resolve_user_plugins_dir`], with its own redirectable root
-/// instead. The expected first caller is the wrapper socket's other
-/// drivers — `stella-serve` or an embedded host — which need the same
-/// roster without depending on `stella-cli` to spell the path
-/// (`doc:wrapper-socket` §6). If that never lands, this belongs back in
-/// `stella-cli`.
-#[must_use]
-pub fn user_plugins_dir() -> Option<PathBuf> {
-    resolve_user_plugins_dir(stella_home())
-}
-
-/// [`user_plugins_dir`] over the anchor the caller supplies.
+/// Pure half only, like [`resolve_project_plugins_dir`] below: the anchor is
+/// an argument. Every plugin caller already has a redirectable root of its
+/// own and passes it, so an ambient `user_plugins_dir()` wrapper reading
+/// `stella_home()` would be a second way to spell the same answer that no
+/// caller wants and that a test could not redirect.
 #[must_use]
 pub fn resolve_user_plugins_dir(stella_home: Option<PathBuf>) -> Option<PathBuf> {
     stella_home.map(|home| home.join(PLUGINS_DIR))

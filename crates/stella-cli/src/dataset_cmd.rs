@@ -67,6 +67,17 @@
 //! [`stella_store::Reconstruction::mismatch_severity`] rather than
 //! re-derived), never used to admit one.
 //!
+//! A middle tier that admitted `compaction`-severity executions *with* their
+//! reconstructed [`DatasetRecord::calls`], marked compaction-era, was
+//! considered and declined (#3613). It would recover legacy transcript data
+//! for SFT and it would cost the one property every emitted `calls` array has
+//! today: that it digest-verified. A dataset whose records mean two different
+//! things depending on a flag inside them is worth less than a smaller one
+//! whose records all mean the same thing, and the trajectory of those turns
+//! is exported already under `--include-unverified-transcripts`. Re-opening
+//! this is a decision about what a default training dataset contains, not a
+//! predicate edit.
+//!
 //! ## What a "diff" can honestly be here
 //!
 //! There is no unified diff anywhere in `store.db`. `files_touched` holds

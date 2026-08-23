@@ -260,7 +260,7 @@ fn spawn_shell_command(
                 data: None,
             }
         } else {
-            ToolOutput::error(content)
+            ToolOutput::classified_error(stella_protocol::ErrorClass::Environment, content)
         };
         let _ = tx.send(envelope(
             agent_id.clone(),
