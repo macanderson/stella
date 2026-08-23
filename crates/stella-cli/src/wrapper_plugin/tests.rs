@@ -1410,3 +1410,26 @@ fn the_pre_turn_snapshot_states_only_what_is_true_yet() {
     assert!(!signals.flip_achieved);
     assert!(!signals.tests_red && !signals.tests_green);
 }
+
+/// **#2651's decision, stated on its own.** A run whose every round finished
+/// is a run whose candidates the plugin scored and chose between; anything
+/// else left them unjudged, and the sweep must not be the first thing to have
+/// an opinion about them.
+#[test]
+fn a_round_that_did_not_finish_makes_the_ending_abnormal() {
+    assert!(
+        !super::ended_abnormally(&[Ok(true), Ok(true)]),
+        "every round finished: the plugin had its chance to score"
+    );
+    assert!(
+        super::ended_abnormally(&[Ok(true), Ok(false)]),
+        "an abort is `Ok` and is exactly the ending that scored nothing"
+    );
+    assert!(super::ended_abnormally(&[Err(CliFailure::from(
+        "the turn failed".to_string()
+    ))]));
+    assert!(
+        !super::ended_abnormally(&[]),
+        "a dispatcher that drove nothing left no candidate to keep"
+    );
+}

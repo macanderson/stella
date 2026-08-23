@@ -172,27 +172,71 @@ CREATE INDEX IF NOT EXISTS cloud_quarantine_by_org
     ON cloud_quarantine(org_id, quarantined_at);
 ";
 
-/// One hub migration: upgrades an existing `usage.db` exactly one
+/// One hub migration function: upgrades an existing `usage.db` exactly one
 /// `user_version` step, inside the transaction the runner opened for it.
 type HubMigration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
+
+/// One rung of [`HUB_MIGRATIONS`]: the function that performs the reshape,
+/// paired with the `user_version` it upgrades a hub *to*.
+///
+/// `target_version` is redundant with the entry's position under correct
+/// use -- and that redundancy is the guard. The `#[cfg(test)]` test
+/// `hub_migrations_declare_sequential_versions` (bottom of this module)
+/// asserts every entry's `target_version` equals its index + 1, so two
+/// branches that each append "the next hub migration" independently (the
+/// exact shape #4487 found: PR #4479 took hub v2 -> v3 while #4462 took the
+/// *workspace* ladder's v29 -> v30 slot) fail that test instead of silently
+/// composing into a ladder where one step runs at the other's version.
+struct HubMigrationStep {
+    /// The `user_version` this step upgrades a hub to.
+    target_version: i64,
+    apply: HubMigration,
+}
 
 /// Ordered hub migration list. `HUB_MIGRATIONS[i]` upgrades a hub at
 /// `user_version` i to i + 1.
 ///
-/// Append only. See the module doc for why position is the contract.
-const HUB_MIGRATIONS: [HubMigration; 3] = [
+/// Append only -- see the module doc for why position is the contract -- and
+/// **never renumber**: a slot is claimed by position, not by name.
+const HUB_MIGRATIONS: [HubMigrationStep; 3] = [
     // v0 -> v1: back-propagate #3388's door-only `kind` vocabulary, and give
     // the hub the `role` column #3395 gave the project store.
-    migrate_hub_v0_to_v1,
+    HubMigrationStep {
+        target_version: 1,
+        apply: migrate_hub_v0_to_v1,
+    },
     // v1 -> v2: seat the tool-fold ledger from what is already rolled up.
-    migrate_hub_v1_to_v2,
+    HubMigrationStep {
+        target_version: 2,
+        apply: migrate_hub_v1_to_v2,
+    },
     // v2 -> v3: `execution_rollup` learns whether its figures are a floor
     // (#4171). Existing rows default to 1 because the gate this replaces only
     // ever let complete executions through.
-    migrate_hub_v2_to_v3,
+    HubMigrationStep {
+        target_version: 3,
+        apply: migrate_hub_v2_to_v3,
+    },
+    // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
+    // This is an INDEX-ORDERED array and `HUB_SCHEMA_VERSION` is its length,
+    // so a slot is claimed by position, not by name. Two branches that each
+    // append "the next hub migration" merge cleanly -- git sees two additions
+    // to different lines -- and, unlike `crate::migrations::MIGRATIONS`,
+    // produce a ladder where one step silently runs at the other's version:
+    // nothing in CI catches it, because both files compile and
+    // `target_version` was never checked against position before #4487.
+    // `hub_migrations_declare_sequential_versions` (below) is what catches it
+    // now: give your new entry the correct `target_version` and the test
+    // fails loudly if a parallel merge left two entries claiming the same
+    // slot.
+    //
+    // Nothing is reserved now: take v3 -> v4 and add your own line here. If a
+    // reserved phase ships without needing its slot, delete its line rather
+    // than leaving a hole -- index order is the contract.
 ];
 
-/// The hub schema version this build writes.
+/// The hub schema version this build writes -- the `PRAGMA user_version` of
+/// every hub it has opened.
 const HUB_SCHEMA_VERSION: i64 = HUB_MIGRATIONS.len() as i64;
 
 /// Apply the schema to a freshly opened hub connection: converge the tables,
@@ -209,9 +253,23 @@ pub(super) fn apply(conn: &mut Connection) -> Result<()> {
         let index = usize::try_from(version).map_err(|_| {
             crate::StoreError::Other(format!("hub schema version is negative: {version}"))
         })?;
-        let step = HUB_MIGRATIONS[index];
+        let step = &HUB_MIGRATIONS[index];
+        // Redundant with `hub_migrations_declare_sequential_versions` by
+        // design (see [`HubMigrationStep`]): that test cannot run against a
+        // hub some *other* build already wrote, so this is the same
+        // assertion at the one moment `target_version` still matters for a
+        // running process -- a slot collision that reached a release trips
+        // this before it ever reshapes the wrong table.
+        debug_assert_eq!(
+            step.target_version,
+            version + 1,
+            "HUB_MIGRATIONS[{index}] declares target_version {} but its position \
+             implies {} -- see hub_migrations_declare_sequential_versions",
+            step.target_version,
+            version + 1
+        );
         let tx = conn.transaction()?;
-        step(&tx)?;
+        (step.apply)(&tx)?;
         // Stamped inside the same transaction as the reshape, so a crash
         // mid-migration rolls back to the old version AND the old shape,
         // never a mix. The project store's runner makes the same guarantee.
@@ -340,4 +398,39 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HUB_MIGRATIONS, HUB_SCHEMA_VERSION};
+
+    /// The #4487 witness: `HUB_MIGRATIONS` is claimed by position, and this is
+    /// what makes a slot collision loud instead of silent. Two branches that
+    /// each append "the next hub migration" merge textually clean -- each adds
+    /// one array element -- but if both declare the same `target_version` (the
+    /// shape #4487 found: PR #4479 took hub v2 -> v3 while #4462 took the
+    /// *workspace* ladder's v29 -> v30 slot, and the hub equivalent would have
+    /// composed with no textual conflict at all), the ladder ends up with two
+    /// entries claiming one version and a hole where the other should be. This
+    /// test catches that: every entry's declared `target_version` must equal
+    /// its index + 1, or the ladder is out of order or has a duplicate/missing
+    /// slot.
+    #[test]
+    fn hub_migrations_declare_sequential_versions() {
+        for (index, step) in HUB_MIGRATIONS.iter().enumerate() {
+            assert_eq!(
+                step.target_version,
+                index as i64 + 1,
+                "HUB_MIGRATIONS[{index}] declares target_version {}, but its position \
+                 says it should be {} -- a slot collision or a hole in the ladder",
+                step.target_version,
+                index + 1
+            );
+        }
+        assert_eq!(
+            HUB_SCHEMA_VERSION,
+            HUB_MIGRATIONS.len() as i64,
+            "HUB_SCHEMA_VERSION must track the ladder's length exactly"
+        );
+    }
 }

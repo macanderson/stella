@@ -156,6 +156,9 @@ use crate::memory::SessionMemory;
 use crate::plugin_cmd::roster::PluginRoster;
 use crate::{OutputFormat, config::Config};
 
+/// What becomes of a run's candidate workspaces when it ends.
+mod candidates;
+use candidates::ended_abnormally;
 /// Every `! wrapper:` line a run prints, in one renderer.
 mod report;
 use report::{report_to, sweep_lines};
@@ -473,22 +476,6 @@ impl BoundWrapper {
             .collect()
     }
 
-    /// Discard every candidate workspace this run still holds, and return what
-    /// would not go.
-    ///
-    /// Called once at the end of a wrapped run. The failures come back rather
-    /// than being swallowed because an un-removed worktree is disk left behind
-    /// under a name only the plane's table knew — see
-    /// [`CandidateFanouts::discard_all`], whose contract this is the caller
-    /// half of.
-    pub(crate) async fn sweep_candidates(&self) -> Vec<String> {
-        let mut failures = Vec::new();
-        for plane in &self.candidate_fanout {
-            failures.extend(plane.discard_all().await.iter().map(ToString::to_string));
-        }
-        failures
-    }
-
     /// The one member's gate, for a test that bound exactly one plugin.
     ///
     /// `#[cfg(test)]` rather than an accessor the crate ships: production
@@ -546,7 +533,7 @@ pub(crate) type SessionChildTurns = ChildTurns<Arc<dyn SubAgentDispatcher>>;
 /// The candidate fan-out plane a `stella run` session installs: the plugin's
 /// declared role intents over **this session's own** worktree substrate.
 pub(crate) type SessionCandidateFanouts =
-    CandidateFanouts<crate::candidate_workspaces::SessionCandidateWorkspaces>;
+    CandidateFanouts<crate::candidate_workspaces::CandidateSubstrate>;
 
 /// This host's child-turn plane for one installed plugin.
 ///
@@ -640,7 +627,7 @@ pub(crate) fn child_turn_plane(
 ///   Neither is overridden.
 pub(crate) fn candidate_fanout_plane(
     manifest: &stella_plugin::PluginManifest,
-    workspaces: crate::candidate_workspaces::SessionCandidateWorkspaces,
+    workspaces: crate::candidate_workspaces::CandidateSubstrate,
 ) -> SessionCandidateFanouts {
     CandidateFanouts::declare(manifest, workspaces)
         .in_turn_lane(stella_core::turn_slots::FANOUT_LANE)
@@ -698,7 +685,7 @@ pub(crate) fn session_host(
     manifest: &stella_plugin::PluginManifest,
     dispatcher: Arc<crate::subagent::SessionSubAgents>,
 ) -> WrapperHost {
-    let workspaces = crate::candidate_workspaces::SessionCandidateWorkspaces::new(
+    let workspaces = crate::candidate_workspaces::CandidateSubstrate::for_session(
         cfg,
         &manifest.name,
         Arc::clone(&dispatcher),
@@ -1203,8 +1190,10 @@ pub(crate) struct RawTurnDriver<'a> {
     /// for the turns it drives directly.
     pub(crate) controls: TurnControls,
     /// What each round's turn returned, in order — the caller's own view of a
-    /// loop the dispatcher owns.
-    pub(crate) results: Vec<Result<(), CliFailure>>,
+    /// loop the dispatcher owns. `Ok(true)` is a turn that *finished*;
+    /// `Ok(false)` is one that aborted, which is the ending
+    /// [`ended_abnormally`] is about.
+    pub(crate) results: Vec<Result<bool, CliFailure>>,
     /// One friction ledger per turn this driver drove, in order (#3976).
     ///
     /// Borrowed, like the conversation and the budget beside it, because the
@@ -1281,7 +1270,11 @@ impl TurnDriver for RawTurnDriver<'_> {
             Ok(stella_core::TurnOutcome::Aborted { reason, .. }) => observed(false, reason.clone()),
             Err(failure) => observed(false, failure.to_string()),
         };
-        self.results.push(outcome.map(|_| ()));
+        // Whether the turn *finished*, not merely whether it returned: an
+        // abort on the turn budget is `Ok`, and it is exactly the ending after
+        // which nothing scored the candidates a plugin fanned out
+        // ([`ended_abnormally`], #2651).
+        self.results.push(outcome.map(|_| turn.completed));
         DrivenTurn {
             outcome: turn,
             // The host's own comparison, over artifacts it pinned before the
@@ -1315,6 +1308,13 @@ pub(crate) async fn run_wrapped(
     mut driver: RawTurnDriver<'_>,
 ) -> Result<(), CliFailure> {
     let format = driver.format;
+    // Before anything is minted, so what this names is only ever a run that is
+    // already over (#2813). Nothing is deleted: a leftover checkout is either
+    // a crash's residue or a live sibling's, and only the person reading can
+    // tell this host which.
+    for orphan in bound.orphaned_candidates() {
+        eprintln!("  ! wrapper: {orphan}");
+    }
     let input = RoundInput {
         goal: goal.to_string(),
         signals,
@@ -1332,7 +1332,19 @@ pub(crate) async fn run_wrapped(
     // Whatever a plugin's last point spent has no turn left to fold it in, so
     // this driver folds it (#3576). See `settle_plugin_child_spend`.
     settle_plugin_child_spend(driver.registry, &mut *driver.budget);
+    // Before the pop, so the whole run is judged rather than every round but
+    // its last.
+    let aborted = report.is_err() || ended_abnormally(&driver.results);
     let last = driver.results.pop();
+    // A run that ended before anything scored its candidates keeps their work
+    // as patches, because the sweep below deletes checkouts and branches
+    // unconditionally (#2651). Written, never applied: which candidate
+    // deserved to land is the plugin's judgement, and it never made one.
+    if aborted {
+        for kept in bound.preserve_candidates().await {
+            eprintln!("  ! wrapper: {kept}");
+        }
+    }
     // The end-of-run sweep, and it runs on both arms below because a dispatch
     // that failed is exactly the run most likely to have left workspaces
     // behind. Failures are printed rather than raised: the work is done, and
@@ -1357,7 +1369,7 @@ pub(crate) async fn run_wrapped(
             // A round always runs, so `results` always has an entry; an empty
             // one would mean the dispatcher returned without driving anything,
             // which is a report about the wrapper and not about the work.
-            last.unwrap_or(Ok(()))
+            last.unwrap_or(Ok(true)).map(|_| ())
         }
         Err(error) => Err(CliFailure::from(error.to_string())),
     }

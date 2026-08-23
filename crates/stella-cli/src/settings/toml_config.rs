@@ -106,6 +106,10 @@ pub struct RunSection {
     /// worktree instead of the checkout. Same name in JSON.
     #[serde(default)]
     pub create_worktrees: Option<super::CreateWorktrees>,
+    /// `worktree` / `copy-tree` — how a best-of-N fan-out isolates one
+    /// candidate from the next. Same name in JSON.
+    #[serde(default)]
+    pub candidate_isolation: Option<super::CandidateIsolation>,
     /// `on` (the default when absent) = the workspace probe skips paths the
     /// repository's own `.gitignore` excludes. Same name in JSON
     /// (`ignore_gitignore`).
@@ -622,6 +626,7 @@ impl TomlConfig {
             tools,
             ignore_gitignore: run.ignore_gitignore,
             create_worktrees: run.create_worktrees,
+            candidate_isolation: run.candidate_isolation,
             allowed_dirs: workspace.allowed_dirs,
             ui,
             reward,

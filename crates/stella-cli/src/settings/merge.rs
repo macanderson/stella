@@ -300,6 +300,13 @@ impl Settings {
         if let Some(worktrees) = scope.create_worktrees {
             self.create_worktrees = Some(worktrees);
         }
+        // The explicit-listing rule again, and the one place it costs most:
+        // omitted here, `candidate_isolation` parses everywhere and merges to
+        // `None`, so a project that asked for the copy-tree substrate would
+        // silently get the git one.
+        if let Some(isolation) = scope.candidate_isolation {
+            self.candidate_isolation = Some(isolation);
+        }
         // Extra write directories (`[workspace] allowed_dirs`): whole-list
         // last-wins, and — the explicit-listing rule again — dropped entirely
         // if omitted here, which would leave `allowed_write_dirs()` empty no

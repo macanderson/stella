@@ -218,6 +218,12 @@ pub struct Settings {
     /// actually going to change files. See [`CreateWorktrees`].
     #[serde(default)]
     pub create_worktrees: Option<CreateWorktrees>,
+    /// `worktree` (the default) / `copy-tree` — how a best-of-N fan-out
+    /// isolates one candidate from the next. See [`CandidateIsolation`], whose
+    /// second value is destructive by design and is why this is an explicit
+    /// key rather than anything detected.
+    #[serde(default)]
+    pub candidate_isolation: Option<CandidateIsolation>,
     /// Directories OUTSIDE the workspace root that write tools may touch
     /// (`stella.toml`'s `[workspace] allowed_dirs`). Relative entries resolve
     /// against the project root at the read site
@@ -357,6 +363,67 @@ impl Serialize for CreateWorktrees {
             Self::Always => "always",
             Self::Ask => "ask",
             Self::Never => "never",
+        })
+    }
+}
+
+/// `candidate_isolation`: how a best-of-N fan-out isolates one candidate's
+/// tree from the next (#1383).
+///
+/// `"worktree"` — the default — cuts a git worktree per candidate and promotes
+/// the winner by `git diff` + `git apply`. It is the right shape **when the
+/// real tree is precious**: nothing lands that the user could not have written
+/// themselves, an adoption that no longer fits refuses rather than resolves,
+/// and a candidate's `target/` is not part of its answer because git's own
+/// ignore rules decide what a snapshot contains.
+///
+/// `"copy-tree"` copies the whole directory instead, ignored files included,
+/// and promotes by replacing the target tree's contents with the winner's. It
+/// exists because the first shape's virtues invert where the tree is
+/// **disposable** — a benchmark container, a scratch clone. There the ignored
+/// state is what the task's own tests execute (`node_modules/`, `.venv/`, a
+/// downloaded dataset installed by task setup), so a git-view candidate solves a
+/// materially different tree than the grader inspects; and the guarantee the
+/// patch buys — don't clobber the user's working copy — is already provided by
+/// the container being thrown away.
+///
+/// **It is never detected.** Whole-tree promotion overwrites the tree it lands
+/// on, so it is only ever safe where somebody has said the tree is expendable,
+/// and that is a sentence a person writes rather than one a host infers from
+/// finding a `Dockerfile`. Absent, null, or empty means `"worktree"`; anything
+/// else is a loud parse error, because a typo here decides whether a promotion
+/// is a patch or an overwrite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CandidateIsolation {
+    /// One git worktree per candidate; promotion is a patch.
+    #[default]
+    Worktree,
+    /// One whole-tree copy per candidate; promotion is a replacement.
+    CopyTree,
+}
+
+impl<'de> Deserialize<'de> for CandidateIsolation {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // Through `Option<String>` so an explicit `null` lands here rather than
+        // being rejected before this function sees it — `create_worktrees`'
+        // shape, for its reason.
+        let raw = Option::<String>::deserialize(deserializer)?;
+        match raw.as_deref().map(str::trim).unwrap_or("") {
+            "" | "worktree" => Ok(Self::Worktree),
+            "copy-tree" => Ok(Self::CopyTree),
+            other => Err(serde::de::Error::custom(format!(
+                "\"candidate_isolation\": {other:?} is not one of \"worktree\", \"copy-tree\" \
+                 (empty or absent means \"worktree\")"
+            ))),
+        }
+    }
+}
+
+impl Serialize for CandidateIsolation {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Worktree => "worktree",
+            Self::CopyTree => "copy-tree",
         })
     }
 }
@@ -731,6 +798,12 @@ impl Settings {
     /// same as an empty or null one — see [`CreateWorktrees`].
     pub fn create_worktrees(&self) -> CreateWorktrees {
         self.create_worktrees.unwrap_or_default()
+    }
+
+    /// The resolved `candidate_isolation` policy. An absent key means
+    /// `worktree` — the non-destructive shape — see [`CandidateIsolation`].
+    pub fn candidate_isolation(&self) -> CandidateIsolation {
+        self.candidate_isolation.unwrap_or_default()
     }
 
     /// The extra write directories this run is granted: the configured list
