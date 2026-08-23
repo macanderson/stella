@@ -485,9 +485,20 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
 /// was not installed while `list` was showing it: an unremovable plugin. The
 /// literal `<tier>/<name>` is still swept up as well, so a package whose
 /// manifest has stopped parsing does not become unremovable in turn.
+/// # Why one tier's failure does not abort the other
+///
+/// For the same reason it does not *stop* at the first tier. A `?` on the
+/// per-directory delete returned before the user tier was read, so a project
+/// copy that would not delete — a permission error on `remove_dir_all`, a
+/// path the [`remove_plugin_dir`] guard refuses — left the user copy on disk
+/// and wired into every tool call, which is precisely the outcome the
+/// paragraph above says this function exists to prevent (#4302). Failures are
+/// collected and reported at the end, naming every directory, while the
+/// copies that did go are still removed and still reported.
 fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
     let name = checked_name(name)?;
     let mut removed = 0usize;
+    let mut failures: Vec<String> = Vec::new();
     // Project first: it is the tier that shadows, so it is the one a user in
     // a workspace means by an unqualified name — and so the order the copies
     // are reported in matches the precedence they had.
@@ -524,7 +535,17 @@ fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
                 })
                 .unwrap_or_default();
 
-            remove_plugin_dir(&tier, &dir)?;
+            // Collected rather than propagated: the next directory, and the
+            // next tier, are still worth removing. The revert above has
+            // already run for this one — the journal it reads lives inside
+            // the directory (#3999), so it cannot be ordered after the
+            // delete — which leaves a package whose keys are out of force
+            // and whose files are still there. That is why the failure is an
+            // error at the end rather than a notice: it needs a hand.
+            if let Err(error) = remove_plugin_dir(&tier, &dir) {
+                failures.push(error);
+                continue;
+            }
             println!(
                 "removed `{name}` ({}) from {}",
                 scope.as_str(),
@@ -558,6 +579,22 @@ fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
             }
             removed += 1;
         }
+    }
+    // Before the not-installed check, and an error even when another tier's
+    // copy did go: a copy still on disk is still in the roster and still
+    // dispatched on every tool call, so a `remove` that exited 0 here would
+    // tell the user a third party's process was gone while it was running.
+    if !failures.is_empty() {
+        return Err(format!(
+            "`{name}`: {removed} {} removed, but {} could not be:\n  {}",
+            if removed == 1 { "copy" } else { "copies" },
+            if failures.len() == 1 {
+                "one"
+            } else {
+                "several"
+            },
+            failures.join("\n  ")
+        ));
     }
     if removed == 0 {
         return Err(format!(
