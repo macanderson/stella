@@ -204,12 +204,19 @@ def test_ttfb_and_response_headers_are_recorded(tmp_path: Path) -> None:
         resp.read()
         assert resp.status == 200
 
+        # Wait for the record's bytes, not the file: the handler creates the
+        # file before it writes the line, so an existence poll can read an
+        # empty file and report 0 lines (#4506).
         deadline = time.time() + 2.0
-        while not wire_path.exists() and time.time() < deadline:
+        lines: list[str] = []
+        while time.time() < deadline:
+            if wire_path.exists():
+                lines = wire_path.read_text().strip().splitlines()
+                if lines:
+                    break
             time.sleep(0.02)
 
-        lines = wire_path.read_text().strip().splitlines()
-        assert len(lines) == 1
+        assert len(lines) == 1, f"expected one wire record within 2s, found {lines!r}"
         row = json.loads(lines[0])
         assert isinstance(row["ttfb_ms"], int)
         assert row["ttfb_ms"] >= 0
