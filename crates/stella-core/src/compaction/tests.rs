@@ -304,21 +304,13 @@ fn retention_is_idempotent_between_batches() {
     };
     let pinned_past_the_pressure_gate = 2u64;
     let tokens = estimate_conversation_tokens(&messages);
-    let (aged, _, _, _) = age_stale_tool_results(
-        &mut messages,
-        policy,
-        tokens,
-        pinned_past_the_pressure_gate,
-    );
+    let (aged, _, _, _) =
+        age_stale_tool_results(&mut messages, policy, tokens, pinned_past_the_pressure_gate);
     assert_eq!(aged, 8, "the first batch must fire");
     let snapshot: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
     let tokens = estimate_conversation_tokens(&messages);
-    let (again, _, _, _) = age_stale_tool_results(
-        &mut messages,
-        policy,
-        tokens,
-        pinned_past_the_pressure_gate,
-    );
+    let (again, _, _, _) =
+        age_stale_tool_results(&mut messages, policy, tokens, pinned_past_the_pressure_gate);
     assert_eq!(again, 0, "second pass must be a no-op");
     let after: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
     assert_eq!(snapshot, after, "no bytes may move between batches");

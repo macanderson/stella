@@ -39,14 +39,27 @@
 //!
 //! - **Path-keyed invalidation.** A `write_file` / `edit_file` / `delete_file`
 //!   naming the same path at or after the read drops that path
-//!   ([`MUTATING_TOOLS`]). So does a later read of the same path whose result
-//!   is still in context — nothing was lost there, so nothing needs saying.
+//!   ([`MUTATING_TOOLS`]). So does a shell command at or after the read whose
+//!   *text* matches a writing shape and whose words name the path
+//!   ([`crate::shell_text::mutating_segment_words`], #3827). So does a later
+//!   read of the same path whose result is still in context — nothing was lost
+//!   there, so nothing needs saying.
 //! - **The message claims a pointer, not a cache.** It says the read happened
 //!   and its output has left context; it never says the current bytes are
-//!   known. That claim stays true under an edit this module cannot see — a
-//!   `bash` heredoc, `sed -i`, an external editor — which is the residual gap
-//!   ([`MUTATING_TOOLS`] cannot name a path a shell command mutated) and the
-//!   reason the wording is deliberately weaker than the invalidation rule.
+//!   known. That claim stays true under an edit this module cannot see, and
+//!   two kinds remain: a mutation whose target the command never spells (a
+//!   build step regenerating a file, `git checkout .`, a whole-tree
+//!   formatter — #4444), and an editor or process outside the session
+//!   entirely. That is why the wording stays deliberately weaker than the
+//!   invalidation rule.
+//!
+//! Reading a shell command's text is a heuristic and is treated as one: it
+//! **over-invalidates by construction**. Any word of a writing segment that
+//! shares a final path component with a digested path drops that path, so
+//! `mv old/mod.rs new/mod.rs` drops every digested `mod.rs`. Dropping a path
+//! that was fine costs one re-read; keeping a path that changed is the wrong
+//! answer this module exists to prevent, so the doubt is spent in that
+//! direction every time.
 //!
 //! # Byte stability (invariant 7)
 //!
@@ -83,6 +96,15 @@ pub const READ_DIGEST_MARKER_PREFIX: &str = "[files already read";
 /// cosmetic — it is the staleness rule silently ceasing to fire.
 pub const MUTATING_TOOLS: &[&str] = &["write_file", "edit_file", "delete_file"];
 
+/// The call argument a shell-shaped tool carries its command in.
+///
+/// Keyed on the *parameter*, not on a tool name, which is the same choice the
+/// stall rung makes for the same reason (`crate::driver`'s
+/// `turn_stall_seconds`): the shell tool and the shell-shaped custom tools are
+/// then covered without `stella-core` learning any tool's id, and a tool that
+/// carries no `command` string cannot be misread as one.
+const COMMAND_PARAM: &str = "command";
+
 /// Ceiling on digested paths. Matched to `RESTORE_MAX_FILES`'s reasoning one
 /// tier up: a digest is one line per path rather than a file body, so it can
 /// afford far more entries, but an unbounded list would let a thousand-read
@@ -107,11 +129,12 @@ pub struct DigestedRead {
 /// Every read whose result has left context and is still safe to name,
 /// oldest first, deduplicated by path.
 ///
-/// A path qualifies when its **latest** read has a compacted result and no
-/// [`MUTATING_TOOLS`] call named it at or after that read. Keying on the
-/// latest read is what makes an early evicted read plus a later live re-read
-/// a non-entry: the answer is already in context, so restating it is pure
-/// cost.
+/// A path qualifies when its **latest** read has a compacted result and
+/// nothing wrote it at or after that read — neither a [`MUTATING_TOOLS`] call
+/// naming it, nor a shell command whose text writes and whose words name it.
+/// Keying on the latest read is what makes an early evicted read plus a later
+/// live re-read a non-entry: the answer is already in context, so restating it
+/// is pure cost.
 #[must_use]
 pub fn collect_digest(messages: &[CompletionMessage]) -> Vec<DigestedRead> {
     // Pass 1: correlate every call to the step it was made at, so a result
@@ -121,11 +144,21 @@ pub fn collect_digest(messages: &[CompletionMessage]) -> Vec<DigestedRead> {
     // Latest read per path, and the step of the latest mutation per path.
     let mut latest_read: HashMap<String, (usize, Option<bool>)> = HashMap::new();
     let mut latest_mutation: HashMap<String, usize> = HashMap::new();
+    // Every writing shell segment's words, with the step it ran at. Kept as a
+    // flat list rather than resolved per path here, because which digested
+    // paths exist is not known until the walk below finishes.
+    let mut shell_writes: Vec<(usize, Vec<String>)> = Vec::new();
 
     for message in messages {
         if message.role == MessageRole::Assistant && !message.tool_calls.is_empty() {
             step += 1;
             for call in &message.tool_calls {
+                if let Some(command) = call.input.get(COMMAND_PARAM).and_then(|v| v.as_str()) {
+                    let words = crate::shell_text::mutating_segment_words(command);
+                    if !words.is_empty() {
+                        shell_writes.push((step, words));
+                    }
+                }
                 let Some(path) = call_path(&call.input) else {
                     continue;
                 };
@@ -159,10 +192,15 @@ pub fn collect_digest(messages: &[CompletionMessage]) -> Vec<DigestedRead> {
         .filter(|(path, (read_step, verdict))| {
             // Its result must have been seen AND been compacted away.
             verdict == &Some(true)
-                // ...and nothing may have written the path since.
+                // ...and no file tool may have written the path since.
                 && latest_mutation
                     .get(path.as_str())
                     .is_none_or(|mutated_at| mutated_at < read_step)
+                // ...nor any shell command whose text writes and whose words
+                // could be naming it.
+                && !shell_writes.iter().any(|(at, words)| {
+                    at >= read_step && words.iter().any(|word| word_names_path(word, path))
+                })
         })
         .map(|(path, (step, _))| DigestedRead { path, step })
         .collect();
@@ -170,6 +208,19 @@ pub fn collect_digest(messages: &[CompletionMessage]) -> Vec<DigestedRead> {
     // ordering, since a `HashMap` drain is not reproducible across runs.
     digested.sort_by(|a, b| a.step.cmp(&b.step).then_with(|| a.path.cmp(&b.path)));
     digested
+}
+
+/// Whether a word of a writing shell segment could be naming `path`.
+///
+/// Equal spellings, or equal final components. The second is what makes the
+/// rule survive the two spellings of one file that a session mixes freely —
+/// a read recorded as `crates/stella-core/src/alpha.rs` against a `sed -i`
+/// run from that directory on `alpha.rs`, or against an absolute path — and
+/// it is also where the over-invalidation lives: `mod.rs` names every
+/// digested `mod.rs`. That is the direction the doubt is spent in on purpose
+/// (see the module docs).
+fn word_names_path(word: &str, path: &str) -> bool {
+    word == path || crate::shell_text::basename(word) == crate::shell_text::basename(path)
 }
 
 /// The path argument of a recorded call, when it has one. Runtime data:
