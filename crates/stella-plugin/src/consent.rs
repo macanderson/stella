@@ -1112,9 +1112,9 @@ mod tests {
         );
     }
 
-    /// The ceiling a user is told about is the one the block declared, and its
-    /// absence is said rather than left blank — "as many as the host allows"
-    /// is a materially different consent from "up to four".
+    /// The ceiling a user is told about is the one the block declared, and an
+    /// absent one gets its own sentence — "as many as the host allows" is a
+    /// materially different consent from "up to four".
     #[test]
     fn a_declared_driver_ceiling_is_stated_and_so_is_its_absence() {
         let capped = consent_text(&parse(

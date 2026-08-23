@@ -246,10 +246,10 @@ impl ServerState {
     /// Clones of every live turn's controls, taken under one lock and handed
     /// back released.
     ///
-    /// Cloning rather than acting under the lock is load-bearing: a settling
-    /// turn takes this same lock on its way out, so a drain that held it
-    /// while waiting for turns to settle would be waiting on work it was
-    /// itself blocking.
+    /// Cloning rather than acting under the lock is required: a settling turn
+    /// takes this same lock on its way out, so a drain that held it while
+    /// waiting for turns to settle would be waiting on work it was itself
+    /// blocking.
     pub(crate) fn live_controls(&self) -> Vec<crate::controls::Controls> {
         self.turns()
             .values()
