@@ -73,7 +73,6 @@ pub(super) fn sessions_inbound(
                 turns: stats.turns,
                 spend_micros: (stats.cost_usd * 1_000_000.0).round().max(0.0) as u64,
                 model: stats.model,
-                autofix: None,
             }
         })
         .collect();

@@ -256,9 +256,6 @@ impl Settings {
         if let Some(ignore) = scope.ignore_gitignore {
             self.ignore_gitignore = Some(ignore);
         }
-        if let Some(autofix) = scope.autofix_prs {
-            self.autofix_prs = Some(autofix);
-        }
         // Appearance (`ui.theme`): whole-block last-wins — a higher-precedence
         // scope that declares `ui` replaces the lower one's. Personal
         // preference, no credential/egress authority, so no trust restoration.
