@@ -68,6 +68,8 @@ use std::process::{Command, Stdio};
 
 use stella_protocol::issue::Issue;
 
+use super::turn_flags::TurnFlags;
+
 /// Where this verb's worktrees live — gitignored, and outside the fleet's
 /// namespace so `stella fleet gc` cannot see them.
 ///
@@ -370,31 +372,12 @@ pub(super) fn run_turn(
     dir: &Path,
     state_root: &Path,
     prompt: &str,
-    spend_limit: Option<f64>,
+    flags: &TurnFlags,
 ) -> Result<String, String> {
     let exe = std::env::current_exe()
         .map_err(|error| format!("cannot resolve this binary to run the turn: {error}"))?;
 
-    let mut cmd = Command::new(exe);
-    cmd.current_dir(dir)
-        // The code is disposable; the learning is not.
-        //
-        // A turn runs in a throwaway worktree, and everything it writes under
-        // `.stella/private` — the reflection log the memory miner reads, the
-        // telemetry store, the code graph — would be removed with it. Twenty-two
-        // turns against oxagen-platform finished with no reflections file at
-        // all, because every one of them had written it faithfully into a
-        // directory built to be destroyed.
-        //
-        // Pointing the state root at the repository is what makes a session's
-        // record of what it learned outlast the unit of work that produced it.
-        .env(stella_home::WORKSPACE_STATE_ROOT_ENV, state_root)
-        .arg("run")
-        .arg("--output-format")
-        .arg("json");
-    if let Some(limit) = spend_limit {
-        cmd.arg("--spend-limit").arg(limit.to_string());
-    }
+    let mut cmd = turn_command(&exe, dir, state_root, flags);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit());
@@ -438,6 +421,34 @@ pub(super) fn run_turn(
             }
         ))
     }
+}
+
+/// The child `stella run`, built but not spawned.
+///
+/// Separated from [`run_turn`] so the *whole* command is a test seam rather
+/// than only the flag half: a `TurnFlags::push_onto` that was correct and
+/// never called would satisfy a test written about the flags alone, which is
+/// the shape of the defect this exists to stop recurring (#4352).
+fn turn_command(exe: &Path, dir: &Path, state_root: &Path, flags: &TurnFlags) -> Command {
+    let mut cmd = Command::new(exe);
+    cmd.current_dir(dir)
+        // The code is disposable; the learning is not.
+        //
+        // A turn runs in a throwaway worktree, and everything it writes under
+        // `.stella/private` — the reflection log the memory miner reads, the
+        // telemetry store, the code graph — would be removed with it. Twenty-two
+        // turns against oxagen-platform finished with no reflections file at
+        // all, because every one of them had written it faithfully into a
+        // directory built to be destroyed.
+        //
+        // Pointing the state root at the repository is what makes a session's
+        // record of what it learned outlast the unit of work that produced it.
+        .env(stella_home::WORKSPACE_STATE_ROOT_ENV, state_root)
+        .arg("run")
+        .arg("--output-format")
+        .arg("json");
+    flags.push_onto(&mut cmd);
+    cmd
 }
 
 /// Pull the human-meaningful reason out of `stella run --output-format json`.
@@ -556,7 +567,7 @@ pub(super) struct Worktree {
 pub(super) fn start(
     root: &Path,
     issue: &Issue,
-    spend_limit: Option<f64>,
+    flags: &TurnFlags,
     attribution: &stella_autonomy::Attribution,
 ) -> Result<WorkOutcome, String> {
     use stella_fleet::git::{SystemGitCli, WorktreeManager};
@@ -605,7 +616,7 @@ pub(super) fn start(
         &created.path,
         root,
         &prompt_for(issue, &attribution.commit),
-        spend_limit,
+        flags,
     );
     let change = tree_change(&created.path, &base);
     let outcome = classify(turn, change, &wt);
@@ -763,6 +774,88 @@ fn stale_attempt_hint(root: &Path, key: &str, error: &str) -> String {
 mod tests {
     use super::*;
     use stella_protocol::issue::{IssueClass, IssueKey, IssueState};
+
+    /// The child turn's argv, as strings.
+    fn turn_args(flags: &TurnFlags) -> Vec<String> {
+        let cmd = turn_command(
+            Path::new("/usr/local/bin/stella"),
+            Path::new("/tmp/worktree"),
+            Path::new("/tmp/repo"),
+            flags,
+        );
+        cmd.get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// **Witness (#4352).** Every session flag the parent parsed reaches the
+    /// turn it spawns.
+    ///
+    /// `--model` was accepted by `drive` — it is `global = true`, so it
+    /// registers with every subcommand — and then dropped: `run_turn`
+    /// forwarded `--spend-limit` and nothing else, so every turn ran on the
+    /// project's configured default. Asserted over the whole built command
+    /// rather than over `push_onto` alone, so a correct helper that nothing
+    /// called could not satisfy it.
+    #[test]
+    fn every_session_flag_reaches_the_turn() {
+        let args = turn_args(&TurnFlags {
+            model: Some("anthropic/claude-fable-5".to_owned()),
+            base_url: Some("https://gateway.example/v1".to_owned()),
+            upstream_pin: vec!["z-ai".to_owned(), "anthropic".to_owned()],
+            allow_dir: vec!["/srv/shared".to_owned()],
+            spend_limit: Some(5.0),
+            turn_timeout: Some(std::time::Duration::from_secs(900)),
+            max_output_tokens: Some(8192),
+        });
+
+        // The turn is still a machine-format `run`: the flags are additive to
+        // that, never a replacement for it.
+        assert_eq!(args[0], "run");
+        assert!(args.windows(2).any(|w| w == ["--output-format", "json"]));
+
+        for (flag, value) in [
+            ("--model", "anthropic/claude-fable-5"),
+            ("--base-url", "https://gateway.example/v1"),
+            ("--allow-dir", "/srv/shared"),
+            ("--spend-limit", "5"),
+            ("--turn-timeout", "900"),
+            ("--max-output-tokens", "8192"),
+        ] {
+            assert!(
+                args.windows(2).any(|w| w == [flag, value]),
+                "{flag} {value} must reach the turn: {args:?}"
+            );
+        }
+
+        // Repeated rather than comma-joined, and in the order given: the pin
+        // expresses a preference order, so a reordering would change routing.
+        assert_eq!(
+            args.iter()
+                .zip(args.iter().skip(1))
+                .filter(|(flag, _)| *flag == "--upstream-pin")
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["z-ai", "anthropic"],
+        );
+    }
+
+    /// A flag the parent did not set is not invented for the child.
+    ///
+    /// Without this the test above would pass just as well on a `push_onto`
+    /// that always emitted something — and a `--model` the operator never
+    /// typed would override the project's own default, which is the defect
+    /// inverted rather than fixed.
+    #[test]
+    fn an_unset_session_flag_is_not_forwarded() {
+        let args = turn_args(&TurnFlags::default());
+
+        assert_eq!(
+            args,
+            vec!["run", "--output-format", "json"],
+            "an untouched invocation must spawn exactly the turn it always did"
+        );
+    }
 
     fn issue_with(body: &str) -> Issue {
         Issue {

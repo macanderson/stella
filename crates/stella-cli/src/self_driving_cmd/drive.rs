@@ -68,6 +68,7 @@ use stella_fleet::issue_claim_key;
 
 use super::audit::{self, Action as Audit};
 use super::state::LoopState as Durable;
+use super::turn_flags::TurnFlags;
 
 /// Attempts spent on one pull request, carried across polls.
 ///
@@ -99,7 +100,7 @@ pub(super) fn drive(
     durable: &Durable,
     max_issues: u32,
     no_review: bool,
-    spend_limit: Option<f64>,
+    flags: &TurnFlags,
     poll_secs: u64,
 ) -> Result<(), String> {
     let root = super::state::repo_root();
@@ -136,7 +137,9 @@ pub(super) fn drive(
             // Named as what it is: each turn is its own `stella run` session
             // with this ceiling (#4353), so a reader does not multiply it out
             // as the run's total.
-            spend_limit.map_or(String::new(), |cap| format!(", ${cap} per turn")),
+            flags
+                .spend_limit
+                .map_or(String::new(), |cap| format!(", ${cap} per turn")),
         ),
     );
 
@@ -330,8 +333,7 @@ pub(super) fn drive(
                 // operator whose clone is full of their own leftovers wants
                 // `ContentionPolicy::ClaimsOnly`, which is what that policy
                 // is for (`stella_autonomy::ContentionPolicy`).
-                if let Err(error) =
-                    assess_one(durable, &root, &provider, &cfg, spend_limit, &mut triaged)
+                if let Err(error) = assess_one(durable, &root, &provider, &cfg, flags, &mut triaged)
                 {
                     audit::record(
                         durable,
@@ -492,20 +494,19 @@ pub(super) fn drive(
                 // A `work` that cannot start is one issue's problem, not the
                 // loop's: a single leftover branch must not halt a run that has
                 // other issues to get on with.
-                let outcome =
-                    match super::work::start(&root, &resolved, spend_limit, &cfg.attribution) {
-                        Ok(outcome) => outcome,
-                        Err(reason) => {
-                            audit::record(
-                                durable,
-                                Audit::Deferred,
-                                Some(&issue.0),
-                                &format!("could not start ({reason}); moving on"),
-                            );
-                            durable.update_stats(|s| s.issues_deferred += 1);
-                            continue;
-                        }
-                    };
+                let outcome = match super::work::start(&root, &resolved, flags, &cfg.attribution) {
+                    Ok(outcome) => outcome,
+                    Err(reason) => {
+                        audit::record(
+                            durable,
+                            Audit::Deferred,
+                            Some(&issue.0),
+                            &format!("could not start ({reason}); moving on"),
+                        );
+                        durable.update_stats(|s| s.issues_deferred += 1);
+                        continue;
+                    }
+                };
                 let learned = super::learning::tally(&root).since(learned_before);
 
                 // Every counter this unit moves, in one write — shared with the
@@ -873,7 +874,7 @@ fn assess_one(
     root: &std::path::Path,
     provider: &crate::issue_provider::GhIssueProvider,
     cfg: &super::config::LoopConfig,
-    spend_limit: Option<f64>,
+    flags: &TurnFlags,
     triaged: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
     let unassessed = super::backlog::unassessed(provider, &cfg.triage)?;
@@ -897,7 +898,7 @@ fn assess_one(
         .unwrap_or_default();
 
     let prompt = super::triage::prompt(&issue, &body, &cfg.triage);
-    let output = super::work::run_turn(root, root, &prompt, spend_limit)?;
+    let output = super::work::run_turn(root, root, &prompt, flags)?;
 
     let Some(assessment) = super::triage::parse(&output, &cfg.triage) else {
         super::backlog::escalate_blocking(
