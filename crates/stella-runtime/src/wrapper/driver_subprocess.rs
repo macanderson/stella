@@ -333,6 +333,11 @@ impl SubprocessDriver {
 
         let mut stderr_seen = Vec::new();
         let mut read = 0usize;
+        // The last capability this session served, if any. Read only on the
+        // path where the driver never ended its session: one that asked and
+        // then went silent abandoned it, which is a different failure from one
+        // that decided nothing — see `DriverError::UnansweredCall`.
+        let mut served_call = None;
         let settled = tokio::time::timeout(self.timeout, async {
             let response = self
                 .converse(
@@ -342,6 +347,7 @@ impl SubprocessDriver {
                     session.as_ref(),
                     &mut stderr_seen,
                     &mut read,
+                    &mut served_call,
                 )
                 .await?;
             // `converse` has dropped the sender, so the writer has shut stdin
@@ -432,9 +438,19 @@ impl SubprocessDriver {
             });
         }
 
-        response.ok_or_else(|| DriverError::NoResponse {
-            program: self.program.clone(),
-            stderr: bounded(&stderr_seen, OUTPUT_EXCERPT_CHARS),
+        // The child exited cleanly and wrote no `next`. Which failure that is
+        // depends on whether it had asked the host for something first: an ask
+        // and then silence is an abandoned session, and naming the call is
+        // what tells its author where.
+        response.ok_or_else(|| match served_call {
+            Some(call) => DriverError::UnansweredCall {
+                program: self.program.clone(),
+                call,
+            },
+            None => DriverError::NoResponse {
+                program: self.program.clone(),
+                stderr: bounded(&stderr_seen, OUTPUT_EXCERPT_CHARS),
+            },
         })
     }
 
@@ -457,6 +473,7 @@ impl SubprocessDriver {
         session: Option<&DriverSession<'_>>,
         stderr_seen: &mut Vec<u8>,
         read: &mut usize,
+        served_call: &mut Option<stella_plugin::DriverCall>,
     ) -> Result<Option<DriveResponse>, DriverError> {
         // Whether a conversation was ever open, decided once and fixed for the
         // whole session: `writer_state.frames` only ever moves from `Some` to
@@ -579,25 +596,20 @@ impl SubprocessDriver {
                             // it here and reports `AnswerChannelFailed`.
                             writer_state.frames = None;
                         }
+                        // Served, and the session is still open. If stdout ends
+                        // before a `next` arrives, this is the capability the
+                        // driver abandoned it after.
+                        *served_call = Some(ask.call);
                     }
                 }
             }
         }
-        // EOF with bytes still buffered: one last parse, so a driver that
-        // answered without a trailing newline and exited is read exactly as one
-        // that did not.
-        self.take_message(&mut framer)?.map_or(Ok(None), |message| {
-            match message {
-                DriverMessage::Response(response) => Ok(Some(response)),
-                // An ask as the very last thing the driver said: it asked and
-                // then closed its own stdout, so no answer could be read even if
-                // one were written.
-                DriverMessage::Call(ask) => Err(DriverError::UnansweredCall {
-                    program: self.program.clone(),
-                    call: ask.call,
-                }),
-            }
-        })
+        // Stdout ended. Nothing is left to parse: `Framer` completes a value
+        // the moment its nesting depth returns to zero rather than on a
+        // newline, and the drain above runs until `take` yields `None`, so any
+        // message the child finished writing was already taken inside the
+        // loop. The caller decides what the silence means.
+        Ok(None)
     }
 
     /// Take the next complete message the framer has assembled, if there is one.
