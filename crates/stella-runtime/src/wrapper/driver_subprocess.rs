@@ -167,6 +167,25 @@ struct WriterState<'a> {
     writer: &'a mut Option<tokio::task::JoinHandle<std::io::Result<()>>>,
 }
 
+/// What a session's read loop accumulates for the caller to read once it ends.
+///
+/// One value rather than three out-parameters: every one of these is only
+/// meaningful *after* `converse` returns, and the caller reads all three
+/// together to decide which failure a silent driver was.
+struct SessionTrace<'a> {
+    /// Everything the driver wrote to stderr, which is where its reason
+    /// usually is.
+    stderr_seen: &'a mut Vec<u8>,
+    /// Bytes read across both streams, checked against [`MAX_CAPTURE_BYTES`]
+    /// at ingest.
+    read: &'a mut usize,
+    /// The last capability this session served, if any (#3794). Read only when
+    /// the driver exited cleanly with no `next`: an ask and then silence is an
+    /// abandoned session, and silence with no ask is
+    /// [`DriverError::NoResponse`].
+    served_call: &'a mut Option<stella_plugin::DriverCall>,
+}
+
 impl SubprocessDriver {
     /// Declare a driver process.
     ///
@@ -345,9 +364,11 @@ impl SubprocessDriver {
                     &mut stderr,
                     writer_state,
                     session.as_ref(),
-                    &mut stderr_seen,
-                    &mut read,
-                    &mut served_call,
+                    SessionTrace {
+                        stderr_seen: &mut stderr_seen,
+                        read: &mut read,
+                        served_call: &mut served_call,
+                    },
                 )
                 .await?;
             // `converse` has dropped the sender, so the writer has shut stdin
@@ -471,10 +492,13 @@ impl SubprocessDriver {
         stderr: &mut tokio::process::ChildStderr,
         mut writer_state: WriterState<'_>,
         session: Option<&DriverSession<'_>>,
-        stderr_seen: &mut Vec<u8>,
-        read: &mut usize,
-        served_call: &mut Option<stella_plugin::DriverCall>,
+        trace: SessionTrace<'_>,
     ) -> Result<Option<DriveResponse>, DriverError> {
+        let SessionTrace {
+            stderr_seen,
+            read,
+            served_call,
+        } = trace;
         // Whether a conversation was ever open, decided once and fixed for the
         // whole session: `writer_state.frames` only ever moves from `Some` to
         // `None` below (a send failure), never the reverse, so this is exactly
