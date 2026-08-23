@@ -3020,35 +3020,7 @@ fn handle_skills_search_key(key: KeyEvent, ui: &mut DeckUi) -> Option<DeckAction
 fn handle_skills_prompt_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     match ui.skills.prompt.clone() {
         Some(SkillPrompt::Scope { action, user }) => {
-            match key.code {
-                KeyCode::Esc => {
-                    ui.skills.prompt = None;
-                    ui.skills.status = Some("cancelled".into());
-                    DeckAction::Handled
-                }
-                KeyCode::Left | KeyCode::Up | KeyCode::Char('p') | KeyCode::Char('P') => {
-                    ui.skills.prompt = Some(SkillPrompt::Scope {
-                        action,
-                        user: false,
-                    });
-                    DeckAction::Handled
-                }
-                KeyCode::Right | KeyCode::Down | KeyCode::Char('u') | KeyCode::Char('U') => {
-                    ui.skills.prompt = Some(SkillPrompt::Scope { action, user: true });
-                    DeckAction::Handled
-                }
-                KeyCode::Enter => {
-                    let scope = if user {
-                        SkillScope::User
-                    } else {
-                        SkillScope::Project
-                    };
-                    ui.skills.searching = true;
-                    create::dispatch_skills_scope(ui, action, scope)
-                }
-                // Modal: swallow everything else.
-                _ => DeckAction::Handled,
-            }
+            skills_keys::handle_scope_key(key, ui, action, user)
         }
         // The create-description input: type a short description, ⏎ moves on to
         // the scope picker (which dispatches the LLM-assisted create).
@@ -3675,6 +3647,9 @@ fn cycle_filter(model: &WorkspaceModel, current: Option<&str>) -> Option<AgentId
 /// MCP-tab key handling (inspector / browse / search / auth).
 mod mcp_keys;
 use mcp_keys::handle_mcp_key;
+
+/// The SKILLS scope picker's keys.
+mod skills_keys;
 
 /// ISSUES-tab browse keys and the multiselect they drive.
 mod issues_keys;

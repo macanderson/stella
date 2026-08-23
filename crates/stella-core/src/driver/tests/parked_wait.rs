@@ -335,10 +335,7 @@ fn throttled() -> ProviderError {
 /// Anthropic and Z.ai shed load with, as `http::classify_http_status` hands
 /// it over.
 fn overloaded() -> ProviderError {
-    ProviderError::Overloaded {
-        message: "anthropic HTTP 529 Overloaded: overloaded".into(),
-        retry_after_ms: None,
-    }
+    ProviderError::overloaded("anthropic HTTP 529 Overloaded: overloaded", None)
 }
 
 /// The witness for #2667's measured loss (7 attempts burned in 15s with 880s

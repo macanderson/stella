@@ -36,6 +36,8 @@
 
 #![cfg(unix)]
 
+mod common;
+
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -152,13 +154,10 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
             .await
             .unwrap_or_else(|e| panic!("{name}: the plugin did not answer: {e}"));
 
-        let golden: WrapperResponse =
-            serde_json::from_str(&fs::read_to_string(&golden_path).expect("a readable golden"))
-                .unwrap_or_else(|e| panic!("{name}'s golden is not a response: {e}"));
-        assert_eq!(
-            WrapperResponse::BeforeTurn(response.clone()),
-            golden,
-            "{name} did not answer with its golden contribution"
+        common::bless_or_assert(
+            &name,
+            &golden_path,
+            &WrapperResponse::BeforeTurn(response.clone()),
         );
 
         assert!(
@@ -326,9 +325,11 @@ fn the_shipped_manifest_declares_both_points_and_the_arbiter_grant_they_need() {
         Some("verifier")
     );
     assert!(
-        manifest.subloop.is_some(),
-        "[roles] requires [subloop] even though this plugin does not use its \
-         bounded-child-turn dispatch (#3496) — declared to satisfy the validator"
+        manifest.subloop.is_none(),
+        "this plugin spends its child turn entirely over the host-call channel, so it \
+         declares no `[subloop]` — since #3496 the `[wrapper]` below is what resolves the \
+         role intent above, and the `[subloop]` that used to sit here only to satisfy the \
+         validator is gone"
     );
 
     let wrapper = manifest.wrapper.as_ref().expect(

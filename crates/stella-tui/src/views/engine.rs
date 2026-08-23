@@ -31,7 +31,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use crate::deck::DeckTab;
-use crate::deck_ui::{DeckAction, DeckUi};
+use crate::deck_ui::{DeckAction, DeckUi, list_nav};
 use crate::envelope::{
     AgentScope, EngineAgentState, EngineConfigState, EngineRole, WorkspaceInput,
 };
@@ -495,6 +495,15 @@ fn handle_nav_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let plain = !key
         .modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META);
+    // Row movement is the deck's one vocabulary, not this panel's: `↑`/`↓`,
+    // `j`/`k`, `⇞`/`⇟` and `Home`/`End` all move the selection. `letters` is
+    // true because the panel is modal while focused — nothing here is
+    // composing a prompt for `j` to join. Tab/`←`/`→` are the pane step and
+    // stay below (#4370).
+    let count = ui.engine.row_count();
+    if list_nav::select(key, &mut ui.engine.row, count, true) {
+        return DeckAction::Handled;
+    }
     match key.code {
         // Return focus to the tab's left column. The working copy stays in
         // memory (refocusing resumes the edits) until the next driver
@@ -505,17 +514,6 @@ fn handle_nav_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
         }
         KeyCode::Tab | KeyCode::Right => switch_tab(ui, true),
         KeyCode::BackTab | KeyCode::Left => switch_tab(ui, false),
-        KeyCode::Up => {
-            ui.engine.row = ui.engine.row.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            let count = ui.engine.row_count();
-            if count > 0 {
-                ui.engine.row = (ui.engine.row + 1).min(count - 1);
-            }
-            DeckAction::Handled
-        }
         KeyCode::Enter => activate_row(ui, false),
         // Space is the toggle chord only: it flips the on/off rows exactly
         // like ⏎ but deliberately does NOT open pickers/edits — a stray

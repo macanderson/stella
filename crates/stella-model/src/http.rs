@@ -577,10 +577,10 @@ pub(crate) fn classify_http_status(
             message: format!("{label} rate limit"),
             retry_after_ms,
         },
-        s if s.as_u16() == HTTP_OVERLOADED => ProviderError::Overloaded {
-            message: format!("{label} HTTP {status}: {}", body_snippet(body)),
+        s if s.as_u16() == HTTP_OVERLOADED => ProviderError::overloaded(
+            format!("{label} HTTP {status}: {}", body_snippet(body)),
             retry_after_ms,
-        },
+        ),
         s if s.is_server_error() => {
             ProviderError::transport(format!("{label} HTTP {status}: {}", body_snippet(body)))
         }

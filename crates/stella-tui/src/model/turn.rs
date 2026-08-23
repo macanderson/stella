@@ -50,7 +50,42 @@ use stella_protocol::SteerCause;
 /// blank it has today, which is the honest outcome rather than a regression.
 #[must_use]
 pub(crate) fn supplies_the_turns_model(role: ModelCallRole, call_seq: u64) -> bool {
-    matches!(role, ModelCallRole::Worker) && call_seq == 0
+    role_supplies_the_turns_model(role) && call_seq == 0
+}
+
+/// The role half of [`supplies_the_turns_model`], for the folds whose event
+/// carries a role but no `call_seq`.
+///
+/// [`stella_protocol::AgentEvent::StepUsage`] is the case: it is the metering
+/// record for a committed call and carries `role`, `provider` and `model`, but
+/// no sequence number — only `StepManifest` has one. A consumer of it can
+/// therefore apply the role condition and nothing else, and the choice is
+/// between asking this or spelling a second role list beside the first. Two
+/// role lists that must agree is how the model on the AGENTS row came to be
+/// taken from any call at all (#4307), so there is one list and it lives here.
+///
+/// Written as an exhaustive `match` rather than a [`matches!`]: a role added to
+/// the vocabulary is an `E0004` at this one site, which is what makes "every
+/// other role is auxiliary" a claim the compiler keeps rather than a comment.
+#[must_use]
+pub(crate) fn role_supplies_the_turns_model(role: ModelCallRole) -> bool {
+    match role {
+        ModelCallRole::Worker => true,
+        ModelCallRole::Unknown
+        | ModelCallRole::Triage
+        | ModelCallRole::Research
+        | ModelCallRole::Plan
+        | ModelCallRole::PlanRepair
+        | ModelCallRole::WitnessAuthor
+        | ModelCallRole::WitnessRepair
+        | ModelCallRole::DistressGuidance
+        | ModelCallRole::Verdict
+        | ModelCallRole::AgentAuthor
+        | ModelCallRole::SkillAuthor
+        | ModelCallRole::DomainInference
+        | ModelCallRole::Reflection
+        | ModelCallRole::Summarization => false,
+    }
 }
 
 /// What SPEC 6.1's opening rule says out loud, stamped onto the stage boundary

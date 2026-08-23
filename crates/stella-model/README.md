@@ -106,7 +106,7 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/provider.rs`](src/provider.rs) | Two-line re-export of the port. Open it to be reminded where the trait actually lives. |
 | [`src/zai.rs`](src/zai.rs) (+ [`src/zai/stream.rs`](src/zai/stream.rs), [`src/zai/unary.rs`](src/zai/unary.rs), [`src/zai/tests.rs`](src/zai/tests.rs), [`src/zai/tests/error_classify.rs`](src/zai/tests/error_classify.rs)) | The shared OpenAI Chat Completions adapter. One adapter serving Z.ai/GLM, xAI, DeepSeek, OpenRouter, `local`, and settings-defined gateways; per-identity behavior (OpenRouter's root `cache_control` + sticky `session_id`, GLM's `thinking`, xAI's `reasoning_effort`) is gated on `self.id` inside it. `stream.rs` is the SSE aggregation half, `unary.rs` the non-streaming fallback a broken streaming path latches onto (`src/stream_recovery.rs`, #2686). |
 | [`src/anthropic.rs`](src/anthropic.rs) (+ [`src/anthropic/tests.rs`](src/anthropic/tests.rs)), [`src/openai.rs`](src/openai.rs), [`src/gemini.rs`](src/gemini.rs), [`src/vertex.rs`](src/vertex.rs), [`src/bedrock.rs`](src/bedrock.rs) | One adapter per structurally distinct wire dialect: Messages API, Responses API, `generateContent` (direct and Vertex's project-scoped enterprise path, sharing wire types and the stream aggregator), Bedrock Converse. All follow the same shape — `new(ApiKey, model)` capturing catalog pricing, `with_base_url`, `http::client()`, `SseDecoder`, `http::classify_http_status`, `impl Provider` (plus `complete_observed`, the mid-stream tool-call announcement the engine speculates on — every streaming adapter implements it; Bedrock, which is unary, implements it as one terminal `text_delta` and announces no tool calls). Open the one whose vendor you are debugging. |
-| [`src/catalog.rs`](src/catalog.rs) | `Catalog`, `CatalogEntry`, `Pricing`, `ToolDialect`, and the compile-time seed. The only sanctioned slug → model resolution. |
+| [`src/catalog.rs`](src/catalog.rs) (+ [`src/catalog/seed.rs`](src/catalog/seed.rs) and `src/catalog/seed/<provider>.rs`) | `Catalog`, `CatalogEntry`, `Pricing`, `ToolDialect`, and the only sanctioned slug → model resolution. The compile-time seed rows live one module per provider: a row carries four prices, two ceilings and the argument for the numbers a user gets, which is what put `catalog.rs` 77 lines from the file-size ceiling with them inside it (#3862). |
 | [`src/credential.rs`](src/credential.rs) (+ [`src/credential/aux.rs`](src/credential/aux.rs)) | `ApiKey` (the non-`Display` secret wrapper), the flag → env → file → prompt chain, `CredentialsFile` (keys *and* the `[credential_fields.<provider>]` companions), the multi-variable resolvers `VertexAddressing` / `BedrockCredentials`, and `AuxCredentials` — the redacting, zeroizing set a host uses to carry the values a provider needs beyond one key (Bedrock's secret access key, session token, and region). |
 | [`src/provider_parity.rs`](src/provider_parity.rs) | `CachePosture` / `ReasoningPosture` / `StreamFallbackPosture` — the per-provider matrix. A new provider id lands here or tests fail. |
 | [`src/cache_economics.rs`](src/cache_economics.rs) | Cache savings arithmetic (`Pricing::cache_savings_usd`) and `diagnose_cache`, which reads the parity matrix to tell an opt-in bug from prefix instability. |
@@ -241,8 +241,10 @@ Adding a provider. **Step 0 is the one most new providers stop at.**
    `impl Provider` (+ `complete_observed` if it streams). Add a `ToolDialect`
    variant in [`src/catalog.rs`](src/catalog.rs), and a matching `Dialect`
    variant plus `build_provider_parts` arm in `stella-cli`.
-2. **Seed the catalog.** A row in `Catalog::seed()` for the provider's
-   `default_model`, or `every_provider_default_model_resolves_against_the_catalog_seed`
+2. **Seed the catalog.** A row in `src/catalog/seed/<provider>.rs` (a new file
+   plus one `mod` line in [`src/catalog/seed.rs`](src/catalog/seed.rs) for a
+   provider that has none) for the provider's `default_model`, or
+   `every_provider_default_model_resolves_against_the_catalog_seed`
    ([`../stella-cli/src/config/tests.rs`](../stella-cli/src/config/tests.rs))
    fails — and the provider would hard-error on first use.
 3. **Declare both parity rows, in the same PR.** Add the provider id to *both*

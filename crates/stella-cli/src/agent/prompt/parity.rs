@@ -377,6 +377,28 @@ fn every_shared_contract_reaches_every_static_prompt_verbatim() {
     }
 }
 
+/// **Witness (#2837).** The clause names the invoked-skill body and the
+/// parked-wait wake by their literal markers. Both are engine-written,
+/// user-role and instruction-shaped, so an untaught marker leaves the engine's
+/// own text failing the test the clause asks the model to apply. Spelled here
+/// rather than left to the table loop below, which cannot fail for a marker
+/// the table does not yet carry.
+#[test]
+fn both_static_prompts_teach_the_skill_invocation_and_parked_wait_markers() {
+    for (label, prompt) in STATIC_PROMPTS {
+        for marker in [
+            stella_core::skills::invoke::SKILL_INVOCATION_PREFIX,
+            stella_core::waiting::WAKE_MARKER,
+        ] {
+            assert!(
+                prompt.contains(marker),
+                "{label} does not teach {marker:?} — name it in the \
+                 injection-defense clause in prompt.rs"
+            );
+        }
+    }
+}
+
 /// The injection-defense marker clause, checked against the engine's own
 /// table rather than prose (#2722).
 ///

@@ -160,6 +160,35 @@ regression for every turn. This is the same discipline
 `crates/stella-cli/src/agent.rs::build_system_prompt` and
 `crates/stella-cli/src/memory.rs` already hold for recalled context.
 
+**A stage receives typed signals, never free text — and the one place that
+bites is research questions** (#3539). `published` is a `Vec<PublishedSignal>`
+typed by the closed `Signal` vocabulary, whose whole defence is that a stage
+cannot invent a fact for a later stage to read. `Signal::Questions` is
+therefore a *count*: a research stage learns that two questions were named and
+never what they were, so `plugins/stella-research` re-derives search terms from
+the goal string, which is strictly weaker than questions produced by a model
+call that already read the goal *and* the task class.
+
+That gap is real and it is deliberately not closed yet, because **nothing
+produces the questions**. The built-in triage stage that named them
+(`stella-pipeline`'s `parse_research_questions`) went with that crate in #3865,
+and the shipping door publishes `questions: 0` unconditionally
+(`crates/stella-cli/src/wrapper_plugin.rs::pre_turn_signals`). A
+`questions: Vec<String>` field on `BeforeTurnRequest` today would be a field
+the wire carries, every reference plugin's `BEFORE_TURN_REQUEST_FIELDS` set has
+to admit, and the schema publishes — always empty. A wire field that has never
+carried a value is a claim about a capability that does not exist.
+
+The shape when a producer arrives is settled, so the next author does not
+re-open it: a first-class optional field on `BeforeTurnRequest`
+(`#[serde(default, skip_serializing_if = "Vec::is_empty")]`, `PROTOCOL_VERSION`
+unchanged), populated by `WrapperDispatch::open_round` from whatever published
+the count — **not** a general "stage input" bag, which would reopen exactly
+what the closed vocabulary closed. `HostStage::Triage.publishes()` already
+includes `Signal::Questions` and `open_round` already carries `published`
+forward into each later stage's request, so a composed triage plugin is the
+producer this is waiting on.
+
 ### `after_turn` — async, may be remoted
 
 Runs once the turn's `Complete` lands.

@@ -150,11 +150,19 @@ pub async fn backfill_opened<P: FnMut(IndexReadiness) + ?Sized>(
     let limit = graph
         .file_count()
         .unwrap_or(super::semantic::NO_FILE_CEILING);
+    // The pass is unbounded (#4043), so it can outlive the lease TTL on a
+    // large tree with a slow backend — and an expired lease is stolen, letting
+    // a second session embed the same pending set and bill the user twice
+    // (#4047). Renewing from the per-batch callback ties the lease to progress
+    // rather than to a timer: no spawn in a module that has none, and a pass
+    // that has genuinely died stops renewing and loses the lease on schedule.
     let files = warm_opened(graph, embedder, limit, &mut |_| {
+        graph.renew_lease(&lease);
         progress(measure(graph, &fingerprint, false));
     })
     .await;
     let chunks = warm_chunks_opened(graph, embedder, limit, &mut |_| {
+        graph.renew_lease(&lease);
         progress(measure(graph, &fingerprint, false));
     })
     .await;

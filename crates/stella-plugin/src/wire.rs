@@ -59,12 +59,16 @@
 //! rule a reviewer has to remember rather than one the compiler holds. See
 //! that type for the `compile_fail` doctest that now pins it.
 
+mod envelope;
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use stella_protocol::candidate::CandidateHandle;
 use stella_protocol::completion::CompletionMessage;
 
+pub(crate) use self::envelope::decode_body;
+use self::envelope::{FromEnvelope, deserialize_envelope};
 use crate::manifest::PluginManifest;
 use crate::observed::ObservedEvidence;
 use crate::oracle::Oracle;
@@ -109,46 +113,6 @@ impl std::fmt::Display for WrapperPoint {
     }
 }
 
-/// The two keys an envelope may carry, and the only two.
-///
-/// **This type is why the envelope is not simply
-/// `#[derive(Deserialize)] #[serde(tag, content)]`** (#3500). Serde's reader
-/// for an adjacently tagged enum ignores every key beside the tag and the
-/// content, so `{"point": …, "body": …, "extra": 1}` decoded cleanly and the
-/// `extra` vanished — while this crate's stated rule, enforced by
-/// `deny_unknown_fields` on every manifest table, is that an unknown key is a
-/// load error. The wire has the stronger claim on that rule than the manifest
-/// does: a manifest is written by a human who can be told, and the wire is
-/// spoken by a program that will not notice. Track C found the host accepting
-/// what all three of its reference plugins refused.
-///
-/// Serde offers no `deny_unknown_fields` for an adjacently tagged enum, so the
-/// strictness lives on a struct that has one, and the body is held as a
-/// [`serde_json::Value`] until `point` has been read — serde's own buffer for
-/// that is private, and holding the body is what makes the two keys order-free
-/// rather than "point must come first", which would be a JSON contract nobody
-/// could keep by accident.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Envelope {
-    point: WrapperPoint,
-    body: serde_json::Value,
-}
-
-/// Decode one envelope body into the type its point names.
-///
-/// Reported through the calling deserializer's own error type, so a plugin
-/// author sees one failure vocabulary rather than "a serde_json error appeared
-/// inside your serde error". The named field survives that trip — an unknown
-/// key in the body still reads as `unknown field \`…\``.
-pub(crate) fn decode_body<T, E>(body: serde_json::Value) -> Result<T, E>
-where
-    T: serde::de::DeserializeOwned,
-    E: serde::de::Error,
-{
-    serde_json::from_value(body).map_err(E::custom)
-}
-
 /// One request on the wire: `{"point": …, "body": {…}}`.
 ///
 /// Adjacently framed rather than internally tagged so the body keeps
@@ -167,16 +131,34 @@ pub enum WrapperRequest {
     AfterTurn(AfterTurnRequest),
 }
 
+impl FromEnvelope for WrapperRequest {
+    fn seed_body<'de, A>(point: WrapperPoint, map: &mut A) -> Result<Self, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        Ok(match point {
+            WrapperPoint::BeforeTurn => Self::BeforeTurn(map.next_value()?),
+            WrapperPoint::AfterTurn => Self::AfterTurn(map.next_value()?),
+        })
+    }
+
+    fn from_value<E: serde::de::Error>(
+        point: WrapperPoint,
+        body: serde_json::Value,
+    ) -> Result<Self, E> {
+        match point {
+            WrapperPoint::BeforeTurn => decode_body(body).map(Self::BeforeTurn),
+            WrapperPoint::AfterTurn => decode_body(body).map(Self::AfterTurn),
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for WrapperRequest {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let Envelope { point, body } = Envelope::deserialize(deserializer)?;
-        match point {
-            WrapperPoint::BeforeTurn => decode_body(body).map(Self::BeforeTurn),
-            WrapperPoint::AfterTurn => decode_body(body).map(Self::AfterTurn),
-        }
+        deserialize_envelope(deserializer)
     }
 }
 
@@ -211,13 +193,31 @@ pub enum WrapperResponse {
     AfterTurn(AfterTurnResponse),
 }
 
+impl FromEnvelope for WrapperResponse {
+    fn seed_body<'de, A>(point: WrapperPoint, map: &mut A) -> Result<Self, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        Ok(match point {
+            WrapperPoint::BeforeTurn => Self::BeforeTurn(map.next_value()?),
+            WrapperPoint::AfterTurn => Self::AfterTurn(map.next_value()?),
+        })
+    }
+
+    fn from_value<E: serde::de::Error>(
+        point: WrapperPoint,
+        body: serde_json::Value,
+    ) -> Result<Self, E> {
+        Self::from_parts(point, body)
+    }
+}
+
 impl<'de> Deserialize<'de> for WrapperResponse {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let Envelope { point, body } = Envelope::deserialize(deserializer)?;
-        Self::from_parts(point, body)
+        deserialize_envelope(deserializer)
     }
 }
 

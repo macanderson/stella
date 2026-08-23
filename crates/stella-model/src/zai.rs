@@ -774,7 +774,10 @@ impl ZaiStreamError {
 }
 
 /// Classify an in-band OpenAI-compatible error frame into a typed
-/// `ProviderError`. Transient/server-side conditions (overloaded, 5xx,
+/// `ProviderError`. An overload (the word, or `code: 529`) is the
+/// park-eligible `Overloaded`, the same class the status-line 529 gets — a
+/// brownout is a brownout whichever side of the response boundary it is
+/// signalled on (#3859). Other transient server-side conditions (5xx,
 /// unavailable, timeout, aborted) are **retryable** `Transport`; an explicit
 /// rate limit is `RateLimited`; everything else is `Terminal`. The gateways don't
 /// share a stable machine code, so this matches on the human-readable
@@ -790,8 +793,16 @@ fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError
     } else {
         format!("{label} stream error: {}", err.message)
     };
-    if haystack.contains("overload")
-        || haystack.contains("server_error")
+    if haystack.contains("overload") || code == "529" {
+        // The gateway shed load, and the only thing that fixes that is
+        // waiting — so this is the park-eligible class rather than the
+        // combined transport arm below, exactly as the status-line 529 is
+        // (#3859). Checked first because an overload frame often also carries
+        // a 5xx code, and the arm below would otherwise swallow it.
+        // `attach_partial` decorates `Overloaded` too, so the input tokens
+        // this stream already reported are not the price of parking.
+        ProviderError::overloaded(detail, None)
+    } else if haystack.contains("server_error")
         || haystack.contains("unavailable")
         || haystack.contains("timeout")
         // An abort is the upstream connection dropping mid-stream, not a
@@ -805,7 +816,6 @@ fn classify_zai_stream_error(err: &ZaiStreamError, label: &str) -> ProviderError
         || code == "500"
         || code == "502"
         || code == "503"
-        || code == "529"
     {
         ProviderError::transport(detail)
     } else if code == "429" || (haystack.contains("rate") && haystack.contains("limit")) {

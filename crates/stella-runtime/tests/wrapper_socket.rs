@@ -68,9 +68,6 @@ measurements = ["p50"]
 requirement = "within-budget"
 check = "p50 <= 105"
 
-[subloop]
-stages = ["triage"]
-
 [roles.triage]
 tier = "cheap"
 

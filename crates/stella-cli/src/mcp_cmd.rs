@@ -79,6 +79,12 @@ pub fn resolve_registry_url(workspace_root: &Path) -> String {
 /// and their kept tools route normally, so calling them "unavailable" would be
 /// false. Without this the cap is entirely silent — the model simply has fewer
 /// tools than the server offers and nothing says so (#689).
+/// `budgeted` carries the servers whose tools were trimmed to fit
+/// [`stella_mcp::MAX_SERVER_SCHEMA_BYTES`] — a different wall from `truncated`
+/// and reported in its own words (#3722). A server can trip either one without
+/// the other: three hundred terse tools trip the count cap, twelve verbose ones
+/// trip the byte budget, and an operator who cannot tell them apart cannot tell
+/// which knob to turn.
 /// `collisions` carries the wire names more than one `(server, tool)` pair
 /// claimed (#2675); every claimant's route was dropped rather than letting
 /// connect order pick which server answers. Reported separately from `failed`
@@ -88,6 +94,7 @@ pub(crate) fn mcp_outcome_report(
     connected: &[&str],
     failed: &[(String, String)],
     truncated: &[(&str, usize)],
+    budgeted: &[(String, usize)],
     collisions: &[stella_mcp::WireNameCollision],
 ) -> String {
     let mut lines = match connected.len() {
@@ -107,8 +114,28 @@ pub(crate) fn mcp_outcome_report(
             .iter()
             .map(|(name, dropped)| truncation_note(name, *dropped)),
     );
+    lines.extend(
+        budgeted
+            .iter()
+            .map(|(name, trimmed)| budget_note(name, *trimmed)),
+    );
     lines.extend(collisions.iter().map(collision_note));
     lines.join("\n")
+}
+
+/// The whole connect outcome for a live tool set, as one notice.
+///
+/// The deck sends this straight to the chrome; unpacking the five accessors at
+/// the call site put the join in `command_deck.rs`, where a sixth diagnostic
+/// meant editing a god file to add it.
+pub(crate) fn mcp_connect_report(set: &stella_mcp::McpToolSet) -> String {
+    mcp_outcome_report(
+        &set.connected_names(),
+        set.failed_servers(),
+        &set.over_advertising_servers(),
+        &set.over_budget_servers(),
+        set.wire_name_collisions(),
+    )
 }
 
 /// One contested wire name's notice, shared by deck and text mode so the
@@ -144,6 +171,23 @@ pub(crate) fn truncation_note(name: &str, dropped: usize) -> String {
     )
 }
 
+/// One server's schema-budget notice, shared by deck and text mode.
+///
+/// Deliberately worded apart from [`truncation_note`]: that one reports the
+/// per-server tool COUNT cap, this one the per-server schema BYTE budget. A
+/// server that advertises a dozen tools with enormous input schemas trips this
+/// and never comes near the count cap, so a reader told only "tools dropped"
+/// would go looking for the wrong limit. "at least" is not needed here — the
+/// budget sees the whole advertised list and counts every tool it cuts.
+pub(crate) fn budget_note(name: &str, trimmed: usize) -> String {
+    format!(
+        "MCP server `{name}` advertised more tool schema than the {}-byte \
+         per-server budget — {trimmed} tool(s) trimmed to fit and not callable \
+         this session",
+        stella_mcp::MAX_SERVER_SCHEMA_BYTES
+    )
+}
+
 /// Text-mode connection diagnostics for a one-shot run.
 ///
 /// Lives here rather than inline in `agent.rs` so the wording is testable: the
@@ -158,6 +202,9 @@ pub(crate) fn print_connect_diagnostics(set: &stella_mcp::McpToolSet) {
     }
     for (name, dropped) in set.over_advertising_servers() {
         eprintln!("  {} {}", "!".yellow(), truncation_note(name, dropped));
+    }
+    for (name, trimmed) in set.over_budget_servers() {
+        eprintln!("  {} {}", "!".yellow(), budget_note(&name, trimmed));
     }
     for collision in set.wire_name_collisions() {
         eprintln!("  {} {}", "!".yellow(), collision_note(collision));

@@ -547,6 +547,17 @@
                 "message": {
                   "type": "string"
                 },
+                "partial": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/PartialUsage"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Accounting a host's stream had already observed when the overload\nframe arrived in band. `None` for the status-line 529, which never\nopened a stream; `serde(default)` keeps hosts that predate the\nfield valid (#3859)."
+                },
                 "retry_after_ms": {
                   "default": null,
                   "format": "uint64",
