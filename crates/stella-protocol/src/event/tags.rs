@@ -1,7 +1,7 @@
 //! The one list every per-variant fact about [`AgentEvent`] expands from.
 //!
-//! Three things are generated here from a single table: [`AgentEvent::type_tag`],
-//! [`KNOWN_TYPE_TAGS`], and [`SIGNAL_CONSUMERS`]. Keeping them in one place is
+//! [`AgentEvent::type_tag`], [`KNOWN_TYPE_TAGS`] and [`SIGNAL_CONSUMERS`] are
+//! all generated here from a single table. Keeping them in one place is
 //! not tidiness — it is what makes two whole classes of bug unrepresentable
 //! rather than merely tested for:
 //!
@@ -193,8 +193,26 @@ agent_event_tags! {
     UsageIncomplete => "usage_incomplete",
         ConsumerPosture::Unclassified { issue: "#2703" },
         &[];
+    // Audited out of the #2703 backlog by #3977. `Behavioral`: the reflection
+    // digest splits a goal arc's journal at each verdict and labels every
+    // segment from this event's own `round`, so deleting the consumer would
+    // make the ledger reflection mines into memory attribute round 1's failed
+    // tool to the last round — a change in what the engine does with its
+    // evidence, not in what a human sees. The engine's own halt is decided by
+    // the typed `GoalVerifierVerdict` (`stella-core/src/goal.rs`), never by
+    // this event, so `site` names the reflection consumer rather than the loop.
+    // `surfaces` stays empty and that is not a weaker claim: the TUI renders
+    // every variant by construction (see `Surface`'s doc), the offline HTML
+    // export in `stella-cli/src/export/transcript.rs` reads the recorded
+    // stream rather than selecting variants, and no `Surface` chooses this tag
+    // — the Observatory's journal query (`journal.rs`) and its
+    // `TENDENCY_EVENT_TYPES` (`sessions.rs`) both name explicit `event_type`
+    // lists that omit `goal_verdict`. `stella-cli/src/diag_bridge.rs` emits a
+    // diagnostic record, which is recording, not deciding.
     GoalVerdict => "goal_verdict",
-        ConsumerPosture::Unclassified { issue: "#2703" },
+        ConsumerPosture::Behavioral {
+            site: "stella-cli/src/memory/reflection/digest.rs::TurnFriction::per_goal_round",
+        },
         &[];
     // Audited out of the #2703 backlog by #3916. `Surfaced` rather than
     // `Behavioral`: the swap has already happened in
@@ -229,8 +247,10 @@ agent_event_tags! {
     // whether a verification plugin re-emits these variants — is a producer
     // question the plugin wire contract (#3511) settles, not an audit gap.
     //
-    // `Proof`'s only production emitter is `stella-pipeline`, so once that
-    // crate leaves the tree no plugin-less run can produce it; what consumes
+    // `Proof`'s only production emitter was `stella-pipeline`, and that crate
+    // has since left the tree (#3865), so no plugin-less run produces it —
+    // confirmed rather than predicted by #3881, which decided all three of the
+    // extraction's producerless surfaces together. What consumes
     // it today is the deck's traces tab
     // (`stella-tui/src/deck/classify.rs::proof_trace`), the offline transcript
     // export (`stella-cli/src/export/transcript.rs`), and a debug-level diag
@@ -286,6 +306,13 @@ agent_event_tags! {
     // decision is the typed `pipeline::delivery::Delivery` value this event is
     // a projection of, so severing the event changes what a reader sees and
     // nothing about what the engine does.
+    //
+    // The posture is about consumption and stays true; the *producer* is gone.
+    // `Pipeline::deliver_winner` left with `stella-pipeline` (#3865), so no run
+    // in this workspace emits this variant. #3881 decided to keep it rather
+    // than retire it — recorded journals carry the tag, and a best-of-N wrapper
+    // plugin reporting a delivery over the socket is what a re-homed producer
+    // would look like. The variant's own doc carries the argument.
     CandidateDelivery => "candidate_delivery",
         ConsumerPosture::Surfaced,
         &[Surface::Observatory];

@@ -1003,7 +1003,8 @@ fn a_resolved_status_never_restates_the_old_ambiguity() {
 fn an_unclassified_failure_says_undetermined_rather_than_guessing() {
     for error in [
         ProviderError::Terminal("anthropic HTTP 400 Bad Request: {\"error\":{}}".to_string()),
-        ProviderError::transport("anthropic HTTP 529 Overloaded: overloaded_error".to_string()),
+        ProviderError::transport("anthropic HTTP 502 Bad Gateway: upstream".to_string()),
+        ProviderError::overloaded("anthropic HTTP 529 Overloaded: overloaded_error", None),
     ] {
         assert_eq!(classify(&error).1, FailureCause::Undetermined);
         let report = failure_report("anthropic", &error);
