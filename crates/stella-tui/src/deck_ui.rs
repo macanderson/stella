@@ -730,6 +730,10 @@ pub struct DeckUi {
     /// Per-lane scrollback bookkeeping. Inert unless the shell armed it with
     /// a real inline viewport — see [`crate::accessible::Scrollback`].
     pub scrollback: crate::accessible::Scrollback,
+    /// The SUB-AGENTS overlay (`ctrl-a`, `/subagents`): every dispatched
+    /// lane with its purpose, its place in the task, and the stop / pause /
+    /// resume / restart verbs. Modal while open.
+    pub subagents: crate::v2::subagents::SubagentsOverlay,
     /// Whether the SESSIONS overlay is open (empty-prompt `←` on the Session
     /// tab, or `/sessions`). Modal while open: ↑/↓ move, `⏎` open (replay),
     /// `a` archive, `x` delete, `r` refresh, Esc/`←` close.
@@ -867,6 +871,7 @@ impl Default for DeckUi {
             no_anim: false,
             accessible: false,
             scrollback: crate::accessible::Scrollback::default(),
+            subagents: crate::v2::subagents::SubagentsOverlay::default(),
             sessions_open: false,
             sessions_show_all: false,
             sessions: Vec::new(),
@@ -1753,6 +1758,15 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         ui.queue_open = !ui.queue_open;
         ui.queue_confirm_clear = false;
         return DeckAction::Handled;
+    }
+
+    // Ctrl-A opens the SUB-AGENTS overlay from anywhere — the lanes the lead
+    // dispatched, with their controls. Modal while open, like the queue.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('a')) {
+        return crate::v2::subagents::open(ui);
+    }
+    if ui.subagents.open {
+        return crate::v2::subagents::handle_key(key, model, ui);
     }
 
     // The queue editor is modal while open: the queue is a *list* the user

@@ -40,6 +40,12 @@ pub struct AgentMeta {
     pub pid: Option<u32>,
     /// The model handling this agent, once routed.
     pub model: Option<String>,
+    /// The reasoning effort the agent's calls are pinned to (`low` … `max`),
+    /// as the driver resolved it; `None` when nothing pinned one.
+    pub effort: Option<String>,
+    /// One sentence on what the agent is for — the task it was handed, in
+    /// the words it was handed. `None` falls back to `title` on screen.
+    pub purpose: Option<String>,
     /// Wall-clock start (ms since epoch) for elapsed / $-per-hour.
     pub started_ms: u64,
 }
@@ -53,8 +59,22 @@ impl AgentMeta {
             role: "agent".to_string(),
             pid: None,
             model: None,
+            effort: None,
+            purpose: None,
             started_ms,
         }
+    }
+
+    /// Builder: set the pinned reasoning effort.
+    pub fn with_effort(mut self, effort: impl Into<String>) -> Self {
+        self.effort = Some(effort.into());
+        self
+    }
+
+    /// Builder: set the one-sentence purpose.
+    pub fn with_purpose(mut self, purpose: impl Into<String>) -> Self {
+        self.purpose = Some(purpose.into());
+        self
     }
 
     /// Builder: set the role.

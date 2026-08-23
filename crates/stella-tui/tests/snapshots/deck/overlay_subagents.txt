@@ -1,0 +1,45 @@
+# deck golden · overlay_subagents
+# every dispatched lane: vitals with model and effort, its purpose, where it is; the control verbs on the rule
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
+└─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
+     model glm-5.2 · ctx ╭ sub-agents · 1 running ────────────────────────────────────────────────────────────────────────────────────╮
+     ⚒ search_code trigge│▸ ◆ sub:auth  needs input · 5:12 · glm-5.2 · effort high · $0.01                                            │
+     returns: wire automa│     Wire the automations triggers API to the new router.                                                   │
+└─ ◆ sub:ci  subagent · r│     waiting on an answer from you                                                                          │                     5:12
+     model glm-5.2-air · │                                                                                                            │
+     ⚒ no tool calls yet │  ◆ sub:ci  running · 5:12 · glm-5.2-air · $0.00                                                            │
+     returns: watch CI + │     watch CI + open PR                                                                                     │
+── turn 1 triage ────────│     starting: no model call yet                                                                            │─────────────────────────
+                         │                                                                                                            │
+◉ recalled  2 frames · 21│                                                                                                            │
+    symbol  engine step-d│                                                                                                            │  120 tok
+    memory  event-log REP│                                                                                                            │   90 tok
+    ⋯ ctrl+o for provenan│                                                                                                            │
+                         │                                                                                                            │
+── PLAN ─────────────────│                                                                                                            │─────────────────────────
+                         │                                                                                                            │
+  Planning the automation│                                                                                                            │
+                         │                                                                                                            │
+☰  plan  4/7  ·  Wire the│                                                                                                            │
+                         │                                                                                                            │
+── EXECUTE ──────────────│                                                                                                            │─────────────────────────
+                         │                                                                                                            │
+ │ ⊙ apps/app/automations│                                                                                                            │
+ │ ⎿ 312 lines           │                                                                                                            │      42ms
+                         │                                                                                                            │
+☰  plan  5/7  ·  Workflow│                                                                                                            │
+                         │                                                                                                            │
+⏸ plan  Refactor the auto│                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+                         │                                                                                                            │
+>>>                      ╰─────────────────────────────────────────── ↑↓ select · ↵ focus · s stop · p pause/resume · r restart · esc ╯
+ ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help
