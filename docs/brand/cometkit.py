@@ -169,6 +169,12 @@ def esc(text: str) -> str:
 
 
 
+def png_chunk(tag: bytes, data: bytes) -> bytes:
+    """One PNG chunk: length, tag, data, CRC. The kit's whole PNG writer."""
+    body = tag + data
+    return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+
 def noise_tile(size: int = 128) -> str:
     """A grey-noise PNG as a data URI, encoded here rather than filtered.
 
@@ -184,15 +190,11 @@ def noise_tile(size: int = 128) -> str:
         raw.append(0)  # PNG per-scanline filter: none
         raw.extend(rng.randrange(256) for _ in range(size))
 
-    def chunk(tag: bytes, data: bytes) -> bytes:
-        body = tag + data
-        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
-
     png = (
         b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 0, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
-        + chunk(b"IEND", b"")
+        + png_chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 0, 0, 0, 0))
+        + png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + png_chunk(b"IEND", b"")
     )
     return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 
@@ -429,9 +431,28 @@ def png_opaque_colours(path: Path) -> dict[tuple[int, int, int], int]:
             idat += raw[off + 8 : off + 8 + length]
         off += 12 + length
 
-    data = zlib.decompress(bytes(idat))
-    stride, bpp = width * 4, 4
     counts: dict[tuple[int, int, int], int] = {}
+    lines = _unfiltered_scanlines(zlib.decompress(bytes(idat)), width, height, 4)
+    for line in lines:
+        for x in range(width):
+            r, g, b, a = line[x * 4 : x * 4 + 4]
+            if a == 0xFF:
+                key = (r, g, b)
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _unfiltered_scanlines(
+    data: bytes, width: int, height: int, bpp: int
+) -> list[bytearray]:
+    """PNG's five per-scanline filters, undone (RFC 2083 §6).
+
+    One copy, shared by the colour census above and the RGBA re-encoder below —
+    the same rule as `STAR_PATH`: a second unfilter loop is how one of them
+    keeps a bug the other has fixed.
+    """
+    stride = width * bpp
+    rows: list[bytearray] = []
     prev = bytearray(stride)
     pos = 0
     for _ in range(height):
@@ -439,7 +460,6 @@ def png_opaque_colours(path: Path) -> dict[tuple[int, int, int], int]:
         pos += 1
         line = bytearray(data[pos : pos + stride])
         pos += stride
-        # PNG's five per-scanline filters, undone in place (RFC 2083 §6).
         for x in range(stride):
             left = line[x - bpp] if x >= bpp else 0
             up = prev[x]
@@ -461,11 +481,114 @@ def png_opaque_colours(path: Path) -> dict[tuple[int, int, int], int]:
                 else:
                     predictor = up_left
                 line[x] = (line[x] + predictor) & 0xFF
-        for x in range(width):
-            r, g, b, a = line[x * 4 : x * 4 + 4]
-            if a == 0xFF:
-                key = (r, g, b)
-                counts[key] = counts.get(key, 0) + 1
+        rows.append(line)
         prev = line
-    return counts
+    return rows
+
+
+def png_rgba_pixels(png: bytes) -> tuple[int, int, bytes]:
+    """An 8-bit non-interlaced RGB/RGBA PNG's pixels, normalised to RGBA.
+
+    Deliberately minimal — colour types 2 and 6 are every PNG this kit
+    produces. Anything else raises rather than being silently accepted,
+    matching `rgbaPixels` in `website/src/lib/brand-parity.test.ts`, which is
+    the consumer this normalisation exists to satisfy.
+    """
+    if png[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit("png_rgba_pixels: not a PNG")
+    width, height, depth, colour = struct.unpack(">IIBB", png[16:26])
+    interlace = png[28]
+    if depth != 8 or interlace != 0 or colour not in (2, 6):
+        raise SystemExit(
+            f"png_rgba_pixels: unsupported PNG (depth {depth}, colour type "
+            f"{colour}, interlace {interlace}) — the kit only writes 8-bit "
+            f"non-interlaced RGB/RGBA"
+        )
+    idat = bytearray()
+    off = 8
+    while off + 8 <= len(png):
+        (length,) = struct.unpack(">I", png[off : off + 4])
+        if png[off + 4 : off + 8] == b"IDAT":
+            idat += png[off + 8 : off + 8 + length]
+        off += 12 + length
+
+    bpp = 4 if colour == 6 else 3
+    rows = _unfiltered_scanlines(zlib.decompress(bytes(idat)), width, height, bpp)
+    if colour == 6:
+        return width, height, b"".join(bytes(r) for r in rows)
+    out = bytearray()
+    for row in rows:
+        for x in range(width):
+            out += row[x * 3 : x * 3 + 3]
+            out.append(0xFF)
+    return width, height, bytes(out)
+
+
+def png_as_rgba(png: bytes) -> bytes:
+    """An RGB PNG re-encoded as RGBA with an opaque alpha channel.
+
+    The kit renders its favicons opaque — the mark on an Ink tile — so its ICO
+    embeds RGB PNGs (colour type 2). Next's `ico` decoder accepts only RGBA
+    and fails the production build on anything else, so the site's copy of
+    `favicon.ico` is the kit's pixels behind an alpha channel of `0xFF` rather
+    than a byte-copy. This is the encoder for that one exception (#3968),
+    living in the kit so the next recolour cannot leave it behind in a scratch
+    directory. An input already carrying alpha returns unchanged.
+    """
+    if png[25] == 6:
+        return png
+    width, height, pixels = png_rgba_pixels(png)
+    stride = width * 4
+    raw = bytearray()
+    for y in range(height):
+        raw.append(0)  # PNG per-scanline filter: none
+        raw += pixels[y * stride : (y + 1) * stride]
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + png_chunk(b"IEND", b"")
+    )
+
+
+def pack_ico(pngs: dict[int, bytes]) -> bytes:
+    """PNG-encoded entries packed into an ICO, smallest first.
+
+    PNG-in-ICO has been read by every browser since IE11 and keeps the file to
+    a few KB where BMP entries would need an AND mask per size. The header is
+    6 bytes, then one 16-byte directory entry each, then the payloads — a size
+    of 256 is written as 0, which is why nothing here may exceed 255.
+    """
+    sizes = sorted(pngs)
+    if any(s > 255 for s in sizes):
+        raise SystemExit("an ICO entry cannot exceed 255px; use a PNG icon instead")
+    header = struct.pack("<HHH", 0, 1, len(sizes))
+    offset = 6 + 16 * len(sizes)
+    entries, payloads = b"", b""
+    for s in sizes:
+        data = pngs[s]
+        entries += struct.pack(
+            "<BBBBHHII", s, s, 0, 0, 1, 32, len(data), offset + len(payloads)
+        )
+        payloads += data
+    return header + entries + payloads
+
+
+def ico_entries(ico: bytes) -> dict[int, bytes]:
+    """Every embedded image of an ICO, keyed by its directory size."""
+    if len(ico) < 6:
+        raise SystemExit("ico_entries: not an ICO")
+    count = struct.unpack("<HHH", ico[:6])[2]
+    out: dict[int, bytes] = {}
+    for i in range(count):
+        entry = 6 + i * 16
+        size = ico[entry] or 256
+        length, offset = struct.unpack("<II", ico[entry + 8 : entry + 16])
+        out[size] = ico[offset : offset + length]
+    return out
+
+
+def ico_as_rgba(ico: bytes) -> bytes:
+    """An ICO with every PNG entry re-encoded to RGBA — see `png_as_rgba`."""
+    return pack_ico({s: png_as_rgba(p) for s, p in ico_entries(ico).items()})
 
