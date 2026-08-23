@@ -23,7 +23,6 @@ arenabench/arenabench/replay.py 1
 arenabench/arenabench/runner.py 2
 arenabench/arenabench/server.py 1
 arenabench/arenabench/snapshot.py 3
-arenabench/tests/test_arena.py 1
 arenabench/tests/test_artifacts.py 1
 arenabench/tests/test_assemble.py 1
 arenabench/tests/test_balance.py 1

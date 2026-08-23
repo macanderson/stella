@@ -401,7 +401,9 @@ class TestSubscriptionCredential:
 
     Harbor forwards `CLAUDE_CODE_OAUTH_TOKEN` into the container and the CLI
     picks whichever auth method is actually present, so a seat carrying only
-    that token runs on the plan. Two things must hold for it to be safe.
+    that token runs on the plan. `required_env` must name it as a candidate
+    so preflight does not abort an OAuth-only seat, and it must never be
+    aliased into as a provider bearer token.
     """
 
     def test_a_subscription_token_credentials_the_seat(self):
