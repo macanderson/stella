@@ -715,47 +715,6 @@ fn unknown_dialects_are_rejected_with_the_valid_set() {
     assert!(err.contains("invalid settings file"), "{err}");
 }
 
-/// The env names a test that redirects the user tier must capture, plus
-/// whatever else it mutates.
-///
-/// `HOME` alone is not enough. `STELLA_HOME` moves the whole stella home and
-/// `STELLA_DATA_DIR` moves the data tier, and both **outrank** `HOME` — so a
-/// test that points `HOME` at a fixture while one of them is set in the
-/// ambient environment reads the developer's real user settings and fails on
-/// an assertion about the fixture (#4350). They come from
-/// [`stella_home::OVERRIDE_ENV_VARS`], which is exact in both directions, so
-/// a third override added there is captured here without this list being
-/// edited.
-fn user_home_env(also: &[&'static str]) -> Vec<&'static str> {
-    let mut names = vec!["HOME"];
-    names.extend(stella_home::OVERRIDE_ENV_VARS);
-    names.extend_from_slice(also);
-    names
-}
-
-/// Point the user tier at `home`, and clear everything that could move it
-/// somewhere else.
-///
-/// Paired with [`user_home_env`] and used instead of a bare
-/// `set_var("HOME", …)`: setting the one and forgetting the others is the
-/// omission #4350 was filed for, and a single call is what stops the next
-/// test in this file repeating it.
-///
-/// # Safety
-///
-/// The caller holds [`crate::test_env::lock`] for the whole
-/// mutate-read-restore window and an [`crate::test_env::EnvRestore`] over
-/// [`user_home_env`], because `setenv` racing a concurrent `getenv` is UB on
-/// POSIX.
-unsafe fn point_user_home_at(home: &Path) {
-    unsafe {
-        std::env::set_var("HOME", home);
-        for name in stella_home::OVERRIDE_ENV_VARS {
-            std::env::remove_var(name);
-        }
-    }
-}
-
 /// Build an isolated workspace whose `.stella/settings.json` carries a
 /// malicious built-in override, with `HOME` and the org-managed path
 /// pointed at empty dirs so only the project scope speaks.
@@ -780,7 +739,7 @@ fn workspace_with_malicious_project(dir: &Path) -> PathBuf {
     // SAFETY: serialized behind the binary-wide env lock (setenv racing
     // any concurrent getenv is UB on POSIX). Caller holds the guard.
     unsafe {
-        point_user_home_at(&home);
+        crate::test_env::point_home_at(&home);
         std::env::set_var("STELLA_MANAGED_SETTINGS", dir.join("no-such-managed.json"));
     }
     ws
@@ -789,7 +748,7 @@ fn workspace_with_malicious_project(dir: &Path) -> PathBuf {
 #[test]
 fn untrusted_project_cannot_redirect_a_builtin_credential() {
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&user_home_env(&[
+    let _restore = crate::test_env::EnvRestore::capture(&crate::test_env::home_env_names(&[
         "STELLA_MANAGED_SETTINGS",
         "STELLA_TRUST_PROJECT",
         "STELLA_PROJECT_HOOKS",
@@ -821,7 +780,7 @@ fn untrusted_project_cannot_redirect_a_builtin_credential() {
 #[test]
 fn trusted_project_may_redirect_when_explicitly_opted_in() {
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&user_home_env(&[
+    let _restore = crate::test_env::EnvRestore::capture(&crate::test_env::home_env_names(&[
         "STELLA_MANAGED_SETTINGS",
         "STELLA_TRUST_PROJECT",
         "STELLA_PROJECT_HOOKS",
@@ -848,7 +807,7 @@ fn trusted_project_may_redirect_when_explicitly_opted_in() {
 #[test]
 fn no_settings_skips_user_managed_and_project_files() {
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&user_home_env(&[
+    let _restore = crate::test_env::EnvRestore::capture(&crate::test_env::home_env_names(&[
         "STELLA_MANAGED_SETTINGS",
         "STELLA_TRUST_PROJECT",
         "STELLA_PROJECT_HOOKS",
@@ -879,7 +838,7 @@ fn no_settings_skips_user_managed_and_project_files() {
     // SAFETY: the binary-wide test environment lock covers mutation,
     // Settings::load, and cleanup.
     unsafe {
-        point_user_home_at(&home);
+        crate::test_env::point_home_at(&home);
         std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
         std::env::set_var("STELLA_TRUST_PROJECT", "1");
         std::env::set_var("STELLA_PROJECT_HOOKS", "1");
@@ -897,7 +856,7 @@ fn no_settings_skips_user_managed_and_project_files() {
 #[test]
 fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&user_home_env(&[
+    let _restore = crate::test_env::EnvRestore::capture(&crate::test_env::home_env_names(&[
         "STELLA_MANAGED_SETTINGS",
         "STELLA_TRUST_PROJECT",
         "STELLA_PROJECT_HOOKS",
@@ -929,7 +888,7 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
     );
     // SAFETY: serialized behind the binary-wide env lock.
     unsafe {
-        point_user_home_at(&home);
+        crate::test_env::point_home_at(&home);
         std::env::set_var(
             "STELLA_MANAGED_SETTINGS",
             dir.path().join("no-such-managed.json"),
@@ -962,7 +921,7 @@ fn untrusted_project_cannot_enable_tools_or_replace_an_agent_prompt() {
 #[test]
 fn untrusted_project_may_narrow_trusted_tool_grants() {
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&user_home_env(&[
+    let _restore = crate::test_env::EnvRestore::capture(&crate::test_env::home_env_names(&[
         "STELLA_MANAGED_SETTINGS",
         "STELLA_TRUST_PROJECT",
         "STELLA_PROJECT_HOOKS",
@@ -984,7 +943,7 @@ fn untrusted_project_may_narrow_trusted_tool_grants() {
     );
     // SAFETY: serialized behind the binary-wide env lock.
     unsafe {
-        point_user_home_at(&home);
+        crate::test_env::point_home_at(&home);
         std::env::set_var(
             "STELLA_MANAGED_SETTINGS",
             dir.path().join("no-such-managed.json"),
@@ -1006,7 +965,7 @@ fn untrusted_project_may_narrow_trusted_tool_grants() {
 #[test]
 fn managed_tool_denial_survives_explicit_project_trust() {
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&user_home_env(&[
+    let _restore = crate::test_env::EnvRestore::capture(&crate::test_env::home_env_names(&[
         "STELLA_MANAGED_SETTINGS",
         "STELLA_TRUST_PROJECT",
         "STELLA_PROJECT_HOOKS",
@@ -1040,7 +999,7 @@ fn managed_tool_denial_survives_explicit_project_trust() {
     );
     // SAFETY: serialized behind the binary-wide env lock.
     unsafe {
-        point_user_home_at(&home);
+        crate::test_env::point_home_at(&home);
         std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
         std::env::set_var("STELLA_TRUST_PROJECT", "1");
         std::env::remove_var("STELLA_PROJECT_HOOKS");
@@ -1077,7 +1036,7 @@ fn managed_tool_denial_survives_explicit_project_trust() {
 #[test]
 fn a_managed_denial_of_any_key_survives_a_project_grant() {
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&user_home_env(&[
+    let _restore = crate::test_env::EnvRestore::capture(&crate::test_env::home_env_names(&[
         "STELLA_MANAGED_SETTINGS",
         "STELLA_TRUST_PROJECT",
         "STELLA_PROJECT_HOOKS",
@@ -1104,7 +1063,7 @@ fn a_managed_denial_of_any_key_survives_a_project_grant() {
     );
     // SAFETY: serialized behind the binary-wide env lock.
     unsafe {
-        point_user_home_at(&home);
+        crate::test_env::point_home_at(&home);
         std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
         std::env::set_var("STELLA_TRUST_PROJECT", "1");
         std::env::remove_var("STELLA_PROJECT_HOOKS");
@@ -1329,7 +1288,7 @@ fn an_untrusted_workspace_names_the_steering_it_withheld() {
     // one, so the arm proved above is the arm a cloned repo actually takes. The
     // pure arms are what this test is for; this is the join to the call site.
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&user_home_env(&[
+    let _restore = crate::test_env::EnvRestore::capture(&crate::test_env::home_env_names(&[
         "STELLA_MANAGED_SETTINGS",
         "STELLA_TRUST_PROJECT",
         "STELLA_PROJECT_HOOKS",
@@ -1338,7 +1297,7 @@ fn an_untrusted_workspace_names_the_steering_it_withheld() {
     std::fs::create_dir_all(home.join(".stella")).unwrap();
     // SAFETY: serialized behind the binary-wide env lock.
     unsafe {
-        point_user_home_at(&home);
+        crate::test_env::point_home_at(&home);
         std::env::set_var(
             "STELLA_MANAGED_SETTINGS",
             dir.path().join("no-such-managed.json"),

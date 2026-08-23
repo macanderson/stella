@@ -380,7 +380,6 @@ mod tests {
     fn managed_authority_rejects_unknown_keys_through_settings_load() {
         let _env = crate::test_env::lock();
         let _restore = crate::test_env::EnvRestore::capture(&[
-            "HOME",
             "STELLA_MANAGED_SETTINGS",
             "STELLA_TRUST_PROJECT",
             "STELLA_PROJECT_HOOKS",
@@ -392,9 +391,9 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::write(&managed, r#"{"authority": {"project_promtps": "off"}}"#).unwrap();
+        let _home = crate::test_env::home_sandbox(&home);
         // SAFETY: serialized behind the binary-wide env lock.
         unsafe {
-            std::env::set_var("HOME", &home);
             std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
             std::env::remove_var("STELLA_TRUST_PROJECT");
             std::env::remove_var("STELLA_PROJECT_HOOKS");

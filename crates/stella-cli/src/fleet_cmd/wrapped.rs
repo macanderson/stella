@@ -56,17 +56,36 @@
 //! observe, exactly what `crate::wrapper_candidate` argues for the same shape
 //! on `stella run`.
 //!
-//! # One host plane: `recall`, and deliberately no `child_turn`
+//! # Two host planes: `recall` and `child_turn`, on one slot rule
 //!
-//! `crate::wrapper_plugin`'s `PLUGIN_CHILD_TURN_SLOT` is a fixed
-//! `turn_instance`, and this door's own rounds claim consecutive slots from 0
-//! (`AttemptDriver::run_turn`) so that a plugin holding an attempt open past
-//! its first internal turn cannot collide two rounds' step manifests under the
-//! one execution row a fleet attempt opens. A fixed child slot would collide
-//! with whichever round lands on it, which is the same hazard the goal door
-//! states for its own round math (#3833). So this host serves `recall` only,
-//! and a plugin naming a `[roles]` tier is answered `Unavailable` through the
-//! gate — a refusal the run reports rather than a silence (#3882).
+//! Every internal round of one attempt shares the **one** execution row that
+//! attempt opened, and context receipts key on
+//! `(execution_id, turn_instance, step, call_seq)` with `step` restarting at 0
+//! each turn — so this door's rounds and any host-made call beside them have
+//! to be told apart by `turn_instance` alone.
+//!
+//! The rule is [`stella_core::turn_slots`]', stated once there and used
+//! unchanged by every door that has this shape: a `turn_instance` is a **lane**
+//! plus a sequence within that lane. This door's rounds take successive slots
+//! of [`stella_core::turn_slots::WORKER_LANE`]
+//! (`AttemptDriver::run_turn`); a wrapper plugin's child turns take successive
+//! slots of `CHILD_TURN_LANE`, allocated by the plane itself. Neither counter
+//! can see the other and neither has to: two lanes never share a slot however
+//! far either counts.
+//!
+//! That is what this door was missing, not a decision (#3882). The plane used
+//! to be pinned to one fixed slot — safe on `stella run`, whose every round
+//! opens its own execution row, and unsafe here — so this host served `recall`
+//! alone and a plugin declaring `[loop] calls = ["child_turn"]` was answered
+//! `Unavailable` through the gate. It now assembles through
+//! [`crate::wrapper_plugin::round_driver_host`], the same one `stella goal`
+//! uses (#3833).
+//!
+//! The plane needs this session's `SubAgentDispatcher`, which needs the
+//! provider, and the roster must be read before the per-worker
+//! `cfg.workspace_root` override — so binding is two moments here exactly as
+//! it is in `run_raw_one_shot`: [`resolve_for_attempt`] first, then
+//! [`ResolvedAttempt::serving`] once the worker has installed its dispatcher.
 //!
 //! # Arbiter-grade wrappers are **not** refused here
 //!
@@ -245,14 +264,21 @@ impl TurnDriver for AttemptDriver<'_, '_> {
         // Invariant 7: `into_messages` hands back user messages, appended
         // after the byte-stable system prefix this conversation opens with.
         self.messages.extend(prelude.into_messages());
-        // Each internal round claims its own `turn_instance` under the one
-        // execution row this attempt opened. Context receipts key on
+        // Each internal round claims its own slot of the worker lane under the
+        // one execution row this attempt opened. Context receipts key on
         // `(execution_id, turn_instance, step, call_seq)` with `step`
         // restarting at 0 every turn, so an arbiter-grade wrapper's second
         // round would otherwise overwrite the first's step manifests — the
         // collision the goal door avoids by refusing that grade outright,
-        // which this door has no reason to refuse (see the module doc).
-        let round_engine = self.engine.with_turn_instance(self.rounds);
+        // which this door has no reason to refuse (see the module doc). The
+        // lane is what keeps the host's own child turns clear of these
+        // (#3882); the sequence within it is this attempt's round count.
+        let round_engine = self
+            .engine
+            .with_turn_instance(stella_core::turn_slots::slot(
+                stella_core::turn_slots::WORKER_LANE,
+                self.rounds,
+            ));
         self.rounds += 1;
         // One observer per round: `tools` is a fact about *this* turn, and a
         // fold shared across rounds would report the first round's tools as
@@ -289,48 +315,89 @@ impl TurnDriver for AttemptDriver<'_, '_> {
     }
 }
 
+/// An installed wrapper found for one attempt, and the grant over the tree
+/// that attempt runs in — everything binding needs before the worker has a
+/// provider.
+///
+/// The half that must run early, and for two reasons rather than one: a
+/// `--pipeline` naming nothing installed has to fail as a typo before a paid
+/// call, and the roster is read from the invocation root, which `run_task`
+/// overwrites with the worker's own tree a few lines later. The other half
+/// needs this attempt's `SubAgentDispatcher`, which needs the provider built
+/// after that override — see [`Self::serving`].
+pub(super) struct ResolvedAttempt {
+    resolved: crate::wrapper_plugin::ResolvedWrapper,
+    candidate: GrantedCandidate,
+    task: String,
+}
+
+impl ResolvedAttempt {
+    /// Bind the plugin's process to what this attempt will do for it.
+    ///
+    /// `recall` reaches the **invocation** workspace's context plane — the
+    /// coordination root, like the claim store beside it — rather than an
+    /// isolated worktree's, which has none and would answer every recall with
+    /// nothing. `child_turn` reaches this attempt's own dispatcher, so the
+    /// child runs in the worker's tree with the worker's tool policy and is
+    /// paid for out of the worker's guard.
+    ///
+    /// # Errors
+    ///
+    /// A wrapper whose declared stage order cannot be resolved — which a
+    /// validated manifest cannot hit, since the variant was found by its
+    /// `[wrapper] id`.
+    pub(super) fn serving(
+        self,
+        invocation_root: &std::path::Path,
+        dispatcher: std::sync::Arc<crate::subagent::SessionSubAgents>,
+    ) -> Result<AttemptWrapper, String> {
+        // One host per member of the selection, built from that member's own
+        // manifest: the child-turn plane reads the manifest's `[roles]` and
+        // `[loop] max_calls`, so a shared one would let a second plugin name
+        // the first's role intents (`ResolvedWrapper::serving`, #4094).
+        let bound = self.resolved.serving(|manifest| {
+            crate::wrapper_plugin::round_driver_host(
+                invocation_root,
+                manifest,
+                std::sync::Arc::clone(&dispatcher)
+                    as std::sync::Arc<dyn stella_core::subagent::SubAgentDispatcher>,
+            )
+        })?;
+        Ok(AttemptWrapper {
+            bound,
+            candidate: self.candidate,
+            task: self.task,
+        })
+    }
+}
+
 /// Resolve `variant` against what the **invocation** workspace has installed
-/// and bind it for one attempt running in `tree`, with `test_command` as that
-/// attempt's oracle.
+/// and pin the tree one attempt runs in, with `test_command` as that attempt's
+/// oracle.
 ///
 /// # Errors
 ///
 /// Whatever [`crate::wrapper_plugin::resolve`] refuses (a variant nothing
 /// installed declares, a manifest with no `[runtime]` block), a tree the
-/// candidate fence will not mint a grant over, a `test_command` the host's
-/// runner vocabulary refuses, or a wrapper whose declared stage order cannot
-/// be resolved. Every one of them fails this attempt's dispatch by name; the
-/// fan-out's other tasks are unaffected.
-pub(super) fn bind_for_attempt(
+/// candidate fence will not mint a grant over, or a `test_command` the host's
+/// runner vocabulary refuses. Every one of them fails this attempt's dispatch
+/// by name; the fan-out's other tasks are unaffected.
+pub(super) fn resolve_for_attempt(
     invocation_root: &std::path::Path,
     tree: &std::path::Path,
     variant: &str,
     task: &stella_fleet::TaskId,
     test_command: Option<&str>,
-) -> Result<AttemptWrapper, String> {
+) -> Result<ResolvedAttempt, String> {
     // Silent by design, and this is the one place in the crate where that is
     // not a dropped refusal: `run_fleet`'s pre-flight resolves the SAME
     // variant from the SAME root before any task is dispatched and prints
     // every notice this sink would print, once. Repeating them here would put
     // N identical copies of one sentence on the stderr of a run with N
     // workers, interleaved by concurrency and attributed to nothing.
-    let resolved = crate::wrapper_plugin::resolve(invocation_root, variant, &mut |_| {})?;
-    let candidate = crate::wrapper_candidate::grant_shared_tree(tree, test_command)?;
-    // `recall` reaches the workspace's own context plane — the coordination
-    // root, like the claim store beside it — rather than an isolated
-    // worktree's (which has none, and would answer every recall with nothing).
-    // One `recall` plane per member of the selection — the plane carries no
-    // manifest-derived narrowing, so they are equivalent; the signature is
-    // what keeps the planes that *are* narrowed from being shared
-    // (`ResolvedWrapper::serving`).
-    let bound = resolved.serving(|_| {
-        crate::wrapper_plugin::WrapperHost::recalling(Box::new(
-            crate::wrapper_recall::SessionRecallHost::open(invocation_root),
-        ))
-    })?;
-    Ok(AttemptWrapper {
-        bound,
-        candidate,
+    Ok(ResolvedAttempt {
+        resolved: crate::wrapper_plugin::resolve(invocation_root, variant, &mut |_| {})?,
+        candidate: crate::wrapper_candidate::grant_shared_tree(tree, test_command)?,
         task: task.to_string(),
     })
 }

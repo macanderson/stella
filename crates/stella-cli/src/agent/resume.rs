@@ -245,6 +245,15 @@ pub(crate) async fn run_resume(cfg: &Config, id: Option<&str>) -> Result<(), Cli
         result,
     } = reported;
 
+    // What the resumed turn changed, measured before the stream closes
+    // (#4159). Unconditional, unlike the terminator below: a resume that ended
+    // in failure still wrote whatever it wrote, and an empty file ledger is
+    // indistinguishable from a turn that touched nothing.
+    //
+    // Not `close_turn_boundary`, which would pay the terminator too — this
+    // driver's terminator is gated on the outcome and is emitted separately
+    // below.
+    crate::turn_files::emit_shared_tree_changes(cfg, &events, execution.as_ref());
     // One terminator for the resumed run (#3398), on both arms: the bare
     // restored turn never had one, and the pipeline arm used to get the
     // pipeline's. A failed resume already reported through `result`.

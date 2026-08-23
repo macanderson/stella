@@ -932,8 +932,8 @@ async fn run_task(
     // here, before the per-worker override below) over the tree this attempt
     // actually runs in — see `wrapped`'s module doc for why those two roots
     // differ and which one each half needs.
-    let wrapped = match wrapper_variant {
-        Some(variant) => Some(wrapped::bind_for_attempt(
+    let resolved_wrapper = match wrapper_variant {
+        Some(variant) => Some(wrapped::resolve_for_attempt(
             &cfg.workspace_root,
             root,
             variant,
@@ -961,7 +961,13 @@ async fn run_task(
     // and always refuses, and the pause gate published below has nothing to
     // reach. A worker's children inherit its headless posture through the
     // registry they run against.
-    crate::subagent::install_for_session(&cfg, &registry)?;
+    let sub_agents = crate::subagent::install_for_session(&cfg, &registry)?;
+    // The second moment of binding (#3882): a plugin's `child_turn` is spent
+    // by this attempt's own dispatcher, which needs the provider built above.
+    let wrapped = match resolved_wrapper {
+        Some(resolved) => Some(resolved.serving(&invocation_root, sub_agents)?),
+        None => None,
+    };
     let active_rules = rules::enforce_workspace_rules(
         &registry,
         root,
@@ -1163,10 +1169,15 @@ async fn run_task(
                         report = wrapper.dispatch(input, &mut driver) => Some(report),
                         _ = stop_wait => None,
                     };
-                    match dispatched {
+                    let raced = match dispatched {
                         Some(report) => Raced::Outcome(wrapper.settle(report, driver)),
                         None => Raced::Stopped,
-                    }
+                    };
+                    // What the plugin's last point spent has no engine turn
+                    // left to fold it in (#3882) — see
+                    // `wrapper_plugin::settle_plugin_child_spend`.
+                    crate::wrapper_plugin::settle_plugin_child_spend(&*registry, &mut budget);
+                    raced
                 }
                 // A fleet worker owns its run (#3379) — no pipeline above it,
                 // so the run's terminator is this lane's to emit. It is sent

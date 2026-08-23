@@ -125,6 +125,11 @@ mod tool_policy;
 // The generated per-tool reference (`docs/tools/`) and the guard that fails
 // when it drifts. Test-only: it is a build-time artifact generator, not
 // runtime behaviour.
+// The environment lock and the user-tier sandbox every env-mutating test in
+// this binary holds. Test-only, and a file rather than an inline module so
+// `main.rs` does not grow toward the god-file ceiling (#3996).
+#[cfg(test)]
+pub(crate) mod test_env;
 #[cfg(test)]
 mod tool_docs;
 mod tool_switches;
@@ -139,83 +144,6 @@ mod wrapper_candidate;
 mod wrapper_plugin;
 mod wrapper_recall;
 mod write_dirs;
-
-/// Serializes tests that mutate process environment variables. `setenv` /
-/// `getenv` from concurrent threads is documented UB on POSIX, and the test
-/// harness runs this binary's test modules on parallel threads — so every
-/// test that calls `std::env::set_var`/`remove_var` (agent.rs provider
-/// routing, config.rs key resolution) must hold this lock for its whole
-/// mutate-read-cleanup window.
-#[cfg(test)]
-pub(crate) mod test_env {
-    /// Acquire the env lock, recovering from a poisoned mutex (a prior
-    /// env-mutating test that panicked mid-hold must not cascade).
-    pub(crate) fn lock() -> std::sync::MutexGuard<'static, ()> {
-        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
-    }
-
-    /// Captures the current value of each named env var and restores it on
-    /// drop. Unlike a hand-rolled "read the old value, mutate, restore at
-    /// the end of the test" sequence, this also restores on an unwinding
-    /// panic (e.g. a failed `assert!` mid-test) — without it, a panicking
-    /// test leaves `HOME`/`STELLA_DATA_DIR`/etc. mutated for every test that
-    /// runs after it in this binary. Callers must hold [`lock`] for the
-    /// entire lifetime of the returned guard.
-    #[must_use]
-    pub(crate) struct EnvRestore(Vec<(String, Option<std::ffi::OsString>)>);
-
-    impl EnvRestore {
-        pub(crate) fn capture(names: &[&str]) -> Self {
-            Self(
-                names
-                    .iter()
-                    .map(|name| ((*name).to_string(), std::env::var_os(name)))
-                    .collect(),
-            )
-        }
-    }
-
-    impl Drop for EnvRestore {
-        fn drop(&mut self) {
-            unsafe {
-                for (name, value) in self.0.drain(..) {
-                    match value {
-                        Some(value) => std::env::set_var(name, value),
-                        None => std::env::remove_var(name),
-                    }
-                }
-            }
-        }
-    }
-
-    /// Witness for #911: the hand-rolled "capture previous, mutate, restore
-    /// at the end of the function" sequence this replaced across ~42 tests
-    /// never runs its restore step when an assertion panics first — this
-    /// fails on that pattern and passes on [`EnvRestore`], whose `Drop` runs
-    /// during unwinding too.
-    #[test]
-    fn restore_runs_on_unwind_not_just_normal_return() {
-        let _outer = lock();
-        let key = "STELLA_TEST_ENV_RESTORE_WITNESS";
-        let original = std::env::var_os(key);
-        unsafe { std::env::remove_var(key) };
-
-        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _restore = EnvRestore::capture(&[key]);
-            unsafe { std::env::set_var(key, "mutated-by-panicking-test") };
-            panic!("simulated assertion failure mid-test");
-        }))
-        .is_err();
-
-        assert!(panicked, "the closure must have actually unwound");
-        assert_eq!(
-            std::env::var_os(key),
-            original,
-            "EnvRestore must undo the mutation even when the guarded body panics"
-        );
-    }
-}
 
 use std::io::IsTerminal;
 use std::process::ExitCode;
@@ -1160,9 +1088,20 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             goal,
             no_pipeline,
             pipeline,
+            test_command,
         } => {
             let pipeline_choice =
                 wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
+            // The raw goal loop runs no oracle of its own, so a
+            // `--test-command` with no `--pipeline` names a check nothing
+            // would ever run — refused rather than dropped, the same rule
+            // `stella run` applies to the same flag.
+            wrapper_plugin::reject_verification_flags_without_pipeline(
+                pipeline_choice,
+                test_command.as_deref(),
+                false,
+                false,
+            )?;
             let goal = prompt_source::resolve(
                 goal,
                 std::io::stdin().is_terminal(),
@@ -1184,7 +1123,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             }
             signals::block_on_interruptible(
                 rt()?,
-                agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, pipeline_choice),
+                agent::run_goal_cmd(
+                    &cfg,
+                    &goal,
+                    cli.globals.spend_limit,
+                    pipeline_choice,
+                    test_command.as_deref(),
+                ),
             )?;
         }
         Command::Fleet {
@@ -1287,6 +1232,10 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     &goal,
                     cli.globals.spend_limit,
                     wrapper_plugin::PipelineChoice::Raw,
+                    // `monitor`'s completion criterion is the goal verifier's,
+                    // and it names no wrapper — so there is no oracle here for
+                    // a test command to arm.
+                    None,
                 ),
             )?;
         }

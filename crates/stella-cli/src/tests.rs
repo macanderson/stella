@@ -5,6 +5,11 @@
 //! root without `global = true`, so clap only accepted it *before* the
 //! subcommand while README and muscle memory put it after.
 
+// The flag-to-documentation lock (#3041), a sibling rather than more lines
+// here: it is a separate question from the argument surface this file is
+// about, and it reuses `repo_root` / `COMMANDS_DOCS_DIR` from below.
+mod flag_docs;
+
 use clap::{CommandFactory, Parser};
 
 use super::build_info::{

@@ -85,6 +85,29 @@ impl TaskBoard {
         &self.items
     }
 
+    /// The task holding the lead's single lane: in progress and unowned.
+    ///
+    /// "Unowned" is what makes it the *lead's* lane. [`Self::assign`] gives a
+    /// delegated task an owner and deliberately does not route through
+    /// [`Self::set_status`], so N sub-agent lanes plus the lead's own task is
+    /// a legal board — a scan that counted them would report every delegating
+    /// session as a violation.
+    ///
+    /// [`Self::set_status`] asks this to decide whether a `task_start` is a
+    /// second lane (#4152). It is public because the other half of the same
+    /// defect is observational: a turn can also end with this card still open
+    /// because the agent walked past it and never called `task_start` at all,
+    /// and nothing on that path has a correction point to hang a refusal on
+    /// (#4153). Measuring how often that happens needs the same predicate,
+    /// and two spellings of "the lead's lane is occupied" is one more than a
+    /// board this small should carry.
+    #[must_use]
+    pub fn unowned_in_progress(&self) -> Option<&TaskItem> {
+        self.items
+            .iter()
+            .find(|t| t.owner.is_none() && t.status == TaskStatus::InProgress)
+    }
+
     /// A task's contract, mutably — how a check runner records an outcome.
     ///
     /// Scoped to the contract rather than handing out the whole item (or the
@@ -219,11 +242,7 @@ impl TaskBoard {
         // told why it can never start, not which lane it happened to collide
         // with.
         let occupant = (status == TaskStatus::InProgress)
-            .then(|| {
-                self.items
-                    .iter()
-                    .find(|t| t.id != id && t.owner.is_none() && t.status == TaskStatus::InProgress)
-            })
+            .then(|| self.unowned_in_progress().filter(|t| t.id != id))
             .flatten()
             .map(|t| (t.id.clone(), t.subject.clone()));
         let item = Self::find(&mut self.items, id)?;

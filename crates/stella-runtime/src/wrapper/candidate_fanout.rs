@@ -362,7 +362,7 @@ pub struct CandidateFanouts<W> {
     width_ceiling: u32,
     fanout_ceiling: u32,
     budget_usd: Option<f64>,
-    turn_instance: u32,
+    turn_lane: u32,
     spent: AtomicU32,
     live: Mutex<Vec<CandidateWorkspace>>,
     ledger: Mutex<Vec<CandidateFanoutSpend>>,
@@ -443,7 +443,7 @@ impl<W> CandidateFanouts<W> {
             width_ceiling: DEFAULT_HOST_MAX_FANOUT_WIDTH,
             fanout_ceiling: DEFAULT_HOST_MAX_FANOUTS,
             budget_usd: None,
-            turn_instance: 0,
+            turn_lane: stella_core::turn_slots::FANOUT_LANE,
             spent: AtomicU32::new(0),
             live: Mutex::new(Vec::new()),
             ledger: Mutex::new(Vec::new()),
@@ -488,11 +488,26 @@ impl<W> CandidateFanouts<W> {
         self
     }
 
-    /// The receipt turn slot the candidates' manifests are recorded under.
+    /// The `turn_instance` lane this plane's fan-outs are recorded in.
+    ///
+    /// [`ChildTurns::in_turn_lane`](super::ChildTurns::in_turn_lane)'s sibling,
+    /// and its argument holds unchanged: the `n`-th fan-out takes the `n`-th
+    /// slot of this lane, so it can never collide with a door's own rounds or
+    /// with the child-turn plane beside it, whatever either counter reaches.
+    /// One slot per fan-out and not per candidate — the candidates of one
+    /// fan-out are told apart by `call_seq` within it, because a width the host
+    /// clamps is not a number that may reach a database key.
+    ///
+    /// Defaults to [`stella_core::turn_slots::FANOUT_LANE`].
     #[must_use]
-    pub fn with_turn_instance(mut self, turn_instance: u32) -> Self {
-        self.turn_instance = turn_instance;
+    pub fn in_turn_lane(mut self, lane: u32) -> Self {
+        self.turn_lane = lane;
         self
+    }
+
+    /// The `turn_instance` the `seq`-th fan-out of this plane lands on.
+    fn slot_for(&self, seq: u32) -> u32 {
+        stella_core::turn_slots::slot(self.turn_lane, seq)
     }
 
     /// The effective ceiling on one fan-out's width, after the clamp.
@@ -707,7 +722,7 @@ impl<W: CandidateWorkspaces> CandidateFanoutPlane for CandidateFanouts<W> {
                         role: args.role.clone(),
                         seat,
                         budget_usd: share,
-                        turn_instance: self.turn_instance,
+                        turn_instance: self.slot_for(taken),
                     },
                 )
             },
