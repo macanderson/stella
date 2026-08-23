@@ -405,6 +405,19 @@ pub fn detach_into_own_process_group(cmd: &mut Command) {
     cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP);
 }
 
+/// Neither unix nor Windows: there is no group to make, and `kill_on_drop` at
+/// the call site is the whole bound.
+///
+/// It exists so the call sites can drop their own `#[cfg]`s without this
+/// crate silently refusing to compile for a third platform. `rootfd.rs` and
+/// `durable_write.rs` already answer the same way — the same API over
+/// whatever the platform does have — and a spawn plane that failed to build
+/// where they succeed would be the inconsistency, not the honesty.
+#[cfg(not(any(unix, windows)))]
+pub fn detach_into_own_process_group(cmd: &mut Command) {
+    let _ = cmd;
+}
+
 /// Kills the whole group a [`detach_into_own_process_group`] child leads, on
 /// drop unless disarmed — the cancellation backstop for the tools that spawn
 /// one ([`crate::bash`], [`crate::custom`], [`crate::hook_runner`], and the
@@ -618,6 +631,32 @@ fn job_holding(pid: u32) -> Option<JobHandle> {
         CloseHandle(process);
         assigned.then_some(job)
     }
+}
+
+/// Neither unix nor Windows: an inert guard with the same three methods, so
+/// the call sites carry no `#[cfg]` of their own.
+///
+/// Inert rather than absent for the reason
+/// [`detach_into_own_process_group`]'s third arm gives. The tree is bounded
+/// by `kill_on_drop` alone here, which reaches the direct child and nothing
+/// else — the gap #3550 closed for Windows, still open for a platform this
+/// workspace does not target.
+#[cfg(not(any(unix, windows)))]
+pub struct GroupKillGuard;
+
+#[cfg(not(any(unix, windows)))]
+impl GroupKillGuard {
+    /// Arm nothing.
+    pub fn arm(pid: i32) -> Self {
+        let _ = pid;
+        Self
+    }
+
+    /// Disarm nothing.
+    pub fn disarm(&mut self) {}
+
+    /// Kill nothing.
+    pub fn kill_now(&mut self) {}
 }
 
 /// Keep the head and tail of `s` when it exceeds `max_bytes`, eliding the

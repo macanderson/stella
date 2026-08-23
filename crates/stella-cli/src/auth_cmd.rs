@@ -14,7 +14,7 @@
 //!
 //! "One key per provider" holds for every provider but Bedrock, which needs a
 //! secret access key and a region beside its access key id. `set` stores those
-//! companions too — see `config::aux` — because the alternative is
+//! companions too — see `config::aux_credentials` — because the alternative is
 //! what shipped before: `stella auth set bedrock` reported success, and the
 //! next run failed on a value the command had no way to accept.
 
