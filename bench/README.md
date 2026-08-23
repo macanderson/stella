@@ -106,6 +106,12 @@ argument; ambient `STELLA_MODEL` is not accepted by the secure launcher.
 `STELLA_BASE_URL=https://api.z.ai/api/coding/paas/v4` — the endpoint must
 include `/coding/`, or the API returns HTTP 429 "insufficient balance."
 
+**Head-to-head A/B matches against another agent** — as opposed to the single
+claim run above — are `../arenabench/`'s job, not this directory's. Its own
+timeout multipliers must stay `1.0` for a number to be comparable with, or
+submitted to, the tbench.ai leaderboard; see
+[`../arenabench/docs/timeout-policy.md`](../arenabench/docs/timeout-policy.md). <!-- doc-links:ignore -->
+
 ## SWE-bench (standalone predictions)
 
 ```bash

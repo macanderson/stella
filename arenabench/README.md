@@ -216,6 +216,17 @@ races whatever shipped that hour — see
 [Which product did you actually race](#which-product-did-you-actually-race).
 It is refused on a `stella` seat, which is pinned by commit instead.
 
+**`agent_timeout_multiplier` and `setup_timeout_multiplier` must stay `1.0`
+for any number you intend to compare with, or submit to, the tbench.ai
+Terminal-Bench 2.1 leaderboard.** Its rules say submissions "may not modify
+timeouts or resources"; a run above `1.0` on either — every number recorded
+before 2026-08-14 used `agent_timeout_multiplier = 2.0` — must carry that
+qualifier wherever it is quoted. `arenabench` logs and notes a non-stock
+`agent_timeout_multiplier` at launch so the run is marked non-submittable from
+the start rather than discovered later. See
+[`docs/timeout-policy.md`](docs/timeout-policy.md) for the full rule and why <!-- doc-links:ignore -->
+the grader's own timeout is held to the same bar.
+
 ---
 
 ## What it does
