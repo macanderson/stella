@@ -379,6 +379,91 @@ fn read_journal(plugin_dir: &Path) -> Option<ConfigJournal> {
     serde_json::from_str(&text).ok()
 }
 
+/// Whether the tier's config file still holds what the package wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CurrentValue {
+    /// The file holds exactly what the package wrote.
+    Unchanged,
+    /// It holds something else now — the literal TOML text, or `None` for a key
+    /// that has since been deleted.
+    Edited(Option<String>),
+    /// The tier's `stella.toml` could not be resolved or read, so nothing is
+    /// claimed either way. Distinct from [`Edited(None)`](Self::Edited): "the key is
+    /// gone" and "we could not look" are different facts, and reporting the
+    /// second as the first would tell a user their config had been edited when
+    /// it may not have been.
+    Unknown,
+}
+
+/// One key an installed package configured, for [`super::list`] to print.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfiguredKey {
+    /// The dotted key, as the manifest declared it.
+    pub(crate) key: String,
+    /// The value the package set, as the consent document rendered it.
+    pub(crate) declared: String,
+    /// What the key held before the install, `None` when it held nothing.
+    ///
+    /// This is the half a user cannot otherwise recover: the current value is
+    /// visible in `stella.toml`, and what removing the package would restore is
+    /// visible nowhere else.
+    pub(crate) prior: Option<String>,
+    /// Whether the file still holds what was written.
+    pub(crate) current: CurrentValue,
+}
+
+/// What an installed package configured, and what each key replaced.
+///
+/// **Driven by the manifest, consulted from the journal** — [`revert`]'s rule,
+/// for [`revert`]'s reason: the journal sits in a directory whose contents came
+/// from a package, so it supplies prior values for keys a human consented to
+/// and never the list of keys itself. A package with no journal (or one
+/// belonging to another package) reports its declared keys with no prior value
+/// rather than nothing at all, because "this package configures your workspace"
+/// is true whether or not the undo record survived.
+///
+/// `config` is the tier's re-derived `stella.toml` ([`ConfigTarget::resolve`]),
+/// never the journal's own path, so a planted journal cannot make `list` read
+/// an arbitrary file.
+pub(crate) fn configured(
+    plugin_dir: &Path,
+    manifest: &PluginManifest,
+    config: Option<&Path>,
+) -> Vec<ConfiguredKey> {
+    if manifest.configure.is_empty() {
+        return Vec::new();
+    }
+    let journal = read_journal(plugin_dir).filter(|journal| journal.plugin == manifest.name);
+    let doc = config.and_then(|path| load_document(path).ok());
+
+    manifest
+        .configure
+        .iter()
+        .map(|entry| {
+            let recorded = journal
+                .as_ref()
+                .and_then(|journal| journal.prior.iter().find(|prior| prior.key == entry.key));
+            let declared = entry.rendered_value();
+            let current = match &doc {
+                None => CurrentValue::Unknown,
+                Some(doc) => {
+                    let segments: Vec<&str> = entry.segments().collect();
+                    match value_text(doc, &segments) {
+                        Some(text) if text == declared => CurrentValue::Unchanged,
+                        other => CurrentValue::Edited(other),
+                    }
+                }
+            };
+            ConfiguredKey {
+                key: entry.key.clone(),
+                declared,
+                prior: recorded.and_then(|recorded| recorded.value.clone()),
+                current,
+            }
+        })
+        .collect()
+}
+
 /// What a revert did, so the caller can say it in the words it uses.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Reverted {

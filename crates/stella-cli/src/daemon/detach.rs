@@ -71,6 +71,20 @@ impl Posture {
     pub(crate) fn supervises(self) -> bool {
         !matches!(self, Self::Foreground)
     }
+
+    /// Whether this process stays and relays the supervised child's console
+    /// back to the terminal that launched it.
+    ///
+    /// Not the same question as [`supervises`](Self::supervises), and the
+    /// difference is what a launcher's own diagnostics turn on: under
+    /// `Attached` the child's stderr reaches the user live, so a line the
+    /// parent also wrote would arrive twice; under `Detached` [`release`] drops
+    /// the handle without following anything, so the child's stderr goes to the
+    /// run's console log and a line the parent does not write reaches the user
+    /// nowhere at all (#3774).
+    pub(crate) fn relays_child_console(self) -> bool {
+        matches!(self, Self::Attached)
+    }
 }
 
 /// Resolve the posture from the two flags, the recursion backstop, and the

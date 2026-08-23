@@ -354,22 +354,20 @@ fn supervision(globals: &cli::GlobalArgs) -> daemon::detach::Posture {
     )
 }
 
-/// Print `--no-pipeline`'s deprecation notice, if owed, once — from whichever
-/// process actually goes on to run the turn.
+/// Print `--no-pipeline`'s deprecation notice, if owed, once — on the terminal
+/// the user launched from.
 ///
-/// The one mechanism [`wrapper_plugin::no_pipeline_deprecation_notice`]'s doc
-/// asks every supervising door to share: call this *after* the
-/// `posture.supervises()` early-return, never before it. An `Attached`/
-/// `Detached` launch re-execs the same argv into a supervised child, which
-/// reaches this exact call site again in its own process — its own posture
-/// never supervises (the recursion backstop) — so printing here rather than
-/// before the re-exec means exactly one process ever calls it: the child
-/// under supervision, or this same process when there is no child at all.
-/// Printing before the early-return double-printed the line for every
-/// `Attached` launch, because `Supervised::follow` then relays the child's
-/// own copy back over the same stream the parent already wrote to.
-fn print_no_pipeline_notice_if_owed(no_pipeline: bool) {
-    if let Some(notice) = wrapper_plugin::no_pipeline_deprecation_notice(no_pipeline) {
+/// The one mechanism [`wrapper_plugin::no_pipeline_notice_for`] asks every
+/// supervising door to share: call this *before* the `posture.supervises()`
+/// early-return, and let the posture decide. A launch that re-execs its argv
+/// into a supervised child reaches this same call again in that child's own
+/// process (whose posture never supervises — the recursion backstop), so the
+/// question the parent has to answer is whether the child's copy will reach the
+/// terminal. Under `Attached` it does, relayed live by `Supervised::follow`, so
+/// the parent stays silent; under `Detached` nothing is relayed and only the
+/// parent can say it.
+fn print_no_pipeline_notice_if_owed(posture: daemon::detach::Posture, no_pipeline: bool) {
+    if let Some(notice) = wrapper_plugin::no_pipeline_notice_for(posture, no_pipeline) {
         eprintln!("⚠ {notice}");
     }
 }
@@ -1094,6 +1092,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             // Resolved first on purpose: the prompt may have come from this
             // process's stdin, and a detached child has none to read.
             let posture = supervision(&cli.globals);
+            print_no_pipeline_notice_if_owed(posture, no_pipeline);
             if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
@@ -1104,7 +1103,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     output_format,
                 ).map_err(failure::CliFailure::from);
             }
-            print_no_pipeline_notice_if_owed(no_pipeline);
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_one_shot(
@@ -1164,6 +1162,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 prompt_source::read_stdin_to_string,
             )?;
             let posture = supervision(&cli.globals);
+            print_no_pipeline_notice_if_owed(posture, no_pipeline);
             if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
@@ -1176,7 +1175,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     OutputFormat::Text,
                 ).map_err(failure::CliFailure::from);
             }
-            print_no_pipeline_notice_if_owed(no_pipeline);
             signals::block_on_interruptible(
                 rt()?,
                 agent::run_goal_cmd(&cfg, &goal, cli.globals.spend_limit, pipeline_choice),
@@ -1205,6 +1203,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             let pipeline_choice =
                 wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
             let posture = supervision(&cli.globals);
+            print_no_pipeline_notice_if_owed(posture, no_pipeline);
             if posture.supervises() {
                 return daemon::supervise_this_invocation(
                     rt()?,
@@ -1221,7 +1220,6 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     output_format,
                 ).map_err(failure::CliFailure::from);
             }
-            print_no_pipeline_notice_if_owed(no_pipeline);
             signals::block_on_interruptible(
                 rt()?,
                 fleet_cmd::run_fleet(

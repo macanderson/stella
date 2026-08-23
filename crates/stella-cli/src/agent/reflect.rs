@@ -35,11 +35,13 @@ use crate::config::Config;
 /// [`TurnEvidence`] is what keeps this at seven arguments" — applied one layer
 /// up, rather than an `#[allow]` asserting the lint was wrong.
 pub(super) struct InteractiveTurn<'a> {
-    /// The whole session history, not this turn's slice — selection is the
-    /// digest's job (#2460).
+    /// The session history so far, of which [`Self::turn_start`] onward is this
+    /// turn. The caller holds one `Vec` and the boundary is an index into it,
+    /// so the pair travels rather than a slice.
     pub(super) messages: &'a [CompletionMessage],
-    /// Where this turn's own work starts in `messages`; the reflection gate
-    /// reads only that slice, so a conversational turn spends no model call.
+    /// Where this turn's own work starts in `messages` — the gate and the
+    /// evidence both read only that slice, so a conversational turn spends no
+    /// model call and a turn that does reflect is reflected on alone.
     pub(super) turn_start: usize,
     /// This turn's folded event ledger (#3946). The transcript records what
     /// was said; only this records what it cost, how long it took, and whether
@@ -54,19 +56,38 @@ pub(super) struct InteractiveTurn<'a> {
     pub(super) friction: &'a [TurnFriction],
 }
 
+impl InteractiveTurn<'_> {
+    /// This turn's own work, and nothing before it.
+    pub(super) fn turn_slice(&self) -> &[CompletionMessage] {
+        &self.messages[self.turn_start..]
+    }
+
+    /// What reflection is asked about — the same slice the gate reads.
+    ///
+    /// The whole history used to be handed over on the argument that selection
+    /// is the digest's job (#2460). The digest does not know where the turn
+    /// starts either, so what it selected was the *session*: a `status` turn
+    /// with one `task_list` call mined the previous turn's lessons back out
+    /// nearly verbatim, and a `thank you` turn was self-rated on a sub-agent
+    /// failure six executions earlier (#4382). Both rows are keyed to an
+    /// `execution_id`, so evidence from outside that execution makes them
+    /// wrong, not merely broad.
+    pub(super) fn evidence(&self, succeeded: bool) -> TurnEvidence<'_> {
+        TurnEvidence::with_rounds(self.turn_slice(), self.friction, succeeded)
+    }
+}
+
 /// Post-turn reflection for one interactive REPL turn, shared by the plain
 /// prompt handler and `/goal` — the two carried byte-identical copies of
 /// this block, which is exactly the drift this helper removes.
 ///
 /// Failures reflect too (the one-shot pipeline path has always treated a
 /// failed run as a high-value learning signal); only a user-chosen soft stop
-/// is excluded (`should_reflect_on`, issue #373 item 7). The gate reads only
-/// this turn's message slice (`turn_start..`) so a conversational turn never
-/// spends a model call.
+/// is excluded (`should_reflect_on`, issue #373 item 7).
 ///
-/// The whole history is handed to reflection, not the tail of it: selection is
-/// the digest's job now (#2460), and pre-truncating here would hide exactly the
-/// middle the selection exists to find.
+/// The gate and the evidence read the same slice ([`InteractiveTurn::evidence`]):
+/// a conversational turn never spends a model call, and a turn that does
+/// reflect is reflected on for what *it* did.
 pub(super) async fn reflect_on_interactive_turn<T, E: std::fmt::Display>(
     provider: &dyn Provider,
     cfg: &Config,
@@ -76,14 +97,14 @@ pub(super) async fn reflect_on_interactive_turn<T, E: std::fmt::Display>(
     budget: &mut BudgetGuard,
 ) {
     if should_reflect_on(result)
-        && turn_warrants_reflection(&turn.messages[turn.turn_start..])
+        && turn_warrants_reflection(turn.turn_slice())
         && let Some(m) = memory
     {
         let mut report = reflect_routed(
             m,
             cfg,
             provider,
-            TurnEvidence::with_rounds(turn.messages, turn.friction, result.is_ok()),
+            turn.evidence(result.is_ok()),
             false,
             remaining_budget(budget),
         )
@@ -155,3 +176,6 @@ pub(crate) fn surface_reflection(report: &ReflectionReport, format: OutputFormat
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

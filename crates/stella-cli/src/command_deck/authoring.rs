@@ -99,7 +99,8 @@ pub(super) async fn record_and_reflect_turn(
         &messages[reflect_start..],
     )
     .await;
-    if outcome.is_err() || !turn_warrants_reflection(&messages[reflect_start..]) {
+    let turn = &messages[reflect_start..];
+    if outcome.is_err() || !turn_warrants_reflection(turn) {
         return;
     }
     let Some(memory) = memory else { return };
@@ -109,11 +110,16 @@ pub(super) async fn record_and_reflect_turn(
     // tool took, and whether it retried or looped — none of which any
     // `CompletionMessage` records. It is one ledger because a lead turn is one
     // turn: the several-turn case is `/goal`, and it passes a slice.
+    //
+    // The transcript is this turn's slice — the same one the gate above read.
+    // Handing over the whole session made the deck's reflection describe the
+    // session rather than the execution its row is keyed to (#4382), exactly
+    // as `agent::reflect::reflect_on_interactive_turn` did.
     let mut report = crate::memory::reflect_routed(
         memory,
         cfg,
         provider,
-        crate::memory::TurnEvidence::with_friction(messages, friction, true),
+        crate::memory::TurnEvidence::with_friction(turn, friction, true),
         true,
         crate::agent::remaining_budget(budget),
     )

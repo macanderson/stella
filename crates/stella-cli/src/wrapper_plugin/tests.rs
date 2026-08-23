@@ -21,6 +21,8 @@ use stella_runtime::wrapper::TurnDriver;
 use super::*;
 use crate::plugin_cmd::roster::{InstalledPlugin, PluginScope};
 
+mod report;
+
 const WRAPPER_MANIFEST: &str = r#"
 name = "budget-keeper"
 [loop]

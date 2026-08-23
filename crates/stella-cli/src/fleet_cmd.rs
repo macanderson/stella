@@ -905,6 +905,7 @@ async fn run_task(
             &cfg.workspace_root,
             root,
             variant,
+            &task.id,
         )?),
         None => None,
     };
