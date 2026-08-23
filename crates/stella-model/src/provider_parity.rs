@@ -113,6 +113,7 @@ pub(crate) fn adapter_sources() -> &'static [&'static str] {
         // fan-in witness lives in the sibling that owns the `Provider` impl
         // the test dispatches through.
         include_str!("openai/provider.rs"),
+        include_str!("openai/stream_fallback_tests.rs"),
         include_str!("gemini/tests.rs"),
         include_str!("vertex.rs"),
         include_str!("zai/tests.rs"),
@@ -724,9 +725,10 @@ pub static STREAM_FALLBACK_POSTURE: &[(&str, StreamFallbackPosture)] = &[
     ),
     (
         "openai",
-        StreamFallbackPosture::StreamingOnly {
-            note: "the Responses adapter has no unary parse path yet; extending the shared \
-                   fallback latch to this dialect is tracked in #2746",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "Responses: retried attempt re-issues the byte-identical body with \
+                        stream: false through the unary read bound (http::unary_client)",
+            witness: "an_openai_stream_hung_before_its_first_byte_falls_back_to_a_unary_request",
         },
     ),
     (

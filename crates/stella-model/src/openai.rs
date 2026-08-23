@@ -7,23 +7,24 @@
 //! of `choices`, and `function_call`/`function_call_output` items instead of
 //! an accumulating `tool_calls` delta array — see the wire types below.
 
-use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use stella_protocol::{
-    CompletionMessage, CompletionRequestRef, CompletionResult, CompletionUsage, FinishReason,
-    MessageRole, ProviderError, ReasoningEffort, ServiceTier, ToolCall, ToolCallObserver,
-    Verbosity,
+    CompletionMessage, CompletionRequestRef, CompletionResult, MessageRole, ProviderError,
+    ReasoningEffort, ServiceTier, ToolCallObserver, Verbosity,
 };
 
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::http;
-use crate::sse::SseDecoder;
 
+mod stream;
 mod stream_error;
+mod unary;
+use crate::stream_recovery::StreamRecovery;
 use stream_error::classify_openai_stream_error;
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -44,6 +45,18 @@ pub struct OpenAiProvider {
     /// session. The value is volatile by design; it rides as a request
     /// parameter and never enters the cached prompt bytes.
     prompt_cache_key: String,
+    /// The streaming→non-streaming fallback latch (#2686, extended to this
+    /// dialect by #2746): armed when a stream hangs before its first byte or
+    /// comes back empty, consulted per attempt so the retry of a faulted
+    /// attempt goes out unary. See [`crate::stream_recovery`].
+    recovery: StreamRecovery,
+    /// The client the unary fallback dispatches through — [`http::unary_client`]'s
+    /// 600s bound, because a non-streaming call has no first token to reset
+    /// the per-read clock (#547).
+    unary_client: reqwest::Client,
+    /// [`http::FIRST_BYTE_TIMEOUT`] in production; a field so the hung-stream
+    /// path is testable in milliseconds.
+    first_byte_deadline: Duration,
 }
 
 /// Process-wide monotonic suffix guaranteeing two [`OpenAiProvider`]
@@ -96,6 +109,9 @@ impl OpenAiProvider {
             model,
             pricing,
             prompt_cache_key: new_prompt_cache_key(),
+            recovery: StreamRecovery::default(),
+            unary_client: http::unary_client(),
+            first_byte_deadline: http::FIRST_BYTE_TIMEOUT,
         }
     }
 
@@ -104,6 +120,29 @@ impl OpenAiProvider {
     #[must_use]
     pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
         self.base_url = base_url.into();
+        self
+    }
+
+    /// Shrink the first-byte deadline so the hung-stream fallback is testable
+    /// in milliseconds instead of 90 seconds of wall clock.
+    #[cfg(test)]
+    pub(crate) fn with_first_byte_deadline(mut self, deadline: Duration) -> Self {
+        self.first_byte_deadline = deadline;
+        self
+    }
+
+    /// Shrink the unary read bound so the non-streaming path is testable in
+    /// milliseconds instead of ten minutes. Separate from
+    /// [`Self::with_first_byte_deadline`] because the two bounds guard
+    /// different halves of the fallback: that one the stream's first byte,
+    /// this one the whole unary generation — head and body alike, which is
+    /// what lets a test stall the response *body*.
+    #[cfg(test)]
+    pub(crate) fn with_unary_read_timeout(mut self, timeout: Duration) -> Self {
+        self.unary_client = reqwest::Client::builder()
+            .read_timeout(timeout)
+            .build()
+            .expect("the test client builds");
         self
     }
 }
@@ -132,8 +171,12 @@ struct OpenAiRequest<'a> {
     /// array we're otherwise using purely for conversation turns and tool
     /// I/O, which is easier to reason about when building `input` from our
     /// one internal message list.
+    ///
+    /// Owned rather than borrowed: the hoisted system prompt is built by
+    /// [`to_openai_input`] inside the body builder, so a borrow here would
+    /// tie the request to a local that dies before it is sent.
     #[serde(skip_serializing_if = "Option::is_none")]
-    instructions: Option<&'a str>,
+    instructions: Option<String>,
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_output_tokens: Option<u32>,
@@ -534,23 +577,61 @@ mod provider;
 impl OpenAiProvider {
     /// Shared body of [`crate::provider::Provider::complete_ref`] and
     /// [`crate::provider::Provider::complete_observed_ref`] — both of which
-    /// live in `openai/provider.rs`. The request has always set
-    /// `stream: true` and the response has always been consumed as SSE; the
-    /// only difference is whether anything is told about the parts as they
-    /// land.
+    /// live in `openai/provider.rs`. The only difference between them is
+    /// whether anything is told about the parts as they land.
+    ///
+    /// Streams by default, but consults the fallback latch first: the retry
+    /// of an attempt whose stream hung before its first byte or came back
+    /// empty goes out as a **unary** request for the same payload instead
+    /// (#2686, #2746) — see [`crate::stream_recovery`] for the latch's states
+    /// and bounds, and [`unary`] for that path.
     async fn complete_inner(
         &self,
         req: CompletionRequestRef<'_>,
         observer: Option<&dyn ToolCallObserver>,
     ) -> Result<CompletionResult, ProviderError> {
+        if self.recovery.use_unary() {
+            return self.complete_unary_attempt(req).await;
+        }
+        let body = self.build_body(req, true);
+        let response = self.dispatch(&self.client, &body, false).await?;
+        let outcome = stream::aggregate_openai_stream(
+            response,
+            observer,
+            self.pricing.as_ref(),
+            self.first_byte_deadline,
+        )
+        .await
+        .map_err(|fault| self.recovery.absorb(fault))?;
+        let cost_usd = self
+            .pricing
+            .map(|p| p.cost_usd(&outcome.usage))
+            .unwrap_or(0.0);
+        let finish_reason =
+            stream::final_finish_reason(outcome.truncated_at_limit, !outcome.tool_calls.is_empty());
+        Ok(CompletionResult {
+            text: outcome.text,
+            tool_calls: outcome.tool_calls,
+            usage: outcome.usage,
+            model: self.model.clone(),
+            cost_usd,
+            finish_reason: Some(finish_reason),
+            upstream_provider: None,
+        })
+    }
+
+    /// The one request body both delivery paths serialize — `stream` is the
+    /// only field on which they differ, so the unary fallback re-issues the
+    /// byte-identical payload minus the stream flag.
+    fn build_body(&self, req: CompletionRequestRef<'_>, stream: bool) -> OpenAiRequest<'_> {
         let (instructions, input) = to_openai_input(req.messages);
         let params = req.params.unwrap_or_default();
-        let body = OpenAiRequest {
+        OpenAiRequest {
             model: &self.model,
             input,
             store: false,
-            instructions: instructions.as_deref(),
-            stream: true,
+            instructions,
+            stream,
             max_output_tokens: req.max_output_tokens,
             // gpt-5 family and the o-series are reasoning models whose
             // Responses API rejects `temperature` with HTTP 400. The engine's
@@ -589,16 +670,40 @@ impl OpenAiProvider {
                 (None, None) => None,
             },
             prompt_cache_key: &self.prompt_cache_key,
-        };
+        }
+    }
 
-        let response = self
-            .client
+    /// POST `body` to `/responses` and run the shared non-success ladder.
+    /// Returns the successful response for the caller — streaming or unary —
+    /// to consume. The two delivery paths differ in their client's read bound
+    /// AND in what that bound's expiry means, so both ride as parameters.
+    ///
+    /// `unary` selects the send-error classification (#547's other half): on
+    /// the unary client the read bound covers the ENTIRE generation, so its
+    /// expiry means the request was too long to serve — Terminal, because
+    /// re-issuing the identical request just waits out the full bound again
+    /// once per retry. On the streaming client the same expiry is only a
+    /// header stall (the first token would have reset the clock), which the
+    /// next attempt may well clear — retryable, as it always was.
+    async fn dispatch(
+        &self,
+        client: &reqwest::Client,
+        body: &OpenAiRequest<'_>,
+        unary: bool,
+    ) -> Result<reqwest::Response, ProviderError> {
+        let response = client
             .post(format!("{}/responses", self.base_url))
             .bearer_auth(self.api_key.reveal())
-            .json(&body)
+            .json(body)
             .send()
             .await
-            .map_err(|e| ProviderError::transport(e.to_string()))?;
+            .map_err(|e| {
+                if unary {
+                    http::classify_unary_dispatch_error("OpenAI", &e)
+                } else {
+                    ProviderError::transport(e.to_string())
+                }
+            })?;
 
         if !response.status().is_success() {
             let status = response.status();
@@ -612,262 +717,12 @@ impl OpenAiProvider {
                 &self.model,
             ));
         }
-
-        let (text, tool_calls, usage, truncated_at_limit) =
-            aggregate_openai_stream(response, observer, self.pricing.as_ref()).await?;
-        let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
-        // Map onto the neutral vocabulary like every sibling adapter, so the
-        // engine can tell a tool-calling stop from a natural one.
-        //
-        // `Length` wins over `ToolCalls` when the response was cut off at
-        // `max_output_tokens`: a step that hit the cap is not finished just
-        // because some tool call happened to complete before the cut, and the
-        // driver's continuation is what recovers the rest. Every sibling
-        // adapter reports the cap this way, and one adapter disagreeing is how
-        // the same truncation came to mean "continue" on four dialects and
-        // "the turn is dead" on this one.
-        let finish_reason = if truncated_at_limit {
-            FinishReason::Length
-        } else if tool_calls.is_empty() {
-            FinishReason::Stop
-        } else {
-            FinishReason::ToolCalls
-        };
-        Ok(CompletionResult {
-            text,
-            tool_calls,
-            usage,
-            model: self.model.clone(),
-            cost_usd,
-            finish_reason: Some(finish_reason),
-            upstream_provider: None,
-        })
+        Ok(response)
     }
 }
 
-/// Accumulator for one in-progress `function_call` item, keyed by the
-/// stream's `output_index` until it completes.
-#[derive(Default)]
-struct ToolCallAccumulator {
-    call_id: String,
-    name: String,
-    arguments: String,
-}
-
-async fn aggregate_openai_stream(
-    response: reqwest::Response,
-    observer: Option<&dyn ToolCallObserver>,
-    pricing: Option<&Pricing>,
-) -> Result<(String, Vec<ToolCall>, CompletionUsage, bool), ProviderError> {
-    let mut decoder = SseDecoder::new();
-    let mut text = String::new();
-    let mut usage = CompletionUsage::default();
-    let mut tool_calls: BTreeMap<usize, ToolCallAccumulator> = BTreeMap::new();
-    let mut completed_seen = false;
-    // Set when the response stopped at `max_output_tokens`. Carried out as a
-    // normal result rather than an error so the engine sees the same
-    // `FinishReason::Length` every other adapter reports — see the
-    // `Incomplete` arm below.
-    let mut truncated_at_limit = false;
-    let mut stream = response.bytes_stream();
-
-    'stream: while let Some(chunk) = http::next_with_timeout(&mut stream, http::STREAM_IDLE_TIMEOUT)
-        .await
-        .map_err(|e| http::attach_partial(e, &usage, &text, pricing))?
-    {
-        decoder
-            .push_bytes(&chunk)
-            .map_err(|e| ProviderError::Malformed(e.to_string()))?;
-        for event in decoder.poll() {
-            let data = event.data.trim();
-            if data.is_empty() {
-                continue;
-            }
-            let parsed: OpenAiStreamEvent = match serde_json::from_str(data) {
-                Ok(v) => v,
-                Err(_) => continue, // tolerate event shapes we don't model
-            };
-            match parsed {
-                OpenAiStreamEvent::OutputItemAdded {
-                    output_index,
-                    item: OpenAiOutputItem::FunctionCall { call_id, name },
-                } => {
-                    let acc = tool_calls.entry(output_index).or_default();
-                    acc.call_id = call_id;
-                    acc.name = name;
-                }
-                OpenAiStreamEvent::OutputItemAdded { .. } => {}
-                OpenAiStreamEvent::OutputTextDelta { delta } => {
-                    if let Some(observer) = observer {
-                        observer.text_delta(&delta);
-                    }
-                    text.push_str(&delta);
-                }
-                OpenAiStreamEvent::FunctionCallArgumentsDelta {
-                    output_index,
-                    delta,
-                } => {
-                    // Liveness only (see `ToolCallObserver::tool_input_delta`):
-                    // a call-only generation must still register as producing.
-                    if let Some(observer) = observer {
-                        observer.tool_input_delta();
-                    }
-                    tool_calls
-                        .entry(output_index)
-                        .or_default()
-                        .arguments
-                        .push_str(&delta);
-                }
-                OpenAiStreamEvent::FunctionCallArgumentsDone { output_index } => {
-                    // Announce from the ACCUMULATOR, not from the event's own
-                    // copy of the arguments: final assembly below parses these
-                    // same bytes, so what the observer is told is exactly what
-                    // the completion will return, as the trait requires.
-                    if let Some(observer) = observer
-                        && let Some(acc) = tool_calls.get(&output_index)
-                        && !acc.call_id.is_empty()
-                    {
-                        // Never announce a call whose input failed to parse —
-                        // speculation on a malformed call would execute
-                        // something the model did not ask for. A broken
-                        // payload still reaches final assembly, where it
-                        // becomes `Value::Null` and the repair path owns it.
-                        let input = if acc.arguments.is_empty() {
-                            Some(serde_json::json!({}))
-                        } else {
-                            serde_json::from_str(&acc.arguments).ok()
-                        };
-                        if let Some(input) = input {
-                            observer.tool_call_streamed(&ToolCall {
-                                call_id: acc.call_id.clone(),
-                                name: acc.name.clone(),
-                                input,
-                            });
-                        }
-                    }
-                }
-                OpenAiStreamEvent::Completed { response } => {
-                    completed_seen = true;
-                    if let Some(u) = response.usage {
-                        usage.reported = true;
-                        usage.input_tokens = u.input_tokens;
-                        usage.output_tokens = u.output_tokens;
-                        usage.cached_input_tokens =
-                            u.input_tokens_details.map(|d| d.cached_tokens).unwrap_or(0);
-                        usage.reasoning_tokens =
-                            u.output_tokens_details.and_then(|d| d.reasoning_tokens);
-                    }
-                }
-                // A mid-stream failure/incompletion/error aborts the turn with
-                // a typed error — never a truncated Ok with the text so far.
-                OpenAiStreamEvent::Failed { response } => {
-                    // A failed response still carries its usage envelope, and
-                    // the provider bills the prompt whether or not it served
-                    // an answer — the same reason `response.incomplete` below
-                    // reads it. Left on the floor, a brownout that parks and
-                    // recovers reports the abandoned attempt as free (#3859).
-                    if let Some(u) = response.usage {
-                        usage.input_tokens = u.input_tokens;
-                        usage.output_tokens = u.output_tokens;
-                        usage.cached_input_tokens =
-                            u.input_tokens_details.map(|d| d.cached_tokens).unwrap_or(0);
-                    }
-                    let (code, message) = response
-                        .error
-                        .map(|e| (e.code, e.message.unwrap_or_default()))
-                        .unwrap_or((None, String::new()));
-                    let error = classify_openai_stream_error(code.as_deref(), &message);
-                    return Err(http::attach_partial(error, &usage, &text, pricing));
-                }
-                OpenAiStreamEvent::Incomplete { response } => {
-                    // An incomplete response still carries the final usage
-                    // envelope, and a cap-hit turn is the MOST expensive kind
-                    // (the whole output budget was spent). Dropping it here
-                    // billed every truncated turn as $0 — invisible to the
-                    // budget guard and `stella stats` alike.
-                    if let Some(u) = response.usage {
-                        usage.reported = true;
-                        usage.input_tokens = u.input_tokens;
-                        usage.output_tokens = u.output_tokens;
-                        usage.cached_input_tokens =
-                            u.input_tokens_details.map(|d| d.cached_tokens).unwrap_or(0);
-                        usage.reasoning_tokens =
-                            u.output_tokens_details.and_then(|d| d.reasoning_tokens);
-                    }
-                    let reason = response
-                        .incomplete_details
-                        .and_then(|d| d.reason)
-                        .unwrap_or_else(|| "unspecified".to_string());
-                    // Hitting the output cap is not a provider failure — it is
-                    // the ordinary "cut off mid-work" outcome that zai,
-                    // Anthropic, Gemini/Vertex and Bedrock all surface as
-                    // `FinishReason::Length`, and that the driver answers with
-                    // an in-turn continuation. Returning `Terminal` here made
-                    // this dialect the one place a truncation killed the turn
-                    // outright, and non-retryably at that: the same event, on
-                    // the same model, behaved differently depending on which
-                    // adapter carried it. Break with what accumulated and let
-                    // the engine apply one policy to every provider.
-                    if reason == "max_output_tokens" {
-                        truncated_at_limit = true;
-                        completed_seen = true;
-                        // Exit the STREAM, not just this chunk's events: a
-                        // plain `break` left the outer read loop waiting on a
-                        // keep-alive connection for the full idle timeout
-                        // after the terminal event had already arrived.
-                        break 'stream;
-                    }
-                    // Every other incompletion (content filters, and whatever
-                    // OpenAI adds later) stays terminal: those are not
-                    // "continue and it will finish" conditions, and guessing
-                    // that they are would trade a loud stop for a silent loop.
-                    return Err(ProviderError::Terminal(format!(
-                        "OpenAI response incomplete: {reason}"
-                    )));
-                }
-                OpenAiStreamEvent::Error { code, message } => {
-                    let error = classify_openai_stream_error(
-                        code.as_deref(),
-                        message.as_deref().unwrap_or_default(),
-                    );
-                    return Err(http::attach_partial(error, &usage, &text, pricing));
-                }
-                OpenAiStreamEvent::Other => {}
-            }
-        }
-    }
-
-    // EOF without `response.completed` (and without the failed/incomplete/
-    // error events handled above) is a disconnect, not a completion —
-    // whatever accumulated is a half-answer. Retryable Transport, upholding
-    // the same "never a truncated Ok" promise as the mid-stream error paths.
-    if !completed_seen {
-        return Err(http::attach_partial(
-            http::stream_ended_before_terminal("OpenAI", "response.completed"),
-            &usage,
-            &text,
-            pricing,
-        ));
-    }
-
-    let tool_calls = tool_calls
-        .into_values()
-        .map(|acc| {
-            let input = if acc.arguments.is_empty() {
-                serde_json::json!({})
-            } else {
-                serde_json::from_str(&acc.arguments).unwrap_or(Value::Null)
-            };
-            ToolCall {
-                call_id: acc.call_id,
-                name: acc.name,
-                input,
-            }
-        })
-        .collect();
-
-    Ok((text, tool_calls, usage, truncated_at_limit))
-}
+#[cfg(test)]
+mod stream_fallback_tests;
 
 #[cfg(test)]
 mod tests {
@@ -875,7 +730,10 @@ mod tests {
     // The port itself, since the impl moved to `openai/provider.rs` and this
     // file no longer imports the trait these tests dispatch through.
     use crate::provider::Provider;
-    use stella_protocol::CompletionRequest;
+    // The result types the delivery paths return: `openai.rs` itself no
+    // longer names them, since assembly moved to `stream.rs`/`unary.rs`.
+    use stella_protocol::{CompletionRequest, CompletionUsage, FinishReason, ToolCall};
+
     use stella_protocol::tool::ToolSchema;
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
