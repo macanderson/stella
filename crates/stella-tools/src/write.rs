@@ -154,7 +154,7 @@ impl WriteFile {
                 Ok(handle) => Arc::new(handle),
                 Err(e) => return ToolOutput::error(format!("cannot open workspace root: {e}")),
             };
-            if handle.stat(&path).is_ok() && !self.ledger.saw_whole_file(root, &path) {
+            if handle.stat(&path).is_ok() && !self.ledger.saw_whole_file(&scope_root, &path) {
                 return ToolOutput::error(format!(
                     "`{FILES_KEY}`[{index}]: refusing to overwrite `{path}`: this session has \
                      not been shown the whole file, and `write_file` replaces all of it. Read \
@@ -179,8 +179,8 @@ impl WriteFile {
             .await
             {
                 Ok(()) => {
-                    self.ledger.record_known(root, &path, content);
-                    self.ledger.record_coverage(root, &path, true);
+                    self.ledger.record_known(&scope_root, &path, content);
+                    self.ledger.record_coverage(&scope_root, &path, true);
                     report.push(format!("{path} — {} bytes", content.len()));
                     changes.push(crate::own_change::own_change(
                         &crate::own_change::workspace_path(root, &scope_root, &path),
@@ -245,7 +245,7 @@ impl WriteFile {
         // reason — absent, unreadable, an escape — is not evidence that
         // something is there to destroy, and the write below answers it
         // properly.
-        if handle.stat(path).is_ok() && !self.ledger.saw_whole_file(root, path) {
+        if handle.stat(path).is_ok() && !self.ledger.saw_whole_file(&scope_root, path) {
             return ToolOutput::error(format!(
                 "refusing to overwrite `{path}`: this session has not been shown the whole file, \
                  and `write_file` replaces all of it. Read it first (`read_file` with no \
@@ -263,12 +263,12 @@ impl WriteFile {
         .await
         {
             Ok(()) => {
-                self.ledger.record_known(root, path, content);
+                self.ledger.record_known(&scope_root, path, content);
                 // The model authored every byte now on disk, which is the
                 // question the guard above asks. Recorded separately from the
                 // hash because they are separate facts: `record_known` says
                 // what the content is, this says the model has seen all of it.
-                self.ledger.record_coverage(root, path, true);
+                self.ledger.record_coverage(&scope_root, path, true);
                 let bytes = content.len();
                 let change = crate::own_change::own_change(
                     &crate::own_change::workspace_path(root, &scope_root, path),
@@ -297,6 +297,107 @@ mod tests {
     /// context rather than the bare root path it used to (#3284).
     fn cx(root: impl AsRef<std::path::Path>) -> crate::ctx::ToolCtx {
         crate::ctx::ToolCtx::bare(root.as_ref().to_path_buf())
+    }
+
+    /// A session rooted at `session` that may also write inside `extra` — the
+    /// `--allow-dir` shape, and the only one in which the read ledger's key
+    /// can be ambiguous at all.
+    fn cx_with_allow_dir(
+        session: &std::path::Path,
+        extra: &std::path::Path,
+    ) -> crate::ctx::ToolCtx {
+        let scope = stella_core::workspace_scope::SessionScope::new(session.to_path_buf())
+            .with_additional([extra.to_path_buf()]);
+        crate::ctx::ToolCtx::bare(session.to_path_buf()).with_scope(scope)
+    }
+
+    /// Two roots, one relative spelling. Witness for #3781: the ledger keyed
+    /// on the root-relative remainder, so `<session>/a.txt` and
+    /// `<allow_dir>/a.txt` — different files — shared one entry, and a
+    /// whole-file read of the first satisfied the no-clobber guard for the
+    /// second. Fails on `main`: the overwrite is accepted.
+    #[tokio::test]
+    async fn a_whole_file_read_under_one_root_does_not_license_a_write_under_another() {
+        let base = scratch("multiroot_refuse")
+            .canonicalize()
+            .expect("canonical scratch");
+        let session = base.join("session");
+        let allowed = base.join("allowed");
+        std::fs::create_dir_all(&session).expect("session root");
+        std::fs::create_dir_all(&allowed).expect("allow dir");
+        std::fs::write(session.join("a.txt"), "session copy\n").expect("seed session");
+        std::fs::write(allowed.join("a.txt"), "allow-dir copy\n").expect("seed allowed");
+
+        let ctx = cx_with_allow_dir(&session, &allowed);
+        let ledger = Arc::new(ReadLedger::default());
+
+        let read = crate::read::ReadFile::with_ledger(ledger.clone())
+            .execute(&serde_json::json!({"path": "a.txt"}), &ctx)
+            .await;
+        assert!(!read.is_error(), "the session-root read must succeed");
+
+        let out = WriteFile::with_ledger(ledger)
+            .execute(
+                &serde_json::json!({
+                    "path": allowed.join("a.txt").to_string_lossy(),
+                    "content": "clobbered\n",
+                }),
+                &ctx,
+            )
+            .await;
+
+        let ToolOutput::Error { message, .. } = out else {
+            panic!("nothing has been shown of the allow-dir file: {out:?}");
+        };
+        assert!(message.contains("refusing to overwrite"), "{message}");
+        assert_eq!(
+            std::fs::read_to_string(allowed.join("a.txt")).expect("still there"),
+            "allow-dir copy\n",
+            "the boundary holds before the bytes move"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// The other half, and the reason keying alone is not the whole fix: the
+    /// read and the write must agree on which root they resolved against.
+    /// `write_file` keyed with `ctx.root()` while `read_file` keyed with the
+    /// root `resolve_for_read` picked, so an absolute key without that
+    /// correction would refuse this legitimate overwrite instead.
+    #[tokio::test]
+    async fn a_whole_file_read_of_an_allow_dir_file_licenses_writing_that_file() {
+        let base = scratch("multiroot_allow")
+            .canonicalize()
+            .expect("canonical scratch");
+        let session = base.join("session");
+        let allowed = base.join("allowed");
+        std::fs::create_dir_all(&session).expect("session root");
+        std::fs::create_dir_all(&allowed).expect("allow dir");
+        std::fs::write(allowed.join("a.txt"), "allow-dir copy\n").expect("seed allowed");
+
+        let ctx = cx_with_allow_dir(&session, &allowed);
+        let ledger = Arc::new(ReadLedger::default());
+        let target = allowed.join("a.txt").to_string_lossy().into_owned();
+
+        let read = crate::read::ReadFile::with_ledger(ledger.clone())
+            .execute(&serde_json::json!({"path": target}), &ctx)
+            .await;
+        assert!(
+            !read.is_error(),
+            "the allow-dir read must succeed: {read:?}"
+        );
+
+        let out = WriteFile::with_ledger(ledger)
+            .execute(
+                &serde_json::json!({"path": target, "content": "rewritten\n"}),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error(), "the model saw every byte of it: {out:?}");
+        assert_eq!(
+            std::fs::read_to_string(allowed.join("a.txt")).expect("rewritten"),
+            "rewritten\n"
+        );
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[tokio::test]
