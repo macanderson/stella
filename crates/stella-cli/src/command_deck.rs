@@ -299,6 +299,19 @@ impl HoldState {
     }
 }
 
+/// The persisted `ui.mid_turn_prompt` policy, or the deck's default
+/// (`queue`) when the key is absent, unreadable, or names a slug the deck does
+/// not know — chrome, never fatal, like `ui.theme`.
+fn mid_turn_prompt_policy(cfg: &Config) -> stella_tui::deck_ui::MidTurnPrompt {
+    crate::settings::Settings::load(&cfg.workspace_root)
+        .ok()
+        .and_then(|s| {
+            s.ui_mid_turn_prompt()
+                .and_then(stella_tui::deck_ui::MidTurnPrompt::parse)
+        })
+        .unwrap_or_default()
+}
+
 /// Return cancelled prompts to the FRONT of the backlog (push order:
 /// front-most last) and mirror each front-insert into the deck's queue view
 /// (`Inbound::PromptRequeued` is the exact inverse of `PromptStarted`'s
@@ -682,6 +695,7 @@ pub async fn run_deck_session(
         initial_graph: agent::graph_snapshot(&cfg.workspace_root),
         no_anim,
         accessible,
+        mid_turn_prompt: mid_turn_prompt_policy(cfg),
         ..Default::default()
     };
     // The deck owns its channel ends and runs on its own task so rendering
@@ -950,9 +964,12 @@ pub async fn run_deck_session(
                     // parked backlog. `EnqueueFront` is the deck's explicit
                     // front-insert (sent while it knows dispatch is held); a
                     // plain `Enqueue` behaves identically here because running
-                    // the text immediately IS the front of the queue.
+                    // the text immediately IS the front of the queue, and so
+                    // does `EnqueueNext` — at rest there is no turn to wait
+                    // behind.
                     Some(WorkspaceInput::Enqueue { text })
                     | Some(WorkspaceInput::EnqueueFront { text })
+                    | Some(WorkspaceInput::EnqueueNext { text })
                     | Some(WorkspaceInput::ToAgent {
                         input: UserInput::Prompt { text, .. },
                         ..
@@ -1640,6 +1657,13 @@ pub async fn run_deck_session(
                         // if a turn started before it arrived — the deck's
                         // queue view already shows it first.
                         Some(WorkspaceInput::EnqueueFront { text }) => queue.push_front(text),
+                        // The deck's default for a plain mid-turn prompt: wait
+                        // in the backlog as the lead's next turn. Deliberately
+                        // NOT drained to a sidecar — the backlog is what an
+                        // Esc-steer delivers into this turn (`steer`), and a
+                        // prompt already running on a stranger lane cannot be
+                        // steered anywhere.
+                        Some(WorkspaceInput::EnqueueNext { text }) => queue.push_back(text),
                         // The deck's queue editor mutates its own view of the
                         // backlog and mirrors each edit here so the dispatch
                         // queue never drifts from what the user is looking at.

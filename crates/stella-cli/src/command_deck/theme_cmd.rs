@@ -91,9 +91,15 @@ pub fn current_summary(cfg: &Config) -> String {
 pub fn set_theme(name: ThemeName) -> Result<String, String> {
     // Live switch first — the next frame is already this theme.
     stella_tui::theme::set_active_theme(name);
-    let ui = crate::settings::UiSettings {
-        theme: Some(name.slug().to_string()),
-    };
+    // Read-modify-write on the section, not just the file: `[ui]` also
+    // carries `mid_turn_prompt`, and a fresh struct here would erase it.
+    // An unreadable user scope falls back to a section holding only the
+    // theme — the write below then reports the same problem in its own words.
+    let mut ui = crate::settings::Settings::load_user_scope(&mut Vec::new())
+        .ok()
+        .and_then(|s| s.ui)
+        .unwrap_or_default();
+    ui.theme = Some(name.slug().to_string());
     let Some(path) = crate::settings::user_config_path() else {
         return Err(format!(
             "theme → {} for this session, but it could not be saved for next time: \

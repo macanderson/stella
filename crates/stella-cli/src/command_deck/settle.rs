@@ -131,6 +131,7 @@ where
                     }
                 }
                 Some(WorkspaceInput::EnqueueFront { text }) => queue.push_front(text),
+                Some(WorkspaceInput::EnqueueNext { text }) => queue.push_back(text),
                 Some(WorkspaceInput::QueueRemove { index }) => {
                     if index < queue.len() {
                         queue.remove(index);

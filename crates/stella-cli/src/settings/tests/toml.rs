@@ -969,6 +969,7 @@ fn a_migrated_file_round_trips_through_a_section_save() {
 
     let ui = UiSettings {
         theme: Some("stella-light".to_string()),
+        ..Default::default()
     };
     ui.save_to(&toml_path).unwrap();
 

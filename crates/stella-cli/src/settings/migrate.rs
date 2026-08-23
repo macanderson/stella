@@ -91,7 +91,7 @@ pub fn render(settings: &Settings, scope: ConfigScope) -> Result<String, String>
             toml_io::item_for(&settings.context_providers, "context_providers")?;
     }
     if let Some(ui) = &settings.ui
-        && ui.theme.is_some()
+        && !ui.is_empty()
     {
         doc["ui"] = toml_io::item_for(ui, "ui")?;
     }

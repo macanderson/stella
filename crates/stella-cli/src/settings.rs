@@ -622,6 +622,22 @@ pub struct UiSettings {
     /// `crates/stella-tui/src/palette.rs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
+    /// What a plain prompt typed at a running agent does: `queue` (the
+    /// default — wait as the lead's next turn, so Esc can steer the backlog
+    /// into the running turn), `ask` (raise the routing card), or `spawn`
+    /// (fork a sidecar lane, the original behaviour). Unset or unrecognised
+    /// keeps the default; the reader validates
+    /// ([`stella_tui::deck_ui::MidTurnPrompt::parse`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mid_turn_prompt: Option<String>,
+}
+
+impl UiSettings {
+    /// Whether every field is unset — the section would serialize to `{}`,
+    /// and the writers drop the key instead.
+    pub fn is_empty(&self) -> bool {
+        self.theme.is_none() && self.mid_turn_prompt.is_none()
+    }
 }
 
 impl UiSettings {
@@ -634,7 +650,7 @@ impl UiSettings {
     pub fn save_to(&self, path: &Path) -> Result<(), String> {
         if toml_config::path_is_toml(path) {
             let user_private = user_config_path().as_deref() == Some(path);
-            let value = self.theme.is_some().then_some(self);
+            let value = (!self.is_empty()).then_some(self);
             return toml_io::save_section(path, "ui", value, user_private);
         }
         private::reject_symlink(path)?;
@@ -647,7 +663,7 @@ impl UiSettings {
         let object = root
             .as_object_mut()
             .ok_or_else(|| format!("settings file {} is not a JSON object", path.display()))?;
-        if self.theme.is_none() {
+        if self.is_empty() {
             object.remove("ui");
         } else {
             let value =
@@ -732,6 +748,13 @@ impl Settings {
     /// the raw slug; validation is the reader's job ([`stella_tui::theme`]).
     pub fn ui_theme(&self) -> Option<&str> {
         self.ui.as_ref().and_then(|u| u.theme.as_deref())
+    }
+
+    /// The persisted mid-turn prompt policy slug (`ui.mid_turn_prompt`), if
+    /// any. Raw like [`Settings::ui_theme`]: the deck parses and applies its
+    /// default ([`stella_tui::deck_ui::MidTurnPrompt`]).
+    pub fn ui_mid_turn_prompt(&self) -> Option<&str> {
+        self.ui.as_ref().and_then(|u| u.mid_turn_prompt.as_deref())
     }
 
     /// The configured MCP registry URL, or the official default. Applied at the

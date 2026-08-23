@@ -123,6 +123,49 @@ fn esc_delivers_the_whole_prompt_queue_in_order() {
     );
 }
 
+/// **The rhythm this exists for**, end to end on the deck's side: type a
+/// prompt at a running agent and press ⏎ — it queues for the lead (no routing
+/// card, no sidecar lane); type another, ⏎ — it queues behind the first; then
+/// Esc delivers both into the running turn, in order, as one steer. The turn
+/// never completes or cancels on the way: nothing here is a `Stop`.
+///
+/// Before this the deck raised a card on the first ⏎ and the second test
+/// keystrokes would have been swallowed by it, so this fails on the old code
+/// at the first assertion.
+#[test]
+fn a_mid_turn_enter_queues_for_the_lead_and_the_next_esc_steers_the_queue() {
+    let mut model = running_model();
+    let mut ui = ready_ui();
+    for (i, prompt) in ["first correction", "second correction"]
+        .iter()
+        .enumerate()
+    {
+        for c in prompt.chars() {
+            handle_deck_key(ch(c), &model, &mut ui);
+        }
+        let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+        assert_eq!(
+            action,
+            DeckAction::Send(WorkspaceInput::EnqueueNext {
+                text: (*prompt).into()
+            }),
+            "⏎ at a running agent queues for the lead, with no card raised"
+        );
+        assert!(ui.pending_dispatch.is_none());
+        // The shell mirrors every queue input into the model the instant it
+        // is sent (`deck_shell`'s one mutation site); do the same here.
+        model.queue.enqueue((*prompt).into(), i as u64);
+    }
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Steer {
+            agent: "lead".into(),
+            texts: vec!["first correction".into(), "second correction".into()],
+        }),
+        "Esc steers the whole backlog into the running turn, in order"
+    );
+}
+
 /// And the case where Esc still means stop: nothing typed, nothing queued.
 /// With no guidance to deliver, an interrupt is the only thing the keystroke
 /// can mean — so the escape hatch never moved.

@@ -376,6 +376,7 @@ fn ui_theme_save_preserves_other_keys_and_roundtrips() {
     );
     let ui = UiSettings {
         theme: Some("stella-light".to_string()),
+        ..Default::default()
     };
     ui.save_to(&path).unwrap();
 
