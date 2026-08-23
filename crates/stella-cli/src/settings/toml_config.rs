@@ -111,11 +111,6 @@ pub struct RunSection {
     /// (`ignore_gitignore`).
     #[serde(default)]
     pub ignore_gitignore: Option<Toggle>,
-    /// `on` (the default when absent) = the deck's background watcher fixes
-    /// CI failures / conflicts on the current-branch PR and merges it green.
-    /// Same name in JSON (`autofix_prs`).
-    #[serde(default)]
-    pub autofix_prs: Option<Toggle>,
 }
 
 /// `[models]` — policy over the model catalog, not a model table.
@@ -626,7 +621,6 @@ impl TomlConfig {
             agent_engine_config,
             tools,
             ignore_gitignore: run.ignore_gitignore,
-            autofix_prs: run.autofix_prs,
             create_worktrees: run.create_worktrees,
             allowed_dirs: workspace.allowed_dirs,
             ui,

@@ -92,7 +92,6 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         agent_engine_config,
         tools,
         ignore_gitignore,
-        autofix_prs,
         create_worktrees,
         allowed_dirs,
         ui,
@@ -119,11 +118,6 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
             "ignore_gitignore",
             Posture::Merged,
             ignore_gitignore != &d.ignore_gitignore,
-        ),
-        keyed(
-            "autofix_prs",
-            Posture::Merged,
-            autofix_prs != &d.autofix_prs,
         ),
         keyed(
             "create_worktrees",
