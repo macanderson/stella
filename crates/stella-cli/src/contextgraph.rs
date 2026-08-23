@@ -270,14 +270,20 @@ impl ContextProvider for GraphProvider {
         &self.caps
     }
     async fn query(&self, query: &ContextQuery) -> Result<ContextQueryResult, HostError> {
-        let db_path = crate::search_cmd::codegraph::graph_db_path(&self.workspace_root);
-        if !db_path.exists() {
+        // No index — or a workspace whose private state will not resolve — is
+        // an empty answer, not a transport failure: this provider is one of
+        // several the host fans out to, and a workspace nobody has indexed is
+        // the ordinary case rather than a fault.
+        let db_path = crate::search_cmd::codegraph::graph_db_path(&self.workspace_root)
+            .ok()
+            .flatten();
+        let Some(db_path) = db_path else {
             return Ok(ContextQueryResult {
                 frames: Vec::new(),
                 truncated: false,
                 dropped_estimate: None,
             });
-        }
+        };
         let root = self.workspace_root.clone();
         let query = query.clone();
         let frames = tokio::task::spawn_blocking(move || {
