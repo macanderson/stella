@@ -206,7 +206,18 @@ fn stopped_fleet_attempt_never_becomes_exportable() {
         true,
     ));
     assert!(!store.execution_usage_complete(id).unwrap());
-    assert!(store.execution_rollup(id, root.path()).unwrap().is_none());
+    // The flag is what withholds it from the enterprise export
+    // (`pending_enterprise_export_page` gates on `usage_complete = 1`, covered
+    // by `stella-store`'s own
+    // `pending_page_skips_incomplete_rows_without_consuming_them`). The
+    // *rollup* is no longer that gate: since #4171 it arrives carrying the
+    // flag, because a project total that reads a stopped attempt's spend as
+    // zero is worse than one that reads it as a floor.
+    let rollup = store
+        .execution_rollup(id, root.path())
+        .unwrap()
+        .expect("a stopped attempt rolls up as a floor");
+    assert!(!rollup.usage_complete, "and is marked as one");
 }
 
 // the post-fanout PR/CI watch (--watch)

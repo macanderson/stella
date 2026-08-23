@@ -187,8 +187,8 @@ impl UsageStore {
             "INSERT OR REPLACE INTO execution_rollup \
              (project_id, execution_id, kind, prompt_digest, prompt_preview, model, provider, \
               outcome, cost_usd, input_tokens, output_tokens, duration_ms, tool_calls, \
-              files_written, produced_output, self_rating, started_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              files_written, produced_output, self_rating, started_at, usage_complete) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 r.project_id,
                 r.execution_id,
@@ -207,6 +207,7 @@ impl UsageStore {
                 r.produced_output as i64,
                 r.self_rating,
                 r.started_at,
+                r.usage_complete as i64,
             ],
         )?;
         if first_fold {
@@ -347,43 +348,6 @@ impl UsageStore {
         )?;
         tx.commit()?;
         Ok(rows.len() as u64)
-    }
-
-    /// The global report: per (org, provider, model) call counts, token and
-    /// cache totals, cost, and how many projects contributed — the query a
-    /// cross-project dashboard or `stella usage` renders. `org` filters to
-    /// one org id; `None` reports everything (NULL-org rows group as
-    /// unregistered/local).
-    pub fn global_telemetry_totals(&self, org: Option<&str>) -> Result<Vec<GlobalTelemetryRow>> {
-        let conn = self.lock();
-        let mut stmt = conn.prepare(
-            "SELECT org_id, provider, model, COUNT(*), SUM(input_tokens), SUM(output_tokens), \
-                    SUM(cache_read_tokens), SUM(cache_write_tokens), SUM(cost_usd), \
-                    COUNT(DISTINCT project_id) \
-             FROM telemetry \
-             WHERE (?1 IS NULL OR org_id = ?1) \
-             GROUP BY org_id, provider, model \
-             ORDER BY SUM(cost_usd) DESC, provider, model",
-        )?;
-        let rows = stmt.query_map(params![org], |r| {
-            Ok(GlobalTelemetryRow {
-                org_id: r.get(0)?,
-                provider: r.get(1)?,
-                model: r.get(2)?,
-                calls: r.get(3)?,
-                input_tokens: r.get(4)?,
-                output_tokens: r.get(5)?,
-                cache_read_tokens: r.get(6)?,
-                cache_write_tokens: r.get(7)?,
-                cost_usd: r.get(8)?,
-                projects: r.get(9)?,
-            })
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
     }
 
     /// Hub rows for one org not yet acknowledged by the cloud, oldest first
@@ -903,27 +867,6 @@ pub struct PruneReport {
     pub vacuumed: bool,
 }
 
-/// One line of the global telemetry report: per (org, provider, model)
-/// totals across every replicated project. A `None` org is
-/// unregistered/local usage.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GlobalTelemetryRow {
-    pub org_id: Option<String>,
-    pub provider: String,
-    pub model: String,
-    pub calls: i64,
-    pub input_tokens: i64,
-    pub output_tokens: i64,
-    pub cache_read_tokens: i64,
-    /// Cache writes are the cost side of the cache ledger: without them a
-    /// report can show a read count but never net savings (writes bill at a
-    /// premium on opt-in providers). The column was always in the hub table;
-    /// only this rollup dropped it.
-    pub cache_write_tokens: i64,
-    pub cost_usd: f64,
-    pub projects: i64,
-}
-
 /// One org-scoped hub row awaiting cloud acknowledgement.
 ///
 /// `hub_rowid` addresses the row for the monotonic cloud cursor
@@ -1030,8 +973,10 @@ pub struct QuarantinedRow {
 // The registration-time scope backfill (#406), in its own module.
 mod backfill;
 
-mod tool_report;
+mod global_report;
+pub use global_report::GlobalTelemetryRow;
 
+mod tool_report;
 pub use tool_report::ToolReportRow;
 // Drain observability: last-attempt record + cursor/backlog readers (#464).
 pub mod drain_state;

@@ -385,13 +385,13 @@ impl SubprocessWrapper {
             // A wrapper that outlives its budget is killed; without this, a
             // child that ignores the drop keeps running after the turn it was
             // gathering evidence for has been reported. It reaches the direct
-            // child and nothing else, which is all there is on non-unix.
+            // child and nothing else; the group kill below is what reaches
+            // the rest of the tree, on every platform since #3550.
             .kill_on_drop(true);
         // The rest of the tree. `after_turn` is where a plugin runs a test or a
         // benchmark, so it is the point most likely to background something,
         // and a backgrounded grandchild is exactly what `kill_on_drop` cannot
         // reach — it outlives the turn it was gathering evidence for.
-        #[cfg(unix)]
         stella_tools::exec::detach_into_own_process_group(&mut command);
 
         let mut child = command.spawn().map_err(|source| WrapperError::Spawn {
@@ -402,7 +402,6 @@ impl SubprocessWrapper {
         // before anything borrows the child, and armed immediately: between
         // here and the disarm below, every path out — a returned error, a
         // dropped future, a panic — reaps the whole group.
-        #[cfg(unix)]
         let mut guard =
             stella_tools::exec::GroupKillGuard::arm(child.id().unwrap_or(0).cast_signed());
         let (Some(stdin), Some(mut stdout), Some(mut stderr)) =
@@ -491,7 +490,6 @@ impl SubprocessWrapper {
                 // may still be writing past the ceiling, or wedged. Kill the
                 // group before answering rather than leaving the drop to reach
                 // the direct child alone.
-                #[cfg(unix)]
                 guard.kill_now();
                 // `converse` already joined the writer when it needed to
                 // report its own failure (`AnswerChannelFailed`) — nothing to
@@ -503,7 +501,6 @@ impl SubprocessWrapper {
                 return Err(error);
             }
             Err(_) => {
-                #[cfg(unix)]
                 guard.kill_now();
                 if let Some(writer) = writer.take() {
                     writer.abort();
@@ -516,7 +513,6 @@ impl SubprocessWrapper {
         };
         // The child has answered and been reaped. Anything it detached on
         // purpose is not this transport's to kill.
-        #[cfg(unix)]
         guard.disarm();
 
         // A child that answered without reading its request is not an error:

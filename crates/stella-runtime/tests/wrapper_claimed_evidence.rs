@@ -191,6 +191,7 @@ fn provenance_distinguishes_the_two_sources() {
         ObservedEvidence {
             flip: FlipObservation::Achieved,
             measurements: BTreeMap::new(),
+            detail: None,
         },
         TamperFinding::Clean,
     );

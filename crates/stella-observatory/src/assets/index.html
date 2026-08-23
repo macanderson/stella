@@ -3852,7 +3852,10 @@ async function openSession(id, quiet) {
   $("ses-skills").innerHTML = (skills.length || agents.length) ? `
     ${skills.map(s => `<div class="feed-item"><b>${esc(s.skill)}</b> —
       ${fmtInt(s.uses)} use(s), v${fmtInt(s.version)}</div>`).join("")}
-    ${agents.map(a => `<div class="feed-item"><b>${esc(a.agent)}</b>
+    ${agents.map(a => a.kind === "delegation"
+      ? `<div class="feed-item"><b>${fmtInt(a.distinct)} task delegation(s)</b>
+      <span class="badge dim">delegated</span> — ${fmtInt(a.uses)} dispatch(es)</div>`
+      : `<div class="feed-item"><b>${esc(a.agent)}</b>
       <span class="badge dim">agent</span> — ${fmtInt(a.uses)} dispatch(es)</div>`).join("")}`
     : `<div class="empty">No skills applied or subagents dispatched.</div>`;
   const mcp = d?.mcp ?? [];

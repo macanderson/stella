@@ -59,7 +59,7 @@ fn argv(manifest: &PluginManifest) -> Vec<String> {
         .expect("a plugin the host spawns declares [runtime]")
         .argv
         .iter()
-        .map(|arg| arg.replace("${plugin_dir}", &dir))
+        .map(|arg| stella_plugin::expand_plugin_dir(arg, Path::new(&dir)))
         .collect()
 }
 
@@ -390,8 +390,12 @@ fn the_shipped_manifest_asks_for_child_turn_and_nothing_else() {
     );
     assert_eq!(
         manifest.loop_grant.max_calls,
+        Some(1),
+        "main.py asks once per point, and the per-point gate is what grades that"
+    );
+    assert_eq!(
+        manifest.loop_grant.max_child_turns,
         Some(8),
-        "main.py asks once per round; the manifest number is a whole-run ChildTurns \
-         ceiling, not a per-point one — see plugin.toml's header"
+        "the whole-run ChildTurns ceiling is its own key now (#3839)"
     );
 }

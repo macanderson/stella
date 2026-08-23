@@ -705,6 +705,7 @@ fn observed_evidence_full() -> ObservedEvidence {
     ObservedEvidence {
         flip: FlipObservation::Achieved,
         measurements: BTreeMap::from([("p50_ms".to_string(), 103)]),
+        detail: Some("the retry budget is still unbounded on the timeout path".to_string()),
     }
 }
 
@@ -712,6 +713,7 @@ fn observed_evidence_minimal() -> ObservedEvidence {
     ObservedEvidence {
         flip: FlipObservation::Unobservable,
         measurements: BTreeMap::new(),
+        detail: None,
     }
 }
 

@@ -231,6 +231,14 @@ fi
   echo "A moved or renamed test is reported here because this guard keys on the"
   echo "bare function name; that is deliberate, and naming it in the PR is the"
   echo "whole cost."
+  echo ""
+  echo "AFTER EDITING THE DESCRIPTION, PUSH — do not re-run this job. In CI the"
+  echo "acknowledgement is read from PR_BODY, which is the description as it"
+  echo "stood in the event payload that started the run; a re-run replays that"
+  echo "same payload and sees the same stale text. The commit-message channel"
+  echo "cannot cover for it either: the checkout is fetch-depth 2, so the"
+  echo "\`git log\` above walks no branch history. A new commit is what carries"
+  echo "the edited description into a fresh event."
 } >&2
 
 exit 1

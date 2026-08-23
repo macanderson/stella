@@ -41,7 +41,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     role-names stat-portability module-reachability typed-errors \
                     dead-code-allows diagnostic-codes bench-suites wire-paths \
                     tokens hue-separation contrast transcript-surfaces prose \
-                    deck-fit-all-test deck-paths css-vars
+                    deck-fit-all-test deck-paths css-vars reserved-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -427,6 +427,10 @@ deck-paths-test: ## Test the deck path guard's directions (hermetic; not part of
 .PHONY: css-vars
 css-vars: ## Assert every var() in a token sheet resolves inside it (#4122)
 	@python3 ./scripts/check-css-vars.py
+
+.PHONY: reserved-paths
+reserved-paths: ## Assert no tracked path uses a Windows device name, which makes the repo unclonable there (#3550)
+	@./scripts/check-reserved-paths.sh
 
 .PHONY: dead-code-allows
 dead-code-allows: ## Assert every #[allow(dead_code)] says why, and that the count only shrinks (#3949)

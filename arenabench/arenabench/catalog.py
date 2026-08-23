@@ -31,18 +31,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .sut import repo_problem, stella_repo
+from .sut import CATALOG_SEED_REL, POSTURE_REL, repo_problem, stella_repo
 
 __all__ = ["models_payload", "parse_catalog"]
-
-#: Repo-relative homes of the two sources. Literals, like the harbor
-#: adapter's `_CATALOG_SEED_DIR` — if a crate moves, this is the line to fix.
-#:
-#: A directory since #3862 split the seed rows one module per provider.
-#: `catalog.rs` still exists and still holds `Catalog`; it just holds no rows,
-#: so a reader anchored on it parses cleanly and finds nothing.
-_CATALOG_REL = Path("crates") / "stella-model" / "src" / "catalog" / "seed"
-_POSTURE_REL = Path("bench") / "harbor_adapter" / "stella_harbor" / "posture.py"
 
 _ENTRY_HEAD = re.compile(r'\s*"([^"]+)"\s*,\s*"([^"]+)"')
 _OUTPUT_CAP = re.compile(r"with_max_output_tokens\(\s*Some\(\s*([0-9_]+)\s*\)")
@@ -110,8 +101,8 @@ def _read(repo: Path, relative: Path, what: str) -> str:
     except OSError as exc:
         raise RuntimeError(
             f"cannot read {what} at {path}: {exc.strerror}. The repo-relative "
-            "path is a literal in arenabench/catalog.py — if the file moved, "
-            "fix it there."
+            "path is a literal in arenabench/sut.py — if the file moved, fix "
+            "it there."
         ) from exc
 
 
@@ -124,20 +115,20 @@ def _read_seed_modules(repo: Path) -> list[str]:
     open-chunk misread the `#[cfg(test)]` boundary already guards against, one
     seam further out.
     """
-    seed_dir = repo / _CATALOG_REL
+    seed_dir = repo / CATALOG_SEED_REL
     try:
         modules = sorted(seed_dir.glob("*.rs"))
     except OSError as exc:
         raise RuntimeError(
             f"cannot read the model catalog seed at {seed_dir}: "
             f"{exc.strerror}. The repo-relative path is a literal in "
-            "arenabench/catalog.py — if the crate moved, fix it there."
+            "arenabench/sut.py — if the crate moved, fix it there."
         ) from exc
     if not modules:
         raise RuntimeError(
             f"the model catalog seed at {seed_dir} holds no `*.rs` module — "
-            "the repo-relative path is a literal in arenabench/catalog.py and "
-            "no longer names where the seed rows live."
+            "the repo-relative path is a literal in arenabench/sut.py and no "
+            "longer names where the seed rows live."
         )
     return [
         _read(repo, module.relative_to(repo), f"the model catalog ({module.name})")
@@ -162,12 +153,12 @@ def models_payload() -> dict[str, Any]:
         entries.extend(parse_catalog(source))
     if not entries:
         raise RuntimeError(
-            f"the model catalog at {repo / _CATALOG_REL} parsed to zero "
+            f"the model catalog at {repo / CATALOG_SEED_REL} parsed to zero "
             "entries — the parser in arenabench/catalog.py no longer matches "
             "its shape"
         )
     benchmarked = parse_benchmarked_slugs(
-        _read(repo, _POSTURE_REL, "the benchmark posture")
+        _read(repo, POSTURE_REL, "the benchmark posture")
     )
     providers: dict[str, list[dict[str, Any]]] = {}
     for entry in entries:

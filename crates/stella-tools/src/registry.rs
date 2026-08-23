@@ -697,9 +697,13 @@ impl ToolRegistry {
         std::mem::take(&mut *self.spawn_queue.lock().unwrap_or_else(|p| p.into_inner()))
     }
 
-    /// Record one invocation of an installed agent definition (see
+    /// Record one invocation of an **installed agent definition** (see
     /// [`crate::agent_use`]). `version` is the definition's pinned version at
     /// invocation time; `reason` is a short free-text why/how (may be empty).
+    ///
+    /// A `task` delegation is the log's other writer and goes through
+    /// [`crate::ctx::ToolCtx::record_agent_delegation`] — the two mint `agent`
+    /// from different name spaces, which is what the recorded kind separates.
     pub fn record_agent_use(&self, agent: &str, version: u32, reason: &str) {
         self.agent_uses
             .lock()
@@ -708,6 +712,7 @@ impl ToolRegistry {
                 agent: agent.to_string(),
                 version,
                 reason: reason.to_string(),
+                kind: crate::agent_use::AgentUseKind::Definition,
             });
     }
 

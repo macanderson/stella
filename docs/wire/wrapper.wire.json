@@ -313,6 +313,7 @@
     {
       "case": "observed_evidence/full",
       "message": {
+        "detail": "the retry budget is still unbounded on the timeout path",
         "flip": "achieved",
         "measurements": {
           "p50_ms": 103
@@ -496,6 +497,7 @@
       "message": {
         "body": {
           "evidence": {
+            "detail": "the retry budget is still unbounded on the timeout path",
             "flip": "achieved",
             "measurements": {
               "p50_ms": 103

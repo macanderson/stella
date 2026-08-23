@@ -1064,6 +1064,69 @@ class TestAPinIsObservedOnce:
         assert captured[0]["env"]["STELLA_BINARY"] == str(binary)
 
 
+def _monorepo_root() -> Path | None:
+    """The Stella checkout this package sits inside, found without the markers.
+
+    Deliberately **not** :func:`arenabench.sut.stella_repo`. The constants
+    under test below are the markers that walk-up consults, so a stale
+    spelling makes discovery answer ``None`` — and a guard resolved through it
+    would skip, defeated by exactly the drift it exists to catch.
+
+    ``crates/`` beside a git directory is what identifies the tree: ArenaBench
+    is agent-agnostic and may be its own repository, in which case there is no
+    Rust tree above it, nothing to check, and the caller skips (#3919).
+    """
+    here = Path(__file__).resolve()
+    for candidate in here.parents:
+        if (candidate / ".git").exists() and (candidate / "crates").is_dir():
+            return candidate
+    return None
+
+
+class TestTheRustPathsThisProjectSpells:
+    """One spelling per Rust-side file, checked against the tree (#4460).
+
+    Three readers across two Python projects each wrote out the model
+    catalog's path. The catalog split (#3862) moved the seed rows and broke
+    two of them — the second time a crate move did that — and the failures
+    were a bare ``FileNotFoundError`` in one place and a silent skip in the
+    other. ``arenabench.sut`` now holds the one copy this project reads
+    through; ``bench/harbor_adapter/tests/test_catalog_ceilings.py`` holds the
+    other project's, checked the same way on its own side.
+    """
+
+    def _root(self) -> Path:
+        root = _monorepo_root()
+        if root is None:
+            pytest.skip(
+                "no Stella checkout above this package — ArenaBench is "
+                "agent-agnostic and its own gate installs no Rust tree"
+            )
+        return root
+
+    def test_the_catalog_marker_names_a_file_that_exists(self) -> None:
+        root = self._root()
+        assert (root / sut.CATALOG_MODULE_REL).is_file(), (
+            f"{sut.CATALOG_MODULE_REL} is gone. It is the marker "
+            "`stella_repo()` matches on, so a stale spelling does not fail "
+            "anything — it makes the arena find no checkout at all and every "
+            "cross-language ratchet skip."
+        )
+
+    def test_the_seed_directory_holds_the_rows_the_catalog_parses(self) -> None:
+        root = self._root()
+        seed = root / sut.CATALOG_SEED_REL
+        assert sorted(seed.glob("*.rs")), (
+            f"{sut.CATALOG_SEED_REL} holds no `*.rs` module. A reader anchored "
+            "one segment short parses cleanly and finds nothing, which is how "
+            "#3862 shipped a model select with no models in it."
+        )
+
+    def test_the_posture_names_a_file_that_exists(self) -> None:
+        root = self._root()
+        assert (root / sut.POSTURE_REL).is_file(), sut.POSTURE_REL
+
+
 def test_a_failing_git_reports_what_git_said(tmp_path: Path) -> None:
     """The witness for #3402: the message survives to the log.
 

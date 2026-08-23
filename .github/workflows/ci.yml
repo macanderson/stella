@@ -386,6 +386,17 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-deck-paths.py
 
+      # A question no compiler asks and this runner cannot fail on its own:
+      # `AUX`, `CON`, `NUL` and friends are Windows device names, so git there
+      # refuses to check the path out and the repository is unclonable — while
+      # the name is perfectly legal Rust and perfectly legal POSIX. Two of them
+      # sat in this tree for as long as their modules existed. windows-check.yml
+      # does catch them, one per run, at checkout; this catches all of them at
+      # once wherever they are, on the runner every PR already waits for.
+      - name: no tracked path uses a Windows device name
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-reserved-paths.sh
+
       - name: no library crate returns Result<_, String>
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-typed-errors.py

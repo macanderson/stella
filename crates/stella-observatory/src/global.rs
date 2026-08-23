@@ -91,6 +91,25 @@ fn open_usage() -> Option<Connection> {
 /// for them: they carry real spend, and [`hub_telemetry`] — which reads the
 /// `telemetry` replica, never this query — still counts every one, dead root
 /// or not.
+///
+/// # The per-row stat is measured, and stays (#3974)
+///
+/// Filtering shipped rows left the stats: this runs `exists()` once per hub
+/// row on every 5-second refresh, forever, to rediscover that the same temp
+/// directories are still gone. #3974 asked whether that wants bounding and
+/// named the first step — separating it from the `LEFT JOIN` it shares the
+/// endpoint with. `tests/projects_endpoint_cost.rs` does that; its module doc
+/// carries the table and the command to re-run it.
+///
+/// The answer is no. At 2338 rows — the hub that prompted the question — the
+/// stat loop is 4.8 ms of a 5000 ms cycle in a release build, about half the
+/// endpoint rather than the dominant term, and both halves cost a couple of
+/// microseconds a row. It is still 0.1% at four times that size. The two
+/// available bounds each cost more than they buy: a recency `LIMIT` is
+/// unsound, because the dead bench roots are *more recent* than the live
+/// workspaces and it would drop a workspace the user can actually open; and a
+/// TTL cache puts mutable state in a module that is read-only by posture and
+/// delays a new store appearing in the switcher.
 pub fn projects(current_root: &Path) -> Value {
     let current_id = project_id_for(current_root);
     let Some(conn) = open_usage() else {

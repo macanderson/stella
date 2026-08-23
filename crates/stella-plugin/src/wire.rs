@@ -67,8 +67,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use stella_protocol::candidate::CandidateHandle;
 use stella_protocol::completion::CompletionMessage;
 
-pub(crate) use self::envelope::decode_body;
-use self::envelope::{FromEnvelope, deserialize_envelope};
+use self::envelope::deserialize_envelope;
+pub(crate) use self::envelope::{FromEnvelope, PendingBody, decode_body};
 use crate::manifest::PluginManifest;
 use crate::observed::ObservedEvidence;
 use crate::oracle::Oracle;
@@ -1034,6 +1034,36 @@ pub enum Verdict {
     },
 }
 
+impl Verdict {
+    /// Attach the wrapper's own advisory note to every clause this verdict
+    /// found unmet.
+    ///
+    /// **After the decision, never before it.** `judge` reads [`EvidenceSet`],
+    /// whose fields are closed by construction so that totality is the
+    /// compiler's job; a free-text field on that type would make it an
+    /// argument instead. So the host decides first and enriches second, and
+    /// nothing downstream of this can change a verdict — the only reader is
+    /// the correction text a held-open round renders.
+    ///
+    /// One note across every clause because that is what the plugin reported:
+    /// [`ObservedEvidence::detail`](crate::ObservedEvidence::detail) is one
+    /// observation about the turn, not a claim about a particular requirement,
+    /// and splitting it per clause would invent an attribution the plugin never
+    /// made. The renderer prints it once.
+    ///
+    /// `None` — a plugin with nothing to add, or a verdict with nothing unmet —
+    /// leaves everything exactly as `judge` left it.
+    #[must_use]
+    pub fn with_detail(mut self, detail: Option<String>) -> Self {
+        if let (Some(detail), Self::Unmet { unmet }) = (detail, &mut self) {
+            for clause in unmet.iter_mut() {
+                clause.detail = Some(detail.clone());
+            }
+        }
+        self
+    }
+}
+
 /// One clause of the definition of done that the evidence did not meet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1045,6 +1075,21 @@ pub struct UnmetRequirement {
     pub statement: String,
     /// What the evidence said.
     pub because: UnmetBecause,
+    /// What the wrapper's own process wanted the next round told, in its own
+    /// words — [`ObservedEvidence::detail`](crate::ObservedEvidence::detail),
+    /// carried here and nowhere else (#3840).
+    ///
+    /// **Never an input to a verdict.** It is attached *after* `judge` has
+    /// decided, by `Verdict::with_detail`, so the decision is still made over
+    /// [`EvidenceSet`]'s closed fields alone and `judge` is still total over
+    /// them. The only thing that reads this is the correction text a held-open
+    /// round renders, which is exactly the fidelity the built-in goal loop had
+    /// and a plugin did not: `stella_core::goal`'s `verifier_feedback_text`
+    /// hands the worker the verifier's own sentence every round, where a
+    /// plugin's correction was the same static `[requirements]` statement
+    /// however the assessment differed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 impl std::fmt::Display for UnmetRequirement {

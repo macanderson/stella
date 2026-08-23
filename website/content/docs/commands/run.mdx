@@ -48,12 +48,18 @@ A run typed at a terminal is [supervised](/docs/commands/daemon): it survives th
 
 ### Reading the outcome without changing the exit code
 
-Whatever the exit code, a finished run states its verification standing in its own
-right. `--output-format json` carries it as `status`, which is one of `completed`
-(something proved the work, or the warrant found nothing to prove), `unverified`
-(the run finished and nothing proved it), `verification_failed` (a test refuted it),
-or `aborted`. The same word is what the audit row records, and `reason` carries the
-verdict summary naming which channel fell short.
+Whatever the exit code, a finished run states how it ended in its own right.
+`--output-format json` carries that as `status`, which a raw run spells `completed`
+(the turn reached an answer) or `aborted` (the loop stopped early — budget, a
+refusal, an error), with `reason` naming the abort. Those two are the whole set:
+they are what `crates/stella-cli/src/agent/summary.rs` can emit, and the same word
+is what the audit row records.
+
+`unverified` and `verification_failed` are **not** raw-run statuses. They belonged
+to the built-in staged pipeline, which was deleted from the workspace in #3865; a
+run whose verification standing is worth reading is one handed to an installed
+verification plugin with `--pipeline <variant>`, and that plugin reports its own
+evidence.
 
 ```bash
 stella run "…" --output-format json | jq -e '.status == "completed"'

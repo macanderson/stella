@@ -79,6 +79,10 @@ CREATE TABLE IF NOT EXISTS execution_rollup (
     produced_output INTEGER NOT NULL,
     self_rating     INTEGER,
     started_at      TEXT NOT NULL,
+    -- 0 when this row's figures are a lower bound: the turn finished with at
+    -- least one paid call whose envelope never landed (#4171). Not a reason to
+    -- withhold the row -- what the receipts prove is more useful than silence.
+    usage_complete  INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (project_id, execution_id)
 );
 -- Convergence works for removals too: the batch replays on every open, so a
@@ -176,12 +180,16 @@ type HubMigration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// `user_version` i to i + 1.
 ///
 /// Append only. See the module doc for why position is the contract.
-const HUB_MIGRATIONS: [HubMigration; 2] = [
+const HUB_MIGRATIONS: [HubMigration; 3] = [
     // v0 -> v1: back-propagate #3388's door-only `kind` vocabulary, and give
     // the hub the `role` column #3395 gave the project store.
     migrate_hub_v0_to_v1,
     // v1 -> v2: seat the tool-fold ledger from what is already rolled up.
     migrate_hub_v1_to_v2,
+    // v2 -> v3: `execution_rollup` learns whether its figures are a floor
+    // (#4171). Existing rows default to 1 because the gate this replaces only
+    // ever let complete executions through.
+    migrate_hub_v2_to_v3,
 ];
 
 /// The hub schema version this build writes.
@@ -293,6 +301,32 @@ fn migrate_hub_v1_to_v2(tx: &rusqlite::Transaction<'_>) -> Result<()> {
          SELECT project_id, execution_id, substr(started_at, 1, 10) FROM execution_rollup",
         [],
     )?;
+    Ok(())
+}
+
+/// v2 -> v3: `execution_rollup` learns whether the figures on a row are exact
+/// or a floor (#4171).
+///
+/// Until #4171 an execution whose accounting was short by one call was not
+/// rolled up at all, so every project total silently read its spend as zero.
+/// It now rolls up with the flag, and the flag has to live somewhere the hub
+/// can read back.
+///
+/// `NOT NULL DEFAULT 1` is a record rather than an invention, the same shape
+/// as the store's own v29 -> v30: the gate this replaces admitted complete
+/// executions and nothing else, so every row already in a hub is exact by
+/// construction.
+///
+/// `execution_rollup` is local-only and never drained (see
+/// [`crate::content_free`]), so the new column raises no invariant-3 question
+/// — it is not a hub `telemetry` column and cannot become egress.
+fn migrate_hub_v2_to_v3(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "execution_rollup", "usage_complete")? {
+        tx.execute_batch(
+            "ALTER TABLE execution_rollup \
+             ADD COLUMN usage_complete INTEGER NOT NULL DEFAULT 1;",
+        )?;
+    }
     Ok(())
 }
 

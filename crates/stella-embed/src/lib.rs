@@ -34,7 +34,11 @@
 //!   the half that is property-tested.
 //! - [`HashEmbedder`] — the offline, pure-Rust, zero-download fallback. It is
 //!   a *lexical* projection and says so ([`SimilarityPosture::Surface`]).
-//! - [`HttpEmbedder`] (feature `http`) — the semantic backend: one
+// `HttpEmbedder` is named below without a link on purpose: the item is
+// `#[cfg(feature = "http")]`, so an intra-doc link to it is an unresolved
+// link — and a hard error — whenever the crate's docs are built on the
+// default feature set, which is what CI's doc-warnings step does (#4453).
+//! - `HttpEmbedder` (feature `http`) — the semantic backend: one
 //!   OpenAI-shaped `POST /v1/embeddings` client that speaks to Voyage
 //!   (`voyage-code-3`), OpenAI (`text-embedding-3-*`), or a local server
 //!   (Ollama, llama.cpp, TEI) at a configured base URL. This is the I/O
