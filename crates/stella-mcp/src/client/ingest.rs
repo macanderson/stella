@@ -209,11 +209,14 @@ pub(super) fn decode_call_result(tool: &str, raw: Value) -> Result<ToolOutput, M
         rendered
     };
     if result.is_error {
-        Ok(ToolOutput::error(if rendered.is_empty() {
-            format!("tool `{tool}` reported an error with no detail")
-        } else {
-            rendered
-        }))
+        Ok(ToolOutput::classified_error(
+            stella_protocol::ErrorClass::Environment,
+            if rendered.is_empty() {
+                format!("tool `{tool}` reported an error with no detail")
+            } else {
+                rendered
+            },
+        ))
     } else {
         Ok(ToolOutput::Ok {
             content: rendered,

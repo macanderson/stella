@@ -254,8 +254,17 @@ pub(super) fn runs(code: &str, g: Grammar) -> Option<Runs> {
     // Depth-first, leaves in source order. `goto_first_child` descends while
     // there is one; at a leaf we emit, then climb until a sibling exists.
     // Failing to climb means we are back at the root and the walk is done.
+    //
+    // A node whose *kind* already reads as a comment is treated as a leaf
+    // even when it has children of its own: every grammar but Rust's spells a
+    // comment as one childless token, but tree-sitter-rust's `line_comment`
+    // carries an anonymous `//` (or `/*`) marker as a real child even for a
+    // plain, non-doc comment. Descending into it split the marker from the
+    // body and let the body fall through the walk as untagged gap-fill —
+    // #4539. Stopping here instead means the whole comment, doc marker
+    // included, renders as one [`Tok::Comment`] run.
     loop {
-        if cursor.goto_first_child() {
+        if !is_comment_kind(cursor.node().kind()) && cursor.goto_first_child() {
             continue;
         }
         out.leaf(cursor.node());
@@ -402,7 +411,7 @@ fn classify(node: Node<'_>) -> Option<Tok> {
     // kinds spell an integer word inside themselves
     // (`interpreted_string_literal`), and reversing these two arms would tint
     // half a Go literal as a number.
-    if kind.contains("comment") {
+    if is_comment_kind(kind) {
         return Some(Tok::Comment);
     }
     if is_str_kind(kind) {
@@ -418,6 +427,15 @@ fn classify(node: Node<'_>) -> Option<Tok> {
         return Some(Tok::Function);
     }
     None
+}
+
+/// Comments, in every grammar's own spelling (`line_comment`/`block_comment`,
+/// or plain `comment`).
+///
+/// Shared between [`classify`] and [`runs`]'s decision not to descend into a
+/// comment node — see the module note on `line_comment` in [`runs`] (#4539).
+fn is_comment_kind(kind: &str) -> bool {
+    kind.contains("comment")
 }
 
 /// String and character literals, and the pieces grammars split them into

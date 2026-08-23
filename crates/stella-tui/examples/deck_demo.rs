@@ -115,10 +115,15 @@ async fn main() -> std::io::Result<()> {
                     }
                 }
                 WorkspaceInput::Control { agent, control } => {
+                    // Delete answers with the row's removal, like the driver.
+                    if control == AgentControl::Delete {
+                        let _ = react_tx.send(Inbound::Deregister { agent });
+                        continue;
+                    }
                     let status = match control {
                         AgentControl::Pause => AgentStatus::Paused,
                         AgentControl::Resume | AgentControl::Restart => AgentStatus::Running,
-                        AgentControl::Stop => AgentStatus::Killed,
+                        AgentControl::Stop | AgentControl::Delete => AgentStatus::Killed,
                     };
                     let _ = react_tx.send(Inbound::Status { agent, status });
                 }

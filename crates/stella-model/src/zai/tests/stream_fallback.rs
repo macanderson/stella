@@ -6,6 +6,9 @@
 //! mirroring the other delivery-path suites.
 
 use super::*;
+use crate::stream_fallback_support::{
+    empty_streams_stall_the_unary_body, hang_streams_answer_unary, stream_flag_in_body,
+};
 
 fn plain_request() -> CompletionRequest {
     CompletionRequest {
@@ -19,113 +22,6 @@ fn plain_request() -> CompletionRequest {
     }
 }
 
-/// Read one HTTP request (headers + `Content-Length` body) off a blocking
-/// socket — just enough parser for the hand-rolled server below.
-fn read_request(socket: &mut std::net::TcpStream) -> String {
-    use std::io::Read;
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 4096];
-    loop {
-        let n = socket.read(&mut chunk).unwrap_or(0);
-        if n == 0 {
-            break;
-        }
-        buf.extend_from_slice(&chunk[..n]);
-        let text = String::from_utf8_lossy(&buf);
-        if let Some(header_end) = text.find("\r\n\r\n") {
-            let content_length = text
-                .lines()
-                .find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().ok())
-                        .flatten()
-                })
-                .unwrap_or(0);
-            if buf.len() >= header_end + 4 + content_length {
-                break;
-            }
-        }
-    }
-    String::from_utf8_lossy(&buf).into_owned()
-}
-
-/// The one server shape wiremock cannot express, hand-rolled on a std
-/// thread: a streaming request is answered with its HTTP headers and then
-/// **not one body byte** — the socket is held open, exactly what a proxy
-/// buffering the SSE body looks like from the client side. A non-streaming
-/// request for the same path completes normally with `unary_body`. Returns
-/// the base URL.
-fn hang_streams_answer_unary(unary_body: &'static str) -> String {
-    use std::io::Write;
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let addr = listener.local_addr().expect("local addr");
-    std::thread::spawn(move || {
-        // Held open so the client sees a live-but-silent stream, never an
-        // EOF (which would be the *empty stream* shape instead).
-        let mut held = Vec::new();
-        for conn in listener.incoming() {
-            let Ok(mut socket) = conn else { break };
-            let request = read_request(&mut socket);
-            if request.contains("\"stream\":true") {
-                let _ =
-                    socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n");
-                let _ = socket.flush();
-                held.push(socket);
-            } else {
-                let _ = write!(
-                    socket,
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
-                     content-length: {}\r\nconnection: close\r\n\r\n{}",
-                    unary_body.len(),
-                    unary_body
-                );
-            }
-        }
-    });
-    format!("http://{addr}")
-}
-
-/// The other server shape wiremock cannot express, and the mirror image of
-/// [`hang_streams_answer_unary`]: a streaming request gets an empty 200 (the
-/// latch-arming shape), and the non-streaming request that follows gets a
-/// complete HTTP head — including a `content-length` promising far more than
-/// is sent — then a few body bytes and silence, the socket held open.
-///
-/// The head arriving is the whole point: `send()` returns, so the stall lands
-/// inside `response.text()` instead. `connection: close` on the stream
-/// response keeps the client from pooling that socket and sending the unary
-/// request down a connection this server has stopped reading, which would
-/// move the stall back into `send()` and prove nothing.
-fn empty_streams_stall_the_unary_body() -> String {
-    use std::io::Write;
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback");
-    let addr = listener.local_addr().expect("local addr");
-    std::thread::spawn(move || {
-        let mut held = Vec::new();
-        for conn in listener.incoming() {
-            let Ok(mut socket) = conn else { break };
-            let request = read_request(&mut socket);
-            if request.contains("\"stream\":true") {
-                let _ = socket.write_all(
-                    b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\
-                      content-length: 0\r\nconnection: close\r\n\r\n",
-                );
-                let _ = socket.flush();
-            } else {
-                let _ = write!(
-                    socket,
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\
-                     content-length: 4096\r\n\r\n{{\"choices\":"
-                );
-                let _ = socket.flush();
-                held.push(socket);
-            }
-        }
-    });
-    format!("http://{addr}")
-}
-
 /// The #2686 witness: a stream that hangs before its first byte fails the
 /// attempt at the first-byte deadline — retryably, so the ordinary retry
 /// machinery re-drives it — and that retry completes as a non-streaming
@@ -135,6 +31,7 @@ fn empty_streams_stall_the_unary_body() -> String {
 #[tokio::test]
 async fn a_stream_hung_before_its_first_byte_falls_back_to_a_non_streaming_request() {
     let base_url = hang_streams_answer_unary(
+        stream_flag_in_body,
         r#"{"id":"cmpl-1","choices":[{"message":{"content":"recovered without streaming"},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":5}}"#,
     );
     let provider = ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2")
@@ -357,7 +254,7 @@ async fn a_unary_read_timeout_is_terminal_never_a_retry_storm() {
 /// the retry goes unary, and its body stalls after the head.
 #[tokio::test]
 async fn a_unary_body_read_timeout_is_terminal_never_a_retry_storm() {
-    let base_url = empty_streams_stall_the_unary_body();
+    let base_url = empty_streams_stall_the_unary_body(stream_flag_in_body);
     let provider = ZaiProvider::new(ApiKey::new("sk-test-zai"), "glm-5.2")
         .with_base_url(base_url)
         .with_unary_read_timeout(Duration::from_millis(120));

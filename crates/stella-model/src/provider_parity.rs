@@ -99,9 +99,12 @@ pub(crate) fn adapter_sources() -> &'static [&'static str] {
         include_str!("anthropic/tests/cache_breakpoints.rs"),
         include_str!("anthropic/tests/thinking.rs"),
         // Beside `tests.rs`, not inside `tests/`: both parent `tests.rs`
-        // files sit on the file-size ratchet, so the two fan-in witnesses
-        // added by #4163 are declared from their adapter modules instead.
+        // files sit on the file-size ratchet, so the fan-in witnesses added
+        // by #4163 and the stream-fallback witnesses added by #2746 are
+        // declared from their adapter modules instead — even the one line
+        // that would declare a submodule from `tests.rs` is growth.
         include_str!("anthropic/parallel_tool_calls.rs"),
+        include_str!("anthropic/stream_fallback_tests.rs"),
         include_str!("zai/parallel_tool_calls.rs"),
         include_str!("bedrock/tests.rs"),
         include_str!("openai.rs"),
@@ -110,7 +113,9 @@ pub(crate) fn adapter_sources() -> &'static [&'static str] {
         // fan-in witness lives in the sibling that owns the `Provider` impl
         // the test dispatches through.
         include_str!("openai/provider.rs"),
+        include_str!("openai/stream_fallback_tests.rs"),
         include_str!("gemini/tests.rs"),
+        include_str!("gemini/tests/stream_fallback.rs"),
         include_str!("vertex.rs"),
         include_str!("zai/tests.rs"),
         include_str!("zai/tests/error_classify.rs"),
@@ -186,7 +191,16 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
                         over one 17-minute session it held for the last 17 calls and not \
                         the first 32, leaving 20 of 69 calls reading zero cached tokens \
                         for 54% of the spend. Only a non-empty upstream_pin \
-                        (provider.order + allow_fallbacks:false) actually fixes the route",
+                        (provider.order + allow_fallbacks:false) actually fixes the route. \
+                        The gateway honours the root-level placement for Anthropic routes, \
+                        verified from recorded field usage rather than a live probe \
+                        (#1854): of 1,684 anthropic/* calls this adapter made between \
+                        2026-07-26 and 2026-08-16, 1,373 read cached tokens (95.8M of \
+                        107.5M input, 89%) and 1,557 recorded cache writes — and the \
+                        adapter has only ever sent the root-level form, never per-part \
+                        markers, so with Anthropic caching being explicit opt-in through \
+                        the gateway those reads could not occur if the root field were \
+                        dropped",
             witness: "openrouter_identity_sends_root_level_cache_control",
         },
     ),
@@ -698,9 +712,10 @@ pub enum StreamFallbackPosture {
 pub static STREAM_FALLBACK_POSTURE: &[(&str, StreamFallbackPosture)] = &[
     (
         "anthropic",
-        StreamFallbackPosture::StreamingOnly {
-            note: "the Messages adapter has no unary parse path yet; extending the shared \
-                   fallback latch to this dialect is tracked in #2746",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "Messages: retried attempt re-issues the byte-identical body with \
+                        stream: false through the unary read bound (http::unary_client)",
+            witness: "an_anthropic_stream_hung_before_its_first_byte_falls_back_to_a_unary_request",
         },
     ),
     (
@@ -720,22 +735,27 @@ pub static STREAM_FALLBACK_POSTURE: &[(&str, StreamFallbackPosture)] = &[
     ),
     (
         "openai",
-        StreamFallbackPosture::StreamingOnly {
-            note: "the Responses adapter has no unary parse path yet; extending the shared \
-                   fallback latch to this dialect is tracked in #2746",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "Responses: retried attempt re-issues the byte-identical body with \
+                        stream: false through the unary read bound (http::unary_client)",
+            witness: "an_openai_stream_hung_before_its_first_byte_falls_back_to_a_unary_request",
         },
     ),
     (
         "gemini",
-        StreamFallbackPosture::StreamingOnly {
-            note: "streamGenerateContent has no unary parse path yet (generateContent would \
-                   be the fallback); tracked in #2746",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "retried attempt re-issues the byte-identical body against plain \
+                        generateContent instead of streamGenerateContent?alt=sse, through \
+                        the unary read bound (http::unary_client)",
+            witness: "a_gemini_stream_hung_before_its_first_byte_falls_back_to_generate_content",
         },
     ),
     (
         "vertex",
-        StreamFallbackPosture::StreamingOnly {
-            note: "shares gemini's streaming aggregator and its gap; tracked in #2746",
+        StreamFallbackPosture::UnaryFallback {
+            mechanism: "shares gemini's assembly and unary generateContent path under the \
+                        project-scoped URL (see the gemini row)",
+            witness: "a_vertex_stream_hung_before_its_first_byte_falls_back_to_generate_content",
         },
     ),
     (

@@ -40,6 +40,6 @@
                          │                                                                                                            │
                          │                                                                                                            │
                          │                                                                                                            │
->>>                      ╰─────────────────── ↑↓ · →↵ open · n nudge · f flag · l lead · ^x^x kill · p pause/resume · r restart · esc ╯
+>>>                      ╰───────── ↑↓ · o↵ open · n nudge · f flag · l lead · x stop·xx delete · r resume·rr restart · p pause · esc ╯
  ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

@@ -917,6 +917,33 @@ mod tests {
         }
     }
 
+    /// A Rust `//` line comment tints as one whole [`Tok::Comment`] run,
+    /// doc marker included — not a fallthrough gap.
+    ///
+    /// tree-sitter-rust spells `line_comment` with an anonymous `//` child
+    /// even for a plain, non-doc comment (every other grammar's comment node
+    /// is childless), so `grammar::runs`' leaf walk used to descend past the
+    /// marker and let the comment body fall through untagged. Fails on the
+    /// pre-#4539 code with `[("// a plain comment", None)]` — no comment run
+    /// at all — and with `[("///", None), (" a doc comment", Some(Comment))]`
+    /// for the doc-comment case, where the `///` marker itself stayed
+    /// untinted (#4539).
+    #[test]
+    fn a_rust_line_comment_is_one_tagged_run() {
+        for text in [
+            "// a plain comment",
+            "/// a doc comment",
+            "//! an inner doc comment",
+        ] {
+            let runs = tokenize(text, Lang::Rust);
+            assert_eq!(
+                runs,
+                vec![(text.to_string(), Some(Tok::Comment))],
+                "{text:?} did not render as one tagged comment run: {runs:?}"
+            );
+        }
+    }
+
     #[test]
     fn markdown_and_toml_map_from_extensions_and_fence_tags() {
         assert_eq!(lang_from_fence("json"), Some(Lang::Json));

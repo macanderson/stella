@@ -875,9 +875,13 @@ async fn an_under_budget_json_rpc_error_message_is_passed_through_verbatim() {
     client.initialize().await.unwrap();
     let set = McpToolSet::from_clients(vec![client]);
 
+    // Byte-equality witness for #3167: classifying this site must not perturb
+    // the message a caller already depended on being passed through verbatim
+    // — only the new `class` field may differ from the pre-#3167 shape.
     assert_eq!(
         set.execute("mcp__files__boom", &Value::Null).await,
-        ToolOutput::error(
+        ToolOutput::classified_error(
+            stella_protocol::ErrorClass::Environment,
             "mcp server `files` failed calling `boom`: json-rpc error -32602: \
                       unknown argument `pth`"
         )
