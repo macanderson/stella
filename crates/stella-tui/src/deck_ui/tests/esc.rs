@@ -136,10 +136,7 @@ fn esc_delivers_the_whole_prompt_queue_in_order() {
 fn a_mid_turn_enter_queues_for_the_lead_and_the_next_esc_steers_the_queue() {
     let mut model = running_model();
     let mut ui = ready_ui();
-    for (i, prompt) in ["first correction", "second correction"]
-        .iter()
-        .enumerate()
-    {
+    for (i, prompt) in ["first correction", "second correction"].iter().enumerate() {
         for c in prompt.chars() {
             handle_deck_key(ch(c), &model, &mut ui);
         }

@@ -474,6 +474,50 @@ mod tests {
         );
     }
 
+    /// The deck's default mid-turn verb waits its turn: an `EnqueueNext` that
+    /// lands in the settle window parks BEHIND what is already waiting, where
+    /// `EnqueueFront` jumps ahead of it. Before the arm existed this input
+    /// was deferred out of the window and never reached the backlog at all.
+    #[tokio::test(start_paused = true)]
+    async fn enqueue_next_during_the_settle_window_waits_behind_the_backlog() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let dir = std::env::temp_dir().join(format!("stella-settle-next-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut queue = crate::session_persist::DurableQueue::fresh(dir.clone());
+        queue.push_back("already waiting".to_string());
+
+        tx.send(WorkspaceInput::EnqueueNext {
+            text: "after it".to_string(),
+        })
+        .unwrap();
+        tx.send(WorkspaceInput::EnqueueFront {
+            text: "before both".to_string(),
+        })
+        .unwrap();
+        drop(tx);
+
+        let deferred = run_while_listening(
+            tokio::time::sleep(std::time::Duration::from_secs(30)),
+            &mut rx,
+            &mut queue,
+        )
+        .await;
+
+        assert_eq!(
+            stella_store::journal::read_queue(&dir),
+            vec![
+                "before both".to_string(),
+                "already waiting".to_string(),
+                "after it".to_string(),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(
+            deferred.is_empty(),
+            "a queue input is serviced, not deferred"
+        );
+    }
+
     #[test]
     fn a_turn_with_no_assistant_prose_is_not_a_question() {
         assert!(!ends_with_a_question(&[user("go")]));
