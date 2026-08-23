@@ -70,7 +70,7 @@ export TB_ROOT=/absolute/path/for/run/scratch     # dataset, jobs, logs
 uv sync --project "$TB_REPO/bench/harbor_adapter" --locked --extra dev
 ```
 
-That installs **Harbor 0.6.1**, and the pin is load-bearing. It is an *audited
+That installs **Harbor 0.6.1**, and the pin is required. It is an *audited
 constant*, not an upgrade candidate: the adapter refuses to launch unless
 `harbor.__version__` matches exactly, five other sites name it, and
 `.github/dependabot.yml` ignores the package because an automated bump to 0.20.0

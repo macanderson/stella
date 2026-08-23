@@ -397,7 +397,7 @@ def plan_actions(
                 # found nothing, and treating it as one is precisely how a
                 # duplicate gets opened — the ledger is the only other gate, and
                 # a fingerprint it has never seen is exactly the case where the
-                # search was load-bearing.
+                # search result was decisive.
                 search_failed = True
                 search_error = str(exc)
             for candidate in candidates:

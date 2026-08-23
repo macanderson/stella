@@ -108,7 +108,7 @@ class Dimension:
 #:
 #: ``wasted_time`` only exists for trials an operator replayed with
 #: ``arenabench flip`` — for everything else the aggregate is ``None``, which
-#: the leaderboard already reads as "no number, no crown". That is load-bearing:
+#: the leaderboard already reads as "no number, no crown". That is required:
 #: a dimension nobody measured must crown nobody, because the alternative is
 #: crowning whichever seat happens to spell "unmeasured" as zero.
 DIMENSIONS: tuple[Dimension, ...] = (

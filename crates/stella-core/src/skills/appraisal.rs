@@ -91,7 +91,7 @@ pub struct AppraisalConfig {
     /// Guards a *promotion* must not regress. Applied to the with-skill arm
     /// against the without-skill baseline.
     ///
-    /// Empty by default, and the omission is load-bearing rather than lazy: a
+    /// Empty by default, and the omission is deliberate rather than lazy: a
     /// skill is injected context, so [`Metric::Tokens`] rises in the with-skill
     /// arm **by construction**. A strict token guard would therefore refuse
     /// every skill that has ever helped anyone. An operator who wants to price

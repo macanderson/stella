@@ -23,8 +23,8 @@
 
 use serde_json::Value;
 use stella_transcript::model::{
-    Accounting, ArgRow, Call, FileChange, FileStatus, Output, Prose, Run, Status, Step, ToolKind,
-    Turn,
+    Accounting, ArgRow, Call, CallAnchor, FileChange, FileStatus, Note, NoteKind, Output, Prose,
+    Run, Status, Step, ToolKind, Turn,
 };
 
 /// Fold an execution's head row and journal rows into a renderable run.
@@ -50,6 +50,12 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
     // `tool_start` is held until its `tool_result` arrives, because a Call is
     // only complete once both halves are known.
     let mut pending: Option<(String, Call)> = None;
+    // A `step_usage` row precedes the tool calls its model call requested, so
+    // its accounting is held and attached to the next completed call — that is
+    // where the reader's eye lands, and the turn rollup sums the same figures
+    // either way.
+    let mut pending_acc: Option<Accounting> = None;
+    let mut metered = false;
     let base_ts = journal.first().and_then(|r| r["ts"].as_i64()).unwrap_or(0);
 
     for row in journal {
@@ -78,9 +84,22 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
                 finish_call(&mut call, row);
                 turn.steps.push(Step {
                     call: Some(call),
-                    accounting: Accounting::default(),
+                    accounting: pending_acc.take().unwrap_or_default(),
                     offset_ms,
                 });
+            }
+            "step_usage" => {
+                metered = true;
+                if let Some(acc) = pending_acc.take()
+                    && let Some(last) = turn.steps.last_mut()
+                {
+                    // Two model calls with no tool call between them: the
+                    // earlier call's figures still have to land somewhere the
+                    // rollup can see.
+                    last.accounting = last.accounting.merged(acc);
+                }
+                pending_acc = Some(usage_accounting(row));
+                turn.notes.push(meter_note(row, turn.steps.len()));
             }
             _ => {}
         }
@@ -98,13 +117,24 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
         });
     }
 
+    // Usage from a final model call that requested no tool (the answer call)
+    // still has to reach the rollup.
+    if let Some(acc) = pending_acc.take()
+        && let Some(last) = turn.steps.last_mut()
+    {
+        last.accounting = last.accounting.merged(acc);
+    }
+
     turn.duration_ms = turn.steps.last().map_or(0, |s| s.offset_ms);
-    if let Some(cost) = execution["cost_usd"].as_f64()
+    if !metered
+        && let Some(cost) = execution["cost_usd"].as_f64()
         && let Some(last) = turn.steps.last_mut()
     {
         // The store records one cost for the execution, not per step. It is
         // attached to the last step rather than spread evenly, because an
-        // invented per-step split would read as measured data.
+        // invented per-step split would read as measured data — and only when
+        // no `step_usage` rows metered the turn call by call, which is the
+        // measured version of the same figure.
         last.accounting.micros = micros_from_usd(cost);
     }
 
@@ -117,6 +147,106 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
         ),
         started_at: execution["started_at"].as_str().unwrap_or("").to_string(),
         turns: vec![turn],
+    }
+}
+
+/// The [`Accounting`] a `step_usage` journal row settles.
+fn usage_accounting(row: &Value) -> Accounting {
+    Accounting {
+        tokens_in: row["input_tokens"].as_u64().unwrap_or(0),
+        tokens_out: row["output_tokens"].as_u64().unwrap_or(0),
+        cached_in: row["cached_input_tokens"].as_u64().unwrap_or(0),
+        micros: micros_from_usd(row["cost_usd"].as_f64().unwrap_or(0.0)),
+    }
+}
+
+/// One metering row: which model was called, through what, and what it cost.
+///
+/// The summary is the findable line — role, route (gateway→upstream when a
+/// gateway names one), model, tokens and wall clock. Everything slower to
+/// read folds into the detail. The anchor carries the call's engine
+/// coordinates so a host page can open its prompt inspector on exactly this
+/// call.
+fn meter_note(row: &Value, before_step: usize) -> Note {
+    let role = row["role"].as_str().unwrap_or("call").to_string();
+    let provider = row["provider"].as_str().unwrap_or("?");
+    let route = match row["upstream_provider"].as_str() {
+        Some(upstream) if !upstream.is_empty() => format!("{provider}→{upstream}"),
+        _ => provider.to_string(),
+    };
+    let model = row["model"].as_str().unwrap_or("?");
+    let step = row["step"].as_u64().unwrap_or(0);
+    let billed = row["input_tokens"].as_u64().unwrap_or(0);
+    let cached = row["cached_input_tokens"].as_u64().unwrap_or(0);
+    let written = row["cache_write_tokens"].as_u64().unwrap_or(0);
+    let summary = format!(
+        "step {step} · {role} · {route} · {model} · {} in · {} out · {}",
+        fmt_tok(billed + cached),
+        fmt_tok(row["output_tokens"].as_u64().unwrap_or(0)),
+        fmt_ms(row["duration_ms"].as_u64().unwrap_or(0)),
+    );
+    let mut detail = vec![format!(
+        "input: {} uncached · {} from prompt cache · {} written to cache",
+        fmt_tok(billed),
+        fmt_tok(cached),
+        fmt_tok(written)
+    )];
+    if let Some(reasoning) = row["reasoning_tokens"].as_u64() {
+        detail.push(format!("reasoning share of output: {}", fmt_tok(reasoning)));
+    }
+    if let Some(est) = row["estimated_input_tokens"].as_u64().filter(|n| *n > 0) {
+        detail.push(format!("engine estimate before the call: {}", fmt_tok(est)));
+    }
+    detail.push(format!(
+        "cost ${:.4} · {} retries",
+        row["cost_usd"].as_f64().unwrap_or(0.0),
+        row["retries"].as_u64().unwrap_or(0)
+    ));
+    if let Some(finish) = row["finish_reason"].as_str() {
+        detail.push(if finish == "length" {
+            "stopped: length — the call hit its output ceiling".to_string()
+        } else {
+            format!("stopped: {finish}")
+        });
+    }
+    if row["complete"].as_bool() == Some(false) {
+        detail.push("provider did not supply a complete usage envelope".to_string());
+    }
+    if let Some(agent) = row["sub_agent_id"].as_str() {
+        detail.push(format!("spent by sub-agent {agent}"));
+    }
+    if let Some(body) = row["body"].as_str().filter(|b| !b.trim().is_empty()) {
+        detail.push("output (this call emits no transcript text of its own):".to_string());
+        detail.extend(body.lines().map(str::to_string));
+    }
+    Note {
+        kind: NoteKind::Meter,
+        summary,
+        detail,
+        before_step,
+        inspect: Some(CallAnchor { step, role }),
+    }
+}
+
+/// Humanize a token count: `981`, `32.4k`.
+fn fmt_tok(n: u64) -> String {
+    if n < 1_000 {
+        n.to_string()
+    } else {
+        #[allow(clippy::cast_precision_loss)] // Display only; ±1 token is invisible at 0.1k.
+        let thousands = n as f64 / 1_000.0;
+        format!("{thousands:.1}k")
+    }
+}
+
+/// `842ms` under a second, `8.4s` above.
+fn fmt_ms(ms: u64) -> String {
+    if ms < 1_000 {
+        format!("{ms}ms")
+    } else {
+        #[allow(clippy::cast_precision_loss)] // Display only.
+        let secs = ms as f64 / 1_000.0;
+        format!("{secs:.1}s")
     }
 }
 
@@ -376,6 +506,92 @@ mod tests {
         ];
         let run = build_run(&execution(), &journal);
         assert_eq!(run.turns[0].steps[0].status(), Status::Error);
+    }
+
+    #[test]
+    fn a_step_usage_row_becomes_a_metering_note_with_an_anchor() {
+        let journal = vec![
+            json!({
+                "type": "step_usage", "ts": 0, "step": 3, "role": "worker",
+                "provider": "openrouter", "upstream_provider": "anthropic",
+                "model": "claude-fable-5", "input_tokens": 3_200,
+                "output_tokens": 410, "cached_input_tokens": 29_100,
+                "cache_write_tokens": 1_200, "duration_ms": 8_400,
+                "cost_usd": 0.0134, "retries": 0,
+            }),
+            json!({
+                "type": "tool_start", "ts": 1, "call_id": "c1", "name": "bash",
+                "body": "{\"command\": \"true\"}",
+            }),
+            json!({
+                "type": "tool_result", "ts": 2, "call_id": "c1", "ok": true, "body": "",
+            }),
+        ];
+        let run = build_run(&execution(), &journal);
+        let turn = &run.turns[0];
+        assert_eq!(turn.notes.len(), 1);
+        let note = &turn.notes[0];
+        // The gateway names its upstream: the arrow is what lets a trace say
+        // which vendor's silicon served the call, not just which API was
+        // dialled.
+        assert!(
+            note.summary.contains("openrouter→anthropic"),
+            "{}",
+            note.summary
+        );
+        assert!(note.summary.contains("claude-fable-5"));
+        let anchor = note
+            .inspect
+            .as_ref()
+            .expect("a metered call is inspectable");
+        assert_eq!(anchor.step, 3);
+        assert_eq!(anchor.role, "worker");
+        // The call's figures land on the tool step it requested, so the turn
+        // rollup sums them exactly once.
+        assert_eq!(turn.steps[0].accounting.tokens_in, 3_200);
+        assert_eq!(turn.steps[0].accounting.cached_in, 29_100);
+        assert_eq!(run.rollup().micros, 13_400);
+    }
+
+    #[test]
+    fn metered_turns_do_not_double_count_the_execution_cost() {
+        // `execution()` carries cost_usd 0.0061; the metered figure must win,
+        // because it is the per-call measurement of the same money.
+        let journal = vec![
+            json!({
+                "type": "step_usage", "ts": 0, "step": 1, "role": "worker",
+                "provider": "zai", "model": "glm-5.2", "input_tokens": 10,
+                "output_tokens": 5, "cached_input_tokens": 0,
+                "cost_usd": 0.002, "duration_ms": 100, "retries": 0,
+            }),
+            json!({
+                "type": "tool_start", "ts": 1, "call_id": "c1", "name": "bash",
+                "body": "{}",
+            }),
+            json!({"type": "tool_result", "ts": 2, "call_id": "c1", "ok": true, "body": ""}),
+        ];
+        let run = build_run(&execution(), &journal);
+        assert_eq!(run.rollup().micros, 2_000);
+    }
+
+    #[test]
+    fn a_final_answer_calls_usage_reaches_the_rollup_without_a_tool_step() {
+        let journal = vec![
+            json!({
+                "type": "tool_start", "ts": 0, "call_id": "c1", "name": "bash",
+                "body": "{}",
+            }),
+            json!({"type": "tool_result", "ts": 1, "call_id": "c1", "ok": true, "body": ""}),
+            json!({
+                "type": "step_usage", "ts": 2, "step": 2, "role": "worker",
+                "provider": "zai", "model": "glm-5.2", "input_tokens": 700,
+                "output_tokens": 90, "cached_input_tokens": 0,
+                "cost_usd": 0.001, "duration_ms": 900, "retries": 0,
+            }),
+        ];
+        let run = build_run(&execution(), &journal);
+        assert_eq!(run.rollup().tokens_in, 700);
+        assert_eq!(run.rollup().tokens_out, 90);
     }
 
     #[test]

@@ -167,7 +167,7 @@ fn page_clip_matches_db_truncate_and_never_splits_a_surrogate_pair() {
     let script_path = dir.path().join("check.js");
     std::fs::write(&cases_path, Value::Array(cases).to_string()).expect("write cases");
 
-    // Two details in the driver are load-bearing.
+    // Two details in the driver are required.
     //
     // `isWellFormed` is Node 20+; where it is missing the regex is the same
     // check — an unpaired high or low surrogate anywhere in the output.
@@ -245,7 +245,7 @@ fn the_page_defines_exactly_one_clipper() {
     );
 }
 
-/// The extractor is load-bearing: if it silently grabbed the wrong text the
+/// The extractor is required: if it silently grabbed the wrong text the
 /// suite above would pass while testing nothing.
 #[test]
 fn extractor_takes_the_whole_function() {

@@ -39,6 +39,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 fn repo_root() -> PathBuf {
     // `CARGO_MANIFEST_DIR` is `<repo>/crates/stella-cli`.
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -54,6 +57,7 @@ fn repo_root() -> PathBuf {
 fn install_attempt() -> Output {
     let root = repo_root();
     Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .current_dir(&root)
         .arg("plugin")
         .arg("install")

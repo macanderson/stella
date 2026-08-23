@@ -50,7 +50,7 @@ Respond with ONLY a JSON array, no prose:
 content.
 
 The "only prefixes that actually appear in the listing below" clause is the
-load-bearing constraint: a domain whose `paths` name directories that do not
+constraint the whole design depends on: a domain whose `paths` name directories that do not
 exist tags nothing, and the failure is silent — recall simply never matches.
 
 ## The repair retry

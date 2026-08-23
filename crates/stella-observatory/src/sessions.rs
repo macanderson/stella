@@ -70,7 +70,7 @@ fn registry_dir() -> PathBuf {
 /// bargain `sent_context`'s reconstruction fold takes: this crate re-reads
 /// artifacts instead of linking the crates that write them (see the crate
 /// README's acknowledged-copies paragraph). The semantics being copied are
-/// load-bearing: a pid that does not fit `pid_t` must read as dead — an `as`
+/// required: a pid that does not fit `pid_t` must read as dead — an `as`
 /// cast would wrap it negative, and `kill(-N, 0)` probes process *group* N,
 /// which can spuriously report alive.
 pub(crate) fn pid_alive(pid: u32) -> bool {
@@ -747,7 +747,7 @@ fn session_turns(conn: &Connection, id: &str) -> Result<Vec<Value>, DbError> {
                 coalesce(t.steps, 0), coalesce(t.input_tokens, 0),
                 coalesce(t.output_tokens, 0), coalesce(t.cache_read_tokens, 0),
                 coalesce(t.cache_miss_tokens, 0), coalesce(t.retries, 0),
-                coalesce(t.duration_ms, 0),
+                coalesce(t.duration_ms, 0), coalesce(t.cache_write_tokens, 0),
                 coalesce(tc.calls, 0), coalesce(tc.errors, 0),
                 coalesce(ft.files, 0), coalesce(ft.added, 0), coalesce(ft.removed, 0)
          FROM executions e
@@ -757,7 +757,8 @@ fn session_turns(conn: &Connection, id: &str) -> Result<Vec<Value>, DbError> {
                            sum(cache_read_tokens) AS cache_read_tokens,
                            sum(cache_miss_tokens) AS cache_miss_tokens,
                            sum(retries)           AS retries,
-                           sum(duration_ms)       AS duration_ms
+                           sum(duration_ms)       AS duration_ms,
+                           sum(cache_write_tokens) AS cache_write_tokens
                     FROM telemetry GROUP BY execution_id) t
            ON t.execution_id = e.id
          LEFT JOIN (SELECT execution_id, count(*) AS calls,
@@ -796,11 +797,12 @@ fn session_turns(conn: &Connection, id: &str) -> Result<Vec<Value>, DbError> {
             "cache_miss_tokens": r.get::<_, i64>(13)?,
             "retries": r.get::<_, i64>(14)?,
             "model_ms": r.get::<_, i64>(15)?,
-            "tool_calls": r.get::<_, i64>(16)?,
-            "tool_errors": r.get::<_, i64>(17)?,
-            "files_touched": r.get::<_, i64>(18)?,
-            "lines_added": r.get::<_, i64>(19)?,
-            "lines_removed": r.get::<_, i64>(20)?,
+            "cache_write_tokens": r.get::<_, i64>(16)?,
+            "tool_calls": r.get::<_, i64>(17)?,
+            "tool_errors": r.get::<_, i64>(18)?,
+            "files_touched": r.get::<_, i64>(19)?,
+            "lines_added": r.get::<_, i64>(20)?,
+            "lines_removed": r.get::<_, i64>(21)?,
         }))
     })?;
     let mut out = Vec::new();

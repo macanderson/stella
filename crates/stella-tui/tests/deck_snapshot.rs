@@ -116,8 +116,8 @@ fn deck_renders_every_tab_with_real_content() {
         );
     }
     // Each floating card over the same scenario (D3–D6), with its
-    // load-bearing copy.
-    // Each floating card over the same scenario, with its load-bearing copy.
+    // required copy.
+    // Each floating card over the same scenario, with its required copy.
     // `/plan` is one case where there used to be three: `/tasks`, `/scope` and
     // `/witness` all described the same plan and none of them could show a
     // step's text. The verification records the witness panel carried are now

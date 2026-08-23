@@ -117,7 +117,7 @@ A spec is **not** deleted just because its feature shipped. Several of the
 documents under `design/` are cited by `file §section` from Rust doc comments
 — they are the normative reference
 the code points at, so renaming or removing one means chasing every citation in
-the same PR. What each spec's `**Status:**` header says is therefore load-bearing:
+the same PR. What each spec's `**Status:**` header says is therefore required:
 update it when the feature lands, and mark a document *Superseded* with a link to
 its replacement rather than leaving two live specs to disagree. Notes for
 features whose site docs fully replaced them (pipeline, hooks, file-touch

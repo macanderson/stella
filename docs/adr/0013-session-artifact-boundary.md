@@ -138,7 +138,7 @@ It loses on three counts:
   not know that `~/src/api` on one machine and `/work/api` on another are one
   project; only something with a concept of *project* does.
 - It contradicts the published posture. "Zero telemetry egress by default" and
-  "your keys call your provider directly" are load-bearing claims; a first-party
+  "your keys call your provider directly" are foundational claims; a first-party
   upload path makes them conditional, and the condition is the thing users are
   choosing Stella to avoid.
 - It builds the easy half twice. Storage, auth, tenancy, retention and audit
@@ -170,7 +170,7 @@ free — which is the whole reason the work journal is a git repository rather
 than a directory of JSON snapshots (`work_journal.rs:5-10`). **If a later
 implementation finds itself defining a diff format, it has taken a wrong turn.**
 
-Two consequences follow, and both are load-bearing.
+Two consequences follow, and both matter.
 
 **The artifact is a delta, not a tree.** `record` stages named paths
 individually and never `git add -A`, deliberately, because sweeping the tree

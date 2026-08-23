@@ -378,7 +378,7 @@ fn entry_body(
             let show_all = expand_thinking || expanded;
             let chevron = if show_all { "⏶" } else { "⏵" };
             // Dim, not tinted. Reasoning is the agent talking to itself; it
-            // is the *least* load-bearing text on screen, so it wears the
+            // is the text the screen depends on least, so it wears the
             // quiet warm neutral, never a hue.
             let header_style = quiet();
             let reasoning_style = Style::new()
@@ -897,7 +897,7 @@ fn entry_body(
         // Also the router's — head *and*, on ctrl+o, the argument object under
         // it. This one **delegates** rather than drawing nothing, which is the
         // difference between the two arms and the lesson of #4157: the row a
-        // gap here would cost is the call itself, the single most load-bearing
+        // gap here would cost is the call itself, the single most consequential
         // row in the transcript, and the previous version of this arm sat here
         // looking live while the router quietly took its `expanded` half away.
         // Delegating means there is one implementation to keep correct and no

@@ -34,6 +34,9 @@ use std::process::Command;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// The `[wrapper] id` the fixture declares, and what `--pipeline` names.
 const VARIANT: &str = "verdict-fixture-v1";
 
@@ -134,7 +137,9 @@ async fn mock_worker() -> MockServer {
 /// same reason: `STELLA_HOME` moves the user tier so no
 /// `~/.stella/credentials.toml` is discoverable, and every family's key is
 /// removed from the environment, so this test cannot reach a real provider
-/// with the developer's money.
+/// with the developer's money. The embedding backend the session's code-graph
+/// build warms is sealed by `without_embedder_backend` — this test spelled
+/// that removal out by hand until the shared helper landed (#4542).
 fn run(workspace: &Path, base_url: &str, extra: &[&str]) -> (Option<i32>, String) {
     let data = tempfile::tempdir().expect("data dir");
     let home = tempfile::tempdir().expect("stella home");
@@ -153,6 +158,7 @@ fn run(workspace: &Path, base_url: &str, extra: &[&str]) -> (Option<i32>, String
     args.extend_from_slice(extra);
 
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args(&args)
         .current_dir(workspace)
         .env("STELLA_HOME", home.path())
@@ -169,16 +175,6 @@ fn run(workspace: &Path, base_url: &str, extra: &[&str]) -> (Option<i32>, String
         .env_remove("AWS_ACCESS_KEY_ID")
         .env_remove("AWS_SECRET_ACCESS_KEY")
         .env_remove("AWS_SESSION_TOKEN")
-        // The session's code-graph build warms a semantic index, and
-        // `stella_embed::EmbedderEnv::from_process` resolves an HTTP backend
-        // from whichever of these is set (`stella-embed/src/http.rs`). Left
-        // inherited, a developer with `VOYAGE_API_KEY` exported has this test
-        // calling api.voyageai.com on their account — which is what happened
-        // the first time it ran here.
-        .env_remove("VOYAGE_API_KEY")
-        .env_remove("STELLA_EMBED_URL")
-        .env_remove("STELLA_EMBED_MODEL")
-        .env_remove("STELLA_EMBED_API_KEY")
         .output()
         .expect("spawn stella");
 

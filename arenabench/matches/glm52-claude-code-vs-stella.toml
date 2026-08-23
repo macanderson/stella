@@ -23,7 +23,7 @@
 # The two z.ai endpoints are NOT interchangeable, and each agent needs its own:
 #   Claude Code  Anthropic Messages   https://api.z.ai/api/anthropic
 #   Stella       OpenAI completions   https://api.z.ai/api/coding/paas/v4
-# The `/coding/` segment is load-bearing: the metered path returns
+# The `/coding/` segment is required: the metered path returns
 # HTTP 429 "Insufficient balance" even on a healthy coding plan.
 
 [match]

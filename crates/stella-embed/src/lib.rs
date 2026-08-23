@@ -72,5 +72,8 @@ mod seam;
 
 pub use hash::{HashEmbedder, l2_normalize};
 #[cfg(feature = "http")]
-pub use http::{EmbedderEnv, HttpEmbedder, Resolution, from_env, resolve};
+pub use http::{
+    ENV_VARS, EmbedderEnv, HttpEmbedder, Resolution, from_env, install_process_env, process_env,
+    resolve,
+};
 pub use seam::{EmbedError, Embedder, EmbedderFingerprint, Embedding, SimilarityPosture};

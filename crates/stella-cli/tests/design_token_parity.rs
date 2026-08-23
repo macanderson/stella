@@ -217,11 +217,14 @@ fn surfaces() -> Vec<Surface> {
         // the values WERE the instrument palette the whole time — which is the
         // argument for the row rather than for a third alignment pass.
         //
-        // No `identity`: a transcript renders a run, and nothing on it is a
-        // brand mark. Its two categorical hues (`--cyan`, `--violet`, tool
+        // No `identity` row: a transcript renders a run, and nothing on it is
+        // a brand mark. Its two categorical hues (`--gold`, `--violet`, tool
         // kind and speaker) are deliberately outside the instrument palette
         // and so outside this matrix; the file's header carries that decision
-        // and its reasoning.
+        // and its reasoning. `--gold` shares the brand's resting-gold value
+        // without being the instrument `identity` role — it colours a tool
+        // kind, so parity with the dashboard's `--identity` is coincidence,
+        // not contract.
         Surface {
             file: "crates/stella-transcript/src/html/transcript.css",
             dark: (":root {", "\n}"),

@@ -57,7 +57,7 @@ if sys.version_info < (3, 11):  # tomllib is what makes this parse rather than g
 import tomllib
 
 # Tier boundaries are memory ceilings in MB. A task lands in the first tier it
-# fits. The names are load-bearing only as labels; the concurrency each tier
+# fits. The names matter only as labels; the concurrency each tier
 # gets is computed from the host, not from the name.
 TIERS: tuple[tuple[str, int], ...] = (
     ("small", 2048),

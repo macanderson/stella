@@ -74,7 +74,7 @@ fn candidate_identity_is_pinned_to_a_literal() {
 /// migration". A file already on disk is only byte-identical to a re-render if
 /// this function's output has not moved, so the whole criterion reduces to this
 /// literal. Frontmatter key order, the `origin: auto` marker, the blank-line
-/// placement, and the `## Evidence` line format are all load-bearing: the
+/// placement, and the `## Evidence` line format are all required: the
 /// parser round-trips them, and a user's `git diff` sees every one.
 #[test]
 fn rendered_skill_bytes_are_pinned() {
@@ -247,7 +247,7 @@ fn the_eval_gate_is_checked_after_the_cap_and_the_no_clobber_guard() {
 
 /// **A known gap, pinned as such — not a guarantee being preserved.**
 ///
-/// Spec §7 makes counting *distinct tasks* rather than raw events a load-bearing
+/// Spec §7 makes counting *distinct tasks* rather than raw events a hard
 /// anti-poisoning rule: "thirty repetitions inside one task must never satisfy a
 /// three-task threshold." The shipped lexical miner cannot honor that, because
 /// [`SkillObservation`] carries no task identity at all — only a free-text

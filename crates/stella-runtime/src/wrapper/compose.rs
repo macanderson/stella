@@ -177,7 +177,7 @@ fn merge_stage_order(manifests: &[PluginManifest]) -> Result<Vec<StageName>, Wra
 /// one member of a valid composition carries requirements at all, and a union
 /// over "at most one non-empty set" cannot disagree with itself.
 ///
-/// That is a load-bearing assumption rather than an observation, which is why
+/// That is a decisive assumption rather than an observation, which is why
 /// `wrapper_composition.rs` pins both halves of it: a steering manifest
 /// declaring `[requirements]` is refused at parse, and two arbiters are
 /// refused at bind. If either ever loosens, this fold needs the check that is

@@ -56,7 +56,7 @@ use stella_protocol::Provider;
 /// Every optional seam an [`Engine`] can carry, answered in full.
 ///
 /// There is no `Default` and no `#[non_exhaustive]`; see the module doc for
-/// why both are load-bearing. Construct with a struct literal naming every
+/// why both are required. Construct with a struct literal naming every
 /// field — [`TurnCapabilities::none`] exists for the genuine no-seams case
 /// (tests, the bare loop) and is itself written as an exhaustive literal, so
 /// a new slot breaks it too.

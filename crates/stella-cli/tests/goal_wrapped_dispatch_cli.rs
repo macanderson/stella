@@ -27,6 +27,9 @@ use std::process::{Command, Stdio};
 use wiremock::matchers::{body_string_contains, method, path};
 use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// The `[wrapper] id` the fixture declares, and what must land in
 /// `executions.pipeline_variant`.
 const VARIANT: &str = "goal-fixture-v1";
@@ -267,6 +270,7 @@ async fn a_goal_run_dispatches_each_round_through_the_bound_wrapper() {
     let server = mock_two_round_goal_loop().await;
 
     let child = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args([
             "--model",
             "zai/glm-5.2",

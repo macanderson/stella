@@ -482,7 +482,7 @@ hdr "make gate vs CI"
 # CONTRIBUTING.md to GATE_STEPS, but it never saw this third copy, so it rotted
 # unguarded in exactly the direction #1437 warns about: under-reporting, which
 # lets a reader run the short list, see green, and believe the gate is green.
-# `|| true` is load-bearing, not defensive noise: this script runs under
+# `|| true` is required, not defensive noise: this script runs under
 # `set -euo pipefail`, where a command substitution that exits non-zero
 # aborts the assignment and therefore the whole run -- which would make the
 # fallback on the next line unreachable and kill setup outright on a machine

@@ -391,7 +391,7 @@ fn every_stated_hue_angle_matches_the_computation() {
 /// is always glyph-paired; it is derived now to sit 39.1° away (see
 /// `palette::WARNING`), so the excuse is retired along with the collision.
 /// The glyph pairing is still asserted — it is a good rule — but it is no
-/// longer load-bearing for telling a warning from the mark.
+/// longer required for telling a warning from the mark.
 ///
 /// What must hold now:
 ///   1. The accent is `#EFC53F`, exactly; the canvas is `#0A0A0C`, exactly.

@@ -130,7 +130,7 @@ const CANDIDATES_DIR: &str = ".stella/private/candidates";
 
 /// The branch namespace a candidate's scratch checkout is cut onto.
 ///
-/// Not `fleet/`, and that is load-bearing rather than cosmetic:
+/// Not `fleet/`, and that is required rather than cosmetic:
 /// `stella fleet gc` reclaims by namespace, so a candidate branch spelled
 /// `fleet/…` is one `gc` believes it owns and may delete out from under a
 /// live fan-out.

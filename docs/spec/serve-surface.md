@@ -655,7 +655,7 @@ mode:
   {drained, cancelled, timed_out}`.
 
   The **listener stays open for the whole drain**, which is the
-  counter-intuitive part and load-bearing: reverse RPC means a parked turn is
+  counter-intuitive part and required: reverse RPC means a parked turn is
   finished *by the host* over new connections, so closing the port would strand
   every turn the drain is waiting for — and would take `/readyz` with it.
   New work is refused by status code; the port is released when the process

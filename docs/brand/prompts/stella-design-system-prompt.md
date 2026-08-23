@@ -14,7 +14,7 @@ stella is Latin for star. The logomark is a comet — a four-point star with thr
 
 Lockup = this mark + "stella" in JetBrains Mono ExtraBold, lowercase, tracking −2%, text optically centered on the star. Clearspace = half a star-height on all sides. Minimum sizes: 16px favicon, 24px UI. Below 16px use the star alone.
 
-**The mark is the same gold on both grounds.** v3.0 and v4.0 each cut a darker stop so the mark could clear the 3:1 graphical floor on paper; v5.0 retires that stop. Two reasons, and both are load-bearing instructions rather than trivia: gold, `text` and `ink` are the only three mark colours the system has, so a fourth is out of the palette by construction; and WCAG 1.4.3 and 1.4.11 both exempt logotypes by name, which is what lets a gold mark sit on paper while gold body text there stays forbidden. `check-contrast.py` records that pairing at **1.65:1** as an exemption rather than hiding it. Do not invent a darker gold for light surfaces.
+**The mark is the same gold on both grounds.** v3.0 and v4.0 each cut a darker stop so the mark could clear the 3:1 graphical floor on paper; v5.0 retires that stop. Two reasons, and both are binding instructions rather than trivia: gold, `text` and `ink` are the only three mark colours the system has, so a fourth is out of the palette by construction; and WCAG 1.4.3 and 1.4.11 both exempt logotypes by name, which is what lets a gold mark sit on paper while gold body text there stays forbidden. `check-contrast.py` records that pairing at **1.65:1** as an exemption rather than hiding it. Do not invent a darker gold for light surfaces.
 
 ## color — hard tokens
 

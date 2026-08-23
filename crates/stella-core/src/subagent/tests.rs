@@ -3,7 +3,7 @@
 
 //! Sub-agent primitive tests (#922).
 //!
-//! The load-bearing one is
+//! The required one is
 //! [`the_parent_transcript_does_not_grow_by_the_childs_intermediate_work`] —
 //! the witness for the whole feature. Everything else pins one of the five
 //! contracts in the module docs.

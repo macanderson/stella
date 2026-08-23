@@ -309,6 +309,10 @@ const RETENTION_MIN_RECLAIM_CHARS: usize = 12_000;
 /// number bounds the effect rather than picking the divisor. #4452 is where
 /// the replay that settles it lives; this constant moves when that lands, not
 /// before.
+///
+/// MEASURED: 330 retention firings across 93 session journals (#4452). The
+/// census is why the divisor is still 2 rather than 3 or 4, so a merge that
+/// changed it would be discarding the measurement, not disagreeing with it.
 const RETENTION_TRIGGER_BUDGET_DIVISOR: u64 = 2;
 
 /// The bytes one aged payload retains: both kept ends plus the elision

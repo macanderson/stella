@@ -370,7 +370,7 @@ def harvest_script(workdir: str | None) -> str:
 def seed_script(workdir: str | None) -> str:
     """POSIX sh that materialises an uploaded archive into both tiers.
 
-    Order is load-bearing. The ``.stella/`` exclusion is written into the
+    Order is required. The ``.stella/`` exclusion is written into the
     repository's ``info/exclude`` **before** anything is unpacked into the
     workspace, so seeded artifacts can never enter a graded diff even for a
     task that shipped its own git repository (where

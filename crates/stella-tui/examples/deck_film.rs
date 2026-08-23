@@ -86,7 +86,7 @@ use stella_tui::{
 /// judders visibly on text, which is the one thing this film is made of.
 const FPS: u32 = 60;
 
-/// The recorded grid. Both numbers are load-bearing, and both are solved
+/// The recorded grid. Both numbers are required, and both are solved
 /// rather than chosen.
 ///
 /// A monospace face pins two ratios, and both are measurements: JetBrains Mono

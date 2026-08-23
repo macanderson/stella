@@ -286,7 +286,7 @@ fn install(
     // configuration half-applied is a state neither `list` nor `remove` can
     // reason about, and it would sit under a name that is now taken.
     //
-    // The order inside is load-bearing. The journal is written BEFORE the
+    // The order inside is fixed. The journal is written BEFORE the
     // config, so there is no instant in which the workspace is configured and
     // nothing on disk knows how to undo it; and the config write is what can
     // fail, which is why it is the step with an undo behind it rather than the
@@ -753,7 +753,7 @@ fn stage_and_commit(source: &Path, tier: &Path, destination: &Path) -> Result<()
 /// A name for the staging directory that no plugin can have and no concurrent
 /// install can collide with.
 ///
-/// The leading dot is load-bearing twice: [`checked_name`] refuses it as a
+/// The leading dot serves two purposes: [`checked_name`] refuses it as a
 /// plugin name, and [`roster::read_tier`] skips it — so a tree that is
 /// mid-copy is never loaded, listed or routed. The pid and counter are what
 /// make the exists-check above meaningful under concurrency: two installs of

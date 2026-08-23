@@ -233,7 +233,7 @@ The **query** scope is what this goal selected — the domains owning the files
 the goal named. Only the second may admit, and only when it is a non-empty
 proper subset of the first.
 
-The proper-subset condition is the load-bearing part. Judged against the
+The proper-subset condition is the part that makes the gate work. Judged against the
 session scope, "shares a domain with the query" and "is tagged at all" are the
 same predicate, and the second is already the filter every candidate passed to
 get here — so the rung would admit the whole in-scope corpus and the gate would
@@ -274,7 +274,7 @@ work happens
   → it is reaffirmed, corrected, or retired — reversibly
 ```
 
-Two anti-poisoning rules are load-bearing and inherited from the prior bundle:
+Two anti-poisoning rules are required and inherited from the prior bundle:
 **count distinct tasks, not events** — thirty repetitions inside one task must
 never satisfy a three-task threshold — and **never promote from model prose
 alone**; a proposal cannot cite itself.

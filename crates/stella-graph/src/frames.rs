@@ -1,7 +1,7 @@
 //! Query → [`ContextFrame`] assembly: the code graph as a built-in CGP
 //! provider.
 //!
-//! Two rules from the lessons registry are load-bearing here:
+//! Two rules from the lessons registry are required here:
 //! - **L-C4 (cite by human label):** every frame's `title` and mandatory
 //!   `citation_label` are human strings like `fn run_turn
 //!   (stella-core/src/driver.rs:160)`; the structured `id` is never presented

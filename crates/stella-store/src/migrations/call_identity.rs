@@ -19,7 +19,7 @@ use crate::{Result, tool_calls::refold_tool_calls};
 /// on `call_id`, and every history the old key collapsed is re-folded from the
 /// event log.
 ///
-/// Three steps, in this order, and the order is load-bearing:
+/// Three steps, in this order, and the order is required:
 ///
 /// 1. **Add the column.** Additive, column-guarded `ADD COLUMN`, defaulting to
 ///    `-1` = the announcing event is unknown — which is exactly what every

@@ -86,7 +86,7 @@ class TestParsing:
 
 class TestForwarding:
     def test_an_undeclared_arm_forwards_nothing_at_all(self) -> None:
-        # The load-bearing test: every measurement taken before #3032 was taken
+        # The decisive test: every measurement taken before #3032 was taken
         # with no such variable in the container, and an arm that declares no
         # tool set must still be able to say that.
         assert tool_set_env(_reader(None)) == {}

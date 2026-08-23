@@ -32,7 +32,7 @@ a running subprocess:
    produced the dead arm.
 5. **Re-dispatch** the voided tasks *and* the ones that never ran, then carry on.
 
-Two invariants hold throughout, and both are load-bearing:
+Two invariants hold throughout, and both are required:
 
 - **The token never touches disk and never enters a log, an argv, or an
   exception message.** Change detection runs on a salted digest with a
@@ -356,7 +356,7 @@ def decide(snap: Snapshot) -> Step:
     if snap.seat_running:
         # Stop before dispatching, never both in one step. Two Harbor jobs
         # writing the same job directory is a corrupted arm, and a supervisor
-        # that issues the launch in the same breath as the kill has no point
+        # that issues the launch and the kill in the same step has no point
         # at which it can confirm the old process is gone.
         return Step(
             state=SeatState.HEALING,

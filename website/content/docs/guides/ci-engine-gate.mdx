@@ -185,7 +185,7 @@ one of four verdicts, checked in this order:
 
 <LoopVerdictDiagram />
 
-The ordering is load-bearing. **Reward outranks everything** — a task that got
+The ordering is required. **Reward outranks everything** — a task that got
 solved did the work by definition, so it is never called silent no matter what
 its event stream lost. And the two verdicts that trip the gate are the two where
 *nothing happened*: `loop_broken` is `zero_work && reward != 1.0`.

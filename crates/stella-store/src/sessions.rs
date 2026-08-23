@@ -146,7 +146,7 @@ pub mod supervised {
     /// The kernel releases it when the last holder dies — crash, `SIGKILL`
     /// and power loss included — so "is the lock free?" answers "is this run
     /// over?" without trusting a pid. See [`super::SupervisorInfo::pgid`] for
-    /// why that distinction is load-bearing rather than fastidious.
+    /// why that distinction is required rather than fastidious.
     ///
     /// *Last holder*, not *the process*: a `flock` belongs to an open file
     /// description, and `fork`+`exec` inherits one. Keeping the answer equal
@@ -337,7 +337,7 @@ impl SessionRegistry {
     ///
     /// `list` reads `<id>.json` and drops anything that fails to parse, so a
     /// damaged record and a missing record are indistinguishable through it.
-    /// That conflation is load-bearing for anything destructive: `upsert`'s own
+    /// That conflation matters for anything destructive: `upsert`'s own
     /// comment records that a power cut leaves a **zero-length `<id>.json`**,
     /// which `list` skips — so a sweep that deletes "sidecars `list` doesn't
     /// account for" deletes the conversation of a session whose record was

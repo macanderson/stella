@@ -439,7 +439,7 @@ def read_json(stream):
 def write_json(stream, document):
     """One JSON document, on one line, flushed.
 
-    The **flush** is the load-bearing word: a host answering a call is blocked
+    The **flush** is the required word: a host answering a call is blocked
     reading this pipe, and a call still sitting in this process's buffer is a
     conversation that ends at the point timeout with neither side at fault. The
     newline is courtesy in both directions — the host ends a message where its

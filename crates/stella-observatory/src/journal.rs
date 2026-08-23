@@ -82,7 +82,7 @@ pub(crate) fn entries(
                               'tool_result', 'speculation_discarded',
                               'turn_parked', 'turn_woken', 'file_change',
                               'candidate_delivery', 'turn_complete',
-                              'steering_withheld')
+                              'steering_withheld', 'step_usage')
          ORDER BY seq ASC";
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
@@ -365,6 +365,43 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
         "turn_complete" => {
             out["model"] = payload["model"].clone();
             out["cost_usd"] = payload["cost_usd"].clone();
+        }
+        // The metering record of one committed model call. This is the row
+        // that makes the transcript auditable per step: which provider served
+        // the call (and, behind a gateway, which upstream vendor), what it
+        // cost in tokens / cache traffic / wall clock, and why generation
+        // stopped. Everything lifted is content-free except `output_text`,
+        // which management and compaction calls carry because they emit no
+        // separate `text` event — it takes the same clip policy as every
+        // other body.
+        "step_usage" => {
+            for key in [
+                "step",
+                "role",
+                "provider",
+                "upstream_provider",
+                "model",
+                "input_tokens",
+                "output_tokens",
+                "cached_input_tokens",
+                "cache_write_tokens",
+                "reasoning_tokens",
+                "estimated_input_tokens",
+                "cost_usd",
+                "duration_ms",
+                "retries",
+                "tool_calls",
+                "complete",
+                "finish_reason",
+                "sub_agent_id",
+            ] {
+                if !payload[key].is_null() {
+                    out[key] = payload[key].clone();
+                }
+            }
+            if let Some(text) = payload["output_text"].as_str() {
+                set_journal_body(&mut out, text, full);
+            }
         }
         _ => {}
     }
