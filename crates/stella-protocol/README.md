@@ -122,7 +122,7 @@ tests with them.
 | [`src/lib.rs`](src/lib.rs) | The crate's flat re-export surface, and the statement of the one-directional wire-compatibility rule. Read it first. |
 | [`src/event.rs`](src/event.rs) | `AgentEvent` and its supporting types — the stream-json vocabulary: every wire variant plus the tagless `Unknown` fallback. Open it to add or change anything a renderer, the journal, or a receipt consumes. |
 | [`src/journal.rs`](src/journal.rs) | `StampedEvent` / `stamped_line` — one *line* of the event stream: an `AgentEvent` plus the optional wall-clock `ts` its sink stamps at the write boundary (#2111). Deliberately not a field of the enum: a stamp is a fact about a write, the same event reaches more than one sink, and this crate owns no clock. |
-| [`src/context_event.rs`](src/context_event.rs) | `LifecycleEventEnvelope` / `LifecycleEvent` — the *other* event channel, the one an older binary can still read. Open it when a new event must survive replay by an older reader. |
+| [`src/context_event.rs`](src/context_event.rs) | `CompiledContextFrameBuilt` — the compiled-frame identity the step manifest carries, and its golden JCS vector. The `LifecycleEventEnvelope` channel that used to live here was deleted unwired (#3135). |
 | [`src/completion.rs`](src/completion.rs) | `CompletionRequest` / `CompletionResult` / `CompletionUsage`, `GenerationParams`, `FinishReason`. The one envelope every provider adapter translates to and from. |
 | [`src/provider.rs`](src/provider.rs) | The `Provider` port and `ToolCallObserver`, the seam speculative tool execution hangs on. |
 | [`src/tool.rs`](src/tool.rs) | `ToolSchema`, `ToolCall`, `ToolOutput`, `ToolResult` — the engine's single internal tool dialect. |
@@ -168,10 +168,10 @@ that do degrade — and they degrade lossily, re-serializing a future token as
 event. Adding a value to a nested vocabulary is therefore still a
 one-directional change; only `AgentEvent` variants travel backwards.
 
-`LifecycleEventEnvelope` remains the right channel for stella-*internal*
-lifecycle events — it adds an explicit `schema_version`, and it keeps internal
-vocabulary off the public cross-language event contract. It is no longer the
-only way to stay readable by an older binary.
+There is no second, internal event channel: the `LifecycleEventEnvelope` that
+used to offer one — a versioned envelope with its own `schema_version` — was
+deleted unwired (#3135). An event that must stay readable by an older binary
+rides `AgentEvent` and its `Unknown` fallback.
 
 **The `agent_event_tags!` list is a compile-time guard, not a convenience.**
 It generates both `type_tag()` and `KNOWN_TYPE_TAGS` from one variant→tag
@@ -223,14 +223,9 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
   fields crossed (`text` carried `delta`, `text_delta` carried `text`); the
   serde aliases keep those parsing, and raw-JSONL readers must stay bilingual
   the same way.
-- **`LifecycleEventEnvelope::decode` never fails, which cuts both ways.** A
-  *recognized* `event_type` whose payload doesn't deserialize degrades to
-  `LifecycleEvent::Unknown` rather than erroring, so a renamed payload field
-  looks exactly like a future event type. The `event_type` string constants are
-  a wire contract; renaming one silently reroutes the event to `Unknown`.
-- **The golden JCS vectors in `context_event.rs` are meant to break.** Renaming,
-  retyping, adding, or reordering a field in a lifecycle body breaks exactly one
-  golden line, because those canonical bytes are the preimage
+- **The golden JCS vector in `context_event.rs` is meant to break.** Renaming,
+  retyping, adding, or reordering a field of `CompiledContextFrameBuilt` breaks
+  the golden line, because those canonical bytes are the preimage
   `stella_core::context_record::hash` builds `record_hash` from. The dev-dep
   pins the same canonicalizer crate *and version* core hashes with.
 - **`ToolSchema::read_only` defaults to `false`** — the safe direction. An MCP
@@ -285,10 +280,6 @@ equality, and a mismatch is harvested as `AgentEvent::SpeculationDiscarded`.
   drops line/column from the resulting error message. Both are the price of the
   forward-compat fallback (#672), and both narrow the "a known tag with a bad
   body stays loud" guarantee slightly.
-- **`context_event.rs` has no emitter yet.** Nothing in the workspace builds or
-  reads a `LifecycleEventEnvelope`; the types and their golden JCS vectors are
-  there to pin the wire shape (and the `record_hash` preimages taken from it)
-  ahead of the first producer. It is a published contract, not live traffic.
 - **`AgentEvent::UsageIncomplete::retries` serializes as `null` when absent.**
   It is the one `Option` on the event vocabulary without
   `skip_serializing_if`, so it costs a key on every incomplete-usage line while
@@ -320,8 +311,9 @@ golden-bytes test in `context_event.rs`, which needs the
 that deserializes a hand-written pre-field JSON literal and asserts the
 default. Every `serde(default)` in this crate has one; match the neighborhood.
 
-**Adding an `AgentEvent` variant** — first ask whether it must be readable by an
-older binary. If yes, it belongs on `LifecycleEventEnvelope`, not here. If no:
+**Adding an `AgentEvent` variant** — an older binary reading the stream lands
+the new variant on `AgentEvent::Unknown`, so backwards readability is not a
+reason to invent a side channel. Then:
 
 1. Add the variant to `AgentEvent` in [`src/event.rs`](src/event.rs).
 2. Add its arm to `type_tag` — `cargo build -p stella-protocol` fails with
@@ -333,11 +325,6 @@ older binary. If yes, it belongs on `LifecycleEventEnvelope`, not here. If no:
    bookkeeping — a variant landed on `main` past the compile-enforced half and
    broke two downstream crates on separate days (#421, then #422; the first of
    those was the staged pipeline, deleted since in #3865).
-
-**Adding a lifecycle event** — add the token to `context_event::event_type`,
-the payload struct, the `LifecycleEvent` variant, the `decode` arm, and a
-golden JCS vector in the same PR. `the_event_type_tokens_are_canonical` and
-`golden_jcs_vectors_for_every_event_body` are the tests that fail until you do.
 
 **Adding a generation parameter** — put it on `GenerationParams` as an
 `Option`, with include-semantics: `None` leaves the provider default alone.
