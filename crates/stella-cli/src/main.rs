@@ -857,12 +857,17 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Some(Command::SelfDriving { cmd }) => {
             // Reads and writes ~/.stella/self-driving/<slug>/ (plus `gh` reads
             // of the defect queue) — works with zero API keys.
-            // The spend ceiling rides the session-wide global rather than a
-            // verb-local flag of the same name: `work` forwards it to the
-            // `stella run` it spawns, and a second spelling of one concept is
-            // how two definitions of a word end up disagreeing.
-            return self_driving_cmd::run(cmd, cli.globals.spend_limit)
-                .map_err(failure::CliFailure::from);
+            // The session-wide globals ride through rather than verb-local
+            // flags of the same names: `work` forwards them to the `stella
+            // run` it spawns, and a second spelling of one concept is how two
+            // definitions of a word end up disagreeing. Every routing and
+            // ceiling flag, not the spend limit alone — `--model` was accepted
+            // and dropped for as long as only that one was threaded (#4352).
+            return self_driving_cmd::run(
+                cmd,
+                &self_driving_cmd::turn_flags::TurnFlags::from_globals(&cli.globals),
+            )
+            .map_err(failure::CliFailure::from);
         }
         Some(Command::Memory { cmd }) => {
             // Reads local stores only (list) / writes one rule file

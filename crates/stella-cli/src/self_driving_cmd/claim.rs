@@ -145,6 +145,25 @@ pub(super) fn acquire(root: &Path, key: &str) -> Claim {
 /// [`super::contention::claims_naming`] deliberately treats as no contention
 /// at all.
 pub(super) fn acquire_as(root: &Path, key: &str, owner: &str) -> Claim {
+    acquire_with(root, key, owner, LEASE_TTL)
+}
+
+/// [`acquire_as`], with the lease's lifetime given rather than fixed.
+///
+/// The TTL is a parameter for the same reason the owner is one: the thing
+/// worth proving about it cannot be reached otherwise. Renewal is a *timing*
+/// behaviour, and nothing that finishes in milliseconds can observe it — every
+/// test written about this module completed far inside [`LEASE_TTL`] and so
+/// passed with the heartbeat thread deleted entirely, while a turn longer than
+/// five minutes (the normal case for a `stella run` on a real issue, not the
+/// edge case) would lose its lease mid-flight to a peer polling at that
+/// moment (#4314).
+///
+/// Deliberately **not** a setting. Five minutes is the right default and an
+/// operator has no reason to tune it — see [`LEASE_TTL`] for both directions
+/// of that argument. This makes the constant observable to a test without
+/// making it configurable by anyone.
+pub(super) fn acquire_with(root: &Path, key: &str, owner: &str, ttl: Duration) -> Claim {
     let Ok(path) = stella_store::workspace_private_sqlite_path(root, "fleet.db") else {
         return Claim::Unavailable;
     };
@@ -155,7 +174,7 @@ pub(super) fn acquire_as(root: &Path, key: &str, owner: &str) -> Claim {
         return Claim::Unavailable;
     };
 
-    let ttl_ms = u64::try_from(LEASE_TTL.as_millis()).unwrap_or(u64::MAX);
+    let ttl_ms = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX);
     match ledger.claim_dispatch(&issue_claim_key(key), owner, now_ms, ttl_ms) {
         Ok(ClaimOutcome::Granted(lease)) => Claim::Granted(hold(path, lease)),
         Ok(ClaimOutcome::Held(who)) => Claim::HeldBy(
@@ -313,6 +332,105 @@ mod tests {
 
         assert!(super::super::contention::ledger_claims(root.path(), "4301").is_empty());
         assert!(matches!(acquire(root.path(), "4301"), Claim::Granted(_)));
+    }
+
+    /// **Witness (#4314).** The heartbeat actually renews: a lease held past
+    /// its own TTL is still live.
+    ///
+    /// Every other test in this module completes in milliseconds and so passes
+    /// with the `beat` thread deleted. This one fails without it, which is the
+    /// only way to cover the case that matters — a turn longer than the TTL,
+    /// which for a real `stella run` is the normal case.
+    ///
+    /// # The numbers, and why they survive a loaded CI box
+    ///
+    /// A 2s TTL gives a 666ms beat interval (`heartbeat_interval_ms` is
+    /// TTL/3), which is comfortably coarser than the 250ms [`STOP_POLL`] the
+    /// thread wakes on — so the TTL is chosen against that constant rather
+    /// than the constant being lowered to suit a test. Beats therefore land at
+    /// roughly 750ms, 1500ms, 2250ms and 3000ms, each pushing the expiry two
+    /// seconds out.
+    ///
+    /// The assertion is at 3500ms. Without a heartbeat the row expired at
+    /// 2000ms and is gone. With one, the last beat before the assertion sets
+    /// expiry to ~5000ms — and the margin is two *consecutive* missed beats,
+    /// which is exactly what a TTL/3 cadence is designed to absorb: even if
+    /// only the 1500ms beat had landed the row is still live at 3500ms. A test
+    /// green on a laptop and red on a loaded box is worse than none.
+    #[test]
+    fn the_heartbeat_keeps_a_lease_alive_past_its_own_ttl() {
+        // Declared before the lease so it outlives it: dropping a `Lease`
+        // joins the beat thread and writes to the ledger underneath.
+        let root = workspace();
+        let ttl = Duration::from_millis(2_000);
+
+        let held = acquire_with(root.path(), "4314", PEER, ttl);
+        assert!(matches!(held, Claim::Granted(_)), "the key was free");
+
+        std::thread::sleep(Duration::from_millis(3_500));
+
+        // Through the claim-time reader, which filters on liveness
+        // (`live_dispatch_claims`) — so this asserts what a *peer* would see
+        // rather than merely that a row exists.
+        assert_eq!(
+            super::super::contention::ledger_claims(root.path(), "4314"),
+            vec![format!("issue:4314 held by {PEER}")],
+            "a lease held past its TTL must still be live — without the \
+             heartbeat a peer polling now takes an issue this loop is working"
+        );
+    }
+
+    /// A lease a rival has already taken stops the heartbeat rather than
+    /// spinning on a grant this process no longer holds.
+    ///
+    /// The `Lost` branch of [`beat`], which nothing covered. Asserted by
+    /// bounded wait rather than a bare `join`: the failure being guarded
+    /// against is a thread that never returns, and a `join` on one would hang
+    /// the suite instead of failing it.
+    #[test]
+    fn the_heartbeat_stops_when_a_rival_takes_the_key() {
+        let root = workspace();
+        let path = stella_store::workspace_private_sqlite_path(root.path(), "fleet.db")
+            .expect("a path under the workspace");
+        let ledger = Ledger::open(&path).expect("the ledger opens");
+        let key = issue_claim_key("4314");
+
+        // A grant that lapses, so the rival's claim can take the key and bump
+        // the fence — which is what makes the first grant unrenewable.
+        let ours = match ledger
+            .claim_dispatch(&key, PEER, now_ms().expect("clock"), 200)
+            .expect("the key is free")
+        {
+            ClaimOutcome::Granted(lease) => lease,
+            ClaimOutcome::Held(_) => panic!("the key was free"),
+        };
+        std::thread::sleep(Duration::from_millis(250));
+        let rival = ledger.claim_dispatch(&key, "self-driving:1", now_ms().expect("clock"), 60_000);
+        assert!(
+            matches!(rival, Ok(ClaimOutcome::Granted(_))),
+            "the lapsed key must be reclaimable: {rival:?}"
+        );
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        {
+            let stop = Arc::clone(&stop);
+            std::thread::spawn(move || {
+                beat(&path, ours, &stop);
+                let _ = tx.send(());
+            });
+        }
+
+        let returned = rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        // Set whatever happened, so a spinning thread does not outlive the
+        // test and keep writing into a tempdir that is about to go.
+        stop.store(true, Ordering::Relaxed);
+        assert!(
+            returned,
+            "`beat` must return on RenewOutcome::Lost — a rival holds the key, \
+             and beating on would be trying to extend a grant this process no \
+             longer has"
+        );
     }
 
     /// #4309's third requirement: the loop never defers on its own lease.

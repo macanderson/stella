@@ -516,6 +516,84 @@ fn remove_uninstalls_every_tier_that_holds_the_name() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// **Witness (#4302).** A project tier that will not delete must not stop the
+/// user tier from being read.
+///
+/// The sibling above proves `remove` reaches every tier when both deletes
+/// succeed. This proves it reaches every tier when the first one *fails*,
+/// which is the case a `?` on the per-directory delete silently dropped: the
+/// user copy stayed on disk, stayed in the roster, and stayed dispatched by
+/// `hook_routes` on every tool call, while the command returned before it had
+/// looked at that tier at all.
+///
+/// The tier is made undeletable rather than the package directory, because
+/// removing a directory entry needs write permission on the *parent* — a
+/// read-only tier is what actually makes `remove_dir_all` fail on the child.
+/// Unix only: `chmod` is the portable way to arrange this, and Windows
+/// permissions do not reproduce it.
+#[cfg(unix)]
+#[test]
+fn a_project_tier_that_will_not_delete_does_not_strand_the_user_copy() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("undeletable-project-tier");
+    let home = root.join("home");
+    let _paths = crate::paths::test_user_home(home.clone());
+    let source = package(&root, "vera");
+    let settings = Settings::default();
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    install(&root, &source, PluginScope::User, true, &settings).expect("the user install");
+    install(&root, &source, PluginScope::Project, true, &settings).expect("the project install");
+    let user_dir = stella_home::resolve_user_plugins_dir(Some(home.join(".stella")))
+        .expect("a home was installed, so the user tier resolves")
+        .join("vera");
+    let project_tier = stella_home::resolve_project_plugins_dir(&root);
+
+    let restore_mode = std::fs::metadata(&project_tier)
+        .expect("the project tier exists")
+        .permissions()
+        .mode();
+    std::fs::set_permissions(&project_tier, std::fs::Permissions::from_mode(0o555))
+        .expect("make the project tier read-only");
+
+    let outcome = remove(&root, "vera");
+
+    // Put the tier back before asserting, so a failed assertion still leaves a
+    // removable tree behind rather than a 0o555 directory the harness cannot
+    // clean up.
+    std::fs::set_permissions(&project_tier, std::fs::Permissions::from_mode(restore_mode))
+        .expect("restore the project tier");
+
+    let error = outcome.expect_err("a tier that would not delete must be reported, not swallowed");
+    assert!(
+        error.contains("vera"),
+        "the error must name the package: {error}"
+    );
+
+    assert!(
+        !user_dir.exists(),
+        "the user copy must be removed even though the project tier failed — leaving it \
+         on disk is the security failure `remove`'s own doc comment says it exists to \
+         prevent"
+    );
+    let (after, _) = PluginRoster::load(&root, &settings);
+    assert!(
+        after
+            .hook_routes()
+            .iter()
+            .all(|route| route.plugin != "vera"),
+        "and it must stop dispatching from the user tier: {:?}",
+        after.hook_routes()
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// **Witness (#3380, defect 2).** A package whose directory name disagrees
 /// with its manifest is listed and routed under the manifest name — so it must
 /// be removable under that name too.

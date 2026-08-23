@@ -35,6 +35,7 @@ pub(crate) mod state;
 mod stats;
 mod surface;
 mod triage;
+pub(crate) mod turn_flags;
 mod work;
 
 use std::collections::BTreeMap;
@@ -48,6 +49,7 @@ use crate::query_format::{QueryFormat, Rows};
 use crate::settings::Settings;
 use crate::timefmt::{now_unix, rfc3339_utc_now};
 use state::LoopState;
+use turn_flags::TurnFlags;
 
 // ---------------------------------------------------------------------------
 // The argument tree
@@ -520,7 +522,7 @@ pub(crate) enum RunCmd {
 // Dispatch
 // ---------------------------------------------------------------------------
 
-pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), String> {
+pub(crate) fn run(cmd: &SelfDrivingCmd, flags: &TurnFlags) -> Result<(), String> {
     // Answered before the state directory is opened, and deliberately: a host
     // asking "which verbs does this build carry" has not decided to drive
     // anything yet, and a compatibility probe that fails because a state dir
@@ -592,13 +594,13 @@ pub(crate) fn run(cmd: &SelfDrivingCmd, spend_limit: Option<f64>) -> Result<(), 
             labels,
             format,
         } => file_finding(&st, title, body, labels, *format),
-        SelfDrivingCmd::Work { issue, format } => work_issue(&st, issue, spend_limit, *format),
+        SelfDrivingCmd::Work { issue, format } => work_issue(&st, issue, flags, *format),
         SelfDrivingCmd::Deliver { cmd } => deliver_cmd(cmd),
         SelfDrivingCmd::Drive {
             max_issues,
             no_review,
             poll_secs,
-        } => drive::drive(&st, *max_issues, *no_review, spend_limit, *poll_secs),
+        } => drive::drive(&st, *max_issues, *no_review, flags, *poll_secs),
         SelfDrivingCmd::Stats { format } => stats::session_stats(&st, *format),
         SelfDrivingCmd::Triage {
             issue,
@@ -1162,7 +1164,7 @@ fn decide(
 fn work_issue(
     st: &LoopState,
     key: &str,
-    spend_limit: Option<f64>,
+    flags: &TurnFlags,
     format: QueryFormat,
 ) -> Result<(), String> {
     let root = state::repo_root();
@@ -1195,8 +1197,20 @@ fn work_issue(
         return Ok(());
     }
 
-    let outcome = work::start(&root, &issue, spend_limit, &attribution)?;
+    // What the turn is about to learn, measured either side of it — the turn
+    // is a child process writing into the repository's own state root, so a
+    // delta over that state is the only producer these counters can have. See
+    // `learning`, and `drive`'s Work arm, which measures the same window.
+    let learned_before = learning::tally(&root);
+    let outcome = work::start(&root, &issue, flags, &attribution)?;
+    let learned = learning::tally(&root).since(learned_before);
     hooks::after_issue_work(&root, &settings, &hook_issue, hook_outcome(&outcome));
+
+    // Recorded for every outcome, including the failure that returns `Err`
+    // below: a turn that ran and failed is a turn this session spent, and a
+    // counter that skipped it would make an unproductive sweep read as an
+    // idle one.
+    stats::record_work(st, learned, &outcome);
 
     match &outcome {
         work::WorkOutcome::Changed { branch, stat, .. } => {
@@ -1208,7 +1222,6 @@ fn work_issue(
             } else {
                 println!("worked #{key} — {stat}\n  branch: {branch}");
             }
-            let _ = st;
             Ok(())
         }
         work::WorkOutcome::NoChange { why } => {

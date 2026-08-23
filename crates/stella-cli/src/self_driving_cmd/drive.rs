@@ -68,6 +68,7 @@ use stella_fleet::issue_claim_key;
 
 use super::audit::{self, Action as Audit};
 use super::state::LoopState as Durable;
+use super::turn_flags::TurnFlags;
 
 /// Attempts spent on one pull request, carried across polls.
 ///
@@ -99,7 +100,7 @@ pub(super) fn drive(
     durable: &Durable,
     max_issues: u32,
     no_review: bool,
-    spend_limit: Option<f64>,
+    flags: &TurnFlags,
     poll_secs: u64,
 ) -> Result<(), String> {
     let root = super::state::repo_root();
@@ -136,7 +137,9 @@ pub(super) fn drive(
             // Named as what it is: each turn is its own `stella run` session
             // with this ceiling (#4353), so a reader does not multiply it out
             // as the run's total.
-            spend_limit.map_or(String::new(), |cap| format!(", ${cap} per turn")),
+            flags
+                .spend_limit
+                .map_or(String::new(), |cap| format!(", ${cap} per turn")),
         ),
     );
 
@@ -330,8 +333,7 @@ pub(super) fn drive(
                 // operator whose clone is full of their own leftovers wants
                 // `ContentionPolicy::ClaimsOnly`, which is what that policy
                 // is for (`stella_autonomy::ContentionPolicy`).
-                if let Err(error) =
-                    assess_one(durable, &root, &provider, &cfg, spend_limit, &mut triaged)
+                if let Err(error) = assess_one(durable, &root, &provider, &cfg, flags, &mut triaged)
                 {
                     audit::record(
                         durable,
@@ -382,6 +384,7 @@ pub(super) fn drive(
                     },
                 );
 
+                let truncated = matches!(pick, Pick::Truncated);
                 let Pick::Take(key, lease) = pick else {
                     // An empty queue is a state, not an ending.
                     //
@@ -401,13 +404,26 @@ pub(super) fn drive(
                     // exhausted queue and a queue whose every candidate went to
                     // a peer read identically, and the second is the one where
                     // something is happening.
+                    //
+                    // Truncation is said for the same reason one step further
+                    // on: a scan that stopped at its probe budget has not seen
+                    // the rest of the queue, and reporting it as "the queue
+                    // offers nothing" would state something nothing asked
+                    // (#4317).
+                    let why = if truncated {
+                        format!(
+                            "the first {MAX_CONTENTION_PROBES} candidates are all being worked \
+                             elsewhere; the rest of the queue was not examined"
+                        )
+                    } else {
+                        "the queue offers nothing this run has not already taken".to_owned()
+                    };
                     audit::record(
                         durable,
                         Audit::Waited,
                         None,
                         &format!(
-                            "the queue offers nothing this run has not already taken \
-                             ({deferrals} deferred to another actor this pass); \
+                            "{why} ({deferrals} deferred to another actor this pass); \
                              re-asking in {poll_secs}s — a new issue, or an escalation \
                              label removed, is all it takes"
                         ),
@@ -478,27 +494,26 @@ pub(super) fn drive(
                 // A `work` that cannot start is one issue's problem, not the
                 // loop's: a single leftover branch must not halt a run that has
                 // other issues to get on with.
-                let outcome =
-                    match super::work::start(&root, &resolved, spend_limit, &cfg.attribution) {
-                        Ok(outcome) => outcome,
-                        Err(reason) => {
-                            audit::record(
-                                durable,
-                                Audit::Deferred,
-                                Some(&issue.0),
-                                &format!("could not start ({reason}); moving on"),
-                            );
-                            durable.update_stats(|s| s.issues_deferred += 1);
-                            continue;
-                        }
-                    };
+                let outcome = match super::work::start(&root, &resolved, flags, &cfg.attribution) {
+                    Ok(outcome) => outcome,
+                    Err(reason) => {
+                        audit::record(
+                            durable,
+                            Audit::Deferred,
+                            Some(&issue.0),
+                            &format!("could not start ({reason}); moving on"),
+                        );
+                        durable.update_stats(|s| s.issues_deferred += 1);
+                        continue;
+                    }
+                };
                 let learned = super::learning::tally(&root).since(learned_before);
 
-                durable.update_stats(|s| {
-                    s.issues_attempted += 1;
-                    s.turns_run += 1;
-                    learned.add_to(s);
-                });
+                // Every counter this unit moves, in one write — shared with the
+                // one-shot `work` verb so the two cannot disagree about what a
+                // work unit did (#4306). The audit lines below stay here: they
+                // are the loop's narration, not the unit's arithmetic.
+                super::stats::record_work(durable, learned, &outcome);
 
                 match outcome {
                     super::work::WorkOutcome::Changed {
@@ -510,7 +525,6 @@ pub(super) fn drive(
                             Some(&issue.0),
                             &format!("the turn left changes — {stat}"),
                         );
-                        durable.update_stats(|s| s.issues_changed += 1);
 
                         // Proved here, in the worktree that holds the change,
                         // before anyone is asked to look at it. On a repository
@@ -633,7 +647,6 @@ pub(super) fn drive(
                             Some(&issue.0),
                             &format!("the turn changed nothing ({why}); worktree released"),
                         );
-                        durable.update_stats(|s| s.issues_no_change += 1);
                     }
 
                     super::work::WorkOutcome::Failed { reason } => {
@@ -643,16 +656,6 @@ pub(super) fn drive(
                             Some(&issue.0),
                             &format!("the turn did not complete: {reason}"),
                         );
-                        durable.update_stats(|s| {
-                            s.issues_failed += 1;
-                            // A turn stopped by its ceiling is a budget fact,
-                            // not a sign the issue is unworkable; conflating
-                            // them would make a too-small allowance look like a
-                            // hard backlog.
-                            if reason.contains("budget exceeded") {
-                                s.turns_over_budget += 1;
-                            }
-                        });
                         escalate(durable, &provider, &cfg, &resolved.key, &reason);
                     }
                 }
@@ -871,7 +874,7 @@ fn assess_one(
     root: &std::path::Path,
     provider: &crate::issue_provider::GhIssueProvider,
     cfg: &super::config::LoopConfig,
-    spend_limit: Option<f64>,
+    flags: &TurnFlags,
     triaged: &mut std::collections::HashSet<String>,
 ) -> Result<(), String> {
     let unassessed = super::backlog::unassessed(provider, &cfg.triage)?;
@@ -895,7 +898,7 @@ fn assess_one(
         .unwrap_or_default();
 
     let prompt = super::triage::prompt(&issue, &body, &cfg.triage);
-    let output = super::work::run_turn(root, root, &prompt, spend_limit)?;
+    let output = super::work::run_turn(root, root, &prompt, flags)?;
 
     let Some(assessment) = super::triage::parse(&output, &cfg.triage) else {
         super::backlog::escalate_blocking(
@@ -1131,7 +1134,38 @@ enum Pick {
     Take(String, Option<super::claim::Lease>),
     /// Every candidate was taken or deferred.
     Exhausted,
+    /// The probe budget ran out with candidates still unexamined.
+    ///
+    /// Distinct from [`Pick::Exhausted`] because the two want different
+    /// sentences from the caller: an exhausted queue means the loop has looked
+    /// at everything and found nothing, while this means it stopped looking. A
+    /// truncated scan reported as an empty one would tell an operator the rest
+    /// of the backlog was clear when nothing had asked.
+    Truncated,
 }
+
+/// How many contention probes one pass of [`next_claimable`] may spend.
+///
+/// Each probe is one `gh pr list --search` call plus two `git` reads and a
+/// SQLite open ([`super::contention::for_issue`]), and a deferral deliberately
+/// writes no `spent` entry — a peer finishing must let the loop take the issue
+/// on a later pass — so an uncapped walk re-probes the whole contended prefix
+/// on **every** poll, forever. Fifty contended issues at the top of the queue
+/// was fifty search calls per poll, indefinitely (#4317).
+///
+/// Twenty, from GitHub's search rate limit rather than taste: that endpoint
+/// allows 30 requests per minute, and the default poll interval is 45s, so a
+/// pass may spend about 22 before a sustained walk outruns the limit. Twenty
+/// leaves headroom for the other reads a pass makes and is far deeper than the
+/// case this bound exists for — if the top twenty candidates are all contended,
+/// the queue is saturated and waiting a poll interval is the right move, not a
+/// deeper scan.
+///
+/// The failure it prevents is quiet, which is why it is a cap and not a
+/// warning: a rate-limited `gh` **fails open** here, so contention detection
+/// degrades to nothing at exactly the moment it is most needed rather than
+/// raising an error anyone would see.
+const MAX_CONTENTION_PROBES: u32 = 20;
 
 /// The first issue on the ranked queue this run may actually start.
 ///
@@ -1157,6 +1191,13 @@ enum Pick {
 /// It is also what makes the run *visible* to a peer's `seen`: the claim-time
 /// worktree probe deliberately cannot see a peer under the loop's own root, so
 /// the lease is the only thing left that can say a turn is in flight (#4300).
+///
+/// # The walk is bounded, and says when it stopped early
+///
+/// At most [`MAX_CONTENTION_PROBES`] probes per pass, after which it returns
+/// [`Pick::Truncated`] rather than [`Pick::Exhausted`] — see both for why the
+/// distinction has to reach the audit line. The bound is on probes, not on
+/// candidates: skipping something already taken is free.
 fn next_claimable(
     ranked: impl IntoIterator<Item = String>,
     taken: impl Fn(&str) -> bool,
@@ -1165,10 +1206,19 @@ fn next_claimable(
     claim: impl Fn(&str) -> super::claim::Claim,
     mut deferred: impl FnMut(&str, &[String]),
 ) -> Pick {
+    let mut probes = 0_u32;
     for key in ranked {
         if taken(&key) {
             continue;
         }
+        // Counted here rather than per candidate: a `taken` candidate costs
+        // nothing — no `gh` call, no git read — so spending budget on one
+        // would let a long prefix of issues this run already holds shorten
+        // the walk that matters.
+        if probes >= MAX_CONTENTION_PROBES {
+            return Pick::Truncated;
+        }
+        probes += 1;
         match contention_verdict(policy, &seen(&key)) {
             ContentionVerdict::Proceed => match claim(&key) {
                 super::claim::Claim::Granted(lease) => return Pick::Take(key, Some(lease)),
@@ -1264,121 +1314,4 @@ fn report(durable: &Durable, tally: &Tally) -> Result<(), String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    // Named rather than reached through `super::claim`: inside this module
-    // `super` is `drive`, not `self_driving_cmd`, and `crate::ingest_cmd`
-    // has a private `Claim` of its own that rustc offers when the path is
-    // wrong — a confusing suggestion for a plain scoping slip.
-    use crate::self_driving_cmd::claim::Claim;
-
-    /// A ranked queue whose top entry a peer is holding yields the next one,
-    /// and says why it skipped.
-    ///
-    /// The second half is what stops this passing vacuously: the identical
-    /// input under [`ContentionPolicy::Proceed`] must take the contended
-    /// candidate, so a `next_claimable` that ignored the verdict entirely
-    /// would fail the first half rather than satisfy both.
-    #[test]
-    fn a_candidate_a_peer_is_working_is_skipped_with_evidence() {
-        let ranked = || ["3691".to_owned(), "3702".to_owned()];
-        let seen = |key: &str| {
-            if key == "3691" {
-                Contention {
-                    local_worktrees: vec!["/tmp/wip-3691-preserved".to_owned()],
-                    ..Contention::default()
-                }
-            } else {
-                Contention::default()
-            }
-        };
-
-        let mut skipped: Vec<(String, Vec<String>)> = Vec::new();
-        let pick = next_claimable(
-            ranked(),
-            |_| false,
-            ContentionPolicy::Defer,
-            seen,
-            |_| Claim::Unavailable,
-            |key, evidence| skipped.push((key.to_owned(), evidence.to_vec())),
-        );
-
-        assert!(matches!(&pick, Pick::Take(key, _) if key == "3702"));
-        assert_eq!(
-            skipped,
-            vec![(
-                "3691".to_owned(),
-                vec!["local worktree: /tmp/wip-3691-preserved".to_owned()]
-            )]
-        );
-
-        let mut skipped_under_proceed: Vec<String> = Vec::new();
-        let pick = next_claimable(
-            ranked(),
-            |_| false,
-            ContentionPolicy::Proceed,
-            seen,
-            |_| Claim::Unavailable,
-            |key, _| skipped_under_proceed.push(key.to_owned()),
-        );
-
-        assert!(matches!(&pick, Pick::Take(key, _) if key == "3691"));
-        assert!(skipped_under_proceed.is_empty());
-    }
-
-    /// A peer that took the lease *between* the probe and the write is one
-    /// more deferral, not the end of the pass.
-    ///
-    /// This is the race the read-only probe structurally cannot close — both
-    /// loops can read "free" before either writes — so the loser has to keep
-    /// walking the queue, with the same audit line and the same counter as any
-    /// other contention (#4300).
-    #[test]
-    fn a_candidate_whose_lease_a_peer_won_is_skipped_like_any_other_deferral() {
-        let mut skipped: Vec<(String, Vec<String>)> = Vec::new();
-        let pick = next_claimable(
-            ["1".to_owned(), "2".to_owned()],
-            |_| false,
-            ContentionPolicy::Defer,
-            |_| Contention::default(),
-            |key| {
-                if key == "1" {
-                    Claim::HeldBy("self-driving:99999".to_owned())
-                } else {
-                    Claim::Unavailable
-                }
-            },
-            |key, evidence| skipped.push((key.to_owned(), evidence.to_vec())),
-        );
-
-        assert!(matches!(&pick, Pick::Take(key, None) if key == "2"));
-        assert_eq!(
-            skipped,
-            vec![(
-                "1".to_owned(),
-                vec!["ledger claim: issue:1 held by self-driving:99999".to_owned()]
-            )]
-        );
-    }
-
-    /// A queue whose every candidate is contended is exhausted, not merely
-    /// stalled on the first one.
-    #[test]
-    fn a_fully_contended_queue_defers_every_candidate() {
-        let mut skipped: Vec<String> = Vec::new();
-        let pick = next_claimable(
-            ["1".to_owned(), "2".to_owned()],
-            |_| false,
-            ContentionPolicy::Defer,
-            |_| Contention {
-                ledger_claims: vec!["fleet-run-7".to_owned()],
-                ..Contention::default()
-            },
-            |_| Claim::Unavailable,
-            |key, _| skipped.push(key.to_owned()),
-        );
-
-        assert!(matches!(pick, Pick::Exhausted));
-        assert_eq!(skipped, vec!["1".to_owned(), "2".to_owned()]);
-    }
-}
+mod tests;
