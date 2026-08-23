@@ -448,6 +448,19 @@ impl BoundWrapper {
             .map_or_else(Vec::new, |plane| plane.spends())
     }
 
+    /// What earlier runs in this workspace left behind, one line each.
+    ///
+    /// Read before this run mints anything, so every record it sees belongs to
+    /// somebody else — and a *live* sibling run's records are skipped, so what
+    /// is left is residue from a process that is gone. It names a reclaim
+    /// command and deletes nothing; see
+    /// [`crate::candidate_workspaces::SessionCandidateWorkspaces::orphaned_candidates`].
+    pub(crate) fn orphaned_candidates(&self) -> Vec<String> {
+        self.candidate_fanout
+            .as_ref()
+            .map_or_else(Vec::new, |plane| plane.workspaces().orphaned_candidates())
+    }
+
     /// Discard every candidate workspace this run still holds, and return what
     /// would not go.
     ///
@@ -1145,6 +1158,13 @@ pub(crate) async fn run_wrapped(
     mut driver: RawTurnDriver<'_>,
 ) -> Result<(), CliFailure> {
     let format = driver.format;
+    // Before anything is minted, so what this names is only ever a run that is
+    // already over (#2813). Nothing is deleted: a leftover checkout is either
+    // a crash's residue or a live sibling's, and only the person reading can
+    // tell this host which.
+    for orphan in bound.orphaned_candidates() {
+        eprintln!("  ! wrapper: {orphan}");
+    }
     let input = RoundInput {
         goal: goal.to_string(),
         signals,

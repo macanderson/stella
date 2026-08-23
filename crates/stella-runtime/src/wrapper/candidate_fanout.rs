@@ -616,6 +616,20 @@ impl<W> CandidateFanouts<W> {
     }
 }
 
+impl<W> CandidateFanouts<W> {
+    /// The substrate this plane fans out onto.
+    ///
+    /// The port is everything the plane itself needs, so this exists for the
+    /// two questions a *host* asks its own substrate and the port has no
+    /// business declaring: what earlier runs left on disk (#2813), and where a
+    /// candidate's unscored work was written when a run ended before anything
+    /// scored it (#2651). Both are answered by the concrete substrate a host
+    /// built, never by the port a plugin sees.
+    pub fn workspaces(&self) -> &W {
+        &self.workspaces
+    }
+}
+
 impl<W: CandidateWorkspaces> CandidateFanouts<W> {
     /// Discard every candidate this run still holds, and report what would not
     /// go.

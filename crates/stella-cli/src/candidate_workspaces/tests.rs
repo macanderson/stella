@@ -738,6 +738,82 @@ async fn a_mid_run_user_rewind_is_not_a_ref_escape() {
     );
 }
 
+/// **#2813's witness.** A candidate that is created and never removed leaves
+/// a record on disk, and a later run names it — while a record whose owner is
+/// still running is left alone.
+///
+/// The kill is modelled by dropping the substrate without calling `remove`,
+/// which is exactly what a SIGKILL leaves behind: the checkout, the branch,
+/// and no in-process table that ever knew about either.
+#[tokio::test]
+async fn a_candidate_that_outlives_its_run_is_named_by_the_next_one() {
+    let dir = repo();
+    let root = dir.path();
+    let records = root.join(CANDIDATES_DIR);
+
+    let killed = {
+        let subject = substrate(root, Arc::new(NoTools));
+        let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+        // Nothing calls `remove`, and the substrate goes out of scope with the
+        // handle still in its table.
+        PathBuf::from(&candidate.root)
+    };
+    assert!(killed.exists(), "premise: the checkout is still on disk");
+    assert_eq!(
+        record::orphans(&records, &|_| true).len(),
+        0,
+        "an owner that is still alive is not residue"
+    );
+
+    // The record this process wrote names this process, which is alive — so
+    // the sweep of a *later* run is modelled by re-pointing the record at a
+    // pid that certainly is not.
+    let mut mine = record::orphans(&records, &|_| false).remove(0);
+    assert_eq!(
+        mine.checkout.canonicalize().unwrap(),
+        killed,
+        "the record names the checkout"
+    );
+    assert!(mine.branch.starts_with(CANDIDATE_BRANCH_PREFIX));
+    mine.pid = u32::MAX - 1;
+    mine.write().unwrap();
+
+    let named = substrate(root, Arc::new(NoTools)).orphaned_candidates();
+    assert_eq!(named.len(), 1, "the residue is named: {named:?}");
+    assert!(
+        named[0].contains(&mine.checkout.display().to_string()) && named[0].contains(&mine.branch),
+        "and named with both halves of a reclaim: {}",
+        named[0]
+    );
+    assert!(
+        killed.exists(),
+        "the sweep reports; deleting a checkout it did not create is the \
+         user's call, not this host's"
+    );
+}
+
+/// The other side of #2813: a candidate removed cleanly leaves no record, so
+/// the next run's sweep has nothing to say about it.
+#[tokio::test]
+async fn a_clean_removal_takes_the_record_with_it() {
+    let dir = repo();
+    let root = dir.path();
+    let subject = substrate(root, Arc::new(NoTools));
+
+    let candidate = subject.create("plugin:p/worker#0").await.unwrap();
+    assert_eq!(
+        record::orphans(&root.join(CANDIDATES_DIR), &|_| false).len(),
+        1,
+        "premise: creation wrote a record"
+    );
+
+    subject.remove(&candidate).await.unwrap();
+    assert!(
+        record::orphans(&root.join(CANDIDATES_DIR), &|_| false).is_empty(),
+        "a candidate that ended is not residue"
+    );
+}
+
 /// **#4478's stash half.** A candidate's `git stash` pushes onto the one
 /// stack the user pops from, and the reachability probe cannot see it: a stash
 /// commit is built *on* the candidate's tip, so it is a descendant rather than

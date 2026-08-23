@@ -81,12 +81,15 @@
 //!
 //! Every candidate this substrate mints is registered in the plane's live
 //! table, and a wrapped run sweeps that table when it ends
-//! (`crate::wrapper_plugin::run_wrapped`). A process **killed** mid-fan-out
-//! leaks its worktrees, which is #2813's shape and is deliberately not
-//! papered over here: `stella fleet gc` cannot reclaim them either, because
-//! this substrate moves out of the `.stella/worktrees/` + `fleet/` namespace
-//! on purpose ([`WorktreeManager::with_worktrees_root`]) rather than borrow a
-//! sweeper that would then also delete checkouts it did not create.
+//! (`crate::wrapper_plugin::run_wrapped`). That table is process memory, so a
+//! process **killed** mid-fan-out used to take the only name its checkouts had
+//! with it — `stella fleet gc` cannot reclaim them either, because this
+//! substrate moves out of the `.stella/worktrees/` + `fleet/` namespace on
+//! purpose ([`WorktreeManager::with_worktrees_root`]) rather than borrow a
+//! sweeper that would then also delete checkouts it did not create. Each
+//! candidate now writes a [`record`] beside its checkout, and a later run in
+//! the same workspace names what a dead owner left rather than deleting it
+//! (#2813).
 //!
 //! [`CandidateWorkspaces`]: stella_runtime::wrapper::CandidateWorkspaces
 //! [`SubAgentSpec`]: stella_core::subagent::SubAgentSpec
@@ -429,6 +432,25 @@ impl SessionCandidateWorkspaces {
             .map(|_| ())
     }
 
+    /// What earlier runs in this workspace left behind, one line each, naming
+    /// the command that reclaims it (#2813).
+    ///
+    /// Read at the start of a wrapped run, before this run writes any record
+    /// of its own — so what it sees is only ever somebody else's, and a
+    /// concurrent fan-out's records are skipped because their owner answers
+    /// the liveness probe.
+    ///
+    /// Reporting rather than reclaiming is the whole point: a leftover
+    /// checkout is either a crash's residue or a live sibling run's, and
+    /// deleting the second on this host's own authority would destroy a
+    /// fan-out somebody is watching. See [`record`].
+    pub(crate) fn orphaned_candidates(&self) -> Vec<String> {
+        record::reclaim_lines(&record::orphans(
+            &self.repo_root.join(CANDIDATES_DIR),
+            &stella_store::sessions::pid_alive,
+        ))
+    }
+
     /// The candidate's whole change against the tree it was cut from.
     ///
     /// `--binary` so a candidate that wrote an image is adoptable rather than
@@ -488,6 +510,12 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
             &worktree.path,
             &self.tracked_paths(&layout.top).await,
         );
+        // The durable half of the live table above: what this checkout is, on
+        // disk, so a process that never reaches `remove` leaves something a
+        // later run can name (#2813). Best-effort like the two baselines —
+        // a candidate that could not be described is still one that should
+        // run.
+        let _ = record::CandidateRecord::of(handle.as_str(), &worktree, &layout.top).write();
 
         self.minted
             .lock()
@@ -689,13 +717,17 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
             // no one can act on.
             return Ok(());
         };
-        self.worktrees
-            .discard(&minted.worktree)
-            .await
-            .map_err(|error| CandidateFanoutError::NotRemoved {
-                handle: workspace.handle.clone(),
-                reason: error.to_string(),
-            })
+        let discarded = self.worktrees.discard(&minted.worktree).await;
+        if discarded.is_ok() {
+            // Only once the checkout is really gone. A record dropped ahead of
+            // a failed discard would leave a leak nothing on disk names, which
+            // is the exact state the record exists to prevent.
+            record::forget(&minted.worktree.path);
+        }
+        discarded.map_err(|error| CandidateFanoutError::NotRemoved {
+            handle: workspace.handle.clone(),
+            reason: error.to_string(),
+        })
     }
 }
 
@@ -726,6 +758,7 @@ fn numstat_totals(numstat: &str) -> (u32, u32) {
 }
 
 mod modes;
+mod record;
 mod ref_guard;
 
 #[cfg(test)]
