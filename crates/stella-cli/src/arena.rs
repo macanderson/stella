@@ -121,6 +121,10 @@ pub(crate) async fn run_arena(mut cfg: Config, args: ArenaArgs) -> Result<(), St
         OutputFormat::StreamJson,
         crate::wrapper_plugin::PipelineChoice::resolve(args.no_pipeline, args.pipeline.as_deref())?,
         args.test_command.as_deref(),
+        // The arena scores from its journal rather than the process exit
+        // (see the comment below), so a wrapper's verdict has nothing to
+        // decide here and `--require-verdict` is not offered on this door.
+        false,
     )
     .await;
 

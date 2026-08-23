@@ -145,31 +145,39 @@ const RETIRED: &[(&str, &str)] = &[
     // settings files in the wild, which is exactly what this list is for: the
     // operator spelled a real key correctly and the feature behind it is gone,
     // so "check the spelling" would be false advice. Retired rather than
-    // deleted silently (#3870, #3872); what each one did, and what rebuilding
-    // it on the raw loop would take, is recorded on its own issue.
+    // deleted silently (#3870, #3872).
+    //
+    // The recap and the trace were each held open while their rebuild was
+    // decided (#3893, #3894). Both are now decided against, and the sentences
+    // below say so — an operator reading "nothing does this now" has to guess
+    // whether to wait for a release that restores it.
     (
         "enable_recap",
-        "printed a deterministic end-of-run recap in text mode; the renderer \
-         read the staged pipeline's verdict types and went with that crate, so \
-         nothing assembles a recap now",
+        "printed a deterministic end-of-run recap in text mode; its one \
+         addition over the file and cost lines already printed was the word \
+         `verified`, which the raw loop cannot say, so it is retired for good \
+         rather than rebuilt (#3893)",
     ),
     (
         "run.recap",
-        "printed a deterministic end-of-run recap in text mode; the renderer \
-         read the staged pipeline's verdict types and went with that crate, so \
-         nothing assembles a recap now",
+        "printed a deterministic end-of-run recap in text mode; its one \
+         addition over the file and cost lines already printed was the word \
+         `verified`, which the raw loop cannot say, so it is retired for good \
+         rather than rebuilt (#3893)",
     ),
     (
         "trace_capture",
         "appended a per-execution trajectory trace to \
-         `.stella/private/traces.jsonl`; the module that assembled it was \
-         orphaned by the staged pipeline's removal and deleted with it",
+         `.stella/private/traces.jsonl`; retired for good, because \
+         `.stella/private/store.db` already records every step, tool call and \
+         cost this wrote and `stella observe` reads them (#3894)",
     ),
     (
         "run.trace_capture",
         "appended a per-execution trajectory trace to \
-         `.stella/private/traces.jsonl`; the module that assembled it was \
-         orphaned by the staged pipeline's removal and deleted with it",
+         `.stella/private/traces.jsonl`; retired for good, because \
+         `.stella/private/store.db` already records every step, tool call and \
+         cost this wrote and `stella observe` reads them (#3894)",
     ),
     (
         "agent_engine_config.approval_wait_secs",

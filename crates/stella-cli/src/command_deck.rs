@@ -91,6 +91,7 @@ use crate::{agent, rules};
 
 mod add_dir;
 mod authoring;
+mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;
 mod lead_control;
@@ -2214,28 +2215,14 @@ pub async fn run_deck_session(
                     // requeue and park on (see [`HoldState`]).
                     dispatch.cancelled(&submitted);
                 }
-                let cancelled_cost =
-                    agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd());
-                if let Some((store, id)) = &execution
-                    && !agent::record_execution_end(
-                        store,
-                        *id,
-                        registry.as_ref(),
-                        "cancelled",
-                        cancelled_cost,
-                        false,
-                    )
-                {
-                    let _ = in_tx.send(Inbound::Event {
-                        agent: LEAD.to_string(),
-                        event: AgentEvent::Error {
-                            message: "store write failed — this cancelled execution was not \
-                                      recorded"
-                                .to_string(),
-                            retryable: true,
-                        },
-                    });
-                }
+                dropped_turn::close_dropped_execution(
+                    execution.as_ref(),
+                    registry.as_ref(),
+                    "cancelled",
+                    dispatch_spend_usd,
+                    &mut budget,
+                    &in_tx,
+                );
                 // Must stay AFTER the store warning above: the warning is
                 // retryable (folds to Running) while this one is not (folds
                 // to Failed), so this event is what leaves the lead in a
@@ -2266,12 +2253,12 @@ pub async fn run_deck_session(
                 }
                 dispatch.reset();
                 queue.clear();
-                let cleared_cost =
-                    agent::settled_cost_since(dispatch_spend_usd, budget.session_spent_usd());
-                session_clear::close_cleared_execution(
+                dropped_turn::close_dropped_execution(
                     execution.as_ref(),
                     registry.as_ref(),
-                    cleared_cost,
+                    "cleared",
+                    dispatch_spend_usd,
+                    &mut budget,
                     &in_tx,
                 );
                 session_clear::reset_lead(

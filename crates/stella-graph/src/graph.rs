@@ -497,6 +497,11 @@ impl CodeGraph {
     /// the per-file [`importers_of`] scan this replaces. Shallowest path
     /// first, then lexicographic; empty on an empty index.
     ///
+    /// Consumed by `stella init`'s orientation line
+    /// (`stella-cli/src/agent/graph.rs`, `format_entry_points`), which names
+    /// the first few beneath the index totals: the totals say how much was
+    /// indexed, these say where a reader starts.
+    ///
     /// [`importers_of`]: CodeGraph::importers_of
     pub fn entry_points(&self, limit: usize) -> Result<Vec<String>, GraphError> {
         store::entry_points(&self.inner.read_guard(), limit)

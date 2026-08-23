@@ -27,6 +27,7 @@ fn format_graph_stats_reports_generated_skip_count_when_nonzero() {
         files_unchanged: 1,
         files_skipped_generated: 5,
         files_skipped_too_large: 0,
+        entry_points: Vec::new(),
     };
     let line = format_graph_stats(&summary);
     assert!(
@@ -46,6 +47,7 @@ fn format_graph_stats_omits_the_skip_clause_when_nothing_was_skipped() {
         files_unchanged: 0,
         files_skipped_generated: 0,
         files_skipped_too_large: 0,
+        entry_points: Vec::new(),
     };
     let line = format_graph_stats(&summary);
     assert!(
@@ -64,6 +66,7 @@ fn format_graph_stats_uses_singular_file_for_a_count_of_one() {
         files_unchanged: 0,
         files_skipped_generated: 1,
         files_skipped_too_large: 0,
+        entry_points: Vec::new(),
     };
     let line = format_graph_stats(&summary);
     assert!(line.contains("skipped 1 generated file"), "{line}");
@@ -106,6 +109,7 @@ fn format_graph_stats_reports_the_size_limit_skip_count() {
         files_unchanged: 0,
         files_skipped_generated: 0,
         files_skipped_too_large: 3,
+        entry_points: Vec::new(),
     };
     let line = format_graph_stats(&summary);
     assert!(
@@ -151,5 +155,75 @@ fn index_workspace_graph_blocking_reports_size_limit_skips_end_to_end() {
     assert!(
         line.contains("skipped 1 file over the size limit"),
         "{line}"
+    );
+}
+
+/// #3719: the totals say how much was indexed; this says where to start
+/// reading. End-to-end through the real builder, because the value comes from
+/// the graph's anti-join rather than from anything this crate computes.
+#[test]
+fn index_workspace_graph_blocking_names_the_files_nothing_imports() {
+    use crate::agent::graph::format_entry_points;
+
+    let ws = tempfile::tempdir().unwrap();
+    let root = ws.path().canonicalize().unwrap();
+    // `main.rs` declares `mod helper;`, so `helper.rs` is imported and is not
+    // an entry point. `bin.rs` and the deeper `tools/probe.rs` are imported by
+    // nothing, and `main.rs` itself is imported by nothing either.
+    std::fs::write(root.join("main.rs"), "mod helper;\npub fn run() {}\n").unwrap();
+    std::fs::write(root.join("helper.rs"), "pub fn help() {}\n").unwrap();
+    std::fs::write(root.join("bin.rs"), "pub fn bin() {}\n").unwrap();
+    std::fs::create_dir_all(root.join("tools")).unwrap();
+    std::fs::write(root.join("tools").join("probe.rs"), "pub fn probe() {}\n").unwrap();
+
+    let summary = index_workspace_graph_blocking(&root, &mut |_| {}).expect("index build succeeds");
+    assert_eq!(
+        summary.entry_points,
+        vec![
+            "bin.rs".to_string(),
+            "main.rs".to_string(),
+            "tools/probe.rs".to_string()
+        ],
+        "shallowest path first, then lexicographic — and never the imported file"
+    );
+
+    let line = format_entry_points(&summary).expect("a tree with entry points gets the line");
+    assert!(
+        line.starts_with("· start here: bin.rs, main.rs, tools/probe.rs"),
+        "{line}"
+    );
+    assert!(
+        !line.contains("helper.rs"),
+        "an imported file is not where a reader starts: {line}"
+    );
+}
+
+/// The line is withheld rather than printed empty. An index where every file
+/// is imported by another is a real answer, and `start here:` followed by
+/// nothing would read as a bug in the summary.
+#[test]
+fn format_entry_points_is_silent_when_the_index_names_none() {
+    use crate::agent::graph::format_entry_points;
+
+    let summary = GraphSummary {
+        total_symbols: 0,
+        total_imports: 0,
+        total_files: 0,
+        files_parsed: 0,
+        files_unchanged: 0,
+        files_skipped_generated: 0,
+        files_skipped_too_large: 0,
+        entry_points: Vec::new(),
+    };
+    assert_eq!(format_entry_points(&summary), None);
+
+    let one = GraphSummary {
+        entry_points: vec!["main.rs".to_string()],
+        ..summary
+    };
+    let line = format_entry_points(&one).expect("one entry point still gets a line");
+    assert!(
+        line.ends_with("nothing in the index imports it"),
+        "singular, not plural, for a count of one: {line}"
     );
 }

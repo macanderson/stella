@@ -69,14 +69,15 @@ is I/O with failure modes, and it stays in the CLI.
 
 `resolve_user_plugins_dir` / `resolve_project_plugins_dir` (#3380) are the same
 shape arriving **one consumer early**: `stella-cli`'s plugin loader is their
-only caller today, and it calls
-the pure `resolve_*` half directly with its own redirectable root — not the
-ambient `user_plugins_dir()` wrapper, which nothing calls yet. The second
-consumer is the wrapper socket's other drivers — `stella-serve` and an
-embedded host — which `doc:wrapper-socket` §6 makes an acceptance criterion,
-and which must find the same two-tier roster without depending on the CLI to
-spell `.stella/plugins`. If that driver never lands, these belong back in
-`stella-cli`.
+only caller today. Both ship as a pure half alone — the user tier had an
+ambient `user_plugins_dir()` wrapper and it is gone (#3720), because every
+plugin caller passes a redirectable root on purpose so a test never reads the
+developer's real `~/.stella/plugins`, which leaves the wrapper a second
+spelling nothing wants. The second consumer is the wrapper socket's other
+drivers — `stella-serve` and an embedded host — which `doc:wrapper-socket` §6
+makes an acceptance criterion, and which must find the same two-tier roster
+without depending on the CLI to spell `.stella/plugins`. If that driver never
+lands, these belong back in `stella-cli`.
 
 This crate is also the workspace's worked example of the three-case rule in
 AGENTS.md § "When a new crate is justified". It is case (b): [`stella-store`](../stella-store) and
