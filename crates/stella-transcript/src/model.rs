@@ -531,6 +531,22 @@ impl NoteKind {
     }
 }
 
+/// The engine coordinates of the model call a [`Note`] meters, so a host page
+/// can hang an inspect control — "what prompt was this call sent" — on the
+/// exact call the note is about.
+///
+/// `step` plus `role` is the pair a per-execution receipt index resolves to
+/// one recorded call; the renderer only carries the coordinates, it never
+/// resolves them itself (it has no store to ask).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallAnchor {
+    /// Engine step index of the metered call.
+    pub step: u64,
+    /// The call's role label (`worker`, `overflow_summarizer`, …), spelled as
+    /// the wire spells it.
+    pub role: String,
+}
+
 /// A non-call event worth a row in the transcript.
 ///
 /// The turn backbone is [`Turn::prompt`] → [`Step`]s → [`Turn::answer`], but a
@@ -552,6 +568,13 @@ pub struct Note {
     /// prose and steps in the order they happened. Mirrors
     /// [`Prose::before_step`].
     pub before_step: usize,
+    /// The metered model call this note is about, when it is about one. The
+    /// HTML renderer emits an inspect control carrying the coordinates; the
+    /// grid renderer ignores it (a terminal has no prompt inspector to open).
+    /// `serde(default)` so a transcript recorded before anchors existed still
+    /// deserializes (invariant #4).
+    #[serde(default)]
+    pub inspect: Option<CallAnchor>,
 }
 
 /// An assistant reasoning block between calls.

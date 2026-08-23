@@ -391,6 +391,7 @@ impl RunBuilder {
                 summary,
                 detail: Vec::new(),
                 before_step: step,
+                inspect: None,
             });
         }
     }
