@@ -234,6 +234,16 @@ artifacts. When Actions is unavailable entirely (an org billing hold has
 happened before — see RELEASING.md's local-release path), it is the only gate
 running at all.
 
+All of which holds only in a clone where `make hooks` has been run, and an
+uninstalled hook announces itself in no way at all: `git push` simply runs
+nothing and says nothing. So every rung of the ladder below ends by checking
+`core.hooksPath` and printing a notice when it is not `.githooks`
+(`scripts/check-hooks-installed.sh`) — silent when installed, and never a
+failure, because it is a fact about the clone rather than about the change.
+That is the cheap half of #3887, whose expensive half — whether an admin merge
+past a red required check is permitted at all — is a repository setting and a
+maintainer's decision, not a file in this tree.
+
 The hook derives `CARGO_SCOPE` from the pushed diff via
 `scripts/impacted-crates.sh`, so a change confined to one crate compiles and
 tests that crate and its dependents rather than all 27 members (#1135). It
