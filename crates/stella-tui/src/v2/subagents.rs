@@ -93,9 +93,15 @@ pub struct SubagentsOverlay {
 /// lets the key fall through: with none an empty session scrolls as it
 /// always did, and with text in the composer `↓` is cursor motion. Gated on
 /// *full* composer emptiness, chips included, like `↑`.
+///
+/// Only from the transcript's **tail**: with a message highlighted `↓` walks
+/// the highlight down (the focus tree's list step), and the overlay — the
+/// children below the last message — opens on the press after the highlight
+/// drops off the end.
 pub fn down_opens(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Option<DeckAction> {
     if ui.tab == DeckTab::Session
         && ui.composer.is_empty()
+        && ui.session_selected.is_none()
         && !rows::rows(model).is_empty()
         && matches!(key.code, KeyCode::Down)
     {
@@ -798,6 +804,13 @@ mod tests {
             "with text in the composer `↓` is cursor motion"
         );
         ui.composer.clear();
+        ui.session_selected = Some(0);
+        assert_eq!(
+            down_opens(key(KeyCode::Down), &model, &mut ui),
+            None,
+            "with a message highlighted `↓` walks the highlight, not the overlay"
+        );
+        ui.session_selected = None;
         down_opens(key(KeyCode::Down), &model, &mut ui);
         handle_key(key(KeyCode::Char('l')), &model, &mut ui);
         assert!(!ui.subagents.open);
