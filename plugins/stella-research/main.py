@@ -44,9 +44,10 @@ itself a per-turn cost regression for every user who installed it.
 # What it does not do, and what replaced it
 
 The built-in stage this extracts (`crates/stella-pipeline/src/research.rs` and
-`pipeline/research_stage.rs`) answers triage's questions by fanning out
-**read-only model sub-agents**. This plugin cannot: `doc:wrapper-socket` §7 is
-explicit that the socket hands a plugin no engine, no provider and no
+`pipeline/research_stage.rs`, deleted with `stella-pipeline` in #3865)
+answered triage's questions by fanning out **read-only model sub-agents**.
+This plugin cannot: `doc:wrapper-socket` §7 is explicit that the socket hands
+a plugin no engine, no provider and no
 credential, and the request carries no `[roles]` call it could spend. So it
 does deterministic grounding instead of model research — it reports what a
 literal scan of the granted workspace actually contains, which is the half of

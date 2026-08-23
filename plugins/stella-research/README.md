@@ -32,7 +32,7 @@ whole protocol.
 
 ## What it replaces, and what it does not
 
-The built-in stage is two files:
+The built-in stage — deleted with `stella-pipeline` in #3865 — was two files:
 
 | Built-in | What it does |
 | --- | --- |

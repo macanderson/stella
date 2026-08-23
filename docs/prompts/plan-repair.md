@@ -1,10 +1,17 @@
 ---
 id: prompt-plan-repair
 title: "plan_repair — the effective prompt"
-status: living
+status: archived
 ---
 
 # `plan_repair`
+
+**This page documents the pre-#3865 staged pipeline, kept for reference.**
+`stella-pipeline` was deleted in #3865, so `Pipeline::plan_stage` and every
+symbol this page cites dispatch from no code in this tree. `plugins/stella-plan`
+is the installed wrapper plugin that ports the plan call itself; it does not
+reproduce this bounded repair retry (#3562) — see
+`docs/prompts/README.md § Half of this set is history`.
 
 Re-authoring a plan the parser rejected. The pipeline's one bounded repair
 retry for the plan stage (the L-V2 "bounded repair loops" pattern) — it runs at

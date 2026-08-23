@@ -487,12 +487,12 @@
     },
     "prompt-plan": {
       "path": "docs/prompts/plan.md",
-      "status": "living",
+      "status": "archived",
       "title": "plan \u2014 the effective prompt"
     },
     "prompt-plan-repair": {
       "path": "docs/prompts/plan-repair.md",
-      "status": "living",
+      "status": "archived",
       "title": "plan_repair \u2014 the effective prompt"
     },
     "prompt-reflection": {
@@ -502,7 +502,7 @@
     },
     "prompt-research": {
       "path": "docs/prompts/research.md",
-      "status": "living",
+      "status": "archived",
       "title": "research \u2014 the effective prompt"
     },
     "prompt-skill-author": {
@@ -517,7 +517,7 @@
     },
     "prompt-triage": {
       "path": "docs/prompts/triage.md",
-      "status": "living",
+      "status": "archived",
       "title": "triage \u2014 the effective prompt"
     },
     "prompt-verdict": {
@@ -527,12 +527,12 @@
     },
     "prompt-witness-author": {
       "path": "docs/prompts/witness-author.md",
-      "status": "living",
+      "status": "archived",
       "title": "witness_author \u2014 the effective prompt"
     },
     "prompt-witness-repair": {
       "path": "docs/prompts/witness-repair.md",
-      "status": "living",
+      "status": "archived",
       "title": "witness_repair \u2014 the effective prompt"
     },
     "prompt-worker": {

@@ -1,10 +1,16 @@
 ---
 id: prompt-research
 title: "research — the effective prompt"
-status: living
+status: archived
 ---
 
 # `research`
+
+**This page documents the pre-#3865 staged pipeline, kept for reference; the
+shape lives in an installed wrapper plugin now (`plugins/stella-research`).**
+`stella-pipeline` was deleted in #3865, so `Pipeline::research_stage` and
+every symbol this page cites dispatch from no code in this tree — see
+`docs/prompts/README.md § Half of this set is history`.
 
 A read-only research sub-agent answering **one** of triage's pre-plan
 questions (#1778). Fans out one child per question, concurrently, before the
