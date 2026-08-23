@@ -26,10 +26,12 @@
 //!
 //! The `.expected.json` sibling is compared — and regenerated under `BLESS=1` —
 //! through `common::bless_or_assert`, the same path the four conformance
-//! harnesses take (#3548, #4437, #4475). What is bespoke here is the *vector
-//! loop*: these vectors run through `converse` with a `.calls.json` script
-//! rather than through `SubprocessWrapper`, so this file owns how a response
-//! is produced and nothing about how one is graded.
+//! harnesses take (#3548, #4437, #4475); the `.stderr.txt` sibling goes through
+//! `hostcall::bless_or_assert_report`, which `BLESS=1` could not reach until
+//! #4533. What is bespoke here is the *vector loop*: these vectors run through
+//! `converse` with a `.calls.json` script rather than through
+//! `SubprocessWrapper`, so this file owns how a response is produced and
+//! nothing about how one is graded.
 //!
 //! `cfg(unix)` for `wrapper_socket.rs`'s reason, tracked in the same place
 //! (#3497): the child is spawned with a POSIX `PATH` and named `python3`.
@@ -47,6 +49,7 @@ use stella_plugin::{
 use stella_protocol::completion::MessageRole;
 
 mod common;
+mod hostcall;
 
 fn plugin_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -308,22 +311,7 @@ fn every_hostcall_vector_ends_at_its_golden_contribution() {
             assert_eq!(context.into_message().role, MessageRole::User, "{name}");
         }
 
-        let reported = sibling(&vector, ".stderr.txt");
-        if reported.exists() {
-            assert_eq!(
-                held.stderr.trim(),
-                fs::read_to_string(&reported)
-                    .expect("a readable report")
-                    .trim(),
-                "{name}: the degradation report changed"
-            );
-        } else {
-            assert!(
-                held.stderr.trim().is_empty(),
-                "{name}: an ungraded vector reported {:?}",
-                held.stderr
-            );
-        }
+        hostcall::bless_or_assert_report(&name, &sibling(&vector, ".stderr.txt"), &held.stderr);
         graded += 1;
     }
     assert!(graded >= 8, "only {graded} host-call vectors ran");

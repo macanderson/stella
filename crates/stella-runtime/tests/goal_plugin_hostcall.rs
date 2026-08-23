@@ -26,11 +26,12 @@
 //!
 //! Goldens are regenerated with `BLESS=1 cargo test -p stella-runtime --test
 //! goal_plugin_hostcall`, through the same [`common::bless_or_assert`] the
-//! three conformance harnesses use (#3548, #4437). This harness drives its
-//! vectors through [`converse`] rather than `SubprocessWrapper`, so what it
-//! shares is the comparison and not the loop — and, as everywhere else,
-//! **read the diff**: a golden blessed without looking is a changelog, not a
-//! test.
+//! three conformance harnesses use (#3548, #4437) — and, for the `.stderr.txt`
+//! sibling, [`hostcall::bless_or_assert_report`], which that command could not
+//! reach at all until #4533. This harness drives its vectors through
+//! [`converse`] rather than `SubprocessWrapper`, so what it shares is the
+//! comparison and not the loop — and, as everywhere else, **read the diff**: a
+//! golden blessed without looking is a changelog, not a test.
 //!
 //! `cfg(unix)` for `wrapper_socket.rs`'s reason, tracked in the same place
 //! (#3497): the child is spawned with a POSIX `PATH` and named `python3`.
@@ -38,6 +39,7 @@
 #![cfg(unix)]
 
 mod common;
+mod hostcall;
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -304,22 +306,7 @@ fn every_hostcall_vector_ends_at_its_golden_evidence() {
             panic!("{name} answers a point this vector set does not exercise");
         };
 
-        let reported = sibling(&vector, ".stderr.txt");
-        if reported.exists() {
-            assert_eq!(
-                held.stderr.trim(),
-                fs::read_to_string(&reported)
-                    .expect("a readable report")
-                    .trim(),
-                "{name}: the degradation report changed"
-            );
-        } else {
-            assert!(
-                held.stderr.trim().is_empty(),
-                "{name}: an ungraded vector reported {:?}",
-                held.stderr
-            );
-        }
+        hostcall::bless_or_assert_report(&name, &sibling(&vector, ".stderr.txt"), &held.stderr);
         graded += 1;
     }
     assert!(graded >= 6, "only {graded} host-call vectors ran");
@@ -379,6 +366,95 @@ fn every_vector_is_graded_by_exactly_one_sibling_and_scripts_its_host() {
             vector.display()
         );
     }
+}
+
+/// **The witness for #4533.** `BLESS=1` regenerates the `.stderr.txt` sibling
+/// as well as the response golden, a second pass writes the same bytes, and an
+/// unblessed run still fails on a report that drifted.
+///
+/// Driven over a scratch directory through [`hostcall::grade_report`] rather than
+/// through the harness above, because `BLESS` is process-global: a test that
+/// set it would put every other test in this binary into bless mode.
+///
+/// Both harnesses in this pair grade their reports through the one function, so
+/// pinning it once covers `plan_plugin_hostcall.rs` too.
+#[test]
+fn blessing_a_report_rewrites_its_sibling_and_settles() {
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let report = scratch.path().join("01-degrades.stderr.txt");
+
+    // A golden that no longer describes what the plugin says. Before #4533 the
+    // bless path could not reach this file at all: the response golden was
+    // rewritten and then this comparison panicked.
+    fs::write(
+        &report,
+        "stella-goal: a line the plugin stopped reporting\n",
+    )
+    .expect("a writable scratch report");
+    let held = std::panic::catch_unwind(|| {
+        hostcall::grade_report(
+            "01-degrades",
+            &report,
+            "stella-goal: the host served nothing",
+            false,
+        );
+    });
+    assert!(
+        held.is_err(),
+        "a drifted report must fail the unblessed run"
+    );
+
+    hostcall::grade_report(
+        "01-degrades",
+        &report,
+        "stella-goal: the host served nothing",
+        true,
+    );
+    let blessed = fs::read_to_string(&report).expect("a readable blessed report");
+    assert_eq!(blessed, "stella-goal: the host served nothing\n");
+
+    // A second pass writes the same bytes: the trimmed report plus one newline
+    // is the fixed point of the trim-to-trim comparison above it.
+    hostcall::grade_report(
+        "01-degrades",
+        &report,
+        "stella-goal: the host served nothing",
+        true,
+    );
+    assert_eq!(
+        fs::read_to_string(&report).expect("a readable blessed report"),
+        blessed,
+        "re-blessing an unchanged report must produce no diff"
+    );
+
+    // And the graded run the bless was for now passes.
+    hostcall::grade_report(
+        "01-degrades",
+        &report,
+        "stella-goal: the host served nothing",
+        false,
+    );
+}
+
+/// The other direction, and the reason blessing removes as well as writes: a
+/// vector that stops degrading must stop carrying a report, or the next run is
+/// graded against something that no longer happens.
+#[test]
+fn blessing_a_vector_that_stopped_degrading_removes_its_report() {
+    let scratch = tempfile::tempdir().expect("a scratch directory");
+    let report = scratch.path().join("02-serves-everything.stderr.txt");
+    fs::write(&report, "stella-goal: a report from an earlier shape\n")
+        .expect("a writable scratch report");
+
+    hostcall::grade_report("02-serves-everything", &report, "", true);
+    assert!(
+        !report.exists(),
+        "a vector with nothing to report must carry no report sibling"
+    );
+
+    // Idempotent: blessing again writes nothing and does not panic.
+    hostcall::grade_report("02-serves-everything", &report, "", true);
+    hostcall::grade_report("02-serves-everything", &report, "", false);
 }
 
 /// The manifest is where "may it ask?" is answered, and the plugin's process
