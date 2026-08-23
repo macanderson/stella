@@ -354,6 +354,18 @@ impl CodeGraph {
         }
     }
 
+    /// Push a lease taken by [`acquire_lease`](Self::acquire_lease) out by
+    /// another TTL, so an unbounded pass that is still making progress keeps
+    /// the lease it is working under (#4047).
+    ///
+    /// Call it from wherever the pass commits a batch. Renewing on progress
+    /// rather than on a timer is what leaves the expiry able to do its job: a
+    /// holder that died stops calling this and loses the lease on schedule.
+    pub fn renew_lease(&self, lease: &lease::Lease) {
+        let conn = self.inner.write_guard();
+        lease::renew(&conn, lease);
+    }
+
     /// Give up a lease taken by [`acquire_lease`](Self::acquire_lease).
     pub fn release_lease(&self, lease: &lease::Lease) {
         let conn = self.inner.write_guard();
@@ -666,6 +678,24 @@ impl CodeGraph {
             imports,
             importers,
         })
+    }
+
+    /// A stamp identifying the index's current generation: a digest over every
+    /// indexed file's `(path, content sha)`.
+    ///
+    /// Read-only, and the whole of its contract is that **equal stamps mean
+    /// every graph-derived answer is unchanged**. A consumer caching anything
+    /// this graph returned compares the stamp it gathered under against the
+    /// stamp now; unequal means some file was added, removed or re-indexed, so
+    /// a cross-file answer — `importers`, a resolved import target — may have
+    /// moved underneath an entry whose own file never changed (#3196).
+    ///
+    /// A caller must not read anything else into it. It is not a version, not
+    /// ordered, and two stamps taken either side of a change that reverted
+    /// itself are equal, which is correct: the answers are equal too.
+    pub fn index_generation(&self) -> Result<[u8; 32], GraphError> {
+        let conn = self.inner.read_guard();
+        store::index_generation(&conn)
     }
 
     /// All known table, type, and view names (lowercased) from the index.

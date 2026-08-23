@@ -20,43 +20,20 @@ use stella_protocol::{CompletionMessage, MessageRole, ToolCall};
 use crate::loop_detect::CallRecord;
 use crate::receipts::TranscriptRevision;
 
-use super::{CONTINUATION_MARKER_PREFIX, LOOP_STEER_PREFIX, SUMMARY_MARKER_PREFIX};
-
-/// Pair the tool calls of the CURRENT turn — assistant messages after the
-/// last user message — with the outputs they produced, in chronological
-/// order, for `crate::loop_detect::detect_loop`. Windowing at the user
-/// boundary matters: identical calls across turns are the user re-asking a
-/// question, not a stuck loop (a REPL session asking the same thing three
-/// times would otherwise trip the exact-repeat detector), and it keeps
-/// this per-step scan O(turn) instead of O(entire history). The overflow
-/// summary, the stuck-loop warning and the output-limit continuation nudge
-/// are also User-role but are not real user turns — treating any of them as a
-/// boundary would truncate the loop window (on every summarization pass, right
-/// when re-detection needs the evidence, or on the one path that exists
-/// precisely because the turn is *not* over), so all three are skipped when
-/// locating the boundary.
+/// Where the current turn's messages start within `messages`: the index right
+/// after the last genuine user turn boundary. A `User`-role message carrying
+/// any [`crate::engine_markers::ENGINE_MARKERS`] prefix is the engine or the
+/// CLI writing to the model, so it is not a boundary — treating one as such
+/// truncates the window right when a consumer needs the fuller history (on
+/// every summarization or compaction pass, on the paths that exist precisely
+/// because the turn is not over, and on a park, which is by construction
+/// preceded by the repeated polling that made parking worth doing).
 ///
-/// Results attach to the most recent still-unresolved call with a matching
-/// `call_id` — providers only guarantee ids unique within one step, and a
-/// scripted or misbehaving backend may reuse them across steps. A call
-/// whose result is missing keeps `output: None`, which the detector treats
-/// as unprovable progress, never loop evidence.
-///
-/// `identities` is the turn's snapshot from [`snapshot_result_identities`],
-/// attached to each resolved record so the detector can compare what a call
-/// really produced rather than what compaction left of it (#554). It is
-/// keyed by [`CallIdentityKey`], so the lookup here must derive the key from
-/// the record's own call. A key that is absent — or poisoned because that
-/// same call produced two different outputs — leaves `identity: None` and
-/// the detector falls back to the output bytes.
-/// Where the current turn's messages start within `messages`: the index
-/// right after the last genuine user turn boundary, skipping the synthetic
-/// User-role markers the driver injects mid-turn (the overflow summary, the
-/// stuck-loop warning, the length-continuation nudge, the working-set
-/// restoration) — none of those are a real user turn, and treating one as
-/// the boundary would truncate the window right when a consumer needs the
-/// fuller history (on every summarization pass, or on the one path that
-/// exists precisely because the turn is not over).
+/// The predicate reads that table rather than restating it. A hand-written
+/// list here had already fallen two entries behind it — the #2684 Stop-hook
+/// feedback and the #3806 already-read digest both joined the table without
+/// reaching this rule, so a stuck-loop scan silently reset on the exact two
+/// injections that mean the turn is still running (#2837).
 ///
 /// Shared by [`recent_call_records`] (loop-detection evidence) and
 /// `driver::confident_zero` (turn-activity evidence for #1477): both need
@@ -67,17 +44,9 @@ pub(super) fn turn_start_index(messages: &[CompletionMessage]) -> usize {
         .iter()
         .rposition(|m| {
             m.role == MessageRole::User
-                && !m.content.starts_with(SUMMARY_MARKER_PREFIX)
-                && !m.content.starts_with(LOOP_STEER_PREFIX)
-                && !m.content.starts_with(CONTINUATION_MARKER_PREFIX)
-                && !m.content.starts_with(crate::restore::RESTORE_MARKER_PREFIX)
-                // A recalled-context block is host-injected context, not a
-                // user turn. Pre-turn blocks land BEFORE the prompt and never
-                // decided this boundary; a proactive re-query (#3243 Phase 3)
-                // injects one mid-turn, where treating it as the boundary
-                // would silently reset loop-detection and confident-zero
-                // evidence on every re-query.
-                && !m.content.starts_with(crate::receipts::RECALL_MARKER)
+                && !crate::engine_markers::ENGINE_MARKERS
+                    .iter()
+                    .any(|marker| m.content.starts_with(marker))
         })
         .map(|i| i + 1)
         .unwrap_or(0)
@@ -228,6 +197,33 @@ mod tests {
         );
     }
 
+    /// **Witness (#2837).** Every entry of the engine's marker table is
+    /// engine-written user-role text, so none of them bounds a turn. Four
+    /// failed before this rule read the table: the Stop-hook feedback and the
+    /// already-read digest had joined the table without reaching the
+    /// hand-written list here, and the skill invocation and the parked-wait
+    /// wake were absent from both.
+    #[test]
+    fn no_engine_written_marker_bounds_the_turn_window() {
+        for marker in crate::engine_markers::ENGINE_MARKERS {
+            let messages = vec![
+                CompletionMessage::system("sys"),
+                CompletionMessage::user("fix the flaky test"),
+                CompletionMessage::assistant("working"),
+                CompletionMessage::user(format!("{marker} engine-written payload]\n\nbody")),
+                CompletionMessage::assistant("still working"),
+            ];
+
+            assert_eq!(
+                turn_start_index(&messages),
+                2,
+                "{marker:?} is engine-written, so the prompt at index 1 still \
+                 bounds the window — a scan starting after {marker:?} loses the \
+                 evidence the consumer is about to read"
+            );
+        }
+    }
+
     /// The evidence walk reads whole path-shaped string values out of tool
     /// inputs — a `path` field is a path; prose (whitespace) and escapes are
     /// not — and includes a file the turn is about to create.
@@ -261,6 +257,27 @@ mod tests {
     }
 }
 
+/// Pair the tool calls of the CURRENT turn — assistant messages after the
+/// [`turn_start_index`] boundary — with the outputs they produced, in
+/// chronological order, for `crate::loop_detect::detect_loop`. Windowing at
+/// that boundary matters: identical calls across turns are the user re-asking
+/// a question, not a stuck loop (a REPL session asking the same thing three
+/// times would otherwise trip the exact-repeat detector), and it keeps this
+/// per-step scan O(turn) instead of O(entire history).
+///
+/// Results attach to the most recent still-unresolved call with a matching
+/// `call_id` — providers only guarantee ids unique within one step, and a
+/// scripted or misbehaving backend may reuse them across steps. A call
+/// whose result is missing keeps `output: None`, which the detector treats
+/// as unprovable progress, never loop evidence.
+///
+/// `identities` is the turn's snapshot from [`snapshot_result_identities`],
+/// attached to each resolved record so the detector can compare what a call
+/// really produced rather than what compaction left of it (#554). It is
+/// keyed by [`CallIdentityKey`], so the lookup here must derive the key from
+/// the record's own call. A key that is absent — or poisoned because that
+/// same call produced two different outputs — leaves `identity: None` and
+/// the detector falls back to the output bytes.
 pub(super) fn recent_call_records<'a>(
     messages: &'a [CompletionMessage],
     identities: &ResultIdentities,

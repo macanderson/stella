@@ -1,13 +1,17 @@
 //! The closed table of engine-injected message markers (#2722).
 //!
-//! The engine and the CLI write a small number of messages that ride the wire
-//! as `User`-role turns but are not the user speaking: the overflow summary,
-//! the stuck-loop steer, the output-limit continuation nudge, and the
-//! recalled-context block. Each one opens with a recognizable marker prefix,
-//! and two independent consumers depend on knowing the complete set:
+//! The engine and the CLI write messages that ride the wire as `User`-role
+//! turns but are not the user speaking — the overflow summary, the stuck-loop
+//! steer, an invoked skill's body, a parked wait's wake report. Each opens
+//! with a recognizable marker prefix, and [`ENGINE_MARKERS`] below is the
+//! enumeration; three independent consumers depend on knowing the complete
+//! set:
 //!
 //! - `receipts::user_block_kind` classifies `User`-role content by these
 //!   prefixes so a receipt never attributes engine text to the person;
+//! - `driver::loop_evidence::turn_start_index` bounds the loop-detection and
+//!   confident-zero windows at the last genuine user turn, so a marked
+//!   message must not end the window it lands inside (#2837);
 //! - the system prompt's injection-defense contract
 //!   (`crates/stella-cli/src/agent/prompt.rs`) teaches the model that
 //!   engine-injected guidance carries one of these markers, so
@@ -45,8 +49,10 @@
 /// (`driver/truncation.rs`), `STOP_HOOK_MARKER_PREFIX`
 /// (`driver/user_hooks.rs`, #2684), `RECALL_MARKER` (`receipts.rs`),
 /// `RESTORE_MARKER_PREFIX` (`restore.rs`, #2685),
-/// `READ_DIGEST_MARKER_PREFIX` (`compaction/read_digest.rs`, #3806) — so the table is
-/// correct by definition for the markers it lists; tests keep it complete.
+/// `READ_DIGEST_MARKER_PREFIX` (`compaction/read_digest.rs`, #3806),
+/// `WAKE_MARKER` (`waiting.rs`) and `SKILL_INVOCATION_PREFIX`
+/// (`skills/invoke.rs`, #2682) — so the table is correct by definition for the
+/// markers it lists; tests keep it complete.
 pub const ENGINE_MARKERS: &[&str] = &[
     crate::driver::SUMMARY_MARKER_PREFIX,
     crate::driver::LOOP_STEER_PREFIX,
@@ -55,6 +61,8 @@ pub const ENGINE_MARKERS: &[&str] = &[
     crate::receipts::RECALL_MARKER,
     crate::restore::RESTORE_MARKER_PREFIX,
     crate::compaction::read_digest::READ_DIGEST_MARKER_PREFIX,
+    crate::waiting::WAKE_MARKER,
+    crate::skills::invoke::SKILL_INVOCATION_PREFIX,
 ];
 
 #[cfg(test)]
@@ -68,9 +76,9 @@ mod tests {
     #[test]
     fn the_table_is_nonempty_and_every_marker_is_distinctive() {
         assert!(
-            ENGINE_MARKERS.len() >= 5,
-            "the five known engine markers must all be present; a shorter table \
-             means one was dropped rather than retired through review"
+            ENGINE_MARKERS.len() >= 9,
+            "an entry left the table; a marker is retired through review, by \
+             deleting the constant it names, never by shrinking this list"
         );
         for marker in ENGINE_MARKERS {
             assert!(

@@ -48,9 +48,10 @@
 //!   fail from one that is merely unreachable (a reconnect proves connect
 //!   health, never call health — see [`HealthState`]), a dead stdio child's
 //!   last stderr lines ride along on the error that reports its death
-//!   ([`stdio`]), and a truncated tool list is reported as itself rather than
-//!   as an outage ([`McpToolSet::over_advertising_servers`],
-//!   [`McpToolSet::dropped_tool_count`]).
+//!   ([`stdio`]), and a tool list cut by either cap is reported as itself
+//!   rather than as an outage — the per-server count cap through
+//!   [`McpToolSet::over_advertising_servers`], the per-server schema byte
+//!   budget through [`McpToolSet::over_budget_servers`].
 //! - **Bounded context.** A server is untrusted input, so everything it can
 //!   push at the model is capped *at ingest* ([`client`]): a rendered
 //!   `tools/call` result is middle-out truncated with an explicit elision
@@ -112,8 +113,8 @@ pub use registry::{
 pub use stdio::StdioTransport;
 pub use suppress::{AUTH_PROBE_TTL, AuthProbeCache, ConnectGate};
 pub use toolset::{
-    DEFAULT_CALL_TIMEOUT, DisabledServers, McpToolSet, ServerIdentity, WireNameCollision,
-    list_resources_tool_name, login_required_tool_name, read_resource_tool_name, split_wire_name,
-    wire_name,
+    DEFAULT_CALL_TIMEOUT, DisabledServers, MAX_SERVER_SCHEMA_BYTES, McpToolSet, ServerIdentity,
+    WireNameCollision, list_resources_tool_name, login_required_tool_name, read_resource_tool_name,
+    split_wire_name, wire_name,
 };
 pub use transport::Transport;
