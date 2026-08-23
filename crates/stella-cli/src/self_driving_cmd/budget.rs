@@ -41,11 +41,10 @@
 //! (`agent::summary::print_json_summary`), for a completed turn and an aborted
 //! one alike. That number is the child's own accounting of what it spent, which
 //! is the same accounting `store.db` records — not a re-derivation from token
-//! counts here. A summary this build cannot parse contributes nothing, which is
-//! the unsafe direction and is stated rather than hidden: an unparseable
-//! summary under-counts the run's spend, so the ceiling is a ceiling on
-//! *measured* spend. It is bounded by the child's own per-turn ceiling, which
-//! is still handed down.
+//! counts here. A summary this build cannot parse contributes nothing, and that
+//! is the unsafe direction: an unparseable summary under-counts the run's
+//! spend, so the ceiling is a ceiling on *measured* spend. What bounds the gap
+//! is the child's own per-turn ceiling, which is still handed down.
 
 use super::turn_flags::TurnFlags;
 

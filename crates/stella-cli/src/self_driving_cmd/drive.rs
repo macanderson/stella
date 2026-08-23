@@ -66,8 +66,10 @@ use stella_autonomy::{
 };
 use stella_fleet::issue_claim_key;
 
+mod ending;
 mod settlement;
 
+use ending::{Tally, budget_reached, report, stopped_by_signal};
 use settlement::{Settlement, issue_finished_by};
 
 use super::audit::{self, Action as Audit};
@@ -85,14 +87,6 @@ struct Spent {
     /// Whether the stale-red re-run has already been spent on this pull
     /// request. Exactly one is allowed — see [`advance`].
     rerun: bool,
-}
-
-/// What one run of the loop did, for the closing line.
-#[derive(Debug, Default)]
-struct Tally {
-    opened: u32,
-    merged: u32,
-    escalated: u32,
 }
 
 /// Drive until there is nothing left to do, or a bound is reached.
@@ -1439,87 +1433,6 @@ fn sleep(secs: u64) {
         }
         std::thread::sleep(remaining.min(SLICE));
     }
-}
-
-/// End the run because the operating system said so, with the record that a
-/// killed process could never write (#4361).
-///
-/// Returns `Err` so `main` reports the shell-conventional `128 + signum` —
-/// `stella self-driving drive` cut short by SIGTERM must be distinguishable
-/// from one that finished, the same contract every other door honours
-/// ([`crate::signals`]).
-fn stopped_by_signal(
-    durable: &Durable,
-    tally: &Tally,
-    signal: crate::signals::Interrupt,
-) -> Result<(), String> {
-    let reason = signal.reason();
-    audit::record(
-        durable,
-        Audit::SessionStopped,
-        None,
-        &format!(
-            "{reason} by a signal — {} opened, {} merged, {} escalated. Every claim this run \
-             held is released.",
-            tally.opened, tally.merged, tally.escalated
-        ),
-    );
-    crate::signals::note_interrupt(signal);
-    Err(reason.to_owned())
-}
-
-/// End a run that has spent its ceiling.
-///
-/// Reported as *budget reached*, never as *finished* — the same distinction
-/// `--max-issues` already draws, and for the same reason: a run that stopped
-/// because it ran out of money has told you nothing about whether the backlog
-/// is done, and a supervisor that read the two endings alike would stop
-/// scheduling work the moment one run hit its cap.
-///
-/// `Ok`, not `Err`. The ceiling was honoured, which is the run doing what it
-/// was asked; a non-zero exit would make an operator's own budget read as a
-/// failure to their scheduler.
-fn budget_reached(
-    durable: &Durable,
-    tally: &Tally,
-    out: super::budget::Exhausted,
-) -> Result<(), String> {
-    audit::record(
-        durable,
-        Audit::SessionStopped,
-        None,
-        &format!(
-            "budget reached — ${:.2} of the run's ${:.2} spend limit is gone, so no further \
-             turn was started. {} opened, {} merged, {} escalated. Raise --spend-limit to \
-             carry on; every claim this run held is released.",
-            out.spent, out.cap, tally.opened, tally.merged, tally.escalated
-        ),
-    );
-    Ok(())
-}
-
-fn report(
-    durable: &Durable,
-    tally: &Tally,
-    budget: &super::budget::RunBudget,
-) -> Result<(), String> {
-    audit::record(
-        durable,
-        Audit::SessionStopped,
-        None,
-        &format!(
-            "{} opened, {} merged, {} escalated{} — `stella self-driving stats` has the rest",
-            tally.opened,
-            tally.merged,
-            tally.escalated,
-            // What the run actually cost, from the turns' own accounting
-            // (#4353). Printed whether or not a ceiling was set: an operator
-            // deciding what to set next time needs the number from the run that
-            // did not have one.
-            format_args!(", ${:.2} spent", budget.spent()),
-        ),
-    );
-    Ok(())
 }
 
 #[cfg(test)]

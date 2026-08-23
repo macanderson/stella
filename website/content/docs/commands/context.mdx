@@ -19,6 +19,7 @@ Every subcommand reads and writes **local files only** — no API key, no networ
 stella context review [--all]
 stella context keep <candidate> [--enforce]
 stella context edit <candidate> --statement <text> [--enforce]
+stella context amend <rule> [--precedence <N>] [--paths <glob>…] [--tasks <task>…] [--keywords <word>…]
 stella context ignore <candidate> [--reason <why>] [--cooldown <ISO-8601>]
 stella context list [--format <text|json>]
 stella context validate [--format <text|json>]
@@ -70,6 +71,40 @@ rather than a property of keeping.
 Publish your wording instead of the extractor's. The claim keeps its lineage and
 its evidence; only the statement becomes yours. Use it when the claim is right
 but the phrasing was inherited from prose that said it badly.
+
+### `stella context amend <rule> [--precedence <N>] [--paths <glob>…] [--tasks <task>…] [--keywords <word>…]`
+
+Change a **published** record's scope or precedence, and re-stamp its identity.
+`edit` rewrites a *proposal's* wording; this is the verb for a record that is
+already steering.
+
+Scope is the field most likely to need changing after publication, because a
+scope defect is invisible until the record meets its neighbours. In this
+repository `read-crate-readme-first` was published with `paths = ["crates"]` at
+the default precedence and suspended eight architecture-invariant records across
+the whole crate tree. `validate` named the remedies — an explicit exclusion, a
+different precedence, a supersession link — and none of them was reachable from
+the CLI.
+
+A named list **replaces** rather than appends, because the usual repair is
+narrowing: `--paths crates/stella-core` after `paths = ["crates"]` matched
+everything.
+
+**With no flags it re-stamps and changes nothing else**, which is the repair for
+a file somebody has already hand-edited. `record_hash` is a two-pass hash over an
+RFC 8785 canonical preimage, so a hand-edit leaves the file describing bytes that
+no longer exist and every load reports `record_hash mismatch … loaded as a new
+revision`. Nothing else re-stamps: every other publication path mints a *new*
+record.
+
+`record_id` moves, because it is derived from the content. That is a new revision
+of the same lineage, which is what a content-derived id is for — the statement,
+the lineage, the evidence and the provenance are untouched.
+
+**Enforcement is not amendable here.** `enforcement.mode` is what
+[`promote`](#stella-context-promote-rule---to-level---reason-why) governs, with
+an approver, a reason, and an immutable ledger event. A flag on this command
+would be a second route to the same grant with none of that behind it.
 
 ### `stella context ignore <candidate> [--reason <why>] [--cooldown <ISO-8601>]`
 
