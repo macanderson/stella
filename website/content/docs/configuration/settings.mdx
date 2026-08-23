@@ -487,11 +487,18 @@ section behaves exactly as the defaults.
     `dark` and `light` also resolve. An unrecognised value falls back to the default
     rather than failing the file.
   </OptionCard>
+  <OptionCard name="mid_turn_prompt" defaultValue="queue">
+    What a plain prompt typed at a **running** agent does. `queue` waits as the lead's
+    next turn, so `Esc` can steer the whole backlog into the turn in flight. `ask` raises
+    a routing card per prompt (`s` steer / `n` next turn / `p` sidecar). `spawn` forks every
+    plain prompt to a sidecar sub-session. An unrecognised value keeps the default.
+    See [Typing while a turn is running](/docs/commands/chat#typing-while-a-turn-is-running).
+  </OptionCard>
 </CardGrid>
 
 ```json title="<workspace>/.stella/settings.json"
 {
-  "ui": { "theme": "stella-light" }
+  "ui": { "theme": "stella-light", "mid_turn_prompt": "ask" }
 }
 ```
 

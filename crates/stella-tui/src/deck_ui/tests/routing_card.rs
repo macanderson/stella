@@ -4,6 +4,15 @@
 
 use super::*;
 
+/// A deck under the `ask` policy: the card is raised only there, so every
+/// card test opts into it. The default policy queues instead
+/// ([`MidTurnPrompt::Queue`]); `tests/queue.rs` covers that rhythm.
+fn asking_ui() -> DeckUi {
+    let mut ui = ready_ui();
+    ui.mid_turn_prompt = MidTurnPrompt::Ask;
+    ui
+}
+
 #[test]
 fn ask_user_answer_latches_until_a_fresh_question_rearms() {
     let ask = Inbound::Event {
@@ -68,7 +77,7 @@ fn a_finished_turn_releases_a_routing_card_stuck_on_its_prompt() {
         agent: "lead".into(),
         status: crate::AgentStatus::Running,
     });
-    let mut ui = ready_ui();
+    let mut ui = asking_ui();
 
     for c in "and now the tests".chars() {
         handle_deck_key(ch(c), &model, &mut ui);
@@ -122,7 +131,7 @@ fn a_finished_turn_on_another_agent_does_not_release_someone_elses_card() {
         agent: "lead".into(),
         status: crate::AgentStatus::Running,
     });
-    let mut ui = ready_ui();
+    let mut ui = asking_ui();
 
     for c in "keep me".chars() {
         handle_deck_key(ch(c), &model, &mut ui);

@@ -248,12 +248,14 @@ Two things are unique to deck turns:
 - **Cooperative claims.** The lead claims files on first write, so parallel
   workers in the same tree never fight over a file.
 - **Mid-turn steering & soft-cancel.** You don't have to wait for a turn to
-  finish to correct it. Type `>your note` and it lands at the next step
-  boundary as a real user message — a course-correction the model reads before
-  its next action, not an interrupt that throws away work. `Esc` is a *soft
-  stop*: it halts at the next boundary and keeps everything already completed.
-  `Esc Esc` cancels immediately and holds the queue. Steering beats
-  restarting: you keep the cache-warm context and only redirect it.
+  finish to correct it. Prompts typed while it runs queue; `Esc` delivers the
+  whole queue plus the composer into the running turn at its next step
+  boundary as real user messages — course-corrections the model reads before
+  its next action, with nothing thrown away. `>your note` skips the queue and
+  lands at the next boundary on its own. `Esc` with nothing to deliver is a
+  *soft stop*: it halts at the next boundary and keeps everything already
+  completed. `Esc Esc` cancels immediately and holds the queue. Steering
+  beats restarting: you keep the cache-warm context and only redirect it.
 
 `stella --plain` (or any non-TTY stdin/stdout, or `STELLA_PLAIN=1`) falls
 back to the **plain REPL**: the same per-prompt raw turns and the same

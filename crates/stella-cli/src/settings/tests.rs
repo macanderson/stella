@@ -376,6 +376,7 @@ fn ui_theme_save_preserves_other_keys_and_roundtrips() {
     );
     let ui = UiSettings {
         theme: Some("stella-light".to_string()),
+        ..Default::default()
     };
     ui.save_to(&path).unwrap();
 
@@ -406,6 +407,36 @@ fn ui_theme_save_preserves_other_keys_and_roundtrips() {
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert!(raw.as_object().unwrap().get("ui").is_none());
     assert_eq!(raw["providers"]["zai"]["default_model"], "glm-5.2");
+}
+
+/// `ui.mid_turn_prompt` is read raw and written beside `theme`; a section
+/// holding only the policy is not "empty", so it is neither dropped on save
+/// nor left behind by the TOML migration's emptiness check.
+#[test]
+fn ui_mid_turn_prompt_roundtrips_and_keeps_the_section_alive_without_a_theme() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "settings.json",
+        r#"{"ui": {"mid_turn_prompt": "ask"}}"#,
+    );
+    let merged = Settings::load_from(std::slice::from_ref(&path)).unwrap();
+    assert_eq!(merged.ui_mid_turn_prompt(), Some("ask"));
+    assert_eq!(merged.ui_theme(), None);
+
+    let ui = UiSettings {
+        theme: None,
+        mid_turn_prompt: Some("spawn".to_string()),
+    };
+    assert!(!ui.is_empty());
+    ui.save_to(&path).unwrap();
+    let raw: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(raw["ui"]["mid_turn_prompt"], "spawn");
+    assert!(
+        raw["ui"].get("theme").is_none(),
+        "unset fields are not written"
+    );
 }
 
 /// **Witness for the shipped default.** With no settings at all — no file,
