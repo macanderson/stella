@@ -1059,6 +1059,118 @@ mod tests {
         assert!(!text.contains("reports its own evidence"), "{text}");
     }
 
+    /// **The driver paragraph, family by family** (#3729). This is the
+    /// sentence a user reads before granting a plugin permission to push
+    /// branches, merge, and spend model calls between their turns, and until
+    /// this test nothing would have failed if a refactor had dropped it.
+    ///
+    /// Every family the block spans is named with its own consent sentence,
+    /// and every declared verb is printed beside its family — the rendering
+    /// is by family because "pushes branches, opens pull requests, reads CI,
+    /// and merges" is what a human weighs, and the verbs are what keeps that
+    /// summary checkable against the block.
+    #[test]
+    fn a_driver_grant_names_every_family_and_the_verbs_under_it() {
+        use crate::driver::DriverFamily;
+
+        let manifest = parse(
+            "name = \"loop\"\n[loop]\nparticipation = \"none\"\n\n\
+             [driver]\ncalls = [\"deliver_open\", \"backlog_next\", \"deliver_merge\"]",
+        );
+        let text = consent_text(&manifest);
+
+        assert!(
+            text.contains(
+                "`loop` DRIVES Stella. It is not a participant in a turn — it starts them."
+            ),
+            "{text}"
+        );
+        let driver = manifest.driver.as_ref().expect("the block is declared");
+        assert_eq!(
+            driver.families(),
+            vec![DriverFamily::Backlog, DriverFamily::Deliver],
+            "the fixture spans two families, or this test proves less than it says"
+        );
+        for family in driver.families() {
+            assert!(
+                text.contains(family.consent_sentence()),
+                "the `{family}` family's sentence is missing:\n{text}"
+            );
+        }
+        assert!(text.contains("(backlog_next)"), "{text}");
+        assert!(
+            text.contains("(deliver_open, deliver_merge)"),
+            "the verbs are printed beside their family, in declaration order:\n{text}"
+        );
+        assert!(
+            text.contains(
+                "performed BY Stella on request: this plugin holds no credential, no provider \
+                 and no forge token of its own."
+            ),
+            "{text}"
+        );
+    }
+
+    /// The ceiling a user is told about is the one the block declared, and its
+    /// absence is said rather than left blank — "as many as the host allows"
+    /// is a materially different consent from "up to four".
+    #[test]
+    fn a_declared_driver_ceiling_is_stated_and_so_is_its_absence() {
+        let capped = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"none\"\n\n\
+             [driver]\ncalls = [\"backlog_next\"]\nmax_calls = 4",
+        ));
+        assert!(
+            capped.contains("asks for up to 4 of those per driver session"),
+            "{capped}"
+        );
+        assert!(!capped.contains("as many of those"), "{capped}");
+
+        let uncapped = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"none\"\n\n\
+             [driver]\ncalls = [\"backlog_next\"]",
+        ));
+        assert!(
+            uncapped.contains("asks for as many of those per driver session as the host allows"),
+            "{uncapped}"
+        );
+        assert!(!uncapped.contains("asks for up to"), "{uncapped}");
+    }
+
+    /// A driver that asks for no capability at all is a coherent declaration,
+    /// so it is said — and nothing else from the block is, because there is no
+    /// ceiling to state and nothing for Stella to perform on its behalf.
+    #[test]
+    fn a_driver_that_asks_for_nothing_says_so_and_nothing_more() {
+        let text = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"none\"\n\n[driver]\ncalls = []",
+        ));
+
+        assert!(text.contains("DRIVES Stella"), "{text}");
+        assert!(
+            text.contains("asks the host for no capability at all"),
+            "{text}"
+        );
+        assert!(!text.contains("per driver session"), "{text}");
+        assert!(!text.contains("performed BY Stella on request"), "{text}");
+    }
+
+    /// The anti-vacuity half, on
+    /// `the_scope_disclaimer_appears_only_when_a_scope_was_declared`'s
+    /// reasoning: absent is not empty. A plugin that is not a driver renders
+    /// none of the paragraph, so the assertions above are about this block and
+    /// not about boilerplate every prompt carries.
+    #[test]
+    fn a_plugin_that_does_not_drive_renders_no_driving_disclosure() {
+        let text = consent_text(&parse(
+            "name = \"p\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]",
+        ));
+
+        assert!(!text.contains("DRIVES Stella"), "{text}");
+        assert!(!text.contains("per driver session"), "{text}");
+        assert!(!text.contains("performed BY Stella on request"), "{text}");
+    }
+
     /// **The #3565 witness.** Everything a package ships is in the document
     /// the *crate* renders, so every host shows the same one — and the tool
     /// line says the three things a user most needs: it is executable code,
