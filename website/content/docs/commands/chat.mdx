@@ -28,6 +28,42 @@ stella chat --plain
 
 The default **Command Deck** presents the session as a set of tabs — **SESSION** (the transcript), **AGENTS** (executions & installed agents), **TRACES**, **GRAPH**, **FILES**, **SKILLS**, **MCP**, **ISSUES** (your connected GitHub/Linear tracker, with instant type-ahead), and **SETTINGS** (the home of all config, incl. the engine-config panel). Slash commands jump between tabs and run actions, and `?` opens a tab-aware key list. The **plain REPL** (`--plain`) is a single scrolling line-based loop with a smaller command set — handy for narrow terminals and recordings.
 
+### Moving around
+
+The deck is a tree — tabs, then the panes and lists inside each, then what a list item
+opens — and four keys walk it the same way at every level, from an **empty prompt**:
+
+| key | does |
+|---|---|
+| `←` `→` | the sibling: the pane beside this one, or, when the tab has none that way, the tab beside it |
+| `↑` `↓` (`k` `j`) | the item above / below in the list under the cursor |
+| `⏎` | open it — a file's diff, a lane's transcript, a message's full text |
+| `⌫` | back up one level — never stops anything |
+
+`Esc` is `⌫` plus one more step: once there is nothing left to close it interrupts the
+running turn (see below). `Tab` / `Shift-Tab` still cycle tabs. `q` or `Esc` closes any
+overlay, and `⇞` `⇟` `Home` `End` page through any list or body. With text in the prompt the
+arrows edit it and `⌫` deletes, as you would expect; the tree is what the keys mean when
+there is nothing to edit. `?` lists every key for the tab you are on.
+
+Off the SESSION tab, the row above the prompt is the **pulse row**: which agent is working,
+its status, how long since it last did anything (red once a running agent has been quiet
+for a minute and a half), where it is, and the last thing it said — so no tab is blind to the
+turn.
+
+### Sub-agents
+
+`↓` on an empty prompt (or `Ctrl-A`, or `/subagents`) opens the **SUB-AGENTS** overlay:
+every lane the lead dispatched and every `delegate` child running inside a turn, each with
+its quiet time, what it is for, and where it is. `→` or `⏎` opens a lane's transcript — the
+breadcrumb reads `SESSION ▸ lead ▸ sub:2` and `⌫` brings you back to the lead; a prompt typed
+there steers that lane. Inside the overlay `n` **nudges** the selected lane (a one-line
+"where are you?" it answers on its own transcript) and `f` **flags** it to whoever
+dispatched it, with its vitals attached, asking them to check on it, stop it, or take the
+task over. `ctrl-x ctrl-x` kills, `p` pauses / resumes, `r` restarts, `l` returns to the
+lead. A `delegate` child has no control plane of its own: its row says so, `⏎` opens its
+parent, and `f` flags it to the parent.
+
 ### Accessible mode
 
 `--accessible` is a **mode on the deck, not a smaller surface beside it**: every tab, every gate, the prompt queue, sub-agents, steering and resume are unchanged. What changes is how the deck talks to your terminal.
@@ -230,12 +266,10 @@ Open a tab or run an action:
     Search the MCP registry and install servers without leaving the deck.
   </OptionCard>
   <OptionCard name="/sessions">
-    Every stella session on this machine, grouped by status. Also reachable with `←` on an
-    empty prompt.
+    Every stella session on this machine, grouped by status. Also **Ctrl-E**.
   </OptionCard>
   <OptionCard name="/context">
-    This session's active skills and MCP servers. Also reachable with `→` on an empty
-    prompt.
+    This session's active skills and MCP servers. Also **Ctrl-K**.
   </OptionCard>
   <OptionCard name="/inspect">
     The context sent to the model on any recorded call — the deck's view of

@@ -80,7 +80,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let bands = Layout::vertical([
         Constraint::Length(1),          // tab row / breadcrumb
         Constraint::Min(1),             // active view
-        Constraint::Length(1),          // air above the prompt
+        Constraint::Length(1),          // air above the prompt, or the pulse row
         Constraint::Length(composer_h), // composer
         Constraint::Length(1),          // keybinding hint row
         Constraint::Length(statline_h), // status bar (+ diagnosis)
@@ -105,6 +105,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         DeckTab::Settings => views::settings::render(model, ui, content, b),
     });
 
+    // The pulse row (`v2::pulse`) draws in the air row off the SESSION tab,
+    // and at an opened lane: the live agent's status, quiet time, place and
+    // last words, so no tab is blind to the turn.
+    guarded_band(buf, bands[2], "pulse", |b| {
+        crate::v2::pulse::render_row(model, ui, bands[2], b)
+    });
     guarded_band(buf, bands[3], "composer", |b| {
         render_composer(&c_layout, bands[3], b)
     });

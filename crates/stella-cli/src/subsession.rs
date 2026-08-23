@@ -669,10 +669,14 @@ pub(crate) fn spawn(
     pause_rx: watch::Receiver<bool>,
     tap: Arc<SteeringTap>,
 ) {
+    // Delegation runs from the lead session only (see the stranded
+    // `task_assign` note in `run_worker`), so the lead is every lane's
+    // dispatcher — stated on the row rather than assumed by the deck.
     let mut meta = AgentMeta::new(spec.lane.clone(), spec.title.clone(), now_ms())
         .with_role("subagent")
         .with_pid(std::process::id())
-        .with_purpose(spec.purpose.clone());
+        .with_purpose(spec.purpose.clone())
+        .with_parent(crate::command_deck::LEAD);
     meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
     meta.effort = pinned_effort(cfg).map(str::to_string);
     let _ = in_tx.send(Inbound::Register(meta));

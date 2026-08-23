@@ -71,17 +71,10 @@ pub(super) fn handle_issues_browse_key(
     composer_empty: bool,
 ) -> Option<DeckAction> {
     let count = ui.issues.rows.len();
+    if super::list_nav::select(key, &mut ui.issues.sel, count, composer_empty) {
+        return Some(DeckAction::Handled);
+    }
     match key.code {
-        KeyCode::Up => {
-            ui.issues.sel = ui.issues.sel.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.issues.sel = (ui.issues.sel + 1).min(count - 1);
-            }
-            Some(DeckAction::Handled)
-        }
         KeyCode::Char(' ') if composer_empty => {
             ui.issues.toggle_pick();
             Some(DeckAction::Handled)

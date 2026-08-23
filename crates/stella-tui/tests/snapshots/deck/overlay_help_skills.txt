@@ -3,43 +3,43 @@
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
- SESSION AGENTS TRACES GRAPH FILES   SKILLS   MCP ISSUES SETTINGS                                                                                       stella*
-╭─────────────────────────────────────────────┌ help — SKILLS · esc close ───────────────────────────────────────┐─────────────────────────────────────────────╮
-│ ⌕                                           │                                                                  │                        installed + registry │
-╰─────────────────────────────────────────────│  SKILLS tab                                                      │─────────────────────────────────────────────╯
- installed · 4                                │  ← →           switch panes                                      │
-╭─────────────────────────────────────────────│  ↑ ↓           select a skill                                    │─────────────────────────────────────────────╮
-│  [x] release-checklist        v3 · project  │  space         enable / disable                                  │                                             │
-│▸ [x] rust-review              v2/4 · user   │  e             edit the selected skill                           │                                             │
-│  [ ] sql-tuning               v1 · user   Re│  p             pin / unpin                                       │                                             │
-│ learned from traces · 1   stella wrote these│  n             new skill — drafted by the LLM                    │                                             │
-│  [x] bench-rig-access         learned   Reac│  ctrl-o        preview                                           │                                             │
-│                                             │  ctrl-x ×2     delete (press twice to confirm)                   │                                             │
-│                                             │  type          search skills                                     │                                             │
-│                                             │                                                                  │                                             │
-│                                             │  everywhere                                                      │                                             │
-│                                             │  tab / ⇧tab    switch tabs                                       │                                             │
-│                                             │  ⏎             queue the prompt — mid-turn it runs as its own age│                                             │
-│                                             │  ⌘⏎ / ⌃⏎ / ⌥⏎  insert a line break in the prompt                 │                                             │
-│                                             │  !cmd          run a shell command NOW (skips the queue)         │                                             │
-│                                             │  /             slash commands — ↑↓ pick · tab completes · ⏎ runs │                                             │
-│                                             │  ctrl-v        paste — a copied image is attached to the prompt  │                                             │
-│                                             │  ctrl-t        open the queue editor                             │                                             │
-│                                             │  ctrl-a / ↓    SUB-AGENTS — ↑↓ pick a lane · →↵ open it · ^x^x ki│                                             │
-│                                             │  ctrl-s        PLAN — every step of the approved plan, in full   │                                             │
-│                                             │  >text         steer the running turn — lands at the next step bo│                                             │
-│                                             │  esc           steer: your draft + queue go INTO the running turn│                                             │
-│                                             │  esc esc       cancel NOW & hold — nothing runs until your next p│                                             │
-│                                             │  ctrl-c        quit stella                                       │                                             │
-│                                             │                                                                  │                                             │
-│                                             │  letter & arrow hotkeys apply while the prompt box is empty      │                                             │
-│                                             │                                                                  │                                             │
-╰─────────────────────────────────────────────│  model                                                           │─────────────────────────────────────────────╯
- registry · web · type a term, ↵ searches     │  worker        zai/glm-5.2-air · answering                       │
-                                              │                                                                  │
- space on/off · ctrl+o preview · e edit · p pi│  machine                                                         │
- 4 installed · 1 learned · 3 enabled          │  engine        3 active · 3 total                                │
-                                              │  cpu           42%                                               │
->>>                                           │  mem           148M                                              │
- ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fo└──────────────────────────────────────────────────────────────────┘
-zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help
+ SESSION AGENTS TRACES GRAPH FILES   S┌ help — SKILLS · esc close ───────────────────────────────────────────────────────┐                              stella*
+╭─────────────────────────────────────│                                                                                  │─────────────────────────────────────╮
+│ ⌕                                   │  SKILLS tab                                                                      │                installed + registry │
+╰─────────────────────────────────────│  ← →           installed ↔ registry search (→ past the search leaves the tab)    │─────────────────────────────────────╯
+ installed · 4                        │  space         enable / disable                                                  │
+╭─────────────────────────────────────│  e             edit the selected skill                                           │─────────────────────────────────────╮
+│  [x] release-checklist        v3 · p│  p             pin / unpin                                                       │                                     │
+│▸ [x] rust-review              v2/4 ·│  n             new skill — drafted by the LLM                                    │                                     │
+│  [ ] sql-tuning               v1 · u│  ctrl-o        preview                                                           │                                     │
+│ learned from traces · 1   stella wro│  ctrl-x ×2     delete (press twice to confirm)                                   │                                     │
+│  [x] bench-rig-access         learne│  type          search skills                                                     │                                     │
+│                                     │                                                                                  │                                     │
+│                                     │  moving around — every tab, every overlay                                        │                                     │
+│                                     │  ← →           the sibling: the pane beside this one, else the tab beside it     │                                     │
+│                                     │  ↑ ↓ · k j     the item above / below                                            │                                     │
+│                                     │  ⏎             open it — a diff, a lane, a message's full text                   │                                     │
+│                                     │  ⌫             back up one level; never reaches a running turn                   │                                     │
+│                                     │  ⇞ ⇟ · Home End a page · the ends                                                │                                     │
+│                                     │  tab / ⇧tab    the next / previous tab                                           │                                     │
+│                                     │  q / esc       close any overlay                                                 │                                     │
+│                                     │                                                                                  │                                     │
+│                                     │  everywhere                                                                      │                                     │
+│                                     │  ⏎             queue the prompt — mid-turn it waits its turn (unless a card asks)│                                     │
+│                                     │  ⌘⏎ / ⌃⏎ / ⌥⏎  insert a line break in the prompt                                 │                                     │
+│                                     │  !cmd          run a shell command NOW (skips the queue)                         │                                     │
+│                                     │  /             slash commands — ↑↓ pick · tab completes · ⏎ runs                 │                                     │
+│                                     │  ctrl-v        paste — a copied image is attached to the prompt                  │                                     │
+│                                     │  ctrl-a        SUB-AGENTS — n nudge · f flag · ^x^x kill · p pause · r restart   │                                     │
+│                                     │  ctrl-t        the queue editor                                                  │                                     │
+│                                     │  ctrl-e        SESSIONS — every session on this machine                          │                                     │
+│                                     │  ctrl-k        CONTEXT — active skills + MCP servers                             │                                     │
+╰─────────────────────────────────────│  ctrl-g        INSPECT — the context sent on any recorded call                   │─────────────────────────────────────╯
+ registry · web · type a term, ↵ searc│  ctrl-s        PLAN — every step of the approved plan, in full                   │
+                                      │  >text         steer the running turn — lands at the next step boundary          │
+ space on/off · ctrl+o preview · e edi│  esc           steer: your draft + queue go INTO the running turn                │
+ 4 installed · 1 learned · 3 enabled  │  esc esc       cancel NOW & hold — nothing runs until your next prompt           │
+ ▶ sub:ci  running · quiet 0:00 · star│  ?             this sheet                                                        │
+>>>                                   │  ctrl-c        quit stella                                                       │
+ ⏎ queue · ↓ 2 sub-agents · ! shell · │                                                                                  │
+zai/glm-5.2-air · execute · ctx ▌░░░░░└──────────────────────────────────────────────────────── ↓ 9 more · ⇟ space · End ┘                                ? help

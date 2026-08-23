@@ -308,8 +308,8 @@ fn help_overlay_shows_only_the_active_tabs_shortcuts() {
         "titled for the tab:\n{traces}"
     );
     assert!(traces.contains("cycle the per-agent filter"), "{traces}");
-    // Deck-wide keys are always present…
-    assert!(traces.contains("switch tabs"), "{traces}");
+    // The focus tree and the deck-wide keys are always present…
+    assert!(traces.contains("the next / previous tab"), "{traces}");
     assert!(traces.contains("quit stella"), "{traces}");
     // …but other tabs' keys are not.
     assert!(!traces.contains("search skills"), "{traces}");

@@ -719,6 +719,22 @@ fn the_help_overlay_carries_the_metrics_spec_5_sends_behind_it() {
     let model = fixture_model();
     let mut ui = ui_for(DeckTab::Skills);
     ui.help_open = true;
+    // The sheet is longer than a 40-row frame since the focus-tree section
+    // joined it, and the numbers sit under the keys — so the first frame
+    // must say there is more below, and `End` must reach it.
+    let top = render_frame(&model, &mut ui, W, H);
+    assert!(
+        top.contains("more · ⇟ space · End"),
+        "a clipped sheet names what is below:\n{top}"
+    );
+    stella_tui::deck_ui::handle_deck_key(
+        crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::NONE,
+        ),
+        &model,
+        &mut ui,
+    );
     let frame = render_frame(&model, &mut ui, W, H);
 
     for needle in [

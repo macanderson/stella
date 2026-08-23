@@ -85,21 +85,14 @@ pub(super) fn handle_sessions_key(key: KeyEvent, now_ms: u64, ui: &mut DeckUi) -
     };
     let count = visible_session_rows(ui, now_ms).len();
     ui.sessions_sel = ui.sessions_sel.min(count.saturating_sub(1));
+    if super::list_nav::closes(key) {
+        ui.sessions_open = false;
+        return DeckAction::Handled;
+    }
+    if super::list_nav::select(key, &mut ui.sessions_sel, count, true) {
+        return DeckAction::Handled;
+    }
     match key.code {
-        KeyCode::Esc | KeyCode::Left | KeyCode::Char('q') => {
-            ui.sessions_open = false;
-            DeckAction::Handled
-        }
-        KeyCode::Up => {
-            ui.sessions_sel = ui.sessions_sel.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.sessions_sel = (ui.sessions_sel + 1).min(count - 1);
-            }
-            DeckAction::Handled
-        }
         KeyCode::Enter => match selected(ui) {
             // Navigate INTO the chosen session live: close the overlay and
             // hand over to the driver, which adopts the durable state and

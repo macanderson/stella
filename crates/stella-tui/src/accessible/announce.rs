@@ -30,13 +30,22 @@ use crate::deck_ui::DeckUi;
 /// it opens and closes on almost every keystroke, and announcing it would bury
 /// the moves that matter.
 fn overlay(ui: &DeckUi) -> Option<&'static str> {
+    // The parked asks first: they own the keyboard ahead of everything
+    // (`deck_ui::parked`), so they are what a reader is answering.
     let candidates = [
+        (ui.approval.is_open(), "approval card"),
+        (ui.question.is_open(), "question card"),
+        (ui.pending_dispatch.is_some(), "routing card"),
         (ui.help_open, "help"),
+        (ui.subagents.open, "sub-agents"),
         (ui.queue_open, "queue editor"),
         (ui.sessions_open, "sessions"),
         (ui.context_open, "context"),
         (ui.inbox_open, "inbox"),
         (ui.inspect_open, "inspect"),
+        (ui.cards.is_open(), "card"),
+        (ui.skills.preview.is_some(), "skill preview"),
+        (ui.mcp.inspector.is_some(), "server inspector"),
         (ui.search.open, "transcript search"),
         (ui.graph_picker_open, "graph file picker"),
     ];
@@ -177,6 +186,25 @@ mod tests {
         assert_eq!(ui.scrollback.take_announcements(), vec!["▸ help opened"]);
         announcing(&model, &mut ui, |ui| ui.help_open = false);
         assert_eq!(ui.scrollback.take_announcements(), vec!["▸ help closed"]);
+    }
+
+    /// The SUB-AGENTS overlay and the floating cards were silent: a reader
+    /// pressed `ctrl-a` and was told nothing. Every modal surface announces.
+    #[test]
+    fn the_sub_agents_overlay_and_the_cards_announce_too() {
+        let model = model_with(&["lead"]);
+        let mut ui = ui();
+        announcing(&model, &mut ui, |ui| ui.subagents.open = true);
+        assert_eq!(
+            ui.scrollback.take_announcements(),
+            vec!["▸ sub-agents opened"]
+        );
+        announcing(&model, &mut ui, |ui| ui.subagents.open = false);
+        ui.scrollback.take_announcements();
+        announcing(&model, &mut ui, |ui| {
+            ui.cards.raise(crate::deck_ui::cards::Card::Plan)
+        });
+        assert_eq!(ui.scrollback.take_announcements(), vec!["▸ card opened"]);
     }
 
     #[test]

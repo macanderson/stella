@@ -46,6 +46,13 @@ pub struct AgentMeta {
     /// One sentence on what the agent is for — the task it was handed, in
     /// the words it was handed. `None` falls back to `title` on screen.
     pub purpose: Option<String>,
+    /// The agent that dispatched this one — its place in the session's agent
+    /// tree. `None` for a root (the lead). The deck walks this for Backspace
+    /// (back to the dispatcher), the breadcrumb (`lead ▸ sub:2`), and the
+    /// SUB-AGENTS overlay's `f` (flag the lane to whoever dispatched it):
+    /// all three need the same answer, and a guess (`"lead"`) would be wrong
+    /// the day a lane dispatches a lane.
+    pub parent: Option<AgentId>,
     /// Wall-clock start (ms since epoch) for elapsed / $-per-hour.
     pub started_ms: u64,
 }
@@ -61,8 +68,15 @@ impl AgentMeta {
             model: None,
             effort: None,
             purpose: None,
+            parent: None,
             started_ms,
         }
+    }
+
+    /// Builder: name the agent that dispatched this one.
+    pub fn with_parent(mut self, parent: impl Into<AgentId>) -> Self {
+        self.parent = Some(parent.into());
+        self
     }
 
     /// Builder: set the pinned reasoning effort.
