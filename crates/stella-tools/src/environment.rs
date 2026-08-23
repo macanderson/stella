@@ -83,6 +83,72 @@ pub fn login_shell() -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// The executables whose presence or absence changes what a plan can be, in
+/// the order they are reported.
+///
+/// Short and evidence-chosen, not a survey. Each one is a command a bench
+/// transcript spent steps discovering the hard way: a task re-derived a plan
+/// around `python3` before finding its interpreter had no `pip` to install
+/// with, and `apt-get` — which worked in the same dataset — was never tried.
+/// Absence is the useful half, so [`EnvironmentIdentity::render`] names what
+/// is missing rather than listing only what is there.
+///
+/// It answers "is this command on `PATH`" and nothing further. A library's
+/// presence (`numpy`) is a question about an interpreter's own search path,
+/// and it needs that interpreter spawned to answer honestly — which is a
+/// different probe from this one and does not belong behind the same line.
+pub const PROBED_COMMANDS: &[&str] = &["python3", "pip", "pip3", "apt-get", "cc", "make", "xxd"];
+
+/// Whether `command` resolves to an executable file in `path` — a `PATH`
+/// value in the platform's own separator convention.
+///
+/// Takes the search path rather than reading the environment, which is what
+/// lets a test drive both answers without mutating a process-global the rest
+/// of the suite is reading concurrently.
+///
+/// A bare name only: a `/`-bearing argument is a path, not a `PATH` lookup,
+/// and answering one here would report a file the shell would never find this
+/// way.
+#[must_use]
+pub fn command_on_path(command: &str, path: &std::ffi::OsStr) -> bool {
+    if command.is_empty() || command.contains('/') || command.contains('\\') {
+        return false;
+    }
+    std::env::split_paths(path)
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .any(|dir| is_executable(&dir.join(command)))
+}
+
+/// Whether `candidate` is a file this process could execute.
+#[cfg(unix)]
+fn is_executable(candidate: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    candidate
+        .metadata()
+        .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+}
+
+/// On Windows executability is carried by the extension, and none of
+/// [`PROBED_COMMANDS`] is a Windows tool. Reporting a bare-name miss is the
+/// truthful answer there rather than a `PATHEXT` walk nothing consumes.
+#[cfg(not(unix))]
+fn is_executable(candidate: &Path) -> bool {
+    candidate.is_file()
+}
+
+/// Which of [`PROBED_COMMANDS`] this process can run, against the ambient
+/// `PATH`. Preserves [`PROBED_COMMANDS`]' order, so two sessions on one
+/// machine render the same line.
+#[must_use]
+pub fn available_commands() -> Vec<&'static str> {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    PROBED_COMMANDS
+        .iter()
+        .copied()
+        .filter(|command| command_on_path(command, &path))
+        .collect()
+}
+
 /// The environment facts collected once per session and rendered as labeled
 /// lines by [`GetEnvironment`]. Every field is session-constant — a process
 /// cannot change its OS mid-session, and the workspace root and scratch
@@ -107,6 +173,8 @@ pub struct EnvironmentIdentity {
     /// The session scratch directory (`crate::scratch::ScratchDir`), when
     /// the scratch plane initialized for this session.
     pub scratch_dir: Option<PathBuf>,
+    /// Which of [`PROBED_COMMANDS`] resolve on this process's `PATH`.
+    pub available_commands: Vec<&'static str>,
 }
 
 impl EnvironmentIdentity {
@@ -124,6 +192,7 @@ impl EnvironmentIdentity {
             os_release: os_release(),
             login_shell: login_shell(),
             scratch_dir,
+            available_commands: available_commands(),
         }
     }
 
@@ -151,22 +220,49 @@ impl EnvironmentIdentity {
             Some(dir) => format!("Scratch directory: {}", dir.display()),
             None => "Scratch directory: unavailable this session".to_string(),
         });
+        let absent: Vec<&str> = PROBED_COMMANDS
+            .iter()
+            .copied()
+            .filter(|command| !self.available_commands.contains(command))
+            .collect();
+        lines.push(format!(
+            "Commands on PATH: {}",
+            join_or(&self.available_commands, "none of the probed set")
+        ));
+        lines.push(format!(
+            "Commands NOT on PATH: {}",
+            join_or(&absent, "none — every probed command resolves")
+        ));
         lines.join("\n")
     }
 }
 
+/// `names` comma-joined, or `empty` when there are none. A line ending in
+/// nothing reads as a rendering fault, and the reader cannot tell it from a
+/// probe that did not run.
+fn join_or(names: &[&str], empty: &str) -> String {
+    if names.is_empty() {
+        return empty.to_string();
+    }
+    names.join(", ")
+}
+
 /// `get_environment`: report the session's environment in one call —
 /// workspace root, git/worktree status, platform, OS release, login shell,
-/// and the scratch directory. Zero arguments, single purpose: report
-/// (invariant #9). No model line — see the module doc.
+/// the scratch directory, and which of [`PROBED_COMMANDS`] resolve on `PATH`.
+/// Zero arguments, single purpose: report (invariant #9). No model line — see
+/// the module doc.
 ///
-/// The description tells the model when the call is worth its cost (#3102):
-/// every fact here except the scratch directory is already in the CLI's
-/// byte-stable "Session environment" prompt block
+/// The description tells the model when the call is worth its cost (#3102).
+/// Two facts here are tool-only, and both are prompt-unsafe for the same
+/// reason: they differ per process, and the CLI's "Session environment" block
+/// must stay byte-stable (invariant 7). The scratch directory is one. The
+/// command probe is the other, and it is what a turn otherwise buys with
+/// steps — a bench task spent one 120s timeout, then a second, discovering
+/// its interpreter had no `pip`, and never tried the `apt-get` that worked in
+/// the same dataset (#2670). Everything else is already in that block
 /// (`append_session_environment` renders from these same functions), so a
-/// model holding that block buys nothing but the scratch path by calling
-/// this. The tool stays because the scratch directory is prompt-unsafe (it
-/// differs per process, and the prompt block must stay byte-stable) and
+/// model holding it buys only those two by calling this. The tool also stays
 /// because hosts that assemble their own prompts (`stella-serve`) may carry
 /// no such block at all.
 pub struct GetEnvironment {
@@ -182,11 +278,14 @@ impl Tool for GetEnvironment {
             name: "get_environment".into(),
             description: "Report this session's environment: workspace root, whether it is a \
                 git repository (and whether it is a linked worktree), platform/arch, OS \
-                release, login shell dialect, and the scratch directory path. Your system \
+                release, login shell dialect, the scratch directory path, and which of \
+                python3, pip, pip3, apt-get, cc, make and xxd are on PATH. Your system \
                 prompt's Session environment block already states everything here except \
-                the scratch directory — call this only when you need the scratch directory \
-                path, or when no such block is in your prompt. Never spend calls on pwd, \
-                uname, or shell probing for these facts."
+                the scratch directory and the PATH probe — call this only when you need \
+                one of those, or when no such block is in your prompt. Call it before \
+                planning any task around an interpreter or a package manager, so a missing \
+                one costs a call rather than a timed-out command. Never spend calls on \
+                pwd, uname, which, or shell probing for these facts."
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
             read_only: true,
@@ -290,18 +389,84 @@ mod tests {
     /// found the tool is NOT a strict subset of the Session environment block
     /// — the scratch directory is tool-only (and the model line prompt-only)
     /// — so the tool survives, but its description has to name that margin or
-    /// every call against a prompt-carrying session is a wasted one.
+    /// every call against a prompt-carrying session is a wasted one. The
+    /// `PATH` probe (#2670) joined that margin and is named the same way.
     #[test]
-    fn the_description_names_the_scratch_directory_as_the_marginal_fact() {
+    fn the_description_names_the_marginal_facts_the_prompt_block_lacks() {
         let description = GetEnvironment { scratch_dir: None }.schema().description;
         assert!(
-            description.contains("except the scratch directory"),
+            description.contains("except the scratch directory and the PATH probe"),
             "the description must say the prompt already carries everything else: {description}"
         );
         assert!(
             description.contains("call this only when"),
             "the description must scope when the call is worth making: {description}"
         );
+        for command in PROBED_COMMANDS {
+            assert!(
+                description.contains(command),
+                "the description must name {command}, or the model cannot tell whether \
+                 the call answers the question it has: {description}"
+            );
+        }
+    }
+
+    /// **Witness (#2670, P6(c)).** A bare name resolves against `PATH` by
+    /// executable bit, and a file that is merely present does not count — a
+    /// probe that answered yes for an unexecutable file would send the model
+    /// down the plan the probe exists to rule out.
+    #[cfg(unix)]
+    #[test]
+    fn the_path_probe_answers_by_executable_bit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let runnable = dir.path().join("runnable-probe");
+        std::fs::write(&runnable, "#!/bin/sh\n").expect("write");
+        std::fs::set_permissions(&runnable, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        std::fs::write(dir.path().join("inert-probe"), "not executable").expect("write");
+
+        let path = std::ffi::OsString::from(dir.path());
+        assert!(command_on_path("runnable-probe", &path));
+        assert!(!command_on_path("inert-probe", &path));
+        assert!(!command_on_path("absent-probe", &path));
+        assert!(
+            !command_on_path("./runnable-probe", &path),
+            "a path is not a PATH lookup, and the shell would not find it this way"
+        );
+    }
+
+    /// Every probed command is reported, present or absent — the absent half
+    /// is the one that changes a plan, and a line that listed only what is
+    /// there would leave the model to infer the rest from silence.
+    #[tokio::test]
+    async fn get_environment_places_every_probed_command_on_one_side_or_the_other() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let tool = GetEnvironment { scratch_dir: None };
+        let ToolOutput::Ok { content, .. } = tool
+            .execute(
+                &json!({}),
+                &crate::ctx::ToolCtx::bare(dir.path().to_path_buf()),
+            )
+            .await
+        else {
+            panic!("get_environment must succeed with zero arguments");
+        };
+
+        let present = line_after(&content, "Commands on PATH: ");
+        let absent = line_after(&content, "Commands NOT on PATH: ");
+        for command in PROBED_COMMANDS {
+            let named = present.split(", ").any(|found| found == *command)
+                || absent.split(", ").any(|missing| missing == *command);
+            assert!(named, "{command} is on neither line: {content}");
+        }
+    }
+
+    fn line_after<'a>(content: &'a str, label: &str) -> &'a str {
+        content
+            .lines()
+            .find_map(|line| line.strip_prefix(label))
+            .unwrap_or_else(|| panic!("no {label:?} line in:\n{content}"))
     }
 
     /// A supplied scratch directory is reported by path, exactly as passed.
