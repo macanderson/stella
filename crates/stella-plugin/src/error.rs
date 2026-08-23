@@ -413,11 +413,21 @@ pub enum ManifestError {
     #[error("[subloop] stages contains an empty stage name")]
     EmptyStageName,
 
-    /// `[roles]` was declared without `[subloop]`. A role exists to be
-    /// resolved for a subloop stage; with no stages it is dead config, and
-    /// dead config in a consent document is a hazard, not clutter.
-    #[error("[roles] requires a [subloop]: a role is only resolved for a subloop stage")]
-    RolesRequireSubloop,
+    /// `[roles]` was declared with nothing that could ever resolve a role —
+    /// neither `[subloop]` nor `[wrapper]`. A role intent exists to be
+    /// resolved; with nothing to resolve it for, it is dead config, and dead
+    /// config in a consent document is a hazard, not clutter.
+    ///
+    /// Named for the rule rather than for one of the two things that satisfy
+    /// it. It was `RolesRequireSubloop` while `[subloop]` was the only thing
+    /// that could spend a model call; `BeforeTurnResponse::role` (#3380) made
+    /// a `[wrapper]` the second, and three shipped manifests were declaring a
+    /// `[subloop]` they never used just to get past this check (#3496).
+    #[error(
+        "[roles] requires a [subloop] or a [wrapper]: a role intent is only resolved for a \
+         subloop stage or a wrapper point, so with neither it can never be spent"
+    )]
+    RolesResolveNowhere,
 
     /// A `[roles.<name>]` entry declared an empty tier. The tier is the
     /// intent the host resolves against the user's providers; an empty

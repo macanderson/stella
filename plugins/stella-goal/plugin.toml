@@ -160,14 +160,6 @@ measurements = ["met"]
 requirement = "goal-met"
 check = "met >= 1"
 
-# `[roles]` requires `[subloop]` (`ManifestError::RolesRequireSubloop`) even
-# though this plugin uses none of `[subloop]`'s own bounded-child-turn
-# dispatch mechanism — the same awkward coupling `plugins/stella-plan`
-# documents and tracks at #3496. `stages = ["verify"]` is declared only to
-# satisfy the validator; the host never reads it for this plugin.
-[subloop]
-stages = ["verify"]
-
 # The one role intent this plugin names. `tier = "verifier"` is the honest
 # name for what this call is — an independent assessment of the worker's own
 # turn — but no shipped host's `ChildTurns::declare` binds it today:

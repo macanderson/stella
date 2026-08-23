@@ -319,7 +319,10 @@ pub struct PluginManifest {
     /// Steering and above: declared stages run as bounded child turns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subloop: Option<Subloop>,
-    /// Routing intents for subloop stages. Requires `[subloop]`.
+    /// Routing intents the host resolves against the user's own providers —
+    /// for a `[subloop]` stage, or for a `[wrapper]` point naming one on its
+    /// `before_turn` response. Requires one of those two: an intent nothing
+    /// can spend is dead config in a document a human consented to (#3496).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roles: Option<BTreeMap<String, Role>>,
     /// Steering and above: the wrapper's stage order and the conditions
@@ -631,8 +634,15 @@ impl PluginManifest {
         }
 
         if let Some(roles) = &self.roles {
-            if self.subloop.is_none() {
-                return Err(ManifestError::RolesRequireSubloop);
+            // "A role must have something that could resolve it", not "a role
+            // requires a subloop". `[subloop]` was the only such thing when
+            // this rule was written; `BeforeTurnResponse::role` (#3380) made a
+            // `[wrapper]` the second, and `stella_runtime::wrapper::admissible`
+            // refuses an intent this table does not declare — so a wrapper
+            // naming one has to declare it here. Refused when neither exists,
+            // because then nothing can ever spend it (#3496).
+            if self.subloop.is_none() && self.wrapper.is_none() {
+                return Err(ManifestError::RolesResolveNowhere);
             }
             for (name, role) in roles {
                 if role.tier.trim().is_empty() {
@@ -913,15 +923,48 @@ mod tests {
     }
 
     #[test]
-    fn roles_without_a_subloop_are_rejected_and_tiers_must_be_non_empty() {
+    fn roles_that_resolve_nowhere_are_rejected_and_tiers_must_be_non_empty() {
         let orphaned = parse(
             "name = \"x\"\n[loop]\nparticipation = \"steering\"\n\n[roles.triage]\ntier = \"cheap\"",
         )
         .unwrap_err();
-        assert!(matches!(orphaned, ManifestError::RolesRequireSubloop));
+        assert!(matches!(orphaned, ManifestError::RolesResolveNowhere));
 
         let blank_tier = parse(
             "name = \"x\"\n[loop]\nparticipation = \"steering\"\n\n[subloop]\nstages = [\"triage\"]\n\n[roles.triage]\ntier = \"\"",
+        )
+        .unwrap_err();
+        assert!(matches!(blank_tier, ManifestError::EmptyRoleTier { .. }));
+    }
+
+    /// **The witness for #3496.** A `[wrapper]` that names a role intent on
+    /// its `before_turn` response is a second thing that can resolve one, so
+    /// `[roles]` beside it loads with no `[subloop]` to prop it up — while
+    /// `[roles]` with neither is still refused, because the rule is "something
+    /// must be able to spend this", not "declare any table you like".
+    ///
+    /// Three shipped manifests were declaring a `[subloop]` they never used to
+    /// get past the old rule (`plugins/stella-plan`, `plugins/stella-goal`,
+    /// and this crate's own reference fixture in
+    /// `crates/stella-runtime/tests/wrapper_socket.rs`); all three drop it in
+    /// the same change.
+    #[test]
+    fn a_wrapper_can_name_a_role_intent_without_declaring_a_subloop() {
+        let wrapper_only = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\n\n\
+             [wrapper]\nid = \"x-v1\"\n\n[[wrapper.stages]]\nname = \"plan\"\n\n\
+             [roles.planner]\ntier = \"plan\"",
+        )
+        .expect("a wrapper naming a role intent needs no subloop to resolve it");
+        assert!(wrapper_only.subloop.is_none());
+        assert!(wrapper_only.roles.is_some());
+
+        // A tier is still a tier: widening which tables satisfy the rule does
+        // not widen what the entries themselves may say.
+        let blank_tier = parse(
+            "name = \"x\"\n[loop]\nparticipation = \"steering\"\npoints = [\"before_turn\"]\n\n\
+             [wrapper]\nid = \"x-v1\"\n\n[[wrapper.stages]]\nname = \"plan\"\n\n\
+             [roles.planner]\ntier = \" \"",
         )
         .unwrap_err();
         assert!(matches!(blank_tier, ManifestError::EmptyRoleTier { .. }));

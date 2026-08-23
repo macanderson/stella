@@ -65,18 +65,6 @@ calls = ["child_turn"]
 # so the consent text a human reads states the real number.
 max_calls = 1
 
-# `[roles]` requires `[subloop]` (`ManifestError::RolesRequireSubloop`,
-# `crates/stella-plugin/src/manifest.rs:772-775`) even though this plugin
-# uses none of `[subloop]`'s own bounded-child-turn *dispatch* — its child
-# turn is spent entirely over the host-call channel above. That coupling is
-# a real, awkward constraint on any plugin that wants a role intent purely
-# for `child_turn`, tracked at #3496 rather than treated as intentional
-# here. `stages = ["plan"]` is declared only to satisfy the validator; the
-# host never reads it for this plugin, because nothing here asks the host
-# to run `[subloop]`'s own stage list.
-[subloop]
-stages = ["plan"]
-
 # The one role intent this plugin names. `tier = "plan"` resolves to
 # `ModelCallRole::Plan` under the host's `default_seats()`
 # (`crates/stella-runtime/src/wrapper/child_turn.rs:170-180`), which is the

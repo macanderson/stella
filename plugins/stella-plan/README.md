@@ -99,14 +99,6 @@ tier = "plan"` is the one role intent this plugin ever names — it resolves to
 `ModelCallRole::Plan` under the host's `default_seats()`, the same
 responsibility the built-in stage's own model call carries.
 
-`[roles]` requires `[subloop]` in the manifest schema
-(`ManifestError::RolesRequireSubloop`) even though this plugin uses none of
-`[subloop]`'s own bounded-child-turn dispatch mechanism — its child turn is
-spent entirely over the host-call channel. `plugin.toml` declares `[subloop]
-stages = ["plan"]` only to satisfy that validator; the host never reads it for
-this plugin. That coupling is a real, awkward constraint on any plugin
-wanting a role intent purely for `child_turn`, tracked at #3496.
-
 **Every way the ask can fail leaves the prompt exactly as it was.** The host
 offers no channel (`unavailable`), the manifest declares no such role intent
 (`undeclared`), the role resolves to the worker's own seat (`forbidden` — the
@@ -180,7 +172,6 @@ its output, and the same is true of `stella-research`'s.
 | No `repo_structure` wire representation, so the planner prompt omits the section the built-in reads | #3562 (item 2) |
 | No `--revise` wire representation, so a rejected plan's revision note cannot reach a re-plan | #3562 (item 3) |
 | The parsed plan rides as prose, not the typed `Vec<PlanStep>` the built-in's per-step engine-turn walk needs | #3562 (item 4) |
-| `[roles]` requires `[subloop]` even for a role intent used only over the host-call channel | #3496 |
 | `stella run`'s driver installs the `ChildTurns` plane but does not yet fold its spend back into the receipt or surface it beside `HostCallGate::refusals()` | #3576 (open items) |
 | It is spawned once per declared stage and contributes at exactly one of them | #3543 |
 | Nobody has benchmarked it against the built-in stage | (none yet — parallel to #3544 for `stella-research`) |

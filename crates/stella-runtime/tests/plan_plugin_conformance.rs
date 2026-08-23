@@ -303,9 +303,11 @@ fn the_shipped_manifest_declares_before_turn_and_one_bounded_child_turn() {
         "the planner role intent resolves to the built-in stage's own responsibility"
     );
     assert!(
-        manifest.subloop.is_some(),
-        "[roles] requires [subloop] even though this plugin does not use its \
-         bounded-child-turn dispatch (#3496) — declared to satisfy the validator"
+        manifest.subloop.is_none(),
+        "this plugin spends its child turn entirely over the host-call channel, so it \
+         declares no `[subloop]` — since #3496 the `[wrapper]` below is what resolves the \
+         role intent above, and the `[subloop]` that used to sit here only to satisfy the \
+         validator is gone"
     );
 
     let wrapper = manifest.wrapper.as_ref().expect(
