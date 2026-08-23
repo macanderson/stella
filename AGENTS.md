@@ -94,6 +94,7 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + transcript-surfaces
                          #   + prose (no content-free constructions added)
                          #   + deck-fit-all-test (the deck enumeration)
+                         #   + deck-paths (the decks' code-map citations)
                          #   + wire-schema
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
@@ -127,14 +128,24 @@ all three trigger on the `docs/**` and `*.md` paths `ci.yml` ignores; and
 because a PR that hand-edits a generated schema and nothing else starts neither
 of the other two (#1439).
 
-A fourth workflow, `deck-fit.yml`, runs no gate step at all: it measures every
-slide of every deck under `website/public/presentations/` against the fixed
-1600x900 canvas the decks are authored in (`scripts/deck-fit.mjs`). It needs a
-browser, which is why it is not in `make gate`, and it has its own file rather
-than a job in `docs-guards.yml` because that workflow triggers on `**/*.rs` and
-would launch a browser on nearly every PR — the same disjoint-paths reasoning
-that gave `wire-schema.yml` its own file. It is deliberately not a required
-check yet (#2425).
+A fourth workflow, `deck-fit.yml`, owns the decks under
+`website/public/presentations/`. Its measurement — every slide against the
+fixed 1600x900 canvas the decks are authored in (`scripts/deck-fit.mjs`) —
+needs a browser, which is why that half is not in `make gate`, and it has its
+own file rather than a job in `docs-guards.yml` because that workflow triggers
+on `**/*.rs` and would launch a browser on nearly every PR — the same
+disjoint-paths reasoning that gave `wire-schema.yml` its own file. It is
+deliberately not a required check yet (#2425).
+
+The browser is what is expensive, not the deck directory, so the two checks
+over these files that need no browser are gate steps and run here as well:
+`deck-fit-all-test` covers the enumeration the workflow drives
+(`scripts/deck-fit-all.sh` — inline in the `run:` block until #3404, which is
+why the enumeration bug #3376 had no regression test), and `deck-paths` holds
+the decks' code-map citations to files that still exist. `deck-paths` runs in
+this workflow rather than only in the gate because `ci.yml`'s required job
+skips its Rust half for a diff confined to `website/**` (#1892), and a diff
+confined to `website/**` is exactly a deck edit (#3573).
 
 A fifth, `main-canary.yml`, is the only one that runs **after** the merge, and
 it exists because some guards cannot be settled before one. A guard enforced

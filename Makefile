@@ -40,7 +40,8 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
                     dead-code-allows diagnostic-codes bench-suites tokens \
-                    hue-separation transcript-surfaces prose deck-fit-all-test
+                    hue-separation transcript-surfaces prose deck-fit-all-test \
+                    deck-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
 # The cargo steps that resolve or parse but never build. They are not in
@@ -362,6 +363,14 @@ deck-fit-all-test: ## Test the deck enumeration and its skip/fail accounting (#3
 .PHONY: deck-fit-all
 deck-fit-all: ## Measure every deck under website/public/presentations/ (needs node + a browser)
 	./scripts/deck-fit-all.sh
+
+.PHONY: deck-paths
+deck-paths: ## Assert every repository path a deck cites still resolves (#3573)
+	@python3 ./scripts/check-deck-paths.py
+
+.PHONY: deck-paths-test
+deck-paths-test: ## Test the deck path guard's directions (hermetic; not part of `gate`)
+	./scripts/test-deck-paths.sh
 
 .PHONY: dead-code-allows
 dead-code-allows: ## Assert every #[allow(dead_code)] says why, and that the count only shrinks (#3949)

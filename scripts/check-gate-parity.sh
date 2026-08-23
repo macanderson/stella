@@ -99,7 +99,10 @@ number_word() {
   26) echo twenty-six ;; 27) echo twenty-seven ;; 28) echo twenty-eight ;;
   29) echo twenty-nine ;; 30) echo thirty ;; 31) echo thirty-one ;;
   32) echo thirty-two ;; 33) echo thirty-three ;; 34) echo thirty-four ;;
-  35) echo thirty-five ;; 36) echo thirty-six ;;
+  35) echo thirty-five ;; 36) echo thirty-six ;; 37) echo thirty-seven ;;
+  38) echo thirty-eight ;; 39) echo thirty-nine ;; 40) echo forty ;;
+  41) echo forty-one ;; 42) echo forty-two ;; 43) echo forty-three ;;
+  44) echo forty-four ;; 45) echo forty-five ;;
   *) echo "" ;;
   esac
 }
@@ -123,7 +126,7 @@ contributing_alias() {
   # hand-copied second list in ci.yml and a third here drifted from it (#3375).
   # A raw command in this fence would be a fourth.
   shellcheck) echo 'make shellcheck' ;;
-  # Eight Python guards, so the `.sh` default below does not fit them.
+  # The Python guards, whose scripts the `.sh` default below does not fit.
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
   typed-errors) echo 'check-typed-errors' ;;
@@ -132,6 +135,7 @@ contributing_alias() {
   hue-separation) echo 'check-hue-separation' ;;
   transcript-surfaces) echo 'check-transcript-surfaces' ;;
   prose) echo 'check-prose' ;;
+  deck-paths) echo 'check-deck-paths' ;;
   doc-warnings) echo 'cargo doc' ;;
   format-check) echo 'cargo fmt' ;;
   lint) echo 'cargo clippy' ;;

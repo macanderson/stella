@@ -94,6 +94,7 @@ python3 ./scripts/check-hue-separation.py
 python3 ./scripts/check-transcript-surfaces.py
 python3 ./scripts/check-prose.py
 ./scripts/test-deck-fit-all.sh
+python3 ./scripts/check-deck-paths.py
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check
@@ -120,10 +121,13 @@ and `command-docs` — on their own because they trigger on the `docs/**` and
 same reason in the other direction — a PR that only hand-edits a generated
 schema under `docs/wire/` starts neither of the others (#1439).
 
-One more workflow runs no gate step: `deck-fit.yml` measures every slide of
-every deck under `website/public/presentations/` against the fixed 1600x900
-canvas they are authored in. It needs a browser, so it cannot live in `make
-gate`, and it triggers only on the presentation paths (#2425).
+One more workflow, `deck-fit.yml`, measures every slide of every deck under
+`website/public/presentations/` against the fixed 1600x900 canvas they are
+authored in. That measurement needs a browser, so it cannot live in `make
+gate`, and it triggers only on the presentation paths (#2425). The two checks
+over the same files that need no browser — `deck-fit-all-test` and
+`deck-paths` — are gate steps, and this workflow runs `deck-paths` too, because
+`ci.yml` skips its Rust half for the `website/**`-only diff a deck edit is.
 
 **Cite a document by its id, not its path.** `doc:context-reuse §4` resolves no
 matter where the file moves; a document with no frontmatter `id` is not citable
