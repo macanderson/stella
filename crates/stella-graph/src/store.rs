@@ -19,7 +19,9 @@
 //! Byte-compat skip (L-C2): a file whose content
 //! sha256 matches the stored value is never re-parsed. [`IndexStats::files_parsed`]
 //! counts real parse invocations, which the skip test asserts drops to zero on
-//! an unchanged second pass.
+//! an unchanged second pass. The skip also compares the language the row was
+//! written under, because a remapped extension is invisible to a content hash
+//! and would otherwise keep the old grammar's symbols forever (#3184).
 //!
 //! Schema: `codegraph.db` is versioned by *convergence* — every statement in
 //! [`MIGRATION`] is `CREATE … IF NOT EXISTS` and the whole batch replays on
@@ -615,9 +617,17 @@ fn index_one(
 
     let sha = sha256_hex(&content);
 
-    // Byte-compat skip (L-C2): identical content is never re-parsed.
-    if let Some(existing) = file_sha(tx, &rel)?
-        && existing == sha
+    // Byte-compat skip (L-C2): identical content is never re-parsed — unless
+    // the language it would be parsed as has changed since the row was
+    // written. A remapped extension is invisible to a content hash, so
+    // without the second half a `.cpp` file indexed under the C grammar keeps
+    // its C-grammar symbols forever in every existing `codegraph.db`: the
+    // bytes never change, so the skip hides the new grammar until somebody
+    // edits the file (#3184). Same argument as the generated-file filter
+    // above, which runs before this skip for the same reason.
+    if let Some((existing_sha, existing_lang)) = indexed_as(tx, &rel)?
+        && existing_sha == sha
+        && language_tag_for(abs).is_none_or(|tag| tag == existing_lang)
     {
         stats.files_skipped_unchanged += 1;
         return Ok(());
@@ -1002,19 +1012,35 @@ fn prune_missing(tx: &Transaction, current: &HashSet<String>) -> Result<usize, G
     Ok(removed)
 }
 
-fn file_sha(tx: &Transaction, rel: &str) -> Result<Option<String>, GraphError> {
+/// The `code_graph_files.language` tag this build would write for `abs`, or
+/// `None` when it cannot say.
+///
+/// `None` is deliberately "do not re-parse on this account" rather than a
+/// third tag: it covers a feature-trimmed build, which answers `None` for a
+/// language whose grammar it did not compile in and must not be allowed to
+/// churn a row a fully-featured build wrote (invariant: a trimmed build reads
+/// a shared `codegraph.db` without rewriting it).
+fn language_tag_for(abs: &Path) -> Option<&'static str> {
+    Language::from_path(abs)
+        .map(Language::tag)
+        .or_else(|| storage::indexes_without_language(abs).then_some("prisma"))
+}
+
+/// The content hash and language tag a file is currently indexed under, or
+/// `None` when it has never been indexed.
+fn indexed_as(tx: &Transaction, rel: &str) -> Result<Option<(String, String)>, GraphError> {
     // `.optional()` maps only "no row for this path" to `None`; any other DB
     // error propagates as `GraphError` instead of being silently swallowed
     // into a spurious "not previously indexed" (which would re-parse and mask
     // a real store fault).
-    let sha = tx
+    let row = tx
         .query_row(
-            "SELECT content_sha256 FROM code_graph_files WHERE path = ?1",
+            "SELECT content_sha256, language FROM code_graph_files WHERE path = ?1",
             params![rel],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()?;
-    Ok(sha)
+    Ok(row)
 }
 
 // Read side (frames come from these)
