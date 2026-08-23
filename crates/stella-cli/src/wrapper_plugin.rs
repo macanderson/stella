@@ -87,10 +87,11 @@
 //! moments, not one function with an `Option` in it.
 //!
 //! And two scope limits. A plugin's `Unmet` fails the process only under
-//! `--require-verdict`, which `stella run` alone offers — the door where an
-//! exit status is a delivery gate. `stella goal` and `stella fleet` drive
-//! wrappers too and take no such flag yet (#3554 shipped the gate on the
-//! one-shot door; see `verdict_gate` for what the default is defending). And
+//! `--require-verdict`, which every wrapper-driving door now offers (#3554
+//! shipped the gate on `stella run`; #4543 took it to `stella goal` — the
+//! LAST round's verdict decides — and to `stella fleet`, where an unmet
+//! verdict fails that ATTEMPT and a failed attempt fails the run; see
+//! `verdict_gate` for what the default is defending). And
 //! only this driver of `doc:wrapper-socket` §6's three exists
 //! (#3551). `--pipeline <variant>` itself now reaches every door that takes
 //! it — `stella run` here, `stella goal` per judged round
@@ -168,7 +169,7 @@ mod report;
 use report::{report_to, sweep_lines};
 /// Whether a wrapper's conclusion decides the run's exit status (#3554).
 mod verdict_gate;
-use verdict_gate::verdict_refusal;
+pub(crate) use verdict_gate::verdict_refusal;
 // The renderers `report_to` composes internally. Nothing in the shipped binary
 // calls them directly — only this module's tests do, through `super::` — so the
 // re-export is `#[cfg(test)]` rather than an `#[allow(unused_imports)]`: the

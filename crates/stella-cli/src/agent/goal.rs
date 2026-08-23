@@ -490,6 +490,10 @@ pub async fn run_goal_cmd(
     // flip with (#3835). Refused before this function on the raw arm, where
     // there is no oracle to arm.
     test_command: Option<&str>,
+    // `--require-verdict` (#3554, this door #4543): the last round's wrapper
+    // verdict gates the exit status. Refused before this function on the raw
+    // arm, where nothing declares a verdict.
+    require_verdict: bool,
 ) -> Result<(), crate::failure::CliFailure> {
     // `Plugin` reads as `Raw` for every branch below except the final
     // dispatch: the wrapped arm builds the same system prompt, the same
@@ -670,6 +674,7 @@ pub async fn run_goal_cmd(
             memory.as_mut(),
             bound,
             candidate,
+            require_verdict,
             Some(&mut rounds),
         )
         .await

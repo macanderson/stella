@@ -96,6 +96,11 @@ pub async fn run_fleet(
     task_timeout: Option<std::time::Duration>,
     output_format: crate::OutputFormat,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
+    // `--require-verdict` (#3554, this door #4543): per attempt — an unmet or
+    // undecided wrapper verdict fails that attempt by name, and a failed
+    // attempt fails the run, the rule every failed task already follows.
+    // Refused before this function on the raw arm.
+    require_verdict: bool,
 ) -> Result<(), String> {
     // The whole door is refused under the enterprise process-free authority,
     // whatever `--pipeline` says (`authorize_execution_surface_with` admits
@@ -198,6 +203,7 @@ pub async fn run_fleet(
         run_id: run_id.clone(),
         dash: worker_dash,
         wrapper_variant: wrapper_variant.map(str::to_string),
+        require_verdict,
     };
     let fleet = Fleet::new(
         worker,
@@ -528,6 +534,10 @@ struct EngineWorker {
     /// own from this name, in its own tree, and `run_fleet`'s pre-flight has
     /// already proven the name resolves.
     wrapper_variant: Option<String>,
+    /// `--require-verdict` (#4543): each attempt's wrapper verdict gates that
+    /// attempt. Meaningless without `wrapper_variant`, and refused before the
+    /// fan-out in that case.
+    require_verdict: bool,
 }
 
 #[async_trait::async_trait]
@@ -547,6 +557,7 @@ impl FleetWorker for EngineWorker {
         let cfg = self.cfg.clone();
         let per_child_budget = self.per_child_budget;
         let wrapper_variant = self.wrapper_variant.clone();
+        let require_verdict = self.require_verdict;
         let task = task.clone();
         let root = workspace_root.to_path_buf();
         let claim_holder = format!("{}/{}", self.run_id, task.id);
@@ -593,6 +604,7 @@ impl FleetWorker for EngineWorker {
                         worker_dash,
                         worker_spend,
                         wrapper_variant.as_deref(),
+                        require_verdict,
                     ))
                 });
             let _ = tx.send(result);
@@ -915,6 +927,7 @@ async fn run_task(
     dash: Option<mpsc::UnboundedSender<FleetMsg>>,
     spend: crate::fleet_spend::SpendRecovery,
     wrapper_variant: Option<&str>,
+    require_verdict: bool,
 ) -> Result<WorkerOutcome, String> {
     // Where this workspace starts. In an ISOLATED worktree this is the whole
     // attribution story — one writer, so the whole advance to `HEAD` is this
@@ -1183,7 +1196,9 @@ async fn run_task(
                         _ = stop_wait => None,
                     };
                     let raced = match dispatched {
-                        Some(report) => Raced::Outcome(wrapper.settle(report, driver)),
+                        Some(report) => {
+                            Raced::Outcome(wrapper.settle(report, driver, require_verdict))
+                        }
                         None => Raced::Stopped,
                     };
                     // What the plugin's last point spent has no engine turn

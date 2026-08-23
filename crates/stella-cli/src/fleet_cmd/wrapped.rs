@@ -203,17 +203,26 @@ impl AttemptWrapper {
     /// wrapper that held the attempt open to fix something must be judged on
     /// the turn it ended with, not the one it rejected.
     ///
+    /// Under `require_verdict` (#4543) the wrapper's own conclusion sits on
+    /// top of that, PER ATTEMPT: a dispatch whose outcome is not `Met` fails
+    /// this attempt by name, and a failed attempt fails the run — the rule
+    /// every failed task already follows. The turn's own failure wins when
+    /// both fire, `run_wrapped`'s rule for the same pair: an aborted turn has
+    /// a more specific thing to say, and flows through unchanged below.
+    ///
     /// # Errors
     ///
-    /// A wrapper whose process could not be driven, or one whose dispatch
-    /// returned without driving a turn at all: both are named reasons the
-    /// attempt failed, never a silently successful one. `stella-cli` is a
+    /// A wrapper whose process could not be driven, one whose dispatch
+    /// returned without driving a turn at all, or — under `require_verdict` —
+    /// a completed turn the wrapper did not vouch for: each is a named reason
+    /// the attempt failed, never a silently successful one. `stella-cli` is a
     /// binary, so a `String` here is the finished product (AGENTS.md
     /// invariant 5).
     pub(super) fn settle(
         &self,
         report: Result<DispatchReport, stella_runtime::wrapper::WrapperError>,
         driver: AttemptDriver<'_, '_>,
+        require_verdict: bool,
     ) -> Result<TurnOutcome, String> {
         let report = report
             .map_err(|error| format!("wrapper \"{}\" cannot be driven: {error}", self.variant()))?;
@@ -225,12 +234,19 @@ impl AttemptWrapper {
         // puts N workers' lines on one stream (#3883).
         self.bound
             .report(Some(&self.task), crate::OutputFormat::Text, &report);
-        driver.driven.ok_or_else(|| {
+        let driven = driver.driven.ok_or_else(|| {
             format!(
                 "wrapper \"{}\" drove this attempt with no turn",
                 self.variant()
             )
-        })
+        })?;
+        if matches!(driven, TurnOutcome::Completed { .. })
+            && let Some(refusal) =
+                crate::wrapper_plugin::verdict_refusal(require_verdict, &report.outcome)
+        {
+            return Err(refusal);
+        }
+        Ok(driven)
     }
 }
 
