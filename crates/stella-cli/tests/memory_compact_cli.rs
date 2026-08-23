@@ -17,6 +17,9 @@ use std::process::{Command, Output};
 
 use stella_context::{ContextDelta, ContextStore, MemoryInput};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 fn context_db(workspace: &Path) -> std::path::PathBuf {
     workspace.join(".stella/private/context.db")
 }
@@ -65,6 +68,7 @@ fn seeded(edits: usize) -> tempfile::TempDir {
 
 fn run(workspace: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args(args)
         .current_dir(workspace)
         .env("STELLA_DATA_DIR", workspace.join("data"))

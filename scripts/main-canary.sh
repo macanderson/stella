@@ -162,7 +162,7 @@ checks=(
   # its ceiling on `main` while every open PR stayed correctly green; it was
   # found by hand during an unrelated merge and fixed by #3444.
   #
-  # `--absolute` is load-bearing and not a tidiness flag. Without it the guard
+  # `--absolute` is required and not a tidiness flag. Without it the guard
   # judges a push to `main` against `HEAD^1`, so it would only ever notice
   # drift the newest commit introduced — and the 2026-08-17 drift, already two
   # commits old by the time anyone looked, passes that test cleanly. Verified
@@ -187,7 +187,7 @@ checks=(
   # its ceiling — the build break itself was invisible, because nothing here
   # compiled anything (#3660).
   #
-  # `--all-targets` is load-bearing: the same splice shape lands in test files
+  # `--all-targets` is required: the same splice shape lands in test files
   # (AGENTS.md's deleted-test guard documents #1976 and #1860), and a break
   # confined to a test target is exactly the one no other post-merge check
   # sees. `--locked` matches what `install.sh` builds under, and stops cargo

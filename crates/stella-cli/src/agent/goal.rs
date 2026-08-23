@@ -122,8 +122,8 @@ pub(crate) async fn run_raw_one_shot(
     let cfg = &bare;
     // Resolved before the provider is built and before a single paid call: a
     // `--pipeline` that names nothing installed must fail as a typo, not after
-    // the run it was meant to shape. The grant is minted in the same breath and
-    // for the same reason — a `--test-command` the host's parser refuses must
+    // the run it was meant to shape. The grant is minted right here, for the
+    // same reason — a `--test-command` the host's parser refuses must
     // stop the run here, not after it is paid for.
     let resolved = match pipeline.plugin() {
         Some(variant) => Some(

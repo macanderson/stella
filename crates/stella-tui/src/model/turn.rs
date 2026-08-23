@@ -281,7 +281,7 @@ pub struct Hud {
     pub limit_usd: Option<f64>,
     pub budget_mode: Option<BudgetMode>,
     /// Wall clock left before the task deadline, as the last `BudgetTick`
-    /// reported it (#2240, #2435). `None` is the load-bearing case and means
+    /// reported it (#2240, #2435). `None` is the decisive case and means
     /// **no deadline is armed** — never "no time left", which is
     /// `Some(0)`. The status bar renders the two differently for exactly that
     /// reason: a HUD showing `0s` for an unarmed run would put back into the

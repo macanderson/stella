@@ -1333,7 +1333,7 @@ fn cycle_identity(pairs: &[(&str, &str)], shift: usize) -> LoopIdentity {
 /// period as it stands when the check runs, so one read → edit → test grind
 /// is `read, edit, test` on one step and `edit, test, read` on the next.
 /// Positional equality called those two different loops, which was invisible
-/// while every re-detection aborted anyway and became load-bearing when a
+/// while every re-detection aborted anyway and became a real bug when a
 /// different loop started buying another steering warning (#1743).
 #[test]
 fn a_rotated_cycle_is_the_same_loop() {

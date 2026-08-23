@@ -757,7 +757,7 @@ async fn ungated_recall_work_is_bounded_by_frame_count_not_corpus_size() {
     );
 }
 
-/// The load-bearing integration test for memory anchors.
+/// The required integration test for memory anchors.
 ///
 /// #775 gave the store the ability to say "this stopped being true" without
 /// saying "we were wrong". That was inert on its own: retrieval read belief

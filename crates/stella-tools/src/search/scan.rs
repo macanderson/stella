@@ -19,6 +19,8 @@ use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use stella_graph::admitted::{Admits, admission};
+
 use super::engine::Hit;
 
 /// Files opened in one scan. A bound, not a tuning knob: the walk is
@@ -35,6 +37,12 @@ const MAX_BYTES_PER_FILE: usize = 64 * 1024;
 /// Directories never descended into. Every entry is either machine-generated
 /// or another tool's private state; a term matched inside one of them points
 /// at nothing the reader can edit.
+///
+/// The one carve-out — `.stella/rules/`, the published context records — is
+/// [`stella_graph::admitted::ADMITTED_SUBTREES`], and it lives in
+/// `stella-graph` rather than here because the code-graph walk applies the
+/// same policy (#4492). Two copies of a list whose job is refusing
+/// `.stella/private/` by name is how one of them stops refusing it.
 const SKIPPED_DIRS: &[&str] = &[
     ".git",
     ".hg",
@@ -53,22 +61,6 @@ const SKIPPED_DIRS: &[&str] = &[
     ".next",
     ".cargo",
 ];
-
-/// Subtrees the walk enters despite [`SKIPPED_DIRS`] and the dot rule, named
-/// by their path relative to the scan root.
-///
-/// `.stella/` is another tool's private state and skipped wholesale — except
-/// for `.stella/rules/`, which holds the published **context records**: the
-/// one part of `.stella/` deliberately tracked in Git, precisely because a
-/// record only steers a teammate's session if it travels with the repository
-/// (AGENTS.md § "The `.stella/` directory"). A retrieval tool that cannot see
-/// the repository's own steering policy is the hole #3162 names.
-///
-/// The exclusion of `.stella/private/` — SQLite state, OAuth tokens, mined
-/// reflections — now holds because it is not on this list, rather than as a
-/// side effect of skipping everything above it. That is the difference the
-/// issue asks for: the thing that must stay unsearchable is refused by name.
-const ADMITTED_SUBTREES: &[&str] = &[".stella/rules"];
 
 /// A term found in a path is worth this many found in contents.
 ///
@@ -157,41 +149,10 @@ pub fn scan_hits_bounded(root: &Path, query: &str, limit: usize, max_files: usiz
     }
 }
 
-/// Whether a directory the walk descends into contributes its own files, or
-/// is only being crossed to reach a subtree that does.
-///
-/// The distinction exists because an admitted subtree can sit under a skipped
-/// one: reaching `.stella/rules` means entering `.stella`, and entering
-/// `.stella` must not scan `.stella/settings.json` on the way past.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Admits {
-    /// An ordinary directory: its own files are scanned.
-    Files,
-    /// Crossed only because an [`ADMITTED_SUBTREES`] entry sits underneath.
-    /// Its own files are not scanned, and its other children are refused
-    /// unless they are themselves on the way to — or inside — an admitted
-    /// subtree.
-    Passage,
-}
-
-/// What `rel` is to [`ADMITTED_SUBTREES`]: inside one, on the way to one, or
-/// neither. `None` means the walk has no business there.
-fn admission(rel: &str) -> Option<Admits> {
-    for allowed in ADMITTED_SUBTREES {
-        if rel == *allowed || rel.starts_with(&format!("{allowed}/")) {
-            return Some(Admits::Files);
-        }
-        if allowed.starts_with(&format!("{rel}/")) {
-            return Some(Admits::Passage);
-        }
-    }
-    None
-}
-
 /// Every regular file under `root`, shallowest directories first and sorted
 /// within each, skipping [`SKIPPED_DIRS`] and dotted entries — except for the
-/// [`ADMITTED_SUBTREES`] carve-out — and stopping once `budget` files have
-/// been yielded.
+/// [`stella_graph::admitted::ADMITTED_SUBTREES`] carve-out — and stopping once
+/// `budget` files have been yielded.
 ///
 /// Breadth-first deliberately, because the order decides **which** files a
 /// capped walk ever sees: a stack here walked the alphabetically *last*

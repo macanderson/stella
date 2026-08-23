@@ -118,7 +118,7 @@ impl Provider for ScriptedProvider {
             upstream_provider: None,
             text,
             tool_calls: Vec::new(),
-            // `reported: true` is load-bearing. The standalone call's accounting
+            // `reported: true` is required. The standalone call's accounting
             // closeout refuses to settle a call whose usage never arrived, and
             // reflection surfaces that as a model error — indistinguishable,
             // from outside, from a model that said nothing. A harness whose

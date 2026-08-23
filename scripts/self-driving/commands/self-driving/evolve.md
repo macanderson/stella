@@ -85,7 +85,7 @@ change:
 
 ## What NOT to change
 
-Three things look like tuning opportunities and are load-bearing:
+Three things look like tuning opportunities but are required as they stand:
 
 - **The dry-streak target of 2.** Raising it does not make convergence more
   reliable, it makes the aperture ladder slower to traverse. If findings are

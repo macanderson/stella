@@ -142,7 +142,7 @@ mod turn_facts;
 mod turn_files;
 mod usage_cmd;
 // The wrapper socket's first driver (#3494). Beside `agent.rs` rather than
-// inside it, because that file is a grandfathered god file closed to growth.
+// inside it, because that file sits close to the 1500-line ratchet.
 mod wrapper_candidate;
 mod wrapper_plugin;
 mod wrapper_recall;

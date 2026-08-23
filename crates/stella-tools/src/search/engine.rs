@@ -240,12 +240,12 @@ impl SearchReport {
 
     /// A search that never reached dispatch: no hits, no strategies, just
     /// the error the caller must surface.
-    fn failed(message: &str) -> Self {
+    fn failed(class: stella_protocol::ErrorClass, message: &str) -> Self {
         Self {
             hits: Vec::new(),
             strategies: Vec::new(),
             note: None,
-            rendered: ToolOutput::error(message),
+            rendered: ToolOutput::classified_error(class, message),
         }
     }
 }
@@ -292,7 +292,7 @@ pub async fn report_with(
 ) -> SearchReport {
     let query = query.trim();
     if query.is_empty() {
-        return SearchReport::failed(QUERY_REQUIRED);
+        return SearchReport::failed(stella_protocol::ErrorClass::InvalidInput, QUERY_REQUIRED);
     }
 
     let owned_root = root.to_path_buf();
@@ -304,7 +304,10 @@ pub async fn report_with(
         // workspace the indexer cannot serve.
         Ok(Err(error)) => (None, Some(error.to_string())),
         Err(join_error) => {
-            return SearchReport::failed(&worker_failure("the search", join_error));
+            return SearchReport::failed(
+                stella_protocol::ErrorClass::Internal,
+                &worker_failure("the search", join_error),
+            );
         }
     };
 
@@ -742,7 +745,7 @@ fn merge_rungs(
 /// that a reader who cannot tell a complete answer from a partial one stops
 /// looking — applies to coverage exactly as it does to length.
 ///
-/// The "not a random sample" sentence is the load-bearing one. Embedding fills
+/// The "not a random sample" sentence is the decisive one. Embedding fills
 /// in change-recency order (`stella_graph::vectors::pending`), so a partial
 /// index is not a uniform thinning of the tree; it is a prefix of it, and a
 /// caller who assumes otherwise will read a miss as evidence of absence.

@@ -42,7 +42,7 @@ fn a_machine_format_turn_reflects_like_a_text_one() {
     }
 }
 
-/// The two per-turn facts are load-bearing, not decoration.
+/// The two per-turn facts are required, not decoration.
 ///
 /// A turn with nothing in it to learn from, or one with no workspace memory
 /// open to record into, spends no reflection call — that is what keeps the

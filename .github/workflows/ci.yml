@@ -310,6 +310,16 @@ jobs:
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-left-behind.sh
 
+      # Also toolchain-free. A constant chosen by measuring something says so
+      # to no compiler, so a textually clean merge can revert it in silence —
+      # which shipped to `main` on 2026-08-09 and was found weeks later
+      # (#2414's ceiling, reverted by #2462, tracked as #2495). A `MEASURED:`
+      # doc marker makes the claim recognisable; this asserts some test names
+      # the constant, so the revert stops being silent.
+      - name: every measured constant is named by a test
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-measured-constants.sh
+
       # Also toolchain-free, and the only gate here that is a question about
       # TWO trees rather than one — which is why it has no `make gate` step to
       # match. Three times a PR has landed that silently deleted a test another
@@ -428,6 +438,10 @@ jobs:
       - name: no library crate returns Result<_, String>
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: python3 ./scripts/check-typed-errors.py
+
+      - name: no new unclassified ToolOutput::error( site (#3167)
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: python3 ./scripts/check-tool-error-class.py
 
       - name: every dead-code suppression says why
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}

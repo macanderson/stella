@@ -177,7 +177,7 @@ _MODEL_TIMEOUT_ENV = "STELLA_MODEL_TIMEOUT"
 # timeout and reports it as a task failure.
 _MODEL_TIMEOUT_CEILING = 21_600
 
-# There is no output-cap table here any more, and its absence is load-bearing.
+# There is no output-cap table here any more, and its absence is deliberate.
 #
 # It held one number per model, pinned against `catalog.rs` by
 # `TestOutputCeilingParity` so the two could not drift. That guarded the right
@@ -596,7 +596,7 @@ def _pin_role_model(
     disclosed posture and the engine's own account of its wiring name the same
     field.
 
-    ``allowed_models`` has to widen with it, and that half is load-bearing: the
+    ``allowed_models`` has to widen with it, and that half is required: the
     vocabulary is a whitelist, so a pin outside it is refused at resolve time
     and the role drops back to whatever it inherits — billing one model while
     the digest claims another.
@@ -987,7 +987,7 @@ def resolve_posture_role_model(
     """Resolve one role's model from a posture, and name the key it came from.
 
     **Reads a posture as written; it is not a mirror of any live engine.**
-    That distinction is the resolution of #4103 and it is load-bearing, so it
+    That distinction is the resolution of #4103 and it is decisive, so it
     is stated before the ladder rather than after it. The subject of this
     function is a *document* — a posture dict, possibly one recorded years ago
     and hashed into a registered SUT — and the question it answers is "what

@@ -15,6 +15,9 @@
 
 use std::process::{Command, Output};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// A scratch workspace with the given `.stella/settings.json`, plus an empty
 /// HOME and data dir so neither the developer's user scope nor their real
 /// `~/.stella/catalog.db` can reach the assertions.
@@ -32,6 +35,7 @@ fn workspace(settings: &str) -> (tempfile::TempDir, tempfile::TempDir) {
 fn doctor(dir: &tempfile::TempDir, home: &tempfile::TempDir, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
+        .without_embedder_backend()
         .args(args)
         .arg("doctor")
         .current_dir(dir.path())

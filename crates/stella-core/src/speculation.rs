@@ -225,7 +225,7 @@ impl ToolCallObserver for SpeculationGate {
             return;
         }
         // Adapters never announce a call whose input failed to parse, but
-        // the `Null` repair sentinel is load-bearing enough to re-check:
+        // the `Null` repair sentinel is essential enough to re-check:
         // a malformed call belongs to dispatch's repair path, not to
         // execution of any kind.
         if call.input.is_null() {

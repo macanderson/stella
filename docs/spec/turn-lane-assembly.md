@@ -205,7 +205,7 @@ pub enum BuiltinLane {
 
 `BuiltinLane` is closed, which is what preserves Move 2's compile-error
 property for everything in this workspace. `TurnLane` is not, which is what
-lets a manifest contribute a row. Both halves are load-bearing and neither is
+lets a manifest contribute a row. Both halves are required and neither is
 a compromise of the other.
 
 Nothing branches on it yet. It exists so the matrix in Move 3 has row keys, and
@@ -370,7 +370,7 @@ above still holds for any *future* supervisor: a supervisor stays a layer, and
 merging one into the loop remains the wrong move.
 
 **It does not, on its own, carry a behavioural witness for Moves 2–3.** They
-are refactors. Move 2's fork witness is real and load-bearing; the rest of
+are refactors. Move 2's fork witness is real and required; the rest of
 Moves 2–3 are structural, and per this repository's own contract that should be
 declared in the PR rather than dressed up as a behaviour change.
 

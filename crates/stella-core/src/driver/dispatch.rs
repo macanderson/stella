@@ -209,7 +209,14 @@ impl<'a> Engine<'a> {
                 if answered.contains(&index) {
                     continue;
                 }
-                let output = ToolOutput::error(HALTED_TOOL_RESULT.to_string());
+                // The engine chose not to run this call because the goal was
+                // already proven met — working as designed, mirroring
+                // `close_open_tool_calls`' own `RefusedByPolicy` for the same
+                // shape of synthetic closure, never `Internal`.
+                let output = ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    HALTED_TOOL_RESULT.to_string(),
+                );
                 let _ = events.send(AgentEvent::ToolResult {
                     call_id: call.call_id.clone(),
                     output: output.clone(),

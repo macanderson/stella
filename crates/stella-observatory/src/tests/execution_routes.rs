@@ -74,7 +74,8 @@ fn execution_journal_replays_transcript_without_deltas() {
             "tool_result",
             "text",
             "text",
-            "file_change"
+            "file_change",
+            "step_usage"
         ],
         "seq order, text_delta excluded"
     );
@@ -178,8 +179,9 @@ fn streamed_reasoning_fragments_fold_into_one_block_per_run() {
     assert_eq!(types, ["tool_start", "tool_result", "reasoning"]);
 }
 
-/// `/transcript` renders the journal through `stella-transcript` — the same
-/// code the TUI draws from — rather than through the page's own JavaScript.
+/// `/api/transcript-html` renders the journal through `stella-transcript` —
+/// the same code the TUI draws from — rather than through the page's own
+/// JavaScript, as a fragment the turn page embeds in a shadow root.
 ///
 /// The assertions are about the *structural* fixes, not about pixels: a tool
 /// call and its result are one node, and the call's command is stated once. A
@@ -187,15 +189,15 @@ fn streamed_reasoning_fragments_fold_into_one_block_per_run() {
 #[test]
 fn transcript_route_renders_one_node_per_call_stating_the_command_once() {
     let ws = seeded_workspace();
-    let response = respond(ws.path(), "/transcript?id=1");
+    let response = respond(ws.path(), "/api/transcript-html?id=1");
     assert_eq!(response.status, "200 OK");
     assert_eq!(response.content_type, "text/html; charset=utf-8");
     let html = String::from_utf8(response.body).unwrap();
 
-    // Standalone: its own styles ride with it, so it needs nothing from
-    // index.html.
-    assert!(html.starts_with("<!DOCTYPE html>"));
-    assert!(html.contains("--del-word"), "the stylesheet is inlined");
+    // A fragment for embedding, not a standalone document: the styles live
+    // at /assets/transcript.css and the host page injects them.
+    assert!(html.starts_with("<div class=\"frame\""), "{html}");
+    assert!(!html.contains("<!DOCTYPE html>"));
 
     // One step, carrying both halves of the call.
     assert_eq!(
@@ -218,11 +220,61 @@ fn transcript_route_renders_one_node_per_call_stating_the_command_once() {
     assert!(html.contains("and named it well"));
 }
 
+/// The seeded `step_usage` event becomes a metering note: the per-call audit
+/// row (provider, model, tokens, cache traffic, latency) with the inspect
+/// control the turn page wires to its prompt inspector, anchored by
+/// (step, role).
+#[test]
+fn transcript_fragment_carries_a_metering_row_with_an_inspect_anchor() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/transcript-html?id=1");
+    let html = String::from_utf8(response.body).unwrap();
+
+    assert!(html.contains("note-meter"), "no metering note:\n{html}");
+    assert!(
+        html.contains("step 1 · worker · zai · glm-5.2"),
+        "the metering summary does not lead with the binding:\n{html}"
+    );
+    assert!(
+        html.contains("class=\"inspect\" data-step=\"1\" data-role=\"worker\""),
+        "the inspect control lost its anchor:\n{html}"
+    );
+    // The fold detail carries the cache split — the figures a cache
+    // investigation needs per call, not per turn.
+    assert!(html.contains("29.1k from prompt cache"), "{html}");
+    assert!(html.contains("1.2k written to cache"), "{html}");
+}
+
+/// The transcript stylesheet is served as an asset, byte-identical to the
+/// renderer crate's one copy, so the embedding page and a test can both hold
+/// it to the same contract.
+#[test]
+fn transcript_stylesheet_is_served_as_an_asset() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/assets/transcript.css");
+    assert_eq!(response.status, "200 OK");
+    assert_eq!(response.content_type, "text/css; charset=utf-8");
+    let css = String::from_utf8(response.body).unwrap();
+    assert_eq!(css, stella_transcript::html::STYLE);
+    assert!(css.contains("--del-word"));
+}
+
+/// The standalone `/transcript` page is consolidated into the turn page —
+/// gone, not redirected: the fragment route is an implementation detail of
+/// the dashboard, and the page-level address it replaced answered the same
+/// question in a second rendering.
+#[test]
+fn the_standalone_transcript_page_is_gone() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/transcript?id=1");
+    assert_eq!(response.status, "404 Not Found");
+}
+
 /// An execution with no events is an empty transcript, not a 500.
 #[test]
 fn transcript_route_renders_an_execution_with_no_events() {
     let ws = seeded_workspace();
-    let response = respond(ws.path(), "/transcript?id=2");
+    let response = respond(ws.path(), "/api/transcript-html?id=2");
     assert_eq!(response.status, "200 OK");
     let html = String::from_utf8(response.body).unwrap();
     assert!(!html.contains("class=\"step"));
@@ -232,10 +284,22 @@ fn transcript_route_renders_an_execution_with_no_events() {
 #[test]
 fn transcript_route_names_the_parameter_it_is_missing() {
     let ws = seeded_workspace();
-    let response = respond(ws.path(), "/transcript");
+    let response = respond(ws.path(), "/api/transcript-html");
     assert_eq!(response.status, "400 Bad Request");
     let body = String::from_utf8(response.body).unwrap();
     assert!(body.contains("id"), "{body}");
+}
+
+/// `/api/model-card` names its missing parameters; the card itself is read
+/// from the user-tier catalog, which a seeded workspace deliberately does not
+/// fabricate.
+#[test]
+fn model_card_route_names_its_missing_parameters() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/model-card?provider=zai");
+    assert_eq!(response.status, "400 Bad Request");
+    let body = String::from_utf8(response.body).unwrap();
+    assert!(body.contains("slug"), "{body}");
 }
 
 /// `after_seq` (#1476) narrows the transcript to rows newer than the
@@ -246,7 +310,8 @@ fn transcript_route_names_the_parameter_it_is_missing() {
 fn execution_journal_after_seq_returns_only_newer_rows() {
     let ws = seeded_workspace();
     // Seq 3 is the tool_start row; only tool_result (4), the two text rows
-    // (5, 6) and the file_change (7) — all > 3 — should come back.
+    // (5, 6), the file_change (7) and the step_usage metering row (8) — all
+    // > 3 — should come back.
     let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=3");
     let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let seqs: Vec<i64> = v
@@ -255,7 +320,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
         .iter()
         .map(|e| e["seq"].as_i64().unwrap())
         .collect();
-    assert_eq!(seqs, [4, 5, 6, 7], "only rows with seq > 3 come back");
+    assert_eq!(seqs, [4, 5, 6, 7, 8], "only rows with seq > 3 come back");
     // A cursor past every seeded row degrades to empty, not an error.
     let none = respond(ws.path(), "/api/execution-journal?id=1&after_seq=99");
     let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
@@ -266,7 +331,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
     let v: serde_json::Value = serde_json::from_slice(&all.body).unwrap();
     assert_eq!(
         v.as_array().unwrap().len(),
-        7,
+        8,
         "seq 0 survives after_seq=-1"
     );
 }
@@ -555,13 +620,13 @@ fn a_long_file_change_diff_is_elided_from_the_middle_and_says_so() {
     let conn = rusqlite::Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
     conn.execute(
         "INSERT INTO events (execution_id, seq, event_type, payload)
-         VALUES (1, 8, 'file_change', ?1)",
+         VALUES (1, 9, 'file_change', ?1)",
         [payload.to_string()],
     )
     .unwrap();
     drop(conn);
 
-    let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=7");
+    let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=8");
     let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let change = &v.as_array().unwrap()[0];
     let hunks = change["hunks"].as_array().expect("hunks");
@@ -595,7 +660,7 @@ fn a_long_file_change_diff_is_elided_from_the_middle_and_says_so() {
     );
 
     // `?full=1` is the reader who asked for everything.
-    let full = respond(ws.path(), "/api/execution-journal?id=1&after_seq=7&full=1");
+    let full = respond(ws.path(), "/api/execution-journal?id=1&after_seq=8&full=1");
     let v: serde_json::Value = serde_json::from_slice(&full.body).unwrap();
     let change = &v.as_array().unwrap()[0];
     assert_eq!(change["elided"], 0, "nothing withheld under ?full=1");

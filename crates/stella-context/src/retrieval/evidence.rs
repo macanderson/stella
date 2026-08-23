@@ -207,7 +207,7 @@ impl TermEvidence {
 /// Whether a query's derived domain scope may serve as admission evidence.
 ///
 /// True iff `query_scope` is a **non-empty proper subset** of `session_scope`.
-/// Both halves are load-bearing, and neither is a stylistic preference:
+/// Both halves are required, and neither is a stylistic preference:
 ///
 /// - **Non-empty.** A goal that named no workspace file selects no domains, and
 ///   an empty scope cannot distinguish one node from another.

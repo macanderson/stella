@@ -1125,7 +1125,7 @@ fn step_manifest_preserves_block_order_and_the_effective_budget() {
     };
     let value = serde_json::to_value(&event).unwrap();
     assert_eq!(value["type"], "step_manifest");
-    // Order is load-bearing — the manifest IS the wire sequence.
+    // Order is required — the manifest IS the wire sequence.
     assert_eq!(value["blocks"][0]["block_id"], "blk_sys");
     assert_eq!(value["blocks"][1]["block_id"], "blk_tail");
     assert_eq!(value["effective_budget_tokens"], 136_363);

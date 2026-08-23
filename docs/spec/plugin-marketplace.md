@@ -167,7 +167,7 @@ yanked = true
 yank_reason = "leaked an API key into the consent text"
 ```
 
-Five properties, each load-bearing:
+Five properties, each required:
 
 1. **The index pins a commit SHA, never only a tag.** Tags move. This is Go's
    lesson and it costs nothing to adopt.

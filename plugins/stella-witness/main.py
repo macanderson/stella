@@ -166,7 +166,7 @@ def read_json(stream):
 
 
 def write_json(stream, document):
-    """One JSON document, on one line, flushed. The flush is load-bearing: the
+    """One JSON document, on one line, flushed. The flush is required: the
     host is reading a pipe and will wait forever for a buffered answer."""
     stream.write(json.dumps(document) + "\n")
     stream.flush()
@@ -184,7 +184,7 @@ def normalize_command(command):
     """Trim, and collapse every run of whitespace to a single space.
 
     Makes `"cargo   test  -p x"` and `"cargo test -p x"` the same tracked
-    command while leaving token order — which can be semantically load-bearing
+    command while leaving token order — which can be semantically significant
     — untouched. A pass on `cargo test -p a` must never be credited to a
     failure of `cargo test -p b`, so reordering is deliberately NOT normalized
     away.

@@ -869,7 +869,10 @@ mod tests {
         );
 
         let err = client.call_tool("t", serde_json::json!({})).await.unwrap();
-        assert_eq!(err, ToolOutput::error("boom"));
+        assert_eq!(
+            err,
+            ToolOutput::classified_error(stella_protocol::ErrorClass::Environment, "boom")
+        );
     }
 
     #[tokio::test]

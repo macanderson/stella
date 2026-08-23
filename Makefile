@@ -39,7 +39,9 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    dead-code-allows diagnostic-codes consumer-sites bench-suites wire-paths \
+                    tool-error-class \
+                    dead-code-allows measured-constants diagnostic-codes consumer-sites \
+                    bench-suites wire-paths \
                     tokens hue-separation contrast transcript-surfaces prose \
                     deck-fit-all-test deck-paths css-vars reserved-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
@@ -393,6 +395,18 @@ typed-errors-update: ## Retighten the invariant-#5 ratchet (run after typing sig
 typed-errors-test: ## Test the invariant-#5 ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-typed-errors.sh
 
+.PHONY: tool-error-class
+tool-error-class: ## Assert no NEW unclassified ToolOutput::error( site (#3167)
+	@python3 ./scripts/check-tool-error-class.py
+
+.PHONY: tool-error-class-update
+tool-error-class-update: ## Retighten the #3167 ratchet (run after classifying a site)
+	@python3 ./scripts/check-tool-error-class.py --update
+
+.PHONY: tool-error-class-test
+tool-error-class-test: ## Test the #3167 ratchet's direction (hermetic; not part of `gate`)
+	./scripts/test-tool-error-class.sh
+
 .PHONY: prose
 prose: ## Assert no content-free prose was added (down-only ratchet)
 	@python3 ./scripts/check-prose.py
@@ -447,6 +461,14 @@ dead-code-allows-update: ## Retighten the dead-code-suppression ratchet (run aft
 .PHONY: dead-code-allows-test
 dead-code-allows-test: ## Test the dead-code ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-dead-code-allows.sh
+
+.PHONY: measured-constants
+measured-constants: ## Assert every constant marked `MEASURED:` is named by a test (#2495)
+	@./scripts/check-measured-constants.sh
+
+.PHONY: measured-constants-test
+measured-constants-test: ## Test the measured-constants guard's directions (hermetic; not part of `gate`)
+	./scripts/test-measured-constants.sh
 
 .PHONY: shellcheck-guard-test
 shellcheck-guard-test: ## Test the shellcheck step's presence guard (hermetic; not part of `gate`)

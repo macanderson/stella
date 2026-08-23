@@ -98,7 +98,7 @@ git store kept in stella's own directory, never in your repository — and is
 restored when the session [resumes](/docs/commands/resume), before anything can
 touch a file. A resumed session is exactly as guarded as the one that died.
 
-Two details of that are load-bearing:
+Two details of that matter:
 
 - **It is written at each step boundary, not at each file change.** The map is
   updated by reads as well as writes, so saving it only when a file changed

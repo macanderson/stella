@@ -12,7 +12,7 @@ that work: the macOS runners have bsdtar and the Linux runners have GNU tar,
 and their determinism options do not overlap (`--sort`/`--mtime`/`--owner` vs
 `--uid`/`--gid`). stdlib `tarfile` + `gzip` behave identically on both.
 
-Determinism rules, all of them load-bearing:
+Determinism rules, all of them required:
 
   * entries are emitted in sorted path order, not readdir order;
   * uid/gid are 0 and uname/gname are empty, so the builder's account never

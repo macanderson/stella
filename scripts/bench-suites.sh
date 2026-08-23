@@ -37,7 +37,7 @@
 #               `uv run --no-sync pytest -q` there.
 #   no-project  `uv run --with pytest --no-project pytest -q` — no project to
 #               sync, because the suite's subject is standard-library only.
-#               Deliberate, and load-bearing: recomputing a published score from
+#               Deliberate, and required: recomputing a published score from
 #               committed evidence must not need the benchmark harness
 #               installed. Two spellings, distinguished by cwd: a suite named by
 #               path runs from the repository root, a suite named by

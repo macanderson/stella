@@ -18,9 +18,9 @@
 //! [`close_turn`] is the fix in shape as well as in behaviour: a driver that
 //! ends a turn calls one function, and cannot end it half-recorded.
 //!
-//! It lives beside `agent.rs` rather than inside it because `agent.rs` is a
-//! grandfathered god file, closed to growth (AGENTS.md § "God files — plan
-//! around them, never into them").
+//! It lives beside `agent.rs` rather than inside it because `agent.rs` sits
+//! close to the 1500-line ratchet (AGENTS.md § "God files — plan around them,
+//! never into them").
 
 use std::sync::Arc;
 

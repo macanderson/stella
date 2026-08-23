@@ -15,7 +15,7 @@
 │ │  e               edit the selected skill                                       !cmd            run a shell command NOW (skips the queue)                 │ │
 │ │  p               pin / unpin                                                   /               slash commands — ↑↓ pick · tab completes · ⏎ runs         │ │
 │ │  n               new skill — drafted by the LLM                                ctrl-v          paste — a copied image is attached to the prompt          │ │
-│ │  ctrl-o          preview                                                       ctrl-a          SUB-AGENTS — n nudge · f flag · ^x^x kill · p pause · r … │ │
+│ │  ctrl-o          preview                                                       ctrl-a          SUB-AGENTS — o open · n nudge · f flag · x stop · xx del… │ │
 │ │  ctrl-x ×2       delete (press twice to confirm)                               ctrl-t          the queue editor                                          │ │
 │ │  type            search skills                                                 ctrl-e          SESSIONS — every session on this machine                  │ │
 │ │                                                                                ctrl-k          CONTEXT — active skills + MCP servers                     │ │

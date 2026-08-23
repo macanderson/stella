@@ -18,7 +18,7 @@ one.
 
 **Directional, never a verdict.** It names what looks wrong, how far outside
 the measured healthy band it sits, and which trials to open. It states no
-cause it has not established. `bands.Band.verdict_capable` is load-bearing
+cause it has not established. `bands.Band.verdict_capable` decides this
 here: a metric whose healthy and unhealthy arms overlap is reported as
 something to look at, never as a finding.
 

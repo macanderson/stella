@@ -112,9 +112,12 @@ pub(super) async fn route(
             continue;
         }
         if set.is_disabled(server) {
-            return Some(ToolOutput::error(format!(
-                "mcp server `{server}` is disabled for this session — tool `{name}` unavailable"
-            )));
+            return Some(ToolOutput::classified_error(
+                stella_protocol::ErrorClass::RefusedByPolicy,
+                format!(
+                    "mcp server `{server}` is disabled for this session — tool `{name}` unavailable"
+                ),
+            ));
         }
         let output = if is_list {
             run_list(client, input).await
@@ -211,7 +214,10 @@ async fn run_list(client: &McpClient, input: &Value) -> ToolOutput {
         None | Some(Value::Null) => None,
         Some(Value::String(cursor)) => Some(cursor.as_str()),
         Some(other) => {
-            return ToolOutput::error(format!("argument `cursor` must be a string, got: {other}"));
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::InvalidInput,
+                format!("argument `cursor` must be a string, got: {other}"),
+            );
         }
     };
     match client.list_resources(cursor).await {
@@ -219,11 +225,14 @@ async fn run_list(client: &McpClient, input: &Value) -> ToolOutput {
             content: bounded(render_listing(client.name(), &page)),
             data: None,
         },
-        Err(err) => ToolOutput::error(format!(
-            "mcp server `{}` failed listing resources: {}",
-            client.name(),
-            err.user_message()
-        )),
+        Err(err) => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::Environment,
+            format!(
+                "mcp server `{}` failed listing resources: {}",
+                client.name(),
+                err.user_message()
+            ),
+        ),
     }
 }
 
@@ -232,10 +241,13 @@ async fn run_read(client: &McpClient, input: &Value) -> ToolOutput {
     let uri = match input.get("uri") {
         Some(Value::String(uri)) if !uri.is_empty() => uri.as_str(),
         _ => {
-            return ToolOutput::error(format!(
-                "tool `{}` requires a string `uri` argument naming the resource to read",
-                read_resource_tool_name(client.name())
-            ));
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::InvalidInput,
+                format!(
+                    "tool `{}` requires a string `uri` argument naming the resource to read",
+                    read_resource_tool_name(client.name())
+                ),
+            );
         }
     };
     match client.read_resource(uri).await {
@@ -243,11 +255,14 @@ async fn run_read(client: &McpClient, input: &Value) -> ToolOutput {
             content: bounded(render_read(client.name(), uri, &read)),
             data: None,
         },
-        Err(err) => ToolOutput::error(format!(
-            "mcp server `{}` failed reading resource `{uri}`: {}",
-            client.name(),
-            err.user_message()
-        )),
+        Err(err) => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::Environment,
+            format!(
+                "mcp server `{}` failed reading resource `{uri}`: {}",
+                client.name(),
+                err.user_message()
+            ),
+        ),
     }
 }
 

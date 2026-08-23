@@ -17,6 +17,9 @@ use std::process::{Command, Output};
 
 use stella_store::{Store, TelemetryRow};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 fn telemetry(step: u64) -> TelemetryRow {
     TelemetryRow {
         step,
@@ -99,6 +102,7 @@ fn seeded(backdated_through: i64) -> (tempfile::TempDir, tempfile::TempDir) {
 
 fn run(workspace: &Path, data: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args(args)
         .current_dir(workspace)
         .env("STELLA_DATA_DIR", data)

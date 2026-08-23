@@ -35,7 +35,7 @@ const RECONNECT_CAP: Duration = Duration::from_secs(30);
 ///   since. `Down` is never terminal — the next call retries (immediately, or
 ///   once [`ServerHealth::retry_in`] elapses).
 ///
-/// The load-bearing rule (#638): **a successful reconnect proves *connect*
+/// The decisive rule (#638): **a successful reconnect proves *connect*
 /// health, not *call* health.** Re-establishing the transport clears
 /// [`ServerHealth::connect_failures`] and disarms the backoff clock, but it
 /// never clears [`ServerHealth::call_failures`] and never promotes a

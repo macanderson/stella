@@ -161,7 +161,7 @@ pub(crate) fn collision_note(collision: &stella_mcp::WireNameCollision) -> Strin
 ///
 /// The cap is interpolated from [`stella_mcp::MAX_TOOLS_PER_SERVER`] rather
 /// than spelled out, so the sentence cannot outlive a change to the constant.
-/// "at least" is load-bearing: discovery stops on the page where the cap bites,
+/// "at least" is required: discovery stops on the page where the cap bites,
 /// so `dropped` is a floor and the true excess may be larger.
 pub(crate) fn truncation_note(name: &str, dropped: usize) -> String {
     format!(

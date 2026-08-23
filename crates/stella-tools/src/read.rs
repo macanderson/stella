@@ -82,7 +82,7 @@ const MAX_UNCHANGED_READS: u64 = 24;
 /// The refusal [`MAX_UNCHANGED_READS`] produces.
 ///
 /// **Byte-identical across calls by construction** — it names the path and the
-/// file's size, never the running tally. That is load-bearing rather than
+/// file's size, never the running tally. That is required rather than
 /// tidy: this refusal is a `ToolOutput::error`, which loop comparison does not
 /// strip a footer from, so a tally inside it would make every refusal a
 /// different string and leave a model that ignores the ceiling exactly as
@@ -515,7 +515,10 @@ impl ReadFile {
         // `stella_core::workspace_scope` on why a parallel checkout of the
         // same repository is the read an agent must not silently get.
         if let Some(refusal) = ctx.refuse_read(path) {
-            return ToolOutput::error(refusal);
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::PermissionDenied,
+                refusal,
+            );
         }
 
         // Read from whichever allowed root holds this path, not from the
@@ -541,7 +544,10 @@ impl ReadFile {
         let handle = match crate::rootfd::RootHandle::open(&root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::error(format!("cannot open workspace root: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("cannot open workspace root: {e}"),
+                );
             }
         };
 
@@ -576,28 +582,43 @@ impl ReadFile {
         let bytes = match loaded {
             Ok(Ok(Loaded::Bytes(bytes))) => bytes,
             Ok(Ok(Loaded::Directory)) => {
-                return ToolOutput::error(format!(
-                    "`{path}` is a directory, not a file — list it with \
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    format!(
+                        "`{path}` is a directory, not a file — list it with \
                          glob({{\"pattern\": \"*\", \"path\": \"{path}\"}})"
-                ));
+                    ),
+                );
             }
             Ok(Ok(Loaded::TooLarge { bytes })) => {
-                return ToolOutput::error(format!(
-                    "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    format!(
+                        "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
                          loaded to render any range, so offset/limit would not help. Search it \
                          with grep, or page it with bash (`sed -n '1,200p' {path}`).",
-                    bytes / (1024 * 1024),
-                    MAX_FILE_BYTES / (1024 * 1024)
-                ));
+                        bytes / (1024 * 1024),
+                        MAX_FILE_BYTES / (1024 * 1024)
+                    ),
+                );
             }
             Ok(Err(e)) if e.is_escape() => {
-                return ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::PermissionDenied,
+                    format!("path `{path}` escapes workspace root ({e})"),
+                );
             }
             Ok(Err(e)) => {
-                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("failed to read `{path}`: {e}"),
+                );
             }
             Err(e) => {
-                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Internal,
+                    format!("failed to read `{path}`: {e}"),
+                );
             }
         };
 
@@ -642,7 +663,10 @@ impl ReadFile {
                 // it toward an action that can never succeed via `read_file`.
                 let whole_file_read = start == 0 && end == lines.len();
                 if !whole_file_read && tally.since_change > MAX_UNCHANGED_READS {
-                    return ToolOutput::error(unchanged_read_ceiling(path, lines.len()));
+                    return ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::RefusedByPolicy,
+                        unchanged_read_ceiling(path, lines.len()),
+                    );
                 }
 
                 if start >= lines.len() {
@@ -746,7 +770,9 @@ impl ReadFile {
                 );
                 ToolOutput::ok(numbered)
             }
-            Err(message) => ToolOutput::error(message),
+            Err(message) => {
+                ToolOutput::classified_error(stella_protocol::ErrorClass::InvalidInput, message)
+            }
         }
     }
 }

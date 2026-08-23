@@ -260,7 +260,7 @@ fn spawn_shell_command(
                 data: None,
             }
         } else {
-            ToolOutput::error(content)
+            ToolOutput::classified_error(stella_protocol::ErrorClass::Environment, content)
         };
         let _ = tx.send(envelope(
             agent_id.clone(),
@@ -515,7 +515,7 @@ pub async fn run_deck(
         accessible::screen_for(opts.accessible),
     )?;
     let _hook_guard = PanicHookGuard::install(opts.debug_log_path.clone(), &guard);
-    // `inline` is the load-bearing bit, not `opts.accessible`: it records
+    // `inline` is the required bit, not `opts.accessible`: it records
     // whether the inline viewport was actually obtained, and the whole
     // scrollback path is gated on it (see `crate::accessible`).
     let (mut terminal, inline) = open_terminal(opts.accessible, &debug)?;

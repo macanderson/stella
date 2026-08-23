@@ -439,7 +439,7 @@ TERMINAL_BENCH_21 = Dataset(
 #: compares the ref string. There is no way to tell those apart after the
 #: fact, so the submittable one is the one recorded here.
 #:
-#: ``min_harbor`` is the load-bearing field: every task declares
+#: ``min_harbor`` is the decisive field: every task declares
 #: ``environment_mode = "separate"`` under ``[verifier]``, which Harbor 0.6.1
 #: does not know and silently discards.
 FRONTIER_BENCH = Dataset(

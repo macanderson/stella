@@ -209,7 +209,7 @@ pub(crate) fn promotion_events(store: &ContextStore) -> Vec<PromotionEventRecord
     store
         // The newest window: `decisions` folds current standing last-write-wins,
         // so the oldest-`READ_LIMIT` read froze it once the log grew past the
-        // bound (#818). Append order is still load-bearing for the fold.
+        // bound (#818). Append order is still required for the fold.
         .records_of_kind_newest_in_append_order(
             ContextRecordKind::PromotionEvent.as_str(),
             READ_LIMIT,

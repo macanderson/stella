@@ -35,7 +35,7 @@ block sequences flattened into a comma-joined string. It supports no nesting,
 and a nested key is not rejected — indentation is stripped and the key is
 silently promoted to the top level.
 
-Two things follow, and both are load-bearing for this decision:
+Two things follow, and both are required for this decision:
 
 1. **The canonical specification's own example does not parse as written.**
    `docs/spec/adaptive-context/context-pr.md` §6.1 shows a nested `scope:` block. Against the shipped

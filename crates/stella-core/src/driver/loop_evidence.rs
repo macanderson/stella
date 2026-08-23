@@ -368,7 +368,7 @@ pub(super) fn call_identity_key(call: &ToolCall) -> CallIdentityKey {
 /// [`TranscriptRevision`] the second and later derivations are pure waste. Unlike
 /// `by_call` this IS cleared, on every rewrite.
 ///
-/// # Why clearing it is belt-and-braces rather than load-bearing
+/// # Why clearing it is a backstop rather than required
 ///
 /// Worth stating precisely, because disabling the clearing breaks no test and that
 /// could be mistaken for missing coverage. Every rewrite the compaction passes

@@ -183,7 +183,7 @@ expect_locked() {
 }
 
 # Assert every `[[package]]` version in the fixture's lock reads $2. The quote
-# in the pattern is load-bearing: the lock's own format line is a bare
+# in the pattern is required: the lock's own format line is a bare
 # `version = 4`, and counting it makes this assertion permanently off by one.
 expect_lock_versions() {
   name="$1"

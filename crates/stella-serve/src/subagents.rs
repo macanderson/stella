@@ -471,7 +471,8 @@ impl ToolExecutor for DelegatingTools<'_> {
             .map(str::trim)
             .filter(|prompt| !prompt.is_empty())
         else {
-            return ToolOutput::error(
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::InvalidInput,
                 "missing required string field `prompt` — the sub-agent cannot see \
                      this conversation, so the question must be self-contained",
             );
@@ -569,14 +570,20 @@ fn render(outcome: &SubAgentOutcome) -> ToolOutput {
                 data: None,
             }
         }
-        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::error(format!(
-            "the sub-agent stopped before producing anything: {reason} — do the work \
+        SubAgentOutcome::Incomplete { reason, .. } => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::Environment,
+            format!(
+                "the sub-agent stopped before producing anything: {reason} — do the work \
                  directly, or ask a narrower question"
-        )),
-        SubAgentOutcome::Refused { reason } => ToolOutput::error(format!(
-            "the sub-agent was not started: {reason} — do the work directly with your \
+            ),
+        ),
+        SubAgentOutcome::Refused { reason } => ToolOutput::classified_error(
+            stella_protocol::ErrorClass::RefusedByPolicy,
+            format!(
+                "the sub-agent was not started: {reason} — do the work directly with your \
                  own tools"
-        )),
+            ),
+        ),
     }
 }
 

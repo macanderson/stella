@@ -87,7 +87,7 @@ impl ArtifactIdentity {
 /// The runner is the sole party that can tell "the process ran and exited
 /// non-zero" from "I killed it at my deadline" or "it never started" — after
 /// the fact all three collapse into a non-zero `exit_code`. The distinction is
-/// load-bearing for verification: a timed-out baseline is not a failing
+/// essential for verification: a timed-out baseline is not a failing
 /// assertion, and letting it lock the flip oracle onto a command that never
 /// really failed manufactures a fake fail→pass flip when the candidate merely
 /// runs faster.

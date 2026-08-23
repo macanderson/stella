@@ -317,7 +317,7 @@ records at all. Both are guarded by `protection_for` being the single predicate
 every retirement passes through, so each check has exactly one home when the
 concept becomes real.
 
-**The pruning-eligibility tier is now enforced, and it is the load-bearing
+**The pruning-eligibility tier is now enforced, and it is the decisive
 correctness result.** The type layer always said `agent_self_report` is
 recognized but may never drive pruning; nothing implemented it. A memory
 citation is the *agent* judging context the agent was given, so

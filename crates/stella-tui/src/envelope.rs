@@ -1110,19 +1110,21 @@ impl std::fmt::Debug for Secret {
 }
 
 /// The agent-control verbs surfaced by the dashboard, each sent as a
-/// [`WorkspaceInput::Control`]. All four are live: the Agents tab binds `s`
+/// [`WorkspaceInput::Control`]. All five are live: the Agents tab binds `s`
 /// (Stop), `p` (Pause/Resume, toggled by the row's current status), and `r`
 /// (Restart), and Esc sends Stop for the focused agent. The driver honors
-/// Pause/Resume/Restart on worker lanes — pause parks the worker at its next
-/// step boundary (never mid-tool), restart respawns the lane from its
-/// retained spec — and treats them as no-ops on the lead, whose interrupt is
-/// Esc (Stop).
+/// Pause/Resume/Restart/Delete on worker lanes — pause parks the worker at
+/// its next step boundary (never mid-tool), restart respawns the lane from
+/// its retained spec, delete stops the worker if one is live and then takes
+/// the lane's row off the deck for good, spec included — and treats them as
+/// no-ops on the lead, whose interrupt is Esc (Stop).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentControl {
     Pause,
     Resume,
     Stop,
     Restart,
+    Delete,
 }
 
 impl AgentControl {
@@ -1132,6 +1134,7 @@ impl AgentControl {
             AgentControl::Resume => "resume",
             AgentControl::Stop => "stop",
             AgentControl::Restart => "restart",
+            AgentControl::Delete => "delete",
         }
     }
 }

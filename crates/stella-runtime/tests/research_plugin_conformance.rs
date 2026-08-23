@@ -134,7 +134,7 @@ fn write(root: &Path, relative: &str, contents: &str) {
 
 /// The workspace the vectors research.
 ///
-/// Every file in it is load-bearing for some vector, and the two that must
+/// Every file in it is required for some vector, and the two that must
 /// **not** be reported are the point of three of them: a generated tree and a
 /// hidden directory both mention `retry_budget`, and neither may appear in a
 /// finding.

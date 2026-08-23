@@ -30,6 +30,9 @@ use stella_protocol::{
 };
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// A GitHub PAT shape planted in the user's prompt.
 const PROMPT_SECRET: &str = "ghp_016C7e4a9b2d3f5081726354ABCDabcd1234";
 /// An AWS key id planted in an `edit` tool's arguments — the path the prompt
@@ -536,6 +539,7 @@ fn seed_mismatching_execution(store: &Store, prompt: &str) -> i64 {
 
 fn export(dir: &tempfile::TempDir, out: &str, extra: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args(["dataset", "export", "--format", "jsonl", "--output", out])
         .args(extra)
         .current_dir(dir.path())

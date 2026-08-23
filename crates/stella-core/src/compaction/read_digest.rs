@@ -235,7 +235,7 @@ fn call_path(input: &serde_json::Value) -> Option<String> {
 
 /// Render the digest message, or `None` when there is nothing to say.
 ///
-/// The wording is load-bearing in two directions: it must be strong enough
+/// The wording must satisfy two conflicting requirements: it must be strong enough
 /// that the model prefers it to a re-read, and weak enough to stay true if the
 /// file changed underneath by a route this module cannot see (see the module
 /// docs' staleness section).

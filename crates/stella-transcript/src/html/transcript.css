@@ -42,11 +42,14 @@
  * comment about its *colours*. So: cite modules and routes by name here, and
  * never by source path.
  *
- * `--cyan` and `--violet` are deliberately NOT instrument values, and that is
+ * `--gold` and `--violet` are deliberately NOT instrument values, and that is
  * now a settled decision rather than an open note (#3630). They encode tool
  * *kind* and speaker; the instrument system separates categories by lightness
  * (`--c1`..`--c4`) rather than hue, because lightness is the one channel that
- * survives greyscale, colour-vision deficiency and a projector.
+ * survives greyscale, colour-vision deficiency and a projector. `--gold` is
+ * the brand's resting gold, replacing the aqua this slot carried before the
+ * v5.1 recolour: the transcript is the artifact people mail around, and the
+ * one hue it leads with should be the product's own.
  *
  * This surface keeps hue anyway, for a reason that does not generalise to the
  * charts that rule was written for. A chart's categories are read *compared*
@@ -81,7 +84,7 @@
   --faint: #777782;
   /* Categorical — see the header note; deliberately not instrument values,
      and deliberately outside the parity matrix. */
-  --cyan: #4ed6e0;
+  --gold: #efc53f;
   --violet: #a8a3f5;
   --magenta: #e08ac0;
   /* The three semantic colours: instrument `--ok` / `--bad` / `--warn`. */
@@ -129,16 +132,16 @@
      v3.0 recolour. */
   --hunk-bg: #0d1420;
   --hunk-ink: #6f87a8;
-  /* The two tints of `--cyan` that carry speaker identity into text: the
+  /* The two tints of `--gold` that carry speaker identity into text: the
      prompt echoed in a turn digest, and the user's own prose. Derived from
-     `--cyan` rather than from the ramp, which is why they are the only two
+     `--gold` rather than from the ramp, which is why they are the only two
      derived surfaces whose light values are a darkening rather than a
      lightening — the hue has to survive, and on paper that means going down
      the value scale instead of up. */
-  --pq-ink: #cfe9ec;
-  --you-prose: #d2f3f6;
+  --pq-ink: #e8dcae;
+  --you-prose: #f0e7c6;
   /* The fill text on a categorical roletag. Scheme-independent on purpose:
-     `--cyan` and `--violet` do not change between schemes (see the header),
+     `--gold` and `--violet` do not change between schemes (see the header),
      so the ink that has to stay legible on them must not change either. */
   --on-category: #000000;
 
@@ -187,8 +190,8 @@
     --code: #2b323a;
     --hunk-bg: #eef3fb;
     --hunk-ink: #4a6285;
-    --pq-ink: #12626b;
-    --you-prose: #0f5b64;
+    --pq-ink: #6a5a14;
+    --you-prose: #5c4e10;
   }
 }
 
@@ -207,7 +210,7 @@ body {
 details { display: block; }
 summary { list-style: none; cursor: pointer; user-select: none; }
 summary::-webkit-details-marker { display: none; }
-summary:focus-visible { outline: 1px solid var(--cyan); outline-offset: -1px; }
+summary:focus-visible { outline: 1px solid var(--gold); outline-offset: -1px; }
 
 .chev {
   color: var(--faint);
@@ -243,7 +246,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   overflow: hidden;
 }
 .zoom span { padding: 2px 10px; font-size: 10.5px; color: var(--dim); }
-.zoom .on { background: var(--selected); color: var(--cyan); }
+.zoom .on { background: var(--selected); color: var(--gold); }
 
 /* turn */
 .turn > summary {
@@ -258,7 +261,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
 .st.ok { color: var(--green); }
 .st.warn { color: var(--amber); }
 .st.err { color: var(--red); font-weight: 700; }
-.st.run { color: var(--cyan); }
+.st.run { color: var(--gold); }
 .tdigest { color: var(--dim); font-size: 12px; min-width: 0; }
 .tdigest .pq { color: var(--pq-ink); }
 .tdigest .aq { color: var(--ink); }
@@ -308,7 +311,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   padding: 1px 7px;
   border-radius: 4px;
 }
-.you .roletag { color: var(--on-category); background: var(--cyan); }
+.you .roletag { color: var(--on-category); background: var(--gold); }
 .agent .roletag { color: var(--on-category); background: var(--violet); }
 .prose { max-width: 72ch; color: var(--ink); }
 .you .prose { color: var(--you-prose); }
@@ -346,7 +349,28 @@ details[open] > summary .chev { transform: rotate(90deg); }
    same job the `@@` rule does, so it spends the same blue. */
 .note-context .notegut { color: var(--hunk-ink); }
 .note-wait .notegut, .note-verdict .notegut { color: var(--amber); }
-.note-handoff .notegut { color: var(--cyan); }
+.note-handoff .notegut { color: var(--gold); }
+.note-meter .notegut { color: var(--gold); }
+
+/* The prompt-inspect control a metering note carries. Hidden by default so a
+   standalone transcript — which has no script and no receipt store — never
+   shows a button that does nothing; a host embedding this markup in a shadow
+   root opts in by putting `live` on the host element. */
+.inspect {
+  display: none;
+  font: inherit;
+  font-size: 10px;
+  color: var(--gold);
+  background: none;
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  padding: 0 7px;
+  margin-left: 6px;
+  cursor: pointer;
+  line-height: 1.6;
+}
+.inspect:hover { border-color: var(--gold); }
+:host(.live) .inspect { display: inline-block; }
 
 /* step — the three fixed gutters */
 .grid {
@@ -383,7 +407,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   border: 1px solid var(--faint);
   color: var(--faint);
 }
-.dot.bash { border-color: var(--cyan); color: var(--cyan); }
+.dot.bash { border-color: var(--gold); color: var(--gold); }
 .dot.rf { border-color: var(--green); color: var(--green); }
 .dot.wf { border-color: var(--green); color: var(--green); }
 .dot.ef { border-color: var(--amber); color: var(--amber); }
@@ -401,7 +425,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   flex-wrap: wrap;
 }
 .tool { font-weight: 700; font-size: 12px; }
-.tool.bash { color: var(--cyan); }
+.tool.bash { color: var(--gold); }
 .tool.rf, .tool.wf { color: var(--green); }
 .tool.ef { color: var(--amber); }
 .tool.df { color: var(--red); }
@@ -428,7 +452,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   font-size: 12px;
   background: var(--sunken-2);
 }
-.cmdbar .ps { color: var(--cyan); font-weight: 700; }
+.cmdbar .ps { color: var(--gold); font-weight: 700; }
 .echo { padding: 4px 12px; color: var(--faint); font-size: 10.5px; font-style: italic; }
 .out { padding: 8px 12px; }
 .out.tail { border-top: 1px solid var(--hover-raised); }
@@ -440,7 +464,7 @@ details[open] > summary .chev { transform: rotate(90deg); }
   color: var(--code);
 }
 .out .ln { color: var(--faint); font-variant-numeric: tabular-nums; user-select: none; }
-.more > summary { color: var(--cyan); font-size: 11px; padding: 4px 12px 8px; opacity: 0.85; }
+.more > summary { color: var(--gold); font-size: 11px; padding: 4px 12px 8px; opacity: 0.85; }
 .more > summary:hover { opacity: 1; text-decoration: underline; }
 .more[open] > summary .o { display: inline; }
 .more[open] > summary .c { display: none; }
@@ -521,9 +545,9 @@ table.diff { border-collapse: collapse; width: 100%; font: 12.5px/1.65 var(--mon
 .out .ts { color: var(--green); }
 .out .tn { color: var(--violet); }
 .out .tc { color: var(--faint); font-style: italic; }
-/* The two classes the grammar-backed lexer added (#4283). They ride `--cyan`
+/* The two classes the grammar-backed lexer added (#4283). They ride `--gold`
    and `--magenta`, the categorical pair that is deliberately scheme-invariant
    (see the header note), so a type and a function name read the same on paper
    as they do on the dark ground. */
-.out .ty { color: var(--cyan); }
+.out .ty { color: var(--gold); }
 .out .tf { color: var(--magenta); }

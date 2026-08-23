@@ -29,7 +29,7 @@
 //! connection.
 //!
 //! The frame sender rides the **port** half, never [`Controls`]. Two reasons,
-//! both load-bearing: the registry `Entry` outlives the session thread, and a
+//! both required: the registry `Entry` outlives the session thread, and a
 //! sender clone parked there would hold the frame channel open forever, so
 //! `Session::next_frame` would never observe the end of the stream (the same
 //! shape of bug as the registry-held `EventSender` clones that stopped `stella
