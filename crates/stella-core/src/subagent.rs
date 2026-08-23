@@ -89,6 +89,17 @@
 //! it is the metering record, and dropping it is exactly how child cost
 //! would vanish from `stella stats` and quietly falsify `$/resolved task`.
 //!
+//! **The two metering records are the exception, and they earn it** (#4383).
+//! `StepUsage` and `UsageIncomplete` carry a `sub_agent_id`, stamped by
+//! [`child_sender`]. The bracket cannot answer for them, because independent
+//! delegates are dispatched *concurrently*: several children's events
+//! interleave on the parent's one stream, so no `Started`/`Finished` pair
+//! encloses any particular call. Until the field existed, a turn's whole cost
+//! landed under the lead — ninety telemetry rows all reading `worker` in
+//! session `ses-1787465453163-60967`, five of them a parallel delegate fan-out
+//! completing within one second — and the `(role, model)` census AGENTS.md
+//! tells a bench reader to run could not separate a lead from its delegates.
+//!
 //! The bracket survives cancellation (#1954): a caller that drops the
 //! future mid-flight — a latency ceiling, a hard cancel — still gets a
 //! `Finished` carrying the committed step count and cost (`CancelBracket`),
@@ -818,7 +829,7 @@ impl Engine<'_> {
         messages.push(CompletionMessage::user(spec.instruction.clone()));
         let seeded = messages.len();
 
-        let child_events = child_sender(events.clone(), tally.clone());
+        let child_events = child_sender(events.clone(), spec.agent_id.clone(), tally.clone());
         // The carve is handed to the turn through a guard that settles it on
         // DROP, not on return (#1850). `settle_child` used to be a statement
         // after the await, so any exit that was not a return skipped it: a
@@ -948,17 +959,39 @@ impl CommittedTally {
     }
 }
 
-/// The child's event sender: drops what must not cross ([`forwards_to_parent`])
-/// and tallies committed model calls — count and cost — on the way past.
+/// The child's event sender: drops what must not cross ([`forwards_to_parent`]),
+/// stamps whose call each metering record was, and tallies committed model
+/// calls — count and cost — on the way past.
 ///
 /// Tallying here rather than from the turn outcome is what makes the numbers
 /// truthful on an abort too — `StepUsage` is emitted per committed call, so a
 /// child that died on step 5 of 16 reports 5. See [`CommittedTally`] for why
 /// it is also the only record that survives a cancel.
-fn child_sender(parent: EventSender, tally: Arc<CommittedTally>) -> EventSender {
-    EventSender::from_fn(move |event| {
+///
+/// # Why the id is stamped here (#4383)
+///
+/// This is the one place that knows *which* child an event belongs to. The
+/// `Started`/`Finished` bracket was designed as the whole attribution
+/// mechanism and is enough for everything else, but the engine dispatches
+/// independent delegates concurrently: several children's events interleave on
+/// the parent's one stream, and no bracket pair encloses any particular call.
+/// So the two metering records carry the id, and every other event keeps the
+/// bracket as its only attribution.
+///
+/// **The innermost sender wins.** A grandchild's event passes this closure
+/// once per level on its way up; the first stamp is the grandchild's own, and
+/// the levels above leave it alone. A cost question is about who spent it, not
+/// about who delegated to whoever spent it.
+fn child_sender(parent: EventSender, agent_id: String, tally: Arc<CommittedTally>) -> EventSender {
+    EventSender::from_fn(move |mut event| {
         if let AgentEvent::StepUsage { cost_usd, .. } = &event {
             tally.observe(*cost_usd);
+        }
+        if let AgentEvent::StepUsage { sub_agent_id, .. }
+        | AgentEvent::UsageIncomplete { sub_agent_id, .. } = &mut event
+            && sub_agent_id.is_none()
+        {
+            *sub_agent_id = Some(agent_id.clone());
         }
         if forwards_to_parent(&event) {
             parent.send(event)

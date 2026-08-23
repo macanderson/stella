@@ -411,9 +411,8 @@ mod tests {
     /// and had nothing to say about.
     ///
     /// The shape is the audited one (`ses-1787092335250-47513`, execution 157):
-    /// real edits landed, then a human stopped the run. Both halves have to
-    /// hold — the work is still measured, *and* the row now states the scope
-    /// that measurement covers.
+    /// real edits landed, then a human stopped the run. The work is still
+    /// measured, and the row now states the scope that measurement covers.
     #[test]
     fn a_cancelled_runs_reflection_says_it_covers_a_partial_run() {
         let store = Store::in_memory().unwrap();

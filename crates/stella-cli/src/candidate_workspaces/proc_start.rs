@@ -119,8 +119,8 @@ mod tests {
         );
     }
 
-    /// A pid nothing is wearing has no reading, which is the half that lets the
-    /// sweep tell a recycled pid from the process that wrote the record.
+    /// A pid nothing is wearing has no reading. That is what lets the sweep
+    /// tell a recycled pid from the process that wrote the record.
     #[test]
     fn a_pid_no_process_wears_has_no_token() {
         // 0 is the kernel's own scheduler slot on both interfaces: `/proc/0`

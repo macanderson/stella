@@ -837,6 +837,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 // The "all optional fields present" shape must actually carry
                 // the optional field, or the sample proves nothing about it.
                 finish_reason: Some(FinishReason::Stop),
+                sub_agent_id: None,
             },
             AgentEvent::StepUsage {
                 upstream_provider: None,
@@ -859,6 +860,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 // ...and the "all absent" shape must omit it entirely, which
                 // is what `skip_serializing_if` promises consumers.
                 finish_reason: None,
+                sub_agent_id: None,
             },
         ]
     }));
@@ -888,6 +890,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 tool_calls: 0,
                 complete: true,
                 finish_reason: Some(finish_reason),
+                sub_agent_id: None,
             }),
     );
     events.extend(
@@ -916,6 +919,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                             cost_usd: 0.0213,
                             input_reported: true,
                         }),
+                        sub_agent_id: None,
                     },
                     // The shape that genuinely learned nothing — a failure
                     // before any usage frame. `partial` must stay absent from
@@ -929,6 +933,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                         duration_ms: 30_000,
                         retries: None,
                         partial: None,
+                        sub_agent_id: None,
                     },
                 ]
             }),

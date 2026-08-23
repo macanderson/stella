@@ -43,11 +43,13 @@ use crate::settings::CandidateIsolation;
 
 /// The environment spelling of `[run] candidate_isolation`.
 ///
-/// Registered in the Harbor adapter's `_CLAIM_CONTAINER_ENV`
-/// (`bench/harbor_adapter/stella_harbor/__init__.py`), whose ambient check
-/// fails closed: an unregistered `STELLA_*` variable refuses the run rather
-/// than reaching the container, so a benchmark arm exporting this without that
-/// registration would select nothing at all.
+/// **Not yet registered in the Harbor adapter** (#4515). The adapter's ambient
+/// check over `_CLAIM_CONTAINER_ENV` fails closed, so a benchmark arm that
+/// exports this today gets a refused run naming the unregistered variable — a
+/// loud, correct failure rather than a silently unselected substrate, but it
+/// does mean the bench half of #4510 is not reachable until that registration
+/// lands. Everything outside the adapter (a container, a CI job, a shell)
+/// already reads it here.
 pub(super) const ISOLATION_ENV: &str = "STELLA_CANDIDATE_ISOLATION";
 
 /// The substrate this launch selects, and whatever the operator must be told

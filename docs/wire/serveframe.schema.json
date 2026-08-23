@@ -663,6 +663,13 @@
               "minimum": 0,
               "type": "integer"
             },
+            "sub_agent_id": {
+              "description": "Which sub-agent spent this call, when a sub-agent did (#4383).\n\n`None` is the lead's own call. It is stamped at the sub-agent\nboundary (`stella_core::subagent`'s `child_sender`), so a nested\nchild names *itself* rather than its parent — the innermost spender\nis the one a cost question is about.\n\nThe bracket in [`crate::subagent_event::SubAgentPhase`] was meant to\nbe the whole attribution mechanism, and it is enough for everything\nit was designed for. It is not enough for **this**: the engine\ndispatches independent delegates concurrently, so several children's\nevents interleave on one stream and no `Started`/`Finished` pair\nbrackets any particular call. Session `ses-1787465453163-60967` has\nfive delegates completing within one second of each other; its\nninety telemetry rows all read `worker`, and no join over the\nbracket can undo that.\n\nContent-free like the rest of this event: an opaque handle\n(`plugin:vera/worker#0`), never instruction text.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "tool_calls": {
               "format": "uint",
               "minimum": 0,
@@ -734,6 +741,13 @@
             },
             "role": {
               "$ref": "#/$defs/ModelCallRole"
+            },
+            "sub_agent_id": {
+              "description": "Which sub-agent's call died, when a sub-agent's did (#4383). Same\ncontract as [`AgentEvent::StepUsage`]'s field of this name, and here\nfor the same reason it is there: a delegate abandoned at the\nengine's dispatch ceiling lands one flagged row, and a row nobody\ncan attribute explains an execution's `usage_complete = 0` without\nsaying whose call it was.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "const": "usage_incomplete",
@@ -3508,7 +3522,7 @@
       "description": "One point in a sub-agent's lifecycle. Exactly one `Started` and exactly\none `Finished` are emitted per spawn, in that order, even when the child\nis refused before its first model call (a refusal still brackets, so a\nconsumer folding these never sees an unclosed child).",
       "oneOf": [
         {
-          "description": "A child turn is about to start. Every event between this and the\nmatching `Finished` with the same `agent_id` belongs to the child,\nnot the parent — this bracket IS the attribution mechanism, which is\nwhy no per-event agent field was added to the rest of the event vocabulary.",
+          "description": "A child turn is about to start. Every event between this and the\nmatching `Finished` with the same `agent_id` belongs to the child,\nnot the parent — this bracket is the attribution mechanism for every\nevent except the two metering records, which carry their own\n`sub_agent_id` (#4383).\n\nThey have to, and the reason is what bounds this bracket's reach: the\nengine dispatches independent delegates **concurrently**, so several\nchildren's events interleave here and \"between `Started` and\n`Finished`\" no longer names one child's work. For a `Stage` or a\n`ToolStart` that costs a reader a little context; for a `StepUsage` it\ncost the whole cost census, which read a five-way parallel fan-out as\nninety of the lead's own calls.",
           "properties": {
             "agent_id": {
               "description": "Stable id for this child, unique within the parent turn.",

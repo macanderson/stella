@@ -1754,6 +1754,28 @@ export type AgentEvent = {
    */
   role?: ModelCallRole;
   step: number;
+  /**
+   * Which sub-agent spent this call, when a sub-agent did (#4383).
+   *
+   * `None` is the lead's own call. It is stamped at the sub-agent
+   * boundary (`stella_core::subagent`'s `child_sender`), so a nested
+   * child names *itself* rather than its parent — the innermost spender
+   * is the one a cost question is about.
+   *
+   * The bracket in [`crate::subagent_event::SubAgentPhase`] was meant to
+   * be the whole attribution mechanism, and it is enough for everything
+   * it was designed for. It is not enough for **this**: the engine
+   * dispatches independent delegates concurrently, so several children's
+   * events interleave on one stream and no `Started`/`Finished` pair
+   * brackets any particular call. Session `ses-1787465453163-60967` has
+   * five delegates completing within one second of each other; its
+   * ninety telemetry rows all read `worker`, and no join over the
+   * bracket can undo that.
+   *
+   * Content-free like the rest of this event: an opaque handle
+   * (`plugin:vera/worker#0`), never instruction text.
+   */
+  sub_agent_id?: string | null;
   tool_calls: number;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
@@ -1798,6 +1820,15 @@ export type AgentEvent = {
    */
   retries?: number | null;
   role: ModelCallRole;
+  /**
+   * Which sub-agent's call died, when a sub-agent's did (#4383). Same
+   * contract as [`AgentEvent::StepUsage`]'s field of this name, and here
+   * for the same reason it is there: a delegate abandoned at the
+   * engine's dispatch ceiling lands one flagged row, and a row nobody
+   * can attribute explains an execution's `usage_complete = 0` without
+   * saying whose call it was.
+   */
+  sub_agent_id?: string | null;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */

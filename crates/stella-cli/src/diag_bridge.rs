@@ -334,6 +334,7 @@ impl DomainBridge {
                 duration_ms,
                 retries,
                 partial,
+                sub_agent_id: _,
             } => {
                 // Token counts are content-free, so the recovered figures ride
                 // the diagnostic timeline like any other operator id. They are
@@ -1329,6 +1330,7 @@ mod tests {
             tool_calls: 1,
             complete: true,
             finish_reason: None,
+            sub_agent_id: None,
         });
 
         let json = serde_json::to_string(&records.records()[0]).expect("serialize");

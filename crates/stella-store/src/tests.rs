@@ -51,6 +51,7 @@ fn execution_lifecycle_events_and_telemetry_roundtrip() {
                 retries: 1,
                 tool_calls: 3,
                 usage_complete: true,
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -1055,7 +1056,11 @@ fn skill_usage_records_per_execution_version_rows() {
     //       rather than finished — `NOT NULL DEFAULT 0` and backfilled, because
     //       unlike v29 the historical fact is recorded one join away in
     //       `executions.outcome` and there is nothing to invent.
-    assert_eq!(SCHEMA_VERSION, 32);
+    //       v33 `telemetry.sub_agent_id` (#4383): which delegate spent a call,
+    //       or NULL for the lead — nullable with no backfill, since a
+    //       sub-agent opens no execution row of its own and nothing in the
+    //       journal can attribute a historical row without guessing.
+    assert_eq!(SCHEMA_VERSION, 33);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
@@ -1142,6 +1147,7 @@ fn drift_row(step: u64, provider: &str, model: &str, estimated: u64, actual: u64
         retries: 0,
         tool_calls: 1,
         usage_complete: true,
+        sub_agent_id: None,
     }
 }
 
@@ -1803,6 +1809,7 @@ fn telemetry(
         retries: 0,
         tool_calls: 0,
         usage_complete: true,
+        sub_agent_id: None,
     }
 }
 
@@ -2058,6 +2065,7 @@ fn telemetry_replicates_to_the_hub_and_heals_missed_turns() {
             retries: 0,
             tool_calls: 1,
             usage_complete: true,
+            sub_agent_id: None,
         }
     }
 

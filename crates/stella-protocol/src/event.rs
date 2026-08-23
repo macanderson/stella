@@ -813,6 +813,27 @@ pub enum AgentEvent {
             )
         )]
         finish_reason: Option<crate::completion::FinishReason>,
+        /// Which sub-agent spent this call, when a sub-agent did (#4383).
+        ///
+        /// `None` is the lead's own call. It is stamped at the sub-agent
+        /// boundary (`stella_core::subagent`'s `child_sender`), so a nested
+        /// child names *itself* rather than its parent — the innermost spender
+        /// is the one a cost question is about.
+        ///
+        /// The bracket in [`crate::subagent_event::SubAgentPhase`] was meant to
+        /// be the whole attribution mechanism, and it is enough for everything
+        /// it was designed for. It is not enough for **this**: the engine
+        /// dispatches independent delegates concurrently, so several children's
+        /// events interleave on one stream and no `Started`/`Finished` pair
+        /// brackets any particular call. Session `ses-1787465453163-60967` has
+        /// five delegates completing within one second of each other; its
+        /// ninety telemetry rows all read `worker`, and no join over the
+        /// bracket can undo that.
+        ///
+        /// Content-free like the rest of this event: an opaque handle
+        /// (`plugin:vera/worker#0`), never instruction text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sub_agent_id: Option<String>,
     },
     /// A provider call failed or timed out after dispatch, so local accounting
     /// cannot prove that no billable work occurred. Content-free by design.
@@ -856,6 +877,14 @@ pub enum AgentEvent {
         /// inside its no-prompts-no-bodies contract.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         partial: Option<crate::completion::PartialUsage>,
+        /// Which sub-agent's call died, when a sub-agent's did (#4383). Same
+        /// contract as [`AgentEvent::StepUsage`]'s field of this name, and here
+        /// for the same reason it is there: a delegate abandoned at the
+        /// engine's dispatch ceiling lands one flagged row, and a row nobody
+        /// can attribute explains an execution's `usage_complete = 0` without
+        /// saying whose call it was.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sub_agent_id: Option<String>,
     },
     /// A verifier model's assessment of a goal-driven loop after one working
     /// round. `met == true` ends the loop; `met == false` feeds `reasoning`

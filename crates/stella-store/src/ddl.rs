@@ -185,6 +185,14 @@ pub(crate) fn files_touched_ddl(table: &str) -> String {
 /// `StepUsage` is emitted exactly once per step that lands. `drift_samples`
 /// treats `(execution_id, step)` as insertion order and `usage_stats` sums
 /// tokens/cost per execution, so a duplicate step double-counts money.
+///
+/// `sub_agent_id` (v33) names which delegate spent the call, or NULL for the
+/// lead's own (#4383). Nullable with no default because NULL is the lead — a
+/// fact, not a gap — and because the `(role, model)` census AGENTS.md sends a
+/// bench reader to run could not otherwise separate a turn's lead from the
+/// delegates it fanned out to: sub-agents open no execution row of their own,
+/// so every one of their calls lands here under the parent id as
+/// `call_role = 'worker'`.
 pub(crate) fn telemetry_ddl(table: &str) -> String {
     format!(
         "CREATE TABLE {table} (
@@ -205,6 +213,7 @@ pub(crate) fn telemetry_ddl(table: &str) -> String {
            retries INTEGER NOT NULL,
            tool_calls INTEGER NOT NULL,
            usage_complete INTEGER NOT NULL DEFAULT 0 CHECK(usage_complete IN (0, 1)),
+           sub_agent_id TEXT,
            UNIQUE (execution_id, step)
          );"
     )

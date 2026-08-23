@@ -169,6 +169,7 @@ async fn fleet_attempt_persists_usage_before_complete_closeout() {
         tool_calls: 0,
         complete: true,
         finish_reason: None,
+        sub_agent_id: None,
     })
     .expect("event");
     drop(tx);

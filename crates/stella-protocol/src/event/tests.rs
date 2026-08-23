@@ -893,6 +893,7 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
         tool_calls: 4,
         complete: true,
         finish_reason: None,
+        sub_agent_id: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"type\":\"step_usage\""), "{json}");

@@ -79,6 +79,7 @@ fn step_usage_bills_the_step_it_paid_for() {
         tool_calls: 1,
         complete: true,
         finish_reason: None,
+        sub_agent_id: None,
     });
     b.finish_turn(Status::Ok);
 

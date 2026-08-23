@@ -470,6 +470,7 @@ mod durable_stream_tests {
             tool_calls: 0,
             complete: true,
             finish_reason: None,
+            sub_agent_id: None,
         };
 
         sender.send(stage.clone()).unwrap();
