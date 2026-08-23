@@ -192,6 +192,7 @@ fn a_flip_decided_requirement_answers_exactly_this() {
             requirement: REQUIREMENT.into(),
             statement: STATEMENT.into(),
             because,
+            detail: None,
         }],
     };
     let undecided = |reason: UndecidedReason| Verdict::Undecided { reason };
@@ -593,6 +594,7 @@ fn a_check_does_not_excuse_a_requirement_from_the_flip_or_the_tamper_exclusion()
             requirement: REQUIREMENT.into(),
             statement: STATEMENT.into(),
             because,
+            detail: None,
         }],
     };
 

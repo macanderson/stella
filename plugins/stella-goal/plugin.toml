@@ -64,12 +64,12 @@
 #
 #   - no `recall`, no `run_test`. One host call, at one point, for the one
 #     thing this plugin cannot do itself: run an independent model turn.
-#   - no free-text correction of its own. `again`'s `Correction.guidance` is
-#     rendered by the HOST from the `[requirements]` statement below — this
-#     plugin has no way to carry the verifier's own `feedback` string forward
-#     into it, because `ObservedEvidence` has no field for prose (README
-#     "Known gaps"). That is real fidelity this plugin loses against
-#     `stella goal`'s own loop, not an oversight.
+#   - no verdict of its own. `again`'s `Correction.guidance` is rendered by
+#     the HOST from the `[requirements]` statement below. What this plugin
+#     does carry into it is the verifier's own `feedback` string, as
+#     `ObservedEvidence`'s advisory `detail` (#3840) — never evidence, never
+#     read by `judge`, attached to the unmet clauses after the verdict is
+#     decided.
 #   - no `[[capabilities]]`. This plugin never opens a file, never searches a
 #     workspace, and never sees the working turn's own transcript beyond the
 #     `TurnOutcome` the wire carries — see main.py's module doc for exactly

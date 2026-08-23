@@ -110,6 +110,7 @@ fn observed() -> ObservedEvidence {
     ObservedEvidence {
         flip: FlipObservation::Achieved,
         measurements: BTreeMap::from([("p50".to_string(), 103), ("p99".to_string(), 128)]),
+        detail: None,
     }
 }
 
@@ -121,6 +122,7 @@ fn unmet() -> UnmetRequirement {
             check: "p50 <= 105".into(),
             reported: 118,
         },
+        detail: None,
     }
 }
 

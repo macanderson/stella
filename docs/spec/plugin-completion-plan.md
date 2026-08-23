@@ -141,7 +141,7 @@ the sequencing in §6 is derivable rather than asserted.
 | `stella run` raises `host_max_holds` / the `ChildTurns` ceiling to the manifest's ask | #3841 | stella-goal (`max_holds = 7`, capped at 3), vera |
 | `--pipeline <variant>` composes more than one plugin's contribution | #3801 | every realistic install — research + plan + vera is three plugins, not a choice of one |
 | ~~`[loop] max_calls` separates per-point from whole-run budget~~ **landed** — `[loop] max_child_turns` is the whole-run key | #3839 | vera, stella-candidates |
-| A verifier's free-text reasoning reaches the next round's worker | #3840 | stella-goal, vera |
+| ~~A verifier's free-text reasoning reaches the next round's worker~~ **landed** — `ObservedEvidence::detail`, advisory and never read by `judge` | #3840 | stella-goal, vera |
 | The role table is plugin-populated (`EngineRole` closed at six) | #3472, #3492 | vera (contributes `worker` + independent `verifier`) |
 | `Principal::Plugin` is constructed and a `[[capabilities]]` entry binds to an `AuthzGate` rule | #3482 | stella-selfdriving — **hard** gate, see §4.3 |
 | A plugin-contributed tool can run a script the package ships (`${plugin_dir}` interpolation) | #3579 | vera, stella-candidates |
@@ -426,9 +426,11 @@ hold a round.
   before the run ends. *Witness: a manifest asking `max_holds = 7` gets seven,
   and one asking for more than the ceiling is told so at bind time, not at
   round four.*
-- **P1.3 — #3840.** A verifier's free-text reasoning reaches the next round's
-  worker. *Witness: the held-open round's prompt contains the verifier's own
-  sentence, not the manifest's `[requirements]` prose.*
+- **P1.3 — #3840. Landed.** A verifier's free-text reasoning reaches the next
+  round's worker, as `ObservedEvidence::detail`. *Witness:
+  `a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round`
+  asserts the held-open round's prompt contains the verifier's own sentence,
+  not only the manifest's `[requirements]` prose.*
 
 ### Phase 2 — composition, which decides whether any of this is usable
 

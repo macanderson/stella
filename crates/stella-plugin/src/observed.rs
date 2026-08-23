@@ -58,6 +58,28 @@ pub struct ObservedEvidence {
     /// `stella_runtime::wrapper::judge`.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub measurements: BTreeMap<String, u64>,
+    /// What the wrapper's own process wants the next round told, in its own
+    /// words — **advisory, and never read by `judge`** (#3840).
+    ///
+    /// The one string on this type, and the constraint that keeps it safe is
+    /// stated in [`EvidenceSet`]'s doc comment: `judge` must be total over a
+    /// fixed set of fields whose values are closed enums, which is the
+    /// compiler's job rather than an argument. So this does not reach
+    /// [`EvidenceSet`] at all. It travels beside the verdict, onto
+    /// [`UnmetRequirement::detail`](crate::UnmetRequirement::detail), where the
+    /// only thing that reads it is the correction a held-open round renders.
+    ///
+    /// What it exists for: `stella_core::goal::GoalVerifierVerdict` carries
+    /// `met` **and** `reasoning` **and** `feedback`, and the built-in loop hands
+    /// the worker that `feedback` verbatim every round. A plugin reporting the
+    /// same verdict as `{"met": 0}` had no way to carry the sentence, so every
+    /// round's correction was the same host-rendered statement of the static
+    /// `[requirements]` clause regardless of what the verifier actually found.
+    ///
+    /// A plugin that has nothing to add leaves it absent, and the correction is
+    /// exactly what it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 impl ObservedEvidence {
@@ -72,6 +94,7 @@ impl ObservedEvidence {
         Self {
             flip: FlipObservation::Unobservable,
             measurements: BTreeMap::new(),
+            detail: None,
         }
     }
 }
@@ -135,11 +158,22 @@ mod tests {
         let observed = ObservedEvidence {
             flip: FlipObservation::Achieved,
             measurements: BTreeMap::from([("p50".to_string(), 103)]),
+            detail: Some("the timeout path is still unbounded".to_string()),
         };
         let merged = EvidenceSet::from_observed(observed.clone(), TamperFinding::Clean);
         assert_eq!(merged.flip, FlipObservation::Achieved);
         assert_eq!(merged.tamper, TamperFinding::Clean);
         assert_eq!(merged.measurements, observed.measurements);
+        // And the advisory note does not cross: `EvidenceSet` is the closed
+        // vocabulary `judge` is total over, so there is no field here for the
+        // detail to land in (#3840). It rejoins after the verdict, on
+        // `Verdict::with_detail`.
+        assert_eq!(
+            serde_json::to_value(&merged)
+                .expect("an evidence set serializes")
+                .get("detail"),
+            None
+        );
 
         let unchecked = EvidenceSet::from_observed(observed, TamperFinding::NotChecked);
         assert_eq!(
