@@ -276,7 +276,7 @@ impl ContextProvider for GraphProvider {
         // the ordinary case rather than a fault.
         let db_path = crate::search_cmd::codegraph::graph_db_path(&self.workspace_root)
             .ok()
-            .filter(|path| path.exists());
+            .flatten();
         let Some(db_path) = db_path else {
             return Ok(ContextQueryResult {
                 frames: Vec::new(),

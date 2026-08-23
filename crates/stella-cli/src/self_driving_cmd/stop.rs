@@ -30,8 +30,8 @@
 //! labels `lost` for a legacy session and probes the pid for a stamped one
 //! (#4360), both inference where a record belongs (#4361).
 //!
-//! SIGKILL cannot be caught and stays inferred. That is the only gap, and it is
-//! declared rather than papered over.
+//! SIGKILL cannot be caught and stays inferred. That is the only gap, and the
+//! Observatory's `liveness` field says so.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU8, Ordering};
