@@ -114,8 +114,9 @@ touched (#1437).
 
 CI enforces the same steps, split across `ci.yml` (plus a release smoke build);
 `docs-guards.yml`, which runs the prose guards — `invariants`, `doc-links`,
-and `command-docs` — on their own because they trigger on the `docs/**` and
-`*.md` paths that `ci.yml` deliberately ignores; and `wire-schema.yml`, for the
+`command-docs`, `brand-case`, `gate-parity`, `god-files` and `design-refs` — on
+their own because they trigger on the `docs/**` and `*.md` paths that `ci.yml`
+deliberately ignores; and `wire-schema.yml`, for the
 same reason in the other direction — a PR that only hand-edits a generated
 schema under `docs/wire/` starts neither of the others (#1439).
 

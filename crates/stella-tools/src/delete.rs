@@ -27,14 +27,18 @@ use crate::rootfd::{EntryKind, RootHandle};
 
 pub struct DeleteFile;
 
-/// What the blocking worker saw and did: the removal happened, and this is the
-/// symlink target it spared, if the entry was a link.
+/// What the blocking worker saw and did: the removal happened, and this is
+/// what it read on the way past — the file's own bytes, or the symlink target
+/// it spared.
 ///
 /// Read *before* the unlink, because afterwards there is nothing left to ask —
 /// and naming the spared target is the whole reason the model can tell a link
 /// deletion from a file deletion.
 enum Removed {
-    File,
+    /// The file's content, when it was readable UTF-8. `None` covers a binary
+    /// or unreadable file, which has no diff worth publishing — a deletion is
+    /// still reported, just without an own reading.
+    File(Option<String>),
     Symlink(std::path::PathBuf),
 }
 
@@ -82,6 +86,32 @@ fn delete_target(value: &Value) -> Result<String, crate::input::InputError> {
     crate::input::required_str(value, "path").map(str::to_string)
 }
 
+/// Attach the call's own reading of one removal, when there was content to
+/// read.
+///
+/// The work-tree snapshot is git's reading and cannot see a gitignored path or
+/// a session with no journal bound, which is how a deletion rendered
+/// `✗ delete <path>` with no line count and no diff (#4366) — the shape
+/// `write_file` and `edit_file` lost in #4367. `turn_files::emit_own_changes`
+/// publishes this only for paths the snapshot missed, so a measured deletion
+/// still produces exactly one event.
+fn attach_own_reading(
+    output: ToolOutput,
+    root: &std::path::Path,
+    scope_root: &std::path::Path,
+    path: &str,
+    before: Option<&str>,
+) -> ToolOutput {
+    let Some(before) = before else {
+        return output;
+    };
+    let change = crate::own_change::own_delete(
+        &crate::own_change::workspace_path(root, scope_root, path),
+        before,
+    );
+    crate::own_change::attach(output, &[change])
+}
+
 /// Delete several files, checking every one before removing any.
 ///
 /// A delete cannot be rolled back, so this validates the whole batch first —
@@ -117,7 +147,12 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         })
         .await;
         match kind {
-            Ok(Ok(EntryKind::File | EntryKind::Symlink)) => planned.push((handle, path)),
+            // The kind is carried into pass two because only a real file's
+            // bytes may be read for the own reading: `read_to_string` expands
+            // the leaf, and a symlink deletion leaves its target alone.
+            Ok(Ok(kind @ (EntryKind::File | EntryKind::Symlink))) => {
+                planned.push((handle, path, kind));
+            }
             // An escape is a different mistake from a directory, and the
             // single form has always said so. Collapsing them here would tell
             // a model that `sub/..` "is not a file", which is true and useless.
@@ -141,10 +176,20 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
 
     // Pass two: every target checked, so remove.
     let mut removed: Vec<String> = Vec::with_capacity(planned.len());
-    for (handle, path) in planned {
+    let mut changes: Vec<crate::own_change::OwnChange> = Vec::with_capacity(planned.len());
+    for (handle, path, kind) in planned {
+        let scope_root = handle.path().to_path_buf();
         let outcome = tokio::task::spawn_blocking({
             let (handle, path) = (std::sync::Arc::clone(&handle), path.clone());
-            move || handle.remove_file(&path)
+            move || {
+                // Before the unlink, for the same reason the single form
+                // reads there: afterwards there is nothing left to read.
+                let before = match kind {
+                    EntryKind::File => handle.read_to_string(&path).ok(),
+                    _ => None,
+                };
+                handle.remove_file(&path).map(|()| before)
+            }
         })
         .await;
         // The one failure no ordering can prevent: the checks all passed and
@@ -152,7 +197,13 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         // the report names exactly what is already gone rather than implying
         // the batch was atomic.
         let failure = match outcome {
-            Ok(Ok(())) => {
+            Ok(Ok(before)) => {
+                if let Some(before) = before {
+                    changes.push(crate::own_change::own_delete(
+                        &crate::own_change::workspace_path(ctx.root(), &scope_root, &path),
+                        &before,
+                    ));
+                }
                 removed.push(path);
                 continue;
             }
@@ -166,11 +217,14 @@ async fn delete_batch(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
             removed.join(", ")
         ));
     }
-    ToolOutput::ok(format!(
-        "deleted {} file(s): {}",
-        removed.len(),
-        removed.join(", ")
-    ))
+    crate::own_change::attach(
+        ToolOutput::ok(format!(
+            "deleted {} file(s): {}",
+            removed.len(),
+            removed.join(", ")
+        )),
+        &changes,
+    )
 }
 
 async fn delete_one(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
@@ -202,7 +256,13 @@ async fn delete_one(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
         move || -> Result<Option<Removed>, crate::rootfd::RootError> {
             let kind = handle.symlink_stat(&path)?.kind();
             let removed = match kind {
-                EntryKind::File => Removed::File,
+                // Read the content BEFORE unlinking, for the same reason the
+                // symlink arm reads its target: afterwards there is nothing
+                // left to ask. Only for a real file — `read_to_string`
+                // expands the leaf, so reading a symlink here would report
+                // the target's bytes as the ones this call removed, and the
+                // whole point of this module is that it did not touch them.
+                EntryKind::File => Removed::File(handle.read_to_string(&path).ok()),
                 // Read the target BEFORE unlinking: afterwards the link is
                 // gone and the report could not name what it spared.
                 EntryKind::Symlink => Removed::Symlink(handle.read_link(&path)?),
@@ -214,7 +274,17 @@ async fn delete_one(input: &Value, ctx: &crate::ctx::ToolCtx) -> ToolOutput {
     })
     .await;
     match outcome {
-        Ok(Ok(Some(Removed::File))) => ToolOutput::ok(format!("deleted {path}")),
+        // The own reading rides `data`; `content` is untouched, so the
+        // byte-identical success string the stagnation detector keys on
+        // (#3176) is unchanged. It is observability only — the git-backed
+        // undo path (`· git-backed · u undo`) does not read it.
+        Ok(Ok(Some(Removed::File(before)))) => attach_own_reading(
+            ToolOutput::ok(format!("deleted {path}")),
+            ctx.root(),
+            &scope_root,
+            path,
+            before.as_deref(),
+        ),
         Ok(Ok(Some(Removed::Symlink(target)))) => ToolOutput::ok(format!(
             "deleted symlink {path} — the link only; its target `{}` is untouched",
             target.display()

@@ -197,6 +197,84 @@ async fn a_file_tool_s_own_reading_is_published_without_a_measurer() {
     assert!(diff.contains("-two\n+three\n"), "{diff}");
 }
 
+/// **The witness for #4366.** `delete_file` carries its own reading too, so a
+/// deletion the work-tree snapshot cannot see still renders with a line count
+/// and an all-red diff.
+///
+/// Fails before this change: `delete_file` read nothing before unlinking and
+/// attached nothing, so nothing reached the stream and the row rendered
+/// `✗ delete <path>` with no `-n lines` and no diff — exactly the shape
+/// `write_file` and `edit_file` lost in #4367.
+#[tokio::test]
+async fn a_deletion_publishes_its_own_reading_as_an_all_red_diff() {
+    use stella_protocol::{AgentEvent, FileChangeKind};
+
+    let (root, reg) = bare_registry();
+    std::fs::write(root.path().join("doomed.txt"), "one\ntwo\nthree\n").unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    reg.attach_events(stella_core::EventSender::new(tx));
+
+    let out = reg
+        .execute("delete_file", &serde_json::json!({ "path": "doomed.txt" }))
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+
+    let Ok(AgentEvent::FileChange {
+        path,
+        kind,
+        added,
+        removed,
+        diff,
+    }) = rx.try_recv()
+    else {
+        panic!("the deletion's own reading must reach the stream");
+    };
+    assert_eq!(path, "doomed.txt");
+    assert_eq!(kind, FileChangeKind::Deleted);
+    assert_eq!(
+        (added, removed),
+        (0, 3),
+        "a deletion removes every line and adds none"
+    );
+    let diff = diff.expect("a deletion carries its diff");
+    // The git spelling every consumer keys "deleted file" on, and every line
+    // on the removed side.
+    assert!(
+        diff.starts_with("--- a/doomed.txt\n+++ /dev/null\n"),
+        "{diff}"
+    );
+    assert!(diff.contains("-one\n-two\n-three\n"), "{diff}");
+}
+
+/// A symlink deletion carries no own reading: `read_to_string` expands the
+/// leaf, so reading one would report the target's bytes as the lines this
+/// call removed — and sparing the target is the whole contract of
+/// [`crate::delete`]. The removal is still reported; only the diff is absent.
+#[cfg(unix)]
+#[tokio::test]
+async fn deleting_a_symlink_publishes_no_diff_of_its_target() {
+    let (root, reg) = bare_registry();
+    std::fs::write(root.path().join("real.toml"), "keep\nme\n").unwrap();
+    std::os::unix::fs::symlink("real.toml", root.path().join("link.toml")).unwrap();
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    reg.attach_events(stella_core::EventSender::new(tx));
+
+    let out = reg
+        .execute("delete_file", &serde_json::json!({ "path": "link.toml" }))
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+    assert!(
+        rx.try_recv().is_err(),
+        "a symlink deletion must publish no reading of the target it spared"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("real.toml")).unwrap(),
+        "keep\nme\n"
+    );
+}
+
 #[tokio::test]
 async fn unknown_tool_returns_error_not_panic() {
     let (_root, reg) = bare_registry();

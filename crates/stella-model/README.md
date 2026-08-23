@@ -65,20 +65,13 @@ here at all. In either case the provider's rows in
 invariant #8); "Extending it" below walks the mechanics and names the tests
 that fail until you do.
 
-A new crate instead of a module is almost never the right split from here. The
-workspace-wide rule: a new crate is justified only when functionality (a) sits
-behind a port and would drag heavy new dependencies into a crate that is
-deliberately light — this crate is already the deliberately *heavy* side of the
-`Provider` port (`reqwest`, `tokio`, SigV4 hashing), so a vendor's dependency
-weight lands here by design; (b) needs a dependency direction the current graph
-forbids — also already solved here, since the trait lives in `stella-protocol`
-precisely so nothing but `stella-cli` has to link the adapters; or (c) is a
-genuinely separate deliverable with its own binary and release cadence, which a
-wire adapter never is. Otherwise extend this crate: a new crate costs an
-AGENTS.md workspace-table row, an impacted-crates scope, CI time, and a README,
-and a wrong split is harder to undo than a wrong merge. If one is truly
-justified, AGENTS.md's workspace table and the root `Cargo.toml` members list
-change in the same PR.
+A new crate instead of a module is almost never the right split from here.
+Against the three-case rule in AGENTS.md § "When a new crate is justified", all
+three are already answered: (a) this crate is the deliberately *heavy* side of
+the `Provider` port (`reqwest`, `tokio`, SigV4 hashing), so a vendor's
+dependency weight lands here by design; (b) the trait lives in
+`stella-protocol` precisely so nothing but `stella-cli` has to link the
+adapters; and (c) a wire adapter is never a separate deliverable.
 
 ## God files — do not add lines
 

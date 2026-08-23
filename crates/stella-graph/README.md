@@ -103,17 +103,11 @@ it". Likewise a new storage source is a module under
 already live here without a split; the exhaustive matches in
 [`src/lang.rs`](src/lang.rs) are what keep that scalable.
 
-A new crate is justified only when functionality (a) sits behind a port/trait
-and would otherwise drag heavy new dependencies into a deliberately light
-crate — not this crate's situation: grammar crates *are* its approved heavy
-dependencies and belong here; (b) needs a dependency direction the current
-graph forbids — the reason this crate and `stella-context` share
-`contextgraph-types` instead of an edge; or (c) is a genuinely separate
-deliverable with its own binary or release cadence. Otherwise extend this
-crate: a new crate costs a workspace-table row, an impacted-crates scope, CI
-time, and a README — with AGENTS.md's workspace table and the root
-`Cargo.toml` members updated in the same PR — and a wrong split is harder to
-undo than a wrong merge.
+Against the three-case rule in AGENTS.md § "When a new crate is justified": (a)
+does not apply, because the grammar crates *are* this crate's approved heavy
+dependencies and belong here; (b) is what made this crate and `stella-context`
+share `contextgraph-types` instead of taking an edge on each other; (c) has
+never applied.
 
 ## God files — do not add lines
 

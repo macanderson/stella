@@ -79,18 +79,11 @@ should replay is an `AgentEvent` and belongs in
 presentation and belongs in the caller or [`stella-tui`](../stella-tui); cost
 and proof belong to the ledger plane.
 
-A new crate is the wrong answer for almost anything diagnostic-shaped. The
-workspace rule: a new crate is justified only when functionality (a) sits
-behind a port/trait and would otherwise drag heavy dependencies into a crate
-that is deliberately light, (b) needs a dependency direction the current graph
-forbids, or (c) is a genuinely separate deliverable with its own binary and
-release cadence. This crate is itself the (b) shape — one serde-only home
-every crate can reach without a cycle — and per-crate vocabularies already
-scale through `Facet` without new crates. Otherwise extend the existing crate:
-a new one costs a workspace-table row, an impacted-crates scope, CI time, and
-a README, and a wrong split is harder to undo than a wrong merge. Adding one
-means updating AGENTS.md's workspace table and the root `Cargo.toml` members
-in the same PR.
+A new crate is the wrong answer for almost anything diagnostic-shaped. Against
+the three-case rule in AGENTS.md § "When a new crate is justified", this crate is
+itself the (b) shape — one serde-only home every crate can reach without a
+cycle — and per-crate vocabularies already scale through `Facet` without new
+crates.
 
 ## God files — do not add lines
 
