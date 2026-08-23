@@ -53,19 +53,19 @@
 //! `[[capabilities]]` list rather than building a gate that refuses it
 //! everything, and that is the owner call this change had to make out loud.
 //!
-//! Two reasons, and the second is the one that decides it:
+//! What decides it: `Principal::Plugin` is carried by two different things. A
+//! plugin's own contributed tool is one
+//! (`stella_tools::custom::CustomTool::principal`); a **best-of-N candidate's
+//! whole worker turn** is the other (`crate::candidate_workspaces`, #3892).
+//! `plugins/stella-candidates` is the only shipped plugin that fans out, and it
+//! declares no capabilities — so a deny-by-default rule would refuse every tool
+//! its candidates call, on its first run, on a declaration written for a
+//! different question.
 //!
-//! 1. The consent prompt renders *"It asks for no tool capabilities."* for
-//!    such a manifest — a statement that the plugin made no request, not that
-//!    the user granted it nothing. Turning that sentence into a total denial
-//!    would enforce a decision nobody was shown.
-//! 2. `Principal::Plugin` is carried by two different things. A plugin's own
-//!    contributed tool is one (`stella_tools::custom::CustomTool::principal`);
-//!    a **best-of-N candidate's whole worker turn** is the other
-//!    (`crate::candidate_workspaces`, #3892). `plugins/stella-candidates` is
-//!    the only shipped plugin that fans out, and it declares no capabilities —
-//!    so a deny-by-default rule would refuse every tool its candidates call,
-//!    on its first run, on a declaration written for a different question.
+//! The consent prompt agrees. It renders *"It asks for no tool capabilities."*
+//! for such a manifest — a statement that the plugin made no request, not that
+//! the user granted it nothing — and turning that sentence into a total denial
+//! would enforce a decision nobody was shown.
 //!
 //! The rule is therefore *undeclared-within-a-declared-grant is denied*, not
 //! *silence is denial*. Declaring a list is a plugin opting into being bounded
