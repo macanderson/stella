@@ -21,17 +21,20 @@
 //!   [`crate::credential::VertexAddressing`] — this crate owns the variable
 //!   names and the `global` default, so any host can construct the adapter.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use stella_protocol::{CompletionRequestRef, CompletionResult, ProviderError, ToolCallObserver};
 
 use crate::catalog::{Catalog, Pricing};
 use crate::credential::ApiKey;
 use crate::gemini::{
-    GeminiRequest, aggregate_gemini_stream, build_generation_config, classify_google_error,
-    to_gemini_request_parts, to_gemini_tools,
+    GeminiRequest, GoogleUnaryCall, aggregate_gemini_stream, build_generation_config,
+    classify_google_error, to_gemini_request_parts, to_gemini_tools,
 };
 use crate::http;
 use crate::provider::Provider;
+use crate::stream_recovery::StreamRecovery;
 
 pub struct VertexProvider {
     client: reqwest::Client,
@@ -44,6 +47,19 @@ pub struct VertexProvider {
     /// `cost_usd` is computed on the real request path — never a hard-coded
     /// zero (which would silently disable budget enforcement for Vertex).
     pricing: Option<Pricing>,
+    /// The streaming→non-streaming fallback latch (#2686, extended to this
+    /// dialect by #2746). Vertex shares gemini's aggregator, its assembly and
+    /// its unary path, so it also shares the fallback — but not this latch:
+    /// a broken streaming path is a fact about one session's transport, so
+    /// each provider instance holds its own.
+    recovery: StreamRecovery,
+    /// The client the unary fallback dispatches through — [`http::unary_client`]'s
+    /// 600s bound, because a non-streaming call has no first token to reset
+    /// the per-read clock (#547).
+    unary_client: reqwest::Client,
+    /// [`http::FIRST_BYTE_TIMEOUT`] in production; a field so the hung-stream
+    /// path is testable in milliseconds.
+    first_byte_deadline: Duration,
 }
 
 impl VertexProvider {
@@ -70,6 +86,9 @@ impl VertexProvider {
             location: location.into(),
             base_url_override: None,
             pricing,
+            recovery: StreamRecovery::default(),
+            unary_client: http::unary_client(),
+            first_byte_deadline: http::FIRST_BYTE_TIMEOUT,
         }
     }
 
@@ -82,14 +101,31 @@ impl VertexProvider {
         self
     }
 
-    fn endpoint(&self) -> String {
+    /// Shrink the first-byte deadline so the hung-stream fallback is testable
+    /// in milliseconds instead of 90 seconds of wall clock.
+    #[cfg(test)]
+    pub(crate) fn with_first_byte_deadline(mut self, deadline: Duration) -> Self {
+        self.first_byte_deadline = deadline;
+        self
+    }
+
+    /// The endpoint for one delivery path. Vertex names the same two methods
+    /// gemini.rs does — `streamGenerateContent?alt=sse` for SSE, plain
+    /// `generateContent` for the unary fallback — under its project- and
+    /// location-scoped path.
+    fn endpoint(&self, stream: bool) -> String {
         let base = match &self.base_url_override {
             Some(base) => base.clone(),
             None if self.location == "global" => "https://aiplatform.googleapis.com".to_string(),
             None => format!("https://{}-aiplatform.googleapis.com", self.location),
         };
+        let method = if stream {
+            "streamGenerateContent?alt=sse"
+        } else {
+            "generateContent"
+        };
         format!(
-            "{base}/v1/projects/{}/locations/{}/publishers/google/models/{}:streamGenerateContent?alt=sse",
+            "{base}/v1/projects/{}/locations/{}/publishers/google/models/{}:{method}",
             self.project, self.location, self.model
         )
     }
@@ -125,8 +161,11 @@ impl VertexProvider {
     /// Shared body of [`Provider::complete_ref`] and
     /// [`Provider::complete_observed_ref`]. Vertex already spoke
     /// `streamGenerateContent?alt=sse` and already shared gemini's
-    /// aggregator, so it inherits every announce site from that fix — the
-    /// two adapters differ only in auth and URL.
+    /// aggregator, so it inherits every announce site from that fix — and,
+    /// since #2746, the streaming→non-streaming fallback and its unary
+    /// `generateContent` path too. The two adapters differ only in auth and
+    /// URL, which is why [`GoogleUnaryCall`] takes an addressed and
+    /// authorized request builder rather than either.
     async fn complete_inner(
         &self,
         req: CompletionRequestRef<'_>,
@@ -139,10 +178,23 @@ impl VertexProvider {
             tools: to_gemini_tools(req.tools),
             generation_config: build_generation_config(req),
         };
+        let call = GoogleUnaryCall {
+            label: "Vertex AI",
+            model: &self.model,
+            pricing: self.pricing.as_ref(),
+            recovery: &self.recovery,
+        };
+        if self.recovery.use_unary() {
+            let request = self
+                .unary_client
+                .post(self.endpoint(false))
+                .bearer_auth(self.access_token.reveal());
+            return call.complete(request, &body).await;
+        }
 
         let response = self
             .client
-            .post(self.endpoint())
+            .post(self.endpoint(true))
             .bearer_auth(self.access_token.reveal())
             .json(&body)
             .send()
@@ -153,8 +205,15 @@ impl VertexProvider {
             return Err(classify_google_error("Vertex AI", response, &self.model).await);
         }
 
-        let (text, tool_calls, usage, finish_reason) =
-            aggregate_gemini_stream("Vertex AI", response, observer, self.pricing.as_ref()).await?;
+        let (text, tool_calls, usage, finish_reason) = aggregate_gemini_stream(
+            "Vertex AI",
+            response,
+            observer,
+            self.pricing.as_ref(),
+            self.first_byte_deadline,
+        )
+        .await
+        .map_err(|fault| self.recovery.absorb(fault))?;
         let cost_usd = self.pricing.map(|p| p.cost_usd(&usage)).unwrap_or(0.0);
         Ok(CompletionResult {
             text,
@@ -181,9 +240,86 @@ mod tests {
         let provider =
             VertexProvider::new(ApiKey::new("token"), "gemini-3-pro", "my-project", "global");
         assert_eq!(
-            provider.endpoint(),
+            provider.endpoint(true),
             "https://aiplatform.googleapis.com/v1/projects/my-project/locations/global/publishers/google/models/gemini-3-pro:streamGenerateContent?alt=sse"
         );
+    }
+
+    /// The unary fallback's half of the same addressing: `generateContent`
+    /// under the identical project/location path, with no `alt=sse`.
+    #[test]
+    fn endpoint_names_generate_content_for_the_unary_fallback() {
+        let provider =
+            VertexProvider::new(ApiKey::new("token"), "gemini-3-pro", "my-project", "global");
+        assert_eq!(
+            provider.endpoint(false),
+            "https://aiplatform.googleapis.com/v1/projects/my-project/locations/global/publishers/google/models/gemini-3-pro:generateContent"
+        );
+    }
+
+    /// The #2746 witness for Vertex. It shares gemini's aggregator, assembly
+    /// and unary path, so the behaviour is inherited — but "inherited" is a
+    /// claim about wiring, and the wiring is per-adapter: the latch, the
+    /// unary client and the second endpoint all live on `VertexProvider`.
+    /// This pins the whole cycle against the project-scoped path, so a Vertex
+    /// that grew its own delivery path could not silently lose the fallback
+    /// (the same reason `complete_observed_inherits_geminis_announce_sites`
+    /// exists).
+    #[tokio::test]
+    async fn a_vertex_stream_hung_before_its_first_byte_falls_back_to_generate_content() {
+        let base_url = crate::stream_fallback_support::hang_streams_answer_unary(
+            crate::stream_fallback_support::stream_method_in_url,
+            r#"{"candidates":[{"finishReason":"STOP","content":{"parts":[{"text":"recovered without streaming"}]}}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":4,"cachedContentTokenCount":3}}"#,
+        );
+        let provider = VertexProvider::new(
+            ApiKey::new("ya29.t"),
+            "gemini-3-pro",
+            "my-project",
+            "global",
+        )
+        .with_base_url(base_url)
+        .with_first_byte_deadline(std::time::Duration::from_millis(120));
+
+        let error = provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect_err("a hung stream must fault at the first-byte deadline, not hang");
+        assert!(error.is_retryable(), "{error:?}");
+        let message = error.to_string();
+        assert!(
+            message.contains("Vertex AI"),
+            "names the adapter, not Gemini: {message}"
+        );
+        assert!(message.contains("first byte"), "{message}");
+        assert!(
+            message.contains("non-streaming"),
+            "the error names the switch it armed: {message}"
+        );
+
+        let result = provider
+            .complete(CompletionRequest {
+                messages: vec![CompletionMessage::user("hi")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: vec![],
+                reasoning: None,
+                params: None,
+            })
+            .await
+            .expect("the fallback attempt completes without streaming");
+        assert_eq!(result.text, "recovered without streaming");
+        assert_eq!(result.usage.input_tokens, 7);
+        assert_eq!(result.usage.cached_input_tokens, 3);
+        assert!(result.usage.reported);
     }
 
     #[test]
@@ -195,7 +331,7 @@ mod tests {
             "us-central1",
         );
         assert_eq!(
-            provider.endpoint(),
+            provider.endpoint(true),
             "https://us-central1-aiplatform.googleapis.com/v1/projects/my-project/locations/us-central1/publishers/google/models/gemini-3-pro:streamGenerateContent?alt=sse"
         );
     }

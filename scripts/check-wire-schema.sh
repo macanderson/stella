@@ -64,6 +64,12 @@ fi
 # re-serialize with the same code that deserialized, so a rename is invisible
 # to them — and the wire form is the *primary* one for this socket, which makes
 # it the contract that most needs a committed fixed point.
+#
+# One exporter, two artifacts, and neither subsumes the other (#3532):
+# `wrapper.wire.json` is a corpus that pins the exact bytes of every message,
+# and `wrapper.schema.json` is JSON Schema derived by schemars, which states
+# the two things a corpus cannot show — a widened scalar and a string format
+# constraint. Both are diffed below.
 if ! build_log="$(cargo run --quiet -p stella-plugin --features schema \
   --bin export-wrapper-wire -- "$tmp" 2>&1)"; then
   echo "check-wire-schema: FAIL — the wrapper-socket exporter did not run." >&2
@@ -74,7 +80,7 @@ fi
 status=0
 for artifact in agentevent.schema.json agentevent.d.ts \
                 serveframe.schema.json serveinbound.schema.json serveframe.d.ts \
-                wrapper.wire.json; do
+                wrapper.wire.json wrapper.schema.json; do
   if [ ! -f "$committed/$artifact" ]; then
     echo "check-wire-schema: FAIL — $committed/$artifact is missing." >&2
     status=1

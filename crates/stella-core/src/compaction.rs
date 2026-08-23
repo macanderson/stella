@@ -413,15 +413,21 @@ fn age_stale_tool_results(
         let before = estimate_message_tokens(message);
         let mut touched = false;
         for result in message.tool_results.iter_mut() {
-            let (payload, is_error) = match &result.output {
-                ToolOutput::Ok { content, .. } => (content, false),
-                ToolOutput::Error { message, .. } => (message, true),
+            let (payload, is_error, class) = match &result.output {
+                ToolOutput::Ok { content, .. } => (content, false, None),
+                ToolOutput::Error { message, class } => (message, true, *class),
             };
             if payload.len() > AGE_THRESHOLD_CHARS {
                 aged_blocks.push(tool_result_block_id(&result.output));
                 let aged_payload = age_content(payload);
+                // Aging shrinks the payload; it must not silently launder an
+                // already-classified failure back to "unaudited" (#3167) —
+                // `class` rides along with whatever prose survives the trim.
                 result.output = if is_error {
-                    ToolOutput::error(aged_payload)
+                    ToolOutput::Error {
+                        message: aged_payload,
+                        class,
+                    }
                 } else {
                     ToolOutput::Ok {
                         content: aged_payload,
@@ -745,14 +751,21 @@ pub fn compact_measured(
             }
             let before = estimate_message_tokens(message);
             for (ridx, result) in message.tool_results.iter_mut().enumerate() {
-                let (payload, is_error) = match &result.output {
-                    ToolOutput::Ok { content, .. } => (content, false),
-                    ToolOutput::Error { message, .. } => (message, true),
+                let (payload, is_error, class) = match &result.output {
+                    ToolOutput::Ok { content, .. } => (content, false, None),
+                    ToolOutput::Error { message, class } => (message, true, *class),
                 };
                 if payload.len() > AGE_THRESHOLD_CHARS {
                     let aged_payload = age_content(payload);
+                    // Preserve whatever class (or lack of one) the failure
+                    // already carried — aging trims prose, it must not
+                    // launder a classified failure back to "unaudited"
+                    // (#3167).
                     result.output = if is_error {
-                        ToolOutput::error(aged_payload)
+                        ToolOutput::Error {
+                            message: aged_payload,
+                            class,
+                        }
                     } else {
                         ToolOutput::Ok {
                             content: aged_payload,
@@ -786,14 +799,19 @@ pub fn compact_measured(
             }
             let before = estimate_message_tokens(message);
             for (ridx, result) in message.tool_results.iter_mut().enumerate() {
-                let (payload_len, is_error) = match &result.output {
-                    ToolOutput::Ok { content, .. } => (content.len(), false),
-                    ToolOutput::Error { message, .. } => (message.len(), true),
+                let (payload_len, is_error, class) = match &result.output {
+                    ToolOutput::Ok { content, .. } => (content.len(), false, None),
+                    ToolOutput::Error { message, class } => (message.len(), true, *class),
                 };
                 if payload_len > 400 {
                     evicted_blocks.push(id_at(idx, ridx));
+                    // Same preservation as the aging pass above: eviction
+                    // replaces the prose, not the audited class (#3167).
                     result.output = if is_error {
-                        ToolOutput::error(EVICTION_STUB.to_string())
+                        ToolOutput::Error {
+                            message: EVICTION_STUB.to_string(),
+                            class,
+                        }
                     } else {
                         ToolOutput::Ok {
                             content: EVICTION_STUB.to_string(),

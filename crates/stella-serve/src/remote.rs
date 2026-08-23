@@ -538,7 +538,8 @@ impl ToolExecutor for RemoteToolExecutor {
         // data. Cancellation therefore ends the turn one step later, at the
         // provider port, which *can* report `ProviderError::Cancelled`.
         if self.pending.is_cancelled() {
-            return ToolOutput::error(
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
                 "turn cancelled before the tool call could be dispatched".to_string(),
             );
         }
@@ -647,7 +648,8 @@ impl RemoteToolExecutor {
         // landing between the check above and this call must not park the step
         // until its deadline.
         if !self.pending.register_tool(request_id.clone(), tx) {
-            return ToolOutput::error(
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
                 "turn cancelled before the tool call could be dispatched".to_string(),
             );
         }
@@ -661,7 +663,8 @@ impl RemoteToolExecutor {
             .is_err()
         {
             self.pending.abandon(&request_id);
-            return ToolOutput::error(
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
                 "serve host disconnected before the tool call could be dispatched".to_string(),
             );
         }
@@ -671,20 +674,25 @@ impl RemoteToolExecutor {
                 answered(&self.pending, &request_id, ReverseKind::Tool, started);
                 output
             }
-            Ok(Err(_)) if self.pending.is_cancelled() => {
-                ToolOutput::error("turn cancelled while the tool call was in flight".to_string())
-            }
-            Ok(Err(_)) => {
-                ToolOutput::error("serve host dropped the tool call without answering".to_string())
-            }
+            Ok(Err(_)) if self.pending.is_cancelled() => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
+                "turn cancelled while the tool call was in flight".to_string(),
+            ),
+            Ok(Err(_)) => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
+                "serve host dropped the tool call without answering".to_string(),
+            ),
             Err(_) => {
                 self.pending.abandon(&request_id);
                 timed_out(&self.pending, &request_id, ReverseKind::Tool, started);
-                ToolOutput::error(format!(
-                    "serve host did not answer the `{name}` tool call within {:?} \
+                ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Timeout,
+                    format!(
+                        "serve host did not answer the `{name}` tool call within {:?} \
                          (reverse-request deadline)",
-                    self.timeout
-                ))
+                        self.timeout
+                    ),
+                )
             }
         }
     }

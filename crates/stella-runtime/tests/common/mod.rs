@@ -1,5 +1,13 @@
-//! What the four plugin conformance harnesses share: the golden comparison,
+//! What every plugin harness with a committed golden shares: the comparison,
 //! and the `BLESS=1` path that regenerates one.
+//!
+//! Six harnesses take it — the four `*_plugin_conformance.rs`, which drive a
+//! vector through `SubprocessWrapper`, and the two `*_plugin_hostcall.rs`,
+//! which drive one through a scripted §6b conversation instead (#4475). The
+//! two vector loops are genuinely different
+//! and stay in their own files; the *grading* is one function, because a
+//! second copy of it is a second BLESS path to keep in step and the last two
+//! harnesses had none at all.
 //!
 //! Not compiled as a test binary of its own — `tests/` subdirectories are
 //! modules, and each harness pulls this in with `mod common;`.

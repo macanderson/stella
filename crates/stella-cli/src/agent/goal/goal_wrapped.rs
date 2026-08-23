@@ -146,6 +146,12 @@ struct GoalRoundDriver<'r, 'e> {
 #[async_trait(?Send)]
 impl TurnDriver for GoalRoundDriver<'_, '_> {
     async fn run_turn(&mut self, prelude: TurnPrelude) -> DrivenTurn {
+        // Pinned before the turn, at the identity the declared artifacts have
+        // now, so the comparison afterwards is about the work (#3587). Already
+        // pinned artifacts keep their first baseline — see
+        // `TamperWatch::pin_declared` for why re-observing would launder a
+        // rewrite from an earlier round.
+        self.watch.pin_declared(prelude.witness());
         self.messages.extend(prelude.into_messages());
         // One observer per internal turn, exactly as
         // `crate::wrapper_plugin::RawTurnDriver` builds one per round: `tools`

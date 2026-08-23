@@ -305,7 +305,8 @@ impl EditFile {
         // every char boundary — shredding the file (and allocating O(len^2)).
         // On an empty file it would silently overwrite. Refuse it outright.
         if old_string.is_empty() {
-            return ToolOutput::error(
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::InvalidInput,
                 "old_string must not be empty — use write_file to create or replace a \
                           whole file",
             );
@@ -325,7 +326,12 @@ impl EditFile {
         // anything is opened.
         let (scope_root, path) = match ctx.resolve_for_write(path) {
             Ok(resolved) => resolved,
-            Err(refusal) => return ToolOutput::error(refusal.to_string()),
+            Err(refusal) => {
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::PermissionDenied,
+                    refusal.to_string(),
+                );
+            }
         };
         let path = path.as_str();
 
@@ -336,17 +342,26 @@ impl EditFile {
         let handle = match crate::rootfd::RootHandle::open(&scope_root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::error(format!("cannot open workspace root: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("cannot open workspace root: {e}"),
+                );
             }
         };
 
         let content = match crate::rootfd::read_to_string_async(&handle, path).await {
             Ok(c) => c,
             Err(e) if e.is_escape() => {
-                return ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::PermissionDenied,
+                    format!("path `{path}` escapes workspace root ({e})"),
+                );
             }
             Err(e) => {
-                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("failed to read `{path}`: {e}"),
+                );
             }
         };
 
@@ -378,42 +393,57 @@ impl EditFile {
                     // more than was shown; the unchanged-file message below
                     // still steers a confused model back to read_file.
                     self.ledger.record_known(&scope_root, path, &content);
-                    ToolOutput::error(format!(
-                        "old_string not found in `{path}` — the file CHANGED after you last \
+                    ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::NotFound,
+                        format!(
+                            "old_string not found in `{path}` — the file CHANGED after you last \
                              read it (out-of-band modification); the copy in your context is \
                              stale. Current content follows — re-issue the edit against these \
                              bytes.\n\n--- {path} (current) ---\n{}",
-                        drift_echo(&content)
-                    ))
+                            drift_echo(&content)
+                        ),
+                    )
                 }
                 Some(_) => match indentation_only_match(&content, old_string) {
                     // The needle is right and only its indentation is wrong.
                     // The generic message below is accurate but costs a ranged
                     // re-read to act on; naming the cause and echoing the
                     // file's own bytes for the span removes that round trip.
-                    Some(actual) => ToolOutput::error(format!(
-                        "old_string not found in `{path}` — but the same text IS present with \
+                    Some(actual) => ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::NotFound,
+                        format!(
+                            "old_string not found in `{path}` — but the same text IS present with \
                          different leading whitespace, so the needle was re-indented. The file \
                          is unchanged since you last saw it. Copy this span byte-exact:\n\n--- \
                          {path} (actual indentation) ---\n{actual}"
-                    )),
-                    None => ToolOutput::error(format!(
-                        "old_string not found in `{path}` — the file is unchanged since you last \
+                        ),
+                    ),
+                    None => ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::NotFound,
+                        format!(
+                            "old_string not found in `{path}` — the file is unchanged since you last \
                              saw it, so the copy in your context matches disk; check for exact \
                              whitespace/newline differences"
-                    )),
+                        ),
+                    ),
                 },
-                None => ToolOutput::error(format!(
-                    "old_string not found in `{path}` — no read of this file is recorded \
+                None => ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::NotFound,
+                    format!(
+                        "old_string not found in `{path}` — no read of this file is recorded \
                          this session; read it first and copy old_string byte-exact"
-                )),
+                    ),
+                ),
             };
         };
         let count = content.matches(old_string).count();
         if count > 1 && !replace_all {
-            return ToolOutput::error(format!(
-                "old_string appears {count} times in `{path}` — set replace_all=true or provide a more specific string"
-            ));
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::InvalidInput,
+                format!(
+                    "old_string appears {count} times in `{path}` — set replace_all=true or provide a more specific string"
+                ),
+            );
         }
 
         let new_content = if replace_all {
@@ -455,7 +485,10 @@ impl EditFile {
                     &[change],
                 )
             }
-            Err(e) => ToolOutput::error(format!("failed to write `{path}`: {e}")),
+            Err(e) => ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
+                format!("failed to write `{path}`: {e}"),
+            ),
         }
     }
 
@@ -488,17 +521,23 @@ impl EditFile {
             let (scope_root, path) = match ctx.resolve_for_write(&target.path) {
                 Ok(resolved) => resolved,
                 Err(refusal) => {
-                    return ToolOutput::error(format!(
-                        "`{EDITS_KEY}`[{index}] (`{}`): {refusal} — nothing was written",
-                        target.path
-                    ));
+                    return ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::PermissionDenied,
+                        format!(
+                            "`{EDITS_KEY}`[{index}] (`{}`): {refusal} — nothing was written",
+                            target.path
+                        ),
+                    );
                 }
             };
             if target.old_string.is_empty() {
-                return ToolOutput::error(format!(
-                    "`{EDITS_KEY}`[{index}] (`{path}`): old_string must not be empty — use \
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    format!(
+                        "`{EDITS_KEY}`[{index}] (`{path}`): old_string must not be empty — use \
                      write_file to create or replace a whole file. Nothing was written."
-                ));
+                    ),
+                );
             }
 
             // One load per file. Every later edit to it composes on the
@@ -513,16 +552,22 @@ impl EditFile {
                     let handle = match crate::rootfd::RootHandle::open(&scope_root) {
                         Ok(handle) => Arc::new(handle),
                         Err(e) => {
-                            return ToolOutput::error(format!("cannot open workspace root: {e}"));
+                            return ToolOutput::classified_error(
+                                stella_protocol::ErrorClass::Environment,
+                                format!("cannot open workspace root: {e}"),
+                            );
                         }
                     };
                     let content = match crate::rootfd::read_to_string_async(&handle, &path).await {
                         Ok(content) => content,
                         Err(e) => {
-                            return ToolOutput::error(format!(
-                                "`{EDITS_KEY}`[{index}]: failed to read `{path}`: {e} — nothing \
+                            return ToolOutput::classified_error(
+                                stella_protocol::ErrorClass::Environment,
+                                format!(
+                                    "`{EDITS_KEY}`[{index}]: failed to read `{path}`: {e} — nothing \
                                  was written"
-                            ));
+                                ),
+                            );
                         }
                     };
                     pending.push(Pending {
@@ -550,15 +595,21 @@ impl EditFile {
 
             let current = &pending[slot].content;
             if !current.contains(old_string) {
-                return ToolOutput::error(self.batch_miss(&pending[slot], index, old_string));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::NotFound,
+                    self.batch_miss(&pending[slot], index, old_string),
+                );
             }
             let count = current.matches(old_string).count();
             if count > 1 && !target.replace_all {
-                return ToolOutput::error(format!(
-                    "`{EDITS_KEY}`[{index}]: old_string appears {count} times in `{}` — set \
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    format!(
+                        "`{EDITS_KEY}`[{index}]: old_string appears {count} times in `{}` — set \
                      replace_all=true or provide a more specific string. Nothing was written.",
-                    pending[slot].path
-                ));
+                        pending[slot].path
+                    ),
+                );
             }
             pending[slot].content = if target.replace_all {
                 current.replace(old_string, new_string)
@@ -575,7 +626,12 @@ impl EditFile {
         for file in &pending {
             let handle = match crate::rootfd::RootHandle::open(&file.scope_root) {
                 Ok(handle) => Arc::new(handle),
-                Err(e) => return ToolOutput::error(format!("cannot open workspace root: {e}")),
+                Err(e) => {
+                    return ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::Environment,
+                        format!("cannot open workspace root: {e}"),
+                    );
+                }
             };
             if let Err(e) = crate::durable_write::write_file_durably_at(
                 handle,
@@ -585,7 +641,10 @@ impl EditFile {
             )
             .await
             {
-                return ToolOutput::error(format!("failed to write `{}`: {e}", file.path));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("failed to write `{}`: {e}", file.path),
+                );
             }
             // The model knows the bytes it just produced — record them so its
             // own edit is never later misattributed as drift.
@@ -699,6 +758,35 @@ mod tests {
         assert_eq!(indentation_only_match("  keep  \n", "keep"), None);
         // Nothing to have mis-indented.
         assert_eq!(indentation_only_match("\n\n", "   "), None);
+    }
+
+    /// The #3167 witness: `edit_file`'s "no read recorded" refusal renders
+    /// the exact prose it always has — the loop detector and the prompt
+    /// cache compare those bytes — but now carries the honest
+    /// [`stella_protocol::ErrorClass::NotFound`] instead of the `class: None`
+    /// every refusal shared before this sweep classified them.
+    #[tokio::test]
+    async fn a_needle_missing_with_no_prior_read_keeps_its_prose_and_gains_a_class() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("f.rs"), "fn main() {}\n").unwrap();
+
+        let result = EditFile::default()
+            .execute(
+                &serde_json::json!({"path": "f.rs", "old_string": "nope", "new_string": "x"}),
+                &cx(dir.path()),
+            )
+            .await;
+        match result {
+            ToolOutput::Error { message, class } => {
+                assert_eq!(
+                    message,
+                    "old_string not found in `f.rs` — no read of this file is recorded \
+                     this session; read it first and copy old_string byte-exact"
+                );
+                assert_eq!(class, Some(stella_protocol::ErrorClass::NotFound));
+            }
+            other => panic!("expected an error, got {other:?}"),
+        }
     }
 
     #[tokio::test]

@@ -1241,6 +1241,13 @@ pub(crate) struct RawTurnDriver<'a> {
 #[async_trait(?Send)]
 impl TurnDriver for RawTurnDriver<'_> {
     async fn run_turn(&mut self, prelude: TurnPrelude) -> DrivenTurn {
+        // Before the turn, which is the whole of what "authoring time" means
+        // here: the artifacts this round's stages declared are pinned at the
+        // identity they have now, so the comparison after the turn is about
+        // the work (#3587). Per round rather than once, because a wrapper may
+        // declare more as it learns more; already-pinned artifacts keep their
+        // first baseline, so a later round cannot launder an earlier rewrite.
+        self.watch.pin_declared(prelude.witness());
         // Invariant 7, at the one call site that spends it: `into_messages`
         // hands back user messages, and they are appended *after* the
         // byte-stable system prefix the conversation already opens with.

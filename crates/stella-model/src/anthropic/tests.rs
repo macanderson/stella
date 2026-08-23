@@ -1,5 +1,5 @@
 use super::*;
-use stella_protocol::{CompletionRequest, MessageRole};
+use stella_protocol::{CompletionRequest, CompletionUsage, MessageRole};
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -520,7 +520,7 @@ fn request_serializes_both_cache_breakpoints() {
         max_tokens: 64,
         system: Some(vec![AnthropicSystemBlock {
             kind: "text",
-            text: "You are a coding agent.",
+            text: "You are a coding agent.".into(),
             cache_control: ephemeral_cache(CacheTtl::FiveMinutes),
         }]),
         messages,
