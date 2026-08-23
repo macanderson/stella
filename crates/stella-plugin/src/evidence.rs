@@ -217,6 +217,92 @@ impl std::fmt::Display for UnmetCheck {
     }
 }
 
+/// What one `[[oracle.checks]]` entry says about one set of reported numbers.
+///
+/// **The whole per-check semantics of the grammar, and the only copy of it**
+/// (#3515). It lives here beside [`MeasurementRule::holds`] because it *is*
+/// the grammar's own meaning, and it is a plain enum rather than a `Result`
+/// because both of its callers have to answer for every arm:
+///
+/// - [`Oracle::unmet`] folds it into `Result<Vec<UnmetCheck>, ManifestError>`,
+///   the shape a caller with somewhere to return an error wants.
+/// - `stella_runtime::wrapper::judge` folds it into `UnmetRequirement` /
+///   `UndecidedReason`, and **must** be total: it is the function that decides
+///   whether a turn may end, so it has no `Result` to escape through and a
+///   missing number has to become a named abstention rather than a silence
+///   (`doc:wrapper-socket` §4).
+///
+/// Those two report differently and that is all they do differently. Before
+/// this type they each walked the checks themselves — `judge` calling
+/// `check.rule()`, reading `measurements`, and applying `holds` in its own
+/// loop — so the evaluator the plugin crate documented as canonical had no
+/// production caller at all, and the copy that actually bound a verdict was in
+/// another crate where a change to either was invisible to the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckOutcome {
+    /// The oracle reported the measurement and the rule holds over it.
+    Held,
+    /// The oracle reported the measurement and the rule does not hold.
+    Failed {
+        /// The rule that was applied.
+        rule: MeasurementRule,
+        /// What the oracle reported for its measurement.
+        reported: u64,
+    },
+    /// The rule parsed, and the oracle did not report the number it reads.
+    ///
+    /// Never "the budget held": a missing number decides nothing, which is the
+    /// `crate::program` discipline pointed at evidence.
+    MeasurementMissing {
+        /// The measurement the rule reads and the report does not carry.
+        measurement: String,
+    },
+    /// The check's text is outside the grammar.
+    ///
+    /// Reachable only for an [`Oracle`] that did not come from
+    /// [`crate::PluginManifest::from_toml_str`] — validation rejects
+    /// unparsable text at load — and still not "the budget held".
+    Unreadable {
+        /// Why the text does not parse, in the words an author needs: the
+        /// `reason` field of [`ManifestError::UnparsableCheck`] rather than
+        /// its whole rendering, because every caller already holds the
+        /// requirement and the check text it would otherwise repeat.
+        reason: String,
+    },
+}
+
+impl OracleCheck {
+    /// Apply this check to what the oracle reported.
+    ///
+    /// Total: every shape of check and every shape of report has an answer
+    /// here, and none of them is "ask someone". See [`CheckOutcome`] for why
+    /// that totality is the property both callers need.
+    #[must_use]
+    pub fn outcome(&self, reported: &BTreeMap<String, u64>) -> CheckOutcome {
+        let rule = match self.rule() {
+            Ok(rule) => rule,
+            // `rule()` returns exactly this variant; the second arm renders
+            // whatever a future one would say rather than claiming totality it
+            // does not have.
+            Err(ManifestError::UnparsableCheck { reason, .. }) => {
+                return CheckOutcome::Unreadable { reason };
+            }
+            Err(other) => {
+                return CheckOutcome::Unreadable {
+                    reason: other.to_string(),
+                };
+            }
+        };
+        match reported.get(&rule.measurement).copied() {
+            None => CheckOutcome::MeasurementMissing {
+                measurement: rule.measurement,
+            },
+            Some(reported) if !rule.holds(reported) => CheckOutcome::Failed { rule, reported },
+            Some(_) => CheckOutcome::Held,
+        }
+    }
+}
+
 impl Oracle {
     /// Whether any check decides `requirement`.
     #[must_use]
@@ -226,13 +312,15 @@ impl Oracle {
 
     /// The checks that did not hold, in declaration order.
     ///
-    /// The whole evaluator for the evidence half of the grammar, and pure: the
-    /// plugin runs its own oracle and reports the numbers, the host decodes
-    /// that report and hands them in, and this applies the manifest's rule to
-    /// them. Evaluating the rule is the host's half; running the oracle and
-    /// vouching for what it produced are the plugin's (#3511). An empty answer
-    /// means every declared check held — which is not by itself "done"
-    /// whenever the flip policy also has something to say.
+    /// A fold over [`OracleCheck::outcome`] — the shared kernel — into the
+    /// shape a caller that *has* somewhere to return an error wants: the two
+    /// arms that decide nothing become an `Err` here, where
+    /// `stella_runtime::wrapper::judge` folds the same kernel into a named
+    /// abstention because it is total (#3515). Pure either way: the plugin
+    /// runs its own oracle and reports the numbers, the host decodes that
+    /// report and hands them in, and the manifest's rule is applied to them
+    /// (#3511). An empty answer means every declared check held — which is not
+    /// by itself "done" whenever the flip policy also has something to say.
     ///
     /// # Errors
     ///
@@ -250,19 +338,29 @@ impl Oracle {
     ) -> Result<Vec<UnmetCheck>, ManifestError> {
         let mut unmet = Vec::new();
         for check in &self.checks {
-            let rule = check.rule()?;
-            let value = reported.get(&rule.measurement).copied().ok_or_else(|| {
-                ManifestError::MeasurementNotReported {
-                    requirement: check.requirement.clone(),
-                    measurement: rule.measurement.clone(),
-                }
-            })?;
-            if !rule.holds(value) {
-                unmet.push(UnmetCheck {
+            match check.outcome(reported) {
+                CheckOutcome::Held => {}
+                CheckOutcome::Failed { rule, reported } => unmet.push(UnmetCheck {
                     requirement: check.requirement.clone(),
                     rule,
-                    reported: value,
-                });
+                    reported,
+                }),
+                CheckOutcome::MeasurementMissing { measurement } => {
+                    return Err(ManifestError::MeasurementNotReported {
+                        requirement: check.requirement.clone(),
+                        measurement,
+                    });
+                }
+                // Rebuilt rather than re-parsed: the kernel already carries
+                // the `reason`, and the other two fields are this check's own,
+                // so the error is byte-identical to the one `rule()` returns.
+                CheckOutcome::Unreadable { reason } => {
+                    return Err(ManifestError::UnparsableCheck {
+                        requirement: check.requirement.clone(),
+                        check: check.rule.clone(),
+                        reason,
+                    });
+                }
             }
         }
         Ok(unmet)
@@ -384,6 +482,57 @@ mod tests {
         assert_eq!(
             unmet[0].to_string(),
             "within-budget: p50 was 118, budget <= 105"
+        );
+    }
+
+    /// **The witness for #3515.** The one evaluator answers all four shapes,
+    /// and answers them without a `Result` — which is what lets
+    /// `stella_runtime::wrapper::judge` fold the same code while staying
+    /// total. Before this existed, `judge` walked the checks itself and the
+    /// evaluator this crate called canonical had no production caller.
+    #[test]
+    fn the_check_kernel_is_total_over_all_four_shapes() {
+        let oracle = parse("\"p50\"", CHECK, "not-applicable").unwrap();
+        let check = &oracle.checks[0];
+
+        assert_eq!(
+            check.outcome(&BTreeMap::from([("p50".to_string(), 103)])),
+            CheckOutcome::Held
+        );
+        assert_eq!(
+            check.outcome(&BTreeMap::from([("p50".to_string(), 118)])),
+            CheckOutcome::Failed {
+                rule: MeasurementRule {
+                    measurement: "p50".into(),
+                    op: CompareOp::LessOrEqual,
+                    value: 105,
+                },
+                reported: 118,
+            }
+        );
+        assert_eq!(
+            check.outcome(&BTreeMap::new()),
+            CheckOutcome::MeasurementMissing {
+                measurement: "p50".into(),
+            },
+            "a number nobody reported decides nothing; reading it as a satisfied \
+             budget is the failure this arm exists to name"
+        );
+
+        // Only reachable for a check that did not come through
+        // `from_toml_str`, which is why it is constructed by hand here.
+        let unvalidated = OracleCheck {
+            requirement: "within-budget".into(),
+            rule: "p50 <= half".into(),
+        };
+        let CheckOutcome::Unreadable { reason } =
+            unvalidated.outcome(&BTreeMap::from([("p50".to_string(), 1)]))
+        else {
+            panic!("text outside the grammar must not read as a held budget");
+        };
+        assert!(
+            reason.contains("not a non-negative whole number"),
+            "{reason}"
         );
     }
 
