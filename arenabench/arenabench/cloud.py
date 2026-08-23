@@ -645,8 +645,19 @@ def _cmd_cloud_run(
     args: Any,
     executor: CloudExecutor | None = None,
     task_lister: Callable[[str], list[str]] = _dataset_task_names,
+    balance_check: Callable[
+        [int, float | None, str | None], balance.Verdict
+    ] = preflight.balance_verdict,
 ) -> int:
-    """``arenabench cloud run match.toml --ref main`` — submit, watch, fetch."""
+    """``arenabench cloud run match.toml --ref main`` — submit, watch, fetch.
+
+    ``balance_check`` is a seam for the same reason ``executor`` and
+    ``task_lister`` are: the default reads this host's own gateway key and
+    asks OpenRouter what is left, so a test exercising the submit path
+    otherwise reached the network with a developer's real credential and
+    passed or failed on an **account balance** (#4461, #3668). The tests pass
+    a wallet that answers a fixed figure; nothing about production changes.
+    """
     import sys
 
     from .config import MatchTemplateError, load_match, required_env
@@ -786,7 +797,7 @@ def _cmd_cloud_run(
     queue = select_queue(args.burst)
     plans = plan_trials(spec)
 
-    money = preflight.balance_verdict(
+    money = balance_check(
         len(plans),
         getattr(args, "est_cost_per_trial", None),
         seat_gateway_credential(needed, available),
