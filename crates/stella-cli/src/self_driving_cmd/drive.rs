@@ -494,11 +494,11 @@ pub(super) fn drive(
                     };
                 let learned = super::learning::tally(&root).since(learned_before);
 
-                durable.update_stats(|s| {
-                    s.issues_attempted += 1;
-                    s.turns_run += 1;
-                    learned.add_to(s);
-                });
+                // Every counter this unit moves, in one write — shared with the
+                // one-shot `work` verb so the two cannot disagree about what a
+                // work unit did (#4306). The audit lines below stay here: they
+                // are the loop's narration, not the unit's arithmetic.
+                super::stats::record_work(durable, learned, &outcome);
 
                 match outcome {
                     super::work::WorkOutcome::Changed {
@@ -510,7 +510,6 @@ pub(super) fn drive(
                             Some(&issue.0),
                             &format!("the turn left changes — {stat}"),
                         );
-                        durable.update_stats(|s| s.issues_changed += 1);
 
                         // Proved here, in the worktree that holds the change,
                         // before anyone is asked to look at it. On a repository
@@ -633,7 +632,6 @@ pub(super) fn drive(
                             Some(&issue.0),
                             &format!("the turn changed nothing ({why}); worktree released"),
                         );
-                        durable.update_stats(|s| s.issues_no_change += 1);
                     }
 
                     super::work::WorkOutcome::Failed { reason } => {
@@ -643,16 +641,6 @@ pub(super) fn drive(
                             Some(&issue.0),
                             &format!("the turn did not complete: {reason}"),
                         );
-                        durable.update_stats(|s| {
-                            s.issues_failed += 1;
-                            // A turn stopped by its ceiling is a budget fact,
-                            // not a sign the issue is unworkable; conflating
-                            // them would make a too-small allowance look like a
-                            // hard backlog.
-                            if reason.contains("budget exceeded") {
-                                s.turns_over_budget += 1;
-                            }
-                        });
                         escalate(durable, &provider, &cfg, &resolved.key, &reason);
                     }
                 }

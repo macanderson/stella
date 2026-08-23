@@ -1195,8 +1195,20 @@ fn work_issue(
         return Ok(());
     }
 
+    // What the turn is about to learn, measured either side of it — the turn
+    // is a child process writing into the repository's own state root, so a
+    // delta over that state is the only producer these counters can have. See
+    // `learning`, and `drive`'s Work arm, which measures the same window.
+    let learned_before = learning::tally(&root);
     let outcome = work::start(&root, &issue, spend_limit, &attribution)?;
+    let learned = learning::tally(&root).since(learned_before);
     hooks::after_issue_work(&root, &settings, &hook_issue, hook_outcome(&outcome));
+
+    // Recorded for every outcome, including the failure that returns `Err`
+    // below: a turn that ran and failed is a turn this session spent, and a
+    // counter that skipped it would make an unproductive sweep read as an
+    // idle one.
+    stats::record_work(st, learned, &outcome);
 
     match &outcome {
         work::WorkOutcome::Changed { branch, stat, .. } => {
@@ -1208,7 +1220,6 @@ fn work_issue(
             } else {
                 println!("worked #{key} — {stat}\n  branch: {branch}");
             }
-            let _ = st;
             Ok(())
         }
         work::WorkOutcome::NoChange { why } => {
