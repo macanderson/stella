@@ -652,6 +652,29 @@ pub struct SessionInfo {
     pub spend_micros: u64,
     /// The model the latest turn ran on.
     pub model: Option<String>,
+    /// Autofix-PR watcher state for this lane — `Some` only on sessions the
+    /// deck's PR watcher spawned. Drives the SESSIONS overlay's extra data
+    /// points (PR number, CI progress, open-in-browser).
+    pub autofix: Option<AutofixStatus>,
+}
+
+/// The deck's read-model of one autofix-PR watcher's progress, mirrored from
+/// the driver's watcher task. Tracker-agnostic in shape but spelled for the
+/// forge the watcher speaks to (`gh`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutofixStatus {
+    /// The PR number (`#183` renders as `183`).
+    pub pr_number: u64,
+    /// Browser-openable PR url — the `o` key's target, exactly like the
+    /// ISSUES tab's open-in-browser.
+    pub pr_url: String,
+    /// CI checks that have settled (pass or fail), out of `checks_total`.
+    pub checks_done: u32,
+    /// Total checks the last poll saw; 0 means "not polled yet".
+    pub checks_total: u32,
+    /// What the watcher is doing right now, in one short phrase
+    /// ("watching CI", "fixing CI failure", "merging").
+    pub phase: String,
 }
 
 /// One persist-until-read notification as the inbox overlay lists it. A
