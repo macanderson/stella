@@ -16,7 +16,7 @@ This guide is about doing that part with the code graph instead.
 cd the-repo
 stella init                                         # index the codebase
 stella search "what imports src/db/schema.ts"       # what am I about to break?
-stella run --test-command "pnpm test orders" \
+stella run --pipeline my-verifier --test-command "pnpm test orders" \
   "add a nullable `archived_at` column to orders and thread it through the API"
 ```
 
@@ -87,17 +87,22 @@ Two of them are worth calling out as habits:
 ## 3. Make the change, with an oracle
 
 Now the actual work. In an unfamiliar codebase the single highest-value thing
-you can supply is the **test command**, because it converts "I think this is
-right" into deterministic evidence:
+you can supply is the **test command** — and the thing that turns it into
+evidence is an installed [verification plugin](/docs/plugins), bound to the run
+with `--pipeline <variant>`:
 
 ```bash
-stella run --test-command "pnpm test orders" \
+stella run --pipeline my-verifier --test-command "pnpm test orders" \
   "add a nullable archived_at column to orders and thread it through the API"
 ```
 
-`--test-command` arms the **flip oracle**: the command must *fail before* the
-change and *pass after* it. A suite that was already green cannot be used as
-proof, which is what makes the flip meaningful rather than decorative.
+`--test-command` arms that plugin's **flip oracle**: the command must *fail
+before* the change and *pass after* it. A suite that was already green cannot
+be used as proof, which is what makes the flip meaningful rather than
+decorative. stella grades what the plugin reports against the verdict rule the
+plugin declared at install; it does not re-run the check itself. Without
+`--pipeline`, the flag is refused — a plain `stella run` has no oracle to arm
+and makes no claim about proof.
 
 Don't know the test command in a repo you have never read? Ask the repo:
 
@@ -110,20 +115,17 @@ make, just, …). It is offline and needs no API key.
 
 ### If you can't express "done" as a test
 
-Then don't pass `--test-command`, and stella supplies the oracle itself. An
-independent model — the **witness author**, never the worker — writes a minimal
-*failing* test pinning the intended behavior, and that test arms the flip oracle
-instead. Witness files are watched for tampering: a worker that edits the
-witness doesn't get credit for passing it.
+Then the oracle has to come from the plugin. A verification plugin may spend
+one model call on a **witness author** — an independent model, never the
+worker — that writes a minimal *failing* test pinning the intended behavior,
+and arms the flip against that instead. Whether it does, and whether it
+watches the witness files for tampering, is that plugin's business: stella
+grades the evidence it reports against its declared rule and re-runs nothing.
+`stella plugin list` shows what you have installed.
 
-The witness is scaffolding, not an inheritance. It encodes a moment ("this code
-doesn't do X yet") rather than an invariant, so it lives and dies inside the
-candidate workspace — you never find an unreviewed, already-satisfied test
-sitting in your test directory afterwards. When it turns out to be worth keeping:
-
-```bash
-stella run --keep-witness "make Plan::validate reject a self-dependency by name"
-```
+`--keep-witness` and `--require-verified` belonged to the built-in staged
+pipeline and are refused on every path since it was removed; a plugin that
+promotes a witness into a committable test does so on its own terms.
 
 ## 4. Review what actually changed
 

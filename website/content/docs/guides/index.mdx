@@ -85,9 +85,11 @@ will see in all of them: the fastest, cheapest path is usually the one that hand
 stella something deterministic to check.
 
 ```bash
-# The strongest flag on the CLI. It arms the fail→pass flip oracle, which
-# lets most runs finish on deterministic evidence and skip the verifier entirely.
-stella run --test-command "cargo test -p api" "add cursor pagination to /orders"
+# --test-command arms an installed verification plugin's fail→pass flip oracle,
+# which lets most runs finish on deterministic evidence and skip the verifier
+# entirely. It is refused on the raw loop, which has no oracle to arm.
+stella run --pipeline my-verifier --test-command "cargo test -p api" \
+  "add cursor pagination to /orders"
 ```
 
 The [plugin socket](/docs/plugins) is the full account of how

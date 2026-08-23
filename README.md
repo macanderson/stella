@@ -46,6 +46,11 @@ a default install. Built in Rust as a workspace of focused crates.
 - **Single-threaded engine** — One deterministic step loop: plan, fan tools
   out in parallel, observe, compact if noisy, repeat. No coordinator or
   multi-agent swarm.
+- **Runs inside your own app** — The same engine is embeddable: link
+  `stella-core` and supply the `Provider` and `ToolExecutor` ports in process,
+  or drive [`stella-serve`](crates/stella-serve/README.md) over HTTP/SSE and
+  keep every model call, tool call and credential on your side of the wire.
+  `doc:engine-embedding` is the contract.
 - **Prompt-cache-native memory** — Lessons in `.stella/memories/` load once at
   session start into a byte-stable system prompt (~0.1× input cost).
 - **Code graph** — A tree-sitter symbol/import index (Rust, TS/TSX/JS, Python,

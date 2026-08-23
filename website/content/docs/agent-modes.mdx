@@ -121,8 +121,9 @@ Prefer a plain line-based REPL? `stella --plain` (or `STELLA_PLAIN=1`).
 
 ## One-shot: `stella run`
 
-The non-interactive workhorse: one prompt in, verified work out, exit code
-back. Defaults to the raw step loop; pass `--pipeline <variant>` to run the
+The non-interactive workhorse: one prompt in, the finished work and an exit
+code back. Defaults to the raw step loop, which reports what it changed and
+claims nothing about proof; pass `--pipeline <variant>` to run the
 turn under an installed [wrapper plugin](/docs/plugins), where
 `--test-command` hands that plugin's own oracle a command to check against
 (refused on the raw default). Combine with

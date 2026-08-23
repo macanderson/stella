@@ -88,13 +88,16 @@ failure class has nowhere to occur.
 put frontier models to work. It is a statement about **where to spend
 them**:
 
-- Verification runs the [flip oracle](/docs/plugins) — a test
-  that fails before the change and passes after — and the ladder is terminal
-  at every rung: when the evidence does not add up, it stops and reports
-  `Unverified`, an honest "not proven," instead of asking a model to guess.
-- The one model call that survives on that path is the witness *author*,
-  which writes the failing test. It never judges the result — the test's own
-  fail→pass flip does that, by running.
+- Verification is a [wrapper plugin](/docs/plugins) you bind with
+  `--pipeline <variant>`, and its oracle is a **flip** — a test that fails
+  before the change and passes after. The plugin runs that check and reports
+  the evidence; stella grades the report against the verdict rule the plugin
+  declared at install, and never re-runs it. Nothing on that path asks a model
+  to rule on inconclusive evidence: a report that does not satisfy the rule
+  is an honest "not proven".
+- The one model call such a plugin spends on evidence is the witness
+  *author*, which writes the failing test. It never judges the result — the
+  test's own fail→pass flip does that, by running.
 - Goal mode is a separate mechanism with its own standing verifier: after
   every round, unconditionally, an independent model assesses the transcript
   against the goal. It is not a fallback for inconclusive evidence — it runs
@@ -111,21 +114,26 @@ exactly what you want from the parts of an agent that decide whether to
 trust it.
 
 And because the distinction is structural rather than rhetorical, it is
-machine-readable. Every verified run says which kind of evidence it stood on:
+machine-readable. A raw run reports what it did and nothing about proof —
+`status`, what it spent, and the files it touched:
 
 ```bash
-stella run --output-format json --test-command "cargo test -p stella-core" \
+stella run --output-format json \
   "make the loop detector count identical no-op calls as progress-free" \
-  | jq '{deterministic: .verdict.deterministic, evidence: .verdict.summary}'
+  | jq '{status, cost_usd, files_touched}'
 ```
 
-A CI gate can therefore insist on the mechanism and refuse the opinion:
+Bind a verification plugin and the same envelope carries its standing, so a
+CI gate can insist on evidence instead of a claim:
 
 ```bash
-stella run --output-format json --test-command "make test" "$TASK" \
-  | jq -e '.verdict.deterministic == true' >/dev/null \
-  || { echo "verified only by a model verifier — holding this one for review" >&2; exit 1; }
+stella run --output-format json --pipeline my-verifier --test-command "make test" "$TASK" \
+  | jq -e '.status == "completed"' >/dev/null \
+  || { echo "nothing proved this run — holding it for review" >&2; exit 1; }
 ```
+
+`--test-command` is refused on the raw loop, which has no oracle to arm — see
+[`stella run`](/docs/commands/run).
 
 <Callout type="info">
   Read the full papers in the repo:

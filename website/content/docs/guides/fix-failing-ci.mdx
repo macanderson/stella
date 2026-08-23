@@ -188,8 +188,9 @@ bypass):
 
 ```bash
 stella --spend-limit 2.00 \
-  run --output-format json --test-command "cargo test --workspace" "fix the failing tests" \
-  | jq -e '.status == "completed" and .verdict.deterministic == true'
+  run --output-format json --pipeline my-verifier \
+  --test-command "cargo test --workspace" "fix the failing tests" \
+  | jq -e '.status == "completed"'
 ```
 
 There is no scope-review gate to opt past here, and the

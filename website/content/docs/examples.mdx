@@ -60,7 +60,8 @@ Three consequences:
    changes it at all.
 2. **A flagship verifier is cheap insurance.** One verifier call is a few thousand input tokens
    and under a thousand out — 1–2¢ on `gpt-5.5`, 2–3¢ on `claude-fable-5`. Make it a
-   *different family* than the worker. Arm `--test-command` and many runs skip it.
+   *different family* than the worker. Arm the plugin's oracle with
+   `--test-command` and many runs skip it.
 3. **Prompt caching does the heavy lifting.** stella keeps the system prefix byte-stable
    so most worker-step input bills at the cached rate, 4–10× cheaper. See the
    [context engine](/docs/context-engine).
@@ -88,8 +89,9 @@ the same model, and the deterministic half of the
 Two habits make one-key runs materially better:
 
 ```bash
-# Arm the flip oracle — deterministic verification, verifier often skipped entirely
-stella run --test-command "cargo test -p api" "add cursor pagination to /orders"
+# Arm an installed plugin's flip oracle — deterministic evidence, verifier often skipped
+stella run --pipeline my-verifier --test-command "cargo test -p api" \
+  "add cursor pagination to /orders"
 
 # Cap the spend — enforced between steps, aborts cleanly
 stella --spend-limit 2.00 goal "the linter passes and the snapshot tests are green"
@@ -134,8 +136,9 @@ else.
 
 <Callout type="warn">
   One model reviewing its own work shares its own blind spots — it is real review, not
-  independent review. Compensate deterministically: arm `--test-command` wherever a test
-  can express "done". A genuinely independent second opinion comes from an installed
+  independent review. Compensate deterministically: bind a verification plugin and arm
+  its oracle with `--test-command` wherever a test can express "done" — the flag is
+  refused on the raw loop, which has no oracle. A genuinely independent second opinion comes from an installed
   verification plugin with a [seat](/docs/configuration/agent-engine-config#seats) of its
   own, on a model from another family.
 </Callout>
@@ -210,7 +213,8 @@ as the gate.
 ```bash
 export ZAI_API_KEY="..."
 
-stella run "add pagination to the /orders endpoint and update its tests" \
+stella run --pipeline my-verifier \
+  "add pagination to the /orders endpoint and update its tests" \
   --test-command "pnpm test orders"
 ```
 
@@ -375,8 +379,8 @@ endpoints.
 
 <Callout type="info">
   Local models have no catalog prices, so `stella stats` dollar columns read zero and
-  `--spend-limit` has nothing to meter against. Bound runs with `--test-command` and goal-mode
-  round caps instead.
+  `--spend-limit` has nothing to meter against. Bound runs with a verification plugin's
+  `--test-command` oracle and goal-mode round caps instead.
 </Callout>
 
 ## Enterprise cloud (Vertex and Bedrock)
