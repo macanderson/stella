@@ -35,7 +35,7 @@
 //! rises to the tab strip and moves to the next tab. Nothing in this module
 //! knows the panes: each tab's handler claims what it can and returns `None`
 //! for what it cannot, and [`handle_deck_key`](super::handle_deck_key) calls
-//! [`step_tab`] only once every handler below has declined.
+//! [`step_tab`](crate::deck_ui::focus::step_tab) only once every handler below has declined.
 //!
 //! ## The empty-composer rule
 //!

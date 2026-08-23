@@ -10,7 +10,7 @@
 //! that takes a list or a scroll calls one of them instead of matching
 //! `KeyCode` itself.
 //!
-//! | key | list ([`select`]) | body ([`scroll`]) |
+//! | key | list ([`select`](crate::deck_ui::list_nav::select)) | body ([`scroll`](crate::deck_ui::list_nav::scroll)) |
 //! |---|---|---|
 //! | `↑` `k` | previous item | one line up |
 //! | `↓` `j` | next item | one line down |

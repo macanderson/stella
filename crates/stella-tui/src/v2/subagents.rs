@@ -27,7 +27,7 @@
 //! running lane, which is what "this one might be dead" looks like), clock,
 //! model, the effort its calls are pinned to, spend. The second row is
 //! **what it is for**: the sentence the lead handed it
-//! ([`AgentMeta::purpose`]), its title until the driver supplies one. The
+//! ([`crate::envelope::AgentMeta::purpose`]), its title until the driver supplies one. The
 //! third is **where it is**: one sentence derived from the lane's own fold
 //! ([`lifecycle::lifecycle`]). Nothing here is a tool's raw arguments or a
 //! JSON result; the fold's humanized one-liner is the most a row quotes.

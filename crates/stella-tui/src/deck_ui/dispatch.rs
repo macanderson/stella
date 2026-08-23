@@ -388,8 +388,10 @@ mod tests {
             agent: "sub:2".into(),
             status: crate::AgentStatus::Failed,
         });
-        let mut ui = DeckUi::default();
-        ui.mid_turn_prompt = MidTurnPrompt::Ask;
+        let mut ui = DeckUi {
+            mid_turn_prompt: MidTurnPrompt::Ask,
+            ..Default::default()
+        };
         ui.focus_agent(1);
         assert_eq!(
             route(&mut ui, &model, "why did it fail?".into()),
