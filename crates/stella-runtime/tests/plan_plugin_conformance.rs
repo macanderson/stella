@@ -76,7 +76,7 @@ fn argv(manifest: &PluginManifest) -> Vec<String> {
         .expect("a plugin the host spawns declares [runtime]")
         .argv
         .iter()
-        .map(|arg| arg.replace("${plugin_dir}", &dir))
+        .map(|arg| stella_plugin::expand_plugin_dir(arg, Path::new(&dir)))
         .collect()
 }
 
@@ -158,6 +158,8 @@ async fn every_response_vector_answers_with_its_golden_contribution() {
             &name,
             &golden_path,
             &WrapperResponse::BeforeTurn(response.clone()),
+            // Nothing in a before_turn contribution is wall clock.
+            |_| {},
         );
 
         assert!(

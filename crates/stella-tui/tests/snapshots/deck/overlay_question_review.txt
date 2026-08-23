@@ -22,17 +22,17 @@
  │ ⊙ apps/app/automations/page.tsx
  │ ⎿ 312 lines                                                                                                                               42ms
                                           ┌ question ────────────────────── ↑↓ move · ⏎ choose · ⇥ back · esc cancel ┐
-☰  plan  5/7  ·  Workflows canvas         │from the `research-child` sub-agent                                       │
+ │ ● edit apps/app/automations/page.tsx +4│from the `research-child` sub-agent                                       │
+ │ ⎿                                      │                                                                          │               +4 −1 · 18ms
+ │     10 -  const items = []             │Review your answers                                                       │
+ │     10 +  const items = useAutomations(│                                                                          │
+ │     11 +  const [q, setQ] = useState(""│  • Which auth should the new endpoint use?                               │
+ │     12 +  const filtered = filter(items│      → Session cookie                                                    │
+ │     13 +  const onNew = () => open()   │        note: admin routes only                                           │
                                           │                                                                          │
-⏸ plan  Refactor the automations store int│Review your answers                                                       │
-                                          │                                                                          │
-                                          │  • Which auth should the new endpoint use?                               │
-                                          │      → Session cookie                                                    │
-                                          │        note: admin routes only                                           │
-                                          │                                                                          │
-                                          │  • Which environments should it reach first?                             │
+☰  plan  5/7  ·  Workflows canvas         │  • Which environments should it reach first?                             │
                                           │      → staging                                                           │
-                                          │                                                                          │
+⏸ plan  Refactor the automations store int│                                                                          │
                                           │▸ Submit answers                                                          │
                                           │  Chat about this instead                                                 │
                                           │  Cancel — no answer                                                      │

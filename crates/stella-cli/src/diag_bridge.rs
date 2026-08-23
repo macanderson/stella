@@ -384,6 +384,38 @@ impl DomainBridge {
                         .with("retryable", *retryable),
                 );
             }
+            // The trust gate's refusal, as a record: counts and which
+            // authority, which is every field the event carries. Nothing here
+            // is repository text — that is the event's own contract (#3616).
+            AgentEvent::SteeringWithheld {
+                withheld_by,
+                memories,
+                records,
+                skills,
+                commands,
+                agents,
+            } => {
+                self.emit(
+                    Level::Warn,
+                    "agent.steering.withheld",
+                    self.at_seq()
+                        .with(
+                            "withheld_by",
+                            match withheld_by {
+                                stella_protocol::Withholder::ProjectUntrusted => {
+                                    "project_untrusted"
+                                }
+                                stella_protocol::Withholder::ManagedCeiling => "managed_ceiling",
+                            },
+                        )
+                        .with("memories", *memories as u64)
+                        .with("records", *records as u64)
+                        .with("skills", *skills as u64)
+                        .with("commands", *commands as u64)
+                        .with("agents", *agents as u64),
+                );
+            }
+
             AgentEvent::ProviderFallback { from, to, .. } => {
                 self.emit(
                     Level::Warn,
@@ -1197,6 +1229,7 @@ mod tests {
             effective_budget_tokens: 100_000,
             calibration_factor: 1.0,
             estimated_input_tokens: 4_200,
+            stall_seconds_requested: None,
             compiled_frame: None,
         });
         assert_eq!(bridge.cx.turn, Some(3));

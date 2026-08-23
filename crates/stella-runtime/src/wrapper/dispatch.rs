@@ -280,7 +280,7 @@ impl RunningProgram {
 
 /// Merge one member's observed evidence into what the composition has so far.
 ///
-/// Two rules, and both follow from what the pieces mean rather than from
+/// Three rules, each following from what the piece means rather than from
 /// convenience:
 ///
 /// - **Measurements union, and a later member does not overwrite an earlier
@@ -295,6 +295,9 @@ impl RunningProgram {
 ///   observing a flip cannot happen while only one oracle may exist, and if it
 ///   somehow does, the first observation stands rather than the last — a later
 ///   silence must never erase an earlier observation.
+/// - **The advisory detail is the first member's that had one.** The same rule
+///   as the flip, for the same reason (#3840): a member with nothing to say
+///   about the round must not silence one that did.
 fn fold_evidence(into: Option<ObservedEvidence>, next: ObservedEvidence) -> ObservedEvidence {
     let Some(mut merged) = into else {
         return next;
@@ -304,6 +307,12 @@ fn fold_evidence(into: Option<ObservedEvidence>, next: ObservedEvidence) -> Obse
     }
     if merged.flip == FlipObservation::NotAttempted {
         merged.flip = next.flip;
+    }
+    // The measurements rule, pointed at the one free-text field: whoever spoke
+    // first keeps the floor, so a later member's silence cannot erase an
+    // earlier member's note (#3840).
+    if merged.detail.is_none() {
+        merged.detail = next.detail;
     }
     merged
 }
@@ -528,6 +537,13 @@ impl WrapperDispatch {
             // and must not be dressed as the plugin's report of nothing
             // (#3513). Either way the flip is `Unobservable` and `judge`
             // abstains; what differs is whose silence it is.
+            // Taken before the merge, because it deliberately does not survive
+            // it: `EvidenceSet` is the closed vocabulary `judge` is total over,
+            // and this is the wrapper's own free text (#3840). It rejoins the
+            // verdict afterwards, where nothing can decide anything with it.
+            let detail = observed
+                .as_ref()
+                .and_then(|observed| observed.detail.clone());
             let evidence = match observed {
                 Some(observed) => EvidenceSet::from_observed(observed, driven.tamper),
                 None => EvidenceSet {
@@ -536,7 +552,7 @@ impl WrapperDispatch {
                 },
             };
 
-            let verdict = judge(&self.rule, &evidence);
+            let verdict = judge(&self.rule, &evidence).with_detail(detail);
             let state = RoundState {
                 holds_spent,
                 host_max_holds: self.host_max_holds,

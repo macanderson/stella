@@ -85,6 +85,7 @@ pub use context_providers::{ContextProviderSettings, ExternalContextProvider, Pr
 pub use engine::*;
 pub use merge::ToolScopePolicies;
 pub(crate) use steering::SteeringCeiling;
+pub(crate) use withheld::WithheldNotice;
 
 /// One `providers.<id>` entry. Every field is optional at the schema level;
 /// which ones are *required* depends on whether the id names a built-in

@@ -77,7 +77,7 @@ fn transport(manifest: &PluginManifest) -> SubprocessWrapper {
     let argv = runtime
         .argv
         .iter()
-        .map(|arg| arg.replace("${plugin_dir}", &dir))
+        .map(|arg| stella_plugin::expand_plugin_dir(arg, Path::new(&dir)))
         .collect();
     SubprocessWrapper::declare(
         argv,
@@ -306,6 +306,19 @@ async fn a_round_the_verifier_marks_unmet_holds_open_for_one_correction_round() 
             .iter()
             .any(|message| message.content.contains("goal-met")),
         "the correction names the requirement by its declared key: {round_two_messages:?}"
+    );
+    // **The #3840 witness.** Round 1's verifier wrote a specific complaint;
+    // before `ObservedEvidence::detail` existed the only string that reached
+    // round 2 was the static `[requirements]` statement, identical on every
+    // goal and every round. `stella goal`'s own loop never had that problem —
+    // `verifier_feedback_text` carries the verdict's real `feedback` verbatim —
+    // and this is that fidelity, restored through the plugin path.
+    assert!(
+        round_two_messages.iter().any(|message| message
+            .content
+            .contains("add a regression test for the retry budget")),
+        "round 2 must carry the verifier's own words, not only the static statement: \
+         {round_two_messages:?}"
     );
 
     // The host made both calls, not the plugin.

@@ -111,6 +111,7 @@ async fn a_flip_the_host_vouches_for_reaches_a_decided_verdict() {
         ObservedEvidence {
             flip: FlipObservation::Achieved,
             measurements: std::collections::BTreeMap::new(),
+            detail: None,
         },
         "the plugin reports the flip it watched and nothing it did not"
     );

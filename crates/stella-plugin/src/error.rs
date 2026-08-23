@@ -176,6 +176,25 @@ pub enum ManifestError {
     )]
     ZeroMaxFanoutWidth,
 
+    /// `[loop] max_child_turns` was declared without `child_turn` in
+    /// `[loop] calls`. [`ManifestError::MaxFanoutWidthRequiresFanout`]'s rule,
+    /// for the other per-capability ceiling.
+    #[error(
+        "[loop] max_child_turns has nothing to bound: declare \"child_turn\" in \
+         [loop] calls, or drop the ceiling"
+    )]
+    MaxChildTurnsRequiresChildTurn,
+
+    /// `[loop] max_child_turns = 0` — a whole-run ceiling that forbids the
+    /// capability the same block declares. The [`ManifestError::ZeroMaxCalls`]
+    /// rule, for the one allowance whose unit is a model call the plugin does
+    /// not own the credential for.
+    #[error(
+        "[loop] max_child_turns = 0 contradicts the \"child_turn\" capability \
+         [loop] calls declares: drop the capability instead"
+    )]
+    ZeroMaxChildTurns,
+
     /// `[oracle]` was declared without `after_turn` in `[loop] points`. The
     /// oracle's evidence reaches the host in the `after_turn` response and
     /// nowhere else, and an undeclared point is never dispatched — so the

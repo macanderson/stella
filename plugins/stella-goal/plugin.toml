@@ -64,12 +64,12 @@
 #
 #   - no `recall`, no `run_test`. One host call, at one point, for the one
 #     thing this plugin cannot do itself: run an independent model turn.
-#   - no free-text correction of its own. `again`'s `Correction.guidance` is
-#     rendered by the HOST from the `[requirements]` statement below — this
-#     plugin has no way to carry the verifier's own `feedback` string forward
-#     into it, because `ObservedEvidence` has no field for prose (README
-#     "Known gaps"). That is real fidelity this plugin loses against
-#     `stella goal`'s own loop, not an oversight.
+#   - no verdict of its own. `again`'s `Correction.guidance` is rendered by
+#     the HOST from the `[requirements]` statement below. What this plugin
+#     does carry into it is the verifier's own `feedback` string, as
+#     `ObservedEvidence`'s advisory `detail` (#3840) — never evidence, never
+#     read by `judge`, attached to the unmet clauses after the verdict is
+#     decided.
 #   - no `[[capabilities]]`. This plugin never opens a file, never searches a
 #     workspace, and never sees the working turn's own transcript beyond the
 #     `TurnOutcome` the wire carries — see main.py's module doc for exactly
@@ -114,24 +114,18 @@ before_turn_stages = ["execute"]
 # the one place that generic support does not yet reach: no shipped host binds
 # a `verifier` seat to serve the role intent this plugin names below.
 calls = ["child_turn"]
-# NOT "one call, ever" despite reading that way at first glance — see README
-# "Known gaps" for the full account. `[loop] max_calls` feeds two different
-# ceilings that do not reset on the same schedule: `HostCallGate` bounds calls
-# per **point conversation** and is fresh every `before_turn`/`after_turn`
-# dispatch (`crates/stella-runtime/src/wrapper/dispatch.rs`'s own doc comment:
-# "a plugin that spent its calls researching before_turn must still be able to
-# ask when after_turn arrives"), so `main.py` asking once per `after_turn` is
-# genuinely "1" against that ceiling. But `ChildTurns` — the plane that
-# actually resolves the `verifier` role intent to a model call — spends this
-# SAME number as a **whole-run** budget that never resets between rounds
-# (`DEFAULT_HOST_MAX_CHILD_TURNS`'s own doc comment: "this bounds how much of
-# the user's money a plugin may spend, so it is per plugin for the whole
-# run"). An arbiter plugin that holds N rounds open, spending one verifier
-# call in each, needs this many child turns for the WHOLE run, not one — so
-# the honest ask is `GoalConfig::default().max_rounds` (8), matching
-# `max_holds` above, even though the host's own default ceiling
-# (`DEFAULT_HOST_MAX_CHILD_TURNS = 4`) will clamp it in practice.
-max_calls = 8
+# One call per point, and it is the honest number: `main.py` asks the host for
+# exactly one thing, once, every `after_turn`. `HostCallGate` is fresh on every
+# dispatch, so this is what it grades against.
+max_calls = 1
+# Eight for the whole run, which is a different question and now has its own key
+# (#3839). `ChildTurns` never resets between rounds, so an arbiter holding N
+# rounds open and asking once in each needs N turns for the run — this file used
+# to declare `max_calls = 8` to buy them, which made the per-point number answer
+# a question it was not asked. `GoalConfig::default().max_rounds` is 8, matching
+# `max_holds` below; the host's own ceiling (`DEFAULT_HOST_MAX_CHILD_TURNS = 4`)
+# clamps it in practice, which is #3841.
+max_child_turns = 8
 # The ask, not the ceiling: `stella_core::goal::GoalConfig::default()`'s own
 # `max_rounds` is 8, and a hold buys one more round the same way a goal round
 # does, so 7 holds is the honest mirror of that default. `again` clamps this

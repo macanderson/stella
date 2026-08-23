@@ -142,6 +142,10 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
                         check: check.rule.clone(),
                         reported,
                     },
+                    // `judge` decides from `EvidenceSet` alone; the plugin's
+                    // advisory note is attached afterwards by
+                    // `Verdict::with_detail` (#3840).
+                    detail: None,
                 }),
                 CheckOutcome::MeasurementMissing { measurement } => {
                     abstain(UndecidedReason::MeasurementMissing {
@@ -168,6 +172,7 @@ pub fn judge(rule: &VerdictRule, evidence: &EvidenceSet) -> Verdict {
                 requirement: name.clone(),
                 statement: statement.clone(),
                 because: because.clone(),
+                detail: None,
             }),
             FlipCredit::Undecided(reason) => abstain(reason.clone()),
             // `flip = "not-applicable"` contributes no conjunct at all — it is
@@ -336,6 +341,11 @@ pub fn again(verdict: &Verdict, round: &RoundState, grant: &LoopGrant) -> Contin
 /// Byte-stable for the same input (invariant 7's discipline): the clauses
 /// arrive in `[requirements]` order because [`judge`] walks a `BTreeMap`, so
 /// two runs over the same evidence produce the same bytes.
+///
+/// The wrapper's own words follow the clauses when it had any
+/// ([`UnmetRequirement::detail`], #3840). Distinct notes only, in first-seen
+/// order: `Verdict::with_detail` puts one observation on every clause, and
+/// repeating it once per requirement would be the same sentence three times.
 fn correction_text(unmet: &[UnmetRequirement]) -> String {
     let mut text = String::from(
         "The turn completed, but these declared requirements are not met yet. \
@@ -343,6 +353,19 @@ fn correction_text(unmet: &[UnmetRequirement]) -> String {
     );
     for clause in unmet {
         let _ = writeln!(text, "- {clause}");
+    }
+
+    let mut notes: Vec<&str> = Vec::new();
+    for detail in unmet.iter().filter_map(|clause| clause.detail.as_deref()) {
+        if !notes.contains(&detail) {
+            notes.push(detail);
+        }
+    }
+    if !notes.is_empty() {
+        text.push_str("\nWhat checked it said:\n");
+        for note in notes {
+            let _ = writeln!(text, "{note}");
+        }
     }
     text
 }

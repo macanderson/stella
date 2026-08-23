@@ -5,9 +5,9 @@
     "evidence": {
       "flip": "unobservable",
       "measurements": {
+        "flip-unstable": 0,
         "test-command-exit-code": 0,
-        "test-duration-ms": 0,
-        "flip-unstable": 0
+        "test-duration-ms": 0
       }
     }
   }

@@ -47,6 +47,7 @@ fn resolved_config_carries_the_authority_computed_during_settings_load() {
         project_prompts_allowed: true,
         project_custom_tools_allowed: false,
         media_requires_host_approval: true,
+        withheld: None,
     };
     let mut settings = crate::settings::Settings::default();
     settings.authority_policy = authority;

@@ -486,6 +486,7 @@ async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
                 evidence: stella_plugin::ObservedEvidence {
                     flip: FlipObservation::NotAttempted,
                     measurements: BTreeMap::from([("p50".into(), p50)]),
+                    detail: None,
                 },
             })
         }

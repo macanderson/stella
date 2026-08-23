@@ -739,6 +739,19 @@ Order, easiest and least risky first:
    `crates/stella-runtime/tests/research_plugin_*.rs`, and distinguishable in
    the store per the paragraph above.
 2. **stella-plan** — `before_turn`, needs the triage signals A8 publishes.
+   **Landed** — `plugins/stella-plan`, driven by
+   `crates/stella-runtime/tests/plan_plugin_{conformance,dispatch,hostcall}.rs`
+   against 20-odd committed vectors, authoring its plan through one declared
+   `child_turn` at `[roles.planner] tier = "plan"`.
+
+   It is narrower than the built-in it replaces, and the narrowing is the
+   comparison's own precondition rather than a detail (#3562): the plugin gets
+   no `repo_structure` and no `--revise` revision note, because neither has a
+   wire representation on `BeforeTurnRequest`; and the plan **rides as volatile
+   context** rather than as a typed response shape, so it reaches the worker's
+   prompt but not `FrameProgress` or the execute cursor the way the built-in
+   plan did. An A/B against the built-in path is therefore measuring a
+   deliberately weaker input, and any result has to say so.
 3. **vera** — `after_turn` + `judge`. Needs A10 (worktrees) and A6 (structured
    verdicts). Ported, not copied: see §8.
 4. **stella-candidates** — the heaviest, needs `again?` with different setup per

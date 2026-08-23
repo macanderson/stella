@@ -188,11 +188,23 @@ fi
 # of the same hole is closed by .github/workflows/wire-schema.yml, which
 # triggers on these same paths (#1439).
 #
-# Keep this list in sync with that workflow's `paths:` filter — both answer the
-# same question, and neither is derived from the other.
+# The selection question is that workflow's own, so the pattern is READ from it
+# rather than restated here (#3836). It used to be restated, under a comment
+# asking the next author to keep the two copies matching — the exact shape #2847
+# abolished for the bench suites below, where one question with two
+# hand-maintained answers had already cost a red `main`. Here the divergence
+# would be quieter and in the direction that misleads: the hook drops to
+# `guards-fast` for a diff the workflow WOULD have called wire-touching, and a
+# stale generated schema leaves the machine believing it was checked.
+# scripts/check-wire-paths.sh fails the gate if a copy reappears.
 
 wire_touched=0
-if grep -Eq '^(docs/wire/|crates/stella-(protocol|serve|plugin)/|scripts/(export-agentevent-schema|check-wire-schema)\.sh$)' "$changed"; then
+if ! wire_filter="$(./scripts/wire-schema-paths.sh filter 2>/dev/null)" || [ -z "$wire_filter" ]; then
+  # Same rule as the cargo scope and the bench filter: what cannot be narrowed
+  # with confidence runs. The dear rung is a cargo build; a missed one is a
+  # stale committed artifact.
+  wire_touched=1
+elif grep -Eq "$wire_filter" "$changed"; then
   wire_touched=1
 fi
 
