@@ -46,6 +46,13 @@ pub struct AgentMeta {
     /// One sentence on what the agent is for — the task it was handed, in
     /// the words it was handed. `None` falls back to `title` on screen.
     pub purpose: Option<String>,
+    /// The agent that dispatched this one — its place in the session's agent
+    /// tree. `None` for a root (the lead). The deck walks this for Backspace
+    /// (back to the dispatcher), the breadcrumb (`lead ▸ sub:2`), and the
+    /// SUB-AGENTS overlay's `f` (flag the lane to whoever dispatched it):
+    /// all three need the same answer, and a guess (`"lead"`) would be wrong
+    /// the day a lane dispatches a lane.
+    pub parent: Option<AgentId>,
     /// Wall-clock start (ms since epoch) for elapsed / $-per-hour.
     pub started_ms: u64,
 }
@@ -61,8 +68,15 @@ impl AgentMeta {
             model: None,
             effort: None,
             purpose: None,
+            parent: None,
             started_ms,
         }
+    }
+
+    /// Builder: name the agent that dispatched this one.
+    pub fn with_parent(mut self, parent: impl Into<AgentId>) -> Self {
+        self.parent = Some(parent.into());
+        self
     }
 
     /// Builder: set the pinned reasoning effort.
@@ -652,6 +666,29 @@ pub struct SessionInfo {
     pub spend_micros: u64,
     /// The model the latest turn ran on.
     pub model: Option<String>,
+    /// Autofix-PR watcher state for this lane — `Some` only on sessions the
+    /// deck's PR watcher spawned. Drives the SESSIONS overlay's extra data
+    /// points (PR number, CI progress, open-in-browser).
+    pub autofix: Option<AutofixStatus>,
+}
+
+/// The deck's read-model of one autofix-PR watcher's progress, mirrored from
+/// the driver's watcher task. Tracker-agnostic in shape but spelled for the
+/// forge the watcher speaks to (`gh`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutofixStatus {
+    /// The PR number (`#183` renders as `183`).
+    pub pr_number: u64,
+    /// Browser-openable PR url — the `o` key's target, exactly like the
+    /// ISSUES tab's open-in-browser.
+    pub pr_url: String,
+    /// CI checks that have settled (pass or fail), out of `checks_total`.
+    pub checks_done: u32,
+    /// Total checks the last poll saw; 0 means "not polled yet".
+    pub checks_total: u32,
+    /// What the watcher is doing right now, in one short phrase
+    /// ("watching CI", "fixing CI failure", "merging").
+    pub phase: String,
 }
 
 /// One persist-until-read notification as the inbox overlay lists it. A

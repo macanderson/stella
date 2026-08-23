@@ -155,16 +155,11 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // gates, because it is the same kind of thing — work parked on an answer.
     let dispatch_h: u16 = if ui.pending_dispatch.is_some() { 7 } else { 0 };
 
-    // The nested subagent blocks (D5). 0 when there are none or the focused
-    // lane is itself a subagent. Full-width rows, so in accessible mode
-    // nothing here ever shares a rendered row with the transcript.
-    let subs_h = crate::views::subagents::band_height(model, ui);
-
     // SPEC 5: the transcript gets the full width and no border. The identity
-    // header, the stage box and the PLAN rail the v1 tab stacked around it
-    // are gone — `v2::frame` names where each of their facts went.
+    // header, the stage box, the PLAN rail and the nested sub-agent band the
+    // v1 tab stacked around it are gone — `v2::frame` names where each of
+    // their facts went; the lanes are the SUB-AGENTS overlay (`↓`, ctrl-a).
     let bands = Layout::vertical([
-        Constraint::Length(subs_h),     // nested subagent rows (0 = none)
         Constraint::Length(ask_h),      // pending ask-user (0 = collapsed)
         Constraint::Length(hunk_h),     // pending hunk review (0 = collapsed)
         Constraint::Length(dispatch_h), // mid-turn routing (0 = collapsed)
@@ -172,12 +167,9 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     ])
     .split(area);
 
-    if subs_h > 0 {
-        crate::views::subagents::render(model, ui, bands[0], buf);
-    }
     if let Some(prompt) = &sm.pending_ask_user {
         let answered = ui.ask_answered.contains(&agent.meta.id);
-        render_ask_user(prompt, answered, bands[1], buf);
+        render_ask_user(prompt, answered, bands[0], buf);
     }
     if let Some(proposal) = &sm.pending_hunk_review {
         let answered = ui.hunk_answered.contains(&agent.meta.id);
@@ -185,14 +177,14 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             proposal,
             ui.hunk_marks.get(&agent.meta.id),
             answered,
-            bands[2],
+            bands[1],
             buf,
         );
     }
     if let Some(pending) = &ui.pending_dispatch {
-        crate::views::dispatch_card::render(pending, bands[3], buf);
+        crate::views::dispatch_card::render(pending, bands[2], buf);
     }
-    let transcript_area = bands[4];
+    let transcript_area = bands[3];
 
     // Transcript: fold through the incremental cache (settled entries fold
     // once; only the streaming tail re-folds per frame), then reuse the

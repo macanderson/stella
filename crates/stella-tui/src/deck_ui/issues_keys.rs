@@ -15,7 +15,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use super::{DeckAction, DeckUi, IssuesMode, IssuesPanel, submit_prompt};
+use super::{DeckAction, DeckUi, IssuesMode, IssuesPanel};
 use crate::deck::WorkspaceModel;
 use crate::envelope::{IssueAction, IssueRow, WorkspaceInput};
 
@@ -66,22 +66,15 @@ impl IssuesPanel {
 /// status · `w` start work.
 pub(super) fn handle_issues_browse_key(
     key: KeyEvent,
-    model: &WorkspaceModel,
+    _model: &WorkspaceModel,
     ui: &mut DeckUi,
     composer_empty: bool,
 ) -> Option<DeckAction> {
     let count = ui.issues.rows.len();
+    if super::list_nav::select(key, &mut ui.issues.sel, count, composer_empty) {
+        return Some(DeckAction::Handled);
+    }
     match key.code {
-        KeyCode::Up => {
-            ui.issues.sel = ui.issues.sel.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.issues.sel = (ui.issues.sel + 1).min(count - 1);
-            }
-            Some(DeckAction::Handled)
-        }
         KeyCode::Char(' ') if composer_empty => {
             ui.issues.toggle_pick();
             Some(DeckAction::Handled)
@@ -134,18 +127,14 @@ pub(super) fn handle_issues_browse_key(
             Some(DeckAction::Handled)
         }
         KeyCode::Char('p') if composer_empty => {
-            let rows = ui.issues.picked_rows();
-            if rows.is_empty() {
+            if ui.issues.picked_rows().is_empty() {
                 ui.issues.notice = Some(NO_SELECTION.into());
                 return Some(DeckAction::Handled);
             }
-            let text = rows
-                .iter()
-                .map(|row| format!("{} {}", row.key, row.title))
-                .collect::<Vec<_>>()
-                .join("\n");
-            ui.issues.picked.clear();
-            Some(submit_prompt(ui, model, text))
+            // Stage the confirmation: ⏎ submits and forwards to the Session
+            // tab, Esc cancels. The popup lists exactly what will be sent.
+            ui.issues.mode = IssuesMode::ConfirmSend;
+            Some(DeckAction::Handled)
         }
         KeyCode::Char('n') if composer_empty => {
             ui.issues.clear_form();
@@ -233,6 +222,45 @@ pub(super) fn issues_page_request(ui: &mut DeckUi) -> DeckAction {
         page: ui.issues.page,
         seq,
     })
+}
+
+/// Build the prompt body for a batch of issues: every field the browse list
+/// carries (key, title, url, state, labels, assignee, source) plus the
+/// working agreement the agent is expected to follow. The text is what lands
+/// in the composer and the transcript, so it is written for the agent, not
+/// the human.
+pub(super) fn issues_prompt_text(rows: &[IssueRow]) -> String {
+    let mut text = String::from(
+        "Work the following issue(s). For EACH one:\n\
+         1. Read the ENTIRE issue body and EVERY comment before writing any code — \
+            use the tracker's read tools (e.g. the GitHub MCP tools) on the url below; \
+            do not rely on this summary alone.\n\
+         2. Do not call the issue complete until you have written tests covering EVERY \
+            requirement called out in the issue's definition of done.\n\n",
+    );
+    for (i, row) in rows.iter().enumerate() {
+        if i > 0 {
+            text.push('\n');
+        }
+        text.push_str(&format!("Issue {}\n", row.key));
+        text.push_str(&format!("  Title: {}\n", row.title));
+        if !row.url.is_empty() {
+            text.push_str(&format!("  URL: {}\n", row.url));
+        }
+        if !row.state.is_empty() {
+            text.push_str(&format!("  State: {}\n", row.state));
+        }
+        if !row.labels.is_empty() {
+            text.push_str(&format!("  Labels: {}\n", row.labels.join(", ")));
+        }
+        if let Some(assignee) = &row.assignee
+            && !assignee.is_empty()
+        {
+            text.push_str(&format!("  Assignee: {assignee}\n"));
+        }
+        text.push_str("  Source: stella command deck ISSUES tab\n");
+    }
+    text
 }
 
 /// Open a url in the system browser, fire-and-forget: the deck does not wait

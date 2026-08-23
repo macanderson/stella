@@ -74,6 +74,20 @@ fn carries_its_own_intent(text: &str) -> bool {
     head.starts_with('>') || head.starts_with('/') || head.starts_with('!')
 }
 
+/// A lead-bound prompt typed at a finished lane, with the lane named in
+/// front: `[about sub:2 — Simplify the crate READMEs · failed] why?`. The
+/// status is in the bracket because it is the fact the question is usually
+/// about, and the lead's own view of the lane is two transcript rows old.
+pub fn about_lane(lane: &crate::deck::AgentEntry, text: &str) -> String {
+    format!(
+        "[about {} — {} · {}] {}",
+        lane.meta.id,
+        crate::v2::subagents::purpose(&lane.meta),
+        lane.status.label(),
+        text.trim()
+    )
+}
+
 /// Route one submission. `Some` is the action to take now; `None` means the
 /// card was raised and the caller should treat the key as handled.
 ///
@@ -82,8 +96,41 @@ fn carries_its_own_intent(text: &str) -> bool {
 /// sees the card: it is simply the next turn. That is the same boundary the
 /// driver enforces on its side (`SteeringTap::is_settling`), which is what
 /// keeps the two layers agreeing about what "still running" means.
+///
+/// A prompt typed at a **live sub-agent lane** — the user opened it from
+/// the SUB-AGENTS overlay — is a steer at that lane, sent as one, whatever
+/// the policy: queueing it for the lead, the card's other routes, and a
+/// sidecar are all things a lane cannot do. A paused lane takes the steer
+/// too: its tap drains at the first boundary after it resumes.
+///
+/// At a **finished** lane there is no turn to steer, so the words go to the
+/// lead as its next prompt — with the lane named in front of them
+/// ([`about_lane`]), because the lead cannot see what the deck is looking at
+/// and "why did this fail?" is a different question about every lane. The
+/// prefix is visible in the transcript, never a hidden rewrite.
 pub fn route(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> Option<WorkspaceInput> {
     let focused = model.agents.get(ui.focused);
+    if let Some(lane) = focused.filter(|a| a.is_subagent()) {
+        if lane.status.is_active() || lane.status == crate::AgentStatus::Paused {
+            let text = text.trim_start().trim_start_matches('>').trim().to_string();
+            return Some(WorkspaceInput::Steer {
+                agent: lane.meta.id.clone(),
+                texts: vec![text],
+            });
+        }
+        // The lead's state decides the route for the lead-bound prompt, so a
+        // reader parked on a finished lane while the lead works gets the same
+        // queue / card / sidecar policy they would get at the lead.
+        let text = about_lane(lane, &text);
+        let lead_running = model
+            .parent_of(ui.focused)
+            .and_then(|p| model.agents.get(p))
+            .is_some_and(|a| a.status == crate::AgentStatus::Running);
+        if !lead_running || carries_its_own_intent(&text) {
+            return Some(WorkspaceInput::Enqueue { text });
+        }
+        return Some(WorkspaceInput::EnqueueNext { text });
+    }
     let running = focused.is_some_and(|a| a.status == crate::AgentStatus::Running);
     if !running || carries_its_own_intent(&text) {
         return Some(WorkspaceInput::Enqueue { text });
@@ -295,6 +342,96 @@ mod tests {
             ui.pending_dispatch.as_ref().map(|p| p.text.as_str()),
             Some("add the tests"),
             "the card holds the user's words verbatim"
+        );
+    }
+
+    /// **The witness for steering an opened lane.** A prompt typed at a
+    /// running sub-agent lane is a steer at that lane — no card, no `>`
+    /// needed, marker stripped if typed — because the card's other routes
+    /// are the lead's and a lane has none of them.
+    #[test]
+    fn a_prompt_at_a_running_lane_is_a_steer_at_that_lane() {
+        let mut model = model_with_lead(crate::AgentStatus::WaitingInput);
+        model.apply_inbound(&Inbound::Register(
+            AgentMeta::new("sub:2", "task 2", 0).with_role("subagent"),
+        ));
+        model.apply_inbound(&Inbound::Status {
+            agent: "sub:2".into(),
+            status: crate::AgentStatus::Running,
+        });
+        let mut ui = DeckUi::default();
+        ui.focus_agent(1);
+        assert_eq!(
+            route(&mut ui, &model, "> narrow it to the parser".into()),
+            Some(WorkspaceInput::Steer {
+                agent: "sub:2".into(),
+                texts: vec!["narrow it to the parser".into()],
+            })
+        );
+        assert!(ui.pending_dispatch.is_none(), "no card at a lane");
+    }
+
+    /// **The witness for a prompt at a finished lane.** There is no turn to
+    /// steer, so the words go to the lead with the lane named in front —
+    /// queued behind the lead's running turn, never to a sidecar and never
+    /// behind a card. A paused lane still takes a steer.
+    #[test]
+    fn a_prompt_at_a_finished_lane_asks_the_lead_about_it() {
+        let mut model = model_with_lead(crate::AgentStatus::Running);
+        model.apply_inbound(&Inbound::Register(
+            AgentMeta::new("sub:2", "task 2", 0)
+                .with_role("subagent")
+                .with_purpose("Simplify the crate READMEs")
+                .with_parent("lead"),
+        ));
+        model.apply_inbound(&Inbound::Status {
+            agent: "sub:2".into(),
+            status: crate::AgentStatus::Failed,
+        });
+        let mut ui = DeckUi {
+            mid_turn_prompt: MidTurnPrompt::Ask,
+            ..Default::default()
+        };
+        ui.focus_agent(1);
+        assert_eq!(
+            route(&mut ui, &model, "why did it fail?".into()),
+            Some(WorkspaceInput::EnqueueNext {
+                text: "[about sub:2 — Simplify the crate READMEs · failed] why did it fail?".into(),
+            }),
+            "named, and queued as the lead's next turn"
+        );
+        assert!(
+            ui.pending_dispatch.is_none(),
+            "no card: a lane cannot answer one"
+        );
+
+        model.apply_inbound(&Inbound::Status {
+            agent: "lead".into(),
+            status: crate::AgentStatus::Done,
+        });
+        assert!(
+            matches!(
+                route(&mut ui, &model, "and now?".into()),
+                Some(WorkspaceInput::Enqueue { .. })
+            ),
+            "an idle lead takes it as its next prompt"
+        );
+
+        let mut paused = model_with_lead(crate::AgentStatus::Running);
+        paused.apply_inbound(&Inbound::Register(
+            AgentMeta::new("sub:3", "task 3", 0).with_role("subagent"),
+        ));
+        paused.apply_inbound(&Inbound::Status {
+            agent: "sub:3".into(),
+            status: crate::AgentStatus::Paused,
+        });
+        ui.focus_agent(1);
+        assert!(
+            matches!(
+                route(&mut ui, &paused, "try the other parser".into()),
+                Some(WorkspaceInput::Steer { agent, .. }) if agent == "sub:3"
+            ),
+            "a paused lane drains the steer when it resumes"
         );
     }
 

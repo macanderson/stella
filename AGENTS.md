@@ -67,9 +67,14 @@ make watch-core          # re-test stella-core only (fastest loop)
 make watch-lint          # re-run clippy on every save
 ```
 
-### The gate — run before every push
+### The gate — what every push is held to
 
-A red gate is an automatic "not yet":
+A red gate is an automatic "not yet". CI is where it runs: on the
+maintainer's laptop an agent session does not run `make gate`, a workspace
+build, or the workspace test suite — it pushes and reads the run
+(CLAUDE.md, "CI builds and tests; this laptop does not"). The list below is
+the contract CI enforces and the command a contributor with their own
+machine runs before pushing:
 
 ```bash
 make gate                # = no-scratch + no-secrets + design-refs

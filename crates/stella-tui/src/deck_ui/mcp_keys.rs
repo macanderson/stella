@@ -47,29 +47,18 @@ fn handle_mcp_inspector_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let Some(inspector) = ui.mcp.inspector.as_mut() else {
         return DeckAction::Handled;
     };
+    if super::list_nav::closes(key) {
+        ui.mcp.inspector = None;
+        return DeckAction::Handled;
+    }
+    // Clamped to content at render time — the view knows the height, this
+    // handler does not; `u16` is the widget's own scroll type.
+    let mut top = usize::from(inspector.scroll);
+    if super::list_nav::offset(key, &mut top, true) {
+        inspector.scroll = u16::try_from(top).unwrap_or(u16::MAX);
+        return DeckAction::Handled;
+    }
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => {
-            ui.mcp.inspector = None;
-            DeckAction::Handled
-        }
-        KeyCode::Up | KeyCode::Char('k') => {
-            inspector.scroll = inspector.scroll.saturating_sub(1);
-            DeckAction::Handled
-        }
-        KeyCode::Down | KeyCode::Char('j') => {
-            // Clamped to content at render time — the view knows the height,
-            // this handler does not.
-            inspector.scroll = inspector.scroll.saturating_add(1);
-            DeckAction::Handled
-        }
-        KeyCode::PageUp => {
-            inspector.scroll = inspector.scroll.saturating_sub(10);
-            DeckAction::Handled
-        }
-        KeyCode::PageDown => {
-            inspector.scroll = inspector.scroll.saturating_add(10);
-            DeckAction::Handled
-        }
         // Ask the registry for a description this server does not carry. Only
         // when it could help: re-asking after a "no such server" would spend a
         // round-trip to redisplay the same answer.
@@ -119,17 +108,10 @@ fn handle_mcp_browse_key(
         }
         return None;
     }
+    if super::list_nav::select(key, &mut ui.mcp.selected, count, composer_empty) {
+        return Some(DeckAction::Handled);
+    }
     match key.code {
-        KeyCode::Up => {
-            ui.mcp.selected = ui.mcp.selected.saturating_sub(1);
-            Some(DeckAction::Handled)
-        }
-        KeyCode::Down => {
-            if count > 0 {
-                ui.mcp.selected = (ui.mcp.selected + 1).min(count - 1);
-            }
-            Some(DeckAction::Handled)
-        }
         // Enter registry-search mode. `s` sits with the tab's other letter
         // actions (e/a/x/r, all gated on an empty composer). `/` deliberately
         // does NOT enter search anymore: it belongs to the command menu

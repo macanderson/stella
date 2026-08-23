@@ -662,6 +662,84 @@ fn steer_lead_pushes_a_running_turn_into_the_tap_in_order() {
     );
 }
 
+/// **The witness for #2899.** A steer aimed at a worker lane lands on that
+/// lane's tap — the one its engine drains — claimed out of the backlog and
+/// never re-parked. Before this the driver held no handle to a worker's tap
+/// and the words went back to the lead's backlog, so steering a drilled-into
+/// lane was a queued prompt for a different agent.
+#[test]
+fn steer_worker_lands_on_the_lanes_own_tap() {
+    use stella_core::ports::TurnSteering;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    queue.push_back("> narrow it to the parser".to_string());
+    let mut subs = subsession::SubSessions::new();
+    subs.started_for_test("req:1");
+    let tap = subs.tap_for_test("req:1").expect("a live lane has a tap");
+    let (in_tx, mut in_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    steer::steer_worker(
+        &subs,
+        &mut queue,
+        "req:1",
+        vec![
+            "narrow it to the parser".to_string(),
+            "and add a test".to_string(),
+        ],
+        &in_tx,
+    );
+
+    assert_eq!(
+        tap.drain_steering(),
+        vec![
+            "narrow it to the parser".to_string(),
+            "and add a test".to_string()
+        ]
+    );
+    assert!(queue.is_empty(), "delivered means claimed, not re-parked");
+    assert!(
+        in_rx.try_recv().is_err(),
+        "nothing to report: all delivered"
+    );
+
+    // A lane with no worker behind it cannot take the words: they go to the
+    // backlog and the deck is told.
+    steer::steer_worker(
+        &subs,
+        &mut queue,
+        "req:9",
+        vec!["for a lane that ended".to_string()],
+        &in_tx,
+    );
+    assert_eq!(queue.len(), 1);
+    assert!(matches!(
+        in_rx.try_recv(),
+        Ok(Inbound::Event { event: AgentEvent::Text { text }, .. }) if text.contains("req:9")
+    ));
+}
+
+/// At the idle arm a steer at a worker is delivered and the lead stays idle;
+/// a steer at the lead becomes its next turn.
+#[test]
+fn steer_idle_routes_a_worker_steer_to_the_lane_and_a_lead_steer_to_the_next_turn() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut queue = crate::session_persist::DurableQueue::fresh(dir.path().to_path_buf());
+    let mut subs = subsession::SubSessions::new();
+    subs.started_for_test("sub:2");
+    let (in_tx, _in_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    assert_eq!(
+        steer::steer_idle("sub:2", &subs, &mut queue, vec!["go on".into()], &in_tx),
+        None,
+        "the lead has nothing to run"
+    );
+    assert_eq!(
+        steer::steer_idle(LEAD, &subs, &mut queue, vec!["next".into()], &in_tx),
+        Some("next".to_string())
+    );
+}
+
 /// **The witness for Esc-with-a-backlog.** A plain stop at the lead with
 /// prompts parked in the driver's queue delivers them into the turn — in
 /// order, claimed out of the backlog, and the turn is *not* soft-stopped. The

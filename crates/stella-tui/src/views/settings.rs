@@ -273,34 +273,44 @@ mod tests {
         assert!(nav.contains("←/→"), "nav teaches the switch key: {nav:?}");
     }
 
-    /// ←/→ walk the nav from browse state, and stop at each end rather than
-    /// wrapping — the AGENTS tab's contract, key-for-key.
+    /// ←/→ walk the nav from browse state; at either end the key **rises to
+    /// the tab strip** and moves to the neighbouring tab instead of wrapping
+    /// the panes — the focus tree's bubbling (`deck_ui::focus`), witnessed
+    /// on the one tab with horizontal siblings at both levels.
     ///
     /// Walks all of [`SettingsPane::ALL`] rather than naming two panes, so
     /// adding a fourth extends the walk instead of silently leaving it
     /// asserting an interior stretch of the nav.
     #[test]
-    fn left_right_walk_the_panes_from_a_blank_composer() {
+    fn left_right_walk_the_panes_then_rise_to_the_tab_strip() {
         let (model, mut ui) = open_ui();
         assert_eq!(ui.settings_pane, SettingsPane::ALL[0], "agents first");
 
         for expected in &SettingsPane::ALL[1..] {
             handle_deck_key(key(KeyCode::Right), &model, &mut ui);
+            assert_eq!(ui.tab, DeckTab::Settings, "a pane step stays on the tab");
             assert_eq!(ui.settings_pane, *expected);
         }
         let last = *SettingsPane::ALL.last().expect("panes exist");
         handle_deck_key(key(KeyCode::Right), &model, &mut ui);
-        assert_eq!(ui.settings_pane, last, "no wrap at the end");
+        assert_eq!(ui.settings_pane, last, "the panes do not wrap");
+        assert_eq!(
+            ui.tab,
+            DeckTab::Settings.next(),
+            "→ past the last pane is the next tab"
+        );
 
+        ui.set_tab(DeckTab::Settings);
         for expected in SettingsPane::ALL.iter().rev().skip(1) {
             handle_deck_key(key(KeyCode::Left), &model, &mut ui);
             assert_eq!(ui.settings_pane, *expected);
         }
         handle_deck_key(key(KeyCode::Left), &model, &mut ui);
+        assert_eq!(ui.settings_pane, SettingsPane::ALL[0]);
         assert_eq!(
-            ui.settings_pane,
-            SettingsPane::ALL[0],
-            "no wrap at the start"
+            ui.tab,
+            DeckTab::Settings.prev(),
+            "← past the first pane is the previous tab"
         );
     }
 

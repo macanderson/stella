@@ -13,35 +13,26 @@
 //! the stale events land, and nothing can repaint a transcript the user just
 //! cleared.
 //!
-//! ## Scope: the lead, and only the lead (#1631)
+//! ## Scope: the lead AND every worker lane
 //!
-//! `/clear` resets the LEAD session. Live sidecar workers (`req:n`, `sub:n`
-//! lanes) keep running, keep their own context, and keep streaming into their
-//! own panes — and the reset now **says so**, naming every live lane in the
-//! freshly-blanked pane ([`surviving_workers_note`]).
+//! `/clear` is the session destroy-and-reset: the lead's history goes, the
+//! task board goes, and every sidecar worker (`req:n`, `sub:n`) is stopped
+//! and its deck row taken down. The maintainer's call, reversing #1631's
+//! "workers survive a clear": a conversation cleared with three lanes still
+//! spending under it is not cleared.
 //!
-//! That is not a preference; it is what the rest of the driver already does:
+//! The stop is the ordinary one ([`SubSessions::stop`] for each live lane,
+//! via [`SubSessions::clear_lanes`]) — the worker's turn future drops at its
+//! next await point and the thread closes out. The **row** comes down in two
+//! steps, because the deck auto-registers a row for any status it hears
+//! about an unknown lane: a lane with no worker behind it is deregistered in
+//! the reset itself, and a live one is remembered and deregistered when its
+//! `Ended` arrives ([`settle_worker_task`]), after the worker's own terminal
+//! status has already landed on the FIFO inbound channel. A Restart cannot
+//! revive a cleared lane: its spec goes with the row.
 //!
-//! * **Running work is never torn down implicitly.** The only other
-//!   session-wide operation, `WorkspaceInput::SessionResume`, *refuses* rather
-//!   than stopping workers, and tells the user how many are live and how to
-//!   stop them. A `/clear` that silently killed them would make it the one
-//!   deck action that destroys parallel work without being asked to.
-//! * **Stopping a worker is an addressed act.** Stop routes by lane
-//!   (`UserInput::Cancel` / `AgentControl::Stop` with an `agent`), and the
-//!   only caller of [`SubSessions::stop_all`] is
-//!   [`subsession::shutdown_workers`] — process teardown. `/clear` is not
-//!   teardown: the session id, its registry record, its sidecar dir and its
-//!   lanes all survive.
-//! * **Refusing, `SessionResume`-style, would be wrong here.** That refusal
-//!   exists because a *switch* would orphan workers that stream into this
-//!   session's lanes and settle against its records. `/clear` changes no
-//!   identity, so the workers stay correctly attached — and the point of the
-//!   instant reset is that `/clear` acts NOW, never parks behind other work.
-//!
-//! What was actually broken was the silence. A blanked pane and a lead back
-//! at `WaitingInput` read as an idle session while sidecar work is still
-//! streaming; the note is what stops the reset from painting a false picture.
+//! The blanked pane says what was stopped ([`cleared_workers_note`]), so a
+//! clear never reads as three workers silently vanishing.
 //!
 //! ## Scope: the WHOLE task board (#1692)
 //!
@@ -60,38 +51,31 @@
 //!    `tasks` table is a resurrectable copy; see that module's docs for why
 //!    deletion, not supersession, is the right shape there.
 //! 3. **Workers that predate the clear may no longer write to the board.**
-//!    They keep running — that is #1631's decision and this does not revisit
-//!    it — but their closeout is *sealed out* of the new board by the spawn
-//!    generation watermark ([`SubSessions::seal_task_board`]), and
-//!    [`settle_worker_task`] quarantines the late report as a note on the
-//!    lead's lane instead of folding it silently back in. The seal holds
-//!    only because the driver is the persisted mirror's sole writer: a
+//!    They are stopped, but a stop lands at the worker's next await point,
+//!    and a worker that finishes in the same instant still reports. Its
+//!    closeout is *sealed out* of the new board by the spawn generation
+//!    watermark ([`SubSessions::seal_task_board`]), and
+//!    [`settle_worker_task`] quarantines a finished pre-clear report as a
+//!    note on the lead's lane instead of folding it silently back in — a
+//!    stopped one says nothing, the stop being the clear's own act. The seal
+//!    holds only because the driver is the persisted mirror's sole writer: a
 //!    worker's own closeout records no board at all (#1708 — see
-//!    `subsession::closeout`). Without the seal
-//!    the drop would not even be safe: board ids restart at "1" after a
-//!    clear, so a pre-clear worker for task "1" would complete whatever
-//!    *new* task "1" the cleared session had since created.
-//!
-//! ### The tension this does NOT resolve
-//!
-//! "Session destroy and reset" and "live sidecar workers survive" (#1631) are
-//! not obviously the same posture, and nothing here decides between them.
-//! The decision on record is scoped to the board, so that is all this
-//! implements: the workers keep running, keep their lanes, and keep reporting
-//! on them — they simply have no board to report *onto* any more. Whether a
-//! worker with no board should still be running at all is a maintainer
-//! question, filed rather than answered.
+//!    `subsession::closeout`). Without the seal the drop would not even be
+//!    safe: board ids restart at "1" after a clear, so a pre-clear worker for
+//!    task "1" would complete whatever *new* task "1" the cleared session
+//!    had since created.
 
 use super::*;
 
-/// Reset the lead session to its seq-0 state: the LLM history becomes the
-/// system prompt alone, the whole task board is wiped (live, persisted, and
-/// sealed against pre-clear workers — see the module docs), the deck pane
-/// blanks ([`Inbound::SessionReset`]), surviving sidecar workers are named in
-/// the blanked pane, the dashboard returns to waiting
-/// ([`AgentStatus::WaitingInput`] — also the journal's settle marker), and the
-/// durable boundary snapshot is rewritten so a resume continues from the
-/// cleared state, not from before it.
+/// Reset the session to its seq-0 state: the LLM history becomes the system
+/// prompt alone, the whole task board is wiped (live, persisted, and sealed
+/// against pre-clear workers — see the module docs), every worker is stopped
+/// and every ended lane's row deregistered, the deck pane blanks
+/// ([`Inbound::SessionReset`]), the stopped workers are named in the blanked
+/// pane, the dashboard returns to waiting ([`AgentStatus::WaitingInput`] —
+/// also the journal's settle marker), and the durable boundary snapshot is
+/// rewritten so a resume continues from the cleared state, not from before
+/// it.
 ///
 /// The board is cleared BEFORE [`Inbound::SessionReset`] goes out, so no
 /// snapshot of the doomed board can be taken between the two. No
@@ -101,11 +85,11 @@ use super::*;
 /// behind it would only add a "tasks 0/0" row to a transcript the user just
 /// emptied.
 ///
-/// Emitting the surviving-worker note *between* the blank and the status flip
-/// is load-bearing twice over: after the blank so the note is not wiped by it,
-/// and before the status flip because the note is an `AgentEvent::Text`, which
-/// the deck's fold reads as the lead running. The trailing `WaitingInput` is
-/// what puts the lead back to idle.
+/// The stopped-worker note goes out *between* the blank and the status flip:
+/// after the blank so the note is not wiped by it, and before the status
+/// flip because the note is an `AgentEvent::Text`, which the deck's fold
+/// reads as the lead running. The trailing `WaitingInput` is what puts the
+/// lead back to idle.
 pub(super) fn reset_lead(
     messages: &mut Vec<CompletionMessage>,
     system_prompt: &str,
@@ -119,6 +103,11 @@ pub(super) fn reset_lead(
     messages.clear();
     messages.push(CompletionMessage::system(system_prompt.to_string()));
     let mirror_cleared = clear_task_board(subs, registry, store);
+    // Sealing precedes the stop (above, inside `clear_task_board`), so a
+    // worker finishing in the same instant is already sealed out.
+    for lane in subs.clear_lanes() {
+        let _ = in_tx.send(Inbound::Deregister { agent: lane });
+    }
     let _ = in_tx.send(Inbound::SessionReset {
         agent: LEAD.to_string(),
     });
@@ -136,7 +125,7 @@ pub(super) fn reset_lead(
             },
         });
     }
-    if let Some(note) = surviving_workers_note(&live_lanes) {
+    if let Some(note) = cleared_workers_note(&live_lanes) {
         let _ = in_tx.send(chrome_note(note));
     }
     let _ = in_tx.send(Inbound::Status {
@@ -187,9 +176,14 @@ fn clear_task_board(
 /// **Unless the worker predates a `/clear`** (#1692). Then there is no board
 /// row of its to close: the board it was assigned from was destroyed, and its
 /// task id now addresses whatever task the cleared session numbered "1" since.
-/// Such a report is quarantined — announced on the lead's lane as the
+/// A finished report is quarantined — announced on the lead's lane as the
 /// pre-clear result it is, and written to neither the live board nor the
-/// mirror — never folded back in.
+/// mirror — never folded back in. A stopped one says nothing: the clear
+/// stopped it, and a note about it would narrate the user's own keystroke.
+///
+/// A lane the clear stopped also loses its deck row here, once its `Ended`
+/// has arrived ([`SubSessions::finish_cleared`]) — every lane, `req:` ones
+/// included, which is why the deregister precedes the `sub:` filter.
 ///
 /// Lives here rather than inline in the driver's `SupervisorMsg::Ended` arm:
 /// the arm is in a god file closed to growth, and which board a worker may
@@ -198,16 +192,23 @@ pub(super) fn settle_worker_task(
     lane: &str,
     generation: u64,
     end: &subsession::WorkerEnd,
-    subs: &SubSessions,
+    subs: &mut SubSessions,
     registry: &ToolRegistry,
     mirror: Option<BoardMirror<'_>>,
     in_tx: &UnboundedSender<Inbound>,
 ) {
+    if subs.finish_cleared(lane) {
+        let _ = in_tx.send(Inbound::Deregister {
+            agent: lane.to_string(),
+        });
+    }
     let Some(task_id) = lane.strip_prefix("sub:") else {
         return;
     };
     if subs.predates_task_board(generation) {
-        let _ = in_tx.send(chrome_note(stale_worker_note(task_id, end)));
+        if !matches!(end, subsession::WorkerEnd::Stopped) {
+            let _ = in_tx.send(chrome_note(stale_worker_note(task_id, end)));
+        }
         return;
     }
     let board = registry.task_board();
@@ -278,27 +279,23 @@ fn stale_worker_note(task_id: &str, end: &subsession::WorkerEnd) -> String {
     )
 }
 
-/// What `/clear` tells the user about the workers it did **not** clear.
-///
-/// Three jobs, and a rewording that drops one of them is the regression:
-/// say the workers are still running, name every lane so the claim is
-/// checkable against the dashboard, and say how to stop one. `None` when
-/// nothing survived — a clear with no sidecar work says nothing extra.
-pub(super) fn surviving_workers_note(live_lanes: &[String]) -> Option<String> {
+/// What `/clear` tells the user about the workers it stopped: that they
+/// were stopped, and which lanes, so the claim is checkable against the
+/// sub-agents overlay. `None` when nothing was running — a clear with no
+/// sidecar work says nothing extra.
+pub(super) fn cleared_workers_note(live_lanes: &[String]) -> Option<String> {
     let (first, rest) = live_lanes.split_first()?;
     let lanes = std::iter::once(first.as_str())
         .chain(rest.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join(", ");
     let subject = if rest.is_empty() {
-        "1 sidecar worker is".to_string()
+        "1 sidecar worker".to_string()
     } else {
-        format!("{} sidecar workers are", live_lanes.len())
+        format!("{} sidecar workers", live_lanes.len())
     };
     Some(format!(
-        "conversation cleared — the lead starts over. {subject} still running on {lanes}, \
-         with their own context, and their output stays on their own lanes. Press `s` on a \
-         lane to stop that worker."
+        "conversation cleared — the lead starts over. {subject} stopped: {lanes}."
     ))
 }
 
@@ -374,32 +371,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// **Witness for #1631.** `/clear` issued while sidecar workers are live
-    /// has exactly one defined outcome: the lead resets, the workers are left
-    /// alone, and the freshly-blanked pane names them. Pinned end to end,
-    /// because every part of it is a way the reset could lie:
+    /// **The witness: `/clear` stops every live worker and takes its row
+    /// down.** Fails on the tree before this change, where the reset left
+    /// both lanes running and said so. Pinned end to end, because every part
+    /// of it is a way the reset could lie:
     ///
-    /// * the note lands AFTER the blank (before it, it would be wiped);
-    /// * it names every live lane, so the claim is checkable against the
-    ///   dashboard rows that are still there;
-    /// * the LAST thing the deck hears is still `WaitingInput` — the note is
+    /// * every live lane is stopped (winding down — its `Ended` is still to
+    ///   come), and a Restart can no longer find it;
+    /// * the blank comes first, then the note naming what was stopped (before
+    ///   the blank it would be wiped), then `WaitingInput` LAST — the note is
     ///   an `AgentEvent::Text`, which the deck's fold reads as the lead
-    ///   running, so a note emitted after the status flip would leave the
-    ///   lead permanently "running" with nothing running;
-    /// * and nothing in the sequence deregisters or stops a lane.
+    ///   running;
+    /// * no row is deregistered before its worker has ended: the worker's
+    ///   terminal status is still in flight, and the deck auto-registers a
+    ///   row for a status about an unknown lane;
+    /// * and once a stopped worker's `Ended` settles, its row comes down and
+    ///   the stop is not narrated as a quarantined result.
     #[test]
-    fn clearing_with_live_sidecars_keeps_them_and_names_them_in_the_blanked_pane() {
+    fn clearing_with_live_sidecars_stops_them_and_brings_their_rows_down() {
         let dir = scratch("sidecars");
         let mut messages = vec![
             CompletionMessage::system("SYSTEM".to_string()),
             CompletionMessage::user("a prompt"),
         ];
         let (in_tx, mut in_rx) = mpsc::unbounded_channel::<Inbound>();
-        let live = vec!["req:1".to_string(), "sub:t-9".to_string()];
+        let live = vec!["req:1".to_string(), "sub:9".to_string()];
         let (registry, mut subs) = board_fixture(&[]);
-        for lane in &live {
-            subs.started_for_test(lane);
-        }
+        let generations: Vec<u64> = live.iter().map(|l| subs.started_for_test(l)).collect();
 
         reset_lead(
             &mut messages,
@@ -411,6 +409,13 @@ mod tests {
             &in_tx,
         );
 
+        for lane in &live {
+            assert!(subs.is_live(lane), "{lane} is winding down, not freed");
+            assert!(
+                !subs.set_paused(lane, true),
+                "{lane} took the stop: a winding-down worker cannot be paused"
+            );
+        }
         let sent: Vec<Inbound> = std::iter::from_fn(|| in_rx.try_recv().ok()).collect();
         assert!(
             matches!(&sent[0], Inbound::SessionReset { agent } if agent == LEAD),
@@ -421,16 +426,14 @@ mod tests {
             event: AgentEvent::Text { text: delta },
         } = &sent[1]
         else {
-            panic!(
-                "expected the surviving-worker note second, got {:?}",
-                sent[1]
-            );
+            panic!("expected the stopped-worker note second, got {:?}", sent[1]);
         };
         assert_eq!(agent, LEAD, "the note belongs in the lead's cleared pane");
         assert!(
             delta.starts_with(stella_tui::NOTICE_MARKER),
             "the note is the program speaking, not the model: {delta}"
         );
+        assert!(delta.contains("stopped"), "{delta}");
         for lane in &live {
             assert!(delta.contains(lane), "the note must name {lane}: {delta}");
         }
@@ -444,39 +447,86 @@ mod tests {
         assert_eq!(
             sent.len(),
             3,
-            "no lane is stopped or deregistered: {sent:?}"
+            "no row comes down while its worker is still writing: {sent:?}"
         );
+
+        // The workers settle: each `Ended` takes its row down, silently.
+        for (lane, generation) in live.iter().zip(generations) {
+            assert!(subs.ended(lane, generation));
+            settle_worker_task(
+                lane,
+                generation,
+                &subsession::WorkerEnd::Stopped,
+                &mut subs,
+                &registry,
+                None,
+                &in_tx,
+            );
+            let sent: Vec<Inbound> = std::iter::from_fn(|| in_rx.try_recv().ok()).collect();
+            assert!(
+                matches!(&sent[..], [Inbound::Deregister { agent }] if agent == lane),
+                "exactly the deregister for {lane}, no quarantine note: {sent:?}"
+            );
+            assert!(subs.spec(lane).is_none(), "{lane} cannot be restarted");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A clear with nothing running says nothing extra — the note exists to
-    /// correct a false picture, and there is no false picture to correct.
+    /// A lane whose worker had already ended has no `Ended` still to come,
+    /// so its row comes down in the reset itself — ahead of the blank.
+    #[test]
+    fn clearing_deregisters_an_already_ended_lane_at_once() {
+        let dir = scratch("ended");
+        let mut messages = vec![CompletionMessage::system("SYSTEM".to_string())];
+        let (in_tx, mut in_rx) = mpsc::unbounded_channel::<Inbound>();
+        let (registry, mut subs) = board_fixture(&[]);
+        let generation = subs.started_for_test("req:3");
+        assert!(subs.ended("req:3", generation));
+
+        reset_lead(
+            &mut messages,
+            "SYSTEM",
+            &dir,
+            &mut subs,
+            &registry,
+            None,
+            &in_tx,
+        );
+
+        let sent: Vec<Inbound> = std::iter::from_fn(|| in_rx.try_recv().ok()).collect();
+        assert!(
+            matches!(&sent[0], Inbound::Deregister { agent } if agent == "req:3"),
+            "{sent:?}"
+        );
+        assert!(matches!(&sent[1], Inbound::SessionReset { .. }), "{sent:?}");
+        assert_eq!(sent.len(), 3, "no note: nothing was running: {sent:?}");
+        assert!(subs.spec("req:3").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A clear with nothing running says nothing extra.
     #[test]
     fn a_clear_with_no_live_workers_adds_no_note() {
-        assert_eq!(surviving_workers_note(&[]), None);
+        assert_eq!(cleared_workers_note(&[]), None);
     }
 
     /// Singular and plural both read as English, and both name every lane:
     /// a count the user cannot cross-check against lane names is exactly the
     /// half-truth this note exists to avoid.
     #[test]
-    fn the_note_counts_and_names_every_surviving_lane() {
-        let one = surviving_workers_note(&["req:1".to_string()]).expect("a note for one worker");
-        assert!(one.contains("1 sidecar worker is"), "{one}");
+    fn the_note_counts_and_names_every_stopped_lane() {
+        let one = cleared_workers_note(&["req:1".to_string()]).expect("a note for one worker");
+        assert!(one.contains("1 sidecar worker stopped"), "{one}");
         assert!(one.contains("req:1"), "{one}");
 
-        let many = surviving_workers_note(&[
+        let many = cleared_workers_note(&[
             "req:1".to_string(),
             "req:2".to_string(),
             "sub:t-1".to_string(),
         ])
         .expect("a note for three workers");
-        assert!(many.contains("3 sidecar workers are"), "{many}");
+        assert!(many.contains("3 sidecar workers stopped"), "{many}");
         assert!(many.contains("req:1, req:2, sub:t-1"), "{many}");
-        assert!(
-            many.contains("stop that worker"),
-            "the note must say how to stop one: {many}"
-        );
     }
 
     /// **Witness for #1692, half one.** The maintainer's call is that
@@ -517,7 +567,9 @@ mod tests {
     }
 
     /// **Witness for #1692, half two — the resurrection.** A `sub:` worker
-    /// that was already running at clear-time finishes afterwards. Its
+    /// that was already running at clear-time finishes in the same instant
+    /// the clear's stop reaches it — a stop lands at an await point, and a
+    /// turn past its last one completes. Its
     /// closeout must not reach the board, and the reason it must not is
     /// concrete rather than tidy: board ids restart at "1" after a clear, so
     /// the pre-clear worker for task "1" would complete an unrelated task
@@ -560,11 +612,14 @@ mod tests {
         );
         while in_rx.try_recv().is_ok() {}
 
+        // The clear's stop reached a worker already past its last await
+        // point: it finishes, its `Ended` frees the lane, and it settles.
+        assert!(subs.ended("sub:1", stale));
         settle_worker_task(
             "sub:1",
             stale,
             &subsession::WorkerEnd::Done,
-            &subs,
+            &mut subs,
             &registry,
             None,
             &in_tx,
@@ -594,15 +649,19 @@ mod tests {
             )),
             "no board snapshot may ride a cleared board: {sent:?}"
         );
+        // The clear stopped this lane, so its settled `Ended` also takes
+        // the row down; the quarantine note rides beside the deregister.
         let [
+            Inbound::Deregister { agent: gone },
             Inbound::Event {
                 agent,
                 event: AgentEvent::Text { text: delta },
             },
         ] = &sent[..]
         else {
-            panic!("expected exactly the quarantine note, got {sent:?}");
+            panic!("expected the deregister and the quarantine note, got {sent:?}");
         };
+        assert_eq!(gone, "sub:1");
         assert_eq!(agent, LEAD);
         assert!(
             delta.starts_with(stella_tui::NOTICE_MARKER),
@@ -653,7 +712,7 @@ mod tests {
             "sub:1",
             fresh,
             &subsession::WorkerEnd::Done,
-            &subs,
+            &mut subs,
             &registry,
             None,
             &in_tx,
@@ -686,8 +745,6 @@ mod tests {
         assert!(done.contains("finished"), "{done}");
         let failed = stale_worker_note("3", &subsession::WorkerEnd::Failed("boom".into()));
         assert!(failed.contains("without finishing"), "{failed}");
-        let stopped = stale_worker_note("3", &subsession::WorkerEnd::Stopped);
-        assert!(stopped.contains("without finishing"), "{stopped}");
     }
 
     /// A registry whose board carries `subjects`, plus the sub-session

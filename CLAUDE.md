@@ -163,3 +163,14 @@
   Search for an existing issue first; link, don't duplicate. The full policy
   is AGENTS.md § "Nothing left behind — every finding becomes a fix or a
   GitHub issue". Never end a turn with untracked half-finished work.
+- **CI builds and tests; this laptop does not.** Never run `make gate`,
+  `make check`, `make test`, `cargo build --workspace`, `cargo test
+  --workspace`, or clippy over the workspace on the maintainer's machine.
+  Push the branch and read the workflow run instead — that is what CI is
+  for, and a workspace build here competes with every other session on the
+  box. A local compile is allowed only when it is **targeted**: one crate,
+  one test filter, for a change you are iterating on right now
+  (`cargo test -p stella-core loop_detect`). `cargo fmt --check` and the
+  toolchain-free guards (`make guards-fast`) compile nothing and are always
+  fine. A PR's evidence is its CI run, so cite the run — a green workspace
+  build on this laptop is not evidence, it is a cost.

@@ -105,8 +105,11 @@ every spawn path shares ([`src/subprocess_env.rs`](src/subprocess_env.rs),
 
 Depends on `stella-protocol` (`ToolOutput`/`ToolSchema`), `stella-core` (the
 `ToolExecutor` port, the hook bus, the task board, the MCP-usage ledger),
-`stella-store` (the foundry adoption ledger), and `stella-home` (the
-user-global custom-tools directory). It builds no binary.
+`stella-store` (the foundry adoption ledger), `stella-home` (the
+user-global custom-tools directory), and `stella-diff` (the differ
+`write_file` and `edit_file` run over the bytes they read and wrote —
+[`src/own_change.rs`](src/own_change.rs) — so a change the work-tree
+measurement cannot see still carries its diff). It builds no binary.
 
 `stella-cli` is the real consumer: it constructs the registry and layers
 custom script tools and MCP tools around it. `stella-tui` and `stella-fleet`

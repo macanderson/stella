@@ -17,7 +17,7 @@
    ↵ open · c comment · s status · p to prompt
 
  w start work   on the selected issue → stella drafts the plan from the issue and the graph, and waits for your approval before touching code
- ↑↓ select · w start work · n new issue · / search tracker · r refresh · ]/[ page · space pick · x close / reopen
+ ↑↓ select · w start work · n new issue · / search tracker · r refresh · ]/[ page · space pick · p send to prompt · x close / reopen
 
 
 
@@ -39,7 +39,7 @@
 
 
 
-
+ ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>
- ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+ ⏎ queue · ↓ 2 sub-agents · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

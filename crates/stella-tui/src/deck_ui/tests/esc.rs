@@ -24,6 +24,56 @@ fn stop_lead() -> DeckAction {
     })
 }
 
+/// Esc at a sub-agent lane the user opened from the overlay steers THAT lane
+/// with the draft alone: the queue is the lead's backlog and stays where it
+/// is. With no draft it is **the way back to the dispatcher** (precedence
+/// rule 8a) — never the lane's stop: a reader who opened a lane to look and
+/// pressed Esc to leave used to cancel the worker with that one press. The
+/// kill is `ctrl-x ctrl-x` in the overlay, armed.
+#[test]
+fn esc_at_an_opened_lane_steers_the_draft_into_that_lane_and_leaves_the_queue() {
+    let mut model = running_model();
+    model.apply_inbound(&Inbound::Register(
+        AgentMeta::new("sub:2", "task 2", 0)
+            .with_role("subagent")
+            .with_parent("lead"),
+    ));
+    model.apply_inbound(&Inbound::Status {
+        agent: "sub:2".into(),
+        status: AgentStatus::Running,
+    });
+    model.queue.enqueue("queued for the lead".to_string(), 0);
+    let mut ui = ready_ui();
+    ui.focus_agent(1);
+    ui.composer.load("use the parser".to_string());
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Steer {
+            agent: "sub:2".into(),
+            texts: vec!["use the parser".into()],
+        })
+    );
+    assert_eq!(model.queue.pending(), 1, "the lead's backlog is untouched");
+    assert_eq!(ui.focused, 1, "a steer does not move focus");
+    let mut ui = ready_ui();
+    ui.focus_agent(1);
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Esc), &model, &mut ui),
+        DeckAction::Handled,
+        "with nothing to say, Esc leaves the lane — it sends nothing"
+    );
+    assert_eq!(ui.focused, 0, "…and the lead is focused again");
+    assert!(
+        ui.esc_armed_at.is_none(),
+        "leaving a lane never arms the double-Esc stop"
+    );
+    assert_eq!(
+        model.agents[1].status,
+        AgentStatus::Running,
+        "the lane was not told anything"
+    );
+}
+
 #[test]
 fn esc_stops_a_running_turn_and_arms_the_double_press() {
     let model = running_model();

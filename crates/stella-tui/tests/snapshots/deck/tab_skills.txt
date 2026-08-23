@@ -39,7 +39,7 @@
 
  space on/off · ctrl+o preview · e edit · p pin · n new from prompt · ctrl+x ctrl+x delete · → search
  4 installed · 1 learned · 3 enabled
-
+ ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>
- ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+ ⏎ queue · ↓ 2 sub-agents · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

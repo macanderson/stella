@@ -1,5 +1,8 @@
 //! The `?` overlay: SPEC 11's help sheet and SPEC 5's metric detail view.
 //!
+//! The keys come from [`crate::keymap`] — this file renders the table and
+//! owns none of its rows, so the sheet cannot drift from the hint row.
+//!
 //! Split out of `deck_render.rs` because that file is a grandfathered god file
 //! and closed to growth (AGENTS.md, "God files — plan around them, never into
 //! them"). It sat at 1514 lines against a 1518 ceiling — four lines of
@@ -25,6 +28,7 @@
 //! *role* is pinned to.
 
 use super::*;
+use crate::keymap::{self, Scope};
 
 /// A pipeline role as this overlay names it.
 ///
@@ -124,141 +128,6 @@ fn help_row(key: &str, desc: &str) -> Line<'static> {
     ])
 }
 
-/// The shortcuts specific to one deck tab, as `(key, description)` pairs.
-/// Keyed off [`DeckTab`] so the overlay only ever shows keys that work where
-/// the user actually is — the per-tab handlers in `deck_ui` are the behavior
-/// these rows must mirror.
-fn tab_shortcuts(tab: DeckTab) -> &'static [(&'static str, &'static str)] {
-    match tab {
-        DeckTab::Session => &[
-            ("↑ ↓", "select a message · esc clears the selection"),
-            ("⇞ ⇟", "scroll the transcript"),
-            ("⌘[ / ⌘]", "jump to transcript start / end (⌃ works too)"),
-            ("ctrl-o", "expand/collapse the selected message (none: all)"),
-            ("ctrl-r", "expand/collapse all thinking"),
-            (
-                "ctrl-f",
-                "find in the transcript — ⏎ next · ctrl-p previous",
-            ),
-            ("ctrl-n / ctrl-p", "jump to the next / previous failure"),
-            ("ctrl-z", "fold the selected turn to one line (none: all)"),
-            ("↑", "with prompts queued: open the queue editor"),
-            ("←", "SESSIONS overlay — every session on this machine"),
-            ("→", "CONTEXT overlay — active skills + MCP servers"),
-            ("ctrl-g", "INSPECT — the context sent on any recorded call"),
-            (
-                "a / t / x",
-                "plan review: approve · trim · abort — one keypress decides",
-            ),
-            (
-                "r",
-                "plan review: refine — type what to change, ⏎ re-plans from it",
-            ),
-            (
-                "esc",
-                "plan review: abort (from the refine input: back out)",
-            ),
-        ],
-        DeckTab::Agents => &[
-            ("↑ ↓", "select an installed agent"),
-            ("⏎", "edit the definition — a save is a new pinned version"),
-            ("a", "assume its identity: the lead runs as this agent"),
-            ("n", "new agent — drafted by the LLM"),
-            ("x x", "delete the agent, every version"),
-            ("v / r", "versions · reload"),
-        ],
-        DeckTab::Traces => &[
-            ("↑ ↓ ⇞ ⇟", "scroll the event log"),
-            ("f", "cycle the per-agent filter"),
-        ],
-        DeckTab::Graph => &[
-            ("← → ↑ ↓", "walk the neighborhood"),
-            ("/ or ⏎", "file picker — re-root on any indexed file"),
-        ],
-        DeckTab::Files => &[("↑ ↓", "select a file"), ("⏎", "open / close the diff")],
-        DeckTab::Skills => &[
-            ("← →", "switch panes"),
-            ("↑ ↓", "select a skill"),
-            ("space", "enable / disable"),
-            ("e", "edit the selected skill"),
-            ("p", "pin / unpin"),
-            ("n", "new skill — drafted by the LLM"),
-            ("ctrl-o", "preview"),
-            ("ctrl-x ×2", "delete (press twice to confirm)"),
-            ("type", "search skills"),
-        ],
-        DeckTab::Mcp => &[
-            ("↑ ↓", "select a server"),
-            ("space / e", "enable / disable"),
-            ("a", "authenticate (env credentials)"),
-            ("o", "OAuth login (http servers)"),
-            ("s", "search the registry"),
-            ("x", "remove the server"),
-            ("r", "refresh"),
-        ],
-        DeckTab::Issues => &[
-            ("↑ ↓", "select an issue"),
-            ("r", "refresh the list"),
-            ("/", "search the tracker"),
-            ("n", "new issue — tab cycles fields · ctrl-s creates"),
-            ("c", "comment on the selected issue"),
-            ("s", "set the selected issue's status"),
-            ("w", "start work on the selected issue"),
-        ],
-        DeckTab::Settings => &[
-            ("← →", "switch panes — agents / tools"),
-            ("e", "edit the pane you are on"),
-            ("t", "jump to the tool switches"),
-            (
-                "tab",
-                "in the editor: switch agent — global / default / worker / …",
-            ),
-            ("⏎", "in the editor: edit the selected row / pick a model"),
-            ("space", "in the editor: toggle the selected row"),
-            ("x", "in the editor: clear the selected row"),
-            ("s / S", "in the editor: save to user / project settings"),
-            ("r", "in the editor: reload from disk"),
-            ("esc", "in the editor: hand the keyboard back to the tab"),
-        ],
-    }
-}
-
-/// Deck-wide shortcuts that work on every tab.
-const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
-    ("tab / ⇧tab", "switch tabs"),
-    // Enter semantics are the inverse of the old chord-to-submit mapping (see
-    // `composer::classify_enter`): a bare ⏎ dispatches, a *modified* ⏎ breaks
-    // the line. The composer footer advertises the same pair — these rows must
-    // not drift from it.
-    // The parenthetical is load-bearing: the unqualified promise ("runs as its
-    // own agent") is what a reviewer read while a scope card was waiting, and
-    // the sidecar it describes is exactly what swallowed their answer.
-    (
-        "⏎",
-        "queue the prompt — mid-turn it runs as its own agent (unless a card waits)",
-    ),
-    ("⌘⏎ / ⌃⏎ / ⌥⏎", "insert a line break in the prompt"),
-    ("!cmd", "run a shell command NOW (skips the queue)"),
-    ("/", "slash commands — ↑↓ pick · tab completes · ⏎ runs"),
-    ("ctrl-v", "paste — a copied image is attached to the prompt"),
-    ("ctrl-t", "open the queue editor"),
-    (
-        "ctrl-a",
-        "SUB-AGENTS — dispatched lanes: stop · pause · restart · focus",
-    ),
-    ("ctrl-s", "PLAN — every step of the approved plan, in full"),
-    (
-        ">text",
-        "steer the running turn — lands at the next step boundary",
-    ),
-    ("esc", "steer: your draft + queue go INTO the running turn"),
-    (
-        "esc esc",
-        "cancel NOW & hold — nothing runs until your next prompt",
-    ),
-    ("ctrl-c", "quit stella"),
-];
-
 /// The help overlay: the active tab's keys first, then the deck-wide keys —
 /// one shortcut per line, key column aligned. Context-aware on purpose: only
 /// shortcuts that work on the tab the user is looking at are shown, so the
@@ -266,19 +135,26 @@ const GLOBAL_SHORTCUTS: &[(&str, &str)] = &[
 /// composer) or `/help`; scrolls with ↑/↓/⇞/⇟/Home/End on a short terminal;
 /// closes with esc/`q`/`?`.
 pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+    // Three sections, all read from `crate::keymap`: the active tab's own
+    // keys, the focus tree that is the same on every tab, then the
+    // deck-wide chords. Context-aware on purpose — only keys that work
+    // where the reader is, so the sheet stays short enough to read at a
+    // glance.
     let mut lines: Vec<Line<'static>> = Vec::new();
-    lines.push(Line::default());
-    lines.push(Line::from(Span::styled(
-        format!("  {} tab", ui.tab.title()),
-        theme::heading(),
-    )));
-    for (key, desc) in tab_shortcuts(ui.tab) {
-        lines.push(help_row(key, desc));
-    }
-    lines.push(Line::default());
-    lines.push(Line::from(Span::styled("  everywhere", theme::heading())));
-    for (key, desc) in GLOBAL_SHORTCUTS {
-        lines.push(help_row(key, desc));
+    let sections = [
+        (format!("  {} tab", ui.tab.title()), Scope::Tab(ui.tab)),
+        (
+            "  moving around — every tab, every overlay".to_string(),
+            Scope::Navigation,
+        ),
+        ("  everywhere".to_string(), Scope::Everywhere),
+    ];
+    for (heading, scope) in sections {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(heading, theme::heading())));
+        for b in keymap::in_scope(scope) {
+            lines.push(help_row(b.keys, b.does));
+        }
     }
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
@@ -291,8 +167,10 @@ pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     // to be *here*, not to be first.
     lines.extend(metric_rows(model));
 
-    // Size the panel to its content, capped to the frame.
-    let w = area.width.min(68);
+    // Size the panel to its content, capped to the frame. Wide enough for a
+    // sentence per key on a 100-column terminal; narrower frames clip the
+    // description, never the key.
+    let w = area.width.saturating_sub(4).min(84);
     let h = area.height.min(lines.len() as u16 + 2);
     let popup = Rect {
         x: area.x + (area.width.saturating_sub(w)) / 2,
@@ -301,23 +179,35 @@ pub(super) fn render_help(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
         height: h,
     };
     Clear.render(popup, buf);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::accent())
-        .title(format!(" help — {} · esc close ", ui.tab.title()));
-    let inner = block.inner(popup);
-    block.render(popup, buf);
-    if inner.height == 0 || inner.width == 0 {
-        return;
-    }
-
     let total = lines.len();
-    let height = inner.height as usize;
+    let height = popup.height.saturating_sub(2) as usize;
     // Record viewport metrics for the pure key handler (`handle_help_key`) —
     // when the panel is clipped, ↑/↓/⇞/⇟/Home/End scroll it.
     ui.metrics.help_total = total;
     ui.metrics.help_height = height;
     let window = ui.help_scroll.window(total, height);
+    // A clipped sheet says so on its bottom edge: on a short terminal the
+    // metric block is below the keys, and a reader who cannot see that it
+    // exists will not scroll to it.
+    let below = total.saturating_sub(window.end);
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::accent())
+        .title(format!(" help — {} · esc close ", ui.tab.title()));
+    if below > 0 {
+        block = block.title_bottom(
+            Line::from(Span::styled(
+                format!(" ↓ {below} more · ⇟ space · End "),
+                theme::muted(),
+            ))
+            .right_aligned(),
+        );
+    }
+    let inner = block.inner(popup);
+    block.render(popup, buf);
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
     Paragraph::new(lines)
         .scroll((window.start as u16, 0))
         .render(inner, buf);

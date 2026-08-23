@@ -613,14 +613,31 @@ impl ToolRegistry {
         // lost — the next measurement, per-call or at the boundary, still
         // reports it, because a snapshot reports everything since the last
         // one rather than everything one call did.
+        //
+        // The call's own reading (`crate::own_change`) rides beside the tree
+        // measurement, for the paths that reading cannot see — a gitignored
+        // file, a workspace with no journal. With no measurer attached it is
+        // published on the event stream directly: a host that folds the
+        // stream without binding a journal still owes every `write_file` its
+        // diff.
         if matches!(output, ToolOutput::Ok { .. }) && self.measures_alone(name) {
+            let own = crate::own_change::from_output(&output);
             let measure = self
                 .call_measure
                 .read()
                 .unwrap_or_else(|p| p.into_inner())
                 .clone();
-            if let Some(measure) = measure {
-                measure.measure_and_publish();
+            match measure {
+                Some(measure) => measure.measure_and_publish(&own),
+                None => {
+                    if let Some(events) = self.events() {
+                        for change in own {
+                            // A closed channel means the renderer is gone,
+                            // which is not this call's failure to report.
+                            let _ = events.send(crate::own_change::file_change(change));
+                        }
+                    }
+                }
             }
         }
         if let Some(bus) = &bus {

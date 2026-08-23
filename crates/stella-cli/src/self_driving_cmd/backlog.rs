@@ -233,10 +233,16 @@ pub(super) async fn file_finding(
 /// "defect", folded a third way. A driver that filtered the queue itself would
 /// be the second definition B1 removed.
 pub(super) fn ranked_keys(
+    st: &super::state::LoopState,
     provider: &dyn IssueProvider,
     policy: &stella_autonomy::priority::TriagePolicy,
 ) -> Result<Vec<String>, String> {
-    let (queue, _) = ranked(provider, policy)?;
+    let (queue, total) = ranked(provider, policy)?;
+    // The driver's claim pass is the one place the queue is read on a
+    // cadence, so it is the one place a snapshot stays current for the
+    // observatory — still the single `ranked` read: the keys the loop claims
+    // from and the items the dashboard shows are one list, folded twice.
+    st.write_queue_snapshot(&queue, &policy.ladder, total);
     Ok(queue
         .ranked
         .into_iter()

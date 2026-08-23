@@ -4,14 +4,9 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
-└─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
-     model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
-     ⚒ write_file apps/api/routes/v1/automations.ts
-     returns: wire automations triggers API → lead inbox
-└─ ◆ sub:ci  subagent · running                                                                                                                             5:12
-     model glm-5.2-air · ctx 3.0k/200k · spend $0.00
-     ⚒ no tool calls yet
-     returns: watch CI + open PR → lead inbox
+── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
     memory  event-log REPL                                                                                                                90 tok
     ⋯ ctrl+o for provenance and budget
@@ -25,21 +20,26 @@
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
  │ ⊙ apps/app/automations/page.tsx
- │ ⎿ 312 lines                            ┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐                       42ms
-                                          │from the `research-child` sub-agent                                       │
- │ ● edit apps/app/automations/page.tsx +4│                                                                          │
- │ ⎿                                      │● Auth method  ○ Rollout                                                  │               +4 −1 · 18ms
- │     10 -  const items = []             │                                                                          │
- │     10 +  const items = useAutomations(│[2/2] Which environments should it reach first?                           │
- │     11 +  const [q, setQ] = useState(""│several answers may be chosen                                             │
+ │ ⎿ 312 lines                                                                                                                               42ms
+
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations(┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐
+ │     11 +  const [q, setQ] = useState(""│from the `research-child` sub-agent                                       │
  │     12 +  const filtered = filter(items│                                                                          │
- │     13 +  const onNew = () => open()   │▸ [ ] staging — the usual soak                                            │
+ │     13 +  const onNew = () => open()   │● Auth method  ○ Rollout                                                  │
+                                          │                                                                          │
+☰  plan  5/7  ·  Workflows canvas         │[2/2] Which environments should it reach first?                           │
+                                          │several answers may be chosen                                             │
+⏸ plan  Refactor the automations store int│                                                                          │
+                                          │▸ [ ] staging — the usual soak                                            │
                                           │  [ ] canary                                                              │
-☰  plan  5/7  ·  Workflows canvas         │  [ ] Type your own answer                                                │
+                                          │  [ ] Type your own answer                                                │
                                           └──────────────────────────────────────────────────────────────────────────┘
-⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
+
 
 
 >>>
- ⏎ queue · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
 zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

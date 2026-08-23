@@ -538,6 +538,47 @@ impl WorkspaceModel {
         self.agents.len() - self.subagent_count()
     }
 
+    /// The index of the agent that dispatched `agents[idx]`, following
+    /// [`AgentMeta::parent`]. A lane registered without a parent — an older
+    /// driver, a replayed journal that predates the field — falls back to
+    /// the first non-subagent row, which is the lead in every session this
+    /// deck has ever drawn; a root returns `None`.
+    pub fn parent_of(&self, idx: usize) -> Option<usize> {
+        let entry = self.agents.get(idx)?;
+        match &entry.meta.parent {
+            Some(parent) => self.index_of(parent),
+            None if entry.is_subagent() => self
+                .agents
+                .iter()
+                .position(|a| !a.is_subagent())
+                .filter(|&lead| lead != idx),
+            None => None,
+        }
+    }
+
+    /// The agents `agents[idx]` dispatched, in registration order.
+    pub fn children_of(&self, idx: usize) -> Vec<usize> {
+        (0..self.agents.len())
+            .filter(|&i| i != idx && self.parent_of(i) == Some(idx))
+            .collect()
+    }
+
+    /// The path from the root to `agents[idx]`, as ids — what the breadcrumb
+    /// prints (`lead ▸ sub:2`). Bounded by the agent count so a malformed
+    /// parent cycle cannot spin it.
+    pub fn ancestry(&self, idx: usize) -> Vec<&AgentId> {
+        let mut path = Vec::new();
+        let mut cur = Some(idx);
+        while let Some(i) = cur
+            && path.len() < self.agents.len()
+        {
+            path.push(&self.agents[i].meta.id);
+            cur = self.parent_of(i);
+        }
+        path.reverse();
+        path
+    }
+
     /// The summed live-turn token rate across every running lane, plus how
     /// many lanes contributed. More than one contributor means the honest
     /// figure is the workspace's combined rate, labelled `combined` (D5) —
