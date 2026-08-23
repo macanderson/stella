@@ -409,10 +409,14 @@ mod tests {
         std::fs::create_dir_all(workspace.join(".stella")).unwrap();
         let managed = tmp.path().join("managed.json");
         std::fs::write(&managed, r#"{"tools": {"environment": "off"}}"#).unwrap();
-        let _restore = crate::test_env::EnvRestore::capture(&["HOME", "STELLA_MANAGED_SETTINGS"]);
+        let _restore = crate::test_env::EnvRestore::capture(&["STELLA_MANAGED_SETTINGS"]);
+        // The user tier is where `save_switches` writes, so pointing `HOME`
+        // alone would leave this round-trip editing the developer's real
+        // `~/.stella/settings.json` whenever `STELLA_HOME` is exported
+        // (#3996).
+        let _home = crate::test_env::home_sandbox(&home);
         // SAFETY: serialized behind the binary-wide environment lock.
         unsafe {
-            std::env::set_var("HOME", &home);
             std::env::set_var("STELLA_MANAGED_SETTINGS", &managed);
         }
 

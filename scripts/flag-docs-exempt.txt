@@ -1,0 +1,11 @@
+# Flags that intentionally ship without an `<OptionCard>` on the docs site.
+# See #3041 and `crates/stella-cli/src/tests/flag_docs.rs`. Format: one
+# `<command>:<flag>` per line, where `<command>` is a top-level command slug
+# or `_global` for a session-wide flag, with the reason as a comment.
+#
+# It is meant to stay near-empty. Adding a line here is allowed but is never
+# silent — it lands as a visible diff, to be justified in review like any
+# other change. Prefer writing the card.
+#
+# A line naming a flag that does not exist fails the guard, so this list
+# cannot rot into a blanket exemption for a name some future flag reuses.
