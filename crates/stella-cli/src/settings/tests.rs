@@ -1355,6 +1355,60 @@ fn an_untrusted_workspace_names_the_steering_it_withheld() {
     );
 }
 
+/// The witness for #3617: the survey counted six steering *directories* and
+/// missed the seventh source, the extension-authored rules the same gate
+/// suppresses out of `.stella/private/store.db`. A workspace whose only
+/// steering was those stayed silent — #2302's defect in a narrower case.
+#[test]
+fn store_published_rules_count_as_withheld_steering() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("repo");
+    std::fs::create_dir_all(&workspace).unwrap();
+    {
+        let store = stella_store::Store::open(&workspace).expect("open the workspace store");
+        store
+            .upsert_rule("house-style", "# house style", "ext")
+            .unwrap();
+    }
+
+    let withheld = super::withheld::survey(&workspace);
+    assert_eq!(withheld.store_records, 1);
+    assert_eq!(
+        withheld.records, 0,
+        "nothing was published to a rules directory"
+    );
+
+    let line = super::withheld::notice(
+        &workspace,
+        Some(super::withheld::Withholder::ProjectUntrusted),
+    )
+    .expect("a workspace whose only steering is store rules is owed a notice too");
+    assert!(line.contains("(1 context record)"), "{line}");
+    assert!(
+        !line.contains("house-style") && !line.contains("house style"),
+        "the notice carries counts, never content or ids: {line}"
+    );
+}
+
+/// Counting the store must never be the reason state appears: `survey` runs on
+/// the `Settings::load` path that `stella --version` takes, and a workspace
+/// that has never run Stella must come back from it untouched.
+#[test]
+fn surveying_a_workspace_with_no_store_creates_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("repo");
+    std::fs::create_dir_all(workspace.join(".stella").join("memories")).unwrap();
+    std::fs::write(workspace.join(".stella").join("memories").join("a.md"), "x").unwrap();
+
+    let withheld = super::withheld::survey(&workspace);
+    assert_eq!(withheld.memories, 1);
+    assert_eq!(withheld.store_records, 0);
+    assert!(
+        !workspace.join(".stella").join("private").exists(),
+        "the survey must not create the private state directory"
+    );
+}
+
 /// The remedy the notice names is decided by attribution, and attribution is
 /// checked against the resolver itself rather than restated (#2302).
 ///
