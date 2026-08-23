@@ -29,10 +29,18 @@
 //! last. The clamp also never loosens once set — even after a later call
 //! commits — so a compaction budget configured above what the provider will
 //! actually accept cannot oscillate grow → overflow → recover for the rest of
-//! the turn. When the ladder is spent, the overflow surfaces exactly as an
-//! unrecovered terminal failure does. Error → recover → error can therefore
-//! burn at most `MAX_RECOVERY_RUNGS` extra calls, each of which was already
-//! billed through the ordinary `UsageIncomplete` attempt observer.
+//! the turn. Error → recover → error can therefore burn at most
+//! `MAX_RECOVERY_RUNGS` extra calls, each of which was already billed through
+//! the ordinary `UsageIncomplete` attempt observer.
+//!
+//! A spent ladder is not yet the end. The transcript that no amount of
+//! compaction shrank may simply fit a *different* provider's window, so the
+//! last thing before terminal surfacing is one try at the mid-turn fallback
+//! (`super::model_fallback`, #2770) — bounded by that seam's own set-once
+//! latch rather than a second bound of its own, and terminal the moment the
+//! replacement rejects too, since by then both the ladder and the latch are
+//! spent. Only then does the overflow surface exactly as an unrecovered
+//! terminal failure does.
 //!
 //! # What consumers see
 //!
@@ -197,7 +205,12 @@ impl<'a> Engine<'a> {
                 // `true` latched the swap — the step re-runs and the
                 // terminal events stay withheld, exactly as an armed
                 // overflow rung withholds them below.
-                if self.attempt_provider_fallback(&message, state, events) {
+                if self.attempt_provider_fallback(
+                    &message,
+                    super::model_fallback::FallbackCause::RetriesExhausted,
+                    state,
+                    events,
+                ) {
                     return None;
                 }
                 // No fallback: surface the pre-#2679 terminal shape.
@@ -285,7 +298,25 @@ impl<'a> Engine<'a> {
                 state.step += 1;
                 None
             }
-            None => Some(self.surface_unrecovered(message, attempt_reasons, state, events)),
+            // The last rung, and the one the two recovery seams had never
+            // composed (#2770): the compaction ladder is spent, but a
+            // configured fallback may carry a window that accepts this
+            // transcript as it stands. Tried once, behind #2679's set-once
+            // latch — the same bound the exhausted-ladder arm above trusts,
+            // and the reason no window-size field on `ProviderProfile` is
+            // needed to make this safe. A replacement that also rejects finds
+            // the ladder spent and the latch set, so it is terminal.
+            None => {
+                if self.attempt_provider_fallback(
+                    &message,
+                    super::model_fallback::FallbackCause::ContextOverflow,
+                    state,
+                    events,
+                ) {
+                    return None;
+                }
+                Some(self.surface_unrecovered(message, attempt_reasons, state, events))
+            }
         }
     }
 
