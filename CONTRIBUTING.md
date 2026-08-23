@@ -97,6 +97,7 @@ python3 ./scripts/check-prose.py
 ./scripts/test-deck-fit-all.sh
 python3 ./scripts/check-deck-paths.py
 python3 ./scripts/check-css-vars.py
+./scripts/check-reserved-paths.sh
 ./scripts/check-wire-schema.sh
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check

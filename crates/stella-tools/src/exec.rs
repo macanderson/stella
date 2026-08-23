@@ -347,29 +347,46 @@ pub(crate) async fn wait_with_capped_output(
     }
 }
 
-/// Start the child in its own session, so it leads a process group
-/// [`GroupKillGuard`] can reach everything inside.
+/// Start the child in a group of its own, so [`GroupKillGuard`] can reach
+/// everything inside it rather than the direct child alone.
+///
+/// It exists so a spawn site outside this crate can take the policy without
+/// taking a platform dependency and a copy of the block — the plugin
+/// transport (`stella_runtime::wrapper::subprocess`) is the first such
+/// caller. Every site that wants this policy calls it: [`crate::bash`],
+/// [`crate::custom`] and [`crate::hook_runner`] here, the plugin transport and
+/// the driver transport in `stella-runtime` (#3549). The guard half was
+/// already shared, and [`GroupKillGuard`]'s own doc says every such site must
+/// use *this* guard rather than grow a second one; the same argument applies
+/// verbatim to the call that creates the group the guard kills.
+///
+/// # Unix
+///
+/// A new session (`setsid(2)`), so the child leads a process group whose id
+/// is its pid — which is what the guard kills.
 ///
 /// The `unsafe` half of that policy, written once. A `pre_exec` closure runs
 /// in the forked child between `fork` and `exec`, where only
 /// async-signal-safe calls are legal; `setsid(2)` is one, and this closure
 /// allocates nothing and touches no lock, which is the whole requirement.
 ///
-/// It exists so a spawn site outside this crate can take the policy without
-/// taking a `libc` dependency and a copy of the block — the plugin transport
-/// (`stella_runtime::wrapper::subprocess`) is the first such caller. Every
-/// site that wants this policy now calls it: [`crate::bash`],
-/// [`crate::custom`] and [`crate::hook_runner`] here, the plugin transport and
-/// the driver transport in `stella-runtime` (#3549). The guard half was
-/// already shared, and [`GroupKillGuard`]'s own doc says every
-/// `pre_exec(setsid)` site must use *this* guard rather than grow a second
-/// one; the same argument applies verbatim to the call that creates the group
-/// the guard kills.
-///
 /// `stella-cli`'s daemon and the TUI's pty harness are deliberately not in
 /// that set — their `pre_exec` closures do more than this one and check what
 /// this one ignores. Those two and the call below are the whole of the
 /// workspace's `setsid` surface; a fourth means a copy has grown back.
+///
+/// # Windows
+///
+/// A new console process group (`CREATE_NEW_PROCESS_GROUP`). The
+/// tree-reaching half is the **Job Object** [`GroupKillGuard::arm`] creates,
+/// because Windows offers no pre-spawn hook that could hand a job handle
+/// back from here — so the job is created and the child assigned to it
+/// immediately after the spawn instead (#3550).
+///
+/// The consequence is the same on both platforms, and so is what covers it: a
+/// child in its own group no longer receives the console's Ctrl-C, exactly as
+/// a `setsid` child no longer receives SIGINT, and the guard is the thing that
+/// reaps the tree instead.
 #[cfg(unix)]
 pub fn detach_into_own_process_group(cmd: &mut Command) {
     // SAFETY: the closure calls one async-signal-safe libc function and
@@ -383,24 +400,43 @@ pub fn detach_into_own_process_group(cmd: &mut Command) {
     }
 }
 
-/// SIGKILLs `pid`'s process group on drop unless disarmed — the
-/// cancellation backstop for the tools that spawn `pre_exec(setsid)`
-/// children ([`crate::custom`], [`crate::hook_runner`]): when the future
-/// driving a tool call is dropped mid-wait (Esc cancels the turn), the
-/// detached process group must not keep running — and mutating the tree —
-/// after the user believes the turn stopped. Normal exit and the timeout
-/// path disarm it.
+#[cfg(windows)]
+pub fn detach_into_own_process_group(cmd: &mut Command) {
+    cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP);
+}
+
+/// Neither unix nor Windows: there is no group to make, and `kill_on_drop` at
+/// the call site is the whole bound.
 ///
-/// It is deliberately `pub`: every `pre_exec(setsid)` spawn site in the
-/// workspace must use *this* guard rather than grow a second one. A `setsid`
-/// child is in its own session, so Ctrl-C's SIGINT — delivered only to the
-/// tty's foreground process group — never reaches it; this guard is the only
-/// thing that reaps the tree, and it fires because the CLI drops the work
-/// future on a signal instead of calling `exit` (`stella-cli/src/signals.rs`).
+/// It exists so the call sites can drop their own `#[cfg]`s without this
+/// crate silently refusing to compile for a third platform. `rootfd.rs` and
+/// `durable_write.rs` already answer the same way — the same API over
+/// whatever the platform does have — and a spawn plane that failed to build
+/// where they succeed would be the inconsistency, not the honesty.
+#[cfg(not(any(unix, windows)))]
+pub fn detach_into_own_process_group(cmd: &mut Command) {
+    let _ = cmd;
+}
+
+/// Kills the whole group a [`detach_into_own_process_group`] child leads, on
+/// drop unless disarmed — the cancellation backstop for the tools that spawn
+/// one ([`crate::bash`], [`crate::custom`], [`crate::hook_runner`], and the
+/// two transports in `stella-runtime`): when the future driving a tool call is
+/// dropped mid-wait (Esc cancels the turn), the detached group must not keep
+/// running — and mutating the tree — after the user believes the turn
+/// stopped. Normal exit and the timeout path disarm it.
+///
+/// It is deliberately `pub`: every such spawn site in the workspace must use
+/// *this* guard rather than grow a second one. A detached child no longer
+/// receives the terminal's interrupt (see [`detach_into_own_process_group`]),
+/// so this guard is the only thing that reaps the tree, and it fires because
+/// the CLI drops the work future on a signal instead of calling `exit`
+/// (`stella-cli/src/signals.rs`).
 ///
 /// Never `tokio::spawn` teardown from a `Drop` instead: during runtime
 /// shutdown the spawn silently does nothing, which is precisely the case
-/// being handled. `kill(2)` is synchronous, so this guard needs no runtime.
+/// being handled. Both platforms' kills are synchronous, so this guard needs
+/// no runtime.
 #[cfg(unix)]
 pub struct GroupKillGuard {
     pid: i32,
@@ -448,6 +484,179 @@ impl Drop for GroupKillGuard {
             }
         }
     }
+}
+
+/// A Windows Job Object handle, closed when it goes out of scope.
+///
+/// `HANDLE` is a raw pointer, so nothing about it is `Send` by inference —
+/// but a job object is an opaque kernel object with no thread affinity, and
+/// the guard is held across awaits inside `tokio::spawn`ed tasks (the plugin
+/// transport, the hook runner), which requires `Send`. The wrapper says that
+/// once instead of at each call site.
+#[cfg(windows)]
+struct JobHandle(windows_sys::Win32::Foundation::HANDLE);
+
+// SAFETY: a job object handle is a kernel handle with no thread affinity; the
+// kernel32 entry points used below are documented thread-safe, and this
+// wrapper exposes no interior reference that a second thread could race.
+#[cfg(windows)]
+unsafe impl Send for JobHandle {}
+
+#[cfg(windows)]
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        // SAFETY: the handle came from `CreateJobObjectW`, is owned solely by
+        // this wrapper, and is closed exactly once.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+    }
+}
+
+/// The Windows counterpart: a Job Object holding the child, terminated on
+/// drop unless disarmed.
+///
+/// `kill_on_drop(true)` reaches the direct child and nothing else, so before
+/// this a hook, a custom tool, a `bash` call or a plugin wrapper that
+/// backgrounded work left that work running after the turn was reported
+/// finished (#3550). A job takes the whole tree, grandchildren the child
+/// spawned included, which is exactly what `kill_on_drop` cannot do.
+///
+/// **`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` is deliberately not set**, and the
+/// kill is an explicit `TerminateJobObject` on the two paths that want one.
+/// With the limit set, [`Self::disarm`] would have to *clear* it before the
+/// handle closed, and a `SetInformationJobObject` that failed there would
+/// kill a tree the turn had already finished with — a regression on the
+/// normal path, which is the one direction this must not fail in. Explicit
+/// termination mirrors the unix `kill(-pid, SIGKILL)` exactly: it fires when
+/// this guard says so and never otherwise. What that gives up is coverage of
+/// Stella itself being killed without unwinding, where a `KILL_ON_JOB_CLOSE`
+/// job would still reap the tree; unix has no equivalent today either.
+#[cfg(windows)]
+pub struct GroupKillGuard {
+    /// `None` when the kernel refused any step of the arming below, which
+    /// leaves `kill_on_drop` as the only bound — the state every call site
+    /// was in before this existed, rather than a new failure.
+    job: Option<JobHandle>,
+    armed: bool,
+}
+
+#[cfg(windows)]
+impl GroupKillGuard {
+    /// Arm a guard over the tree led by `pid`. A pid of 0 — `Child::id` after
+    /// the child was already reaped — is inert, as it is on unix.
+    ///
+    /// The job is created and assigned *after* the spawn because Windows has
+    /// no pre-spawn hook to do it from `detach_into_own_process_group`. That
+    /// leaves a window between spawn and assignment in which a grandchild
+    /// started by the child would escape the job; it is microseconds wide, and
+    /// closing it needs `CREATE_SUSPENDED` plus a `ResumeThread` on a thread
+    /// handle `tokio::process` does not expose.
+    pub fn arm(pid: i32) -> Self {
+        Self {
+            job: (pid > 0).then(|| job_holding(pid as u32)).flatten(),
+            armed: true,
+        }
+    }
+
+    /// Stop the guard from killing on drop. Call it once the tree is known to
+    /// be gone: the child exited normally, or the caller already killed it on
+    /// its timeout path.
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    /// Terminate the tree now, and disarm. The timeout path: the child is
+    /// still running and must die *before* the caller returns an error,
+    /// rather than at some later scope exit.
+    pub fn kill_now(&mut self) {
+        self.armed = false;
+        self.terminate();
+    }
+
+    fn terminate(&self) {
+        if let Some(job) = &self.job {
+            // SAFETY: `job` is a live job handle owned by this guard, and the
+            // exit code is an arbitrary non-zero value the kernel only
+            // reports back on the terminated processes.
+            unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(job.0, 1) };
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for GroupKillGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.terminate();
+        }
+    }
+}
+
+/// A job object with the process `pid` leads assigned to it, or `None` when
+/// the kernel refused any step.
+///
+/// Failure is silent by design: the caller's only alternative is to abort a
+/// tool call over a cancellation backstop it could not install, and the
+/// backstop's absence is the state every call site was already in. The
+/// process handle is closed as soon as the assignment is made — the job holds
+/// its own reference, and leaking one handle per spawned tool would be a slow
+/// leak in a long session.
+#[cfg(windows)]
+fn job_holding(pid: u32) -> Option<JobHandle> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    };
+
+    // SAFETY: every call is a kernel32 entry point taking only the handles and
+    // integers passed to it; each failure is reported by a null or zero
+    // return and is checked before the next call runs. An unnamed job with
+    // default security is created with two null pointers, which is what the
+    // documented "no attributes, no name" form is.
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return None;
+        }
+        // Owned from here, so every early return below closes it.
+        let job = JobHandle(job);
+        // `PROCESS_TERMINATE` as well as `PROCESS_SET_QUOTA`: assignment
+        // needs both, because a job that cannot terminate its members is not
+        // the guarantee this guard advertises.
+        let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let assigned = AssignProcessToJobObject(job.0, process) != 0;
+        CloseHandle(process);
+        assigned.then_some(job)
+    }
+}
+
+/// Neither unix nor Windows: an inert guard with the same three methods, so
+/// the call sites carry no `#[cfg]` of their own.
+///
+/// Inert rather than absent for the reason
+/// [`detach_into_own_process_group`]'s third arm gives. The tree is bounded
+/// by `kill_on_drop` alone here, which reaches the direct child and nothing
+/// else — the gap #3550 closed for Windows, still open for a platform this
+/// workspace does not target.
+#[cfg(not(any(unix, windows)))]
+pub struct GroupKillGuard;
+
+#[cfg(not(any(unix, windows)))]
+impl GroupKillGuard {
+    /// Arm nothing.
+    pub fn arm(pid: i32) -> Self {
+        let _ = pid;
+        Self
+    }
+
+    /// Disarm nothing.
+    pub fn disarm(&mut self) {}
+
+    /// Kill nothing.
+    pub fn kill_now(&mut self) {}
 }
 
 /// Keep the head and tail of `s` when it exceeds `max_bytes`, eliding the

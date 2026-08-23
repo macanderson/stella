@@ -447,6 +447,159 @@ mod tests {
         }
     }
 
+    /// A backend that records the greatest number of requests it ever had in
+    /// flight at once, and every text it was asked to embed.
+    ///
+    /// The instrument for #4190. The file rung's *batching* was already
+    /// right — one file is one vector, so its requests were always full — so
+    /// the only observable difference between the serial shape and the
+    /// overlapped one is how many requests coexist. Each call sleeps well
+    /// past scheduler noise, so a rung that issues its requests one at a time
+    /// cannot reach a peak above one however the runtime behaves.
+    #[derive(Debug, Default)]
+    struct ConcurrencyProbe {
+        in_flight: AtomicUsize,
+        peak: AtomicUsize,
+        seen: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl Embedder for ConcurrencyProbe {
+        fn fingerprint(&self) -> EmbedderFingerprint {
+            EmbedderFingerprint {
+                model_id: "probe".into(),
+                revision: "1".into(),
+                dims: 2,
+                normalization: "l2".into(),
+            }
+        }
+
+        async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError> {
+            let now = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            self.seen
+                .lock()
+                .expect("the probe log")
+                .extend(texts.iter().cloned());
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+
+            let fingerprint = self.fingerprint().id();
+            Ok(texts
+                .iter()
+                .map(|text| {
+                    let mut vector = vec![text.len() as f32, 1.0];
+                    stella_embed::l2_normalize(&mut vector);
+                    Embedding {
+                        fingerprint: fingerprint.clone(),
+                        vector,
+                    }
+                })
+                .collect())
+        }
+
+        fn similarity_posture(&self) -> SimilarityPosture {
+            SimilarityPosture::Semantic {
+                admission_floor: 0.2,
+            }
+        }
+    }
+
+    /// **The witness for #4190.** The file rung awaited each batch before
+    /// scanning for the next, so exactly one request was ever in flight for
+    /// the whole rung — 54 sequential round trips on this repository, paid at
+    /// session start and in `stella init`, and paid *before* the chunk rung
+    /// starts, so the first prompt waits on all of them.
+    ///
+    /// Sixty-four one-symbol files are two full requests. Overlapped, both
+    /// are in flight; serial, the peak is one.
+    #[tokio::test]
+    async fn the_file_pass_keeps_more_than_one_request_in_flight() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let graph = indexed_fixture(&root, 64);
+        let probe = ConcurrencyProbe::default();
+
+        let outcome = warm_opened(
+            &graph,
+            &probe,
+            crate::search::semantic::NO_FILE_CEILING,
+            &mut |_| {},
+        )
+        .await;
+        let WarmOutcome::Warmed { embedded, .. } = outcome else {
+            panic!("the pass ran against a working backend: {outcome:?}");
+        };
+        assert_eq!(embedded, 64, "every fixture file must be embedded");
+
+        assert!(
+            probe.peak.load(Ordering::SeqCst) > 1,
+            "the file rung must overlap its requests (#4190); peak in flight was {}",
+            probe.peak.load(Ordering::SeqCst)
+        );
+
+        // The other half of overlapping a scan-driven loop: the pending set
+        // is re-asked only once every request from the previous window has
+        // settled, so no file can be handed to two requests and paid for
+        // twice on the user's bill.
+        let seen = probe.seen.lock().expect("the probe log");
+        assert_eq!(
+            seen.len(),
+            64,
+            "64 files must cost 64 embeddings, not more: {} texts embedded",
+            seen.len()
+        );
+        let mut unique: Vec<&String> = seen.iter().collect();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 64, "no file may be embedded twice");
+        graph.shutdown();
+    }
+
+    /// The file rung's counterpart to
+    /// `every_chunk_keeps_the_vector_computed_for_it`. Once requests overlap
+    /// they complete out of issue order, so a response must be matched to the
+    /// request it answers; pairing the Nth completion with the Nth batch
+    /// stores every vector against the wrong file. Nothing errors when that
+    /// happens — each file still receives a well-formed vector of the right
+    /// width — so the only instrument that can see it is what the index
+    /// answers afterwards (#4189's shape, one rung up).
+    #[tokio::test]
+    async fn every_file_keeps_the_vector_computed_for_it() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let root = workspace.path().canonicalize().expect("canonicalize");
+        let graph = indexed_fixture(&root, REVERSING_DIMS);
+        let embedder = ReversingEmbedder::default();
+        let fingerprint = embedder.fingerprint().id();
+
+        let outcome = warm_opened(
+            &graph,
+            &embedder,
+            crate::search::semantic::NO_FILE_CEILING,
+            &mut |_| {},
+        )
+        .await;
+        assert!(matches!(outcome, WarmOutcome::Warmed { .. }), "{outcome:?}");
+
+        for index in 0..REVERSING_DIMS {
+            let hits = graph
+                .rank_files_by_vector(&fingerprint, &ReversingEmbedder::one_hot(index), 0.5, 1)
+                .expect("rank the stored file vectors");
+            let top = hits
+                .first()
+                .unwrap_or_else(|| panic!("file_{index}.rs has no stored vector"));
+            assert_eq!(
+                top.key,
+                format!("file_{index}.rs"),
+                "the vector computed for file_{index}.rs was stored against {} — a \
+                 response was routed by arrival order rather than to the request it \
+                 answered",
+                top.key
+            );
+        }
+        graph.shutdown();
+    }
+
     /// A backend that answers a fixed number of requests and then refuses
     /// every one after — the refusal deliberately slow, so the requests that
     /// did succeed have already landed by the time it arrives.

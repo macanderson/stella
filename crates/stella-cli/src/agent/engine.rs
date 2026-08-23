@@ -590,7 +590,7 @@ pub(crate) fn build_provider(cfg: &Config) -> Result<Box<dyn Provider>, String> 
 /// region/project-scoped URLs themselves). `aux` carries whatever the provider
 /// needs beyond one key — Bedrock's AWS secret access key, optional session
 /// token, and region — already resolved through the credential chain by
-/// `config::aux::provider_aux`; empty for every other provider.
+/// `config::aux_credentials::provider_aux`; empty for every other provider.
 ///
 /// The catalog is consulted first (provider-scoped, since the same slug
 /// legitimately exists on several providers — `gemini-3-pro` on both `gemini`

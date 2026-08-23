@@ -217,9 +217,19 @@ impl RootHandle {
     /// reported. Callers use it to reject early (before a 64 MB download
     /// crosses the wire); the authority remains the walk performed by the
     /// operation itself.
+    /// The call is cfg-split because the two `resolve_leaf`s are: the unix one
+    /// takes a `follow_leaf` flag and hands back `(OwnedFd, CString)`, the
+    /// string resolver takes neither and hands back a `PathBuf`. This method
+    /// sits in the shared `impl` and used to call the unix arity from both, so
+    /// **the non-unix half of this file had never compiled** — found by the
+    /// first Windows build the repository has ever run (#3550).
     pub fn is_confined(&self, rel: &str) -> Result<(), RootError> {
-        match self.resolve_leaf(rel, false, true) {
-            Ok(_) => Ok(()),
+        #[cfg(unix)]
+        let resolved = self.resolve_leaf(rel, false, true).map(|_| ());
+        #[cfg(not(unix))]
+        let resolved = self.resolve_leaf(rel, false).map(|_| ());
+        match resolved {
+            Ok(()) => Ok(()),
             Err(RootError::Escapes(reason)) => Err(RootError::Escapes(reason)),
             Err(RootError::Io(_)) => Ok(()),
         }
