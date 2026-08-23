@@ -5,7 +5,8 @@
     scripts/render-deck-film.py film.jsonl -o docs/demo/stella-deck.mp4
 
 The film carries styled character grids plus a camera track; this turns them
-into pixels. Output is 1920x1080, 60 fps, H.264 High / yuv420p, `faststart`,
+into pixels. Output is 1920x1080 (`--size` for a 4K/6K master), 60 fps, H.264
+High / yuv420p, `faststart`,
 **no audio track at all** — the shape a hero `<video autoplay loop muted>`
 wants.
 
@@ -42,9 +43,12 @@ run refuses rather than quietly rendering the one blurry shot.
 Terminals fall back per glyph and so does this: the deck's frames reach for box
 drawing, geometric shapes, and a handful of symbols that no single monospace
 face carries. The chain is JetBrains Mono (the brand face, `docs/brand/fonts/`)
-→ DejaVu Sans Mono → FreeMono, and a glyph that survives all three is a hard
-error naming the character — a silently-rendered tofu box in a hero video is
-worse than a failed build.
+→ DejaVu Sans Mono → DejaVu Sans → Noto Sans Symbols 2 → Noto Sans Symbols →
+FreeMono (`FONT_CHAIN`, with the Debian and Homebrew paths of each), and a
+glyph that survives the whole chain is a hard error naming the character — a
+silently-rendered tofu box in a hero video is worse than a failed build. On a
+Mac: `brew install --cask font-dejavu font-noto-sans-symbols
+font-noto-sans-symbols-2`.
 
 Bold is a real face, not a synthesised smear. Dim is applied as an alpha blend
 toward the cell's background, italic is drawn upright (the deck uses it for
@@ -59,6 +63,7 @@ import json
 import shutil
 import subprocess
 import sys
+import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,21 +77,78 @@ REPO = Path(__file__).resolve().parent.parent
 
 # The font chain, in fallback order. Each entry is (regular, bold); a glyph is
 # drawn by the first face that has it.
+#
+# A fallback face is looked for at every path a platform installs it to — the
+# Debian/Ubuntu package path first, then the Homebrew cask (`brew install
+# --cask font-dejavu`, which drops into `~/Library/Fonts`). Before the macOS
+# paths were listed the chain on a Mac was JetBrains Mono alone, and the first
+# v2 glyph outside its coverage (U+25AE `▮`) refused the whole render.
+HOME_FONTS = Path.home() / "Library/Fonts"
 FONT_CHAIN = [
     (
-        REPO / "docs/brand/fonts/JetBrainsMono-Regular.ttf",
-        REPO / "docs/brand/fonts/JetBrainsMono-Bold.ttf",
+        [REPO / "docs/brand/fonts/JetBrainsMono-Regular.ttf"],
+        [REPO / "docs/brand/fonts/JetBrainsMono-Bold.ttf"],
     ),
     (
-        Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
-        Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"),
+        [
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+            HOME_FONTS / "DejaVuSansMono.ttf",
+            Path("/Library/Fonts/DejaVuSansMono.ttf"),
+        ],
+        [
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"),
+            HOME_FONTS / "DejaVuSansMono-Bold.ttf",
+            Path("/Library/Fonts/DejaVuSansMono-Bold.ttf"),
+        ],
+    ),
+    # Proportional faces from here down. A fallback glyph is drawn centred in
+    # its cell (`_draw_centred`), so a face's advance never reaches the layout
+    # and a symbol face is as safe as a monospace one. The v2 deck reaches for
+    # U+2630 `☰`, U+23F8 `⏸`, U+23BF `⎿` and U+2315 `⌕`, which no monospace
+    # face on either platform carries.
+    (
+        [
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+            HOME_FONTS / "DejaVuSans.ttf",
+            Path("/Library/Fonts/DejaVuSans.ttf"),
+        ],
+        [
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+            HOME_FONTS / "DejaVuSans-Bold.ttf",
+            Path("/Library/Fonts/DejaVuSans-Bold.ttf"),
+        ],
     ),
     (
-        Path("/usr/share/fonts/truetype/freefont/FreeMono.ttf"),
-        Path("/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf"),
+        [
+            Path("/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf"),
+            HOME_FONTS / "NotoSansSymbols2-Regular.ttf",
+            Path("/Library/Fonts/NotoSansSymbols2-Regular.ttf"),
+        ],
+        [],
+    ),
+    (
+        [
+            Path("/usr/share/fonts/truetype/noto/NotoSansSymbols-Regular.ttf"),
+            HOME_FONTS / "NotoSansSymbols[wght].ttf",
+            Path("/Library/Fonts/NotoSansSymbols[wght].ttf"),
+        ],
+        [],
+    ),
+    # The Halfwidth and Fullwidth Forms block — the deck's `WRITE` glyph is the
+    # fullwidth `＋` (U+FF0B, `stella_tui_theme::glyph::WRITE`), and none of the
+    # faces above carry it. GNU FreeFont does on Debian; macOS ships it in
+    # Arial Unicode.
+    (
+        [
+            Path("/usr/share/fonts/truetype/freefont/FreeMono.ttf"),
+            Path("/Library/Fonts/Arial Unicode.ttf"),
+        ],
+        [Path("/usr/share/fonts/truetype/freefont/FreeMonoBold.ttf")],
     ),
 ]
 
+# The output frame. 1080p by default; `--size` overrides it for a 4K or 6K
+# master, and `--supersample` is read relative to whatever this is.
 OUT_W, OUT_H = 1920, 1080
 
 # How many grid rasters to keep. Small on purpose — see the loop in `main`.
@@ -157,15 +219,16 @@ def load_faces(px: int) -> list[Face]:
     from fontTools.ttLib import TTFont
 
     faces: list[Face] = []
-    for regular, bold in FONT_CHAIN:
-        if not regular.exists():
+    for regular_paths, bold_paths in FONT_CHAIN:
+        regular = next((p for p in regular_paths if p.exists()), None)
+        if regular is None:
             continue
         covers: set[int] = set()
         tt = TTFont(str(regular), lazy=True)
         for table in tt["cmap"].tables:
             covers |= set(table.cmap.keys())
         tt.close()
-        bold_path = bold if bold.exists() else regular
+        bold_path = next((p for p in bold_paths if p.exists()), regular)
         faces.append(
             Face(
                 regular=ImageFont.truetype(str(regular), px),
@@ -176,7 +239,7 @@ def load_faces(px: int) -> list[Face]:
     if not faces:
         sys.exit(
             "render-deck-film: no usable font. Expected the brand face at "
-            f"{FONT_CHAIN[0][0].relative_to(REPO)}"
+            f"{FONT_CHAIN[0][0][0].relative_to(REPO)}"
         )
     return faces
 
@@ -327,8 +390,13 @@ class Rasteriser:
     ) -> None:
         font = face.font(bold)
         advance = font.getlength(ch) or self.cell_w
+        # A wide (East Asian W/F) glyph owns two cells: the deck's buffer
+        # leaves a continuation space after it, so centring over both keeps
+        # the glyph where a terminal would draw it rather than spilling it
+        # half a cell to the left of its column.
+        span = self.cell_w * (2 if unicodedata.east_asian_width(ch) in "WF" else 1)
         draw.text(
-            (left + (self.cell_w - advance) / 2, baseline),
+            (left + (span - advance) / 2, baseline),
             ch,
             font=font,
             fill=fg,
@@ -388,6 +456,7 @@ def ffmpeg_bin() -> str:
 
 
 def main() -> None:
+    global OUT_W, OUT_H
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("film", type=Path, help="the .jsonl written by deck_film")
     ap.add_argument("-o", "--out", type=Path, required=True, help="output .mp4")
@@ -407,6 +476,18 @@ def main() -> None:
     # one, since the wide shots have the least detail per pixel.
     ap.add_argument("--crf", type=int, default=24, help="x264 quality (lower is better)")
     ap.add_argument(
+        "--size",
+        default=f"{OUT_W}x{OUT_H}",
+        help="output frame, WxH (default 1920x1080; 3840x2160 and 6144x3456 are "
+        "the 4K and 6K 16:9 masters). The raster scales with it, so a 6K render "
+        "at --supersample 2.5 is a 15K-wide raster per grid — use ~1.6 there.",
+    )
+    ap.add_argument(
+        "--preset",
+        default="slow",
+        help="x264 preset; `medium` roughly halves a 6K encode's wall clock",
+    )
+    ap.add_argument(
         "--poster",
         type=Path,
         help="also write this frame as a still (a `poster` for the <video>)",
@@ -420,6 +501,14 @@ def main() -> None:
         "and for cutting social stills), named <out-stem>-<index>.png",
     )
     args = ap.parse_args()
+
+    try:
+        w, h = (int(n) for n in args.size.lower().split("x"))
+    except ValueError:
+        sys.exit(f"render-deck-film: --size wants WxH, got {args.size!r}")
+    if w % 2 or h % 2 or w < 2 or h < 2:
+        sys.exit("render-deck-film: --size must be even on both axes (yuv420p)")
+    OUT_W, OUT_H = w, h
 
     stills = (
         {int(n) for n in args.stills.split(",") if n.strip()} if args.stills else set()
@@ -468,7 +557,7 @@ def main() -> None:
             "-f", "rawvideo", "-pix_fmt", "rgb24",
             "-s", f"{OUT_W}x{OUT_H}", "-r", str(fps), "-i", "-",
             "-an",                       # no audio track at all
-            "-c:v", "libx264", "-profile:v", "high", "-preset", "slow",
+            "-c:v", "libx264", "-profile:v", "high", "-preset", args.preset,
             "-crf", str(args.crf), "-pix_fmt", "yuv420p",
             "-movflags", "+faststart",
             str(args.out),

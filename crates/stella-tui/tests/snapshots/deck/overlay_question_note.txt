@@ -6,15 +6,12 @@
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
 └─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
      model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
-     ⚒ search_code trigger
+     ⚒ write_file apps/api/routes/v1/automations.ts
      returns: wire automations triggers API → lead inbox
 └─ ◆ sub:ci  subagent · running                                                                                                                             5:12
      model glm-5.2-air · ctx 3.0k/200k · spend $0.00
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
     memory  event-log REPL                                                                                                                90 tok
     ⋯ ctrl+o for provenance and budget
@@ -26,18 +23,21 @@
 ☰  plan  4/7  ·  Wire the triggers API
 
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-                                          ┌ question ───────────────────────────────────── ⏎ save note · esc discard ┐
- │ ⊙ apps/app/automations/page.tsx        │from the `research-child` sub-agent                                       │
- │ ⎿ 312 lines                            │                                                                          │                       42ms
-                                          │Which auth should the new endpoint use?                                   │
-☰  plan  5/7  ·  Workflows canvas         │                                                                          │
-                                          │  [ ] Session cookie — Matches the rest of the app                        │
-⏸ plan  Refactor the automations store int│  [x] Bearer token                                                        │
-                                          │  [ ] Type your own answer                                                │
-                                          │                                                                          │
-                                          │  note: only for the admin routes▏                                        │
-                                          └──────────────────────────────────────────────────────────────────────────┘
 
+ │ ⊙ apps/app/automations/page.tsx
+ │ ⎿ 312 lines                                                                                                                               42ms
+                                          ┌ question ───────────────────────────────────── ⏎ save note · esc discard ┐
+ │ ● edit apps/app/automations/page.tsx +4│from the `research-child` sub-agent                                       │
+ │ ⎿                                      │                                                                          │               +4 −1 · 18ms
+ │     10 -  const items = []             │Which auth should the new endpoint use?                                   │
+ │     10 +  const items = useAutomations(│                                                                          │
+ │     11 +  const [q, setQ] = useState(""│  [ ] Session cookie — Matches the rest of the app                        │
+ │     12 +  const filtered = filter(items│  [x] Bearer token                                                        │
+ │     13 +  const onNew = () => open()   │  [ ] Type your own answer                                                │
+                                          │                                                                          │
+☰  plan  5/7  ·  Workflows canvas         │  note: only for the admin routes▏                                        │
+                                          └──────────────────────────────────────────────────────────────────────────┘
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
 
 >>>

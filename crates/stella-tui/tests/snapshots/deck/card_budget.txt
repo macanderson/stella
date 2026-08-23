@@ -6,15 +6,12 @@
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
 └─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
      model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
-     ⚒ search_code trigger
+     ⚒ write_file apps/api/routes/v1/automations.ts
      returns: wire automations triggers API → lead inbox
 └─ ◆ sub:ci  subagent · running                                                                                                                             5:12
      model glm-5.2-air · ctx 3.0k/200k · spend $0.00
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
     memory  event-log REPL                                                                                                                90 tok
     ⋯ ctrl+o for provenance and budget
@@ -30,14 +27,17 @@
  │ ⊙ apps/app/automations/page.tsx
  │ ⎿ 312 lines                                                                                                                               42ms
 
-☰  plan  5/7  ·  Workflows canvas
-
-⏸ plan  Refactor the automations store into a shared┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐
-                                                    │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations()
+ │     11 +  const [q, setQ] = useState("")
+ │     12 +  const filtered = filter(items, q)      ┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐
+ │     13 +  const onNew = () => open()             │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │
                                                     │new cap $                                             │
-                                                    │the cap applies when the driver's budget stream folds │
+☰  plan  5/7  ·  Workflows canvas                   │the cap applies when the driver's budget stream folds │
                                                     └──────────────────────────────────────────────────────┘
-
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
 
 >>>

@@ -6,15 +6,12 @@
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
 └─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
      model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
-     ⚒ search_code trigger
+     ⚒ write_file apps/api/routes/v1/automations.ts
      returns: wire automations triggers API → lead inbox
 └─ ◆ sub:ci  subagent · running                                                                                                                             5:12
      model glm-5.2-air · ctx 3.0k/200k · spend $0.00
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
     memory  event-log REPL                                                                                                                90 tok
     ⋯ ctrl+o for provenance and budget
@@ -23,21 +20,24 @@
 
   Planning the automations cluster: list, editor, triggers, workflows.
 
-☰  plan  4/7  ·  Wire the triggers API              ┌ plan  pending approval · 3 steps  x skip · esc close ┐
-                                                    │Refactor the automations store into a shared worksp…  │
-── EXECUTE ─────────────────────────────────────────│                                                      │────────────────────────────────────────────────────
-                                                    │▸ ○ 1. extract types                                  │
- │ ⊙ apps/app/automations/page.tsx                  │  ○ 2. move hooks                                     │
- │ ⎿ 312 lines                                      │  ○ 3. update 9 imports                               │                                 42ms
-                                                    │                                                      │
-☰  plan  5/7  ·  Workflows canvas                   │repo      macanderson/web-app ⎇ feat/automations-store│
-                                                    │write     packages/automations/** · apps/app/automatio│
-⏸ plan  Refactor the automations store into a shared│read      apps/** · packages/**  (2 globs)            │
-                                                    │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │
-                                                    │models    think — · work glm-5.2-air · verify —       │
-                                                    │shell     allowlisted                                 │
-                                                    └──────────────────────────────────────────────────────┘
+☰  plan  4/7  ·  Wire the triggers API
 
+── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                    ┌ plan  pending approval · 3 steps  x skip · esc close ┐
+ │ ⊙ apps/app/automations/page.tsx                  │Refactor the automations store into a shared worksp…  │
+ │ ⎿ 312 lines                                      │                                                      │                                 42ms
+                                                    │▸ ○ 1. extract types                                  │
+ │ ● edit apps/app/automations/page.tsx +4 -1       │  ○ 2. move hooks                                     │
+ │ ⎿                                                │  ○ 3. update 9 imports                               │                         +4 −1 · 18ms
+ │     10 -  const items = []                       │                                                      │
+ │     10 +  const items = useAutomations()         │repo      macanderson/web-app ⎇ feat/automations-store│
+ │     11 +  const [q, setQ] = useState("")         │write     packages/automations/** · apps/app/automatio│
+ │     12 +  const filtered = filter(items, q)      │read      apps/** · packages/**  (2 globs)            │
+ │     13 +  const onNew = () => open()             │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │
+                                                    │models    think — · work glm-5.2-air · verify —       │
+☰  plan  5/7  ·  Workflows canvas                   │shell     allowlisted                                 │
+                                                    └──────────────────────────────────────────────────────┘
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
 
 >>>

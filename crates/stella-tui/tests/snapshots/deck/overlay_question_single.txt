@@ -6,15 +6,12 @@
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
 └─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
      model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
-     ⚒ search_code trigger
+     ⚒ write_file apps/api/routes/v1/automations.ts
      returns: wire automations triggers API → lead inbox
 └─ ◆ sub:ci  subagent · running                                                                                                                             5:12
      model glm-5.2-air · ctx 3.0k/200k · spend $0.00
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
     memory  event-log REPL                                                                                                                90 tok
     ⋯ ctrl+o for provenance and budget
@@ -28,16 +25,19 @@
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
  │ ⊙ apps/app/automations/page.tsx
- │ ⎿ 312 lines                            ┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐                       42ms
-                                          │from the `research-child` sub-agent                                       │
-☰  plan  5/7  ·  Workflows canvas         │                                                                          │
-                                          │Which auth should the new endpoint use?                                   │
-⏸ plan  Refactor the automations store int│                                                                          │
-                                          │▸ [ ] Session cookie — Matches the rest of the app                        │
-                                          │  [ ] Bearer token                                                        │
-                                          │  [ ] Type your own answer                                                │
-                                          └──────────────────────────────────────────────────────────────────────────┘
+ │ ⎿ 312 lines                                                                                                                               42ms
 
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                      ┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐               +4 −1 · 18ms
+ │     10 -  const items = []             │from the `research-child` sub-agent                                       │
+ │     10 +  const items = useAutomations(│                                                                          │
+ │     11 +  const [q, setQ] = useState(""│Which auth should the new endpoint use?                                   │
+ │     12 +  const filtered = filter(items│                                                                          │
+ │     13 +  const onNew = () => open()   │▸ [ ] Session cookie — Matches the rest of the app                        │
+                                          │  [ ] Bearer token                                                        │
+☰  plan  5/7  ·  Workflows canvas         │  [ ] Type your own answer                                                │
+                                          └──────────────────────────────────────────────────────────────────────────┘
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
 
 >>>

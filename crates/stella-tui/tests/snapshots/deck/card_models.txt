@@ -6,38 +6,38 @@
  SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
 └─ ◆ sub:auth  subagent · needs input                                                                                                                       5:12
      model glm-5.2 · ctx 5.1k/200k · spend $0.01 · scope apps/api/routes/v1/**
-     ⚒ search_code trigger
+     ⚒ write_file apps/api/routes/v1/automations.ts
      returns: wire automations triggers API → lead inbox
 └─ ◆ sub:ci  subagent · running                                                                                                                             5:12
      model glm-5.2-air · ctx 3.0k/200k · spend $0.00
      ⚒ no tool calls yet
      returns: watch CI + open PR → lead inbox
-── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-
-◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
     symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
     memory  event-log REPL                                                                                                                90 tok
     ⋯ ctrl+o for provenance and budget
 
-── PLAN ────────────────────────────────────┌ models  resolved routing ───────────────────────────────── esc close ┐────────────────────────────────────────────
-                                            │session   glm-5.2                                                     │
-  Planning the automations cluster: list, ed│auto      model off · effort on · thinking off                        │
-                                            │                                                                      │
-☰  plan  4/7  ·  Wire the triggers API      │lead      zai/glm-5.2-air                                             │
-                                            │          medium · thinking on · from default_model                   │
-── EXECUTE ─────────────────────────────────│think     z-ai/glm-5.2                                    unassigned  │────────────────────────────────────────────
-                                            │          low · thinking off · from agents.triage.model               │
- │ ⊙ apps/app/automations/page.tsx          │research  zai/glm-5.2-air                                             │
- │ ⎿ 312 lines                              │          low · thinking off · from default_model                     │                         42ms
-                                            │plan      zai/glm-5.2-air                                             │
-☰  plan  5/7  ·  Workflows canvas           │          medium · thinking on · from default_model                   │
-                                            │work      zai/glm-5.2-air                                     served  │
-⏸ plan  Refactor the automations store into │          medium · thinking on · from default_model                   │
-                                            │verify    anthropic/claude-opus-5                         unassigned  │
-                                            │          high  (effort_auto replaced "max") · thinking on            │
-                                            │          from pipeline_verifier_model                                │
-                                            └──────────────────────────────────────────────────────────────────────┘
+── PLAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
+  Planning the automations cluster: list, editor, triggers, workflows.
+                                            ┌ models  resolved routing ───────────────────────────────── esc close ┐
+☰  plan  4/7  ·  Wire the triggers API      │session   glm-5.2                                                     │
+                                            │auto      model off · effort on · thinking off                        │
+── EXECUTE ─────────────────────────────────│                                                                      │────────────────────────────────────────────
+                                            │lead      zai/glm-5.2-air                                             │
+ │ ⊙ apps/app/automations/page.tsx          │          medium · thinking on · from default_model                   │
+ │ ⎿ 312 lines                              │think     z-ai/glm-5.2                                    unassigned  │                         42ms
+                                            │          low · thinking off · from agents.triage.model               │
+ │ ● edit apps/app/automations/page.tsx +4 -│research  zai/glm-5.2-air                                             │
+ │ ⎿                                        │          low · thinking off · from default_model                     │                 +4 −1 · 18ms
+ │     10 -  const items = []               │plan      zai/glm-5.2-air                                             │
+ │     10 +  const items = useAutomations() │          medium · thinking on · from default_model                   │
+ │     11 +  const [q, setQ] = useState("") │work      zai/glm-5.2-air                                     served  │
+ │     12 +  const filtered = filter(items, │          medium · thinking on · from default_model                   │
+ │     13 +  const onNew = () => open()     │verify    anthropic/claude-opus-5                         unassigned  │
+                                            │          high  (effort_auto replaced "max") · thinking on            │
+☰  plan  5/7  ·  Workflows canvas           │          from pipeline_verifier_model                                │
+                                            └──────────────────────────────────────────────────────────────────────┘
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
 
 
 >>>
