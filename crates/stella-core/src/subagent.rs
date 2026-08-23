@@ -830,6 +830,13 @@ impl Engine<'_> {
         let seeded = messages.len();
 
         let child_events = child_sender(events.clone(), spec.agent_id.clone(), tally.clone());
+        // A call may never be granted more than what is left of the ceiling the
+        // whole child runs under (#4488).
+        carve.set_task_deadline(bounded_by_ceiling(
+            carve.task_deadline(),
+            self.config.tool_timeout,
+            std::time::Instant::now(),
+        ));
         // The carve is handed to the turn through a guard that settles it on
         // DROP, not on return (#1850). `settle_child` used to be a statement
         // after the await, so any exit that was not a return skipped it: a
@@ -956,6 +963,48 @@ impl CommittedTally {
 
     fn cost_usd(&self) -> f64 {
         *self.cost_usd.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+
+/// What a child must keep in hand after its deadline trips: abort at the step
+/// boundary, assemble the report, close the bracket (#4488).
+///
+/// The number's requirement is only that it be strictly positive and small
+/// against the ceiling, so the child always reaches its own deadline before
+/// the engine's dispatch ceiling reaches the tool. Thirty seconds is generous
+/// for work that is pure local computation with no model call left in it.
+const CEILING_RESERVE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The wall clock this child may spend, given what it inherited and the
+/// dispatch ceiling its whole run sits under.
+///
+/// # The defect this closes (#4488)
+///
+/// The delegate's ceiling is `EngineConfig::tool_timeout` (15 minutes), and
+/// the per-call bound underneath it is `model_timeout` — which measures
+/// **silence**, not elapsed time. So a stream that dribbles a fragment every
+/// few seconds re-arms the idle bound forever, consumes the entire ceiling
+/// with one call, and is abandoned by `execute_with_repair` with nothing
+/// salvaged: the child never got to decide anything, because nothing inside it
+/// knew what its outer ceiling was.
+///
+/// A task deadline is what the engine already bounds a dispatch by
+/// (`step::deadline_bounded_generation`, #2021), and it is a wall clock rather
+/// than an idle gap — so deriving one from the ceiling makes the child see its
+/// own limit first and report the call as timed out. The reserve is what keeps
+/// "first" true rather than a coin flip at the same instant.
+///
+/// The tighter of the two always wins, so a parent already racing a deadline
+/// never hands a child more time than the parent itself has.
+fn bounded_by_ceiling(
+    inherited: Option<std::time::Instant>,
+    ceiling: Option<std::time::Duration>,
+    now: std::time::Instant,
+) -> Option<std::time::Instant> {
+    let from_ceiling = ceiling.map(|ceiling| now + ceiling.saturating_sub(CEILING_RESERVE));
+    match (inherited, from_ceiling) {
+        (Some(inherited), Some(from_ceiling)) => Some(inherited.min(from_ceiling)),
+        (only, None) | (None, only) => only,
     }
 }
 
