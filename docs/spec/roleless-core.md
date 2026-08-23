@@ -292,11 +292,17 @@ published-numbers call #3870 reserves for a maintainer; it lands with slice 6,
 where the Python stops writing the keys. Until then both doors name the keys out
 loud, which is the half that ends the silence without spending a number.
 
-Note the #1147 protection the constraint above cites — "a posture naming a
-verifier that does not resolve refuses the run" — **no longer exists on any
-branch**: it lived in `stella-pipeline` and went in #3865, leaving
-`Config::engine_settings_trusted` set by two call sites and read by none.
-Nothing was regressed here; the gap predates this slice and is filed separately.
+Note that the #1147 protection the constraint above cites — "a posture naming a
+verifier that does not resolve refuses the run" — no longer guards a *verifier*
+pin: that one lived in `stella-pipeline` and went with the crate in #3865, and
+there is no verifier role for a posture to pin any more (#3908). The
+published-claim property it protected survived, and #3937 re-armed it at the pin
+that still exists: under a trusted engine posture a `seat_models` entry that
+cannot be built refuses the run rather than riding the session's model
+(`agent::seats::EnginePosture`, consulted by `subagent::install_for_session`).
+So `Config::engine_settings_trusted` is read again, and a harness posture whose
+pinned seat does not resolve fails loudly instead of publishing a number under a
+digest it does not describe.
 
 ### Slice 5 — the settings UI becomes a seat list (gap D)
 

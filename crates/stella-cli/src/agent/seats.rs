@@ -133,20 +133,24 @@ impl std::fmt::Debug for SeatProviders {
 /// - a provider whose credential did not discover,
 /// - an adapter that failed to build.
 ///
-/// A skipped seat falls back to the session's model, which is the same answer
-/// an unassigned seat gets. That is deliberate and it is the *only* safe
-/// direction: the alternative — refusing the session because one seat could not
-/// be built — would let a stale line in a settings file stop a user working,
-/// and the alternative to *that* — silently substituting some other model —
-/// would spend money on a model nobody chose. Saying so out loud and carrying
-/// on is the third option, and the notices are why the caller can say it.
+/// Under [`EnginePosture::Configured`] a skipped seat falls back to the
+/// session's model, which is the same answer an unassigned seat gets. That is
+/// deliberate and it is the safe direction *for a person at a terminal*: the
+/// alternative — refusing the session because one seat could not be built —
+/// would let a stale line in a settings file stop a user working, and the
+/// alternative to *that* — silently substituting some other model — would
+/// spend money on a model nobody chose. Saying so out loud and carrying on is
+/// the third option, and the notices are why the caller can say it.
+///
+/// Under [`EnginePosture::Trusted`] the same degradation is **wrong**, and the
+/// run is refused instead. See that variant for why.
 ///
 /// Returns the plane plus one human-readable notice per skipped seat.
-#[must_use]
 pub(crate) fn resolve_seat_models(
     assignments: &BTreeMap<String, String>,
     configured: &[crate::config::ConfiguredProvider],
-) -> (SeatProviders, Vec<String>) {
+    posture: EnginePosture,
+) -> Result<(SeatProviders, Vec<String>), String> {
     let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
 
     let mut seats = SeatProviders::new();
@@ -188,7 +192,57 @@ pub(crate) fn resolve_seat_models(
         }
     }
 
-    (seats, notices)
+    if posture == EnginePosture::Trusted && !notices.is_empty() {
+        return Err(format!(
+            "the engine config was supplied by the trusted launcher seam, so a seat it pins is \
+             a published claim and may not quietly ride the session's model:\n  {}",
+            notices.join("\n  ")
+        ));
+    }
+
+    Ok((seats, notices))
+}
+
+/// Where the engine config this session runs under came from.
+///
+/// The distinction decides what an unbuildable seat costs, and it is the whole
+/// of #1147. A seat that cannot be built normally falls back to the session's
+/// model with a notice — right for a person at a terminal, whose alternative
+/// is not working at all.
+///
+/// It is wrong for the trusted launcher seam. That seam replaces the engine
+/// config ATOMICALLY, and its contract is that the object is the frozen,
+/// disclosed system under test: a benchmark arm publishes its hash and then
+/// reports numbers against it. A seat the object pins is therefore a PUBLISHED
+/// claim, and degrading it produces a number that misdescribes the posture —
+/// which is worse than a crash, because nothing about the run looks wrong. So
+/// the run is refused and nobody publishes anything.
+///
+/// The refusal itself is not new. It lived in `stella-pipeline` against that
+/// crate's verifier pin, went with the crate in #3865, and left
+/// `Config::engine_settings_trusted` written by two call sites, read by none,
+/// and still carrying a doc comment promising it (#3937). The pinned role it
+/// used to protect is gone (#3908); the published-claim property is not, and
+/// `seat_models` is where it lands now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EnginePosture {
+    /// The engine config came from the settings scope chain — an ordinary
+    /// session, whose seats degrade with a notice.
+    Configured,
+    /// The engine config came from the trusted launcher seam
+    /// (`STELLA_ENGINE_CONFIG_JSON`), whose seats may not degrade.
+    Trusted,
+}
+
+impl EnginePosture {
+    /// The posture a resolved [`crate::config::Config`] is running under.
+    pub(crate) fn of(cfg: &crate::config::Config) -> Self {
+        if cfg.engine_settings_trusted {
+            Self::Trusted
+        } else {
+            Self::Configured
+        }
+    }
 }
 
 /// One installed plugin's declared roles, as the seat list needs them.
@@ -309,7 +363,8 @@ mod tests {
     /// Core must not invent a default for a role it does not understand.
     #[test]
     fn no_assignments_resolves_no_seats() {
-        let (seats, notices) = resolve_seat_models(&BTreeMap::new(), &[]);
+        let (seats, notices) =
+            resolve_seat_models(&BTreeMap::new(), &[], EnginePosture::Configured).unwrap();
         assert_eq!(seats.seats().count(), 0, "resolved: {seats:?}");
         assert!(notices.is_empty(), "{notices:?}");
     }
@@ -323,13 +378,48 @@ mod tests {
             "planner".to_string(),
             "no-such-provider/no-such-model".to_string(),
         )]);
-        let (seats, notices) = resolve_seat_models(&assignments, &[]);
+        let (seats, notices) =
+            resolve_seat_models(&assignments, &[], EnginePosture::Configured).unwrap();
         assert_eq!(seats.seats().count(), 0);
         assert_eq!(notices.len(), 1, "{notices:?}");
         assert!(notices[0].contains("planner"), "{notices:?}");
         assert!(
             notices[0].contains("session's model"),
             "the notice must say what happens instead: {notices:?}"
+        );
+    }
+
+    /// **Witness (#1147, #3937).** The same unbuildable seat that degrades for
+    /// an ordinary session **refuses** one whose engine config came from the
+    /// trusted launcher seam.
+    ///
+    /// Both arms in one test, deliberately: the degrading arm is what makes
+    /// the refusing arm evidence of a decision rather than of a broken
+    /// resolver. Fails on the base commit at the signature —
+    /// `resolve_seat_models` had no posture to be told and no way to refuse,
+    /// which is why `Config::engine_settings_trusted` was written twice, read
+    /// nowhere, and still carrying a doc comment promising this.
+    #[test]
+    fn a_trusted_posture_refuses_the_seat_an_ordinary_session_degrades() {
+        let assignments = BTreeMap::from([(
+            "planner".to_string(),
+            "no-such-provider/no-such-model".to_string(),
+        )]);
+
+        // The control: an ordinary session carries on, on the session's model.
+        let (_, notices) =
+            resolve_seat_models(&assignments, &[], EnginePosture::Configured).unwrap();
+        assert_eq!(notices.len(), 1, "premise: this seat degrades: {notices:?}");
+
+        let refusal = resolve_seat_models(&assignments, &[], EnginePosture::Trusted)
+            .expect_err("a pinned seat that cannot be built must refuse the run");
+        assert!(
+            refusal.contains("planner"),
+            "the refusal names the seat: {refusal}"
+        );
+        assert!(
+            refusal.contains("published claim"),
+            "and says why a frozen posture may not degrade: {refusal}"
         );
     }
 
