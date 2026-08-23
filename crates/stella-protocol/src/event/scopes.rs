@@ -9,13 +9,21 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Whose stage boundary an [`super::AgentEvent::Stage`] reports (#3398).
+// Referenced only by the intra-doc links below — the same `cfg(doc)`
+// treatment as `payload.rs`, and for the same reason: spelling the links
+// `[`AgentEvent::X`](super::AgentEvent::X)` would leak a Rust module path
+// into the published wire contract, because schemars exports these doc
+// comments verbatim as the `description` in `docs/wire/` (#3461).
+#[cfg(doc)]
+use super::AgentEvent;
+
+/// Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).
 ///
 /// Deliberately **not** `#[serde(default)]`. A default would silently claim
 /// one scope for every historical recording, and half of them are the other
 /// one — a decode ambiguity that would live in the fixtures forever. A
 /// recording written before this field existed decodes through
-/// [`super::AgentEvent::Unknown`] instead, which says "I do not know what this is"
+/// [`AgentEvent::Unknown`] instead, which says "I do not know what this is"
 /// rather than guessing wrong.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -33,7 +41,7 @@ pub enum StageScope {
 /// forbids, L-E1).
 ///
 /// This is deliberately no longer the same thing as "every stage a turn can
-/// have". [`crate::StageName`] is what [`super::AgentEvent::Stage`] carries, and it is
+/// have". [`crate::StageName`] is what [`AgentEvent::Stage`] carries, and it is
 /// open: a stage a plugin contributed has a name here that this enum does not
 /// and should not know (`doc:roleless-core`). Staying closed is what keeps this
 /// type useful to the consumers that genuinely need a fixed set — the
@@ -112,7 +120,7 @@ pub enum BudgetMode {
     Enforced,
 }
 
-/// Which budget limit a [`super::AgentEvent::BudgetDenied`] tripped — mirrors
+/// Which budget limit a [`AgentEvent::BudgetDenied`] tripped — mirrors
 /// `stella-core::budget::BudgetAxis` (kept separate so `stella-protocol`
 /// never depends on `stella-core`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,7 +133,7 @@ pub enum BudgetScope {
     Session,
 }
 
-/// What kind of policy-plane decision a [`super::AgentEvent::PolicyDecision`]
+/// What kind of policy-plane decision a [`AgentEvent::PolicyDecision`]
 /// records (receipts spec §6.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -142,7 +150,7 @@ pub enum PolicyKind {
 }
 
 /// Which authority held a workspace's steering back
-/// ([`super::AgentEvent::SteeringWithheld`], #2302/#3616).
+/// ([`AgentEvent::SteeringWithheld`], #2302/#3616).
 ///
 /// Two causes resolve one refusal, and they are not interchangeable: they have
 /// different remedies, and one of them the user cannot lift at all. A harness

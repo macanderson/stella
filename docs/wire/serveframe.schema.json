@@ -1656,7 +1656,7 @@
       ]
     },
     "BudgetScope": {
-      "description": "Which budget limit a [`super::AgentEvent::BudgetDenied`] tripped — mirrors\n`stella-core::budget::BudgetAxis` (kept separate so `stella-protocol`\nnever depends on `stella-core`).",
+      "description": "Which budget limit a [`AgentEvent::BudgetDenied`] tripped — mirrors\n`stella-core::budget::BudgetAxis` (kept separate so `stella-protocol`\nnever depends on `stella-core`).",
       "oneOf": [
         {
           "const": "turn",
@@ -2986,7 +2986,7 @@
       "type": "object"
     },
     "PolicyKind": {
-      "description": "What kind of policy-plane decision a [`super::AgentEvent::PolicyDecision`]\nrecords (receipts spec §6.4).",
+      "description": "What kind of policy-plane decision a [`AgentEvent::PolicyDecision`]\nrecords (receipts spec §6.4).",
       "oneOf": [
         {
           "const": "evaluated",
@@ -3479,7 +3479,7 @@
       "type": "string"
     },
     "StageScope": {
-      "description": "Whose stage boundary an [`super::AgentEvent::Stage`] reports (#3398).\n\nDeliberately **not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`super::AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
+      "description": "Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).\n\nDeliberately **not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
       "oneOf": [
         {
           "const": "turn",
@@ -4013,7 +4013,7 @@
       "type": "object"
     },
     "Withholder": {
-      "description": "Which authority held a workspace's steering back\n([`super::AgentEvent::SteeringWithheld`], #2302/#3616).\n\nTwo causes resolve one refusal, and they are not interchangeable: they have\ndifferent remedies, and one of them the user cannot lift at all. A harness\nthat folded them together would tell an operator to set a flag they have\nalready set.",
+      "description": "Which authority held a workspace's steering back\n([`AgentEvent::SteeringWithheld`], #2302/#3616).\n\nTwo causes resolve one refusal, and they are not interchangeable: they have\ndifferent remedies, and one of them the user cannot lift at all. A harness\nthat folded them together would tell an operator to set a flag they have\nalready set.",
       "oneOf": [
         {
           "const": "project_untrusted",
