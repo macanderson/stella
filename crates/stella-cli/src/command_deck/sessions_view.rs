@@ -15,6 +15,32 @@ use tokio::sync::mpsc::UnboundedSender;
 use super::{Inbound, chrome_note};
 use crate::config::Config;
 
+/// What a SESSIONS verb needs to know about the process servicing it: the
+/// registry and store it reads, the config a describer builds its provider
+/// from, and which record is this process's own. One borrow, so the deck's
+/// registry verbs carry it as one argument.
+pub(super) struct SessionScope<'a> {
+    pub(super) registry: &'a SessionRegistry,
+    pub(super) store: &'a Option<Arc<Store>>,
+    pub(super) cfg: &'a Config,
+    pub(super) budget_limit: Option<f64>,
+    /// This process's own session record id.
+    pub(super) mine: &'a str,
+    pub(super) workspace: &'a str,
+}
+
+impl SessionScope<'_> {
+    /// The overlay snapshot for this scope.
+    pub(super) fn snapshot(&self) -> Inbound {
+        sessions_inbound(
+            self.registry,
+            self.store.as_deref(),
+            self.mine,
+            self.workspace,
+        )
+    }
+}
+
 /// The SESSIONS overlay snapshot: every registry record mapped to the deck's
 /// [`stella_tui::SessionInfo`], flagging this process's own record and the
 /// rows that can be reopened HERE (no live owner, this workspace, durable
@@ -66,18 +92,15 @@ const DESCRIBE_PER_REFRESH: usize = 6;
 /// never ran a turn has nothing to describe and keeps its summary. The
 /// provider is built in the task, as the skill author does, so the pump holds
 /// no reference across the calls.
-pub(super) fn describe_sessions(
-    registry: SessionRegistry,
-    store: Option<Arc<Store>>,
-    cfg: Config,
-    budget_limit: Option<f64>,
-    mine: String,
-    workspace: String,
-    in_tx: UnboundedSender<Inbound>,
-) {
-    let Some(store) = store else {
+pub(super) fn describe_sessions(scope: &SessionScope<'_>, in_tx: UnboundedSender<Inbound>) {
+    let Some(store) = scope.store.clone() else {
         return;
     };
+    let registry = scope.registry.clone();
+    let cfg = scope.cfg.clone();
+    let budget_limit = scope.budget_limit;
+    let mine = scope.mine.to_string();
+    let workspace = scope.workspace.to_string();
     let pending: Vec<_> = registry
         .list()
         .into_iter()
