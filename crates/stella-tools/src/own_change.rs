@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! A mutating call's **own reading** of what it changed — the diff `write_file`
-//! and `edit_file` compute from the bytes they read and the bytes they wrote.
+//! A mutating call's **own reading** of what it changed — the diff
+//! `write_file`, `edit_file` and `delete_file` compute from the bytes they
+//! read and the bytes they left.
 //!
 //! # Why the work-tree measurement is not enough
 //!
@@ -24,9 +25,10 @@
 //!   to take.
 //!
 //! `write_file` and `edit_file` hold both sides of every change they make: the
-//! content they were handed, and the content they read before replacing it. A
-//! diff over those two is a measurement of the bytes, not an inference from
-//! the arguments (the #2290 defect the counts contract forbids — a tool's
+//! content they were handed, and the content they read before replacing it.
+//! `delete_file` holds one side and knows the other is empty. A diff over
+//! those two is a measurement of the bytes, not an inference from the
+//! arguments (the #2290 defect the counts contract forbids — a tool's
 //! *arguments* are a request, and these are the bytes that landed). So the
 //! tools report it, and the turn's measurer publishes it for any path the
 //! tree reading did not cover. Where the snapshot *did* see the path, its
@@ -73,12 +75,14 @@ pub struct OwnChange {
     pub diff: String,
 }
 
-/// Whether the call created the path or changed one that was there.
+/// Whether the call created the path, changed one that was there, or removed
+/// it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OwnChangeKind {
     Created,
     Modified,
+    Deleted,
 }
 
 /// Diff `before` against `after` for `path`.
@@ -99,6 +103,26 @@ pub fn own_change(path: &str, before: Option<&str>, after: &str) -> OwnChange {
         kind,
         // Counts are `usize` in the differ and `u32` on the wire; a file with
         // more than four billion lines is not a file this tool writes.
+        added: u32::try_from(diff.added).unwrap_or(u32::MAX),
+        removed: u32::try_from(diff.removed).unwrap_or(u32::MAX),
+        diff: patch_text(path, kind, &diff),
+    }
+}
+
+/// The removal of `path`, whose content was `before`.
+///
+/// Its own constructor rather than a `None` for `after`, because the two ends
+/// are not symmetric: a deletion always has a before and never has an after,
+/// so [`own_change`]'s `Option` would have to grow a second one that no
+/// caller could pass both of. The diff is all-red, headed `--- a/path` /
+/// `+++ /dev/null` — the git spelling every consumer keys "deleted file" on.
+#[must_use]
+pub fn own_delete(path: &str, before: &str) -> OwnChange {
+    let kind = OwnChangeKind::Deleted;
+    let diff = stella_diff::unified_diff(before, "", CONTEXT);
+    OwnChange {
+        path: path.to_string(),
+        kind,
         added: u32::try_from(diff.added).unwrap_or(u32::MAX),
         removed: u32::try_from(diff.removed).unwrap_or(u32::MAX),
         diff: patch_text(path, kind, &diff),
@@ -141,14 +165,17 @@ fn patch_text(path: &str, kind: OwnChangeKind, diff: &stella_diff::Diff) -> Stri
 
     let mut out = String::new();
     match kind {
-        OwnChangeKind::Created => {
-            out.push_str("--- /dev/null\n");
-        }
-        OwnChangeKind::Modified => {
+        OwnChangeKind::Created => out.push_str("--- /dev/null\n"),
+        OwnChangeKind::Modified | OwnChangeKind::Deleted => {
             let _ = writeln!(out, "--- a/{path}");
         }
     }
-    let _ = writeln!(out, "+++ b/{path}");
+    match kind {
+        OwnChangeKind::Deleted => out.push_str("+++ /dev/null\n"),
+        OwnChangeKind::Created | OwnChangeKind::Modified => {
+            let _ = writeln!(out, "+++ b/{path}");
+        }
+    }
     for hunk in &diff.hunks {
         out.push_str(&hunk.header());
         out.push('\n');
@@ -173,6 +200,7 @@ pub fn file_change(change: OwnChange) -> stella_protocol::AgentEvent {
         kind: match change.kind {
             OwnChangeKind::Created => stella_protocol::FileChangeKind::Created,
             OwnChangeKind::Modified => stella_protocol::FileChangeKind::Modified,
+            OwnChangeKind::Deleted => stella_protocol::FileChangeKind::Deleted,
         },
         added: change.added,
         removed: change.removed,
@@ -262,6 +290,29 @@ mod tests {
                 .starts_with("--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,7 +1,7 @@\n")
         );
         assert!(change.diff.contains("\n-d\n+D\n"), "{}", change.diff);
+    }
+
+    /// A deletion is all-red and headed `/dev/null` on the NEW side — the
+    /// mirror of a creation, and the git spelling every consumer keys
+    /// "deleted file" on.
+    #[test]
+    fn a_deleted_file_is_an_all_red_diff_to_dev_null() {
+        let change = own_delete("notes/spec.md", "# Spec\n\nbody\n");
+        assert_eq!(change.kind, OwnChangeKind::Deleted);
+        assert_eq!((change.added, change.removed), (0, 3));
+        assert!(
+            change
+                .diff
+                .starts_with("--- a/notes/spec.md\n+++ /dev/null\n@@ -1,3 +0,0 @@\n")
+        );
+        assert!(change.diff.contains("-# Spec\n"));
+        // Past the two header lines — `+++ /dev/null` is one of them — no
+        // line may be an addition.
+        assert!(
+            !change.diff.lines().skip(2).any(|l| l.starts_with('+')),
+            "nothing added: {}",
+            change.diff
+        );
     }
 
     /// An existing empty file is modified, not created: the distinction the
