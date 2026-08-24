@@ -31,6 +31,7 @@ pub mod installed;
 pub mod models_card;
 pub mod plan_card;
 pub mod pulse;
+pub mod seats;
 pub mod sessions;
 pub mod status_bar;
 pub mod status_source;
