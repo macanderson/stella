@@ -47,6 +47,7 @@ use std::path::{Path, PathBuf};
 use stella_core::ports::Principal;
 use stella_plugin::{HookEvent, PluginManifest};
 
+use super::receipt::{self, ConsentState};
 use crate::settings::{Settings, Toggle};
 
 /// The manifest file inside a plugin directory.
@@ -118,9 +119,20 @@ pub(crate) struct InstalledPlugin {
     pub(crate) dir: PathBuf,
     /// The tier it was found in.
     pub(crate) scope: PluginScope,
+    /// Whether the manifest on disk is still the one a human accepted a grant
+    /// for (#3514). Read from the tier's consent receipts by [`read_tier`];
+    /// [`PluginRoster::compose`] is what acts on it.
+    pub(crate) consent: ConsentState,
 }
 
 impl InstalledPlugin {
+    /// Whether this package may load at all — the one place the consent state
+    /// and the tier are folded into a verdict, so the roster and the notice
+    /// `read_tier` prints cannot disagree about which packages are in force.
+    pub(crate) fn admitted(&self) -> bool {
+        self.consent.admits(self.scope)
+    }
+
     /// The caller a gate sees for anything this plugin does.
     ///
     /// [`Principal::Plugin`], never [`Principal::User`]: a plugin is a third
@@ -179,13 +191,25 @@ impl PluginRoster {
     /// be replaced or removed as a unit, so "this workspace pins a different
     /// build of `vera`" removes the user-scope `vera` entirely rather than
     /// running both.
+    ///
+    /// A package whose manifest is no longer the one a human consented to
+    /// never reaches the roster at all (#3514, [`super::receipt`]) — it is
+    /// dropped here rather than in [`read_tier`] so that `stella plugin
+    /// remove` and `install`'s duplicate-name check, which read a tier
+    /// directly, can still see a package they have to act on. An unremovable
+    /// plugin is the failure mode the loader's uninstall path exists to
+    /// prevent, and refusing to *load* one must not create it.
     pub(crate) fn compose(
         user: Vec<InstalledPlugin>,
         project: Vec<InstalledPlugin>,
         retractions: &BTreeMap<String, Toggle>,
     ) -> Self {
         let mut by_name: BTreeMap<String, InstalledPlugin> = BTreeMap::new();
-        for plugin in user.into_iter().chain(project) {
+        for plugin in user
+            .into_iter()
+            .chain(project)
+            .filter(InstalledPlugin::admitted)
+        {
             // `insert` overwrites, and the project tier is iterated second, so
             // the higher scope replaces the lower one whole.
             by_name.insert(plugin.manifest.name.clone(), plugin);
@@ -445,13 +469,24 @@ pub(crate) fn read_tier(
 
     let mut found: Vec<InstalledPlugin> = Vec::new();
     for path in dirs {
-        match load_manifest(&path) {
-            Ok(Some(manifest)) => {
+        match read_manifest(&path) {
+            Ok(Some((manifest, text))) => {
                 note_identity_surprises(&path, &manifest, &found, notices);
+                // The consent transaction, re-checked on every load (#3514).
+                // Said out loud when it withholds the package, on
+                // `read_project_tier`'s reasoning: a plugin that vanishes with
+                // no message is indistinguishable from a broken one, and this
+                // is the case where the user is certain they installed
+                // something.
+                let consent = receipt::check(dir, scope, &path, &manifest.name, text.as_bytes());
+                if let Some(notice) = consent.notice(scope, &manifest.name, &path) {
+                    notices.push(notice);
+                }
                 found.push(InstalledPlugin {
                     manifest,
                     dir: path,
                     scope,
+                    consent,
                 });
             }
             Ok(None) => {}
@@ -510,15 +545,26 @@ fn note_identity_surprises(
 /// Parse one plugin directory's manifest. `Ok(None)` = no `plugin.toml`, so
 /// this directory is not a plugin at all.
 pub(crate) fn load_manifest(dir: &Path) -> Result<Option<PluginManifest>, String> {
+    Ok(read_manifest(dir)?.map(|(manifest, _)| manifest))
+}
+
+/// [`load_manifest`], keeping the bytes it parsed.
+///
+/// The text is what a consent receipt digests (#3514, [`super::receipt`]), and
+/// it is returned rather than re-read so that "the manifest that was parsed"
+/// and "the manifest that was digested" cannot be two different reads of a
+/// file a third party's process is free to rewrite between them.
+pub(crate) fn read_manifest(dir: &Path) -> Result<Option<(PluginManifest, String)>, String> {
     let path = dir.join(MANIFEST_FILE);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
-    PluginManifest::from_toml_str(&text)
-        .map(Some)
-        .map_err(|error| format!("{} did not load: {error}", path.display()))
+    match PluginManifest::from_toml_str(&text) {
+        Ok(manifest) => Ok(Some((manifest, text))),
+        Err(error) => Err(format!("{} did not load: {error}", path.display())),
+    }
 }
 
 #[cfg(test)]
@@ -547,6 +593,7 @@ mod tests {
             manifest: wired(name),
             dir: PathBuf::from("/ws/.stella/plugins").join(name),
             scope,
+            consent: ConsentState::Receipted,
         }
     }
 
@@ -684,6 +731,7 @@ mod tests {
             ),
             dir: PathBuf::from("/ws/.stella/plugins/quiet"),
             scope: PluginScope::Project,
+            consent: ConsentState::Receipted,
         };
         let roster = PluginRoster::compose(Vec::new(), vec![plugin], &BTreeMap::new());
         assert_eq!(roster.plugins().len(), 1);
@@ -810,6 +858,7 @@ mod tests {
             ),
             dir: PathBuf::from("/ws/.stella/plugins/watch"),
             scope: PluginScope::Project,
+            consent: ConsentState::Receipted,
         };
         assert_eq!(
             plugin.manifest.loop_grant.participation,
