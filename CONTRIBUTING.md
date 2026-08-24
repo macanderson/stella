@@ -106,6 +106,7 @@ python3 ./scripts/check-css-vars.py
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --keep-going
+make doc-warnings-schema
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ./scripts/check-tool-docs.sh

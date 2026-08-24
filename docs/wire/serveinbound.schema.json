@@ -1,162 +1,111 @@
 {
   "$defs": {
-    "EngineOverrides": {
-      "$defs": {
-        "GenerationParams": {
-          "description": "Optional sampling/routing parameter overrides riding a\n[`CompletionRequest`]. Every field is independently optional —\n\"include\" semantics: `None` leaves the provider's own default in place,\n`Some` puts the value on the wire. Each adapter forwards the subset its\ndialect supports and silently drops the rest (a param the provider\ncan't express must never fail the request).",
-          "properties": {
-            "frequency_penalty": {
-              "description": "Penalize tokens by their frequency in the text so far.",
-              "format": "float",
-              "type": [
-                "number",
-                "null"
-              ]
+    "CompletionResult": {
+      "description": "The result of a completion.",
+      "properties": {
+        "cost_usd": {
+          "description": "Estimated provider cost in USD (0 for on-device/local).",
+          "format": "double",
+          "type": "number"
+        },
+        "finish_reason": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FinishReason"
             },
-            "presence_penalty": {
-              "description": "Penalize tokens that have appeared at all in the text so far.",
-              "format": "float",
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "repetition_penalty": {
-              "description": "Multiplicative repetition penalty (>1 discourages, <1 encourages).",
-              "format": "float",
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "seed": {
-              "description": "Random seed for deterministic outputs, where supported.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "service_tier": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ServiceTier"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Which capacity tier to route to ([`ServiceTier`])."
-            },
-            "top_k": {
-              "description": "Limit sampling to the k highest-probability tokens.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": [
-                "integer",
-                "null"
-              ]
-            },
-            "top_p": {
-              "description": "Nucleus sampling: cumulative-probability cutoff.",
-              "format": "float",
-              "type": [
-                "number",
-                "null"
-              ]
-            },
-            "verbosity": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/Verbosity"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "How much detail to ask for ([`Verbosity`])."
+            {
+              "type": "null"
             }
+          ],
+          "default": null,
+          "description": "Why generation stopped, when the adapter can determine it. `None` when\nthe provider doesn't report it. `serde(default)` so envelopes\nserialized before this field existed still parse."
+        },
+        "model": {
+          "description": "Concrete model id/slug that produced the result, resolved from the\ncatalog — never a literal at the call site.",
+          "type": "string"
+        },
+        "text": {
+          "default": "",
+          "description": "The answer text, assembled from the stream. Empty when the model\nonly made tool calls.",
+          "type": "string"
+        },
+        "tool_calls": {
+          "description": "Tool calls the model requested, in the order it made them.",
+          "items": {
+            "$ref": "#/$defs/ToolCall"
           },
-          "type": "object"
+          "type": "array"
         },
-        "ReasoningEffort": {
-          "description": "Reasoning effort forwarded to models with a thinking/extended-reasoning\nmode. One enum, mapped per-adapter to the provider's own parameter name\n(\"reasoning_param\").",
-          "oneOf": [
-            {
-              "const": "low",
-              "description": "Least thinking — cheapest and fastest.",
-              "type": "string"
-            },
-            {
-              "const": "medium",
-              "description": "The middle setting most adapters treat as their default.",
-              "type": "string"
-            },
-            {
-              "const": "high",
-              "description": "More thinking, for harder steps.",
-              "type": "string"
-            },
-            {
-              "const": "xhigh",
-              "description": "Above `High`, where the provider exposes a fourth level.",
-              "type": "string"
-            },
-            {
-              "const": "max",
-              "description": "The provider's ceiling.",
-              "type": "string"
-            }
+        "upstream_provider": {
+          "description": "The upstream that actually served this call, when the endpoint is a\n*gateway* that routes to somebody else's silicon and names it in the\nresponse (OpenRouter's top-level `provider`).\n\n`None` on every direct endpoint, where the provider id already answers\n\"who served this?\" — Anthropic-direct is served by Anthropic. Only a\ngateway can make that question unanswerable, and one did: a probe\ncarrying Stella's own attribution asked OpenRouter for\n`anthropic/claude-sonnet-5` and was served by Amazon Bedrock, which no\ntrace could show because the adapter recorded the gateway and threw the\nupstream away. A head-to-head is only controlled if the model\n*provider* is held fixed, so an unrecorded upstream is an uncontrolled\nvariable hiding inside a field that reads as though it were pinned.\n\nIt rides here rather than in [`CompletionUsage`] because usage is a\n`Copy` envelope of counters; this is call metadata, like `model`.",
+          "type": [
+            "string",
+            "null"
           ]
         },
-        "ServiceTier": {
-          "description": "Provider service tier: `Priority` routes to faster paid-tier capacity,\n`Flex` to cheaper capacity with slower response times. Only applied by\nproviders that support tiered service; others use their default tier.",
-          "oneOf": [
-            {
-              "const": "auto",
-              "description": "Let the provider pick the tier.",
-              "type": "string"
-            },
-            {
-              "const": "default",
-              "description": "The account's standard tier.",
-              "type": "string"
-            },
-            {
-              "const": "flex",
-              "description": "Cheaper capacity, slower responses.",
-              "type": "string"
-            },
-            {
-              "const": "priority",
-              "description": "Faster paid-tier capacity.",
-              "type": "string"
-            }
-          ]
-        },
-        "Verbosity": {
-          "description": "Response-detail level for providers with a verbosity parameter (OpenAI's\n`text.verbosity`). Adapters whose wire has no equivalent ignore it — the\nsame never-fail contract as [`ReasoningEffort`].",
-          "oneOf": [
-            {
-              "const": "low",
-              "description": "Terse answers.",
-              "type": "string"
-            },
-            {
-              "const": "medium",
-              "description": "The provider's usual level of detail.",
-              "type": "string"
-            },
-            {
-              "const": "high",
-              "description": "Expansive answers.",
-              "type": "string"
-            }
-          ]
+        "usage": {
+          "$ref": "#/$defs/CompletionUsage",
+          "description": "Token accounting for this call ([`CompletionUsage`])."
         }
       },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "usage",
+        "model",
+        "cost_usd"
+      ],
+      "type": "object"
+    },
+    "CompletionUsage": {
+      "description": "Token accounting for a single completion, normalized across providers\ninto one envelope: normalization lives in the adapter, not the caller.",
+      "properties": {
+        "cache_write_tokens": {
+          "default": 0,
+          "description": "Tokens WRITTEN to the provider's prompt cache by this call\n(Anthropic `cache_creation_input_tokens`, Bedrock\n`cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a\nsubset of `input_tokens` — providers report writes separately, and\nfolding them into `input_tokens` would change cost accounting\n(`Pricing::cost_usd` bills them on their own line at the catalog's\n`cache_write_usd_per_mtok`, so folding would double-charge). 0 for providers\nthat never report cache writes (the OpenAI-compatible dialects).\n`serde(default)` so envelopes serialized before this field existed\nstill parse.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cached_input_tokens": {
+          "default": 0,
+          "description": "The subset of `input_tokens` served from the provider's prompt cache\n— billed at the cache-read rate, not the input rate. 0 for providers\nthat never report a cache hit.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "input_tokens": {
+          "description": "Tokens the prompt cost, cache hits included.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_tokens": {
+          "description": "Tokens the model generated.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reasoning_tokens": {
+          "description": "The subset of `output_tokens` the model spent on reasoning, when the\nprovider breaks it out (`completion_tokens_details.reasoning_tokens`\non the OpenAI-compatible dialects, `output_tokens_details` on the\nResponses API).\n\n`None` means NOT REPORTED, and is not the same fact as `Some(0)`.\nAnthropic's Messages API folds thinking into `output_tokens` with no\nbreakdown at all, so every anthropic.rs call records `None` — while a\nreasoning-capable model that genuinely did no thinking on a call\nrecords `Some(0)`. Collapsing the two would report \"this model never\nthinks\" for the entire Anthropic-direct route, which is the same class\nof error as reading an unfilled placeholder column as a measured zero.\n\nAlready inside `output_tokens` for billing on every provider that\nreports it, so it is a diagnostic breakdown and never its own cost\nline.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "reported": {
+          "default": false,
+          "description": "The adapter observed the provider's authoritative usage-bearing\nterminal response. This is explicit because a legitimate call can\nreport all zero counters, while a missing usage frame can accompany\nnon-empty streamed text. Legacy envelopes fail closed.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens"
+      ],
+      "type": "object"
+    },
+    "EngineOverrides": {
       "additionalProperties": false,
       "description": "The caller-policy slice of `EngineConfig`, settable per turn (#1167) as\nthe optional `engine` object on `POST /v1/turns` and\n`POST /v1/sessions/{id}/turns`.\n\nEvery field is independently optional with \"lower onto defaults\" semantics:\n`None` keeps the server's configured default, `Some` overrides it for this\nturn only. What is deliberately **not** here: `retry_policy` and\n`loop_detection` are operator policy — they bound what a single request can\ncost this process, and a caller who could widen them could make a turn\neffectively unbounded — and `max_steps` / `reverse_request_timeout_ms`\nalready ride the request top-level.\n\nUnknown fields are refused rather than ignored: a typoed knob that parses\nis a knob silently *not* honored, the same illegibility the ceilings exist\nto avoid on the other side.\n\nSession note: none of these knobs touch the message transcript, so a\nper-turn override on `POST /v1/sessions/{id}/turns` cannot perturb the\nbyte-stable prompt prefix the session's cache contract depends on.",
       "properties": {
@@ -263,49 +212,218 @@
       "title": "EngineOverrides",
       "type": "object"
     },
-    "ProviderDeltaIn": {
-      "$defs": {
-        "ProviderDelta": {
-          "description": "One streamed fragment of an in-flight model completion.\n\nText and thinking are distinct variants rather than one string because the\ntwo must never be confused downstream: thinking renders as collapsible,\nvisibly-secondary content while answer text is the reply — the same\nseparation `ToolCallObserver` keeps between `text_delta` and\n`reasoning_delta`, carried across the wire.",
-          "oneOf": [
+    "ErrorClass": {
+      "description": "Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is deliberately no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original.",
+      "oneOf": [
+        {
+          "const": "invalid_input",
+          "description": "The call's arguments could not be read as the tool's schema — a\nmissing required field, a wrong type. The model's mistake: it counts\nagainst the prompt/tool menu, never against the tool.",
+          "type": "string"
+        },
+        {
+          "const": "not_found",
+          "description": "The named subject does not exist — an unknown tool, a path or symbol\nthat is not there to operate on.",
+          "type": "string"
+        },
+        {
+          "const": "permission_denied",
+          "description": "The operating environment refused the operation (filesystem\npermissions, containment) — distinct from a *policy* refusal, which\nis [`Self::RefusedByPolicy`].",
+          "type": "string"
+        },
+        {
+          "const": "refused_by_policy",
+          "description": "A policy plane declined the call — an extension deny, a human \"no\",\nan approval that could not be asked. Working as designed, never a\ntool defect.",
+          "type": "string"
+        },
+        {
+          "const": "timeout",
+          "description": "The operation ran out of its time budget.",
+          "type": "string"
+        },
+        {
+          "const": "environment",
+          "description": "The world outside the tool failed it — a network error, a missing\nbinary, a full disk.",
+          "type": "string"
+        },
+        {
+          "const": "internal",
+          "description": "The tool's own defect — our bug, and the class an error-rate ceiling\nis actually about.",
+          "type": "string"
+        },
+        {
+          "const": "other",
+          "description": "A class this reader does not recognize (written by a newer emitter).\nNever constructed by this build's classifiers.",
+          "type": "string"
+        }
+      ]
+    },
+    "FinishReason": {
+      "description": "Why the model stopped generating, normalized across providers. Lets the\nengine tell a natural stop from a truncation (`Length`) so an empty or\ncut-off turn is surfaced to the user instead of being recorded as a clean\ncompletion (the \"turn ends with no feedback\" defect).",
+      "oneOf": [
+        {
+          "const": "stop",
+          "description": "Natural end of the response.",
+          "type": "string"
+        },
+        {
+          "const": "length",
+          "description": "Output was cut off at the token limit (OpenAI-compatible `length`).",
+          "type": "string"
+        },
+        {
+          "const": "tool_calls",
+          "description": "The model stopped in order to make tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "content_filter",
+          "description": "A provider content filter halted generation.",
+          "type": "string"
+        }
+      ]
+    },
+    "GenerationParams": {
+      "description": "Optional sampling/routing parameter overrides riding a\n[`CompletionRequest`]. Every field is independently optional —\n\"include\" semantics: `None` leaves the provider's own default in place,\n`Some` puts the value on the wire. Each adapter forwards the subset its\ndialect supports and silently drops the rest (a param the provider\ncan't express must never fail the request).",
+      "properties": {
+        "frequency_penalty": {
+          "description": "Penalize tokens by their frequency in the text so far.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "presence_penalty": {
+          "description": "Penalize tokens that have appeared at all in the text so far.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "repetition_penalty": {
+          "description": "Multiplicative repetition penalty (>1 discourages, <1 encourages).",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "seed": {
+          "description": "Random seed for deterministic outputs, where supported.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "service_tier": {
+          "anyOf": [
             {
-              "description": "A fragment of user-visible answer text.",
-              "properties": {
-                "kind": {
-                  "const": "text",
-                  "type": "string"
-                },
-                "text": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "text"
-              ],
-              "type": "object"
+              "$ref": "#/$defs/ServiceTier"
             },
             {
-              "description": "A fragment of thinking/chain-of-thought content.",
-              "properties": {
-                "kind": {
-                  "const": "reasoning",
-                  "type": "string"
-                },
-                "text": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "text"
-              ],
-              "type": "object"
+              "type": "null"
             }
+          ],
+          "description": "Which capacity tier to route to ([`ServiceTier`])."
+        },
+        "top_k": {
+          "description": "Limit sampling to the k highest-probability tokens.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
           ]
+        },
+        "top_p": {
+          "description": "Nucleus sampling: cumulative-probability cutoff.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "verbosity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Verbosity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How much detail to ask for ([`Verbosity`])."
         }
       },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object"
+    },
+    "PartialUsage": {
+      "description": "The accounting an adapter had already observed when an attempt died before its terminal usage frame arrived. A mid-stream disconnect is not a total loss of accounting: dialects that report the prompt's cost up front have already delivered exact input, cache-read and cache-write counts by the time generation is cut. Every field is a LOWER BOUND on real spend and never a substitute for a provider-attested total, which is why such a record can never be mistaken for settled accounting.",
+      "properties": {
+        "cost_usd": {
+          "description": "`usage` priced at the serving model's catalog rates, or `0.0` when the\nadapter had no pricing row for the model. Never provider-attested.",
+          "format": "double",
+          "type": "number"
+        },
+        "input_reported": {
+          "default": false,
+          "description": "Whether the input-side counts came from the provider's own frame\nrather than a local estimate. `true` is the common case for\nAnthropic-shaped streams and `false` for the OpenAI-shaped ones, which\nsend usage only at the end — the distinction a reader needs before\ntreating `usage.input_tokens` as fact.",
+          "type": "boolean"
+        },
+        "usage": {
+          "$ref": "#/$defs/CompletionUsage",
+          "description": "Counts observed before the failure. Input-side figures are the\nprovider's own when the dialect front-loads them; `output_tokens` is\nwhatever the last usage frame stated, or an estimate over the text\nthat actually arrived when no such frame did."
+        }
+      },
+      "required": [
+        "usage",
+        "cost_usd"
+      ],
+      "type": "object"
+    },
+    "ProviderDelta": {
+      "description": "One streamed fragment of an in-flight model completion.\n\nText and thinking are distinct variants rather than one string because the\ntwo must never be confused downstream: thinking renders as collapsible,\nvisibly-secondary content while answer text is the reply — the same\nseparation `ToolCallObserver` keeps between `text_delta` and\n`reasoning_delta`, carried across the wire.",
+      "oneOf": [
+        {
+          "description": "A fragment of user-visible answer text.",
+          "properties": {
+            "kind": {
+              "const": "text",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "A fragment of thinking/chain-of-thought content.",
+          "properties": {
+            "kind": {
+              "const": "reasoning",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ProviderDeltaIn": {
       "description": "Host → engine: a batch of streamed fragments for an in-flight\n[`ServerFrame::ProviderRequest`] — the incremental half of a provider\nanswer (#1165), POSTed to `POST /v1/turns/{id}/provider-delta` and keyed by\nthe same `request_id` the terminating [`ProviderResultIn`] answers.\n\nStrictly optional: a host that cannot stream never POSTs one and keeps\nexactly its old behavior. Strictly advisory, with the same contract as\n`ToolCallObserver::text_delta`: the definitive text is the\n`CompletionResult` on the eventual provider result — a retried model call\nre-streams from the start with no reset marker, and consumers replace the\npreview with the authoritative `Text` event when it lands.\n\nA batch rather than one fragment per POST, because a per-token HTTP\nrequest would cost more than the latency it buys: the host accumulates\nwhatever chunking its own stream hands it and flushes on its own cadence.",
       "properties": {
         "deltas": {
@@ -326,398 +444,219 @@
       "title": "ProviderDeltaIn",
       "type": "object"
     },
-    "ProviderResultIn": {
-      "$defs": {
-        "CompletionResult": {
-          "description": "The result of a completion.",
+    "ProviderErrorWire": {
+      "description": "Serializable mirror of [`ProviderError`]'s taxonomy. The host classifies the\nfailure at its adapter (never re-derived here) and sends the class; the\nengine reconstructs a real [`ProviderError`] so its retry logic behaves\nexactly as it would with a local provider.",
+      "oneOf": [
+        {
           "properties": {
-            "cost_usd": {
-              "description": "Estimated provider cost in USD (0 for on-device/local).",
-              "format": "double",
-              "type": "number"
+            "kind": {
+              "const": "transport",
+              "type": "string"
             },
-            "finish_reason": {
+            "message": {
+              "type": "string"
+            },
+            "partial": {
               "anyOf": [
                 {
-                  "$ref": "#/$defs/FinishReason"
+                  "$ref": "#/$defs/PartialUsage"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "default": null,
-              "description": "Why generation stopped, when the adapter can determine it. `None` when\nthe provider doesn't report it. `serde(default)` so envelopes\nserialized before this field existed still parse."
-            },
-            "model": {
-              "description": "Concrete model id/slug that produced the result, resolved from the\ncatalog — never a literal at the call site.",
-              "type": "string"
-            },
-            "text": {
-              "default": "",
-              "description": "The answer text, assembled from the stream. Empty when the model\nonly made tool calls.",
-              "type": "string"
-            },
-            "tool_calls": {
-              "description": "Tool calls the model requested, in the order it made them.",
-              "items": {
-                "$ref": "#/$defs/ToolCall"
-              },
-              "type": "array"
-            },
-            "upstream_provider": {
-              "description": "The upstream that actually served this call, when the endpoint is a\n*gateway* that routes to somebody else's silicon and names it in the\nresponse (OpenRouter's top-level `provider`).\n\n`None` on every direct endpoint, where the provider id already answers\n\"who served this?\" — Anthropic-direct is served by Anthropic. Only a\ngateway can make that question unanswerable, and one did: a probe\ncarrying Stella's own attribution asked OpenRouter for\n`anthropic/claude-sonnet-5` and was served by Amazon Bedrock, which no\ntrace could show because the adapter recorded the gateway and threw the\nupstream away. A head-to-head is only controlled if the model\n*provider* is held fixed, so an unrecorded upstream is an uncontrolled\nvariable hiding inside a field that reads as though it were pinned.\n\nIt rides here rather than in [`CompletionUsage`] because usage is a\n`Copy` envelope of counters; this is call metadata, like `model`.",
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "usage": {
-              "$ref": "#/$defs/CompletionUsage",
-              "description": "Token accounting for this call ([`CompletionUsage`])."
+              "description": "Accounting a host's dying stream had already observed. Carried\nacross the wire so a remote provider loses no more usage than a\nlocal one does; `serde(default)` keeps hosts that predate the\nfield (and the many failures with nothing to report) valid."
             }
           },
           "required": [
-            "usage",
-            "model",
-            "cost_usd"
+            "kind",
+            "message"
           ],
           "type": "object"
         },
-        "CompletionUsage": {
-          "description": "Token accounting for a single completion, normalized across providers\ninto one envelope: normalization lives in the adapter, not the caller.",
+        {
           "properties": {
-            "cache_write_tokens": {
-              "default": 0,
-              "description": "Tokens WRITTEN to the provider's prompt cache by this call\n(Anthropic `cache_creation_input_tokens`, Bedrock\n`cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a\nsubset of `input_tokens` — providers report writes separately, and\nfolding them into `input_tokens` would change cost accounting\n(`Pricing::cost_usd` bills them on their own line at the catalog's\n`cache_write_usd_per_mtok`, so folding would double-charge). 0 for providers\nthat never report cache writes (the OpenAI-compatible dialects).\n`serde(default)` so envelopes serialized before this field existed\nstill parse.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
+            "kind": {
+              "const": "rate_limited",
+              "type": "string"
             },
-            "cached_input_tokens": {
-              "default": 0,
-              "description": "The subset of `input_tokens` served from the provider's prompt cache\n— billed at the cache-read rate, not the input rate. 0 for providers\nthat never report a cache hit.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
+            "message": {
+              "type": "string"
             },
-            "input_tokens": {
-              "description": "Tokens the prompt cost, cache hits included.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "output_tokens": {
-              "description": "Tokens the model generated.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "reasoning_tokens": {
-              "description": "The subset of `output_tokens` the model spent on reasoning, when the\nprovider breaks it out (`completion_tokens_details.reasoning_tokens`\non the OpenAI-compatible dialects, `output_tokens_details` on the\nResponses API).\n\n`None` means NOT REPORTED, and is not the same fact as `Some(0)`.\nAnthropic's Messages API folds thinking into `output_tokens` with no\nbreakdown at all, so every anthropic.rs call records `None` — while a\nreasoning-capable model that genuinely did no thinking on a call\nrecords `Some(0)`. Collapsing the two would report \"this model never\nthinks\" for the entire Anthropic-direct route, which is the same class\nof error as reading an unfilled placeholder column as a measured zero.\n\nAlready inside `output_tokens` for billing on every provider that\nreports it, so it is a diagnostic breakdown and never its own cost\nline.",
+            "retry_after_ms": {
+              "default": null,
               "format": "uint64",
               "minimum": 0,
               "type": [
                 "integer",
                 "null"
               ]
-            },
-            "reported": {
-              "default": false,
-              "description": "The adapter observed the provider's authoritative usage-bearing\nterminal response. This is explicit because a legitimate call can\nreport all zero counters, while a missing usage frame can accompany\nnon-empty streamed text. Legacy envelopes fail closed.",
-              "type": "boolean"
             }
           },
           "required": [
-            "input_tokens",
-            "output_tokens"
+            "kind",
+            "message"
           ],
           "type": "object"
         },
-        "FinishReason": {
-          "description": "Why the model stopped generating, normalized across providers. Lets the\nengine tell a natural stop from a truncation (`Length`) so an empty or\ncut-off turn is surfaced to the user instead of being recorded as a clean\ncompletion (the \"turn ends with no feedback\" defect).",
-          "oneOf": [
-            {
-              "const": "stop",
-              "description": "Natural end of the response.",
-              "type": "string"
-            },
-            {
-              "const": "length",
-              "description": "Output was cut off at the token limit (OpenAI-compatible `length`).",
-              "type": "string"
-            },
-            {
-              "const": "tool_calls",
-              "description": "The model stopped in order to make tool calls.",
-              "type": "string"
-            },
-            {
-              "const": "content_filter",
-              "description": "A provider content filter halted generation.",
-              "type": "string"
-            }
-          ]
-        },
-        "PartialUsage": {
-          "description": "The accounting an adapter had already observed when an attempt died before its terminal usage frame arrived. A mid-stream disconnect is not a total loss of accounting: dialects that report the prompt's cost up front have already delivered exact input, cache-read and cache-write counts by the time generation is cut. Every field is a LOWER BOUND on real spend and never a substitute for a provider-attested total, which is why such a record can never be mistaken for settled accounting.",
+        {
+          "description": "The host's provider is shedding load (HTTP 529). Carried distinctly\nrather than folded into `Transport` because the engine branches on it:\na sustained overload that outlives the inline ladder converts into a\nsupervised parked wait, which `Transport` declines (#2742). A remote\nprovider's brownout must recover exactly as a local one's does.",
           "properties": {
-            "cost_usd": {
-              "description": "`usage` priced at the serving model's catalog rates, or `0.0` when the\nadapter had no pricing row for the model. Never provider-attested.",
-              "format": "double",
-              "type": "number"
+            "kind": {
+              "const": "overloaded",
+              "type": "string"
             },
-            "input_reported": {
-              "default": false,
-              "description": "Whether the input-side counts came from the provider's own frame\nrather than a local estimate. `true` is the common case for\nAnthropic-shaped streams and `false` for the OpenAI-shaped ones, which\nsend usage only at the end — the distinction a reader needs before\ntreating `usage.input_tokens` as fact.",
-              "type": "boolean"
+            "message": {
+              "type": "string"
             },
-            "usage": {
-              "$ref": "#/$defs/CompletionUsage",
-              "description": "Counts observed before the failure. Input-side figures are the\nprovider's own when the dialect front-loads them; `output_tokens` is\nwhatever the last usage frame stated, or an estimate over the text\nthat actually arrived when no such frame did."
+            "partial": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PartialUsage"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Accounting a host's stream had already observed when the overload\nframe arrived in band. `None` for the status-line 529, which never\nopened a stream; `serde(default)` keeps hosts that predate the\nfield valid (#3859)."
+            },
+            "retry_after_ms": {
+              "default": null,
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
             }
           },
           "required": [
-            "usage",
-            "cost_usd"
+            "kind",
+            "message"
           ],
           "type": "object"
         },
-        "ProviderErrorWire": {
-          "description": "Serializable mirror of [`ProviderError`]'s taxonomy. The host classifies the\nfailure at its adapter (never re-derived here) and sends the class; the\nengine reconstructs a real [`ProviderError`] so its retry logic behaves\nexactly as it would with a local provider.",
-          "oneOf": [
-            {
-              "properties": {
-                "kind": {
-                  "const": "transport",
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                },
-                "partial": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/PartialUsage"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Accounting a host's dying stream had already observed. Carried\nacross the wire so a remote provider loses no more usage than a\nlocal one does; `serde(default)` keeps hosts that predate the\nfield (and the many failures with nothing to report) valid."
-                }
-              },
-              "required": [
-                "kind",
-                "message"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "kind": {
-                  "const": "rate_limited",
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                },
-                "retry_after_ms": {
-                  "default": null,
-                  "format": "uint64",
-                  "minimum": 0,
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "kind",
-                "message"
-              ],
-              "type": "object"
-            },
-            {
-              "description": "The host's provider is shedding load (HTTP 529). Carried distinctly\nrather than folded into `Transport` because the engine branches on it:\na sustained overload that outlives the inline ladder converts into a\nsupervised parked wait, which `Transport` declines (#2742). A remote\nprovider's brownout must recover exactly as a local one's does.",
-              "properties": {
-                "kind": {
-                  "const": "overloaded",
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                },
-                "partial": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/PartialUsage"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ],
-                  "description": "Accounting a host's stream had already observed when the overload\nframe arrived in band. `None` for the status-line 529, which never\nopened a stream; `serde(default)` keeps hosts that predate the\nfield valid (#3859)."
-                },
-                "retry_after_ms": {
-                  "default": null,
-                  "format": "uint64",
-                  "minimum": 0,
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                }
-              },
-              "required": [
-                "kind",
-                "message"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "kind": {
-                  "const": "auth",
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "message"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "kind": {
-                  "const": "unknown_model",
-                  "type": "string"
-                },
-                "slug": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "slug"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "kind": {
-                  "const": "malformed",
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "message"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "kind": {
-                  "const": "cancelled",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind"
-              ],
-              "type": "object"
-            },
-            {
-              "description": "The host's provider rejected the request as exceeding the model's\ncontext window — the class the engine's reactive overflow recovery\nkeys on (#2680). Carried distinctly so a remote provider's overflow\nrecovers exactly as a local one's does instead of degrading to\n`Terminal`'s abort.",
-              "properties": {
-                "kind": {
-                  "const": "context_overflow",
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "message"
-              ],
-              "type": "object"
-            },
-            {
-              "description": "The provider refused to fund the requested output ceiling. Carried\nas its own variant rather than folded into `Terminal` because a host\ndriving the engine over the wire must be able to tell a repairable\nrefusal from the end of the turn — the same split the engine-side\nrecovery keys on.",
-              "properties": {
-                "affordable_output_tokens": {
-                  "format": "uint32",
-                  "minimum": 0,
-                  "type": [
-                    "integer",
-                    "null"
-                  ]
-                },
-                "kind": {
-                  "const": "output_budget_exceeded",
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "message"
-              ],
-              "type": "object"
-            },
-            {
-              "properties": {
-                "kind": {
-                  "const": "terminal",
-                  "type": "string"
-                },
-                "message": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "kind",
-                "message"
-              ],
-              "type": "object"
-            }
-          ]
-        },
-        "ToolCall": {
-          "description": "One tool invocation the model requested.",
+        {
           "properties": {
-            "call_id": {
-              "description": "Stable id correlating this call to its eventual `ToolResult`.",
+            "kind": {
+              "const": "auth",
               "type": "string"
             },
-            "input": {
-              "description": "The arguments, as the model produced them. Runtime data: never trust\nthe shape. `stella-tools` validates this against\n[`ToolSchema::input_schema`] at dispatch (`registry/validate.rs`,\n#3144) — required fields, declared types, enums, item types, and\n`additionalProperties: false` where a schema advertises it — and\nrefuses a contradicting call before the tool runs. Tools still read\nfields defensively: a direct caller may bypass the registry."
-            },
-            "name": {
-              "description": "Which tool to run — matches the [`ToolSchema::name`] it was chosen\nfrom.",
+            "message": {
               "type": "string"
             }
           },
           "required": [
-            "call_id",
-            "name",
-            "input"
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "unknown_model",
+              "type": "string"
+            },
+            "slug": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "slug"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "malformed",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "cancelled",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The host's provider rejected the request as exceeding the model's\ncontext window — the class the engine's reactive overflow recovery\nkeys on (#2680). Carried distinctly so a remote provider's overflow\nrecovers exactly as a local one's does instead of degrading to\n`Terminal`'s abort.",
+          "properties": {
+            "kind": {
+              "const": "context_overflow",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "The provider refused to fund the requested output ceiling. Carried\nas its own variant rather than folded into `Terminal` because a host\ndriving the engine over the wire must be able to tell a repairable\nrefusal from the end of the turn — the same split the engine-side\nrecovery keys on.",
+          "properties": {
+            "affordable_output_tokens": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "kind": {
+              "const": "output_budget_exceeded",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "kind": {
+              "const": "terminal",
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
           ],
           "type": "object"
         }
-      },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      ]
+    },
+    "ProviderResultIn": {
       "description": "Host → engine: the result of a [`ServerFrame::ProviderRequest`] — either a\ncompleted model response or a classified provider error.",
       "oneOf": [
         {
@@ -764,118 +703,147 @@
       "title": "ProviderResultIn",
       "type": "object"
     },
-    "ToolResultIn": {
-      "$defs": {
-        "ErrorClass": {
-          "description": "Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is deliberately no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original.",
-          "oneOf": [
-            {
-              "const": "invalid_input",
-              "description": "The call's arguments could not be read as the tool's schema — a\nmissing required field, a wrong type. The model's mistake: it counts\nagainst the prompt/tool menu, never against the tool.",
-              "type": "string"
-            },
-            {
-              "const": "not_found",
-              "description": "The named subject does not exist — an unknown tool, a path or symbol\nthat is not there to operate on.",
-              "type": "string"
-            },
-            {
-              "const": "permission_denied",
-              "description": "The operating environment refused the operation (filesystem\npermissions, containment) — distinct from a *policy* refusal, which\nis [`Self::RefusedByPolicy`].",
-              "type": "string"
-            },
-            {
-              "const": "refused_by_policy",
-              "description": "A policy plane declined the call — an extension deny, a human \"no\",\nan approval that could not be asked. Working as designed, never a\ntool defect.",
-              "type": "string"
-            },
-            {
-              "const": "timeout",
-              "description": "The operation ran out of its time budget.",
-              "type": "string"
-            },
-            {
-              "const": "environment",
-              "description": "The world outside the tool failed it — a network error, a missing\nbinary, a full disk.",
-              "type": "string"
-            },
-            {
-              "const": "internal",
-              "description": "The tool's own defect — our bug, and the class an error-rate ceiling\nis actually about.",
-              "type": "string"
-            },
-            {
-              "const": "other",
-              "description": "A class this reader does not recognize (written by a newer emitter).\nNever constructed by this build's classifiers.",
-              "type": "string"
-            }
-          ]
+    "ReasoningEffort": {
+      "description": "Reasoning effort forwarded to models with a thinking/extended-reasoning\nmode. One enum, mapped per-adapter to the provider's own parameter name\n(\"reasoning_param\").",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Least thinking — cheapest and fastest.",
+          "type": "string"
         },
-        "ToolOutput": {
-          "description": "The output of running a tool — success or a typed, named failure. Never a\nbare string: every tool result is inspectable without string-sniffing.",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "description": "The tool ran to completion.",
-              "properties": {
-                "ok": {
-                  "properties": {
-                    "content": {
-                      "description": "What the tool produced, as the model will read it.",
-                      "type": "string"
-                    },
-                    "data": {
-                      "description": "The structured half of the result, when the tool has one (#3285).\n`content` is prose for the model; `data` is the same facts as a\nvalue a contract's `output_schema` can check — \"references, not\npayloads\" (#2694 §4) is unenforceable over prose. `None` means\nthe tool produces no structured output, which is every tool\nwritten before this field existed. Optional and absent-when-`None`\nso every payload written before the field round-trips\nbyte-identically (invariant #4), and so the content bytes the\nmodel sees are never perturbed by structure."
-                    }
-                  },
-                  "required": [
-                    "content"
-                  ],
-                  "type": "object"
-                }
-              },
-              "required": [
-                "ok"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "The tool failed.",
-              "properties": {
-                "error": {
-                  "properties": {
-                    "class": {
-                      "anyOf": [
-                        {
-                          "$ref": "#/$defs/ErrorClass"
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ],
-                      "description": "Which [`ErrorClass`] this failure falls in (#3145). `None` is a\ndeclared default meaning \"unclassified\" — the site that built\nthis error has not been audited into a class yet, which is\ndistinct from any class it could be assigned. Optional and\nabsent-when-`None` so every payload written before the field\nexisted round-trips byte-identically (invariant #4), and so the\nmessage bytes the model sees are never perturbed by\nclassification."
-                    },
-                    "message": {
-                      "description": "Why it failed, phrased so the model can act on it — the model\nsees this text and retries against it.",
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "message"
-                  ],
-                  "type": "object"
-                }
-              },
-              "required": [
-                "error"
-              ],
-              "type": "object"
-            }
-          ]
+        {
+          "const": "medium",
+          "description": "The middle setting most adapters treat as their default.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "More thinking, for harder steps.",
+          "type": "string"
+        },
+        {
+          "const": "xhigh",
+          "description": "Above `High`, where the provider exposes a fourth level.",
+          "type": "string"
+        },
+        {
+          "const": "max",
+          "description": "The provider's ceiling.",
+          "type": "string"
+        }
+      ]
+    },
+    "ServiceTier": {
+      "description": "Provider service tier: `Priority` routes to faster paid-tier capacity,\n`Flex` to cheaper capacity with slower response times. Only applied by\nproviders that support tiered service; others use their default tier.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Let the provider pick the tier.",
+          "type": "string"
+        },
+        {
+          "const": "default",
+          "description": "The account's standard tier.",
+          "type": "string"
+        },
+        {
+          "const": "flex",
+          "description": "Cheaper capacity, slower responses.",
+          "type": "string"
+        },
+        {
+          "const": "priority",
+          "description": "Faster paid-tier capacity.",
+          "type": "string"
+        }
+      ]
+    },
+    "ToolCall": {
+      "description": "One tool invocation the model requested.",
+      "properties": {
+        "call_id": {
+          "description": "Stable id correlating this call to its eventual `ToolResult`.",
+          "type": "string"
+        },
+        "input": {
+          "description": "The arguments, as the model produced them. Runtime data: never trust\nthe shape. `stella-tools` validates this against\n[`ToolSchema::input_schema`] at dispatch (`registry/validate.rs`,\n#3144) — required fields, declared types, enums, item types, and\n`additionalProperties: false` where a schema advertises it — and\nrefuses a contradicting call before the tool runs. Tools still read\nfields defensively: a direct caller may bypass the registry."
+        },
+        "name": {
+          "description": "Which tool to run — matches the [`ToolSchema::name`] it was chosen\nfrom.",
+          "type": "string"
         }
       },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "required": [
+        "call_id",
+        "name",
+        "input"
+      ],
+      "type": "object"
+    },
+    "ToolOutput": {
+      "description": "The output of running a tool — success or a typed, named failure. Never a\nbare string: every tool result is inspectable without string-sniffing.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "The tool ran to completion.",
+          "properties": {
+            "ok": {
+              "properties": {
+                "content": {
+                  "description": "What the tool produced, as the model will read it.",
+                  "type": "string"
+                },
+                "data": {
+                  "description": "The structured half of the result, when the tool has one (#3285).\n`content` is prose for the model; `data` is the same facts as a\nvalue a contract's `output_schema` can check — \"references, not\npayloads\" (#2694 §4) is unenforceable over prose. `None` means\nthe tool produces no structured output, which is every tool\nwritten before this field existed. Optional and absent-when-`None`\nso every payload written before the field round-trips\nbyte-identically (invariant #4), and so the content bytes the\nmodel sees are never perturbed by structure."
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "ok"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The tool failed.",
+          "properties": {
+            "error": {
+              "properties": {
+                "class": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/ErrorClass"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Which [`ErrorClass`] this failure falls in (#3145). `None` is a\ndeclared default meaning \"unclassified\" — the site that built\nthis error has not been audited into a class yet, which is\ndistinct from any class it could be assigned. Optional and\nabsent-when-`None` so every payload written before the field\nexisted round-trips byte-identically (invariant #4), and so the\nmessage bytes the model sees are never perturbed by\nclassification."
+                },
+                "message": {
+                  "description": "Why it failed, phrased so the model can act on it — the model\nsees this text and retries against it.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "error"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ToolResultIn": {
       "description": "Host → engine: the result of a [`ServerFrame::ToolRequest`].",
       "properties": {
         "output": {
@@ -891,9 +859,29 @@
       ],
       "title": "ToolResultIn",
       "type": "object"
+    },
+    "Verbosity": {
+      "description": "Response-detail level for providers with a verbosity parameter (OpenAI's\n`text.verbosity`). Adapters whose wire has no equivalent ignore it — the\nsame never-fail contract as [`ReasoningEffort`].",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Terse answers.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "The provider's usual level of detail.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "Expansive answers.",
+          "type": "string"
+        }
+      ]
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Bodies a host POSTs back to answer a reverse request. ToolResultIn answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers POST /v1/turns/{id}/provider-result; ProviderDeltaIn optionally streams fragments of an in-flight provider answer to POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn. Each is keyed by the request_id carried on the frame it answers. EngineOverrides is not a reverse-request answer at all: it is the optional `engine` object on POST /v1/turns and POST /v1/sessions/{id}/turns, published here because it is wire contract. This document is a definitions container, not a union: the bodies are not interchangeable and carry no discriminant.",
+  "description": "Bodies a host POSTs back to answer a reverse request. ToolResultIn answers POST /v1/turns/{id}/tool-result; ProviderResultIn answers POST /v1/turns/{id}/provider-result; ProviderDeltaIn optionally streams fragments of an in-flight provider answer to POST /v1/turns/{id}/provider-delta ahead of its ProviderResultIn. Each is keyed by the request_id carried on the frame it answers. EngineOverrides is not a reverse-request answer at all: it is the optional `engine` object on POST /v1/turns and POST /v1/sessions/{id}/turns, published here because it is wire contract. This document is a definitions container, not a union: the bodies are not interchangeable and carry no discriminant. Every payload type they reference is defined here beside them, once each.",
   "title": "StellaServeInbound"
 }
