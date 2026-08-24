@@ -5,9 +5,9 @@
 //! the transcript at full width (SPEC 5).
 //!
 //! The rows themselves are [`super::transcript`]'s vocabulary, reached through
-//! `crate::render::entry_lines` (named rather than linked: it is `pub(crate)`,
-//! and an intra-doc link to it resolves only under `--document-private-items`,
-//! which the doc gate does not pass) — this module orchestrates rather than
+//! `crate::render::entry_lines` (`pub(crate)`, so an intra-doc link to it
+//! resolves only under `--document-private-items`, which the doc gate does not
+//! pass) — this module orchestrates rather than
 //! draws: it carves the gate bands, keeps the incremental fold ([`SessionFold`])
 //! and its [`FoldPlan`] in step with the deck's state, and windows the result
 //! onto the rows the frame has. No transcript rendering is duplicated; there is
