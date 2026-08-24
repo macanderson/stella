@@ -692,8 +692,8 @@ fn row_record(
                     },
                 ),
             ];
-            crate::views::linear::record_line(
-                crate::views::linear::identity(
+            crate::v2::record::record_line(
+                crate::v2::record::identity(
                     format!("group {}", group.to_uppercase()),
                     is_sel,
                     theme::ACCENT,
@@ -717,8 +717,8 @@ fn row_record(
                 ("group", tool.group.clone()),
                 ("why", reason.unwrap_or_default()),
             ];
-            crate::views::linear::record_line(
-                crate::views::linear::identity(tool.name.clone(), is_sel, theme::INK),
+            crate::v2::record::record_line(
+                crate::v2::record::identity(tool.name.clone(), is_sel, theme::INK),
                 &fields,
                 panel_w,
             )
