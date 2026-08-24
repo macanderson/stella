@@ -475,7 +475,9 @@ pub(crate) fn reconstruct(
             continue;
         };
         if kind == "system_prefix" {
-            system_text.get_or_insert_with(String::new).push_str(&content);
+            system_text
+                .get_or_insert_with(String::new)
+                .push_str(&content);
         }
         // Local gap content is stored bytes, so re-hashing it proves nothing;
         // `None` says "not evidence" where `true` would claim it was.
@@ -769,6 +771,42 @@ mod tests {
         assert_eq!(out["messages"][1]["blocks"][0]["digest_verified"], true);
         assert_eq!(out["messages"][2]["role"], "tool");
         assert_eq!(out["messages"][2]["body"], "← tool_result c1\nfn a() {}");
+    }
+
+    /// **Witness for the "System prompt" view.** A reconstruction carries the
+    /// resolved `system_prefix` bytes a second time, sectioned by provenance
+    /// (`crate::system_prompt`), and a call with no such block says so
+    /// instead of rendering an empty prompt.
+    #[test]
+    fn the_reconstruction_carries_the_sectioned_system_prompt() {
+        let text = "the base persona\n\n## Session environment\nWorkspace root: /w";
+        let entries = vec![gap("blk_sys", "system_prefix", 0, text)];
+        let out = reconstruct(
+            &entries,
+            &Preimages::index(&[]),
+            JournalEra::CompactionJournaled,
+            true,
+        );
+        assert_eq!(out["system_prompt"]["found"], true, "{out}");
+        let sections = out["system_prompt"]["sections"].as_array().unwrap();
+        assert_eq!(sections[0]["label"], "Base instructions");
+        assert_eq!(sections[0]["body"], "the base persona");
+        assert_eq!(sections[1]["label"], "Session environment");
+
+        let without = reconstruct(
+            &[entry("blk_text", "assistant_text", 0)],
+            &Preimages::index(&[]),
+            JournalEra::CompactionJournaled,
+            true,
+        );
+        assert_eq!(without["system_prompt"]["found"], false);
+        assert!(
+            without["system_prompt"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("no system_prefix block"),
+            "{without}"
+        );
     }
 
     #[test]

@@ -837,13 +837,7 @@ pub(crate) fn build_pipeline_system_prompt(
     worker: Option<&stella_protocol::role::ModelRef>,
 ) -> String {
     let base = resolved_base(cfg, PIPELINE_SYSTEM_PROMPT);
-    assemble_system_prompt(
-        &base,
-        workspace_root,
-        &cfg.authority,
-        active_rules,
-        worker,
-    )
+    assemble_system_prompt(&base, workspace_root, &cfg.authority, active_rules, worker)
 }
 
 /// The exact prompt claim-mode isolation must yield: the pipeline persona

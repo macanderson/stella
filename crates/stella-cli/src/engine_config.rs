@@ -1240,6 +1240,7 @@ mod tests {
             r#"{"default_model": "openrouter/openai/gpt-5.5",
                 "allowed_models": ["anthropic/claude-fable-5"],
                 "auto_mode": "off", "effort_auto": "on", "reasoning_auto": "off",
+                "minimal_prompt": "on",
                 "agents": {"default": {"provider": "openrouter", "effort": "high",
                                       "reasoning": "on",
                                       "params": {"temperature": 0.2, "top_k": 40,
@@ -1256,6 +1257,10 @@ mod tests {
         );
         assert!(!state.auto_mode);
         assert!(state.effort_auto);
+        assert!(
+            state.minimal_prompt,
+            "the minimal-prompt toggle reaches the deck"
+        );
         let agent = state.agent(EngineRole::Default).expect("default state");
         assert_eq!(agent.model.as_deref(), Some("openrouter/openai/gpt-5.5"));
         assert_eq!(agent.provider.as_deref(), Some("openrouter"));
@@ -1283,6 +1288,7 @@ mod tests {
         // preserved, not dropped).
         assert_eq!(back.auto_mode, Some(Toggle::Off));
         assert_eq!(back.effort_auto, Some(Toggle::On));
+        assert_eq!(back.minimal_prompt, Some(Toggle::On));
         // The round trip is stable: state → settings → state is identity
         // for the fields the snapshot carries.
         let state2 = state_from_settings(

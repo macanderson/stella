@@ -56,6 +56,9 @@ a plugin runs.
     "effort_auto": "off",
     // "on" = thinking mode chosen for you, overriding "reasoning" below.
     "reasoning_auto": "off",
+    // "on" = the minimal base system prompt: a bare tool advertisement, so
+    // your own prompt fields carry the prose. `--minimal` for one invocation.
+    "minimal_prompt": "off",
 
     // Seconds of provider silence that end one generation. The partner of
     // params.max_tokens below: raise the output cap without raising this and
@@ -213,6 +216,17 @@ Set any of the three autos to `"on"` and stop thinking about it:
   </OptionCard>
   <OptionCard name="reasoning_auto" defaultValue="off">
     Thinking mode chosen for you, overriding `agents.default.reasoning`.
+  </OptionCard>
+  <OptionCard name="minimal_prompt" defaultValue="off">
+    Run every session on the minimal base system prompt — a bare tool
+    advertisement in place of the built-in persona, so the prose the model is
+    steered by comes from what you configure: `agents.default.prompt` (which
+    appends after the minimal base instead of replacing it), workspace
+    memories, rules, and SessionStart hook context. `--minimal` (or
+    `STELLA_MINIMAL=1`) forces it on for one invocation; the flag can never
+    turn a configured mode off. In `stella.toml` this is `[agents]
+    minimal_prompt`, and the Command Deck's SETTINGS → AGENTS pane carries it
+    as a GLOBAL toggle.
   </OptionCard>
   <OptionCard name="headless_scope_bypass" defaultValue="off">
     **Inert — setting this changes nothing.** Nothing reads the value, at any

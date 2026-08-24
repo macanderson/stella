@@ -1,7 +1,8 @@
 //! The ENGINE panel — the config editor the SETTINGS tab hosts full-width,
-//! for `settings.json` → `agent_engine_config`: the global routing toggles
-//! plus the per-agent model / prompt / sampling overrides for the four
-//! pipeline agents (default · worker · verifier · triage).
+//! for `settings.json` → `agent_engine_config`: the global toggles (the auto
+//! modes, the minimal-prompt switch, the allowed-model list) plus the
+//! `default` agent's model / prompt / sampling overrides — one agent page,
+//! because core has one role (#3908).
 //!
 //! Ownership mirrors the MCP and SKILLS surfaces: the **driver** owns the
 //! settings files on disk and pushes [`crate::envelope::Inbound::EngineConfig`]
@@ -551,10 +552,6 @@ fn activate_row(ui: &mut DeckUi, via_space: bool) -> DeckAction {
         EngineTab::Global => {
             let state = ui.engine.state.as_mut().expect("guarded above");
             match GLOBAL_ROWS[row.min(GLOBAL_ROWS.len() - 1)] {
-                GlobalRow::AutoMode => state.auto_mode = !state.auto_mode,
-                GlobalRow::EffortAuto => state.effort_auto = !state.effort_auto,
-                GlobalRow::ReasoningAuto => state.reasoning_auto = !state.reasoning_auto,
-                GlobalRow::MinimalPrompt => state.minimal_prompt = !state.minimal_prompt,
                 GlobalRow::AllowedModels => {
                     if via_space {
                         return DeckAction::Handled;
@@ -562,6 +559,7 @@ fn activate_row(ui: &mut DeckUi, via_space: bool) -> DeckAction {
                     let buffer = state.allowed_models.join(", ");
                     ui.engine.edit = Some(EngineEdit { row, buffer });
                 }
+                toggle => toggle.flip(state),
             }
         }
         EngineTab::Agent(role) => {
@@ -682,11 +680,8 @@ fn clear_row(ui: &mut DeckUi) -> DeckAction {
     };
     match tab {
         EngineTab::Global => match GLOBAL_ROWS[row.min(GLOBAL_ROWS.len() - 1)] {
-            GlobalRow::AutoMode => state.auto_mode = false,
-            GlobalRow::EffortAuto => state.effort_auto = false,
-            GlobalRow::ReasoningAuto => state.reasoning_auto = false,
-            GlobalRow::MinimalPrompt => state.minimal_prompt = false,
             GlobalRow::AllowedModels => state.allowed_models.clear(),
+            toggle => toggle.switch_off(state),
         },
         EngineTab::Agent(role) => {
             let field = AgentField::ALL[row.min(AgentField::ALL.len() - 1)];
@@ -975,17 +970,11 @@ fn render_row(
         EngineTab::Global => {
             let row = GLOBAL_ROWS[i.min(GLOBAL_ROWS.len() - 1)];
             let value = match row {
-                GlobalRow::AutoMode => Some(on_off(state.auto_mode)),
-                GlobalRow::EffortAuto => Some(on_off(state.effort_auto)),
-                GlobalRow::ReasoningAuto => Some(on_off(state.reasoning_auto)),
-                GlobalRow::MinimalPrompt => Some(on_off(state.minimal_prompt)),
+                // An empty list renders as the dimmed placeholder below.
                 GlobalRow::AllowedModels => {
-                    if state.allowed_models.is_empty() {
-                        None // dimmed placeholder below
-                    } else {
-                        Some(state.allowed_models.join(", "))
-                    }
+                    (!state.allowed_models.is_empty()).then(|| state.allowed_models.join(", "))
                 }
+                toggle => toggle.flag(state).map(on_off),
             };
             (row.label(), value)
         }
