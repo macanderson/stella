@@ -745,9 +745,9 @@ pub struct DeckUi {
     /// the active provider's models as `provider/slug` specs, already
     /// filtered through the configured `allowed_models` list driver-side.
     pub model_candidates: Vec<String>,
-    /// Whether the SESSIONS overlay is open (empty-prompt `←` on the Session
-    /// tab, or `/sessions`). Modal while open: ↑/↓ move, `⏎` open (replay),
-    /// `a` archive, `x` delete, `r` refresh, Esc/`←` close.
+    /// Whether the SESSIONS overlay is open (`ctrl-e`, `/sessions`). Modal
+    /// while open: ↑/↓ move, `⏎` open (replay), `a` archive, `x` delete,
+    /// `r` refresh, Esc/`←` close.
     pub sessions_open: bool,
     /// The machine-wide session registry snapshot ([`Inbound::Sessions`]),
     /// pre-sorted by the driver; the overlay groups it by phase.
@@ -757,8 +757,8 @@ pub struct DeckUi {
     /// `h` in the overlay: list every session on the machine rather than
     /// this workspace's recent ones and the live ones (see `sessions`).
     pub sessions_show_all: bool,
-    /// Whether the CONTEXT overlay is open (empty-prompt `→` on the Session
-    /// tab, or `/context`): active skills + MCP servers for THIS session,
+    /// Whether the CONTEXT overlay is open (`ctrl-k`, `/context`):
+    /// active skills + MCP servers for THIS session,
     /// rendered from the already-live `skills`/`mcp` snapshots.
     pub context_open: bool,
     /// Vertical scroll offset (rows) for the CONTEXT overlay; render clamps.
@@ -2164,15 +2164,15 @@ fn handle_slash_key(
 // The queue editor's modal keys live in `queue_editor` (split out beside
 // `nav`/`gates` under the god-file rule).
 
-/// Open the SESSIONS overlay (empty-prompt `←`, `/sessions`) and ask the
-/// driver for a fresh registry snapshot.
+/// Open the SESSIONS overlay (`ctrl-e`, `/sessions`) and ask the driver for
+/// a fresh registry snapshot.
 pub(crate) fn open_sessions_overlay(ui: &mut DeckUi) -> DeckAction {
     ui.sessions_open = true;
     ui.sessions_sel = 0;
     DeckAction::Send(WorkspaceInput::SessionsRefresh)
 }
 
-/// Open the CONTEXT overlay (empty-prompt `→`, `/context`) and freshen both
+/// Open the CONTEXT overlay (`ctrl-k`, `/context`) and freshen both
 /// snapshots it renders — the second refresh rides `pending_inputs` since a
 /// key returns only one action.
 pub(crate) fn open_context_overlay(ui: &mut DeckUi) -> DeckAction {

@@ -107,6 +107,29 @@ fn the_page_menu_is_scoped_and_refuses_export() {
     );
 }
 
+/// `n` from an empty page composer starts a brand-new FULL session — the
+/// SESSIONS overlay's verb, reachable from the page — while `n` typed into a
+/// draft stays a letter.
+#[test]
+fn n_on_the_page_starts_a_new_full_session() {
+    let model = model_with(&["lead"]);
+    let mut ui = page_ui();
+    assert_eq!(
+        handle_deck_key(ch('n'), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::SessionNew)
+    );
+    assert!(!ui.agents_page.open, "the hand-over closes the page");
+
+    let mut ui = page_ui();
+    handle_deck_key(ch('a'), &model, &mut ui);
+    handle_deck_key(ch('n'), &model, &mut ui);
+    assert_eq!(
+        ui.agents_page.composer.buffer(),
+        "an",
+        "a draft keeps its letters"
+    );
+}
+
 /// `⏎` on a resumable session row hands over to the driver; the page closes.
 #[test]
 fn enter_on_a_resumable_session_resumes_it() {

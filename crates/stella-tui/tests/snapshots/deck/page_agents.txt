@@ -42,4 +42,4 @@
 
 
  ❯ describe a task for a new session
-   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · ⌃x⌃x kill · r refresh · esc back
+   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · n new session · ⌃x⌃x kill · r refresh · esc back

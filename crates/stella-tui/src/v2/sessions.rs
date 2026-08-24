@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The SESSIONS overlay (empty-prompt `←`, `/sessions`):
+//! The SESSIONS overlay (`ctrl-e`, `/sessions`):
 //!
 //! ```text
 //! ╭ sessions · 2 live · 3 recent ──────────────────── n new · h 12 more ╮

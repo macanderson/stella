@@ -18,12 +18,14 @@
 //!   ○ stella: fix the parser                          ↩ resume · 2d ago
 //!
 //! ❯ describe a task for a new session
-//!   ⏎ start a new agent · ↑↓ select · ⏎ open · ⌃x⌃x kill · esc back
+//!   ⏎ start a new agent · ↑↓ select · ⏎ open · n new session · esc back
 //! ```
 //!
 //! The page's own composer is the point: describe a task, `⏎`, and a fresh
 //! sub-agent lane starts on it ([`WorkspaceInput::SpawnLane`]) — whatever the
-//! lead is doing. The rows are the same two populations the SUB-AGENTS and
+//! lead is doing. `n` starts a brand-new **full** session instead
+//! ([`WorkspaceInput::SessionNew`]): the driver parks this one and opens an
+//! empty record, the SESSIONS overlay's own verb. The rows are the same two populations the SUB-AGENTS and
 //! SESSIONS overlays show one each of: this session's lanes (live first) and
 //! the machine's session registry ([`crate::deck_ui::sessions`]'s row rules).
 //!
@@ -285,6 +287,13 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
                 ui.agents_page.notice = Some("refreshing sessions…".to_string());
                 return DeckAction::Send(WorkspaceInput::SessionsRefresh);
             }
+            // A brand-new full session, distinct from the composer's lane:
+            // the driver parks this session and opens an empty record — the
+            // SESSIONS overlay's own `n`, reachable from here too.
+            KeyCode::Char('n') if !ctrl => {
+                ui.agents_page.open = false;
+                return DeckAction::Send(WorkspaceInput::SessionNew);
+            }
             KeyCode::Char('x') if ctrl => return kill_selected(model, ui, &list, armed),
             _ => {}
         }
@@ -493,7 +502,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         }
     }
     foot.push(Line::from(Span::styled(
-        "   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · ⌃x⌃x kill · r refresh · esc back",
+        "   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · n new session · ⌃x⌃x kill · r refresh · esc back",
         dim,
     )));
     let foot_area = Rect {

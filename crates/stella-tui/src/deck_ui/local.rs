@@ -60,7 +60,7 @@ pub(super) fn deck_local_command(text: &str, ui: &mut DeckUi) -> Option<DeckActi
         }
         // The three transcript-page overlays are deck-local view state,
         // exactly like the tab switches above (their keyboard shortcuts:
-        // empty-prompt `←` / `→`, and the footer's ✉ badge for the inbox).
+        // `ctrl-e` / `ctrl-k`, and the footer's ✉ badge for the inbox).
         "/sessions" => open_sessions_overlay(ui),
         "/subagents" => crate::v2::subagents::open(ui),
         "/context" => open_context_overlay(ui),
