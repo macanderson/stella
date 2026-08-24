@@ -1,29 +1,34 @@
-//! Which concurrently-running lanes may write this session's resume point.
+//! Which durable record each concurrently-running lane writes its resume
+//! point to.
 //!
 //! [`engine_wiring`](super::engine_wiring)'s
 //! `a_bound_session_checkpoints_from_every_role` proves the sink reaches every
-//! role that *should* have it. This module proves the other half, which has no
-//! natural home there because it is the opposite assertion: the lanes that must
-//! NOT have it.
+//! role that *should* carry the SESSION's own sink. This module proves the
+//! other half: a lane that runs *beside* the lead turn must never share it —
+//! it must write its own.
 //!
 //! A [`crate::durability::SessionDurability`] handle is keyed on one session
 //! record, and `Config` is `Clone` over an `Arc` — so every clone of a bound
 //! `Config` yields a sink pointing at the *same* `CHECKPOINT_BLOB`. That is
 //! correct for the session's own turns, which run one at a time, and wrong for
 //! anything that runs *beside* them: two writers of one resume point is one
-//! resume point.
+//! resume point, not two.
 //!
-//! `stella_core::subagent` already draws this line for dispatched children, in
-//! prose worth restating because it names the damage exactly — inheriting the
-//! parent's sink is "actively destructive in both directions: every child step
-//! would overwrite the parent's resume point with the CHILD's transcript, and
-//! the child reaching a terminal outcome would call `discard` — retracting the
-//! parent's resume point while the parent still needs it."
+//! `stella_core::subagent` draws this line for dispatched children by
+//! stripping the sink entirely, in prose worth restating because it names the
+//! damage exactly — inheriting the parent's sink is "actively destructive in
+//! both directions: every child step would overwrite the parent's resume point
+//! with the CHILD's transcript, and the child reaching a terminal outcome
+//! would call `discard` — retracting the parent's resume point while the
+//! parent still needs it." A dispatched child has no durable identity of its
+//! own to re-key the sink to, so stripping is the whole fix there.
 //!
 //! A deck sub-session (`crate::subsession`) is that same shape reached by a
-//! different door: a real engine session on its own OS thread, dispatched
-//! *because* the lead is mid-turn, built from a clone of the lead's `Config`.
-//! The engine crate cannot see it — a sub-session is not a sub-agent, it goes
+//! different door — a real engine session on its own OS thread, dispatched
+//! *because* the lead is mid-turn, built from a clone of the lead's `Config` —
+//! but it DOES have an identity of its own: its lane id. So `run_worker`
+//! re-keys the sink to the lane's own handle instead of stripping it (#3233),
+//! and the engine crate still cannot see any of this — a sub-session goes
 //! through `Engine::with_sleeper` rather than `run_sub_agent` — so the line has
 //! to be drawn here, at the seam that builds its config.
 
@@ -98,28 +103,40 @@ fn a_sub_sessions_turn_cannot_destroy_the_leads_resume_point() {
     );
 
     // ── Arm 2: the seam. ────────────────────────────────────────────────
-    let (cfg, record, _store, _ws) = bound_session("ses-isolated-sink");
-    let lead = crate::agent::engine_config_for(&cfg)
+    let (lead_cfg, lead_record, _store, _ws) = bound_session("ses-isolated-sink");
+    let lead = crate::agent::engine_config_for(&lead_cfg)
         .checkpoint_sink
         .expect("the lead session is bound");
     lead.persist(r#"{"version":1,"lane":"lead"}"#);
 
-    let sub = crate::agent::subsession_engine_config_for(&cfg).checkpoint_sink;
-    if let Some(sub) = &sub {
-        sub.persist(r#"{"version":1,"lane":"sub"}"#);
-        sub.discard();
-    }
+    // The lane's own handle, bound to its own journal — never the lead's
+    // `cfg.durability` cell. `ses-isolated-sink__req-1`, not `.../req:1`:
+    // `lane_journal_key`'s actual sanitized shape (`__`, and no `:`) — both
+    // production `WorkJournal::open`'s "filesystem- and ref-safe" contract
+    // forbids.
+    let (lane_cfg, lane_record, _lane_store, _lane_ws) = bound_session("ses-isolated-sink__req-1");
+    let sub = crate::agent::subsession_engine_config_for(&lead_cfg, &lane_cfg.durability)
+        .checkpoint_sink
+        .expect("the lane is bound");
+    sub.persist(r#"{"version":1,"lane":"sub"}"#);
+    sub.discard();
 
     assert_eq!(
-        record.checkpoint().as_deref(),
+        lead_record.checkpoint().as_deref(),
         Some(r#"{"version":1,"lane":"lead"}"#),
         "a sub-session's turn ending retracted the LEAD's resume point. The \
          deck dispatches a sub-session precisely because the lead is mid-turn, \
-         so the two run at once against one `CHECKPOINT_BLOB` — and the loser \
-         is the turn a human is waiting on. `stella-core::subagent` strips the \
-         sink for exactly this reason; a sub-session reaches the same hazard \
-         through `Engine::with_sleeper` instead of `run_sub_agent`, where the \
-         engine crate cannot see it.",
+         so the two must never share one `CHECKPOINT_BLOB` — and the loser \
+         would be the turn a human is waiting on. `stella-core::subagent` \
+         strips the sink for a dispatched child, which has no identity of its \
+         own to re-key to; a sub-session reaches the same door through \
+         `Engine::with_sleeper` instead of `run_sub_agent`, but DOES have an \
+         identity — its lane id — so it must re-key rather than share.",
+    );
+    assert!(
+        lane_record.checkpoint().is_none(),
+        "the lane's own checkpoint must discard at its own turn's end, \
+         exactly like the lead's",
     );
 }
 
@@ -145,32 +162,40 @@ fn the_lead_session_still_checkpoints_and_still_discards() {
     assert!(record.checkpoint().is_none());
 }
 
-/// A sub-session carries no sink at all, rather than a differently-keyed one.
+/// A sub-session carries the LANE's own sink, never the lead's — and never
+/// none, now that a lane has a durable identity of its own to re-key to.
 ///
-/// Stated separately from the witness because it is the *design* decision, not
-/// the damage: a sub-session is not separately resumable today — nothing reads
-/// a worker lane's resume point, and `stella resume` restores the session
-/// record's own turn — so a second sink would be a write with no reader, and
-/// `Engine::persist_checkpoint` serializes the whole transcript before the sink
-/// ever sees it. Giving a worker lane its own durable identity is the tracked
-/// follow-up (#3233), and this assertion is what will fail when someone does
-/// it, which is the right place for that conversation to happen.
+/// Stated separately from the witness above because it is the *design*
+/// decision, not the damage: `crate::subsession::run_worker` binds a
+/// [`crate::durability::SessionDurability`] under the lane's own journal key
+/// (`{session}/{lane}`) before building its engine, so the lane is
+/// independently resumable (#3233) — this is what will fail if a future
+/// change goes back to stripping the sink instead.
 #[test]
-fn a_sub_session_carries_no_checkpoint_sink() {
-    let (cfg, _record, _store, _ws) = bound_session("ses-sub-none");
-    assert!(
-        crate::agent::subsession_engine_config_for(&cfg)
-            .checkpoint_sink
-            .is_none(),
-        "a sub-session must carry no sink rather than the lead's",
+fn a_sub_session_carries_its_own_checkpoint_sink_never_the_leads() {
+    let (lead_cfg, _lead_record, _store, _ws) = bound_session("ses-sub-own-sink");
+    let (lane_cfg, lane_record, _lane_store, _lane_ws) = bound_session("ses-sub-own-sink__req-1");
+
+    let sub = crate::agent::subsession_engine_config_for(&lead_cfg, &lane_cfg.durability)
+        .checkpoint_sink
+        .expect("a sub-session must carry the LANE's sink, not none");
+    sub.persist(r#"{"version":1}"#);
+    assert_eq!(
+        lane_record.checkpoint().as_deref(),
+        Some(r#"{"version":1}"#),
+        "a sub-session's checkpoint must land in the lane's own record",
     );
-    // Everything else about the config is the session's own tuning — the strip
-    // is one field, not a separate engine shape.
-    let lead = crate::agent::engine_config_for(&cfg);
-    let sub = crate::agent::subsession_engine_config_for(&cfg);
-    assert_eq!(sub.max_steps, lead.max_steps);
-    assert_eq!(sub.compaction_budget_tokens, lead.compaction_budget_tokens);
-    assert_eq!(sub.cwd, lead.cwd);
+
+    // Everything else about the config is the session's own tuning — the
+    // re-key is one field, not a separate engine shape.
+    let lead = crate::agent::engine_config_for(&lead_cfg);
+    let sub_cfg = crate::agent::subsession_engine_config_for(&lead_cfg, &lane_cfg.durability);
+    assert_eq!(sub_cfg.max_steps, lead.max_steps);
+    assert_eq!(
+        sub_cfg.compaction_budget_tokens,
+        lead.compaction_budget_tokens
+    );
+    assert_eq!(sub_cfg.cwd, lead.cwd);
 }
 
 /// The source fence. `subsession::run_worker` must build its engine through
