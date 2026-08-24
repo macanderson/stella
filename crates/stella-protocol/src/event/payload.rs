@@ -152,8 +152,11 @@ pub struct ScopeProposal {
     /// `read-only`, `none`), when stated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_policy: Option<String>,
-    /// Which revision of the plan this is: `1` for the first proposal of a
-    /// session, incremented each time a changed plan is re-proposed.
+    /// Which revision of the plan this is: `1` for a plan's first proposal,
+    /// incremented each time a changed plan is re-proposed. What a producer
+    /// counts a plan's lifetime as is its own to decide — the deck's gate
+    /// resets per turn, because that is where the deck also drops the plan
+    /// it was holding.
     ///
     /// `None` means the producer does not track revisions — every recording
     /// written before this field existed decodes that way, and a surface

@@ -687,6 +687,7 @@ fn scope_proposal_roundtrips_its_scope_card_facts_and_stays_additive() {
         write_globs: vec!["apps/api/**".into(), "apps/app/automations/**".into()],
         read_globs: vec!["packages/shared/**".into()],
         shell_policy: Some("allowlisted".into()),
+        revision: Some(3),
     };
     let json = serde_json::to_string(&full).unwrap();
     let back: ScopeProposal = serde_json::from_str(&json).unwrap();
