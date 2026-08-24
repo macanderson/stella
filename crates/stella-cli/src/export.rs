@@ -476,13 +476,12 @@ fn render_dashboard(
 <title>stella session telemetry — {watermark}</title>
 <style>
   /* ── Instrument tokens ─────────────────────────────────────────────────
-     This file is the third surface on stella's web instrument system; the
-     other two are crates/stella-observatory/src/assets/index.html and
-     arenabench/ui/app/globals.css. That file's delimited palette block is
-     the single definition, and this block is a derivation of it —
+     This file is a surface on stella's web instrument system, beside
+     crates/stella-observatory/src/assets/index.html —
      crates/stella-cli/tests/design_token_parity.rs fails if any token they
      both name disagrees, so the copy cannot drift the way the two before it
-     did.
+     did. (The arena UIs carried the same tokens until the ejection, #2380;
+     their parity travels with the arenabench repo now.)
 
      The palette used to be interpolated from `stella_tui::theme`, which was
      right when the export's only sibling was the terminal. It is wrong now:
@@ -571,7 +570,7 @@ fn render_dashboard(
   }}
 
   /* ── Light mode ────────────────────────────────────────────────────────
-     Byte-identical to the Observatory's light scheme and to arenabench's.
+     Byte-identical to the Observatory's light scheme.
      This report is mailed around and attached to PRs, so it lands in readers'
      browsers, not ours — it was dark-only, which meant half of them opened a
      black page on a white desktop.

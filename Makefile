@@ -213,9 +213,8 @@ record-demo-video: ## Re-cut docs/demo/stella-deck.mp4 from the command deck (FI
 # suites, this target ran three, and the arenabench failure that reddened `main`
 # on 2026-08-11 had no local command that would have caught it.
 #
-# Deliberately NOT a `make gate` step. It takes minutes (arenabench alone is
-# ~70s) and would tax every Rust-only push for a question that push cannot have
-# changed. .githooks/pre-push runs it instead for a push whose diff matches the
+# Deliberately NOT a `make gate` step. It takes minutes and would tax every
+# Rust-only push for a question that push cannot have changed. .githooks/pre-push runs it instead for a push whose diff matches the
 # workflow's own scope filter, so the suites are gated where they are relevant
 # and free where they are not. `make bench-suites` — which IS a gate step —
 # holds the arrangement together without running a single test.
@@ -938,7 +937,7 @@ contest: ## Stella vs Claude Code (num_tasks= versus_model= max_throughput= [tar
 # `arenabench run` itself.
 .PHONY: run-match
 run-match: ## Launch one arenabench match, credentialled from ~/.env.global.local (match=path/to.toml [ARENA_ARGS=…])
-	@[ -n "$(match)" ] || { echo "usage: make run-match match=arenabench/matches/<name>.toml"; exit 2; }
+	@[ -n "$(match)" ] || { echo "usage: make run-match match=path/to/<name>.toml  (templates live in the arenabench repo's matches/)"; exit 2; }
 	scripts/arena-local.sh $(match) $(ARENA_ARGS)
 
 .PHONY: arena-scripts-test

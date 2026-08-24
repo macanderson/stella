@@ -162,7 +162,7 @@ for all 28 members (#1135). It falls back to the whole workspace for a push to
 build script / the gate machinery, and for anything it cannot narrow with
 confidence. See what it would choose with `make impacted`.
 
-If the diff touches the Python bench tooling (`bench/**`, `arenabench/**`,
+If the diff touches the Python bench tooling (`bench/**`,
 `crates/stella-model/src/catalog.rs`, or `.github/workflows/bench.yml`) the hook
 also runs `make bench-test`, which runs every pytest suite that workflow gates
 and needs [uv](https://docs.astral.sh/uv/). It is not a `make gate` step — it

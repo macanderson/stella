@@ -322,13 +322,14 @@ The same diff also decides whether the hook runs `make bench-test` — the Pytho
 bench suites, which are gated by `.github/workflows/bench.yml` and are not a
 `make gate` step because they cost minutes. The hook selects on that workflow's
 own scope filter, read from it by `scripts/bench-suites.sh filter` rather than
-copied, so a push touching `bench/**`, `arenabench/**`,
+copied, so a push touching `bench/**`,
 `crates/stella-model/src/catalog.rs` or the workflow itself runs them before it
 leaves the machine. `GATE=fast` skips them out loud, on the same "no tests"
 contract it applies to cargo. This existed nowhere until #2847: the workflow ran
 seven pytest suites, `make bench-test` ran three, and `main` went red on
-2026-08-11 on a deterministic arenabench failure with no local command that
-would have caught it.
+2026-08-11 on a deterministic failure in the arenabench suite (in-tree then,
+ejected to its own repository since — #2380) with no local command that would
+have caught it.
 
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
 `cargo deny check advisories bans sources licenses`). All four are real
