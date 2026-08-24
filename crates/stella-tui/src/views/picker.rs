@@ -115,7 +115,7 @@ pub(crate) fn model_candidates(ui: &DeckUi) -> &[String] {
     ui.engine
         .state
         .as_ref()
-        .map(crate::views::engine::picker_candidates)
+        .map(crate::v2::engine_panel::picker_candidates)
         .unwrap_or(&[])
 }
 

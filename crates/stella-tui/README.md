@@ -101,23 +101,25 @@ so the caller hands over a plain `GraphSnapshot`.
 
 The gate's `file-size` guard (`scripts/check-file-size.sh`) enforces a
 1500-line ratchet: a new file over the limit is a hard failure with no
-baseline escape, and the two files below are grandfathered at a recorded
-ceiling in `scripts/file-size-baseline.txt`. They are god files — already too
-big, closed to growth — and this crate hosts the workspace's single worst:
+baseline escape, and the file below is grandfathered at a recorded
+ceiling in `scripts/file-size-baseline.txt`. It is a god file — already too
+big, closed to growth — and it is the workspace's single worst:
 the guard's own header cites [`src/deck_ui.rs`](src/deck_ui.rs), which had
 reached 6,884 lines when the guard landed and has since been cut to its
-recorded ceiling in `scripts/file-size-baseline.txt`. Plan changes so no new line lands in any of them. The
+recorded ceiling in `scripts/file-size-baseline.txt`. Plan changes so no new line lands in it. The
 crate's own precedent is the [`src/views/`](src/views) directory — one render
 module per tab, split out of the deck files — so a change that adds rendering
 goes in a `views/` module, not `deck_ui.rs`; new modal
 key handling goes in a `src/deck_ui/` submodule the way
-[`src/deck_ui/cards.rs`](src/deck_ui/cards.rs) already does. Note that
-[`src/views/engine.rs`](src/views/engine.rs) is itself grandfathered: a split
-buys headroom, not immunity, so code you touch inside any of these files is a
-candidate to extract.
+[`src/deck_ui/cards.rs`](src/deck_ui/cards.rs) already does.
 
 - [`src/deck_ui.rs`](src/deck_ui.rs)
-- [`src/views/engine.rs`](src/views/engine.rs)
+
+`src/views/engine.rs` left this list when the SETTINGS tab's AGENTS pane was
+ported to the SPEC 5 frame: the panel now lives under
+[`src/v2/engine_panel.rs`](src/v2/engine_panel.rs), split three ways — `tabs.rs`
+holds the strip's vocabulary, `keys.rs` the modal key map, `paint.rs` the
+drawing — and none of the three is near the limit.
 
 [`src/deck_render.rs`](src/deck_render.rs) was on this list and is not any
 more, and it took two extractions to get there: the composer footer's
@@ -154,7 +156,8 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/deck_shell.rs`](src/deck_shell.rs) | `run_deck(...)`: the deck's `select!` loop, plus a third arm — a 33 ms tick that advances the clock and samples resources. |
 | [`src/envelope.rs`](src/envelope.rs) | The multi-agent wire types: `Inbound` in, `WorkspaceInput` out, and every out-of-band snapshot the driver pushes. |
 | [`src/composer.rs`](src/composer.rs) | The input model: textarea semantics, `classify_enter`, paste chips, and the slash popup shared by both surfaces. |
-| [`src/views/*.rs`](src/views) | One module per deck tab (session · agents · installed · traces · graph · files · skills · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `engine` is the exception: the config editor SETTINGS hosts, with its own `render_panel` and key handler. |
+| [`src/views/*.rs`](src/views) | One module per deck tab (session · agents · installed · traces · graph · files · skills · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `tools` is the exception: a config editor SETTINGS hosts, with its own `render_panel` and key handler. |
+| [`src/v2/engine_panel.rs`](src/v2/engine_panel.rs) | The SETTINGS tab's AGENTS pane — the `agent_engine_config` editor, modal while focused. `tabs.rs` is the strip's vocabulary, `keys.rs` the key map and the writes it makes into the working copy, `paint.rs` the five bands it draws. |
 | [`src/diff.rs`](src/diff.rs), [`src/syntax.rs`](src/syntax.rs), [`src/markdown.rs`](src/markdown.rs), [`src/textline.rs`](src/textline.rs) | Shared text presentation — one implementation each of "how a diff looks", source coloring, markdown, and the event→wording table (also consumed by `stella-cli`'s plain renderer). |
 | [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` mirrors the brand kit at `docs/brand/`; `theme.rs` is the only module allowed to reference it. |
 | [`src/v2/status_bar.rs`](src/v2/status_bar.rs) | SPEC 5's one-row status bar — `worker · stage · ctx [meter] % · $spend · saved $x · ✉ n`, with `? help` pinned right. `cells` is the one decision function (pure over `Status`, so the golden frames are fixture data); `render_band` draws it plus the cache-diagnosis row beneath. Replaced the two-row v1 statline in #4123/#4129; `src/statline.rs` is deleted (#4128) and this module's doc keeps the record of why the two-row shape lost. |
