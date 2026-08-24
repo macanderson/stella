@@ -220,13 +220,24 @@ Open a tab or run an action:
     overlay as its worker winds down, and the cleared pane names what was
     stopped. A cleared lane cannot be restarted.
   </OptionCard>
-  <OptionCard name="/models">
+  <OptionCard name="/info">
     List providers and models (the same output as `stella models`). Also accepts
-    `refresh [--force]` and `list` — see below.
+    `refresh [--force]` and `list` — see below. (`/models` before the rename;
+    the old name still routes.)
   </OptionCard>
   <OptionCard name="/model">
-    Set the persistent default model (`/model zai/glm-5.2`). With no argument,
-    show the current default and the pickable list.
+    Switch **this session's** model. Bare `/model` opens a picker over the
+    models your configured providers offer (scoped by `[models].allowed` when
+    set); `/model zai/glm-5.2` is the typed form. Session-only — new sessions
+    keep the settings default. `/model default zai/glm-5.2` persists the
+    default instead.
+  </OptionCard>
+  <OptionCard name="/agent">
+    Run as an installed agent for the rest of this session. Opens a picker over
+    the definitions at user and project scope; choosing one appends its persona
+    to the system prompt, narrows the tool surface to its `tools:` grant, and
+    applies its declared `model:` (if any) as a session model switch — the same
+    assume the AGENTS tab's `a` performs.
   </OptionCard>
   <OptionCard name="/profile">
     Retune every role at once — `fast`, `balanced`, `pro`, `ultra`, or `auto` to
@@ -298,17 +309,17 @@ Open a tab or run an action:
 
 Press **Ctrl-C** to quit the deck.
 
-#### `/models` with an argument
+#### `/info` with an argument
 
-`/models` also takes two arguments, and both are handled inside the deck without a model call. When the configured model is itself broken, `/models refresh` is how you dig out — routing it through a turn would fail on the very error you are fixing:
+`/info` also takes two arguments, and both are handled inside the deck without a model call. When the configured model is itself broken, `/info refresh` is how you dig out — routing it through a turn would fail on the very error you are fixing:
 
 ```text
-/models refresh           re-sync the catalog
-/models refresh --force   re-download everything, ignoring ETags
-/models list              the same listing the bare /models prints
+/info refresh           re-sync the catalog
+/info refresh --force   re-download everything, ignoring ETags
+/info list              the same listing the bare /info prints
 ```
 
-Parsing is deliberately conservative: one recognized token (plus `refresh --force`). A single unrecognized token gets usage back rather than a wasted model call, and anything sentence-like after `/models` stays an ordinary prompt.
+Parsing is deliberately conservative: one recognized token (plus `refresh --force`). A single unrecognized token gets usage back rather than a wasted model call, and anything sentence-like after `/info` stays an ordinary prompt.
 
 #### `/profile` — one word for the whole harness
 
@@ -338,7 +349,7 @@ The verifier is the interesting one, because two goals pull against each other: 
 
 Clamping alone would flatten the ladder — on a two-rung provider both `fast` and `balanced` land on `low`. The missing rung is bought back on the axis that can still carry it: among models at the same price, the one whose provider *can* express the requested level wins. That is a tiebreak and nothing more. The search never leaves the price band, so a profile cannot overspend its tier to buy a knob, and it takes the cheapest qualifying model rather than the best. Where nothing at that price can express the level, the clamp stands and the confirmation says which levels moved.
 
-Like `/model`, the change applies to sessions started from now on; the running session keeps its current model.
+Like `/model default`, the change applies to sessions started from now on; the running session keeps its current model (a bare `/model` pick is the one that moves it).
 
 ### Plain REPL (`--plain`)
 
@@ -352,8 +363,8 @@ answers nothing.
   <OptionCard name="/help">
     Show help.
   </OptionCard>
-  <OptionCard name="/models">
-    List providers and models.
+  <OptionCard name="/info">
+    List providers and models (`/models` still routes).
   </OptionCard>
   <OptionCard name="/config">
     Show the current configuration — the deck has no `/config`; this is the REPL's own.

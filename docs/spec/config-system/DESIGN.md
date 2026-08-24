@@ -209,8 +209,11 @@ Two things already exist that this closed set strands:
   read-only persona. Its input schema has `description` and `prompt` — there
   is no `agent_type`.
 - **`.stella/agents/*.md`** holds named markdown personas, listed by
-  `/agents`, otherwise advisory. They cannot set a model, an effort, or a
-  tool scope.
+  `/agents`. When one is assumed in the deck (`/agent`, or `a` on the
+  AGENTS tab), its `tools:` grant narrows the session tool policy and its
+  `model:` key applies as a session model switch — but a definition still
+  cannot set an effort, and outside the deck's assume path (the `delegate`
+  tool, fleet workers) it stays advisory.
 
 Opening the set joins them: `[agents.<name>]` becomes a real engine posture,
 and `delegate` gains an `agent_type` parameter that selects one.

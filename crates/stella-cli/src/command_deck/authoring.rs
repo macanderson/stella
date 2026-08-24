@@ -222,13 +222,25 @@ pub(super) fn delete_agent(root: &std::path::Path, name: &str, scope: AgentScope
     }
 }
 
-/// The persona block an assumed agent contributes to the system prompt: the
-/// same words a `/name task` invocation opens with, minus the task.
-pub(super) fn assumed_persona(
+/// An assumed agent's session-facing contract: the persona block for the
+/// system prompt, and the two scopes the deck now enforces rather than
+/// narrates — the `tools:` grant and the declared `model:`.
+pub(super) struct AssumedAgent {
+    /// The persona block — the same words a `/name task` invocation opens
+    /// with, minus the task.
+    pub(super) persona: String,
+    /// The `tools:` grant; `None` restricts nothing.
+    pub(super) tools: Option<Vec<String>>,
+    /// The declared `model:` spec; `None` rides the session's model.
+    pub(super) model: Option<String>,
+}
+
+/// Load the installed definition `name` at `scope` as an [`AssumedAgent`].
+pub(super) fn assumed_agent(
     root: &std::path::Path,
     name: &str,
     scope: AgentScope,
-) -> Result<String, String> {
+) -> Result<AssumedAgent, String> {
     let dir = crate::agents_installed::agents_dir_for(scope, root)?;
     let entry = crate::agents_installed::discover(
         crate::agents_installed::user_agents_dir().as_deref(),
@@ -244,17 +256,27 @@ pub(super) fn assumed_persona(
         .unwrap_or(&entry.content)
         .trim()
         .to_string();
-    let mut out = format!(
+    let mut persona = format!(
         "You are acting as the following agent for this whole session.\n\n# Agent: {}\n{}\n\n{body}",
         entry.name, entry.description
     );
     if let Some(tools) = &entry.tools {
-        out.push_str(&format!(
+        persona.push_str(&format!(
             "\n\nThis agent's toolbelt is restricted to: {}.",
             tools.join(", ")
         ));
     }
-    Ok(out)
+    // The declared model comes off the pinned content's frontmatter — the
+    // same parse the loader runs, so the picker and a `/name task`
+    // invocation can never read the key differently.
+    let model = stella_core::extensions::agent_from_file(&entry.source_path, &entry.content)
+        .ok()
+        .and_then(|def| def.model);
+    Ok(AssumedAgent {
+        persona,
+        tools: entry.tools.clone(),
+        model,
+    })
 }
 
 /// The edit-save path: archive-then-write a NEW version and pin it (see
