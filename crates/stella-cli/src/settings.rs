@@ -248,6 +248,13 @@ pub struct Settings {
     /// opinion about its own verifier, not borrowing permission.
     #[serde(default)]
     pub reward: Option<RewardSettings>,
+    /// Whether the deck's plan gate is installed, and how big a plan has to be
+    /// before it fires ([`PlanReviewSettings`], #4611). Whole-block last-wins
+    /// across scopes, on `reward`'s argument: both fields describe one policy,
+    /// so a per-field merge would leave a scope holding half of somebody
+    /// else's. Carries no credential or egress authority.
+    #[serde(default)]
+    pub plan_review: Option<PlanReviewSettings>,
     /// Adaptive-context lifecycle configuration (the `context` block).
     /// `context.lifecycle.enabled` defaults **`true`** — the lifecycle ships
     /// on, and setting it `false` restores every pre-adaptive behavior.
@@ -705,6 +712,109 @@ impl RewardSettings {
     }
 }
 
+/// The `plan_review` section — the deck's plan gate (#4594, #4611).
+///
+/// The gate puts the task board to the person driving before the first step of
+/// a plan runs. Both of its facts are written here rather than compiled in:
+/// whether it is installed at all, and how many open steps a plan needs before
+/// it fires. Absent fields keep [`PlanReviewPolicy`]'s defaults, so an absent
+/// section behaves exactly as the shipped gate does.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PlanReviewSettings {
+    /// `on` (the default) installs the gate wherever a driver is attached to
+    /// answer it; `off` withholds it, and no card is ever raised.
+    ///
+    /// Off is not the same as unattended. A headless run already installs no
+    /// gate because nobody can answer one — this is the interactive driver
+    /// saying they do not want to be asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<Toggle>,
+    /// How many OPEN steps a plan needs before the card goes up. Default
+    /// [`PlanReviewPolicy::DEFAULT_MIN_STEPS`].
+    ///
+    /// `1` asks about every plan. `0` is refused rather than read as "off":
+    /// an empty board has no open steps, so a zero threshold would raise a
+    /// card over a plan with nothing in it, and a person who means off has
+    /// `enabled` to say so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_steps: Option<usize>,
+}
+
+impl PlanReviewSettings {
+    /// Fill the absent fields from the defaults and validate the result.
+    ///
+    /// # Errors
+    ///
+    /// The message a person sees at launch, naming the key they have to change
+    /// and what the rule is.
+    pub fn resolve(&self) -> Result<PlanReviewPolicy, String> {
+        let min_steps = self
+            .min_steps
+            .unwrap_or(PlanReviewPolicy::DEFAULT_MIN_STEPS);
+        if min_steps == 0 {
+            return Err(
+                "settings `plan_review.min_steps`: 0 would raise a plan card over a \
+                        board with no open steps — write 1 to be asked about every plan, or \
+                        `\"enabled\": \"off\"` to switch the gate off"
+                    .to_string(),
+            );
+        }
+        Ok(PlanReviewPolicy {
+            enabled: self.enabled.map(Toggle::is_on).unwrap_or(true),
+            min_steps,
+        })
+    }
+}
+
+/// The resolved plan-gate policy: the two facts the gate reads, validated once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlanReviewPolicy {
+    /// Whether the gate is installed where a driver could answer it.
+    pub enabled: bool,
+    /// How many open steps raise a card. Never zero — [`PlanReviewSettings::resolve`]
+    /// refuses that.
+    pub min_steps: usize,
+}
+
+impl PlanReviewPolicy {
+    /// How many steps a plan needs before the driver is asked to look at it.
+    ///
+    /// Not a measurement — a judgement about attention, and the reason this is
+    /// configurable at all. A one- or two-step plan is already legible from the
+    /// transcript as it happens, so stopping the turn to present it spends more
+    /// of the driver's attention than it saves. Three is where a plan stops
+    /// being a description of the next thing and starts being a commitment
+    /// worth redirecting before it runs.
+    pub const DEFAULT_MIN_STEPS: usize = 3;
+
+    /// The policy this invocation applies: `--plan` (`Config::plan_mode`, #1264)
+    /// forces the gate on and asks about every plan, whatever the files say.
+    ///
+    /// A flag outranks a settings file for the reason `Config::max_output_tokens`
+    /// gives: it is the most specific statement anyone can make — this run,
+    /// right now — and it is what a person reaches for when the configured
+    /// value is the thing going wrong.
+    pub fn for_run(self, plan_mode: bool) -> Self {
+        if plan_mode {
+            Self {
+                enabled: true,
+                min_steps: 1,
+            }
+        } else {
+            self
+        }
+    }
+}
+
+impl Default for PlanReviewPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            min_steps: Self::DEFAULT_MIN_STEPS,
+        }
+    }
+}
+
 /// The `ui` section of settings.json — appearance preferences. All fields
 /// optional so an absent section behaves exactly as the defaults.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
@@ -810,6 +920,20 @@ impl Settings {
     /// asked for, which is worse than not starting.
     pub fn reward_policy(&self) -> Result<RewardPolicy, String> {
         self.reward.clone().unwrap_or_default().resolve()
+    }
+
+    /// The resolved plan-gate policy (#4611). An absent `plan_review` block is
+    /// exactly the defaults: the gate is on, and it fires at
+    /// [`PlanReviewPolicy::DEFAULT_MIN_STEPS`] open steps.
+    ///
+    /// Returns `Err` for the same reason [`Self::reward_policy`] does — a
+    /// threshold the module refuses is a mistake someone has to see.
+    ///
+    /// # Errors
+    ///
+    /// A `min_steps` of zero, which would raise a card over an empty board.
+    pub fn plan_review(&self) -> Result<PlanReviewPolicy, String> {
+        self.plan_review.clone().unwrap_or_default().resolve()
     }
 
     /// The resolved `create_worktrees` policy. An absent key means `ask`, the

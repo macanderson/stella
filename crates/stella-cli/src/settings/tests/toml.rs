@@ -237,6 +237,71 @@ fn an_unusable_reward_scale_fails_the_load_by_name() {
     assert!(error.contains("greater than zero"), "{error}");
 }
 
+/// No `[plan_review]` block at all is exactly the shipped gate — on, at three
+/// open steps. Every workspace that never opts in is unchanged (#4611).
+#[test]
+fn no_plan_review_block_is_exactly_the_shipped_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[run]\nignore_gitignore = \"on\"\n",
+    );
+    let settings = load_toml(&path, ConfigScope::User).unwrap();
+    assert_eq!(settings.plan_review, None);
+    let policy = settings.plan_review().unwrap();
+    assert!(policy.enabled);
+    assert_eq!(policy.min_steps, PlanReviewPolicy::DEFAULT_MIN_STEPS);
+}
+
+/// Both facts reach the resolved policy from the file, which is the whole of
+/// #4611: the threshold was a `const` and the gate had no off switch.
+#[test]
+fn plan_review_carries_both_facts_out_of_the_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        dir.path(),
+        "stella.toml",
+        "[plan_review]\nenabled = \"off\"\nmin_steps = 6\n",
+    );
+    let policy = load_toml(&path, ConfigScope::User)
+        .unwrap()
+        .plan_review()
+        .unwrap();
+    assert!(!policy.enabled);
+    assert_eq!(policy.min_steps, 6);
+}
+
+/// A zero threshold is refused at load, by name — it would raise a card over a
+/// board with no open steps, and `enabled` is how a person says off. Same
+/// loud-beats-clamping rule the reward scale follows above.
+#[test]
+fn a_zero_plan_review_threshold_fails_the_load_by_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(dir.path(), "stella.toml", "[plan_review]\nmin_steps = 0\n");
+    let error = load_toml(&path, ConfigScope::User)
+        .unwrap()
+        .plan_review()
+        .expect_err("a zero threshold must not load");
+    assert!(error.contains("plan_review.min_steps"), "{error}");
+    assert!(error.contains("\"enabled\": \"off\""), "{error}");
+}
+
+/// `--plan` (#1264) outranks the file, both ways: it installs a gate the
+/// settings switched off, and it asks about every plan whatever threshold they
+/// set. A flag is the most specific statement anyone can make.
+#[test]
+fn plan_mode_outranks_the_settings_chain() {
+    let off = PlanReviewPolicy {
+        enabled: false,
+        min_steps: 12,
+    };
+    assert_eq!(off.for_run(false), off, "no flag changes nothing");
+    let forced = off.for_run(true);
+    assert!(forced.enabled);
+    assert_eq!(forced.min_steps, 1);
+}
+
 #[test]
 fn models_allowed_lands_in_allowed_models() {
     let dir = tempfile::tempdir().unwrap();

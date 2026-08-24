@@ -476,6 +476,37 @@ byte-for-byte at the value level, so changing a theme from the deck's SETTINGS t
 drops `providers`, `hooks`, or a forward-compatible key it does not recognise. Clearing
 the theme removes the `ui` key rather than leaving an empty `{}` behind.
 
+## The `plan_review` section
+
+The deck's plan gate. Before the first step of a plan runs, the task board goes to whoever
+is driving as a card they can approve or send back — and both of its facts are settings
+rather than constants (#4611).
+
+<CardGrid size="md">
+  <OptionCard name="enabled" defaultValue="on">
+    `off` withholds the gate entirely, so no card is ever raised. This is the interactive
+    driver saying they do not want to be asked; a headless run already installs no gate,
+    because nobody is there to answer one.
+  </OptionCard>
+  <OptionCard name="min_steps" defaultValue="3">
+    How many **open** board rows a plan needs before the card goes up. Finished and
+    cancelled rows do not count, so a board most of the way through its work does not raise
+    a card over its last remaining step. `1` asks about every plan. `0` is refused at launch
+    by name: an empty board has no open rows, and `enabled` is how you say off.
+  </OptionCard>
+</CardGrid>
+
+```json title="<workspace>/.stella/settings.json"
+{
+  "plan_review": { "min_steps": 5 }
+}
+```
+
+Whole-block last-wins across scopes, like `ui` and `reward` — the switch and the threshold
+are one policy, so a project that declares either states both rather than inheriting half of
+a user-scope answer. `stella run --plan` overrides both for one invocation: the gate is
+installed and every plan is put to the driver, whatever the file says.
+
 ## The `context` block
 
 The `context` block configures the **adaptive-context lifecycle**: mining observations

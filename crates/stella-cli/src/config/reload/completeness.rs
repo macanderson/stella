@@ -79,6 +79,7 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
         tool_policy,
         ignore_gitignore,
         reward_policy,
+        plan_review,
         create_worktrees,
         allowed_write_dirs,
         authority,
@@ -193,6 +194,11 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
             name: "reward_policy",
             posture: Posture::Reloaded,
             moved: reward_policy != &before.reward_policy,
+        },
+        Field {
+            name: "plan_review",
+            posture: Posture::Reloaded,
+            moved: plan_review != &before.plan_review,
         },
         Field {
             name: "create_worktrees",

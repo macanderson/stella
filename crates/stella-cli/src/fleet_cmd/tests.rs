@@ -535,6 +535,7 @@ fn steered_config(workspace_root: PathBuf) -> Config {
         tool_policy: Default::default(),
         ignore_gitignore: true,
         reward_policy: crate::reward::RewardPolicy::default(),
+        plan_review: crate::settings::PlanReviewPolicy::default(),
         // Workspace skills sit behind the project-trust boundary, so a witness
         // about a worker receiving one has to open the session the way a
         // trusted project does.

@@ -12,7 +12,7 @@ use crate::subsession::SupervisorMsg;
 
 mod plan_gate;
 
-pub(crate) use plan_gate::plan_goal;
+pub(crate) use plan_gate::PlanSetup;
 
 /// Mirrors the task board into the event stream: after any `task_*` tool
 /// call the FULL board snapshot rides the turn's channel as
@@ -32,8 +32,9 @@ pub(crate) struct TaskTap<'a> {
     pub(crate) events: UnboundedSender<AgentEvent>,
     pub(crate) registry: &'a ToolRegistry,
     pub(crate) supervisor: Option<UnboundedSender<SupervisorMsg>>,
-    /// `None` when no driver is attached to answer — the gate is then not
-    /// installed rather than installed and auto-approving.
+    /// `None` when no driver is attached to answer, or when the `plan_review`
+    /// policy withholds the gate — it is then not installed rather than
+    /// installed and auto-approving.
     plan_gate: Option<plan_gate::PlanGate>,
 }
 
@@ -46,20 +47,21 @@ impl<'a> TaskTap<'a> {
     /// what keeps the next tap from advertising a delegation it cannot
     /// perform.
     ///
-    /// `goal` is the plan gate's headline — the request the board is a plan
-    /// for (`plan_goal`). It is read only when a card is actually raised.
+    /// `plan` is what the gate needs from the turn: the headline the board is a
+    /// plan for, and the `plan_review` policy that decides whether there is a
+    /// gate at all ([`PlanSetup`]).
     pub(crate) fn new(
         inner: &'a dyn ToolExecutor,
         events: UnboundedSender<AgentEvent>,
         registry: &'a ToolRegistry,
         supervisor: Option<UnboundedSender<SupervisorMsg>>,
-        goal: String,
+        plan: PlanSetup,
     ) -> Self {
         if supervisor.is_some() {
             registry.enable_task_delegation();
         }
         let plan_gate =
-            plan_gate::PlanGate::install(registry.question_broker(), events.clone(), goal);
+            plan_gate::PlanGate::install(registry.question_broker(), events.clone(), plan);
         Self {
             inner,
             events,
@@ -241,6 +243,15 @@ mod tests {
         }
     }
 
+    /// The shipped policy, under `goal`. What a deck turn gets with no
+    /// `plan_review` block anywhere in the settings chain and no `--plan`.
+    fn setup(goal: &str) -> PlanSetup {
+        PlanSetup {
+            goal: goal.to_string(),
+            policy: crate::settings::PlanReviewPolicy::default(),
+        }
+    }
+
     fn picked(label: &str, note: Option<&str>) -> QuestionOutcome {
         QuestionOutcome::Answered {
             answers: vec![Answer {
@@ -298,7 +309,7 @@ mod tests {
     async fn starting_a_plan_puts_the_board_to_the_driver_as_a_scope_review() {
         let (registry, ran, mut rx, events) = gated(3, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
 
         let out = tap
             .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -340,7 +351,7 @@ mod tests {
             Some(picked("Change it first", Some("do the tests first"))),
         );
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
 
         let out = tap
             .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -370,7 +381,7 @@ mod tests {
     async fn no_driver_means_no_gate_rather_than_a_gate_that_answers_itself() {
         let (registry, ran, mut rx, events) = gated(5, None);
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
 
         let out = tap
             .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -392,7 +403,7 @@ mod tests {
     async fn a_short_plan_is_not_worth_a_card() {
         let (registry, ran, mut rx, events) = gated(2, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "tidy up".into());
+        let tap = TaskTap::new(&inner, events, &registry, None, setup("tidy up"));
 
         tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
             .await;
@@ -411,7 +422,7 @@ mod tests {
     async fn an_approved_plan_is_asked_about_once() {
         let (registry, ran, mut rx, events) = gated(3, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
 
         for id in ["1", "2", "3"] {
             tap.execute(stella_tools::tasks::START, &serde_json::json!({ "id": id }))
@@ -434,7 +445,7 @@ mod tests {
         let (registry, ran, mut rx, events) =
             gated(3, Some(picked("Change it first", Some("smaller"))));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
 
         for _ in 0..2 {
             tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -468,7 +479,7 @@ mod tests {
                 .expect("the board accepts a completion");
         }
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
 
         tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "2"}))
             .await;
@@ -480,6 +491,104 @@ mod tests {
             })
             .expect("three steps are left, so a card goes up");
         assert_eq!(proposal.steps, vec!["step 2", "step 3", "step 4"]);
+    }
+
+    /// **The #4611 witness, half one.** The threshold used to be a `const`, so
+    /// a two-step plan could never raise a card and a driver who wanted one had
+    /// no way to ask. `plan_review.min_steps` is that number, and moving it
+    /// changes whether the card goes up.
+    #[tokio::test]
+    async fn a_configured_threshold_decides_whether_a_card_is_raised() {
+        let (registry, ran, mut rx, events) = gated(2, Some(picked("Start work", None)));
+        let inner = Ran(ran.clone());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            PlanSetup {
+                goal: "tidy up".into(),
+                policy: crate::settings::PlanReviewPolicy {
+                    enabled: true,
+                    min_steps: 2,
+                },
+            },
+        );
+
+        tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
+            .await;
+        assert!(
+            drain(&mut rx)
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ScopeReview { .. })),
+            "two steps must raise a card once the workspace asked for two"
+        );
+        assert!(ran.load(Ordering::SeqCst), "and the approved step runs");
+    }
+
+    /// **The #4611 witness, half two.** A driver who never wants the card had
+    /// to answer one per plan, forever. `plan_review.enabled = "off"` is the
+    /// one more reason `install` returns `None`, so an attached driver is not
+    /// asked and nothing claims a decision is pending.
+    #[tokio::test]
+    async fn the_gate_can_be_switched_off_with_a_driver_attached() {
+        let (registry, ran, mut rx, events) = gated(5, Some(picked("Change it first", None)));
+        let inner = Ran(ran.clone());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            PlanSetup {
+                goal: "fix the router".into(),
+                policy: crate::settings::PlanReviewPolicy {
+                    enabled: false,
+                    min_steps: 3,
+                },
+            },
+        );
+
+        let out = tap
+            .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
+            .await;
+        assert!(matches!(out, ToolOutput::Ok { .. }), "{out:?}");
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "a withheld gate cannot refuse a step — the scripted driver would have"
+        );
+        assert!(
+            !drain(&mut rx)
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ScopeReview { .. })),
+            "nobody was asked, so nothing may claim a decision is pending"
+        );
+    }
+
+    /// `--plan` (#1264) asks about every plan. The flag has been stamped onto
+    /// `Config::plan_mode` and read by nothing since the staged pipeline left
+    /// the workspace; `PlanReviewPolicy::for_run` is what it now does, and this
+    /// is that policy reaching the board.
+    #[tokio::test]
+    async fn plan_mode_puts_even_a_one_step_plan_to_the_driver() {
+        let plan = PlanSetup {
+            goal: "fix the router".into(),
+            policy: crate::settings::PlanReviewPolicy {
+                enabled: false,
+                min_steps: 9,
+            }
+            .for_run(true),
+        };
+        let (registry, ran, mut rx, events) = gated(1, Some(picked("Start work", None)));
+        let inner = Ran(ran.clone());
+        let tap = TaskTap::new(&inner, events, &registry, None, plan);
+        tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
+            .await;
+        assert!(
+            drain(&mut rx)
+                .iter()
+                .any(|e| matches!(e, AgentEvent::ScopeReview { .. })),
+            "a one-step plan is put to the driver under --plan"
+        );
     }
 
     /// Same shape for the invocation plane (#2685): the tap sits above the
