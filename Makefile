@@ -412,7 +412,7 @@ tool-error-class-test: ## Test the #3167 ratchet's direction (hermetic; not part
 	./scripts/test-tool-error-class.sh
 
 .PHONY: prose
-prose: ## Assert no content-free prose was added (down-only ratchet)
+prose: ## Assert no content-free prose or banned vocabulary was added (down-only ratchet)
 	@python3 ./scripts/check-prose.py
 
 .PHONY: prose-report
