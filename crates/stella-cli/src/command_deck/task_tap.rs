@@ -24,10 +24,10 @@ pub(crate) use plan_gate::plan_goal;
 /// by `crate::subsession`).
 ///
 /// The board snapshot itself is **not** published here. It used to be, and
-/// that is precisely why only the Command Deck ever recorded a checklist: a
-/// one-shot `stella run`, `stella goal`, a delegated child and a subsession
-/// lane all move the same board through the same six tools and composed no
-/// such decorator. The mirror now sits on `ToolRegistry::execute` (#4613),
+/// that is precisely why only the deck ever recorded a checklist: a one-shot
+/// `stella run`, `stella goal`, a delegated child and a subsession lane all
+/// move the same board through the same six tools and composed no such
+/// decorator. The mirror now sits on `ToolRegistry::execute` (#4613),
 /// under the event sender every door attaches through
 /// `crate::turn_files::open_turn_streams`, so the deck's stream carries
 /// exactly what it always did and every other door carries it too.

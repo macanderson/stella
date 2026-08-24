@@ -581,7 +581,7 @@ async fn a_delegate_call_records_an_agent_use_row() {
 /// records the checklist, not only the one that composed a decorator.
 ///
 /// Fails before this change: `AgentEvent::TaskUpdate` had exactly two
-/// producers in the tree and both were the Command Deck, so a one-shot
+/// producers in the tree and both were the deck's own decorator, so a one-shot
 /// `stella run`, `stella goal`, a delegated child and a subsession lane moved
 /// this same board and emitted nothing at all about it. Nothing reached the
 /// stream here.

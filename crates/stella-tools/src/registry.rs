@@ -603,11 +603,11 @@ impl ToolRegistry {
         // replayable from the event log rather than only from the final
         // `tasks` rows. It sits here — in the registry, under the sender every
         // door attaches through `open_turn_streams` — because it used to sit
-        // in the Command Deck's own decorator, which is the only surface that
-        // composed it: a one-shot `stella run`, `stella goal`, a delegated
-        // child and a subsession lane all moved the same board and published
-        // nothing about it. A headless run is exactly the case nobody watched,
-        // and it was the case with no record.
+        // in the deck's own decorator, which is the only surface that composed
+        // it: a one-shot `stella run`, `stella goal`, a delegated child and a
+        // subsession lane all moved the same board and published nothing about
+        // it. An unattended run is exactly the case nobody watched, and it was
+        // the case with no record.
         //
         // Before the result, for the same reason the per-call measurement
         // below goes before it: the engine sends `ToolResult` once `execute`
