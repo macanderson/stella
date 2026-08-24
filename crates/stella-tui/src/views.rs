@@ -6,12 +6,8 @@
 //! tab ([`settings`]) hosts as a pane of its ←/→ nav, not a tab renderer of
 //! its own — it exposes `render_panel(ui, area, buf)` plus its own key
 //! handler, modal while that panel is focused. The AGENTS pane beside it is
-//! [`crate::v2::engine_panel`]. `installed` is a second exception: it
-//! is the AGENTS tab's INSTALLED AGENTS pane, dispatched from
-//! [`agents::render`] rather than from the deck's tab match, and its
-//! `render(ui, now_ms, area, buf)` takes only the deck clock off the model rather than
-//! carry a dead one — it has no model-derived state and no key handler of
-//! its own, deck_ui.rs routes its keys directly.)
+//! [`crate::v2::engine_panel`]. The AGENTS tab's INSTALLED AGENTS pane left
+//! this module with #4687's port and is [`crate::v2::installed`] now.)
 
 /// The braille spinner's frames — the classic 10-frame dot cycle.
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
