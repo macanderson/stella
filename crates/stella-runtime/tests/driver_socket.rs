@@ -16,8 +16,10 @@
 //! can drive" is the requirement rather than a demonstration.
 //!
 //! `cfg(unix)` is the same declared gap the rest of this suite carries, tracked
-//! in #3497: the fix is a portable in-tree fixture binary rather than a skipped
-//! test.
+//! in #3497. The fixture binary that closes it exists —
+//! `wrapper-plugin-fixture`, which `wrapper_socket.rs` and
+//! `wrapper_transport_limits.rs` now drive — and this file has not moved onto
+//! it yet.
 
 #![cfg(unix)]
 

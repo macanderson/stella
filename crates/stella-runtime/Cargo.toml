@@ -40,6 +40,20 @@ async-trait = { workspace = true }
 # a workspace dependency of six crates; nothing else here needs a combinator.
 futures-util = { workspace = true }
 
+# The portable plugin the socket's own tests drive (#3497). It links `std` and
+# nothing else — no serde, no `stella-plugin`, no JSON parser — because a Rust
+# SDK here would make the wire path second-class exactly as
+# `doc:pipeline-as-plugins` §5 commitment 2 forbids. It replaced the `/bin/sh`
+# scripts that made those tests `#[cfg(unix)]`, so `tests/` locate it with
+# `env!("CARGO_BIN_EXE_wrapper-plugin-fixture")` and cargo builds it for them.
+[[bin]]
+name = "wrapper-plugin-fixture"
+path = "src/bin/wrapper-plugin-fixture.rs"
+
+# A test fixture, never a shipped surface — keep it out of dist.
+[package.metadata.dist]
+dist = false
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros", "test-util"] }

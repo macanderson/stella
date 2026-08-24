@@ -75,6 +75,7 @@ fn edit(path: &str, before: &str, after: &str) -> Call {
             before: before.to_string(),
             after: after.to_string(),
             status: FileStatus::Modified,
+            patch: None,
         }],
         status: Status::Ok,
         duration_ms: 12,
@@ -607,6 +608,7 @@ fn acceptance_word_diff_highlights_only_the_changed_token() {
         before: before.to_string(),
         after: after.to_string(),
         status: FileStatus::Modified,
+        patch: None,
     });
 
     let rows: Vec<_> = diff.hunks.iter().flat_map(|h| h.rows.iter()).collect();
@@ -832,6 +834,7 @@ fn context_lines_are_never_marked_changed() {
         before: "a\nb\nc\nd\ne\n".to_string(),
         after: "a\nb\nCHANGED\nd\ne\n".to_string(),
         status: FileStatus::Modified,
+        patch: None,
     });
     for row in diff.hunks.iter().flat_map(|h| h.rows.iter()) {
         if row.kind == RowKind::Context {
@@ -842,6 +845,51 @@ fn context_lines_are_never_marked_changed() {
 
 // -------------------------------------------------------------- file kinds
 
+/// **The witness for #3577.** A caller holding only the replaced fragment
+/// produces a diff numbered from 1, and on a 400-line file those numbers read
+/// as the file's. The producer's own patch, when there is one, is drawn as
+/// given — same rows, same word spans, the file's line numbers.
+#[test]
+fn a_producers_patch_is_drawn_at_the_files_own_line_numbers() {
+    let fragment = FileChange {
+        path: "main.tex".to_string(),
+        before: "{15pt}\n".to_string(),
+        after: "{12pt}\n".to_string(),
+        status: FileStatus::Modified,
+        patch: None,
+    };
+    let from_fragment = FileDiff::build(&fragment);
+    assert_eq!(from_fragment.hunks[0].header, "@@ -1,1 +1,1 @@");
+
+    let measured = FileChange {
+        patch: Some(Patch {
+            text: "--- a/main.tex\n+++ b/main.tex\n@@ -212,1 +212,1 @@\n-{15pt}\n+{12pt}\n"
+                .to_string(),
+            added: 1,
+            removed: 1,
+        }),
+        ..fragment
+    };
+    let diff = FileDiff::build(&measured);
+    assert_eq!(diff.hunks[0].header, "@@ -212,1 +212,1 @@");
+    assert_eq!(
+        diff.hunks[0]
+            .rows
+            .iter()
+            .map(|r| (r.old_no, r.new_no))
+            .collect::<Vec<_>>(),
+        vec![(Some(212), None), (None, Some(212))]
+    );
+    assert_eq!((diff.added, diff.removed), (1, 1));
+    assert!(
+        diff.minimal,
+        "nothing was compared, so nothing can have fallen back"
+    );
+    // The pairing that gives a modified line its word spans survives the patch
+    // path — it is the same row builder, reached with parsed hunks.
+    assert!(diff.hunks[0].rows[0].spans.iter().any(|s| s.changed));
+}
+
 #[test]
 fn a_new_file_renders_as_an_all_green_diff() {
     let diff = FileDiff::build(&FileChange {
@@ -849,6 +897,7 @@ fn a_new_file_renders_as_an_all_green_diff() {
         before: String::new(),
         after: "$pdf_mode = 1;\n$clean_ext = 'aux log';\n".to_string(),
         status: FileStatus::New,
+        patch: None,
     });
     assert_eq!(diff.added, 2);
     assert_eq!(diff.removed, 0);
@@ -867,6 +916,7 @@ fn a_deleted_file_renders_as_an_all_red_diff() {
         before: "\\relax\n\\gdef\n".to_string(),
         after: String::new(),
         status: FileStatus::Deleted,
+        patch: None,
     });
     assert_eq!(diff.removed, 2);
     assert_eq!(diff.added, 0);
@@ -885,6 +935,7 @@ fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithm
             before: "a\nb\n".to_string(),
             after: String::new(),
             status: FileStatus::Deleted,
+            patch: None,
         }],
         status: Status::Ok,
         duration_ms: 4,
@@ -903,6 +954,7 @@ fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithm
             before: String::new(),
             after: "a\nb\nc\n".to_string(),
             status: FileStatus::New,
+            patch: None,
         }],
         status: Status::Ok,
         duration_ms: 4,
