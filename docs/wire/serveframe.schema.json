@@ -3385,7 +3385,7 @@
       ]
     },
     "ScopeProposal": {
-      "description": "What a `ScopeReview` gate presents for approval before a large plan\nexecutes (L-E5).\n\nThe fields after `estimated_cost_usd` are the scope-card grid's facts\n(repo/branch, read/write globs, shell policy) — all additive\n(`serde(default)`), so streams recorded before they existed parse with\nevery one absent, and a proposal that names none serializes exactly as it\nalways has.",
+      "description": "What a `ScopeReview` gate presents for approval before a large plan\nexecutes (L-E5).\n\nEverything after `estimated_cost_usd` is additive (`serde(default)`), so\nstreams recorded before those fields existed parse with every one absent,\nand a proposal that names none serializes exactly as it always has:\n`repo`/`branch`, the read and write globs and the shell policy are the\nscope-card grid's facts, and `revision` is the plan breadcrumb's.",
       "properties": {
         "branch": {
           "description": "The branch the work lands on, when named.",
@@ -3403,7 +3403,7 @@
           ]
         },
         "estimated_files": {
-          "description": "How many files the plan expects to touch — the magnitude the gate's\nthresholds are compared against.",
+          "description": "How many files the plan expects to touch — the magnitude the gate's\nthresholds are compared against.\n\n`0` is *not stated*, the same as an empty glob list below, and a\nsurface must render it as nothing rather than as \"~0 files\": a\nproducer that knows the steps but not the blast radius is the common\ncase, and a plan claiming it touches no files is a different and\nfalse statement.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -3419,6 +3419,15 @@
           "description": "The repository the scope binds to (`owner/name`, or a workspace\npath), when the planner named one.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "description": "Which revision of the plan this is: `1` for a plan's first proposal,\nincremented each time a changed plan is re-proposed. What a producer\ncounts a plan's lifetime as is its own to decide — the deck's gate\nresets per turn, because that is where the deck also drops the plan\nit was holding.\n\n`None` means the producer does not track revisions — every recording\nwritten before this field existed decodes that way, and a surface\nrendering a breadcrumb must say nothing rather than claim `r1` for a\nplan whose history it cannot see (#4333).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         },

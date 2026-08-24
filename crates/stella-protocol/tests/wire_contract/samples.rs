@@ -528,6 +528,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 write_globs: vec!["src/router/**".into()],
                 read_globs: vec!["src/**".into()],
                 shell_policy: Some("allowlisted".into()),
+                revision: Some(2),
             },
         },
         AgentEvent::ScopeReview {
