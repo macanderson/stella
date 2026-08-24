@@ -163,7 +163,7 @@ protocol: the **[Context Graph Protocol](https://github.com/macanderson/context-
   any CGP host, checked at CI time rather than discovered at integration
   time.
 - **A trust architecture**, not just a transport: provenance (every frame
-  says where it came from), budget honesty (providers respect the token
+  says where it came from), budget discipline (providers respect the token
   budget they're given), consent, citation guarantees, version stability,
   and temporal validity — the bi-temporal "invalidation doesn't happen"
   property, standardized.
@@ -241,7 +241,7 @@ Recurring lessons that keep showing up in the reflection log are
 **auto-promoted into skills** (a new `.stella/skills/<slug>/SKILL.md`),
 capped per session and never clobbering an existing skill.
 
-### Honest measurement: A/B control turns
+### Measuring recall: A/B control turns
 
 Does recall actually help? stella measures instead of assuming: at a fixed
 rate (every 10th turn by default), recall is deterministically suppressed and
@@ -281,7 +281,7 @@ fresh as files change, for exactly as long as a session runs.
 <Callout type="info">
   `importers` edges resolve for relative TypeScript/JavaScript and Python
   imports, and for Rust `use`/`mod` paths through the workspace module tree
-  (file-level edges; external crates stay unresolved). Remaining honest
+  (file-level edges; external crates stay unresolved). Remaining
   gaps: Go and Java package imports, and PHP namespace `use`, are indexed
   unresolved.
 </Callout>
