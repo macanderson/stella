@@ -115,6 +115,23 @@ pub struct RunSection {
     /// (`ignore_gitignore`).
     #[serde(default)]
     pub ignore_gitignore: Option<Toggle>,
+    /// Whether this machine trusts a project it opens by default, in place of
+    /// typing `STELLA_TRUST_PROJECT=1` on every launch. `false` (the default
+    /// when absent) changes nothing.
+    ///
+    /// **Honored only from the user and org-managed scopes.** A project's own
+    /// `stella.toml` is exactly the file this key would need to be hostile
+    /// through — a cloned repository shipping `run.auto_trust_project = true`
+    /// in its own committed config would be granting itself the trust the
+    /// boundary exists to withhold. So this key parses at every scope (an
+    /// unrecognized key is a worse failure than an inert one) but a project
+    /// scope's value is always discarded before it reaches
+    /// `Settings::merge_captured_scopes` — see there, and
+    /// `settings::project_trust`. An explicit `STELLA_TRUST_PROJECT` (either
+    /// spelling) always overrides this on a one-off basis, in either
+    /// direction.
+    #[serde(default)]
+    pub auto_trust_project: Option<bool>,
 }
 
 /// `[models]` — policy over the model catalog, not a model table.
@@ -639,6 +656,7 @@ impl TomlConfig {
             ignore_gitignore: run.ignore_gitignore,
             create_worktrees: run.create_worktrees,
             candidate_isolation: run.candidate_isolation,
+            auto_trust_project: run.auto_trust_project,
             allowed_dirs: workspace.allowed_dirs,
             ui,
             reward,
