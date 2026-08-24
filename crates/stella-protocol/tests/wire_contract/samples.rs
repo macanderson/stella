@@ -9,7 +9,7 @@
 //! because the proofs are the only consumers.
 
 use serde_json::json;
-use stella_protocol::completion::FinishReason;
+use stella_protocol::completion::{FinishReason, ReasoningEffort};
 use stella_protocol::delivery_event::{DeliveryDecline, DeliveryOutcome};
 use stella_protocol::event::{
     BudgetMode, BudgetScope, CiStatus, FileChangeKind, MediaJobState, MediaKind, ModelCallRole,
@@ -112,6 +112,11 @@ pub(crate) fn all_usage_incomplete_reasons() -> Vec<UsageIncompleteReason> {
 pub(crate) fn all_finish_reasons() -> Vec<FinishReason> {
     use FinishReason::*;
     vec![Stop, Length, ToolCalls, ContentFilter]
+}
+
+pub(crate) fn all_reasoning_efforts() -> Vec<ReasoningEffort> {
+    use ReasoningEffort::*;
+    vec![Low, Medium, High, Xhigh, Max]
 }
 
 pub(crate) fn all_file_change_kinds() -> Vec<FileChangeKind> {
@@ -276,6 +281,7 @@ pub(crate) fn all_subagent_phases() -> Vec<SubAgentPhase> {
             budget_usd: Some(0.25),
             write_access: false,
             depth: 1,
+            effort: Some(stella_protocol::ReasoningEffort::High),
         },
         SubAgentPhase::Finished {
             agent_id: "search-1".into(),
@@ -522,6 +528,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 write_globs: vec!["src/router/**".into()],
                 read_globs: vec!["src/**".into()],
                 shell_policy: Some("allowlisted".into()),
+                revision: Some(2),
             },
         },
         AgentEvent::ScopeReview {
@@ -837,6 +844,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 // The "all optional fields present" shape must actually carry
                 // the optional field, or the sample proves nothing about it.
                 finish_reason: Some(FinishReason::Stop),
+                effort: Some(ReasoningEffort::High),
+                max_output_tokens: Some(64_000),
                 sub_agent_id: None,
             },
             AgentEvent::StepUsage {
@@ -860,6 +869,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 // ...and the "all absent" shape must omit it entirely, which
                 // is what `skip_serializing_if` promises consumers.
                 finish_reason: None,
+                effort: None,
+                max_output_tokens: None,
                 sub_agent_id: None,
             },
         ]
@@ -890,6 +901,39 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 tool_calls: 0,
                 complete: true,
                 finish_reason: Some(finish_reason),
+                // The ceiling the `Length` arm of this sweep was cut off at —
+                // the pairing the field exists for.
+                effort: None,
+                max_output_tokens: Some(64_000),
+                sub_agent_id: None,
+            }),
+    );
+    // Every effort a request can pin, on the field that records what the
+    // dispatched request actually asked for (#4565).
+    events.extend(
+        all_reasoning_efforts()
+            .into_iter()
+            .map(|effort| AgentEvent::StepUsage {
+                upstream_provider: None,
+                step: 3,
+                role: ModelCallRole::Worker,
+                provider: "openai".into(),
+                output_text: None,
+                model: "o5".into(),
+                input_tokens: 2_000,
+                output_tokens: 900,
+                cached_input_tokens: 0,
+                cache_write_tokens: 0,
+                reasoning_tokens: Some(700),
+                estimated_input_tokens: 1_900,
+                cost_usd: 0.02,
+                duration_ms: 30_000,
+                retries: 0,
+                tool_calls: 0,
+                complete: true,
+                finish_reason: Some(FinishReason::Stop),
+                effort: Some(effort),
+                max_output_tokens: None,
                 sub_agent_id: None,
             }),
     );
@@ -1093,8 +1137,26 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             budget_usd: None,
             write_access: true,
             depth: 2,
+            effort: None,
         },
     });
+    // Every effort a child's bracket can pin — the same vocabulary
+    // `StepUsage` samples above, exercised on the `Started` field too so a
+    // divergence between the two carriers cannot hide.
+    events.extend(
+        all_reasoning_efforts()
+            .into_iter()
+            .map(|effort| AgentEvent::SubAgent {
+                phase: SubAgentPhase::Started {
+                    agent_id: "search-1".into(),
+                    instruction_preview: "find the retry policy".into(),
+                    budget_usd: None,
+                    write_access: false,
+                    depth: 1,
+                    effort: Some(effort),
+                },
+            }),
+    );
     // Every ladder rung (#1043). Each has to reach the wire on its own,
     // because the rung is the *only* thing separating verdicts that the
     // surrounding `passed`/`deterministic` flags spell identically — a

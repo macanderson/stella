@@ -43,20 +43,23 @@ renderer is a second renderer's future bug.
 
 ## Cross-language parity
 
-`arenabench/ui` re-implements two of this crate's algorithms in TypeScript,
-because that page is a Next.js client with no way to call into the workspace.
+The arena transcript — in the
+[arenabench repo](https://github.com/macanderson/arenabench) since the
+ejection (#2380) — re-implements two of this crate's algorithms in TypeScript,
+because that page is a Next.js client with no way to call into this workspace.
 Neither is allowed to drift silently: the two languages cannot share a test
 runner, so they share a **file**.
 
-| Algorithm | Golden | TypeScript check |
+| Algorithm | Golden | TypeScript check (arenabench repo) |
 |---|---|---|
 | `word::highlight` + change-block pairing | `tests/fixtures/word-highlight-matrix.txt` | `check-word-highlight-parity.mjs` |
 | `stella_diff::view::plan` | `stella-diff`'s `view-plan-matrix.txt` | `check-diff-view-parity.mjs` |
 
 Re-bless with `BLESS=1 cargo test -p stella-transcript --test
-word_highlight_matrix`, then **read the diff** and port the change — a
-re-blessed golden fails the TypeScript until it catches up. Both run in CI
-(`.github/workflows/diff-view-parity.yml`).
+word_highlight_matrix`, then **read the diff** and port the change. The
+arenabench repo vendors both matrices under `ui/golden/` and its CI holds the
+ports to them, so a re-blessed golden here must be synced there by copying
+the regenerated file.
 
 ## What the model fixes structurally
 

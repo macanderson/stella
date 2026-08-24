@@ -32,6 +32,7 @@ fn scoped_model(approved: bool) -> WorkspaceModel {
                 write_globs: vec!["apps/api/**".into()],
                 read_globs: vec!["apps/**".into()],
                 shell_policy: Some("allowlisted".into()),
+                revision: None,
             },
         },
     });

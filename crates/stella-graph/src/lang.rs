@@ -6,7 +6,7 @@
 //! asset to resolve relative to the binary's install path.
 //!
 //! Two languages carry no grammar at all and are read by this crate's own
-//! line scans instead — [`crate::markdown`] and [`crate::toml`] — which is
+//! line scans instead — [`crate::markdown`] and [`crate::record_toml`] — which is
 //! why they are indexable in every build, trimmed or not.
 
 use std::path::Path;
@@ -34,7 +34,7 @@ pub enum Language {
     /// here whose parser is this crate's own, and so present in every build.
     Markdown,
     /// A published **context record**, split on its table headers by this
-    /// crate's private `toml` module (#4492). Like [`Language::Markdown`] it
+    /// crate's private `record_toml` module (#4492). Like [`Language::Markdown`] it
     /// carries no grammar and is present in every build; unlike every other
     /// language here its extension alone does not qualify a file — only a
     /// `.toml` under `.stella/rules/` is one

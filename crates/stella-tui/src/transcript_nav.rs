@@ -360,6 +360,7 @@ mod tests {
             duration_ms: 10,
             speculated: false,
             diff: Vec::new(),
+            read_size: None,
         }
     }
 
@@ -377,6 +378,7 @@ mod tests {
                 path: path.into(),
                 seq,
             }],
+            read_size: None,
         }
     }
 
@@ -447,6 +449,7 @@ mod tests {
                 duration_ms: 5,
                 speculated: false,
                 diff: Vec::new(),
+                read_size: None,
             },
         ];
         assert_eq!(search_hits(&t, "deadlock"), vec![1]);

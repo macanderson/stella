@@ -286,9 +286,10 @@ fn the_word_rules_still_match_their_committed_matrix() {
         "word highlighting no longer matches {}.{first}\n\n\
          If the change is intended: re-bless with\n  \
          BLESS=1 cargo test -p stella-transcript --test word_highlight_matrix\n\
-         and then port it to arenabench/ui/lib/word-highlight.ts, which is\n\
-         checked against this same file by\n  \
-         node arenabench/ui/scripts/check-word-highlight-parity.mjs",
+         then port it to ui/lib/word-highlight.ts in the arenabench repo\n\
+         (github.com/macanderson/arenabench) and copy the regenerated matrix\n\
+         over its vendored ui/golden/word-highlight-matrix.txt — its CI\n\
+         holds the port to that file.",
         path.display()
     );
 }

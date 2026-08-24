@@ -91,6 +91,10 @@ fn execution_journal_replays_transcript_without_deltas() {
     assert_eq!(v[4]["body"], "added the function");
     assert_eq!(v[4]["truncated"], false);
     assert_eq!(v[5]["body"], "and named it well");
+    // The metering row lifts what the dispatched request asked for (#4565) —
+    // the profile card renders "not recorded for this run" without these.
+    assert_eq!(v[7]["effort"], "high");
+    assert_eq!(v[7]["max_output_tokens"], 32000);
     // No execution 2 events were seeded — an empty transcript, not an error.
     let none = respond(ws.path(), "/api/execution-journal?id=2");
     let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();

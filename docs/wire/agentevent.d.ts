@@ -978,14 +978,21 @@ export interface ProviderShare {
 }
 
 /**
+ * Reasoning effort forwarded to models with a thinking/extended-reasoning
+ * mode. One enum, mapped per-adapter to the provider's own parameter name
+ * ("reasoning_param").
+ */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
  * What a `ScopeReview` gate presents for approval before a large plan
  * executes (L-E5).
  *
- * The fields after `estimated_cost_usd` are the scope-card grid's facts
- * (repo/branch, read/write globs, shell policy) — all additive
- * (`serde(default)`), so streams recorded before they existed parse with
- * every one absent, and a proposal that names none serializes exactly as it
- * always has.
+ * Everything after `estimated_cost_usd` is additive (`serde(default)`), so
+ * streams recorded before those fields existed parse with every one absent,
+ * and a proposal that names none serializes exactly as it always has:
+ * `repo`/`branch`, the read and write globs and the shell policy are the
+ * scope-card grid's facts, and `revision` is the plan breadcrumb's.
  */
 export interface ScopeProposal {
   /**
@@ -999,6 +1006,12 @@ export interface ScopeProposal {
   /**
    * How many files the plan expects to touch — the magnitude the gate's
    * thresholds are compared against.
+   *
+   * `0` is *not stated*, the same as an empty glob list below, and a
+   * surface must render it as nothing rather than as "~0 files": a
+   * producer that knows the steps but not the blast radius is the common
+   * case, and a plan claiming it touches no files is a different and
+   * false statement.
    */
   estimated_files: number;
   /**
@@ -1010,6 +1023,19 @@ export interface ScopeProposal {
    * path), when the planner named one.
    */
   repo?: string | null;
+  /**
+   * Which revision of the plan this is: `1` for a plan's first proposal,
+   * incremented each time a changed plan is re-proposed. What a producer
+   * counts a plan's lifetime as is its own to decide — the deck's gate
+   * resets per turn, because that is where the deck also drops the plan
+   * it was holding.
+   *
+   * `None` means the producer does not track revisions — every recording
+   * written before this field existed decodes that way, and a surface
+   * rendering a breadcrumb must say nothing rather than claim `r1` for a
+   * plan whose history it cannot see (#4333).
+   */
+  revision?: number | null;
   /**
    * The shell policy in force for the run (e.g. `allowlisted`,
    * `read-only`, `none`), when stated.
@@ -1084,6 +1110,14 @@ export type SubAgentPhase = {
    * Nesting depth: `1` for a child of the top-level turn.
    */
   depth: number;
+  /**
+   * The reasoning effort the child's model calls are pinned to, as
+   * resolved at dispatch — the spec's override or, absent one, the
+   * parent engine's own setting. `None` when neither pins one. This
+   * is the only durable record of a child's effort: the metering
+   * rows carry the child's model and provider but not this.
+   */
+  effort?: ReasoningEffort | null;
   /**
    * The child's task, truncated for display. Never the full prompt —
    * the prompt can be large and the event stream is journaled.
@@ -1698,6 +1732,10 @@ export type AgentEvent = {
   cost_usd: number;
   duration_ms: number;
   /**
+   * The reasoning effort the dispatched request actually carried -- the resolved value after auto-mode and per-model downgrade, never the configured one. Absent when the request pinned no effort or the stream predates this field; absence is not a pin.
+   */
+  effort?: ReasoningEffort | null;
+  /**
    * The engine's RAW (uncalibrated) pre-call estimate of the input it
    * sent — paired with `input_tokens` (plus cache-write tokens, which
    * are real prompt tokens split out only for pricing) this is one
@@ -1717,6 +1755,10 @@ export type AgentEvent = {
    */
   finish_reason?: FinishReason | null;
   input_tokens: number;
+  /**
+   * The output-token ceiling the dispatched request asked for -- the effective per-call value after the turn's standing clamp, so it can move between steps of one turn. Paired with finish_reason == length it names the ceiling the cut-off happened at. Absent when the request asked for no ceiling or the stream predates this field.
+   */
+  max_output_tokens?: number | null;
   model: string;
   /**
    * Authoritative model output for calls that do not emit a separate

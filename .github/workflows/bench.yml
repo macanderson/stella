@@ -97,7 +97,7 @@ jobs:
           # since a push runs them unconditionally. The tests assert this
           # pattern still names the module they read.
           if git diff --name-only "$BASE_SHA"...HEAD \
-            | grep -Eq '^(bench/|arenabench/|crates/stella-model/src/catalog(\.rs$|/)|crates/stella-cli/src/settings(\.rs$|/)|\.github/workflows/bench\.yml$)'; then
+            | grep -Eq '^(bench/|crates/stella-model/src/catalog(\.rs$|/)|crates/stella-cli/src/settings(\.rs$|/)|\.github/workflows/bench\.yml$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -171,13 +171,7 @@ jobs:
         if: steps.scope.outputs.changed == 'true'
         run: uv run --with pytest --no-project pytest -q bench/wirelog/tests
 
-      # ArenaBench is being prepared for ejection into its own repository and
-      # carries its own workflow at arenabench/.github/workflows/ci.yml, which
-      # becomes active the moment that folder becomes a repo root. Until the
-      # split lands, run its suite from here so the gate never lapses — the
-      # last time this suite went unwatched, a wrong-field trajectory reader
-      # posted $0.00 for every contestant and swept the scoreboard.
-      - name: arenabench — pytest (until ejection)
-        if: steps.scope.outputs.changed == 'true'
-        working-directory: arenabench
-        run: uv run --with pytest --no-project pytest -q
+      # ArenaBench's suite ran here "until ejection" from the day its folder
+      # carried a dormant workflow of its own. The ejection landed (#2380):
+      # the harness lives at https://github.com/macanderson/arenabench, where
+      # that workflow is now the live gate.

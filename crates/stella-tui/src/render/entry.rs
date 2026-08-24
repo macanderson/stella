@@ -216,7 +216,15 @@ fn v2_rows(
             path,
         } => {
             let measured = v2::measured_delta(call_id, view.following, view.files);
-            out.extend(v2::head_rows(name, path.as_deref(), input, measured, width));
+            let read = v2::read_size(call_id, view.following);
+            out.extend(v2::head_rows(
+                name,
+                path.as_deref(),
+                input,
+                measured,
+                read,
+                width,
+            ));
             if expanded {
                 tool::argument_rows(v2::head_metal(name), raw, width, out);
             }
@@ -765,19 +773,22 @@ fn entry_body(
             steps,
             estimated_files,
         } => {
+            // `estimated_files: 0` is *not stated* (see `ScopeProposal`), so
+            // the magnitude clause is dropped rather than printed as
+            // "~0 files" — a claim the producer never made.
+            let mut facts = format!("  ·  {}", plural(*steps as u64, "step", "steps"));
+            if *estimated_files > 0 {
+                facts.push_str(&format!(
+                    " · ~{}",
+                    plural(u64::from(*estimated_files), "file", "files")
+                ));
+            }
             push_note(
                 "⏸ plan",
                 loud(theme::WARNING_BRIGHT),
                 vec![
                     Span::styled(summary.clone(), value()),
-                    Span::styled(
-                        format!(
-                            "  ·  {} · ~{}",
-                            plural(*steps as u64, "step", "steps"),
-                            plural(u64::from(*estimated_files), "file", "files")
-                        ),
-                        quiet(),
-                    ),
+                    Span::styled(facts, quiet()),
                 ],
                 width,
                 out,

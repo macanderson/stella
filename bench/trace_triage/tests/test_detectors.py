@@ -219,6 +219,61 @@ def test_error_envelope_around_substantial_output_fires(tmp_path):
     assert CHAIN_OUTPUT in finding.occurrences[0].excerpt
 
 
+def test_an_environment_classed_envelope_still_fires(tmp_path):
+    """A classified `environment` error proceeds to the envelope heuristics."""
+    write_run(
+        tmp_path,
+        [
+            {
+                "task": "alpha__AAA",
+                "reward": 0,
+                "events": tool_pair(
+                    "c1",
+                    "bash",
+                    {"command": "ls -la docs/; file docs/*"},
+                    err(
+                        CHAIN_OUTPUT
+                        + "\nbash: line 1: file: command not found\n\n[exit code: 127]",
+                        cls="environment",
+                    ),
+                ),
+            }
+        ],
+    )
+    (finding,) = _findings(tmp_path, "tool-error-envelope")
+    assert CHAIN_OUTPUT in finding.occurrences[0].excerpt
+    assert "error class `environment`" in finding.occurrences[0].location
+
+
+def test_a_refusal_class_beats_an_envelope_shaped_message(tmp_path):
+    """The class is the discriminator, not the prose.
+
+    This payload passes every string heuristic — `[exit code:` trailer,
+    substantial body — and the executor classified it `refused_by_policy`, so
+    it must not fire. A detector that only reads the message fires here.
+    """
+    write_run(
+        tmp_path,
+        [
+            {
+                "task": "alpha__AAA",
+                "reward": 0,
+                "events": tool_pair(
+                    "c1",
+                    "bash",
+                    {"command": "ls -la docs/; file docs/*"},
+                    err(
+                        CHAIN_OUTPUT
+                        + "\nbash: line 1: file: command not found\n\n[exit code: 127]",
+                        cls="refused_by_policy",
+                    ),
+                ),
+            }
+        ],
+    )
+    assert _findings(tmp_path, "tool-error-envelope") == []
+
+
 def test_a_guard_refusal_is_not_this_defect(tmp_path):
     """A refusal wraps a refusal, not output, and is a different ticket."""
     refusal = (

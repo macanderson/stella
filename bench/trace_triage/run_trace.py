@@ -104,6 +104,21 @@ class ToolCall:
         return message if isinstance(message, str) else ""
 
     @property
+    def error_class(self) -> str | None:
+        """The executor's `ErrorClass` token, or `None` when the wire has none.
+
+        Serialized by `crates/stella-protocol/src/tool.rs` only when the error
+        was classified, so an old trace and an unclassified error look the
+        same here: both `None`. A detector reading this must treat `None` as
+        "no claim", never as a class of its own.
+        """
+        err = self.error
+        if not err:
+            return None
+        cls = err.get("class")
+        return cls if isinstance(cls, str) else None
+
+    @property
     def ok_content(self) -> str:
         if not self.result:
             return ""

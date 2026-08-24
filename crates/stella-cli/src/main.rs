@@ -740,6 +740,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             diff,
             context,
             only,
+            system_prompt,
         }) => {
             // Reads the local receipt tables only — no provider, no API key.
             return inspect::run_inspect(&inspect::InspectArgs {
@@ -752,6 +753,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 diff: *diff,
                 context: *context,
                 only: *only,
+                system_prompt: *system_prompt,
             })
             .map_err(failure::CliFailure::from);
         }

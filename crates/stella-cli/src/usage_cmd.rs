@@ -347,6 +347,19 @@ fn tool_report(format: StatsFormat) -> Result<(), String> {
     let rows = hub
         .tool_report()
         .map_err(|e| format!("cannot read the usage hub: {e}"))?;
+    // The per-class split of the errors column (#4550), read beside the rows
+    // it splits. Executions folded before the split existed have no class
+    // rows, so a class sum may undercount `errors` — never the reverse.
+    let classes = hub
+        .tool_error_class_report()
+        .map_err(|e| format!("cannot read the usage hub: {e}"))?;
+    let split_of = |tool: &str, surface: &str| -> Vec<(String, i64)> {
+        classes
+            .iter()
+            .filter(|c| c.tool == tool && c.surface == surface)
+            .map(|c| (class_label(&c.class).to_string(), c.errors))
+            .collect()
+    };
     let rate = |calls: i64, errors: i64| {
         if calls > 0 {
             errors as f64 / calls as f64
@@ -359,12 +372,18 @@ fn tool_report(format: StatsFormat) -> Result<(), String> {
             let objects: Vec<serde_json::Value> = rows
                 .iter()
                 .map(|r| {
+                    let by_class: serde_json::Map<String, serde_json::Value> =
+                        split_of(&r.tool, &r.surface)
+                            .into_iter()
+                            .map(|(class, errors)| (class, errors.into()))
+                            .collect();
                     serde_json::json!({
                         "tool": r.tool,
                         "surface": r.surface,
                         "calls": r.calls,
                         "errors": r.errors,
                         "error_rate": rate(r.calls, r.errors),
+                        "errors_by_class": by_class,
                     })
                 })
                 .collect();
@@ -374,17 +393,19 @@ fn tool_report(format: StatsFormat) -> Result<(), String> {
             );
         }
         StatsFormat::Csv => {
-            println!("tool,surface,calls,errors,error_rate");
+            println!("tool,surface,calls,errors,error_rate,errors_by_class");
             for r in &rows {
                 // Tool names are model- and MCP-supplied text: same RFC-4180
-                // escape as every other text column on this surface.
+                // escape as every other text column on this surface. The
+                // class column is closed-vocabulary tokens and counts.
                 println!(
-                    "{},{},{},{},{:.4}",
+                    "{},{},{},{},{:.4},{}",
                     crate::stats::csv_escape(&r.tool),
                     crate::stats::csv_escape(&r.surface),
                     r.calls,
                     r.errors,
                     rate(r.calls, r.errors),
+                    class_summary(&split_of(&r.tool, &r.surface), ";"),
                 );
             }
         }
@@ -397,18 +418,19 @@ fn tool_report(format: StatsFormat) -> Result<(), String> {
                 return Ok(());
             }
             println!(
-                "{:<28} {:<8} {:>8} {:>8} {:>8}",
+                "{:<28} {:<8} {:>8} {:>8} {:>8}  CLASSES",
                 "TOOL", "SURFACE", "CALLS", "ERRORS", "ERR-RATE"
             );
             let mut totals = (0i64, 0i64);
             for r in &rows {
                 println!(
-                    "{:<28} {:<8} {:>8} {:>8} {:>7.2}%",
+                    "{:<28} {:<8} {:>8} {:>8} {:>7.2}%  {}",
                     r.tool,
                     r.surface,
                     r.calls,
                     r.errors,
                     100.0 * rate(r.calls, r.errors),
+                    class_summary(&split_of(&r.tool, &r.surface), " "),
                 );
                 totals.0 += r.calls;
                 totals.1 += r.errors;
@@ -424,6 +446,28 @@ fn tool_report(format: StatsFormat) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The display spelling of a stored class token: the hub stores `''` for a
+/// site not yet audited into a class, which no report cell can show.
+/// `"unclassified"` cannot collide — `ErrorClass`'s closed vocabulary never
+/// contains it.
+fn class_label(class: &str) -> &str {
+    if class.is_empty() {
+        "unclassified"
+    } else {
+        class
+    }
+}
+
+/// `class:count` pairs joined by `sep`, largest first (the hub report's own
+/// order) — the compact spelling the CSV and text surfaces share.
+fn class_summary(split: &[(String, i64)], sep: &str) -> String {
+    split
+        .iter()
+        .map(|(class, errors)| format!("{class}:{errors}"))
+        .collect::<Vec<_>>()
+        .join(sep)
 }
 
 fn sync(all: bool) -> Result<(), String> {
