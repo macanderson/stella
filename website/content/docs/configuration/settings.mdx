@@ -793,7 +793,15 @@ schema, the sink-authorization rules, and the closed event envelope are document
 A repository you just cloned can carry a `<workspace>/.stella/settings.json` — and an
 untrusted repo must not be able to run commands on your machine or route your API keys to
 a server it controls. stella therefore holds back the dangerous parts of a project-scope
-file until you opt in with **`STELLA_TRUST_PROJECT=1`**:
+file until you opt in with **`STELLA_TRUST_PROJECT=1`** — or, to avoid typing that on every
+launch, `run.auto_trust_project = true` in **your own** `~/.stella/stella.toml` (or the
+org-managed file). That key is deliberately inert in a project's own `stella.toml`: a
+project voting itself trusted is exactly the hole this boundary exists to close, so a
+project-scope `auto_trust_project` still parses and is then discarded, with a stderr
+notice saying so. An explicit `STELLA_TRUST_PROJECT` env var always overrides the config
+default, either direction, for that one launch — so `STELLA_TRUST_PROJECT=0` still closes
+trust for a repository you have set `auto_trust_project` on generally, and
+`STELLA_TRUST_PROJECT=1` still opens it for one you have not.
 
 - **Hooks.** Project-scope `hooks` load only when the project is trusted. (The legacy
   `STELLA_PROJECT_HOOKS=1` flag still unlocks hooks — and only hooks.)
@@ -817,10 +825,11 @@ file until you opt in with **`STELLA_TRUST_PROJECT=1`**:
   unless full project trust is present and managed policy permits them. User-global
   manifests under `~/.stella/tools/` remain available.
 
-A stderr notice names skipped hooks, skipped context providers, and credential-routing
-fields, so a trusted-but-forgotten flag is diagnosable. Cosmetic project fields (`name`,
-`default_model`, `dialect`) apply regardless of trust. Managed denials from the captured
-org settings snapshot always win; changing the file takes effect on the next settings load.
+A stderr notice names skipped hooks, skipped context providers, credential-routing
+fields, and an ignored project-scope `auto_trust_project`, so a trusted-but-forgotten flag
+is diagnosable. Cosmetic project fields (`name`, `default_model`, `dialect`) apply
+regardless of trust. Managed denials from the captured org settings snapshot always win;
+changing the file takes effect on the next settings load.
 
 ## Lifecycle hooks
 

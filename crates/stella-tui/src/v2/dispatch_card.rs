@@ -1,14 +1,30 @@
-//! The mid-turn routing card — drawn when the deck has parked a prompt
-//! rather than guessing where it goes. The decision itself lives in
-//! [`crate::deck_ui::dispatch`]; this is only its face.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! The mid-turn routing card — drawn in its own band above the transcript
+//! when the deck has parked a prompt rather than guessing where it goes:
+//!
+//! ```text
+//! ╭ ◇ this turn is still running — where does this go? ──────────────╮
+//! │ and now add the tests                                            │
+//! │  s   steer this turn — inject at the next step                   │
+//! │  n   next turn — continue this conversation                      │
+//! │  p   parallel — hand it to req:2                                 │
+//! │  esc put it back in the composer                                 │
+//! ╰──────────────────────────────────────────────────────────────────╯
+//! ```
+//!
+//! The decision itself lives in [`crate::deck_ui::dispatch`]; this is only
+//! its face.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
+use stella_tui_theme::{glyph, token};
 
-use crate::theme;
+use crate::views::cards::truncate_cols;
 
 /// The mid-turn routing card: the user's words, held, and the three places
 /// they can go.
@@ -19,45 +35,48 @@ use crate::theme;
 /// respect the conversation already in progress: steer it, continue it, or
 /// fork away from it.
 pub fn render(pending: &crate::deck_ui::PendingDispatch, area: Rect, buf: &mut Buffer) {
-    let key = Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD);
-    let dim = Style::new().fg(theme::MUTED);
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let key = Style::new().fg(token::GOLD);
+    let muted = Style::new().fg(token::MUTED);
     // One line, clipped: the card's height is fixed so the routes below can
     // never be pushed out of frame by a long prompt. The full text is still
     // in the composer's hands — Esc returns it verbatim.
-    let budget = area.width.saturating_sub(4) as usize;
-    let held: String = if pending.text.chars().count() > budget {
-        pending
-            .text
-            .chars()
-            .take(budget.saturating_sub(1))
-            .collect::<String>()
-            + "…"
-    } else {
-        pending.text.clone()
+    let held = truncate_cols(&pending.text, usize::from(area.width).saturating_sub(4));
+    let route = |chord: &str, does: String| {
+        Line::from(vec![
+            Span::styled(format!(" {chord:<4}"), key),
+            Span::styled(does, muted),
+        ])
     };
     let lines = vec![
-        Line::from(Span::styled(held, Style::new().fg(theme::VIOLET))),
-        Line::from(vec![
-            Span::styled("  s  ", key),
-            Span::styled("steer this turn — inject at the next step", dim),
-        ]),
-        Line::from(vec![
-            Span::styled("  n  ", key),
-            Span::styled("next turn — continue this conversation", dim),
-        ]),
-        Line::from(vec![
-            Span::styled("  p  ", key),
-            Span::styled(format!("parallel — hand it to {}", pending.next_lane), dim),
-        ]),
-        Line::from(vec![
-            Span::styled("  esc  ", key),
-            Span::styled("put it back in the composer", dim),
-        ]),
+        Line::from(Span::styled(
+            format!(" {held}"),
+            Style::new().fg(token::TEXT),
+        )),
+        route("s", "steer this turn — inject at the next step".into()),
+        route("n", "next turn — continue this conversation".into()),
+        route("p", format!("parallel — hand it to {}", pending.next_lane)),
+        route("esc", "put it back in the composer".into()),
     ];
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::new().fg(theme::ACCENT))
-        .title(" this turn is still running — where does this go? ");
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(token::BORDER))
+        // The gate glyph in the lift gold is what "waiting on you" looks
+        // like everywhere on this deck — `v2::sessions` marks a `NeedsInput`
+        // session with the same pair.
+        .title(Line::from(vec![
+            Span::styled(
+                format!(" {} ", glyph::GATE),
+                Style::new().fg(token::GOLD_BRIGHT),
+            ),
+            Span::styled(
+                "this turn is still running — where does this go? ",
+                Style::new().fg(token::TEXT),
+            ),
+        ]));
     Paragraph::new(lines).block(block).render(area, buf);
 }
 
