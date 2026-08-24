@@ -66,7 +66,7 @@ use serde_json::Value;
 use crate::enterprise_telemetry::{
     ManagedModelDimension, OperationalEventContext, OperationalIdentity, StellaOperationalEventV1,
 };
-use crate::usage::{CloudTelemetryEvent, ExecutionRollupRow, ToolBucket};
+use crate::usage::{CloudTelemetryEvent, ErrorClassBucket, ExecutionRollupRow, ToolBucket};
 use crate::{DrainBatch, Result, StoreError, TelemetryRow};
 
 // ---------------------------------------------------------------------------
@@ -520,6 +520,16 @@ pub fn poisoned_execution_rollup() -> ExecutionRollupRow {
             tool: content_sentinel("tool_histogram.tool"),
             surface: content_sentinel("tool_histogram.surface"),
             calls: 3,
+            errors: 1,
+        }],
+        error_class_histogram: vec![ErrorClassBucket {
+            tool: content_sentinel("error_class_histogram.tool"),
+            surface: content_sentinel("error_class_histogram.surface"),
+            // The reviewed decision #4550 asks for: an `ErrorClass` wire
+            // token is a closed vocabulary — `ErrorClass::parse` coerces any
+            // unknown token to `other`, so free text cannot ride it — and,
+            // like `outcome` above, it needs no sentinel.
+            class: "environment".into(),
             errors: 1,
         }],
     }

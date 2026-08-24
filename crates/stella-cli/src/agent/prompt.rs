@@ -414,6 +414,27 @@ Rules:
 /// the prompt cache on every call, so they must stay dense.
 const MEMORY_PROMPT_BUDGET_CHARS: usize = 16_000;
 
+/// The session-environment block's opening bytes.
+///
+/// Named, rather than written inline at the one `push_str` that emits it,
+/// because [`provenance`] labels the reconstructed prompt by finding these
+/// exact bytes: a heading reworded here would silently relabel a span in
+/// `stella inspect --system-prompt` and the deck's INSPECT overlay. Sharing
+/// the constant is what makes that impossible.
+pub(crate) const SESSION_ENVIRONMENT_HEADER: &str = "\n\n## Session environment\n";
+
+/// The workspace-memories block's opening bytes — a [`provenance`] marker on
+/// the same terms as [`SESSION_ENVIRONMENT_HEADER`].
+pub(crate) const MEMORIES_HEADER: &str =
+    "\n\nWorkspace memories (lessons from previous sessions — apply them):\n";
+
+/// The fail-closed memories notice's opening bytes — a [`provenance`] marker
+/// on the same terms as [`SESSION_ENVIRONMENT_HEADER`]. Distinct from
+/// [`MEMORIES_HEADER`] because the two mean opposite things: one says the
+/// memories are here, the other says they were withheld.
+pub(crate) const MEMORIES_OMITTED_PREFIX: &str =
+    "\n\nWorkspace memories were omitted from this prompt: ";
+
 // The A/B recall measurement rate lived here as a `pub(crate)` constant every
 // driver had to pass by hand, and exactly one of them did. It is now
 // `context.retrieval.ab_recall_rate` (`crate::settings`), read once at session
@@ -549,7 +570,7 @@ fn append_session_environment(
         " — not a git repository"
     };
     prompt.push_str(&format!(
-        "\n\n## Session environment\nWorkspace root: {}{repo_note}\nPlatform: {} {}",
+        "{SESSION_ENVIRONMENT_HEADER}Workspace root: {}{repo_note}\nPlatform: {} {}",
         workspace_root.display(),
         std::env::consts::OS,
         std::env::consts::ARCH,
@@ -657,9 +678,8 @@ fn append_workspace_memories(prompt: &mut String, workspace_root: &std::path::Pa
         Ok(suppression) => suppression,
         Err(error) => {
             prompt.push_str(&format!(
-                "
-
-Workspace memories were omitted from this prompt: {error}. They are still on disk in .stella/memories/ and will return once the suppression state is readable."
+                "{MEMORIES_OMITTED_PREFIX}{error}. They are still on disk in .stella/memories/ \
+                 and will return once the suppression state is readable."
             ));
             return;
         }
@@ -704,12 +724,7 @@ Workspace memories were omitted from this prompt: {error}. They are still on dis
     if memories.is_empty() {
         return;
     }
-    prompt.push_str(&format!(
-        "
-
-Workspace memories (lessons from previous sessions — apply them):
-{memories}"
-    ));
+    prompt.push_str(&format!("{MEMORIES_HEADER}{memories}"));
     if dropped > 0 {
         prompt.push_str(&format!(
             "
@@ -791,6 +806,11 @@ pub(crate) fn expected_isolated_pipeline_prompt(workspace_root: &std::path::Path
     append_session_environment(&mut expected, workspace_root, None);
     expected
 }
+
+/// The read side of the assembly above: which setting produced each span of an
+/// already-assembled prompt. A submodule of this one so its marker table can
+/// name the constants the appenders push, instead of copying their bytes.
+pub(crate) mod provenance;
 
 /// The structural half of the shared-contract discipline: the tests above are
 /// written one per contract, so they cover the contracts that exist and say

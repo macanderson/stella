@@ -273,6 +273,12 @@ pub(super) struct SettledCall<'a> {
     pub(super) estimated_input_tokens: u64,
     pub(super) duration_ms: u64,
     pub(super) retries: u32,
+    /// The resolved reasoning effort the dispatched request carried — what
+    /// actually went on the wire, never the configured value (#4565).
+    pub(super) effort: Option<stella_protocol::completion::ReasoningEffort>,
+    /// The output ceiling the dispatched request asked for, after the turn's
+    /// standing clamp (`ModelCallShape::max_output_tokens`).
+    pub(super) max_output_tokens: Option<u32>,
 }
 
 /// Emit the metering record for one committed call.
@@ -307,6 +313,8 @@ pub(super) fn emit_step_usage(events: &EventSender, call: SettledCall<'_>) {
         // `Length` here is the only truthful "this step hit the output
         // ceiling" signal any consumer gets.
         finish_reason: result.finish_reason,
+        effort: call.effort,
+        max_output_tokens: call.max_output_tokens,
         // The lead's own call. A delegate's is stamped where the delegate is
         // known — `subagent::child_sender`, the one place that can say which
         // of several concurrent children an event belongs to (#4383).

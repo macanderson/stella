@@ -331,11 +331,18 @@ pub(crate) fn clamp_hook_context(context: &str) -> String {
 /// bounds the cost of that mistake; it cannot remove it.
 pub(crate) async fn with_session_hook_context(mut system_prompt: String, cfg: &Config) -> String {
     if let Some(context) = session_start_hook_context(cfg).await {
-        system_prompt.push_str("\n\nSession context (from SessionStart hooks):\n");
+        system_prompt.push_str(SESSION_HOOK_CONTEXT_HEADER);
         system_prompt.push_str(&clamp_hook_context(&context));
     }
     system_prompt
 }
+
+/// The hook-context section's opening bytes, named for the reason
+/// [`crate::agent::prompt::SESSION_ENVIRONMENT_HEADER`] is: it is the last
+/// marker `crate::agent::prompt::provenance` splits a reconstructed prompt on,
+/// and a reworded heading here would relabel a span in every inspector.
+pub(crate) const SESSION_HOOK_CONTEXT_HEADER: &str =
+    "\n\nSession context (from SessionStart hooks):\n";
 
 // Pipeline port adapters
 

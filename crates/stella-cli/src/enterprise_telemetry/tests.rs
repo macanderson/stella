@@ -190,6 +190,7 @@ fn rollup(id: i64) -> ExecutionRollupRow {
         started_at: "2026-07-21 12:00:00".into(),
         day: "2026-07-21".into(),
         tool_histogram: Vec::new(),
+        error_class_histogram: Vec::new(),
     }
 }
 

@@ -2841,6 +2841,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The reasoning effort the dispatched request actually carried -- the resolved value after auto-mode and per-model downgrade, never the configured one. Absent when the request pinned no effort or the stream predates this field; absence is not a pin."
+        },
         "estimated_input_tokens": {
           "default": 0,
           "description": "The engine's RAW (uncalibrated) pre-call estimate of the input it\nsent — paired with `input_tokens` (plus cache-write tokens, which\nare real prompt tokens split out only for pricing) this is one\ndrift sample, the feedback that calibrates future estimates per\nmodel (`stella-core::estimator::Calibration`). Raw by contract:\nconsumers rebuild the correction from these pairs, and a\ncorrected estimate here would compound the correction on every\nround trip. Attachment weight is excluded — the media estimate is\na deliberate ~80× over-estimate of billed tokens, right for\ncontext pressure and poison as a drift sample. `0` means no\nestimate was taken (pre-drift emitters — hence `serde(default)`,\nso old streams still parse).",
@@ -2863,6 +2874,15 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "max_output_tokens": {
+          "description": "The output-token ceiling the dispatched request asked for -- the effective per-call value after the turn's standing clamp, so it can move between steps of one turn. Paired with finish_reason == length it names the ceiling the cut-off happened at. Absent when the request asked for no ceiling or the stream predates this field.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "model": {
           "type": "string"
