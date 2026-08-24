@@ -446,8 +446,8 @@ nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
   letter-spacing:.005em;padding:11px 13px;margin-bottom:-1px}
 .tabs button:hover{color:var(--text);background:var(--accent-wash)}
 .tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
-.tf-wrap{margin-left:auto;display:flex;align-items:center;gap:var(--sp1);padding:6px 0}
-.tf-wrap[hidden]{display:none}
+.tf-wrap{display:flex;align-items:center;justify-content:flex-end;
+  gap:var(--sp1);padding:0 0 var(--sp2)}
 .tf-label{font:var(--fs-micro)/1 var(--mono);color:var(--text-3)}
 .tf{display:flex;align-items:stretch;border:1px solid var(--control-edge);
     border-radius:var(--radius-sm);overflow:hidden}
@@ -871,18 +871,6 @@ footer b{color:var(--identity);font-weight:600}
       <button role="tab" id="tab-hub" aria-controls="panel-hub" data-tab="hub">Org / hub</button>
       <button role="tab" id="tab-config" aria-controls="panel-config" data-tab="config">Config</button>
     </div>
-    <!-- Shown only on the tabs whose surfaces the window actually filters
-         (TF_TABS in the script below). Everywhere else the control used to
-         sit in the nav and silently do nothing, which reads as broken. -->
-    <div class="tf-wrap" id="tfWrap">
-      <span class="tf-label" id="tfLabel">Window</span>
-      <div class="tf" id="tf" role="radiogroup" aria-labelledby="tfLabel">
-        <button role="radio" data-tf="24h">24h</button>
-        <button role="radio" data-tf="7d">7d</button>
-        <button role="radio" data-tf="30d">30d</button>
-        <button role="radio" data-tf="all" aria-checked="true">All</button>
-      </div>
-    </div>
   </nav>
 
   <main id="main" tabindex="-1">
@@ -1003,6 +991,15 @@ footer b{color:var(--identity);font-weight:600}
 
   <!-- ══ OVERVIEW ══════════════════════════════════════════════════════ -->
   <section data-tab="overview" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" tabindex="0" class="on">
+    <div class="tf-wrap">
+      <span class="tf-label" id="tfLabel-overview">Window</span>
+      <div class="tf" role="radiogroup" aria-labelledby="tfLabel-overview">
+        <button role="radio" data-tf="24h">24h</button>
+        <button role="radio" data-tf="7d">7d</button>
+        <button role="radio" data-tf="30d">30d</button>
+        <button role="radio" data-tf="all" aria-checked="true">All</button>
+      </div>
+    </div>
     <div class="grid kpis" id="kpis"></div>
     <div class="grid cols-2">
       <div class="card">
@@ -1051,6 +1048,15 @@ footer b{color:var(--identity);font-weight:600}
 
   <!-- ══ ACTIVITY ══════════════════════════════════════════════════════ -->
   <section data-tab="activity" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" tabindex="0">
+    <div class="tf-wrap">
+      <span class="tf-label" id="tfLabel-activity">Window</span>
+      <div class="tf" role="radiogroup" aria-labelledby="tfLabel-activity">
+        <button role="radio" data-tf="24h">24h</button>
+        <button role="radio" data-tf="7d">7d</button>
+        <button role="radio" data-tf="30d">30d</button>
+        <button role="radio" data-tf="all" aria-checked="true">All</button>
+      </div>
+    </div>
     <div id="act-undated"></div>
     <div class="grid cols-2e">
       <div class="card">
@@ -4097,19 +4103,11 @@ const TABS = [...document.querySelectorAll('#tabs button[role="tab"]')];
    must not park focus on a `hidden` button — so the arrow keys walk the
    visible tabs, which is also the set the reader can see. */
 const visibleTabs = () => TABS.filter(b => !b.hidden);
-/* The tabs whose surfaces re-render under the time window (inTf/inTfDay):
-   Overview's KPIs, timeline and executions table, and Activity's daily
-   charts. Every other tab shows all-time or configuration state, so the
-   window control hides there — a visible control that filters nothing on
-   the tab in front of the reader is indistinguishable from a broken one.
-   The selection itself survives in state.tf while hidden. */
-const TF_TABS = new Set(["overview", "activity"]);
 function switchTab(tab, arg = "") {
   // A transcript route with no execution behind it is not a route.
   if (tab === "transcript" && !arg) { location.hash = "sessions"; return; }
   const left = state.tab === "transcript" && tab !== "transcript";
   state.tab = tab;
-  $("tfWrap").hidden = !TF_TABS.has(tab);
   if (tab === "transcript") $("tab-transcript").hidden = false;
   TABS.forEach(b => {
     const on = b.dataset.tab === tab;
@@ -4189,29 +4187,38 @@ addEventListener("hashchange", () => {
 });
 
 /* ── time window: a real radiogroup, arrow-key operable ──────────────── */
-const TFS = [...$("tf").querySelectorAll('button[role="radio"]')];
-function setTf(b) {
-  state.tf = b.dataset.tf;
-  TFS.forEach(x => {
-    const on = x === b;
+/* One control inside each page it filters — Overview (KPIs, timeline,
+   executions, via inTf) and Activity (the daily charts, via inTfDay) —
+   rather than one in the nav, where it stood above ten tabs that ignore it
+   and was reported as broken for exactly that reason. The instances share
+   `state.tf`, so a window chosen on one page is the window on the other. */
+const TF_GROUPS = [...document.querySelectorAll(".tf")];
+const tfRadios = (g) => [...g.querySelectorAll('button[role="radio"]')];
+function setTf(tf) {
+  state.tf = tf;
+  TF_GROUPS.forEach(g => tfRadios(g).forEach(x => {
+    const on = x.dataset.tf === tf;
     x.setAttribute("aria-checked", on ? "true" : "false");
     x.tabIndex = on ? 0 : -1;
-  });
+  }));
   renderKpis(); renderTimeline(); renderExecutions(); renderActivity();
 }
-TFS.forEach(b => { b.tabIndex = b.getAttribute("aria-checked") === "true" ? 0 : -1; });
-$("tf").addEventListener("click", (ev) => {
-  const b = ev.target.closest('button[role="radio"]');
-  if (b) setTf(b);
-});
-$("tf").addEventListener("keydown", (ev) => {
-  const i = TFS.indexOf(document.activeElement);
-  if (i < 0) return;
-  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
-  if (!(ev.key in step)) return;
-  ev.preventDefault();
-  const b = TFS[(i + step[ev.key] + TFS.length) % TFS.length];
-  b.focus(); setTf(b);
+TF_GROUPS.forEach(g => {
+  tfRadios(g).forEach(b => { b.tabIndex = b.dataset.tf === state.tf ? 0 : -1; });
+  g.addEventListener("click", (ev) => {
+    const b = ev.target.closest('button[role="radio"]');
+    if (b) setTf(b.dataset.tf);
+  });
+  g.addEventListener("keydown", (ev) => {
+    const rs = tfRadios(g);
+    const i = rs.indexOf(document.activeElement);
+    if (i < 0) return;
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    if (!(ev.key in step)) return;
+    ev.preventDefault();
+    const b = rs[(i + step[ev.key] + rs.length) % rs.length];
+    b.focus(); setTf(b.dataset.tf);
+  });
 });
 
 /* ── connection state ────────────────────────────────────────────────── */
