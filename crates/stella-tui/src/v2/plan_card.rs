@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The plan card (`/plan`): the whole plan, **readable**.
+//! The plan card (`⌃S`, `/plan`): the whole plan, **readable**.
 //!
 //! # What this is for
 //!
-//! The rail ([`crate::views::plan_rail`]) is a quarter of the frame wide, so a
-//! step there is a headline: a ring, an ordinal, and as much of the title as
-//! fits. That is the right density for something on screen the whole time, and
-//! the wrong one for the moment a user actually asks *what is step 3*.
+//! The tab row's breadcrumb ([`crate::v2::frame`]) spends one row on the plan:
+//! the running step's title and the fraction, and nothing else. That is the
+//! right density for something on screen the whole time, and the wrong one for
+//! the moment a user actually asks *what is step 3*.
 //!
-//! This card is that moment. Every step at full width with its elaboration
-//! underneath, then the plan's operating envelope — where it may write, what it
-//! may spend, which models are routed where, and what will count as done.
+//! This card is that moment, and it is what the breadcrumb expands into
+//! (SPEC 7.3). Every step at full width with its elaboration underneath, then
+//! the plan's operating envelope — where it may write, what it may spend,
+//! which models are routed where, and what will count as done.
 //!
 //! It supersedes three cards that each showed a slice of this and none of which
 //! showed a step's text: `/scope` (the envelope, no steps), `/tasks` (a board
-//! nothing populated), and `/witness` (the verification records, now the rail's
-//! bottom panel).
+//! nothing populated), and `/witness` (the verification records).
 //!
 //! Post-approval the envelope is read-only: the title says `locked · e to
 //! edit`, and `e` *proposes* a change as a `WorkspaceInput` out to the driver —
@@ -30,17 +30,19 @@
 //! labeled slots `think` / `work` / `verify`; the internal pipeline role
 //! identifiers never reach a rendered string.
 
+mod step_style;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use stella_tui_theme::token;
 
 use stella_protocol::ScopeProposal;
 
 use crate::deck::{AgentEntry, PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::plan::{Plan, PlanState};
-use crate::theme;
 use crate::views::cards;
 
 /// Width of the dimmed left label column.
@@ -48,7 +50,7 @@ const LABEL_W: usize = 10;
 
 /// One labeled grid row: dim fixed-width label, then the value spans.
 fn grid_row(label: &str, value: Vec<Span<'static>>, accessible: bool) -> Line<'static> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     if accessible {
         // Labeled record, no column alignment: `· label value`.
         let mut spans = vec![Span::styled(format!("· {label} "), dim)];
@@ -63,7 +65,7 @@ fn grid_row(label: &str, value: Vec<Span<'static>>, accessible: bool) -> Line<'s
 /// The value spans for the `models` row: `think <id>` dim · `work <id>` accent
 /// · `verify <id>` dim.
 fn models_value(model: &WorkspaceModel) -> Vec<Span<'static>> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     let slot = |role: PipelineRole| -> String {
         model
             .role_pins
@@ -76,7 +78,7 @@ fn models_value(model: &WorkspaceModel) -> Vec<Span<'static>> {
         Span::styled(" · ", dim),
         Span::styled(
             format!("work {}", slot(PipelineRole::Worker)),
-            theme::accent(),
+            Style::new().fg(token::GOLD),
         ),
         Span::styled(" · ", dim),
         Span::styled(format!("verify {}", slot(PipelineRole::Verifier)), dim),
@@ -100,7 +102,7 @@ pub fn step_rows(
     now_ms: u64,
     animate: bool,
 ) -> (Vec<Line<'static>>, Option<usize>) {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     let steps = plan.steps();
     if steps.is_empty() {
         return (
@@ -120,9 +122,7 @@ pub fn step_rows(
         if Some(i) == selected {
             selected_row = Some(rows.len());
         }
-        // The per-step visual is shared with the rail and the plan-review
-        // dialog (`crate::views::plan_style`) — one vocabulary, three surfaces.
-        let v = crate::views::plan_style::step_visual(step.state, now_ms, animate);
+        let v = step_style::step_visual(step.state, now_ms, animate);
         let mut spans = vec![
             cards::marker(Some(i) == selected),
             Span::styled(v.glyph, v.ring),
@@ -181,8 +181,8 @@ pub fn grid_rows(
     proposal: &ScopeProposal,
     accessible: bool,
 ) -> Vec<Line<'static>> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
-    let primary = Style::new().fg(theme::TEXT_PRIMARY);
+    let dim = Style::new().fg(token::MUTED);
+    let primary = Style::new().fg(token::TEXT);
     let val = |text: String| vec![Span::styled(text, primary)];
     let dash = "—".to_string();
     let mut rows = Vec::new();
@@ -214,13 +214,13 @@ pub fn grid_rows(
     // mini fraction bar. The cap is the agent's own metered limit.
     let mut budget: Vec<Span<'static>> = vec![Span::styled(
         format!("${:.2}", agent.cost_usd),
-        Style::new().fg(theme::SUCCESS_BRIGHT),
+        Style::new().fg(token::GREEN),
     )];
     if let Some(cap) = agent.model.hud.limit_usd.filter(|cap| *cap > 0.0) {
         budget.push(Span::styled(format!(" of ${cap:.2} "), dim));
         if !accessible {
             let pct = ((agent.cost_usd / cap).clamp(0.0, 1.0) * 100.0).round() as usize;
-            budget.extend(cards::mini_fraction_bar(pct, 100, 7, theme::SUCCESS_BRIGHT));
+            budget.extend(cards::mini_fraction_bar(pct, 100, 7, token::GREEN));
         }
     } else if let Some(estimate) = proposal.estimated_cost_usd {
         budget.push(Span::styled(format!(" · est ${estimate:.2}"), dim));
@@ -249,9 +249,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
     if !plan.summary.is_empty() {
         rows.push(Line::from(Span::styled(
             cards::truncate_cols(&plan.summary, inner_w),
-            Style::new()
-                .fg(theme::TEXT_PRIMARY)
-                .add_modifier(Modifier::BOLD),
+            Style::new().fg(token::TEXT).add_modifier(Modifier::BOLD),
         )));
         rows.push(Line::default());
     }
@@ -291,7 +289,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
             PlanState::Draft => plan.state.label().to_string(),
             _ => format!("{} {done}/{total}{revision}", plan.state.label()),
         },
-        Style::new().fg(theme::TEXT_TERTIARY),
+        Style::new().fg(token::MUTED),
     )];
     let mut verbs: Vec<&str> = Vec::new();
     if crate::deck_ui::cards::selected_step_skippable(model, ui) {
