@@ -21,6 +21,9 @@ mod frame;
 // wrote by hand.
 mod width;
 
+// `render_turn_tail`'s cutoffs (#4566's fix shape (a)).
+mod tail;
+
 use crate::digest::{self, format_cost, format_duration, format_tokens};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::{Command, Cursor, FoldState, Zoom, apply};

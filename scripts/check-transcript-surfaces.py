@@ -61,7 +61,7 @@ RENDERER_CRATE = "crates/stella-transcript/"
 
 # The shared entry points a surface is expected to draw through.
 GRID = "stella_transcript::grid::render{,_turn_lines}"
-HTML = "stella_transcript::html::render_{page,run}"
+HTML = "stella_transcript::html::render_{page,run,turn_tail}"
 
 # What a reference to each entry point looks like in source, once comments are
 # stripped. The `use stella_transcript::grid;` form means a call site reads
@@ -72,15 +72,18 @@ HTML = "stella_transcript::html::render_{page,run}"
 # still going. A live surface has to use the second — an append-only one cannot
 # redraw a whole run per event — and refusing to count it would have read a
 # surface's move *onto* the streaming API as a regression away from sharing.
-# `render_page` and `render_run` both count, mirroring the grid pair: the
-# first draws a standalone document, the second a fragment a host page
-# embeds. The Observatory moved from the page to the fragment when its
-# standalone `/transcript` route was consolidated into the turn page, and
-# refusing to count the fragment would have read that consolidation as a
-# regression away from sharing.
+# `render_page`, `render_run` and `render_turn_tail` all count, mirroring the
+# grid pair: the first two draw a standalone document and a fragment a host
+# page embeds; `render_turn_tail` (#4566) draws only the tail a live poll has
+# not seen yet, HTML's counterpart to grid's `render_turn_lines`. The
+# Observatory moved from the page to the fragment when its standalone
+# `/transcript` route was consolidated into the turn page, and later grew the
+# tail call for its live poll — refusing to count either would have read a
+# surface's own move further onto the shared renderer as a regression away
+# from sharing it.
 PATTERNS = {
     GRID: re.compile(r"\bgrid::render(_turn_lines)?\s*\("),
-    HTML: re.compile(r"\bhtml::render_(page|run)\s*\("),
+    HTML: re.compile(r"\bhtml::render_(page|run|turn_tail)\s*\("),
 }
 
 
