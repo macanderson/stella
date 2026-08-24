@@ -1003,48 +1003,76 @@ pub(crate) fn drain_queue(
         let Some(text) = queue.pop_front() else {
             break;
         };
-        let lane = subs.next_req_lane();
-        let _ = in_tx.send(Inbound::PromptStarted {
-            agent: lane.clone(),
-            text: text.clone(),
-        });
-        // Say so where the user is actually looking. Until now the only trace
-        // of a spawn was a trace-strip row and a new dashboard lane on another
-        // tab, so a prompt typed mid-turn appeared to do nothing — the deck
-        // silently started a second agent and never said which one or how to
-        // reach it. `ShellEvent` is the transcript-only channel (no status
-        // flip, no counters, no second trace row), which is exactly right for
-        // a notice about a lane other than the one it prints on.
-        let _ = in_tx.send(Inbound::ShellEvent {
-            agent: LEAD.to_string(),
-            event: AgentEvent::Text {
-                text: spawn_notice(&lane, &text),
-            },
-        });
-        let (stop_tx, stop_rx) = oneshot::channel();
-        let (pause_tx, pause_rx) = watch::channel(false);
-        let spec = SubSessionSpec {
-            lane: lane.clone(),
-            title: prompt_line(&text, 48),
-            purpose: first_sentence(&text),
-            notify_title: format!("reply ready — {}", prompt_line(&text, 40)),
-            prompt: text,
-        };
-        let (generation, tap) = subs.started(&lane, stop_tx, pause_tx, spec.clone());
-        spawn(
+        spawn_prompt_lane(
+            text,
+            subs,
             cfg,
-            spec,
-            generation,
             budget_limit,
-            session_id.to_string(),
-            workspace_name.to_string(),
-            in_tx.clone(),
-            sup_tx.clone(),
-            stop_rx,
-            pause_rx,
-            tap,
+            session_id,
+            workspace_name,
+            in_tx,
+            sup_tx,
         );
     }
+}
+
+/// Start one `req:<n>` lane on `text` — the drain's loop body, and the
+/// agents page's "describe a task for a new session"
+/// (`WorkspaceInput::SpawnLane`). The caller has already checked
+/// [`SubSessions::has_slot`]. Returns the lane id it started.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_prompt_lane(
+    text: String,
+    subs: &mut SubSessions,
+    cfg: &Config,
+    budget_limit: Option<f64>,
+    session_id: &str,
+    workspace_name: &str,
+    in_tx: &UnboundedSender<Inbound>,
+    sup_tx: &UnboundedSender<SupervisorMsg>,
+) -> String {
+    let lane = subs.next_req_lane();
+    let _ = in_tx.send(Inbound::PromptStarted {
+        agent: lane.clone(),
+        text: text.clone(),
+    });
+    // Say so where the user is actually looking. Until now the only trace
+    // of a spawn was a trace-strip row and a new dashboard lane on another
+    // tab, so a prompt typed mid-turn appeared to do nothing — the deck
+    // silently started a second agent and never said which one or how to
+    // reach it. `ShellEvent` is the transcript-only channel (no status
+    // flip, no counters, no second trace row), which is exactly right for
+    // a notice about a lane other than the one it prints on.
+    let _ = in_tx.send(Inbound::ShellEvent {
+        agent: LEAD.to_string(),
+        event: AgentEvent::Text {
+            text: spawn_notice(&lane, &text),
+        },
+    });
+    let (stop_tx, stop_rx) = oneshot::channel();
+    let (pause_tx, pause_rx) = watch::channel(false);
+    let spec = SubSessionSpec {
+        lane: lane.clone(),
+        title: prompt_line(&text, 48),
+        purpose: first_sentence(&text),
+        notify_title: format!("reply ready — {}", prompt_line(&text, 40)),
+        prompt: text,
+    };
+    let (generation, tap) = subs.started(&lane, stop_tx, pause_tx, spec.clone());
+    spawn(
+        cfg,
+        spec,
+        generation,
+        budget_limit,
+        session_id.to_string(),
+        workspace_name.to_string(),
+        in_tx.clone(),
+        sup_tx.clone(),
+        stop_rx,
+        pause_rx,
+        tap,
+    );
+    lane
 }
 
 /// The lead-transcript notice a spawn prints: that the prompt started, which
@@ -1063,6 +1091,45 @@ pub(crate) fn spawn_notice(lane: &str, prompt: &str) -> String {
          Back here: ↓ → l ({LEAD}).\n",
         prompt_line(prompt, 56),
     )
+}
+
+/// `WorkspaceInput::SpawnLane` — the agents page's "describe a task for a
+/// new session": start a lane on `text` when a worker slot is free, and say
+/// so on the lead transcript when none is, quoting the task so the words
+/// survive the refusal (the page's composer already cleared on submit).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn spawn_lane_or_notice(
+    text: String,
+    subs: &mut SubSessions,
+    cfg: &Config,
+    budget_limit: Option<f64>,
+    session_id: &str,
+    workspace_name: &str,
+    in_tx: &UnboundedSender<Inbound>,
+    sup_tx: &UnboundedSender<SupervisorMsg>,
+) {
+    if subs.has_slot() {
+        spawn_prompt_lane(
+            text,
+            subs,
+            cfg,
+            budget_limit,
+            session_id,
+            workspace_name,
+            in_tx,
+            sup_tx,
+        );
+        return;
+    }
+    let _ = in_tx.send(Inbound::ShellEvent {
+        agent: LEAD.to_string(),
+        event: AgentEvent::Text {
+            text: format!(
+                "every worker slot is taken ({MAX_CONCURRENT}) — the task was not started. \
+                 Stop a lane (↓ → ⌃x⌃x) or wait for one to finish, then resubmit: {text}"
+            ),
+        },
+    });
 }
 
 /// Respawn an ended lane from its retained spec — the Restart verb. `false`

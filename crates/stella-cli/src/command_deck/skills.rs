@@ -12,7 +12,12 @@ pub(super) fn deck_slash_commands(
     let mut commands: Vec<SlashCommand> = DECK_BUILTINS
         .iter()
         .map(|(name, description, domain)| {
-            SlashCommand::new(*name, *description).in_domain(*domain)
+            let command = SlashCommand::new(*name, *description).in_domain(*domain);
+            if is_sideband(name) {
+                command.sideband()
+            } else {
+                command
+            }
         })
         .collect();
     let customs = custom.slash_entries(&commands);
@@ -146,6 +151,59 @@ pub(super) const DECK_BUILTINS: &[(&str, &str, SlashDomain)] = &[
 /// The deck's reserved command names — see [`DECK_BUILTINS`].
 pub(super) fn deck_reserved() -> Vec<&'static str> {
     DECK_BUILTINS.iter().map(|(name, ..)| *name).collect()
+}
+
+/// The **queue-free** commands: submitted, they leave the deck as
+/// [`stella_tui::WorkspaceInput::Command`] and run at once beside the prompt
+/// queue — mid-turn included — with their replies on the transcript-only
+/// `ShellEvent` channel (`command_side`). Membership is the driver's call
+/// (the deck reads it off the vocabulary's `sideband` flag), and the test is
+/// whether the command touches the turn, the backlog, or the conversation:
+/// `/export` reads the store, `/model` writes settings, `/help` opens an
+/// overlay — none of them belongs behind a running turn. The exceptions
+/// stay queued on purpose: `/clear` cancels the turn, `/init`/`/reload`/
+/// `/profile`/`/add-dir` mutate the live session, and a custom (⚡) command
+/// *is* a prompt once expanded.
+pub(super) const SIDEBAND: &[&str] = &["/help", "/model", "/models", "/theme", "/export", "/donate"];
+
+/// Whether `head` (the first `/`-token of a submission) is queue-free.
+pub(crate) fn is_sideband(head: &str) -> bool {
+    SIDEBAND.contains(&head)
+}
+
+#[cfg(test)]
+mod sideband_tests {
+    use super::*;
+
+    /// Every queue-free name is a real builtin, and the turn-coupled
+    /// exceptions are not on the list.
+    #[test]
+    fn the_sideband_list_is_a_subset_of_the_builtins() {
+        for name in SIDEBAND {
+            assert!(
+                DECK_BUILTINS.iter().any(|(n, ..)| n == name),
+                "{name} is queue-free but not a builtin"
+            );
+        }
+        for name in ["/clear", "/init", "/reload", "/profile", "/add-dir"] {
+            assert!(!is_sideband(name), "{name} is turn-coupled by design");
+        }
+    }
+
+    /// The deck's vocabulary carries the flag, so the routing decision is
+    /// declared once here and read everywhere.
+    #[test]
+    fn the_vocabulary_carries_the_sideband_flag() {
+        let commands = deck_slash_commands(&crate::extensions::CustomExtensions::default());
+        for c in &commands {
+            assert_eq!(
+                c.sideband,
+                is_sideband(&c.name),
+                "{} disagrees with the SIDEBAND list",
+                c.name
+            );
+        }
+    }
 }
 
 // SKILLS tab: driver-side ops (the deck routes `WorkspaceInput::Skill`)

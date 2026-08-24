@@ -91,6 +91,7 @@ use crate::{agent, rules};
 
 mod add_dir;
 mod authoring;
+mod command_side;
 mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;
@@ -594,6 +595,8 @@ pub async fn run_deck_session(
     // statline's MODEL cell can name nothing until a role has already served.
     let pins = model_cmd::configured_role_pins(cfg);
     let _ = in_tx.send(Inbound::ConfiguredRoles(pins));
+    // The `/model` argument menu's vocabulary, before the first keystroke.
+    let _ = in_tx.send(model_cmd::candidates_inbound(cfg));
     // Custom definitions that failed to load are reported in the startup
     // dialog — stdout belongs to the alternate screen, and a
     // silently-missing /command is otherwise undiagnosable. Session chrome:
@@ -968,6 +971,31 @@ pub async fn run_deck_session(
                     }) => {
                         dispatch.release();
                         text
+                    }
+                    // A queue-free command (`command_side`): runs NOW, and
+                    // an argument-carrying text it declines becomes the next
+                    // prompt — the route it had before the flag existed.
+                    Some(WorkspaceInput::Command { text }) => {
+                        if command_side::run(text.trim(), cfg, &in_tx, &session_record.id) {
+                            continue 'session;
+                        }
+                        dispatch.release();
+                        text
+                    }
+                    // The agents page's new-task prompt: a lane, never the
+                    // lead's next turn — that is the variant's whole meaning.
+                    Some(WorkspaceInput::SpawnLane { text }) => {
+                        subsession::spawn_lane_or_notice(
+                            text,
+                            &mut subs,
+                            cfg,
+                            budget_limit,
+                            &session_record.id,
+                            &workspace_name,
+                            &in_tx,
+                            &sup_tx,
+                        );
+                        continue 'session;
                     }
                     // A steer at a worker, or one whose lead turn ended
                     // before this recv read it — see `steer::steer_idle`.
@@ -1701,6 +1729,28 @@ pub async fn run_deck_session(
                                     );
                                 }
                             }
+                        }
+                        // A queue-free command runs beside the turn — the
+                        // whole point of the route (`command_side`); a text
+                        // it declines waits its turn as it always did.
+                        Some(WorkspaceInput::Command { text }) => {
+                            if !command_side::run(text.trim(), cfg, &in_tx, &session_record.id) {
+                                queue.push_back(text);
+                            }
+                        }
+                        // The agents page's new-task prompt: a lane now,
+                        // exactly as at idle — the lead's turn is untouched.
+                        Some(WorkspaceInput::SpawnLane { text }) => {
+                            subsession::spawn_lane_or_notice(
+                                text,
+                                &mut subs,
+                                cfg,
+                                budget_limit,
+                                &session_record.id,
+                                &workspace_name,
+                                &in_tx,
+                                &sup_tx,
+                            );
                         }
                         // Esc with something to say — see `steer`.
                         Some(WorkspaceInput::Steer { agent, texts }) if agent == LEAD =>
@@ -3482,13 +3532,14 @@ async fn run_deck_command(
             event: AgentEvent::Text { text },
         });
     };
+    // The queue-free commands live in `command_side`, shared with the two
+    // `WorkspaceInput::Command` arms so a mid-turn `/export` and a queued
+    // one from an old journal run the same code. Asked first: whatever it
+    // recognizes never reaches the arms below.
+    if command_side::run(trimmed, cfg, in_tx, session_id) {
+        return DeckCommand::Handled;
+    }
     match trimmed {
-        "/help" => {
-            // Open the same rich, scrollable overlay the `?` key opens —
-            // every key, every tab, every slash command in one place. Far
-            // more useful (and readable) than a cramped one-line summary.
-            let _ = in_tx.send(Inbound::ShowHelp);
-        }
         "/clear" => {
             // Reset the driver's own LLM history…
             messages.clear();
@@ -3500,15 +3551,6 @@ async fn run_deck_command(
             let _ = in_tx.send(Inbound::SessionReset {
                 agent: LEAD.to_string(),
             });
-        }
-        "/model" => {
-            say(model_cmd::current_summary(cfg));
-        }
-        "/models" => {
-            say(Config::available_models_plain(None));
-        }
-        "/theme" => {
-            say(theme_cmd::current_summary(cfg));
         }
         "/init" => {
             // The splash replay, the narrator, and the question channel all
@@ -3528,29 +3570,7 @@ async fn run_deck_command(
                 Err(e) => say(format!("init failed: {e}")),
             }
         }
-        // Export THIS session's telemetry to a timestamped ZIP archive of raw
-        // JSON dumps + a self-contained HTML dashboard. The session id is what
-        // scopes it: the archive is built to be shared, and #2558 records what
-        // shipping the whole workspace store cost.
-        "/export" => say(crate::export::export_command(&cfg.workspace_root, session_id).await),
         "/reload" => say(settings_io::reload_command(cfg, in_tx)),
-        "/donate" => {
-            say("❤️  Support Stella\n\
-                 \n\
-                 Stella is free, open-source, and local-first — no server, no \
-                 account, no telemetry sent home. If it's saving you time or \
-                 money, consider becoming a GitHub Sponsor:\n\
-                 \n\
-                   → https://github.com/sponsors/macanderson\n\
-                 \n\
-                 Recurring sponsorships keep development sustainable. You'll \
-                 see the available tiers and perks (one-time and monthly) on \
-                 that page. Every pledge helps fund the next feature, the next \
-                 provider, and the next release.\n\
-                 \n\
-                 Thank you! 🙏"
-                .to_string());
-        }
         // Deck-local commands (tab switches, `/agents` opening the Agents
         // tab, the transcript-page overlays) are normally consumed TUI-side,
         // but a queued one reaches here — accept it as handled (a no-op)
@@ -3562,30 +3582,6 @@ async fn run_deck_command(
                 say(reply);
                 return DeckCommand::Handled;
             }
-            // `/model <provider/slug>` — set the persistent default model.
-            // Validation + the settings write live in `model_cmd` (parity
-            // with the SETTINGS tab); handled before the whitespace check
-            // below, which would otherwise mistake `/model x` for a prompt.
-            if let Some(command) = model_cmd::parse_model_command(trimmed) {
-                match command {
-                    model_cmd::ModelCommand::Usage => say(
-                        "usage: `/model <provider/slug>` — e.g. `/model zai/glm-5.2`. \
-                         Run `/model` alone to see the current default and the list."
-                            .to_string(),
-                    ),
-                    model_cmd::ModelCommand::Set(id) => {
-                        match model_cmd::set_default_model(cfg, &id) {
-                            Ok(msg) => {
-                                say(msg);
-                                // Refresh an open SETTINGS tab with the merged view.
-                                let _ = in_tx.send(engine_config_inbound(cfg, None));
-                            }
-                            Err(msg) => say(msg),
-                        }
-                    }
-                }
-                return DeckCommand::Handled;
-            }
             // `/profile [name]` — retune every role at once. Claimed here,
             // above the whitespace check below, which would otherwise bill
             // `/profile ultra` as a model prompt.
@@ -3594,41 +3590,6 @@ async fn run_deck_command(
                 if reply.settings_changed {
                     // Refresh an open SETTINGS tab with the merged view.
                     let _ = in_tx.send(engine_config_inbound(cfg, None));
-                }
-                return DeckCommand::Handled;
-            }
-            // `/theme <slug>` — switch + persist the colour theme (parity with
-            // `/model`). The live switch is a buffer remap in `stella_tui`, so
-            // it lands on the next frame; here we just flip it and save.
-            if let Some(command) = theme_cmd::parse_theme_command(trimmed) {
-                match command {
-                    theme_cmd::ThemeCommand::Set(name) => match theme_cmd::set_theme(name) {
-                        Ok(msg) | Err(msg) => say(msg),
-                    },
-                    theme_cmd::ThemeCommand::Usage(arg) => say(theme_cmd::usage(&arg)),
-                }
-                return DeckCommand::Handled;
-            }
-            // The `/models` argument forms first (see [`ModelsCommand`]):
-            // handled model-free — a catalog refresh is part of digging out
-            // of a broken model setting, so it can never be allowed to
-            // depend on a working model.
-            if let Some(command) = parse_models_command(trimmed) {
-                match command {
-                    ModelsCommand::Refresh { force } => {
-                        say("Model catalog refresh…".to_string());
-                        let mut emit = |line: String| say(line);
-                        if let Err(e) =
-                            crate::model_catalog::run_refresh_emit(force, &mut emit).await
-                        {
-                            say(format!("refresh failed: {e}"));
-                        }
-                    }
-                    ModelsCommand::List => say(Config::available_models_plain(None)),
-                    ModelsCommand::Usage(word) => say(format!(
-                        "`/models {word}` — unknown subcommand; try `/models` or `/models list` \
-                         (the listing) or `/models refresh [--force]` (re-sync the catalog)"
-                    )),
                 }
                 return DeckCommand::Handled;
             }

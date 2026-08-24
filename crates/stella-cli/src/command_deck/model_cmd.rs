@@ -109,6 +109,43 @@ pub fn configured_role_pins(
         .collect()
 }
 
+/// The `/model` argument-menu vocabulary
+/// ([`stella_tui::Inbound::ModelCandidates`]): the **active provider's**
+/// models as `provider/slug` specs. A configured non-empty `allowed_models`
+/// list IS the vocabulary — scoped to the active provider, exactly the
+/// narrowing the SETTINGS tab's picker applies (`views::engine`'s
+/// `picker_candidates`); without one, the runtime catalog's rows for that
+/// provider. Sent at startup and re-sent whenever the answer may have moved
+/// (a `/model` set, a catalog refresh, an engine-config save).
+pub fn model_candidates(cfg: &Config) -> Vec<String> {
+    let provider = cfg.provider.id;
+    let allowed: Vec<String> = crate::settings::Settings::load(&cfg.workspace_root)
+        .ok()
+        .and_then(|s| s.agent_engine_config)
+        .and_then(|e| e.allowed_models)
+        .unwrap_or_default();
+    if !allowed.is_empty() {
+        return allowed
+            .into_iter()
+            .filter(|spec| {
+                spec.strip_prefix(provider)
+                    .is_some_and(|rest| rest.starts_with('/'))
+            })
+            .collect();
+    }
+    stella_model::Catalog::current()
+        .entries()
+        .iter()
+        .filter(|e| e.provider == provider)
+        .map(|e| format!("{}/{}", e.provider, e.id))
+        .collect()
+}
+
+/// [`model_candidates`] as the inbound the deck folds.
+pub fn candidates_inbound(cfg: &Config) -> stella_tui::Inbound {
+    stella_tui::Inbound::ModelCandidates(model_candidates(cfg))
+}
+
 /// Validate `id` against the catalog (exactly as the settings tab's default
 /// resolves, via [`crate::engine_config::parse_model_spec`]) and persist it
 /// as `default_model` in user-scope settings through the same `save_to` the
@@ -244,6 +281,39 @@ mod tests {
             aux_credentials: Default::default(),
             cache_ttl: None,
         }
+    }
+
+    /// **The witness for the `/model` argument menu's vocabulary.** Without
+    /// an `allowed_models` list the candidates are the catalog's rows for
+    /// the ACTIVE provider alone; with one configured, the list itself is
+    /// the vocabulary, still scoped to the active provider — the same
+    /// narrowing the SETTINGS tab's picker applies.
+    #[test]
+    fn model_candidates_scope_to_the_provider_and_honor_the_allowlist() {
+        let (td, _guard) = scratch();
+        let workspace = td.path().join("repo");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let cfg = test_config(workspace.clone());
+
+        let open = model_candidates(&cfg);
+        assert!(!open.is_empty(), "the seed catalog has anthropic rows");
+        assert!(
+            open.iter().all(|spec| spec.starts_with("anthropic/")),
+            "only the active provider's models are offered: {open:?}"
+        );
+
+        std::fs::create_dir_all(workspace.join(".stella")).unwrap();
+        std::fs::write(
+            workspace.join(".stella/settings.json"),
+            r#"{"agent_engine_config": {"allowed_models":
+                ["anthropic/claude-opus-5", "zai/glm-5.2"]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            model_candidates(&cfg),
+            vec!["anthropic/claude-opus-5".to_string()],
+            "a configured allowlist IS the vocabulary, scoped to the provider"
+        );
     }
 
     #[test]

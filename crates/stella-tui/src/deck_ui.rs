@@ -737,6 +737,14 @@ pub struct DeckUi {
     /// lane with its purpose, its place in the task, and the stop / pause /
     /// resume / restart verbs. Modal while open.
     pub subagents: crate::v2::subagents::SubagentsOverlay,
+    /// The AGENTS page (`←` twice from an empty prompt on the Session tab):
+    /// the full-frame fleet surface — lanes, sessions, and its own composer
+    /// that starts a new agent lane. Modal while open.
+    pub agents_page: crate::v2::agents_page::AgentsPage,
+    /// The `/model` argument vocabulary ([`Inbound::ModelCandidates`]):
+    /// the active provider's models as `provider/slug` specs, already
+    /// filtered through the configured `allowed_models` list driver-side.
+    pub model_candidates: Vec<String>,
     /// Whether the SESSIONS overlay is open (empty-prompt `←` on the Session
     /// tab, or `/sessions`). Modal while open: ↑/↓ move, `⏎` open (replay),
     /// `a` archive, `x` delete, `r` refresh, Esc/`←` close.
@@ -879,6 +887,8 @@ impl Default for DeckUi {
             accessible: false,
             scrollback: crate::accessible::Scrollback::default(),
             subagents: crate::v2::subagents::SubagentsOverlay::default(),
+            agents_page: crate::v2::agents_page::AgentsPage::default(),
+            model_candidates: Vec::new(),
             sessions_open: false,
             sessions_show_all: false,
             sessions: Vec::new(),
@@ -928,6 +938,12 @@ impl DeckUi {
     /// when nothing modal owns the keyboard does the composer receive the paste.
     /// Keeps [`crate::deck_shell`] a dumb wire.
     pub fn paste(&mut self, text: &str) {
+        // 0. The AGENTS page is full-frame modal; its composer takes the
+        //    paste (nothing above it holds a text input).
+        if self.agents_page.open {
+            self.agents_page.composer.paste(text);
+            return;
+        }
         // 1. Installed-agents sub-modes are modal while open.
         if self.installed.mode != InstalledMode::Browse {
             match self.installed.mode {
@@ -1114,6 +1130,10 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     if let Inbound::SlashCommands(commands) = inbound {
         ui.slash_commands = commands.clone();
         ui.slash_selected = 0;
+        return;
+    }
+    if let Inbound::ModelCandidates(candidates) = inbound {
+        ui.model_candidates = candidates.clone();
         return;
     }
     // The installed-agents list is out-of-band view state too — the driver
@@ -1638,6 +1658,8 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // exactly like a non-Esc key would.
     let is_esc = matches!(key.code, KeyCode::Esc);
     let esc_armed = ui.esc_armed_at.take();
+    // The double-`←` latch pairs exactly like the double-Esc one above it.
+    let left_armed = ui.agents_page.left_armed_at.take();
 
     // Ctrl-C: clean cancel + quit, from anywhere.
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
@@ -1665,6 +1687,12 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // is long enough to scroll on most terminals.
     if ui.help_open {
         return handle_help_key(key, ui);
+    }
+
+    // The AGENTS page (`←` twice) is full-frame and modal while open — only
+    // quit, the splash, and help (all handled above) precede it.
+    if ui.agents_page.open {
+        return crate::v2::agents_page::handle_key(key, model, ui);
     }
 
     // The INSTALLED AGENTS sub-modes (editor / create flow / version picker)
@@ -1891,6 +1919,12 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // tabs: they quick-pick ask-user answers and must be typeable as the
     // first character of a prompt). The slash popup claims Tab first —
     // completion beats tab-cycling while the menu is open.
+    // `/model <fragment>`: the argument menu opens where the slash menu
+    // closed (see `composer::args`) and claims its keys ahead of tab-cycling,
+    // so Tab completes a model spec instead of leaving the tab.
+    if let Some(action) = local::model_arg_key(key, model, ui) {
+        return action;
+    }
     let slash = slash_matches(model, ui);
     if slash.is_empty() {
         match key.code {
@@ -1989,6 +2023,12 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // the highlighted message — all from an empty composer only, where none
     // of them is editing.
     if composer_empty && key.modifiers.is_empty() {
+        // `←` on the SESSION tab is the AGENTS-page chord: the first press
+        // arms, the second (inside the window) opens the page. Everywhere
+        // else the arrows keep stepping the tab strip.
+        if let Some(action) = crate::v2::agents_page::left_left(key, left_armed, ui) {
+            return action;
+        }
         if let Some(dir) = focus::Dir::of(key.code) {
             return focus::step_tab(dir, ui);
         }
@@ -2076,6 +2116,12 @@ fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckA
     if text.trim() == "/clear" {
         ui.dispatch_held = false;
         return DeckAction::Send(WorkspaceInput::SessionClear);
+    }
+    // A queue-free command leaves beside the queue, mid-turn included, and
+    // ahead of a held dispatch — holding prompts must not capture `/export`
+    // into the backlog. See `dispatch::sideband`.
+    if let Some(input) = dispatch::sideband(ui, &text) {
+        return DeckAction::Send(input);
     }
     if ui.dispatch_held {
         ui.dispatch_held = false;

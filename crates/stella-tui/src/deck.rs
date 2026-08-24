@@ -816,6 +816,7 @@ impl WorkspaceModel {
             Inbound::GraphSnapshot(_)
             | Inbound::IndexReadiness(_)
             | Inbound::SlashCommands(_)
+            | Inbound::ModelCandidates(_)
             | Inbound::AgentsList { .. }
             | Inbound::AgentAssumed { .. }
             | Inbound::Skills(_)

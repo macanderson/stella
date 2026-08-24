@@ -86,9 +86,13 @@ async fn main() -> std::io::Result<()> {
                 // (the first submission after a double-Esc hold) and a
                 // wait-your-turn queue both start a scripted run just like a
                 // plain enqueue.
+                // A page-spawned lane and a queue-free command have no real
+                // driver here either; the demo scripts them like a prompt.
                 WorkspaceInput::Enqueue { text }
                 | WorkspaceInput::EnqueueFront { text }
-                | WorkspaceInput::EnqueueNext { text } => {
+                | WorkspaceInput::EnqueueNext { text }
+                | WorkspaceInput::SpawnLane { text }
+                | WorkspaceInput::Command { text } => {
                     n += 1;
                     let id = format!("you:{n}");
                     let _ = react_tx.send(Inbound::Register(

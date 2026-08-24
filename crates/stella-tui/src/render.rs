@@ -461,6 +461,88 @@ pub(crate) fn render_slash_popup(
         .render(area, buf);
 }
 
+/// The `/model` argument menu ([`crate::composer::args`]): the palette's
+/// floating shape over candidate model specs. The typed fragment lights up
+/// inside each candidate the way the typed prefix does in the command
+/// palette; the window scrolls around the selection identically.
+pub(crate) fn render_arg_popup(
+    command: &str,
+    matches: &[String],
+    fragment: &str,
+    selected: usize,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    use stella_tui_theme::token;
+    ratatui::widgets::Clear.render(area, buf);
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let gold = Style::new().fg(token::GOLD);
+    let lit = Style::new()
+        .fg(token::GOLD_BRIGHT)
+        .add_modifier(Modifier::BOLD);
+
+    let total = matches.len();
+    let selected = selected.min(total.saturating_sub(1));
+    let visible = inner_height(area).saturating_sub(1).max(1);
+    let first = scroll_window_start(total, selected, visible);
+    let last = (first + visible).min(total);
+    let needle = fragment.to_ascii_lowercase();
+
+    let mut lines: Vec<Line<'static>> = matches[first..last]
+        .iter()
+        .enumerate()
+        .map(|(offset, candidate)| {
+            let index = first + offset;
+            let is_sel = index == selected;
+            let marker = if is_sel { "▸ " } else { "  " };
+            let mut spans = vec![Span::styled(marker.to_string(), gold)];
+            // Light the matched fragment wherever it sits in the spec.
+            match (!needle.is_empty())
+                .then(|| candidate.to_ascii_lowercase().find(&needle))
+                .flatten()
+            {
+                Some(at) => {
+                    let end = at + needle.len();
+                    spans.push(Span::styled(candidate[..at].to_string(), gold));
+                    spans.push(Span::styled(candidate[at..end].to_string(), lit));
+                    spans.push(Span::styled(candidate[end..].to_string(), gold));
+                }
+                None => spans.push(Span::styled(candidate.clone(), gold)),
+            }
+            let mut line = Line::from(spans);
+            if is_sel {
+                line.style = Style::new().bg(token::HL);
+            }
+            line
+        })
+        .collect();
+    let (hidden_above, hidden_below) = (first, total - last);
+    let mut hint = vec![Span::raw(" ")];
+    if hidden_above > 0 || hidden_below > 0 {
+        hint.push(Span::styled(
+            format!("▲{hidden_above} ▼{hidden_below}"),
+            dim,
+        ));
+    } else {
+        hint.push(Span::styled("⇥ completes · esc closes", dim));
+    }
+    lines.push(Line::from(hint));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::new().fg(token::RULE))
+        .title(Line::from(vec![
+            Span::styled(format!(" {command}"), gold),
+            Span::styled(format!("  {} of {total} ", last - first), muted),
+        ]))
+        .title(Line::from(Span::styled(" ↑↓ move · ↵ run · esc ", dim)).right_aligned());
+    Paragraph::new(Text::from(lines))
+        .block(block)
+        .render(area, buf);
+}
+
 /// Most styled diff lines a collapsed tool result shows inline before folding
 /// the rest behind ctrl+o — a mutation stays glanceable in the transcript
 /// without a large diff flooding it uninvited.

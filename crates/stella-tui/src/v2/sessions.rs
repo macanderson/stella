@@ -189,7 +189,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
 
 /// The glyph and metal for a phase (SPEC 4): running is gold, parked is
 /// silver, finished is dim, and only an error is red.
-fn phase_mark(phase: SessionPhase) -> (char, Color) {
+pub(crate) fn phase_mark(phase: SessionPhase) -> (char, Color) {
     match phase {
         SessionPhase::InProgress => (glyph::RUNNING, token::GOLD),
         SessionPhase::NeedsInput => (glyph::GATE, token::GOLD_BRIGHT),
@@ -212,7 +212,7 @@ fn basename(path: &str) -> String {
 }
 
 /// Cut to `max` characters with an ellipsis.
-fn truncate(s: &str, max: usize) -> String {
+pub(crate) fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
     }
@@ -221,7 +221,7 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 /// A compact `3m ago`-style age from a millisecond delta.
-fn fmt_age(delta_ms: u64) -> String {
+pub(crate) fn fmt_age(delta_ms: u64) -> String {
     let secs = delta_ms / 1000;
     if secs < 60 {
         return format!("{secs}s ago");

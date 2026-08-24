@@ -1,0 +1,45 @@
+# deck golden · page_agents
+# the full-frame AGENTS page: counts, working lanes, resumable sessions, and the new-task prompt
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ AGENTS · 1 waiting · 2 working · 1 completed
+
+ WORKING
+ ▸ ◆ sub:auth  needs input · 5:12 · glm-5.2 · $0.01
+     wire automations triggers API
+   ◆ sub:ci  running · 5:12 · glm-5.2-air · $0.00
+     watch CI + open PR
+   ◆ req:1  queued · 5:12 · glm-5.2 · $0.00
+     Fix the parser panic on empty input.
+ COMPLETED
+   ✓ stella: wire the dedup digest  ↩ resume · 5m ago
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ ❯ describe a task for a new session
+   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · ⌃x⌃x kill · r refresh · esc back
