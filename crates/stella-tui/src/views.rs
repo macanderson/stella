@@ -2,16 +2,13 @@
 //! `render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer)`
 //! — a deterministic draw of the (model, ui) into a sub-area, recording any
 //! viewport metrics it needs for scroll clamping back onto `ui.metrics`.
-//! (`engine` and `tools` are the exceptions: they are the two config editors
-//! the SETTINGS tab ([`settings`]) hosts as the two panes of its ←/→ nav, not
-//! tab renderers of their own — each exposes `render_panel(ui, area, buf)`
-//! plus its own key handler, modal while that panel is focused. `installed`
-//! is a third: it
-//! is the AGENTS tab's INSTALLED AGENTS pane, dispatched from
-//! [`agents::render`] rather than from the deck's tab match, and its
-//! `render(ui, now_ms, area, buf)` takes only the deck clock off the model rather than
-//! carry a dead one — it has no model-derived state and no key handler of
-//! its own, deck_ui.rs routes its keys directly.)
+//! `tools` is the exception: it is one of the config editors the SETTINGS
+//! tab ([`settings`]) hosts as a pane of its ←/→ nav, not a tab renderer of
+//! its own — it exposes `render_panel(ui, area, buf)` plus its own key
+//! handler, modal while that panel is focused. The AGENTS tab and its
+//! INSTALLED AGENTS pane are [`crate::v2::agents_page`] and
+//! [`crate::v2::installed`]; the AGENTS pane beside `tools` on SETTINGS is
+//! [`crate::v2::engine_panel`].
 
 /// The braille spinner's frames — the classic 10-frame dot cycle.
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -30,21 +27,17 @@ pub(crate) fn spinner_glyph(now_ms: u64, no_anim: bool) -> &'static str {
     SPINNER_FRAMES[((now_ms / SPINNER_PERIOD_MS) as usize) % SPINNER_FRAMES.len()]
 }
 
-pub mod agents;
 pub mod approval;
 pub(crate) mod cards;
 pub mod dispatch_card;
-pub mod engine;
 pub mod files;
 pub mod graph;
-pub mod installed;
 pub mod issues;
 pub(crate) mod linear;
 pub mod mcp;
 pub mod picker;
 pub mod question;
 pub(crate) mod queue_popup;
-pub mod seats;
 pub mod session;
 pub mod settings;
 pub mod skills;

@@ -1,9 +1,10 @@
-//! The ENGINE panel's tab strip: GLOBAL plus one page per configurable agent.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! The engine panel's tab strip: GLOBAL plus one page per configurable agent.
 //!
-//! A sibling module rather than more lines in [the parent](super), which is a
-//! grandfathered god file closed to growth (AGENTS.md § "God files"). The split
-//! is along a real seam: everything here is the strip's *vocabulary and cycle
-//! order*, and none of it touches the overlay's state or draws anything.
+//! Everything here is the strip's *vocabulary and cycle order*; none of it
+//! touches the panel's state or draws anything.
 //!
 //! [`EngineTab::ALL`] is **derived** from [`EngineRole::ALL`] rather than
 //! written out. It used to be a hand-typed copy of the role list, which is the
@@ -14,7 +15,7 @@
 
 use crate::envelope::{EngineConfigState, EngineRole};
 
-/// Which tab of the overlay has the keyboard: the GLOBAL toggles or one of
+/// Which tab of the panel has the keyboard: the GLOBAL toggles or one of
 /// the per-agent override pages. GLOBAL comes first — the cross-agent
 /// switches are what the panel usually opens on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -96,9 +97,9 @@ impl GlobalRow {
 
     /// This row's on/off flag in `state` — `None` for `AllowedModels`, which
     /// is a list, not a switch. The one place the row→field mapping lives for
-    /// the parent's flip/clear/render sites, so a new toggle row is an arm
-    /// here (plus [`Self::flag_mut`]'s) rather than three edits in a god file
-    /// closed to growth (AGENTS.md § "God files").
+    /// the panel's flip/clear/render sites, so a new toggle row is an arm
+    /// here (plus [`Self::flag_mut`]'s) rather than three edits spread across
+    /// the panel.
     pub(super) fn flag(self, state: &EngineConfigState) -> Option<bool> {
         match self {
             GlobalRow::AutoMode => Some(state.auto_mode),
