@@ -11,8 +11,9 @@
 //! switch leaves the running wiring untouched.
 //!
 //! The system prompt is rewritten between turns, exactly as
-//! `WorkspaceInput::AgentAssume` always did (invariant #7 holds *across* a
-//! turn, and `messages[0]` may move only at a turn boundary). The
+//! `WorkspaceInput::AgentAssume` always did (the prompt prefix is
+//! byte-stable *across* a turn — AGENTS.md's rule #7 — so `messages[0]`
+//! may move only at a turn boundary). The
 //! SessionStart hook context is NOT re-run for the rewrite: the caller hands
 //! in the suffix captured at startup, so a hook's side effects happen once
 //! per session no matter how often the model changes.
