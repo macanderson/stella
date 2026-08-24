@@ -1343,6 +1343,7 @@ impl<'a> Engine<'a> {
             crate::receipts::ServedBy {
                 role: self.call_role,
                 provider: self.active_provider().id(),
+                upstream_provider: result.upstream_provider.as_deref(),
                 model: &result.model,
             },
             events,

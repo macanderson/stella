@@ -46,6 +46,10 @@ pub struct ServedBy<'a> {
     pub role: ModelCallRole,
     /// The provider id that answered.
     pub provider: &'a str,
+    /// The upstream a gateway routed to, when the result names one
+    /// (`CompletionResult::upstream_provider`) — settled-boundary knowledge
+    /// like `model`, and `None` on direct endpoints (#3054).
+    pub upstream_provider: Option<&'a str>,
     /// The model the provider reported actually serving.
     pub model: &'a str,
 }
@@ -1050,6 +1054,7 @@ impl ReceiptLedger {
         let ServedBy {
             role,
             provider,
+            upstream_provider,
             model,
         } = served;
         self.digests.sync_to(self.revision);
@@ -1112,6 +1117,7 @@ impl ReceiptLedger {
             call_seq: self.call_seq,
             role,
             provider: provider.to_string(),
+            upstream_provider: upstream_provider.map(str::to_string),
             model: model.to_string(),
             blocks,
             effective_budget_tokens: self.effective_budget_tokens,

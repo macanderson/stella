@@ -1060,7 +1060,11 @@ fn skill_usage_records_per_execution_version_rows() {
     //       or NULL for the lead — nullable with no backfill, since a
     //       sub-agent opens no execution row of its own and nothing in the
     //       journal can attribute a historical row without guessing.
-    assert_eq!(SCHEMA_VERSION, 33);
+    //       v34 `step_receipt.upstream_provider` (#3054): the vendor a
+    //       gateway routed a call to, which until then lived only in the raw
+    //       `events` payload — nullable with no backfill, since NULL is "no
+    //       upstream was named" and history's answer is only in the journal.
+    assert_eq!(SCHEMA_VERSION, 34);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

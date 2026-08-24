@@ -3385,6 +3385,13 @@
         "type": {
           "const": "step_manifest",
           "type": "string"
+        },
+        "upstream_provider": {
+          "description": "The upstream the gateway routed this call to, when it names one —\nthe same contract as [`AgentEvent::StepUsage`]'s field of this\nname, carried here because this event is what the store projects\ninto the durable `step_receipt` row (#3054): without it a stored\nreceipt says `openrouter` for every gateway call and `stella\ninspect` cannot answer \"which vendor served this call\" for a past\nexecution. `None` on direct endpoints, where `provider` is\nalready the answer, and on every manifest recorded before this\nfield existed (hence `serde(default)`).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

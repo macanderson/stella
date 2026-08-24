@@ -695,6 +695,7 @@ mod stall {
             crate::receipts::ServedBy {
                 role: stella_protocol::ModelCallRole::Worker,
                 provider: "anthropic",
+                upstream_provider: None,
                 model: "opus",
             },
             &events,

@@ -2028,6 +2028,18 @@ export type AgentEvent = {
    */
   turn_instance: number;
   type: "step_manifest";
+  /**
+   * The upstream the gateway routed this call to, when it names one —
+   * the same contract as [`AgentEvent::StepUsage`]'s field of this
+   * name, carried here because this event is what the store projects
+   * into the durable `step_receipt` row (#3054): without it a stored
+   * receipt says `openrouter` for every gateway call and `stella
+   * inspect` cannot answer "which vendor served this call" for a past
+   * execution. `None` on direct endpoints, where `provider` is
+   * already the answer, and on every manifest recorded before this
+   * field existed (hence `serde(default)`).
+   */
+  upstream_provider?: string | null;
 } | {
   step: ProofStep;
   /**

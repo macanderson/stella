@@ -1128,7 +1128,10 @@ fn step_manifest_preserves_block_order_and_the_effective_budget() {
         step: 3,
         call_seq: 0,
         role: ModelCallRole::Worker,
-        provider: "anthropic".into(),
+        provider: "openrouter".into(),
+        // A gateway call: the pair must survive the round trip together —
+        // the gateway id alone cannot answer who served the call (#3054).
+        upstream_provider: Some("Amazon Bedrock".into()),
         model: "claude-opus".into(),
         blocks: vec![
             ManifestEntry {
@@ -1167,9 +1170,14 @@ fn step_manifest_preserves_block_order_and_the_effective_budget() {
     assert!(value.get("compiled_frame").is_none(), "{value}");
     let back: AgentEvent = serde_json::from_str(&value.to_string()).unwrap();
     match back {
-        AgentEvent::StepManifest { blocks, .. } => {
+        AgentEvent::StepManifest {
+            blocks,
+            upstream_provider,
+            ..
+        } => {
             assert_eq!(blocks.len(), 2);
             assert_eq!(blocks[0].cache_zone, CacheZone::StablePrefix);
+            assert_eq!(upstream_provider.as_deref(), Some("Amazon Bedrock"));
         }
         other => panic!("unexpected variant: {other:?}"),
     }
@@ -1191,10 +1199,14 @@ fn a_manifest_from_a_pre_frame_stream_still_parses() {
         AgentEvent::StepManifest {
             compiled_frame,
             call_seq,
+            upstream_provider,
             ..
         } => {
             assert_eq!(compiled_frame, None, "absent frame ⇒ the lifecycle was off");
             assert_eq!(call_seq, 0);
+            // #3054's field is likewise absent on every pre-existing journal
+            // and must decode as "no upstream was named".
+            assert_eq!(upstream_provider, None);
         }
         other => panic!("unexpected variant: {other:?}"),
     }
@@ -1208,6 +1220,7 @@ fn a_manifest_carrying_a_compiled_frame_round_trips() {
         call_seq: 0,
         role: ModelCallRole::Worker,
         provider: "anthropic".into(),
+        upstream_provider: None,
         model: "opus".into(),
         blocks: vec![],
         effective_budget_tokens: 1,

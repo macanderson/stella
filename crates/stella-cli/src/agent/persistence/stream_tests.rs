@@ -346,6 +346,7 @@ fn receipt_events_persist_into_queryable_block_and_manifest_rows() {
         call_seq: 0,
         role: ModelCallRole::Worker,
         provider: "anthropic".into(),
+        upstream_provider: None,
         model: "opus".into(),
         blocks: vec![ManifestEntry {
             block_id: "blk_tool1".into(),
@@ -442,6 +443,7 @@ fn end_to_end_receipt_reconstructs_the_step_byte_exact_from_the_persisted_store(
         stella_core::receipts::ServedBy {
             role: stella_protocol::ModelCallRole::Worker,
             provider: "anthropic",
+            upstream_provider: None,
             model: "opus",
         },
         &events,
@@ -526,6 +528,7 @@ fn a_decomposed_recall_turn_still_reconstructs_byte_exact() {
         stella_core::receipts::ServedBy {
             role: stella_protocol::ModelCallRole::Worker,
             provider: "anthropic",
+            upstream_provider: None,
             model: "opus",
         },
         &events,
