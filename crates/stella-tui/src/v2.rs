@@ -20,6 +20,7 @@
 
 pub mod budget_card;
 pub mod fields;
+pub mod files_tab;
 pub mod frame;
 pub mod graph;
 pub mod graph_tab;

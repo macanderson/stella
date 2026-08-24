@@ -4,41 +4,41 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION AGENTS TRACES GRAPH   FILES   SKILLS MCP ISSUES SETTINGS                                                                                       stella*
-┌ Files · 2 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│File                                                                                                             Agent         Op        +       -  reads    ×│
-│apps/app/automations/page.tsx                                                                                    lead         U  +4      -1            0   ×1 │
-│apps/api/routes/v1/automations.ts                                                                                sub:auth     C  +3      -0            0   ×1 │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│2 files   +7  -1  0 reads                                                                                                                                     │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ ▤ 2 files · +7 -1 · 0 reads                                                                                                                             ↵ diff
+  File                                                                                                             Agent         Op +       -         reads    ×
+  apps/app/automations/page.tsx                                                                                    lead          U  +4      -1            0   ×1
+▸ apps/api/routes/v1/automations.ts                                                                                sub:auth      C  +3      -0            0   ×1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
  ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>
  ⏎ queue · ↓ 2 sub-agents · ! shell · / commands

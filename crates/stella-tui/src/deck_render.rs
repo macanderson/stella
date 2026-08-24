@@ -98,7 +98,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         DeckTab::Agents => views::agents::render(model, ui, content, b),
         DeckTab::Traces => views::traces::render(model, ui, content, b),
         DeckTab::Graph => views::graph::render(model, ui, content, b),
-        DeckTab::Files => views::files::render(model, ui, content, b),
+        DeckTab::Files => crate::v2::files_tab::render(model, ui, content, b),
         DeckTab::Skills => views::skills::render(model, ui, content, b),
         DeckTab::Mcp => views::mcp::render(model, ui, content, b),
         DeckTab::Issues => views::issues::render(model, ui, content, b),

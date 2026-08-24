@@ -35,7 +35,6 @@ pub mod approval;
 pub(crate) mod cards;
 pub mod dispatch_card;
 pub mod engine;
-pub mod files;
 pub mod graph;
 pub mod installed;
 pub mod issues;
