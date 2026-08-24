@@ -427,7 +427,7 @@ mod tests {
     /// pointed at `claude-sonnet-5` — evidence consistent with both answers.
     #[tokio::test]
     async fn the_next_request_is_served_by_the_switched_model() {
-        use stella_protocol::{CompletionRequest, Provider as _};
+        use stella_protocol::CompletionRequest;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
