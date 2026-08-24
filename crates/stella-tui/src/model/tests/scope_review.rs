@@ -157,10 +157,11 @@ fn scope_review_clears_on_error_and_complete() {
 /// the gate emits — and a refusal deliberately has none: the gate hands the
 /// driver's change request back as the parked `task_start`'s own error and
 /// emits nothing (#3861, #4594). So the latch stayed set for the whole window
-/// the model spent re-planning, and three surfaces read a decision as pending
-/// while nobody was waiting on anything: `deck::classify` said
-/// `WaitingInput`, `fleet_dashboard` held the lane `Blocked`, and the rail
-/// said `pending approval`.
+/// the model spent re-planning, and two surfaces read a decision as pending
+/// while nobody was waiting on anything: `fleet_dashboard` held the lane
+/// `Blocked`, and the rail said `pending approval`. #4612 named a third,
+/// `deck::classify` — that one already recovered, because `status_from_event`
+/// reads a `ToolResult` as `Running`.
 ///
 /// It also gives [`crate::plan::Plan::cancel`] its first caller reachable from
 /// an event; it existed for exactly this state and nothing could reach it.
