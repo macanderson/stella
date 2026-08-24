@@ -178,7 +178,7 @@ WINNER: model-b — pass_rate lift +1.000 over `model-a` (z ∞, n 12/12)
   ✓ turns        10.0000 →     4.0000  (+6.0000 vs tolerance 0.0000)
 ```
 
-Three things about that output are load-bearing:
+Three things about that output determine whether a comparison result can be trusted:
 
 - **The report shape is `stella_core::comparison::ComparisonReport`, not a
   harness-local type.** The promotion gates that read it — an adapter (#836), a
@@ -241,7 +241,7 @@ recall.frames                     0.00 (0)      3.00 (18)        +3.000
 tool.grep                         2.00 (12)      0.00 (0)        -2.000
 ```
 
-Four decisions there are load-bearing:
+Four decisions there determine whether the attribution can be trusted:
 
 - **Tools are keyed by name, never by a class.** A foundry-authored tool is
   indistinguishable from a built-in on the wire — `ToolCall` carries a name and

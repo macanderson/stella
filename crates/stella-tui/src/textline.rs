@@ -11,7 +11,7 @@
 //! surface maps onto its own palette — `colored` codes on the plain surface,
 //! `ratatui` styles on the deck.
 //!
-//! The wording is byte-load-bearing: the plain renderer's observable output
+//! The wording is byte-exact: the plain renderer's observable output
 //! is composed as `"  {glyph} {body}"` (plus `" {detail}"` when present), and
 //! the fixture tests at the bottom pin every line to the exact strings the
 //! plain surface printed before the extraction. Change a string here and the
@@ -1117,7 +1117,7 @@ mod tests {
     /// plugin's own name back, verbatim — not a category like "plugin", and
     /// not the nearest host stage it happens to resemble.
     ///
-    /// `triage-lite` is the load-bearing case: it *contains* a host stage's
+    /// `triage-lite` is the decisive case: it *contains* a host stage's
     /// name, so anything that resolved by prefix or substring would silently
     /// relabel it `triage` and claim the turn ran a stage it never ran.
     #[test]

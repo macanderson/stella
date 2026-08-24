@@ -41,21 +41,23 @@
 //! only; see `bench/harbor_adapter/README.md` for the same list stated from
 //! the launcher's side.
 //!
-//! ## The one target that leaves the seal (`VOYAGE_API_KEY`)
+//! ## The embedding credential (`VOYAGE_API_KEY`)
 //!
-//! Every target above stays inside the sealed [`HANDOFF`] map for the rest of
-//! the process's life and is read only through [`key_for`]. The embedding
-//! backend's credential is the deliberate exception (#2995): `stella-embed`'s
-//! `EmbedderEnv::from_process` (`crates/stella-embed/src/http.rs`) reads
-//! `VOYAGE_API_KEY` ambiently — a pre-existing, shipped contract this handoff
-//! does not change — so [`consume_at_startup`] re-exports it into the process
-//! environment once consumed. That is a strictly weaker guarantee than every
-//! other target gets: a subprocess a custom tool or hook spawns inherits it,
-//! exactly as it would inherit a developer's own exported `VOYAGE_API_KEY`. What this
-//! handoff still buys for it: it never touches Harbor's environment or
-//! `docker compose exec` argv, and it never enters the model-provider
-//! selection contract. Threading a typed, ambient-env-free path through
-//! `stella-embed`'s call sites is a larger, separate change.
+//! Every target stays inside the sealed [`HANDOFF`] map for the rest of the
+//! process's life and is read only through [`key_for`]. The embedding
+//! credential (#2995) is the one that also has to reach a crate that never
+//! learns this module exists: `stella-embed` is a dependency leaf, and both it
+//! and `stella-tools`' search ladder resolve a backend from
+//! `EmbedderEnv::from_process`.
+//!
+//! It used to reach them by `std::env::set_var` — which handed a subprocess a
+//! custom tool or hook spawns exactly what a developer's own exported key
+//! would, inside a container the rest of this file exists to keep secrets out
+//! of (#3093). [`consume_at_startup`] now *installs* [`embedder_env`] —
+//! ambient configuration with the sealed credential written over it — through
+//! `stella_embed::install_process_env`, which is the same value delivered
+//! without the environment block. The ambient read stays exactly as it was for
+//! a process that received no handoff.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -101,14 +103,12 @@ const ALLOWED_TARGETS: &[&str] = &[
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
     // The embedding backend's credential (#2995) — a second, independent
-    // route, never selected by a model provider spec. See the module doc's
-    // "one target that leaves the seal" section: unlike every name above,
-    // `consume_at_startup` re-exports this one into the process environment.
+    // route, never selected by a model provider spec.
     EMBEDDING_CREDENTIAL_TARGET,
 ];
 
-/// The embedding backend credential name this handoff re-exports into the
-/// process environment after consumption. See the module doc.
+/// The embedding backend credential name. Read out of the sealed map by
+/// [`embedder_env`]; see the module doc.
 const EMBEDDING_CREDENTIAL_TARGET: &str = "VOYAGE_API_KEY";
 
 static HANDOFF: OnceLock<BTreeMap<String, String>> = OnceLock::new();
@@ -123,9 +123,42 @@ static HANDOFF: OnceLock<BTreeMap<String, String>> = OnceLock::new();
 /// of the process environment, which is only sound before the process grows a
 /// second thread (#1140).
 pub(crate) fn consume_at_startup(phase: &StartupPhase) -> Result<(), String> {
+    let Some(credentials) = read_handoff(phase)? else {
+        return Ok(());
+    };
+
+    // The embedding credential reaches `stella-embed` and `stella-tools` as an
+    // installed value rather than an environment variable, so no subprocess
+    // inherits it — see the module doc. A refusal here means something already
+    // installed one, which cannot happen from the single call site in `main`
+    // and is the same "initialized more than once" bug the map reports below.
+    if !stella_embed::install_process_env(embedder_env_over(
+        stella_embed::EmbedderEnv::from_process(),
+        Some(&credentials),
+    )) {
+        return Err(
+            "an embedder configuration was already installed before the credential handoff"
+                .to_string(),
+        );
+    }
+
+    HANDOFF
+        .set(credentials)
+        .map_err(|_| "credential handoff was initialized more than once".to_string())
+}
+
+/// Read, validate and scrub one configured handoff, without installing it
+/// anywhere. `Ok(None)` when this process was given none.
+///
+/// Split out of [`consume_at_startup`] so the witness can drive the whole
+/// consumption sequence — descriptor, pairing, and the environment scrub that
+/// is the property under test — without setting the process-wide [`HANDOFF`],
+/// which is a `OnceLock` every other test in this binary reads through
+/// [`is_present`].
+fn read_handoff(phase: &StartupPhase) -> Result<Option<BTreeMap<String, String>>, String> {
     phase.assert_before_runtime("credential_handoff::consume_at_startup");
     let Some(fd_raw) = std::env::var_os(HANDOFF_FD_ENV) else {
-        return Ok(());
+        return Ok(None);
     };
     let target = std::env::var(HANDOFF_TARGET_ENV)
         .map_err(|_| format!("{HANDOFF_TARGET_ENV} is required with {HANDOFF_FD_ENV}"))?;
@@ -155,18 +188,35 @@ pub(crate) fn consume_at_startup(phase: &StartupPhase) -> Result<(), String> {
     unsafe {
         std::env::remove_var(HANDOFF_FD_ENV);
         std::env::remove_var(HANDOFF_TARGET_ENV);
-        // The one target that leaves the seal — see the module doc. Every
-        // other credential stays in `HANDOFF` only, read through `key_for`;
-        // this one is re-exported because `stella-embed`'s ambient read is a
-        // pre-existing contract this handoff does not change.
-        if let Some(value) = credentials.get(EMBEDDING_CREDENTIAL_TARGET) {
-            std::env::set_var(EMBEDDING_CREDENTIAL_TARGET, value);
-        }
     }
 
-    HANDOFF
-        .set(credentials)
-        .map_err(|_| "credential handoff was initialized more than once".to_string())
+    Ok(Some(credentials))
+}
+
+/// The embedder configuration this process runs under: the ambient one, with
+/// the sealed embedding credential written over it when a handoff carried one.
+///
+/// The credential goes no further than the returned value — it is never
+/// written back to `std::env`, which is the whole of #3093.
+pub(crate) fn embedder_env() -> stella_embed::EmbedderEnv {
+    embedder_env_over(stella_embed::EmbedderEnv::from_process(), HANDOFF.get())
+}
+
+/// [`embedder_env`] over an explicit ambient configuration and handoff — the
+/// pure half, so the precedence is testable without a `OnceLock` that can only
+/// be set once per process.
+///
+/// The handoff wins where it has a value. It arrived over a descriptor from a
+/// launcher that chose it deliberately; ambient environment in a bench
+/// container is whatever the task image happened to leave behind.
+fn embedder_env_over(
+    mut ambient: stella_embed::EmbedderEnv,
+    handoff: Option<&BTreeMap<String, String>>,
+) -> stella_embed::EmbedderEnv {
+    if let Some(value) = handoff.and_then(|map| map.get(EMBEDDING_CREDENTIAL_TARGET)) {
+        ambient.voyage_api_key = Some(value.clone());
+    }
+    ambient
 }
 
 /// Split the descriptor payload into one value per declared target.
@@ -339,6 +389,105 @@ mod tests {
         // close through the same `file` drop at function exit. Re-checking the
         // raw fd number here would be racy under the parallel harness — a
         // sibling test can reuse the freed number immediately.
+    }
+
+    /// Witness for #3093: consuming a handoff that carries the embedding
+    /// credential must leave `VOYAGE_API_KEY` out of the process environment,
+    /// where it used to be `set_var`'d back in — so a `bash` tool call the
+    /// agent makes does not inherit it.
+    ///
+    /// The child is spawned rather than inferred. `std::env` being empty and a
+    /// real subprocess seeing nothing are the same fact, but only one of them
+    /// is the fact the issue is about, and a test that asserts the other is
+    /// asking the reader to complete the argument.
+    #[test]
+    fn the_embedding_credential_never_reaches_the_process_environment() {
+        let _env = crate::test_env::lock();
+        let _restore = crate::test_env::EnvRestore::capture(&[
+            HANDOFF_FD_ENV,
+            HANDOFF_TARGET_ENV,
+            EMBEDDING_CREDENTIAL_TARGET,
+        ]);
+
+        let mut fds = [0_i32; 2];
+        // SAFETY: valid two-element output buffer.
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        // SAFETY: the write end is ours; the `File` closes it on drop, which
+        // is what lets the read below see EOF.
+        let mut writer = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+        writer.write_all(b"voyage-handoff-secret\n").unwrap();
+        drop(writer);
+
+        // SAFETY: the binary-wide environment lock is held for the whole
+        // mutate-read-restore window, and `_restore` puts all three back.
+        unsafe {
+            std::env::set_var(HANDOFF_FD_ENV, fds[0].to_string());
+            std::env::set_var(HANDOFF_TARGET_ENV, EMBEDDING_CREDENTIAL_TARGET);
+            std::env::remove_var(EMBEDDING_CREDENTIAL_TARGET);
+        }
+
+        let credentials = read_handoff(&crate::startup::StartupPhase::for_test())
+            .expect("the handoff is consumable")
+            .expect("a handoff was configured");
+        assert_eq!(
+            credentials
+                .get(EMBEDDING_CREDENTIAL_TARGET)
+                .map(String::as_str),
+            Some("voyage-handoff-secret"),
+            "the credential must arrive in the sealed map"
+        );
+
+        assert!(
+            std::env::var_os(EMBEDDING_CREDENTIAL_TARGET).is_none(),
+            "{EMBEDDING_CREDENTIAL_TARGET} is in this process's environment, so \
+             every subprocess the agent spawns inherits it (#3093)"
+        );
+
+        let child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!("printenv {EMBEDDING_CREDENTIAL_TARGET} || true"))
+            .output()
+            .expect("spawn a child");
+        assert!(
+            String::from_utf8_lossy(&child.stdout).trim().is_empty(),
+            "a spawned child read {EMBEDDING_CREDENTIAL_TARGET} out of its \
+             inherited environment"
+        );
+
+        assert_eq!(
+            embedder_env_over(stella_embed::EmbedderEnv::default(), Some(&credentials))
+                .voyage_api_key
+                .as_deref(),
+            Some("voyage-handoff-secret"),
+            "and the embedder must still receive it — keeping the credential \
+             out of the environment by losing it is not the fix"
+        );
+    }
+
+    #[test]
+    fn a_handoff_credential_wins_over_an_ambient_one_and_leaves_the_rest_alone() {
+        let ambient = stella_embed::EmbedderEnv {
+            url: Some("http://127.0.0.1:11434/v1".to_string()),
+            voyage_api_key: Some("whatever-the-task-image-left".to_string()),
+            ..stella_embed::EmbedderEnv::default()
+        };
+        let handoff = BTreeMap::from([(
+            EMBEDDING_CREDENTIAL_TARGET.to_string(),
+            "from-the-launcher".to_string(),
+        )]);
+
+        let resolved = embedder_env_over(ambient.clone(), Some(&handoff));
+        assert_eq!(
+            resolved.voyage_api_key.as_deref(),
+            Some("from-the-launcher")
+        );
+        assert_eq!(resolved.url, ambient.url, "routing is not a credential");
+
+        assert_eq!(
+            embedder_env_over(ambient.clone(), None).voyage_api_key,
+            ambient.voyage_api_key,
+            "a process with no handoff keeps stella-embed's ambient contract"
+        );
     }
 
     #[test]

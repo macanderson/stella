@@ -63,7 +63,7 @@ pub fn open_store(
 ///
 /// A limit arms enforcement; its absence runs in observed mode, where spend is
 /// measured and reported on every settled call but never blocks a step. The
-/// distinction is load-bearing for a server: a host that forgot to set a
+/// distinction is required for a server: a host that forgot to set a
 /// ceiling must still get accurate accounting.
 #[must_use]
 pub fn budget_guard(budget_limit_usd: Option<f64>) -> BudgetGuard {

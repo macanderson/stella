@@ -41,7 +41,7 @@ needs_flock = pytest.mark.skipif(
 def _holder(lock: Path) -> subprocess.Popen[bytes]:
     """A neighbour holding the lock as ONE process, the way the entrypoint does.
 
-    ``--no-fork`` is load-bearing, not tidiness. Without it ``flock`` forks and
+    ``--no-fork`` is required, not tidiness. Without it ``flock`` forks and
     execs the command in a child, so two processes share the locked descriptor
     — and an advisory lock is released only when the *last* one closes. Killing
     the ``Popen`` pid then reaps the ``flock`` parent while the orphaned child

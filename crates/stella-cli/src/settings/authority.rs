@@ -105,7 +105,7 @@ impl AuthorityPolicy {
 /// What the org-managed scope says about tools, as a policy in its own right:
 /// the managed scope's `tools` map (any key — a tool name, a group, `"*"`).
 ///
-/// Grants are **kept**, not filtered out, and that is load-bearing: a managed
+/// Grants are **kept**, not filtered out, and that is required: a managed
 /// `{"*": "off", "task_list": "on"}` has to resolve `task_list` as permitted
 /// when [`apply_tool_ceiling`] asks whether a merged grant may stand. A
 /// deny-only view would answer "no" and delete the org's own exception.

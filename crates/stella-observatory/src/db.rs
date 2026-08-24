@@ -390,15 +390,37 @@ impl Observatory {
                 }))
             },
         ))?;
+        // `partial_run` (schema v32, #3808): whether the reflection covers a
+        // run that was cancelled partway. Probed on its own rather than folded
+        // into the gated query above, for two reasons: a pre-v32 store must
+        // lose this flag and nothing else (the gated query still resolves,
+        // so real reflections keep rendering), and a cancelled run whose only
+        // row came from finalize fails `HAS_SELF_REVIEW` — yet "cancelled
+        // before it could be graded" is a reason the panel owes the reader,
+        // where `reflection: null` alone says nothing (#4538).
+        let partial_run = match conn.query_row(
+            "SELECT partial_run FROM execution_reflection WHERE execution_id = ?1",
+            [id],
+            |r| r.get::<_, i64>(0),
+        ) {
+            Ok(v) => v != 0,
+            Err(rusqlite::Error::QueryReturnedNoRows) => false,
+            Err(e) if is_missing_schema(&e) => false,
+            Err(e) => return Err(e.into()),
+        };
         let mut out = head;
         out["steps"] = Value::Array(steps);
         out["tools"] = Value::Array(tools);
         out["files"] = Value::Array(files);
         out["recall"] = Value::Array(recall_timings(&conn, id)?);
-        out["reflection"] = if reflection == json!({}) {
-            Value::Null
-        } else {
-            reflection
+        out["reflection"] = match (reflection == json!({}), partial_run) {
+            (true, false) => Value::Null,
+            (true, true) => json!({ "partial_run": true }),
+            (false, _) => {
+                let mut graded = reflection;
+                graded["partial_run"] = json!(partial_run);
+                graded
+            }
         };
         Ok(out)
     }

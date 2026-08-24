@@ -112,7 +112,7 @@ Two constraints follow, and they bind Phase 2:
 
 What survives unchanged is more than the distinction. The **event** this ADR
 promised is already built: `CompiledContextFrameBuilt`
-(`crates/stella-protocol/src/context_event.rs:273-280`) carries `compiled_frame_id`
+(`crates/stella-protocol/src/context_event.rs`) carries `compiled_frame_id`
 and a `sha256:`-prefixed `frame_hash`, with a pinned golden JCS vector, and is
 deliberately unwired — the wire shape was fixed before its first emitter. So
 the amendment retires the *aggregate*, not the announcement: what that event

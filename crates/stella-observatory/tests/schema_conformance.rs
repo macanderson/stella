@@ -386,7 +386,7 @@ fn real_store_workspace() -> tempfile::TempDir {
                 memory_id: "nod_abc".into(),
                 useful_score: 4,
                 truthful: true,
-                remark: "load-bearing".into(),
+                remark: "required".into(),
             }],
         )
         .expect("citations");

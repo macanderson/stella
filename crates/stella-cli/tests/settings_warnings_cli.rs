@@ -26,6 +26,9 @@
 
 use std::process::{Command, Output};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// A workspace with the given `.stella/settings.json`, plus an empty HOME so
 /// the developer's own user scope cannot contribute keys to the assertions.
 fn workspace(settings: &str) -> (tempfile::TempDir, tempfile::TempDir) {
@@ -59,6 +62,7 @@ fn models_with(
 ) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
+        .without_embedder_backend()
         .arg("models")
         .current_dir(dir.path())
         .env("HOME", home.path())
@@ -296,6 +300,7 @@ fn run_machine_readable(
 ) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
+        .without_embedder_backend()
         .args([
             "--model",
             "openrouter/z-ai/glm-5.1",
@@ -438,6 +443,7 @@ fn a_trusted_checkouts_json_summary_reports_no_withholding() {
 fn goal_run(dir: &tempfile::TempDir, home: &tempfile::TempDir, extra_env: &[(&str, &str)]) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
     command
+        .without_embedder_backend()
         .args([
             "--model",
             "openrouter/z-ai/glm-5.1",
@@ -531,6 +537,127 @@ fn an_untrusted_checkouts_withheld_steering_reaches_a_goal_runs_journal() {
 fn a_trusted_checkouts_goal_run_records_no_withheld_notice() {
     let (dir, home) = steering_workspace();
     goal_run(&dir, &home, &[("STELLA_TRUST_PROJECT", "1")]);
+    assert!(
+        withheld_events_in_journal(&dir).is_empty(),
+        "a trusted workspace loaded its steering and is owed no event"
+    );
+}
+
+/// A one-task `stella fleet` fan-out in `dir`, against the same closed
+/// loopback port [`run_stream_json`] uses and for the same reason: the notice
+/// goes on the attempt's channel when it opens, before a provider is asked
+/// for anything. A positional prompt is a SHARED-tree task, so the attempt's
+/// journal is the invocation workspace's own store —
+/// [`withheld_events_in_journal`] reads it unchanged.
+///
+/// The fleet pins its base to a sha before dispatching anything, so the
+/// workspace has to be a git repository with one commit first.
+fn fleet_run(dir: &tempfile::TempDir, home: &tempfile::TempDir, extra_env: &[(&str, &str)]) {
+    for args in [
+        vec!["init", "-q"],
+        vec![
+            "-c",
+            "user.email=fleet@test",
+            "-c",
+            "user.name=fleet",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+    ] {
+        let status = Command::new("git")
+            .args(&args)
+            .current_dir(dir.path())
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    }
+    let mut command = Command::new(env!("CARGO_BIN_EXE_stella"));
+    command
+        .without_embedder_backend()
+        .args([
+            "--model",
+            "openrouter/z-ai/glm-5.1",
+            "--api-key",
+            "sk-not-a-real-key",
+            "--base-url",
+            "http://127.0.0.1:1",
+            "--spend-limit",
+            "0.05",
+            "fleet",
+            "--output-format",
+            "json",
+            "say hi and stop",
+        ])
+        .current_dir(dir.path())
+        .env("HOME", home.path())
+        .env("STELLA_HOME", home.path())
+        .env("STELLA_DATA_DIR", home.path())
+        .env("NO_COLOR", "1")
+        .env("STELLA_NO_ENV_FILE", "1")
+        .env("STELLA_CATALOG_AUTO_REFRESH", "0")
+        .env(
+            "STELLA_MANAGED_SETTINGS",
+            home.path().join("no-managed.json"),
+        )
+        .env_remove("STELLA_MODEL")
+        .env_remove("STELLA_TRUST_PROJECT")
+        .env_remove("STELLA_PROJECT_HOOKS")
+        .env_remove("OPENROUTER_API_KEY")
+        .env_remove("ANTHROPIC_API_KEY")
+        .env_remove("ZAI_API_KEY")
+        .env_remove("OPENAI_API_KEY");
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
+    // The run fails — there is nothing on that port — and that is fine: what
+    // is under test is an event sent before the first model call.
+    let _ = command.output().expect("run stella fleet");
+}
+
+/// **Witness (#4500, the fleet door).** A fleet attempt's journal records the
+/// untrusted checkout's refusal — once per attempt, because each worker is
+/// its own session in its own workspace (its own store, its own SessionStart
+/// hooks, its own system prompt), so the process-wide latch the goal door
+/// spends would let the first lane's journal vouch for every sibling's.
+///
+/// `stella fleet` routed through neither opener that carries the notice, so
+/// an untrusted checkout fanning out N workers had the refusal on stderr and
+/// in no attempt's journal at all.
+#[test]
+fn an_untrusted_checkouts_withheld_steering_reaches_a_fleet_attempts_journal() {
+    let (dir, home) = steering_workspace();
+    fleet_run(&dir, &home, &[]);
+
+    let events = withheld_events_in_journal(&dir);
+    assert_eq!(
+        events.len(),
+        1,
+        "one attempt is owed exactly one withheld-steering event: {events:?}"
+    );
+    let payload = &events[0];
+    assert!(
+        payload.contains("\"withheld_by\":\"project_untrusted\""),
+        "the event must name the authority, because it decides the remedy: {payload}"
+    );
+    assert!(
+        payload.contains("\"memories\":1") && payload.contains("\"records\":1"),
+        "the event must say how much was withheld: {payload}"
+    );
+    assert!(
+        !payload.contains("SECRET-MARKER-BODY") && !payload.contains("00-marker"),
+        "counts, never content or filenames: {payload}"
+    );
+}
+
+/// The silent arm of the fleet door: a trusted checkout loaded its steering
+/// and is owed nothing.
+#[test]
+fn a_trusted_checkouts_fleet_run_records_no_withheld_notice() {
+    let (dir, home) = steering_workspace();
+    fleet_run(&dir, &home, &[("STELLA_TRUST_PROJECT", "1")]);
     assert!(
         withheld_events_in_journal(&dir).is_empty(),
         "a trusted workspace loaded its steering and is owed no event"

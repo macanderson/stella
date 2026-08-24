@@ -229,7 +229,7 @@ catalog! {
     "get_environment"     => (true, true, Low, Always, "environment", "get_environment"),
     // Put a decision back to whoever is driving this agent (#4212).
     //
-    // `read_only` is honest — it changes nothing — and load-bearing twice:
+    // `read_only` is honest — it changes nothing — and required twice:
     // `ReadOnlyTools` filters on exactly this flag, so a delegated child can
     // still ask its dispatcher (the whole agent-to-agent path, by
     // construction rather than by a special case), and the engine

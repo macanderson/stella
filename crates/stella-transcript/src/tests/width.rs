@@ -127,6 +127,7 @@ fn a_row_that_exactly_fits_is_not_pushed_one_cell_over() {
         summary: "y".repeat(40),
         detail: vec!["detail".to_string()],
         before_step: 0,
+        inspect: None,
     }];
     for width in 40..=140 {
         assert_fits(&run, width).unwrap();
@@ -267,6 +268,7 @@ fn a_turn() -> impl Strategy<Value = Turn> {
                     summary,
                     detail,
                     before_step: 0,
+                    inspect: None,
                 })
                 .collect(),
             steps: calls

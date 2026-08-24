@@ -388,7 +388,7 @@ fn run_deck_paints_folds_resizes_and_restores_under_a_real_pty() {
 /// The accessibility contract of `--accessible` (#1258), driven through the
 /// real entry point.
 ///
-/// The load-bearing assertion is negative: this mode must never enter the
+/// The required assertion is negative: this mode must never enter the
 /// alternate screen. That single escape sequence is the difference between
 /// "the conversation is terminal output a screen reader can read" and "the
 /// conversation is a grid of cells being rewritten wholesale", and it is the

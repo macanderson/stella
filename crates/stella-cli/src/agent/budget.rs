@@ -4,8 +4,8 @@
 //! Session budget helpers: the `--spend-limit` guard's construction, the
 //! headroom read the deck and fleet surfaces report, and the post-turn
 //! reflection settlement. Split out of `agent.rs` (the `driver/settlement.rs`
-//! pattern) — the parent is a grandfathered god file closed to growth, and
-//! these three are the self-contained budget seam.
+//! pattern) — the parent sits close to the 1500-line ratchet, and these three
+//! are the self-contained budget seam.
 
 use stella_core::BudgetGuard;
 use stella_protocol::AgentEvent;

@@ -191,7 +191,7 @@ fn an_unknown_event_round_trips_without_losing_data() {
 
 #[test]
 fn a_known_tag_with_a_malformed_body_is_still_a_hard_error() {
-    // The load-bearing negative test. Forward compatibility is scoped to
+    // The decisive negative test. Forward compatibility is scoped to
     // *unrecognized tags only*; a recognized tag whose body does not fit
     // is an encoder bug or a corrupt record, and must stay loud. If this
     // ever degrades to Unknown, corruption becomes indistinguishable from

@@ -188,7 +188,7 @@ impl RepairPlan {
 /// what this module grants on its own, never to withdraw what the caller
 /// already asked for.
 ///
-/// The order the bounds are tested in is load-bearing. The cap is absolute,
+/// The order the bounds are tested in is decisive. The cap is absolute,
 /// so it comes first. Affordability comes next and applies at every level,
 /// including inside the allowance: a run with a measured axis that cannot pay
 /// for another attempt must not start one, whatever its count says. Only then

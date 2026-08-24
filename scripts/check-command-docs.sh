@@ -38,11 +38,12 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
-# Where the top-level subcommand enum lives. It has moved twice already
-# (stella-cli/src/main.rs -> stella-cli/src/cli.rs, PR #999; then under
-# crates/ with the rest of the workspace, PR #1385), which is why this fails
-# loudly rather than silently finding nothing.
-enum_file="crates/stella-cli/src/cli.rs"
+# Where the top-level subcommand enum lives. It has moved three times
+# already (stella-cli/src/main.rs -> stella-cli/src/cli.rs, PR #999; then
+# under crates/ with the rest of the workspace, PR #1385; then out to its own
+# sibling file when cli.rs crowded the 1500-line ratchet, #3776), which is
+# why this fails loudly rather than silently finding nothing.
+enum_file="crates/stella-cli/src/cli/command.rs"
 enum_decl="pub(crate) enum Command {"
 docs_dir="website/content/docs/commands"
 meta_file="$docs_dir/meta.json"

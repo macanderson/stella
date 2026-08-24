@@ -12,8 +12,18 @@ a plugin CANNOT be written without an SDK, the protocol is too complicated").
 `[runtime].argv` directly — no shell — writes one JSON request on stdin and
 reads the response from stdout:
 
+    {"point": "before_turn", "body": {...BeforeTurnRequest}}
+ -> {"point": "before_turn", "body": {"witness": [...]}}
+
     {"point": "after_turn", "body": {...AfterTurnRequest}}
  -> {"point": "after_turn", "body": {...AfterTurnResponse}}
+
+Two points, and each says one thing. `before_turn` names the paths the flip
+will be judged against — paths, never findings, because this plugin does not
+vouch for its own witness and the host is the one that snapshots and compares
+(#3499, #3587). `after_turn` reports the flip it observed. It contributes no
+context and no role at `before_turn`: a verifier that steered the turn it is
+about to judge would be grading its own work.
 
 No host call happens in between. This plugin declares no `[loop] calls` and
 asks the host for nothing: everything it needs — the invocation, its arguments
@@ -63,9 +73,11 @@ import sys
 import time
 
 PROTOCOL_VERSION = 1
-POINT = "after_turn"
+BEFORE_TURN = "before_turn"
+AFTER_TURN = "after_turn"
+POINTS = (BEFORE_TURN, AFTER_TURN)
 
-REQUEST_FIELDS = {
+AFTER_TURN_FIELDS = {
     "protocol_version",
     "wrapper",
     "stage",
@@ -73,6 +85,15 @@ REQUEST_FIELDS = {
     "goal",
     "candidate",
     "turn",
+}
+BEFORE_TURN_FIELDS = {
+    "protocol_version",
+    "wrapper",
+    "stage",
+    "round",
+    "goal",
+    "candidate",
+    "published",
 }
 GRANT_FIELDS = {"handle", "root", "test"}
 TEST_FIELDS = {"program", "args", "baseline"}
@@ -145,7 +166,7 @@ def read_json(stream):
 
 
 def write_json(stream, document):
-    """One JSON document, on one line, flushed. The flush is load-bearing: the
+    """One JSON document, on one line, flushed. The flush is required: the
     host is reading a pipe and will wait forever for a buffered answer."""
     stream.write(json.dumps(document) + "\n")
     stream.flush()
@@ -163,7 +184,7 @@ def normalize_command(command):
     """Trim, and collapse every run of whitespace to a single space.
 
     Makes `"cargo   test  -p x"` and `"cargo test -p x"` the same tracked
-    command while leaving token order — which can be semantically load-bearing
+    command while leaving token order — which can be semantically significant
     — untouched. A pass on `cargo test -p a` must never be credited to a
     failure of `cargo test -p b`, so reordering is deliberately NOT normalized
     away.
@@ -320,6 +341,104 @@ def unobservable(reason):
     return evidence(FLIP_UNOBSERVABLE, {})
 
 
+def under_root(root, candidate):
+    """The candidate path, if it names an existing regular file inside `root`.
+
+    Absolute paths and any path with a `..` segment are refused here rather
+    than left for the host's fence to drop: a declaration is this plugin's own
+    claim about its own witness, and one it already knows the host will refuse
+    is noise in the wire log with no chance of becoming a watch.
+    """
+    if not candidate or os.path.isabs(candidate):
+        return None
+    parts = candidate.replace("\\", "/").split("/")
+    if any(part == ".." for part in parts):
+        return None
+    return candidate if os.path.isfile(os.path.join(root, candidate)) else None
+
+
+def cargo_witnesses(program, args):
+    """`tests/<name>.rs` for every `--test <name>` in a cargo invocation.
+
+    The motivating case for the whole declaration (#3587): `cargo test --test
+    flip` names `flip`, and the artifact is `tests/flip.rs` **by cargo's
+    convention and by nothing in the invocation**. The host is deliberately
+    forbidden from deriving that — a host deriving a witness is a host guessing
+    at one — so the plugin whose flip it is says it instead.
+
+    A guess that is wrong costs nothing and cannot credit anything: the path
+    will not exist, `under_root` drops it, the watch stays empty and the finding
+    stays `NotChecked`, which is the same refusal-to-credit the invocation
+    produced before this plugin said anything. Only a path that is really there
+    can ever become a watch, and a watch only ever *withholds* credit.
+
+    Not attempted for a workspace-scoped invocation whose target lives under a
+    member directory (`cargo test -p stella-core --test loops`): the convention
+    stops at the member's own root and this program has no way to find it.
+    """
+    if os.path.basename(program) not in {"cargo", "cargo.exe"}:
+        return []
+    if "test" not in args:
+        return []
+    named = []
+    pending = False
+    for arg in args:
+        if pending:
+            named.append(arg)
+            pending = False
+        elif arg == "--test":
+            pending = True
+        elif arg.startswith("--test="):
+            named.append(arg[len("--test=") :])
+    return ["tests/{}.rs".format(name) for name in named if name]
+
+
+def witness_artifacts(body):
+    """The paths this plugin will judge its flip against, for `before_turn`.
+
+    Two sources, in the order a reader would look for them: the files the
+    invocation itself names, and the files a runner's convention implies. The
+    first is what the host already derives, and declaring it again is a no-op —
+    the watch is add-only and keeps each artifact's first-observed identity — so
+    this list is *what this plugin judges*, complete, rather than a diff against
+    what the host happened to work out.
+
+    Never a finding, only paths: this plugin does not vouch for its own witness
+    and could not if it wanted to (#3499). The host snapshots each one before
+    the turn and compares after it.
+    """
+    declared = []
+    grant = body.get("candidate")
+    if isinstance(grant, dict):
+        deny_unknown(grant, GRANT_FIELDS, "the candidate grant")
+        root = grant.get("root")
+        if not isinstance(root, str) or not root:
+            refuse("the candidate grant carried no root")
+
+        plan = grant.get("test")
+        if isinstance(plan, dict):
+            deny_unknown(plan, TEST_FIELDS, "the test plan")
+            program = plan.get("program")
+            if not isinstance(program, str) or not program:
+                refuse("the test plan carried no program")
+            args = plan.get("args", [])
+            if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
+                refuse("the test plan's args must be a list of strings")
+
+            named = [arg for arg in args if arg and not arg.startswith("-")]
+            for candidate in named + cargo_witnesses(program, args):
+                resolved = under_root(root, candidate)
+                if resolved is not None and resolved not in declared:
+                    declared.append(resolved)
+
+    if not declared:
+        report(
+            "this round names no artifact this plugin can point at, so the host "
+            "has nothing to watch and the flip cannot be credited"
+        )
+    return declared
+
+
 def assess(body):
     """The whole of `after_turn`: observe the flip, report what was seen."""
     grant = body.get("candidate")
@@ -400,7 +519,7 @@ def assess(body):
 
 
 def read_request(stdin):
-    """Decode `{"point": ..., "body": ...}` and return the `after_turn` body."""
+    """Decode `{"point": ..., "body": ...}` and return `(point, body)`."""
     envelope = read_json(stdin)
     if not isinstance(envelope, dict):
         refuse("stdin was not a single JSON object")
@@ -408,14 +527,19 @@ def read_request(stdin):
         refuse("the request envelope carried a field outside {point, body}")
 
     point = envelope.get("point")
-    if point != POINT:
+    if point not in POINTS:
         refuse(
-            "this plugin answers only `{}`; it was asked `{}`".format(POINT, point)
+            "this plugin answers only `{}`; it was asked `{}`".format(
+                "` and `".join(POINTS), point
+            )
         )
     body = envelope.get("body")
     if not isinstance(body, dict):
         refuse("the request carried no body object")
-    deny_unknown(body, REQUEST_FIELDS)
+    deny_unknown(
+        body,
+        BEFORE_TURN_FIELDS if point == BEFORE_TURN else AFTER_TURN_FIELDS,
+    )
 
     version = body.get("protocol_version")
     if version != PROTOCOL_VERSION:
@@ -424,23 +548,33 @@ def read_request(stdin):
                 PROTOCOL_VERSION, version
             )
         )
-    return body
+    return (point, body)
+
+
+def answer(point, body):
+    """The response body for one point.
+
+    `before_turn` contributes the witness declaration and nothing else — no
+    context, no role, no scope. A plugin that steered the turn it is about to
+    judge would be grading its own work, which is the thing this whole
+    extraction exists to prevent (#3511).
+    """
+    if point == BEFORE_TURN:
+        return {
+            "protocol_version": PROTOCOL_VERSION,
+            "witness": witness_artifacts(body),
+        }
+    return {"protocol_version": PROTOCOL_VERSION, "evidence": assess(body)}
 
 
 def main():
     try:
-        body = read_request(sys.stdin)
-        observed = assess(body)
+        point, body = read_request(sys.stdin)
+        answered = answer(point, body)
     except Refusal as refusal:
         report(str(refusal))
         return 1
-    write_json(
-        sys.stdout,
-        {
-            "point": POINT,
-            "body": {"protocol_version": PROTOCOL_VERSION, "evidence": observed},
-        },
-    )
+    write_json(sys.stdout, {"point": point, "body": answered})
     return 0
 
 

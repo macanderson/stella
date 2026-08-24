@@ -7,7 +7,7 @@
 //! `contextgraph-host`'s stdio and HTTP transports, so a third-party provider
 //! is now a config entry rather than a fork.
 //!
-//! Two properties are load-bearing and deliberately **not** optional:
+//! Two properties are required and deliberately **not** optional:
 //!
 //! * **Conformance is an admission gate, not a badge.** A provider is run
 //!   through the protocol's own conformance suite *before* it is registered on

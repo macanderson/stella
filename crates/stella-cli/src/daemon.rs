@@ -47,7 +47,7 @@
 //! # The three bugs this inherits rather than rediscovers
 //!
 //! `scripts/self-driving.sh` has supervised its own cycles for long enough to pay
-//! for three, and each one is load-bearing here:
+//! for three, and each one is required here:
 //!
 //! 1. **The child must lead its own process group**, or stopping the
 //!    supervisor orphans the work. [`spawn`] calls `setsid` before `exec` and

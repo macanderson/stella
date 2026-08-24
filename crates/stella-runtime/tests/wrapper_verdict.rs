@@ -1,7 +1,7 @@
 //! `judge` and `again` are total, and this is where that is proved rather than
 //! asserted.
 //!
-//! Totality is the load-bearing property, not a nicety: `judge` has no
+//! Totality is the required property, not a nicety: `judge` has no
 //! `Result` to hand a caller and no `.await` to hang an escalation on, so every
 //! shape of evidence must already have an answer — and every answer must be
 //! one a host can act on. The evidence vocabulary is closed and small

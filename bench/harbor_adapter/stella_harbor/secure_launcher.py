@@ -73,13 +73,13 @@ _CANONICAL_PROVIDER_ROUTE_POLICY = "openrouter-auto"
 # the run visibly rather than truncating a trial into a loss — which is the
 # whole reason a wallet is guarded here and never inside a trial.
 #
-# It is now load-bearing arithmetic rather than a backstop, and it moved from
-# $180 to $600 because of it. The confirmatory stage requests 445 trials: at
-# the frozen $0.17 cap that projected to $75.65, comfortably inside $180
-# *because the cap made it so*, and at the measured forecast above it projects
-# to $534. The old limit did not bound the run's cost — it bounded how much of
-# each task the agent was allowed to finish, and the projection only fit
-# because trials were being stopped short.
+# It is now required arithmetic rather than a backstop, and it moved from
+# $180 to $600 because of that shift. The confirmatory stage requests 445
+# trials: at the frozen $0.17 cap that projected to $75.65, comfortably
+# inside $180 *because the cap made it so*, and at the measured forecast
+# above it projects to $534. The old limit did not bound the run's cost — it
+# bounded how much of each task the agent was allowed to finish, and the
+# projection only fit because trials were being stopped short.
 #
 # So this is not new spending appetite; it is the same run, priced honestly for
 # the first time. It is also a PROVISIONING REQUIREMENT, not an authorisation:

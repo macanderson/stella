@@ -9,8 +9,8 @@ ArenaBench could stop them before this module: there was no ``cancel_job`` or
 wrong killed the terminal and watched Batch bill the rest.
 
 **The selector is the run's own ``jobs.json``, never a queue sweep and never a
-job-name prefix.** This is the load-bearing sentence in the file, and it is
-enforced structurally: :func:`cancel_run` reads
+job-name prefix.** This is the sentence the rest of the file depends on, and
+it is enforced structurally: :func:`cancel_run` reads
 ``s3://<bucket>/runs/<run-id>/jobs.json`` through
 ``executor.load_jobs(run_id)``, takes the ids in it, and signals exactly those.
 It never calls ``list_jobs``, and it never matches on ``job_name``'s

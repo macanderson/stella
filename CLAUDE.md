@@ -163,6 +163,27 @@
   Search for an existing issue first; link, don't duplicate. The full policy
   is AGENTS.md § "Nothing left behind — every finding becomes a fix or a
   GitHub issue". Never end a turn with untracked half-finished work.
+- **Every Sourcery ❌ gets a fix or an answer before the PR is mergeable.**
+  Sourcery reviews every PR, and when the PR links issues it posts an
+  "Assessment against linked issues" table as a `sourcery-ai` comment — one
+  row per objective, `✅` for met, `❌` with an explanation for partial or
+  missing. After opening a PR, and again after every later push to it, read
+  that comment (it lands within a few minutes;
+  `gh pr view <n> --json comments --jq '.comments[] | select(.author.login == "sourcery-ai") | .body'`)
+  and settle every `❌` row before the session ends; the PR is unmergeable until
+  that comment can be read:
+  - **Fix it** when the objective belongs to the PR — push the commits that
+    satisfy it, then re-read the table Sourcery posts for the new head.
+  - **Answer it** when it does not belong: deliberately out of scope,
+    deferred into a filed issue, or a misreading of the diff. Post a PR
+    comment naming the row and the reason, and file the follow-up issue
+    where one is owed ("Nothing left behind" above). Sourcery's verdict is
+    a claim like any other review comment and can be wrong about your diff —
+    the rebuttal still goes on the PR, where the next reviewer finds it.
+
+  A `❌` with neither a fix pushed nor a comment answering it is untracked
+  half-finished work, and the PR stays unmergeable until it has one or the
+  other.
 - **CI builds and tests; this laptop does not.** Never run `make gate`,
   `make check`, `make test`, `cargo build --workspace`, `cargo test
   --workspace`, or clippy over the workspace on the maintainer's machine.

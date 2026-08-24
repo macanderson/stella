@@ -130,7 +130,7 @@ async fn a_drain_refuses_new_turns_and_sessions() {
     assert!(status.contains("503"), "{status}");
 }
 
-/// The load-bearing half of the drain: an in-flight turn must still be
+/// The required half of the drain: an in-flight turn must still be
 /// *answerable*. Refusing `provider-result` during a drain would park every
 /// turn on a reverse request nobody could answer, and the drain would then
 /// time out cancelling turns it had itself wedged.

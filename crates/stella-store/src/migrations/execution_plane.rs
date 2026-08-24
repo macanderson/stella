@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn v22_migration_backfills_every_existing_execution_to_the_pre_rewrite_era() {
-        // The backfill is the load-bearing half of #1981: a row already at
+        // The backfill is the essential half of #1981: a row already at
         // rest was written by a build that could not journal a compaction
         // rewrite, so era 0 is a fact about it. Reading those rows as the
         // current era would raise an integrity alarm on every compacted block

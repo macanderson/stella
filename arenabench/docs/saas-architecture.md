@@ -50,7 +50,7 @@ at render time, is what turns that from an investigation into a lookup.
 ### 1.2 ArenaBench cannot be used by anyone who is not us
 
 Seven modules import Stella-shaped assumptions (inventoried in §8). The most
-load-bearing:
+required:
 
 - `catalog.py` parses `crates/stella-model/src/catalog.rs` to populate the
   model select. Without a Stella checkout the select is an error state.
@@ -221,7 +221,7 @@ plane is retired (§9.4).
 
 ### 4.2 The measurement machinery does not move
 
-This must be said precisely, because it is the load-bearing claim of Phase 1.
+This must be said precisely, because it is the required claim of Phase 1.
 
 Every number ArenaBench reports is derived from files a run already wrote —
 `result.json`, `stella-events.jsonl`, trajectory files, `flip.json`. The

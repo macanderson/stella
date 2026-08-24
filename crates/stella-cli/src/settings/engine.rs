@@ -415,7 +415,7 @@ impl AgentEngineConfig {
         // had its value discarded, so the LOWER scope silently won the one
         // knob deciding whether an unattended run may proceed past scope
         // review. Latent while nothing layered underneath the user's file;
-        // load-bearing now that `provider_engine_baseline` does.
+        // required now that `provider_engine_baseline` does.
         take!(headless_scope_bypass);
         take!(model_timeout_secs);
         take!(compaction_budget_tokens);
@@ -510,7 +510,7 @@ impl AgentEngineConfig {
     ///
     /// **It is nevertheless not retired, and the reason is a measurement one
     /// rather than an oversight (#3870).** The key is inert in the engine but
-    /// load-bearing in the benchmark contract:
+    /// required in the benchmark contract:
     /// `bench/harbor_adapter/stella_harbor/posture.py` writes
     /// `headless_scope_bypass: "on"` into the claim-path Terminal-Bench
     /// posture, whose digest `6c7fc70c` is registered in

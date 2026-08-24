@@ -62,8 +62,16 @@ lexical answer as a semantic one.
 
 ## Configuration
 
-`resolve(&EmbedderEnv)` is a pure function; `from_env()` is the one-line
-wrapper that reads the process environment.
+`resolve(&EmbedderEnv)` is a pure function; `from_env()` resolves
+`process_env()`, which is `EmbedderEnv::from_process()` — the real environment
+— unless a host called `install_process_env` first. `ENV_VARS` names every
+variable read, so a caller that must clear the whole surface enumerates it
+instead of transcribing it.
+
+A host installs when it holds the credential somewhere the environment must
+never see it: Stella's launcher hands the embedding key down an inherited pipe
+precisely so a `bash` call the agent makes cannot inherit it, and `setenv`-ing
+it for this crate's benefit put it straight back (#3093).
 
 | variable | meaning |
 |---|---|

@@ -15,7 +15,7 @@ launch therefore cannot disagree: they are the same function called twice.
 WHY A SEAT DOES NOT SIMPLY GET EVERY VARIABLE
 
 Two fences stand between a dotenv file and a contestant's subprocess, and both
-are load-bearing:
+are required:
 
 * :func:`~.model.screen_env` allows only *credential-shaped* names — those
   ending ``_API_KEY``, ``_API_TOKEN``, ``_AUTH_TOKEN``, ``_OAUTH_TOKEN``,

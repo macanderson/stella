@@ -583,7 +583,7 @@ fn restrict_to_owner(_path: &Path) {}
 /// fault is an out-of-date binary, not a broken workspace.
 ///
 /// **The version is read inside a `BEGIN IMMEDIATE` transaction**, and that is
-/// load-bearing rather than incidental. Read outside — or inside a `DEFERRED`
+/// required rather than incidental. Read outside — or inside a `DEFERRED`
 /// transaction, which takes its snapshot before it takes the write lock — two
 /// processes opening the same fresh workspace at once (a fleet run, or a
 /// `stella` session next to a `stella stats`) could both read

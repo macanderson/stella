@@ -22,7 +22,7 @@ pub(super) async fn build_code_graph(
 ) {
     build_code_graph_with(
         workspace_root,
-        &stella_embed::EmbedderEnv::from_process(),
+        &crate::credential_handoff::embedder_env(),
         emit,
     )
     .await;
@@ -563,7 +563,7 @@ pub(super) fn report_retired_vectors(
     use stella_embed::Embedder;
 
     let stella_embed::Resolution::Configured(embedder) =
-        stella_embed::resolve(&stella_embed::EmbedderEnv::from_process())
+        stella_embed::resolve(&crate::credential_handoff::embedder_env())
     else {
         return;
     };
@@ -650,7 +650,7 @@ async fn backfill_vectors_quietly(
     use crate::search_cmd::semantic::WarmOutcome;
 
     let stella_embed::Resolution::Configured(embedder) =
-        stella_embed::resolve(&stella_embed::EmbedderEnv::from_process())
+        stella_embed::resolve(&crate::credential_handoff::embedder_env())
     else {
         return;
     };

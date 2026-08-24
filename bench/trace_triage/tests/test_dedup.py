@@ -63,7 +63,7 @@ class FakeGitHub:
 def _witness_failure_events(reason: str = REASON) -> list:
     """One witness failure, and nothing else a detector would also fire on.
 
-    Three of these four events are load-bearing for that "nothing else", and
+    Three of these four events are required to keep that "nothing else" true, and
     each was added after a detector fired on the fixture rather than on the
     defect it describes:
 

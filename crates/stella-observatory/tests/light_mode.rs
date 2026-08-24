@@ -217,7 +217,7 @@ fn no_selector_recolors_the_page_background_as_text() {
     for needle in [
         // Declared on the ink page, and re-pointed by BOTH light gates — the
         // media query and the explicit attribute. Two declarations is the
-        // load-bearing count: a light theme that inherited the dark `--ink`
+        // required count: a light theme that inherited the dark `--ink`
         // would paint dark text on the dark selected fill, which is the same
         // unreadable pair this test was written to catch, arrived at from the
         // other direction.

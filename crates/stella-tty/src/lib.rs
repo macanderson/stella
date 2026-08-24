@@ -32,7 +32,7 @@ pub fn human_can_answer(
 mod tests {
     use super::*;
 
-    /// The full truth table: every one of the three inputs is load-bearing on
+    /// The full truth table: every one of the three inputs is required on
     /// its own, so a caller cannot drop one and still get the right answer by
     /// accident.
     #[test]

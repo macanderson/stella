@@ -157,10 +157,33 @@ impl Registry {
         facts: &super::select::TurnFacts<'_>,
         budget_chars: Option<usize>,
     ) -> RenderedChannel {
+        self.render_volatile_for_turn_excluding(facts, budget_chars, &Default::default())
+    }
+
+    /// [`Self::render_volatile_for_turn`] minus the records a turn has already
+    /// been shown, by handle.
+    ///
+    /// The re-query's door (#4498): the volatile channel renders as one
+    /// budgeted block, so a mid-turn re-query that re-rendered it whole would
+    /// repeat every record the turn-opening block already carried — the same
+    /// incremental-drift shape the frame and skill handles dedup, at the one
+    /// source whose granularity used to be the whole block. An excluded record
+    /// is treated exactly like a deselected one: it appears in neither
+    /// `rendered` nor `dropped`, because `dropped` is the budget's silent-gap
+    /// ledger and a record the model has already seen lost nothing.
+    pub fn render_volatile_for_turn_excluding(
+        &self,
+        facts: &super::select::TurnFacts<'_>,
+        budget_chars: Option<usize>,
+        already_rendered: &std::collections::HashSet<String>,
+    ) -> RenderedChannel {
         let inputs: Vec<RenderInput<'_>> = self
             .entries
             .iter()
             .filter(|entry| {
+                if already_rendered.contains(&entry.record.handle) {
+                    return false;
+                }
                 let applies_to = entry
                     .record
                     .record

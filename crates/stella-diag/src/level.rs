@@ -3,7 +3,7 @@
 
 //! How loud a record is, and how loud a sink is willing to be.
 //!
-//! Two types rather than one, and the distinction is load-bearing:
+//! Two types rather than one, and the distinction is required:
 //! [`Level`] is a property of a record and always exists; [`LevelFilter`] is a
 //! property of a *sink* and can be [`LevelFilter::Off`], which a record's level
 //! never can. `docs/spec/diagnostics.md` §6 is the rule that keeps them

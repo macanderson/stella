@@ -3,9 +3,9 @@
 
 //! The Session tab's incremental transcript fold.
 //!
-//! Split out of [`super`] rather than grown there: `views/session.rs` is one of
-//! the crate's grandfathered god files and is closed to new lines (AGENTS.md
-//! § God files), and the fold is a self-contained concern — it turns a
+//! Split out of [`super`] rather than grown there: `views/session.rs` stays
+//! under the 1500-line ratchet by growing sideways (AGENTS.md § God files),
+//! and the fold is a self-contained concern — it turns a
 //! transcript plus a set of view flags into `Line`s and their row ranges, and
 //! touches no `Frame`, no layout and no key routing. A pure move, plus the tail
 //! cache described on [`SessionFold::tail`].

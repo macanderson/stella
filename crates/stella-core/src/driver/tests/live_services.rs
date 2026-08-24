@@ -22,7 +22,7 @@ use super::*;
 use crate::ports::LiveService;
 
 /// A `ToolExecutor` reporting a fixed service roster, counting how many times
-/// the engine asked. The count is the load-bearing half of the "peek, not
+/// the engine asked. The count is the essential half of the "peek, not
 /// drain" contract: the port must be safe to ask, so the engine asking twice
 /// (two completing steps in one turn) must not change the answer.
 struct Serving {

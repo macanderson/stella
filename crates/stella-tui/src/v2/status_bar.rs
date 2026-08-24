@@ -141,7 +141,7 @@ fn ratio(frac: f64) -> f64 {
 /// rounding moves the bar in 8.3% steps, which reads as a bar that does not
 /// track the number printed beside it.
 ///
-/// The clamp to `1..=7` is the load-bearing part. Rounding is allowed to move
+/// The clamp to `1..=7` is the essential part. Rounding is allowed to move
 /// the head of the bar; it is not allowed to move its *ends*. A partial cell
 /// that rounds up to `█` renders a 99.9% context window identically to a full
 /// one — and "full" is the reading a user compacts on, so the two must never
@@ -303,9 +303,9 @@ fn help() -> Vec<Span<'static>> {
 /// Draw the deck's bottom band: the status bar, and the diagnosis row under it
 /// when the caller reserved one.
 ///
-/// Lives here rather than in `deck_render` because `deck_render.rs` is a
-/// grandfathered god file and closed to growth (AGENTS.md, "God files — plan
-/// around them, never into them"), and because the decision of what the band
+/// Lives here rather than in `deck_render` because `deck_render.rs` stays
+/// under the 1500-line ratchet by growing sideways (AGENTS.md, "God files —
+/// plan around them, never into them"), and because the decision of what the band
 /// contains is this module's, not the frame's. The frame's job is to hand it a
 /// `Rect`.
 pub fn render_band(

@@ -332,7 +332,7 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
 /// The project-tier rule directories, with installed plugins' contributed
 /// `<plugin_dir>/rules` **first** (#3380).
 ///
-/// # Both halves of the position are load-bearing
+/// # Both halves of the position are required
 ///
 /// *Project tier, never user.* A plugin's records are a third party's, which
 /// is the same trust posture the repository's own `.stella/rules` has and a

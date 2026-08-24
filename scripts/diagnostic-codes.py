@@ -106,7 +106,7 @@ def strip_comments(src: str) -> str:
     contents of string literals' escapes — leaving strings themselves intact.
 
     Doc comments are where every `diag!` *example* lives, so stripping them is
-    load-bearing, not tidiness. Block comments nest in Rust and are handled so.
+    required, not tidiness. Block comments nest in Rust and are handled so.
     Comment characters are replaced with spaces, not deleted, so byte offsets
     stay meaningful for error reporting.
     """

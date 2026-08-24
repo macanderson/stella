@@ -13,8 +13,8 @@
 //! module is the ledger read and the printed report, and the flags it is
 //! driven by live with the rest of the verb surface in
 //! [`crate::fleet_verbs`]. It is a sibling of `fleet_cmd.rs` rather than a
-//! section of it because that file is a grandfathered god file closed to
-//! growth (AGENTS.md § *God files*).
+//! section of it because that file sits close to the 1500-line ratchet
+//! (AGENTS.md § *God files*).
 
 use std::path::Path;
 

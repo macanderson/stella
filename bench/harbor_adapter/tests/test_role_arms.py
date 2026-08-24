@@ -80,7 +80,7 @@ def _posture_schema():
 
 
 class TestUnsetReproducesTheRegisteredPosture:
-    """The load-bearing half: carrying this code changes no recorded digest."""
+    """The decisive half: carrying this code changes no recorded digest."""
 
     def test_unset_selectors_emit_neither_row_nor_flat_key(self) -> None:
         """Absence is the encoding of "inherit", exactly as for every arm above.

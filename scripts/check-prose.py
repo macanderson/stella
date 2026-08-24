@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Guard: no content-free prose in this repository's text.
+"""Guard: no content-free prose or insider vocabulary in this repository's text.
 
-Bans a short list of constructions that announce writing instead of doing it.
-The canonical specimen, and the one that named this guard:
+Bans two kinds of prose. The first is constructions that announce writing
+instead of doing it. The canonical specimen, and the one that named this
+guard:
 
     Two things stated rather than hidden: ...
 
 Strip that clause and nothing is lost. The sentence after it still says
 whatever it said. That is the test every pattern here has to pass -- a
 construction earns a ban only when deleting it costs the reader nothing.
+
+The second is words a reader outside this repository cannot parse, or filler
+that adds nothing: declarations of honesty ("the honest claim" -- honesty is
+assumed; state the fact), interface jargon ("TUI", "REPL", "Command Deck" --
+say interactive mode or non-interactive mode), and Rust-internal terms in
+prose ("variant" -- say option; "invariant" -- say rule). The bar for every
+sentence a human reads here: an 8th grader can follow it.
 
 Scope is every tracked text file: prose, Rust doc comments, Python
 docstrings, shell headers. A comment is text a human reads, so it is held to
@@ -73,7 +81,7 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         # Announcing a list instead of writing it. Spared when the phrase is a
         # real subject with a real object -- "Both halves of the rev-range are
         # validated" says something; "Both halves matter" does not.
-        re.compile(r"\b(?:Two|Three|Four|Five|Six|Both)\s+(?:things?|halves|reasons?|consequences?)\b(?!\s+of\b)"),
+        re.compile(r"\b(?:Two|Three|Four|Five|Six|Both)\s+(?:things?|halves|reasons?|consequences?|problems?|causes?|claims?|facts?|parts?)\b(?!\s+of\b)"),
         "delete the announcement; write the list",
     ),
     (
@@ -101,6 +109,29 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         "tired-metaphor",
         re.compile(r"\b(?:load-bearing|belt and braces|in the same breath)\b"),
         "say what it does: required, checked twice, in the same PR",
+    ),
+    (
+        "honesty-declaration",
+        # "the honest number", "measured honestly", "N honest claims about".
+        # Honesty is assumed; declaring it is filler. State the fact.
+        re.compile(r"\b[Hh]onest(?:ly|y)?\b"),
+        "delete it; honesty is assumed -- state the fact",
+    ),
+    (
+        "interface-jargon",
+        # The interface has one public name per mode. "TUI", "REPL" and
+        # "Command Deck" are insider names; a reader should see "interactive
+        # mode" or "non-interactive mode". File and crate names like
+        # `stella-tui` stay in backticks, which this guard already exempts.
+        re.compile(r"\bTUI\b|\bREPL\b|\bCommand Deck\b|\b[Dd]eck consumers?\b|\b[Hh]eadless\b"),
+        "say interactive mode / non-interactive mode",
+    ),
+    (
+        "rust-jargon",
+        # Rust terms in prose a non-Rust reader has to decode. An enum
+        # "variant" is an option in a list; an "invariant" is a rule.
+        re.compile(r"\b[Ii]nvariants?\b|\b[Vv]ariants?\b"),
+        "say option (for variant) or rule (for invariant)",
     ),
 ]
 

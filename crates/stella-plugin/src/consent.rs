@@ -321,7 +321,8 @@ fn loop_say(manifest: &PluginManifest) -> Vec<String> {
     }
 
     // Two of those capabilities are not like the others, and the list above
-    // renders them in the same breath as `recall`. A fan-out buys N *writing*
+    // renders them next to `recall` as if they were the same kind of thing. A
+    // fan-out buys N *writing*
     // worker turns off one ask, and an adoption puts one of their diffs on the
     // reader's own tree — the two facts a human is consenting to, said in
     // words rather than left to be inferred from a capability's name (#3844).

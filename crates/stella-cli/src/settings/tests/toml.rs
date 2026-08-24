@@ -1,6 +1,6 @@
 //! Tests for the `stella.toml` format port.
 //!
-//! The load-bearing one is
+//! The decisive one is
 //! [`a_toml_config_and_its_json_equivalent_produce_identical_settings`]: the
 //! whole premise of Phase 1 is that the port changes SPELLING and nothing else.
 //! If that test can be made to pass only by weakening it, the port has changed
@@ -1026,7 +1026,7 @@ fn migrating_an_inline_api_key_to_project_scope_is_refused_and_writes_nothing() 
     assert!(!err.contains("sk-secret"), "the key is not echoed: {err}");
 }
 
-/// Why the check above is load-bearing rather than defensive: `render` is a
+/// Why the check above is required rather than defensive: `render` is a
 /// pure serializer with no opinion about secrets, and `api_key` is
 /// `skip_serializing_if = "Option::is_none"`, so a key that is present IS
 /// written. This pins that — if `render` ever stopped emitting it, the guard

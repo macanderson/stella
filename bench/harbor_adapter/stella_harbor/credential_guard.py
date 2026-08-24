@@ -63,7 +63,7 @@ def credential_carrying_names(
 def credential_leak_message(carriers: Sequence[str]) -> str:
     """Name the offending variables and the fix, not just the symptom.
 
-    This refusal is correct and load-bearing — it is the check that stops a
+    This refusal is correct and required — it is the check that stops a
     provider key reaching a task container's ``/proc/<pid>/environ`` — but for
     as long as it said only *that* a credential remained, it did not say
     *which variable* held it, and every occurrence cost an operator a manual

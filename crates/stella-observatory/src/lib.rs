@@ -51,6 +51,7 @@ mod fsview;
 mod global;
 mod journal;
 mod live;
+mod model_card;
 mod self_driving;
 mod self_driving_sessions;
 mod sent_context;
@@ -90,7 +91,7 @@ const SELF_DRIVING_JS: &str = include_str!("assets/self_driving.js");
 ///
 /// It covers **reading the head only**, never the response. That distinction
 /// used to be invisible — every route answered once and closed, so wrapping
-/// the whole exchange was equivalent — and became load-bearing the moment
+/// the whole exchange was equivalent — and became required the moment
 /// `/api/v1/live` existed: a ten-second cap on a healthy SSE stream would
 /// sever it on a timer. The hazard this guards against (a peer that connects
 /// and says nothing) ends when the head arrives, so that is where the timeout
@@ -175,18 +176,25 @@ impl Response {
 /// module for why it also needs its own connection budget.
 const LIVE_ROUTE: &str = "/api/v1/live";
 
-/// Render one execution's transcript to a standalone HTML page.
+/// Render one execution's transcript to an HTML fragment for the dashboard to
+/// embed on its turn page (in a shadow root, beside the stylesheet served at
+/// `/assets/transcript.css`).
 ///
 /// Asks for the journal `full` — the per-body clip exists so the dashboard's
-/// incremental poll stays small, and this route renders once into a page whose
+/// incremental poll stays small, and this renders once into markup whose
 /// output folds already keep a long body out of the reader's way.
+///
+/// This used to be a standalone page at `/transcript?id=N`, reached by a
+/// button on top of the dashboard's own hand-rendered transcript — two
+/// renderings of one run, one click apart. The fragment is the consolidation:
+/// one renderer (`stella-transcript`), embedded where the turn already is.
 fn render_transcript(obs: &Observatory, id: i64) -> Result<String, db::DbError> {
     let execution = obs.execution(id)?;
     let journal = obs.execution_journal(id, true, None)?;
     let rows = journal.as_array().cloned().unwrap_or_default();
     let run = transcript_view::build_run(&execution, &rows);
     let state = stella_transcript::FoldState::new();
-    Ok(stella_transcript::html::render_page(&run, &state))
+    Ok(stella_transcript::html::render_run(&run, &state))
 }
 
 /// The path with any query string removed.
@@ -252,11 +260,24 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                 body: SELF_DRIVING_JS.as_bytes().to_vec(),
             };
         }
-        // The rendered transcript (`?id=<execution id>`). Unlike every route
-        // below it, this returns HTML rather than JSON: the page is rendered by
-        // `stella-transcript`. It is standalone — its own styles ride with it —
-        // so it opens in its own tab and needs nothing from `index.html`.
-        "/transcript" => {
+        // The rendered transcript's stylesheet, exactly as `stella-transcript`
+        // ships it. Served as an asset rather than inlined into `index.html`
+        // so the one copy in the renderer crate stays the one copy; the
+        // dashboard fetches it once and rewrites `:root` to `:host` when it
+        // builds the shadow root it embeds fragments in.
+        "/assets/transcript.css" => {
+            return Response {
+                status: "200 OK",
+                content_type: "text/css; charset=utf-8",
+                body: stella_transcript::html::STYLE.as_bytes().to_vec(),
+            };
+        }
+        // The rendered transcript (`?id=<execution id>`) as an HTML fragment.
+        // Unlike every route below it, this returns HTML rather than JSON: the
+        // markup is rendered by `stella-transcript` and embedded by the
+        // dashboard's turn page. The standalone `/transcript` page this
+        // replaces is gone — one run, one rendering, one place to read it.
+        "/api/transcript-html" => {
             let Some(id) = query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) else {
                 return Response::error("400 Bad Request", "missing ?id=<execution id>");
             };
@@ -284,6 +305,19 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             Some(id) => obs.execution(id),
             None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
         },
+        // One model's catalog card (`?provider=<api provider>&slug=<model>`),
+        // for the turn page's agent profile section: the defaults the model
+        // offers — context window, output ceiling, reasoning support, pricing,
+        // and the api-provider / model-provider split — beside the bindings
+        // the run's own receipts recorded.
+        "/api/model-card" => {
+            let (Some(provider), Some(slug)) =
+                (query_param(query, "provider"), query_param(query, "slug"))
+            else {
+                return Response::error("400 Bad Request", "missing ?provider=&slug=");
+            };
+            model_card::model_card(&model_card::default_catalog_db(), &provider, &slug)
+        }
         // The transcript replay (#1461). `full=1` lifts the per-body clip —
         // fetched whole on drawer-open. `after_seq=<n>` (#1476) narrows to
         // rows newer than the drawer's last-seen `seq`, for the incremental

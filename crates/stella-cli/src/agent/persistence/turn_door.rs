@@ -31,9 +31,9 @@ pub(crate) struct TurnDoor<'a> {
     ///
     /// It rides on the door rather than as a parameter of its own because the
     /// door is already the value that says *who is asking for this turn and on
-    /// whose behalf*, and because `crate::agent::run_turn` lives in a
-    /// grandfathered god file closed to growth: threading a fact through a
-    /// value that is already threaded costs that file no lines (AGENTS.md
+    /// whose behalf*, and because `crate::agent::run_turn` lives in a file
+    /// close to the 1500-line ratchet: threading a fact through a value that
+    /// is already threaded costs that file no lines (AGENTS.md
     /// § "God files").
     pub(crate) facts: Option<TurnFacts>,
 }

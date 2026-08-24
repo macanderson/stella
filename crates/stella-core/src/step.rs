@@ -1094,7 +1094,7 @@ impl SummarizerHealth {
 /// What one compaction pass did: what it cost, and whether it rewrote the
 /// transcript in place.
 ///
-/// `#[must_use]` is load-bearing. `rewrote` is the only signal that the two
+/// `#[must_use]` is required. `rewrote` is the only signal that the two
 /// position-keyed memos — the loop detector's result identities and the receipt
 /// ledger's block digests — must drop their keys, and a caller that ignored it
 /// would leave both serving digests for bytes that no longer exist. Making the

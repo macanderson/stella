@@ -4,7 +4,7 @@ import { HeroTerminal } from "@/components/command-deck";
 import { AnimatedLockup } from "@/components/animated-lockup";
 import { Mark } from "@/components/brand";
 import { InstallBlock } from "@/components/install-block";
-import { PROVIDER_CATALOG } from "@/components/provider-cards";
+import { PROVIDER_CATALOG } from "@/components/provider-catalog";
 import { REPO_URL, SITE_URL } from "@/lib/site";
 
 // The root layout's metadata is titled/described for the docs section it
@@ -19,7 +19,7 @@ import { REPO_URL, SITE_URL } from "@/lib/site";
 // and Twitter titles right below it, which are NOT template-expanded — the tab
 // said one thing and every shared card said another.
 const HOME_TITLE = "stella — the terminal agent that proves its work finished";
-// "ends a run on evidence" is load-bearing and deliberately not "a second
+// "ends a run on evidence" is required and deliberately not "a second
 // model confirms it". That was the old wording, and it described a rung that
 // does not exist: there is no model verdict, and no arm that
 // asks a model anything — a turn the oracle cannot settle reports UNVERIFIED
@@ -257,7 +257,7 @@ export default function HomePage() {
             ))}
           </p>
           <p className="mt-4 max-w-prose text-sm text-fd-muted-foreground">
-            {/* The trailing `{" "}` is load-bearing: JSX trims the leading
+            {/* The trailing `{" "}` is required: JSX trims the leading
                 whitespace of a text node's first line when the node spans
                 more than one line, so `</span> speaks each\n vendor's…`
                 shipped as "stellaspeaks each vendor's". */}

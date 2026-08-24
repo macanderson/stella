@@ -106,17 +106,25 @@ jobs:
           # gate runs. An empty diff runs nothing here — reporting that PR is
           # empty-diff.yml's job.
           #
-          # The one prose path that is not prose-only: a command reference page
-          # is asserted about by `stella-cli`'s own tests — the subcommand
-          # index, the per-command summaries, and since #3041 every flag's card
-          # — so editing one without running them is exactly the hole that
-          # sends `check-command-docs.sh` to `docs-guards.yml` a second time.
-          # A deleted card is a red test, and a test that never ran is green.
+          # The prose paths that are not prose-only, because a Rust test reads
+          # the file and a test that never ran is green:
+          #
+          #  - a command reference page is asserted about by `stella-cli`'s own
+          #    tests — the subcommand index, the per-command summaries, and
+          #    since #3041 every flag's card — so editing one without running
+          #    them is exactly the hole that sends `check-command-docs.sh` to
+          #    `docs-guards.yml` a second time. A deleted card is a red test.
+          #  - `provider-catalog.ts` is the docs' copy of the provider registry,
+          #    pinned against `PROVIDERS` by `docs_sync.rs`. #4588 moved those
+          #    records into it from `provider-cards.tsx` in a website-only diff,
+          #    which skipped the Rust gate here and merged green; `main` was
+          #    then red on that test until the next commit that touched a crate
+          #    made anyone look.
           if git diff --name-only "$BASE_SHA"...HEAD \
             | grep -Evq '^(website/|docs/|\.github/ISSUE_TEMPLATE/)|^[^/]+\.md$'; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
           elif git diff --name-only "$BASE_SHA"...HEAD \
-            | grep -q '^website/content/docs/commands/'; then
+            | grep -Eq '^website/content/docs/commands/|^website/src/components/provider-catalog\.ts$'; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
           else
             echo "rust=false" >> "$GITHUB_OUTPUT"
@@ -309,6 +317,16 @@ jobs:
       - name: every deferral marker names a tracking issue
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-left-behind.sh
+
+      # Also toolchain-free. A constant chosen by measuring something says so
+      # to no compiler, so a textually clean merge can revert it in silence —
+      # which shipped to `main` on 2026-08-09 and was found weeks later
+      # (#2414's ceiling, reverted by #2462, tracked as #2495). A `MEASURED:`
+      # doc marker makes the claim recognisable; this asserts some test names
+      # the constant, so the revert stops being silent.
+      - name: every measured constant is named by a test
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-measured-constants.sh
 
       # Also toolchain-free, and the only gate here that is a question about
       # TWO trees rather than one — which is why it has no `make gate` step to

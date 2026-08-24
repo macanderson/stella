@@ -183,7 +183,7 @@ pub(crate) fn spawn(
     // fails without receivers). If watcher creation fails below, `tx` is
     // dropped with the closure and the pipeline task exits on channel close.
     // Resolved once here and refreshed on a ref move, never per event — see
-    // [`SharedIgnore`] for why both halves of that are load-bearing.
+    // [`SharedIgnore`] for why both halves of that are required.
     let event_ignore: SharedIgnore =
         Arc::new(std::sync::Mutex::new(WorkspaceIgnore::resolve(&root)));
     let (tx, _ticks) = start_pipeline(inner, debounce, event_ignore.clone());

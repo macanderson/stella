@@ -51,8 +51,10 @@ on:
       - "crates/stella-transcript/**"
       - "arenabench/ui/lib/diff-view.ts"
       - "arenabench/ui/lib/word-highlight.ts"
+      - "arenabench/ui/lib/transcript-view.ts"
       - "arenabench/ui/scripts/check-diff-view-parity.mjs"
       - "arenabench/ui/scripts/check-word-highlight-parity.mjs"
+      - "arenabench/ui/scripts/check-transcript-view.mjs"
       - ".github/workflows/diff-view-parity.yml"
   push:
     branches: [main]
@@ -61,8 +63,10 @@ on:
       - "crates/stella-transcript/**"
       - "arenabench/ui/lib/diff-view.ts"
       - "arenabench/ui/lib/word-highlight.ts"
+      - "arenabench/ui/lib/transcript-view.ts"
       - "arenabench/ui/scripts/check-diff-view-parity.mjs"
       - "arenabench/ui/scripts/check-word-highlight-parity.mjs"
+      - "arenabench/ui/scripts/check-transcript-view.mjs"
       - ".github/workflows/diff-view-parity.yml"
   workflow_dispatch:
 
@@ -96,3 +100,14 @@ jobs:
         if: '!cancelled()'
         working-directory: arenabench/ui
         run: node scripts/check-word-highlight-parity.mjs
+
+      # Not a Rust-parity check like the two above, but the same shape — pure
+      # functions, zero dependencies, needs Node — and until #4039 wired it
+      # here it ran in no workflow at all: the reading-tool decisions in
+      # `lib/transcript-view.ts` (errors-only pairing, prompt-first ordering,
+      # call/result folding, JSON folds) were guarded only on a developer's
+      # own initiative. Same `!cancelled()` reasoning as its sibling.
+      - name: the transcript reading-tool checks pass
+        if: '!cancelled()'
+        working-directory: arenabench/ui
+        run: node scripts/check-transcript-view.mjs

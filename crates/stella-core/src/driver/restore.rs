@@ -536,7 +536,7 @@ impl<'a> Engine<'a> {
 
 #[cfg(test)]
 mod tests {
-    //! Witnesses for #2685. The load-bearing assertions spell the marker as
+    //! Witnesses for #2685. The assertions that make this witness work spell the marker as
     //! a string literal rather than naming `RESTORE_MARKER_PREFIX`, so the
     //! fail half of the witness can run against the base tree (which has
     //! neither the constant nor the behavior); `the_literal_is_the_constant`

@@ -20,8 +20,12 @@
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 fn run_stella(workspace: &Path, data: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args([
             "--model",
             "openrouter/z-ai/glm-5.1",
@@ -104,6 +108,7 @@ fn test_command_alone_is_refused_without_pipeline() {
 fn a_bare_raw_run_never_prints_the_verification_refusal() {
     let (workspace, data) = fresh_dirs();
     let out = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args([
             "--model",
             "openrouter/z-ai/glm-5.1",

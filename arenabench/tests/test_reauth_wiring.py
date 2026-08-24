@@ -351,7 +351,7 @@ class TestOnlyAVoidComesBack:
         return made.processes[1]
 
     def test_a_measured_loss_is_never_re_dispatched(self, rig) -> None:
-        """The load-bearing one. ``alpha`` lost; it stays lost."""
+        """The decisive one. ``alpha`` lost; it stays lost."""
         made = rig()
         made.start()
         made.trial("alpha", LOST)
