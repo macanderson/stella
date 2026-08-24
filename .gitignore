@@ -205,8 +205,9 @@ docs/brand/__pycache__/
 # while the bundle actually sat one directory deeper, so it matched nothing and
 # a rig key reached a public remote. Match the directory wherever it lands.
 stella-bench-handoff/
-# results from aws hosted bench runs get dropped here
-arenabench/arenabench-cloud/
+# results from aws hosted bench runs get dropped here (the fetch convention
+# survives the arenabench ejection, #2380 — runs are fetched beside the repo)
+arenabench-cloud/
 
 # A checkout of macanderson/stella-examples, which `example-plugins.yml` clones
 # to this path to grade the three verify-{rs,py,ts} plugins. It is another

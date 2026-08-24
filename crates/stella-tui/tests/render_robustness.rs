@@ -180,6 +180,7 @@ fn nasty_unicode_cards_never_panic_at_any_width() {
                     write_globs: vec![text.clone()],
                     read_globs: vec![text.clone()],
                     shell_policy: Some(text.clone()),
+                    revision: None,
                 },
             },
         ] {

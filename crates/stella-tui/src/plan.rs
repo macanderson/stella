@@ -144,6 +144,11 @@ pub struct Plan {
     /// Set once the user has decided, so a later empty board cannot silently
     /// walk the plan back to `PendingApproval`.
     decided: bool,
+    /// Which revision of the plan this is, when the proposal stated one
+    /// (#4333). `None` for a board-only plan and for any recording written
+    /// before `ScopeProposal::revision` existed — the rail then says nothing
+    /// rather than claiming a first revision it cannot see.
+    pub revision: Option<u32>,
 }
 
 impl Plan {
@@ -161,6 +166,7 @@ impl Plan {
         self.estimated_cost_usd = proposal.estimated_cost_usd;
         self.state = PlanState::PendingApproval;
         self.decided = false;
+        self.revision = proposal.revision;
         // A proposal at the gate is a *new* plan, so the previous one's
         // progress does not carry over. Without this, a re-plan mid-turn read
         // as `pending approval 5/7` — five steps of a plan nobody has agreed

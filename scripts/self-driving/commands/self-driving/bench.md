@@ -34,7 +34,9 @@ gh run watch <id>
 
 ## The measured arm — `bench h2h`
 
-`arenabench/matches/fable5-claude-code-vs-stella.toml`: six Terminal-Bench 2.1
+`matches/fable5-claude-code-vs-stella.toml` in the
+[arenabench repo](https://github.com/macanderson/arenabench) (name it with
+`SELF_DRIVING_MATCH`, or `ARENABENCH_CHECKOUT`): six Terminal-Bench 2.1
 tasks, Claude Code and Stella both on Fable 5, `effort = medium` on both seats.
 **The model is held constant so the agent architecture is the variable under
 test.** That is the whole point — a model swap is a cost change, not evidence

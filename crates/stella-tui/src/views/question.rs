@@ -591,13 +591,24 @@ fn question_body(overlay: &QuestionOverlay, request: &QuestionRequest) -> Vec<Li
     } else {
         String::new()
     };
+    // One rendered row per authored line. The card sizes itself from the row
+    // count, so a question that arrives as several lines — the deck's plan
+    // gate sends the plan as a numbered list (#4594) — grows the card
+    // instead of being flattened into one row and clipped at the border.
+    let mut body = question.question.lines();
     rows.push(Line::from(vec![
         Span::styled(position, dim),
         Span::styled(
-            question.question.clone(),
+            body.next().unwrap_or_default().to_string(),
             Style::new().fg(theme::TEXT_PRIMARY),
         ),
     ]));
+    for line in body {
+        rows.push(Line::from(Span::styled(
+            line.to_string(),
+            Style::new().fg(theme::TEXT_PRIMARY),
+        )));
+    }
     if question.multi_select {
         rows.push(Line::from(Span::styled(
             "several answers may be chosen",

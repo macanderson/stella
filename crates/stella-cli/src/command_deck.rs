@@ -117,7 +117,7 @@ use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
-use task_tap::TaskTap;
+use task_tap::{TaskTap, plan_goal};
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
@@ -1820,8 +1820,9 @@ pub async fn run_deck_session(
                         // lead's next prompt.
                         Some(WorkspaceInput::ScopeChangeRequest { .. }) => {
                             queue.push_back(
-                                "The user wants to change the approved scope: propose an \
-                                 updated scope (raise a scope review with the revised plan)."
+                                "The user wants to change the approved scope: revise the task \
+                                 board (task_create / task_cancel) and start the revised plan \
+                                 — that is what raises a fresh scope review for them."
                                     .to_string(),
                             );
                         }
@@ -3578,7 +3579,10 @@ async fn run_lead_turn(
             Principal::User,
             registry.hook_bus(),
         );
-        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()));
+        // The plan gate's headline, taken before the engine borrows
+        // `messages` mutably (`task_tap::plan_gate`, #4594).
+        let goal = plan_goal(messages);
+        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()), goal);
         let hook_runner = HostHookRunner;
         let mut engine = Engine::with_sleeper(
             provider,

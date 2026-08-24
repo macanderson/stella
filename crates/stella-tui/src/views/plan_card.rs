@@ -275,13 +275,21 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
     }
 
     let (done, total) = plan.progress();
+    // The revision breadcrumb (#4333): silent on the first revision and on a
+    // plan whose producer does not number them, so the marker appears exactly
+    // when a plan has been re-proposed and a reader needs to know they are
+    // looking at a different one.
+    let revision = match plan.revision {
+        Some(r) if r > 1 => format!(" · r{r}"),
+        _ => String::new(),
+    };
     let context = vec![Span::styled(
         match plan.state {
             PlanState::PendingApproval => {
-                format!("{} · {total} steps", plan.state.label())
+                format!("{} · {total} steps{revision}", plan.state.label())
             }
             PlanState::Draft => plan.state.label().to_string(),
-            _ => format!("{} {done}/{total}", plan.state.label()),
+            _ => format!("{} {done}/{total}{revision}", plan.state.label()),
         },
         Style::new().fg(theme::TEXT_TERTIARY),
     )];

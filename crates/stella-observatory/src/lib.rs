@@ -57,6 +57,7 @@ mod self_driving_sessions;
 mod sent_context;
 mod sessions;
 mod transcript_view;
+mod turn_agents;
 
 use accept::{AcceptAction, AcceptBackoff};
 use std::net::SocketAddr;
@@ -429,6 +430,15 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         "/api/execution-tendencies" => {
             match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
                 Some(id) => obs.execution_tendencies(id),
+                None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
+            }
+        }
+        // The sub-agents one turn fanned out — the `sub_agent` bracket joined
+        // with the child-stamped metering rows, one row per child, for the
+        // turn page's sub-agents panel.
+        "/api/execution-subagents" => {
+            match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
+                Some(id) => obs.execution_subagents(id),
                 None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
             }
         }

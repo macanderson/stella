@@ -16,7 +16,7 @@
 # --help text ends here.
 #
 # A seat is one `harbor run` invocation — one contestant's whole arm of a match
-# (`arenabench/arenabench/runner.py` spawns one per contestant with
+# (runner.py in the arenabench repo spawns one per contestant with
 # `start_new_session=True`). It outlives its owner by design: that isolation is
 # what lets `scripts/arena-kill.sh` stop an arena without ending the benchmarks
 # it was displaying. The cost is that a seat whose owner died for real has

@@ -103,6 +103,30 @@ fn inspecting_a_turn_is_a_page_not_a_drawer() {
     }
 }
 
+/// The turn page's sub-agents plane: the fan-out section lists the turn's
+/// delegate children, clicking one makes the page assume that child
+/// (`#transcript/<id>/sub/<agent>`), a back button climbs to the parent
+/// turn, and ← / → cycle the fan-out. Whether the page then *looks* right is
+/// not decidable from Rust — same bargain as the page-not-drawer test above.
+#[test]
+fn a_turns_sub_agents_are_a_focusable_plane_of_the_transcript_page() {
+    for needle in [
+        "/api/execution-subagents",         // the endpoint the page folds from
+        "sect(\"tx-subagents\"",            // the fan-out section on the parent view
+        "renderSubagentFocus",              // the page assumed by one child
+        "/sub/",                            // the child's address in the route
+        "id=\"tx-sub-up\"",                 // back to the parent turn
+        "id=\"tx-sub-prev\"",               // ← previous sub-agent…
+        "id=\"tx-sub-next\"",               // …next sub-agent →
+        "goSubagent(txSub.exec, txSub.ids", // the arrow keys cycle the fan-out
+    ] {
+        assert!(
+            INDEX_HTML.contains(needle),
+            "the sub-agents plane is missing {needle}"
+        );
+    }
+}
+
 /// The page must be fully self-contained: any http(s) URL in the HTML
 /// would be an outbound fetch from the user's browser — a phone-home.
 #[test]
