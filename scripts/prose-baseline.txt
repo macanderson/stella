@@ -898,9 +898,7 @@ crates/stella-tui/src/v2/subagents/rows.rs 1
 crates/stella-tui/src/v2/transcript.rs 3
 crates/stella-tui/src/v2/transcript_source.rs 6
 crates/stella-tui/src/views/approval.rs 1
-crates/stella-tui/src/views/engine.rs 2
 crates/stella-tui/src/views/files.rs 2
-crates/stella-tui/src/views/installed.rs 2
 crates/stella-tui/src/views/question.rs 5
 crates/stella-tui/src/views/seats.rs 1
 crates/stella-tui/src/views/session.rs 1
