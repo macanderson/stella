@@ -118,7 +118,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         DeckTab::Graph => views::graph::render(model, ui, content, b),
         DeckTab::Files => views::files::render(model, ui, content, b),
         DeckTab::Skills => views::skills::render(model, ui, content, b),
-        DeckTab::Mcp => views::mcp::render(model, ui, content, b),
+        DeckTab::Mcp => crate::v2::mcp_tab::render(model, ui, content, b),
         DeckTab::Issues => views::issues::render(model, ui, content, b),
         DeckTab::Settings => views::settings::render(model, ui, content, b),
     });
@@ -179,7 +179,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     if ui.queue_open {
         guarded_overlay(buf, area, "queue", |b| {
-            views::queue_popup::render(model, ui, area, b)
+            crate::v2::queue::render(model, ui, area, b)
         });
     }
     // The STATE overlay (`⌃s`): the expansion of the Session tab's one-row
@@ -370,8 +370,7 @@ fn slash_live_hints(model: &WorkspaceModel, ui: &DeckUi) -> Vec<(String, String)
     hints
 }
 
-// The queue editor popup lives in `views::queue_popup` (split out beside the
-// other popup renderers under the god-file rule).
+// The queue editor popup lives in `crate::v2::queue`.
 
 /// The INBOX overlay (`/inbox`): the persist-until-read notifications,
 /// newest first — unread bold with a ● dot, read dimmed with ✓, and a `↗`
@@ -546,7 +545,7 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
         } else {
             "not connected".to_string()
         };
-        let heading = crate::views::mcp::compact_heading(server);
+        let heading = crate::v2::mcp_tab::compact_heading(server);
         let mut spans = vec![
             Span::raw("  "),
             Span::styled(glyph, glyph_style),

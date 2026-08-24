@@ -147,11 +147,14 @@ fn read_provider_catalog() -> Option<String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()?
         .parent()?;
-    let website = root.join("website");
-    if !website.is_dir() {
+    if !root.join("website").is_dir() {
         return None;
     }
-    let path = website.join("src/components/provider-catalog.ts");
+    // One literal, spelled in full, because `scripts/check-website-inputs.sh`
+    // finds a website input by grepping the Rust sources for it. A path built
+    // from two `join` calls is invisible to that grep, so the guard would be
+    // unable to see this read even though the file it reads is declared (#4662).
+    let path = root.join("website/src/components/provider-catalog.ts");
     Some(
         std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("{} is missing or unreadable: {e}", path.display())),

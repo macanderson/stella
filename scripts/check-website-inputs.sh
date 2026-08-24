@@ -52,10 +52,10 @@
 # kinds are spelled differently in the inventory so there is something to
 # decide about.
 #
-# It also sees a path only where it appears as one literal. A test that builds
+# It also sees a path only where it appears as one literal. A helper that builds
 # `root.join("website").join("src/…")` names no `website/…` string, so nothing
-# here can find it — declare it, and say the path once in the doc comment above
-# the helper, which is what `docs_sync.rs` does.
+# here can find the read. Write the full path as one literal at the point of the
+# read and the grep sees it — which is what `docs_sync.rs` does (#4662).
 #
 # Uses portable POSIX tools so it runs on a bare CI runner.
 set -euo pipefail

@@ -14,31 +14,31 @@
 
  registry · web · s search · new servers land disabled · the handshake shows capabilities before first enable
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
  ↵ tools · ctrl+o inspect · a auth · o login · e enable · x remove · r refresh · s search
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
  ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>
  ⏎ queue · ↓ 2 sub-agents · ! shell · / commands

@@ -370,34 +370,7 @@ fn render_deck_hides_the_hardware_cursor_under_a_modal_overlay() {
     );
 }
 
-/// 140 columns, not 100: this asserts the *whole* left run is drawn, and since
-/// #3591 that is a claim about a row wide enough to hold it. At 100 the steer
-/// hint outranks `queue (never blocks)` and takes its columns — which used to
-/// look like both being present only because the row was clipped mid-word.
-#[test]
-fn queue_popup_lists_prompts_and_arms_the_clear_confirm() {
-    let model = running_model_with_queue();
-    let mut ui = DeckUi::default();
-    ui.queue_open = true;
-    ui.queue_sel = 1;
-    let area = Rect::new(0, 0, 80, 20);
-    let mut buf = Buffer::empty(area);
-    crate::views::queue_popup::render(&model, &ui, area, &mut buf);
-    let text = buffer_text(&buf);
-    assert!(text.contains("queue · 2 pending"), "title:\n{text}");
-    assert!(text.contains("write the tests"), "row 1:\n{text}");
-    assert!(text.contains("▸ 2. open a pr"), "row 2 selected:\n{text}");
-    assert!(text.contains("ctrl+x delete"), "legend:\n{text}");
-    // Armed confirm swaps the legend for the warning.
-    ui.queue_confirm_clear = true;
-    let mut buf2 = Buffer::empty(area);
-    crate::views::queue_popup::render(&model, &ui, area, &mut buf2);
-    let warned = buffer_text(&buf2);
-    assert!(
-        warned.contains("press ctrl+d again"),
-        "confirm warning:\n{warned}"
-    );
-}
+// The queue editor's own paint is covered where it lives — `v2::queue`.
 
 /// A `DeckUi` on the Graph tab with an `n`-file snapshot rooted on the
 /// middle file, its picker open.
