@@ -182,7 +182,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         );
     }
     if let Some(pending) = &ui.pending_dispatch {
-        crate::views::dispatch_card::render(pending, bands[2], buf);
+        crate::v2::dispatch_card::render(pending, bands[2], buf);
     }
     let transcript_area = bands[3];
 

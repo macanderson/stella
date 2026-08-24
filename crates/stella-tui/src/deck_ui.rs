@@ -813,7 +813,7 @@ pub struct DeckUi {
     /// Outranks `question` for the keyboard — a call about to execute is a
     /// tighter gate than a decision being deliberated, and it carries the
     /// shorter of the two deadlines.
-    pub approval: crate::views::approval::ApprovalOverlay,
+    pub approval: crate::v2::approval::ApprovalOverlay,
     /// The `/model` picker: switch this session's model. Modal while open;
     /// rows come live from `engine.state` (see [`crate::views::picker`]).
     pub model_picker: crate::views::picker::ListPicker,
@@ -905,7 +905,7 @@ impl Default for DeckUi {
             engine: crate::views::engine::EngineOverlay::default(),
             tools: crate::views::tools::ToolsOverlay::default(),
             question: crate::views::question::QuestionOverlay::default(),
-            approval: crate::views::approval::ApprovalOverlay::default(),
+            approval: crate::v2::approval::ApprovalOverlay::default(),
             model_picker: crate::views::picker::ListPicker::default(),
             agent_picker: crate::views::picker::ListPicker::default(),
         }

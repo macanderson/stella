@@ -33,7 +33,7 @@ pub(super) fn render(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     }
     if ui.approval.is_open() {
         super::guarded_overlay(buf, area, "approval", |b| {
-            views::approval::render(&ui.approval, ui.accessible, area, b)
+            crate::v2::approval::render(&ui.approval, ui.accessible, area, b)
         });
     }
 }
