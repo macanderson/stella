@@ -18,7 +18,7 @@
 #
 # The decision used to live in a YAML `run:` block, where nothing could
 # exercise it, beside a `paths-ignore` list a comment asked a human to keep in
-# agreement with it. Both halves are here now, so both are testable.
+# agreement with it. It is one script now, and this suite is what exercises it.
 #
 # bash 3.2 compatible.
 

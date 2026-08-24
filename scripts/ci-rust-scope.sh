@@ -80,12 +80,21 @@ if [ -z "$changed" ]; then
   exit 0
 fi
 
+# The file list goes to a file, and every grep below reads that file rather
+# than a pipe. `grep -q` exits on its first match and closes the pipe under it,
+# so the writer takes a SIGPIPE — and `pipefail` then reports 141 for a
+# pipeline that MATCHED. It is a race, so it answers wrongly on some runs and
+# not others, and the wrong answer here is `false`: a skipped Rust gate. Same
+# shape as #1815, which scripts/check-gate-parity.sh carries a note about.
+files="$(mktemp "${TMPDIR:-/tmp}/stella-ci-rust-scope.XXXXXX")"
+trap 'rm -f "$files"' EXIT INT TERM
+printf '%s\n' "$changed" >"$files"
+
 # The prose paths: website/, docs/, .github/ISSUE_TEMPLATE/, and root-level
 # *.md only — `[^/]+\.md$` stops at the first `/`, like the glob `*.md`, so a
 # crate's own README still pays the gate. Anything outside them means the gate
 # runs.
-if printf '%s\n' "$changed" |
-  grep -Evq '^(website/|docs/|\.github/ISSUE_TEMPLATE/)|^[^/]+\.md$'; then
+if grep -Evq '^(website/|docs/|\.github/ISSUE_TEMPLATE/)|^[^/]+\.md$' "$files"; then
   echo "true"
   exit 0
 fi
@@ -95,15 +104,21 @@ fi
 # is not restated here: scripts/check-website-inputs.sh holds those entries to
 # what the Rust sources actually name, so the filter and the tests cannot drift
 # apart the way the filter and the trigger did.
-if [ -f "$inventory" ]; then
-  carve="$(sed -e 's/#.*//' "$inventory" |
-    awk '$1 == "read" { p = $2; sub(/\/$/, "", p); gsub(/\./, "\\.", p); print "^" p "(/|$)" }')"
-  if [ -n "$carve" ] && printf '%s\n' "$changed" | grep -Eq "$(printf '%s' "$carve" | paste -sd '|' -)"; then
-    echo "true"
-    exit 0
-  fi
-else
+if [ ! -f "$inventory" ]; then
   open "$inventory is missing, so the carve-out cannot be built"
+fi
+
+carve="$(sed -e 's/#.*//' "$inventory" |
+  awk '$1 == "read" { p = $2; sub(/\/$/, "", p); gsub(/\./, "\\.", p); print "^" p "(/|$)" }' |
+  paste -sd '|' -)"
+
+if [ -z "$carve" ]; then
+  open "$inventory declares no read paths, so the carve-out would be empty"
+fi
+
+if grep -Eq "$carve" "$files"; then
+  echo "true"
+  exit 0
 fi
 
 echo "false"

@@ -120,8 +120,15 @@ $entries
 EOF
 
 # Every website path any Rust source under crates/ names, as one literal.
+#
+# `|| true` on the grep: it exits 1 when nothing matches, and `pipefail` would
+# turn that into the whole script dying here — before any verdict, with no
+# message — for a tree where no Rust source names a website path at all. That
+# tree is the goal state, not an error, and it is exactly when the stale-entry
+# check below has something to say. Same trap #1800 documents in
+# scripts/check-file-size.sh.
 literals="$(
-  git grep -ohE 'website/[A-Za-z0-9._/-]*' -- 'crates/**/*.rs' |
+  { git grep -ohE 'website/[A-Za-z0-9._/-]*' -- 'crates/**/*.rs' || true; } |
     sed -e 's/\/$//' | LC_ALL=C sort -u
 )"
 
