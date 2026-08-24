@@ -43,9 +43,9 @@
 //! # Why the two tiers answer differently
 //!
 //! `~/.stella/plugins` holds what the operator installed, and
-//! [`super::roster`]'s module docs state the invariant that makes this
-//! enforceable: *nothing arrives in it except through `stella plugin install`'s
-//! consent transaction.* So a user-tier package with **no receipt at all** is
+//! [`super::roster`]'s module docs state the rule that makes this enforceable:
+//! *nothing arrives in it except through `stella plugin install`'s consent
+//! transaction.* So a user-tier package with **no receipt at all** is
 //! a package whose receipt went missing, and it is refused.
 //!
 //! `<workspace>/.stella/plugins` is different by design. It holds whatever a
