@@ -196,7 +196,7 @@ fn seeded_workspace() -> TempDir {
              (1, 5, 'text', '{"type":"text","delta":"added the function"}'),
              (1, 6, 'text', '{"type":"text","text":"and named it well"}'),
              (1, 7, 'file_change', '{"type":"file_change","path":"src/lib.rs","kind":"modified","added":2,"removed":1,"diff":"--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,3 +3,4 @@\n ctx\n-fn a() {}\n+fn a() -> u8 { 0 }\n+fn b() {}\n"}'),
-             (1, 8, 'step_usage', '{"type":"step_usage","step":1,"role":"worker","provider":"zai","model":"glm-5.2","input_tokens":3200,"output_tokens":410,"cached_input_tokens":29100,"cache_write_tokens":1200,"reasoning_tokens":96,"estimated_input_tokens":203,"cost_usd":0.0134,"duration_ms":8400,"retries":0,"tool_calls":1,"complete":true,"finish_reason":"stop"}');"#,
+             (1, 8, 'step_usage', '{"type":"step_usage","step":1,"role":"worker","provider":"zai","model":"glm-5.2","input_tokens":3200,"output_tokens":410,"cached_input_tokens":29100,"cache_write_tokens":1200,"reasoning_tokens":96,"estimated_input_tokens":203,"cost_usd":0.0134,"duration_ms":8400,"retries":0,"tool_calls":1,"complete":true,"finish_reason":"stop","effort":"high","max_output_tokens":32000}');"#,
     )
     .unwrap();
     // The context receipts (#1475), also in their own batch: one recorded

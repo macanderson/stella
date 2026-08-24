@@ -541,6 +541,59 @@ mod tests {
         );
     }
 
+    /// #4565's witness for the auxiliary path: the metering record claims the
+    /// effort and ceiling the dispatched request carried, exactly as the
+    /// engine's own step loop does. Fails before #4565, when `StepUsage` had
+    /// neither field.
+    #[tokio::test]
+    async fn step_usage_carries_the_requests_effort_and_output_ceiling() {
+        let provider = Succeeds;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let _ = run_accounted_call(
+            AccountedCall {
+                provider: &provider,
+                role: ModelCallRole::Summarization,
+                model_hint: "configured-model".into(),
+                request: CompletionRequest {
+                    messages: vec![CompletionMessage::user("work")],
+                    max_output_tokens: Some(8_192),
+                    temperature: None,
+                    effort: Some(stella_protocol::completion::ReasoningEffort::Low),
+                    tools: Vec::new(),
+                    reasoning: None,
+                    params: None,
+                },
+                retry_policy: RetryPolicy::new(1, 0, 0),
+                timeout: None,
+                estimated_input_tokens: 1,
+                receipt: None,
+            },
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let usage = events
+            .iter()
+            .find(|event| matches!(event, AgentEvent::StepUsage { .. }))
+            .expect("a settled call emits its metering record");
+        assert!(
+            matches!(
+                usage,
+                AgentEvent::StepUsage {
+                    effort: Some(stella_protocol::completion::ReasoningEffort::Low),
+                    max_output_tokens: Some(8_192),
+                    ..
+                }
+            ),
+            "the metering record must carry the dispatched request's effort \
+             and ceiling: {usage:?}"
+        );
+    }
+
     struct Succeeds;
 
     #[async_trait]

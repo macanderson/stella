@@ -2086,9 +2086,11 @@ async function paintRenderedTranscript(fragment) {
    tokens, cache traffic, latency, the upstream vendor a gateway routed to)
    and, from the local model catalog, the defaults that model offers:
    context window, output ceiling, reasoning support, knowledge cutoff and
-   pricing. What this build does not persist it says out loud instead of
-   omitting: the resolved reasoning effort, the requested output cap and any
-   custom prompt override are config-plane facts no event carries yet. */
+   pricing. The resolved reasoning effort and the requested output cap ride
+   `step_usage` (#4565), so they read as "not recorded" only on a journal
+   written before that. What this build still does not persist it says out
+   loud instead of omitting: a custom prompt override is a config-plane fact
+   no event carries yet (#3906). */
 function profileSeats(calls, usage) {
   const seats = new Map();
   for (const c of calls) {
@@ -2126,6 +2128,7 @@ function seatCardHtml(s) {
   const caps = [...new Set(s.rows.map(u => u.max_output_tokens).filter(v => v != null))];
   const agents = [...new Set(s.rows.map(u => u.sub_agent_id).filter(Boolean))];
   const notRecorded = `<span class="prof-gap" title="No event carries this yet: it lives only in the session's config plane, so an honest per-turn card cannot claim it.">not recorded for this run</span>`;
+  const notInJournal = `<span class="prof-gap" title="This journal predates the metering record carrying the request's effort and output cap, so an honest card cannot claim either.">not recorded for this run</span>`;
   return `<div class="prof-card">
     <div class="prof-head"><b>${esc(s.role)}</b>
       <span class="badge dim">${fmtInt(s.calls)} call${s.calls === 1 ? "" : "s"}</span>${
@@ -2140,8 +2143,8 @@ function seatCardHtml(s) {
         fmtTok(written)} written) · ${fmtTok(outTok)} out</dd>
       <dt>model latency</dt><dd>${s.rows.length
         ? `${fmtMs(ms)} total · ${fmtMs(ms / s.rows.length)} / call` : "—"}</dd>
-      <dt>effort</dt><dd>${efforts.length ? esc(efforts.join(", ")) : notRecorded}</dd>
-      <dt>output cap</dt><dd>${caps.length ? caps.map(fmtTok).join(", ") + " tok" : notRecorded}</dd>
+      <dt>effort</dt><dd>${efforts.length ? esc(efforts.join(", ")) : notInJournal}</dd>
+      <dt>output cap</dt><dd>${caps.length ? caps.map(fmtTok).join(", ") + " tok" : notInJournal}</dd>
       <dt>custom prompt</dt><dd>${notRecorded}</dd>
     </dl>
     <div class="prof-offer" data-provider="${esc(s.provider)}" data-slug="${esc(s.model)}">

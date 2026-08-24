@@ -114,6 +114,11 @@ pub(crate) fn all_finish_reasons() -> Vec<FinishReason> {
     vec![Stop, Length, ToolCalls, ContentFilter]
 }
 
+pub(crate) fn all_reasoning_efforts() -> Vec<ReasoningEffort> {
+    use ReasoningEffort::*;
+    vec![Low, Medium, High, Xhigh, Max]
+}
+
 pub(crate) fn all_file_change_kinds() -> Vec<FileChangeKind> {
     use FileChangeKind::*;
     vec![Read, Created, Modified, Deleted]
@@ -898,6 +903,35 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 // the pairing the field exists for.
                 effort: None,
                 max_output_tokens: Some(64_000),
+                sub_agent_id: None,
+            }),
+    );
+    // Every effort a request can pin, on the field that records what the
+    // dispatched request actually asked for (#4565).
+    events.extend(
+        all_reasoning_efforts()
+            .into_iter()
+            .map(|effort| AgentEvent::StepUsage {
+                upstream_provider: None,
+                step: 3,
+                role: ModelCallRole::Worker,
+                provider: "openai".into(),
+                output_text: None,
+                model: "o5".into(),
+                input_tokens: 2_000,
+                output_tokens: 900,
+                cached_input_tokens: 0,
+                cache_write_tokens: 0,
+                reasoning_tokens: Some(700),
+                estimated_input_tokens: 1_900,
+                cost_usd: 0.02,
+                duration_ms: 30_000,
+                retries: 0,
+                tool_calls: 0,
+                complete: true,
+                finish_reason: Some(FinishReason::Stop),
+                effort: Some(effort),
+                max_output_tokens: None,
                 sub_agent_id: None,
             }),
     );
