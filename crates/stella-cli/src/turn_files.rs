@@ -699,14 +699,16 @@ mod tests {
     /// The owner list the fence below walks: every file in `stella-cli` that
     /// opens a turn's event stream, and the driver in it that does.
     ///
-    /// **The list is the guard.** A door missing from it is a door the fence
-    /// cannot see, which is exactly how `stella goal` and `stella resume`
-    /// bypassed the seam for as long as it existed (#4507): the goal doors
-    /// attached *nothing* to the channel they opened, so a whole goal run
-    /// rendered no task board, no sub-agent lifecycle and no diff under any
-    /// mutating call, and the resume driver spelled the pair out by hand and
-    /// skipped the measurer beside them. Adding a driver here is part of
-    /// writing one.
+    /// **The list is the guard, and [`ENGINE_DRIVERS`] is what keeps it
+    /// complete.** A door missing from here is a door this fence cannot see,
+    /// which is exactly how `stella goal` and `stella resume` bypassed the
+    /// seam for as long as it existed (#4507): the goal doors attached
+    /// *nothing* to the channel they opened, so a whole goal run rendered no
+    /// task board, no sub-agent lifecycle and no diff under any mutating call,
+    /// and the resume driver spelled the pair out by hand and skipped the
+    /// measurer beside them. Adding a driver here is part of writing one — and
+    /// since #3421, forgetting to fails `ENGINE_DRIVERS`' own fence rather than
+    /// waiting for a bench run to notice.
     ///
     /// Two lanes are deliberately absent and are **not** an oversight:
     /// `subsession.rs` and `fleet_cmd.rs` run on a `Config::clone` sharing one
@@ -763,6 +765,165 @@ mod tests {
                  events) without the silent one beside it."
             );
         }
+    }
+
+    /// What a file that builds an engine owes the turn-file ledger.
+    ///
+    /// Every engine-building file in this crate declares one, and "nothing" is
+    /// not among them: a driver that pays no boundary has to say *why*, and a
+    /// driver blocked on something else has to name the issue — AGENTS.md's
+    /// rule 10 pointed at a producer instead of a consumer.
+    #[derive(Debug)]
+    enum DriverPosture {
+        /// Owns a turn's stream and pays both halves of the boundary. Which
+        /// halves and where is [`STREAM_OWNERS`]' question, not this one.
+        Owns,
+        /// Runs under a stream someone else opened, so the debt is not its to
+        /// pay — the parent's boundary sweep measures what it wrote.
+        Nested(&'static str),
+        /// Owns a turn and cannot measure it yet, with the issue that unblocks
+        /// it. Never a silence: the Files tab is empty for this door and that
+        /// is a tracked gap rather than an oversight.
+        Blocked(&'static str),
+    }
+
+    /// Every file in this crate that builds an engine, and what it owes.
+    ///
+    /// The two lists above are hand-maintained and can only check the doors
+    /// they already know about — "the list is the guard", and a door missing
+    /// from it is a door the fence cannot see. That is not a hypothetical: the
+    /// goal doors and `stella resume` bypassed the stream seam for as long as
+    /// it existed and were found by a bench run rather than by a test (#4507).
+    ///
+    /// This list is checked in **both** directions against the tree, so a file
+    /// that starts building an engine has to join it and a row whose file
+    /// stopped building one has to leave. That is what closes the discovery
+    /// gap #3421 named: the next driver cannot be added silently, whatever it
+    /// is called and wherever it lands.
+    const ENGINE_DRIVERS: &[(&str, DriverPosture)] = &[
+        // `stella run` and the plain chat loop. Reaches the opening seam
+        // through `persistence::attach_run_streams`, which is why
+        // `STREAM_OWNERS` names that file and this one names the driver's own.
+        ("agent.rs", DriverPosture::Owns),
+        ("command_deck.rs", DriverPosture::Owns),
+        ("agent/goal.rs", DriverPosture::Owns),
+        ("agent/goal/goal_wrapped.rs", DriverPosture::Owns),
+        ("agent/resume.rs", DriverPosture::Owns),
+        (
+            "subagent.rs",
+            DriverPosture::Nested(
+                "a dispatched child runs on its parent's stream and inherits no \
+                 durable identity (`durability`'s \"what must NOT inherit a \
+                 binding\"), so its writes reach the ledger through the \
+                 parent's turn boundary",
+            ),
+        ),
+        (
+            "subsession.rs",
+            DriverPosture::Blocked(
+                "#3233: a lane runs on a `Config::clone` sharing one \
+                 `SessionDurability` cell, so a measurement here would consume \
+                 the lead's baseline and split one turn's changes across two \
+                 bursts",
+            ),
+        ),
+        (
+            "fleet_cmd.rs",
+            DriverPosture::Blocked(
+                "#3233, and worse than the lane's: a worker rebinds \
+                 `cfg.workspace_root` to its own worktree while the shared \
+                 journal stays rooted at the lead's, so a snapshot here would \
+                 measure the wrong tree",
+            ),
+        ),
+    ];
+
+    /// **Fence (#3421).** Every file that builds an engine declares what it
+    /// owes the turn-file ledger, and nothing builds one without saying.
+    ///
+    /// Keyed on the engine construction rather than on a turn-entry spelling,
+    /// because the drivers do not agree on one: `run_turn_with_sender`,
+    /// `run_goal` and the resume path are three different entries and
+    /// `Engine::with_sleeper` is the one thing all of them do first.
+    ///
+    /// Shipping files only. A `#[cfg(test)]` engine is a fixture, and the
+    /// question here is which *door* drives a turn.
+    #[test]
+    fn every_engine_driver_declares_what_it_owes_the_ledger() {
+        // Built rather than written out, so this file is not its own match,
+        // and with the open paren so a doc comment naming the constructor is
+        // prose rather than a driver.
+        let builds = format!("Engine::with_{}(", "sleeper");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+        for (file, posture) in ENGINE_DRIVERS {
+            let body = std::fs::read_to_string(src.join(file))
+                .unwrap_or_else(|e| panic!("cannot read {file}: {e}"));
+            assert!(
+                body.contains(&builds),
+                "{file} is declared a turn driver ({posture:?}) and no longer \
+                 builds an engine. A stale row is worse than no row: it makes \
+                 the list look complete while the door it stood for has moved."
+            );
+            match posture {
+                // `Owns` is checked by the two fences above, which is where
+                // the debt itself lives.
+                DriverPosture::Owns => {}
+                DriverPosture::Nested(reason) => assert!(
+                    !reason.is_empty(),
+                    "{file} is declared nested and says nothing about whose \
+                     stream it runs on. A driver that pays no boundary owes an \
+                     explanation a reviewer can check."
+                ),
+                DriverPosture::Blocked(reason) => assert!(
+                    reason.contains('#'),
+                    "{file} is blocked and names no issue. An empty Files tab \
+                     with nothing tracking it is the silence this table exists \
+                     to refuse."
+                ),
+            }
+        }
+
+        for path in shipping_sources(&src) {
+            let body = std::fs::read_to_string(&path).expect("a listed source");
+            if !body.contains(&builds) {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(&src)
+                .expect("walked from src")
+                .to_string_lossy()
+                .replace('\\', "/");
+            assert!(
+                ENGINE_DRIVERS.iter().any(|(file, _)| *file == relative),
+                "{relative} builds an engine and is in no row of \
+                 `ENGINE_DRIVERS`. A driver that owns a turn owes the boundary \
+                 a measurement, and one that does not owes an explanation — \
+                 declare which, and name the issue if it is blocked."
+            );
+        }
+    }
+
+    /// Every `.rs` file under `src` that ships, newest-first order irrelevant.
+    ///
+    /// `tests.rs` and anything under a `tests/` directory are skipped: a
+    /// fixture engine is not a door, and counting one would make the fence
+    /// demand a posture for a test module.
+    fn shipping_sources(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        let entries = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot walk {dir:?}: {e}"));
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if path.is_dir() {
+                if name != "tests" {
+                    out.extend(shipping_sources(&path));
+                }
+            } else if name.ends_with(".rs") && name != "tests.rs" {
+                out.push(path);
+            }
+        }
+        out
     }
 
     /// Every stream owner that ends its run with the cost-shaped terminator

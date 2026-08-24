@@ -518,3 +518,132 @@ fn drain_stops_at_slash_commands_and_respects_hold() {
     assert!(!would_take);
     assert_eq!(queue.len(), 1);
 }
+
+/// **The #3233 witness (the bug the integration test caught).** A lane's
+/// durability key must be both filesystem-safe and git-ref-safe —
+/// `WorkJournal::open`'s own contract — and every lane id this file mints
+/// violates BOTH bytes it forbids: `:` (git refuses it in a ref name) and
+/// `/` (ref-safe on its own, but `index_file_path` folds `session` into one
+/// path component via `format!("{workspace_id}.{session}.index")`, so an
+/// embedded `/` there is parsed as a path separator into a subdirectory
+/// nothing creates). Either mistake makes `record_checkpoint` fail and
+/// `JournalCheckpointSink::persist`'s best-effort contract swallow the error
+/// silently — exactly what happened here before this fix, with no visible
+/// symptom short of a kill actually losing a transcript.
+#[test]
+fn the_lane_journal_key_is_filesystem_and_git_ref_safe() {
+    assert_eq!(lane_journal_key("ses-1", "req:3"), "ses-1__req-3");
+    assert_eq!(
+        lane_journal_key("ses-1", "sub:task-42"),
+        "ses-1__sub-task-42"
+    );
+    for lane in ["req:1", "req:12", "sub:abc-123"] {
+        let key = lane_journal_key("ses-1", lane);
+        assert!(
+            !key.contains(':'),
+            "{lane} produced a key git would refuse to ref: {key}"
+        );
+        assert!(
+            !key.contains('/'),
+            "{lane} produced a key with a stray path separator: {key}"
+        );
+    }
+}
+
+/// A checkpoint fixture shaped like one a killed lane would have left behind:
+/// step 4, a stale system prompt, and one completed exchange.
+fn killed_lane_checkpoint() -> stella_core::step::Checkpoint {
+    stella_core::step::Checkpoint {
+        version: stella_core::step::CHECKPOINT_VERSION,
+        step: 4,
+        messages: vec![
+            CompletionMessage::system("stale system prompt"),
+            CompletionMessage::user("do the task"),
+        ],
+        budget: stella_core::step::BudgetSnapshot {
+            mode: stella_protocol::BudgetMode::Observed,
+            turn_limit_usd: None,
+            session_limit_usd: None,
+            turn_spent_usd: 0.0,
+            session_spent_usd: 0.0,
+        },
+        total_cost_usd: 0.0,
+        calibration_model: None,
+        loop_steered: false,
+        loop_steered_pattern: Vec::new(),
+        loop_steered_inputs: None,
+        transcript_rewrites: 0,
+        loop_steers_spent: 0,
+    }
+}
+
+/// **The #3233 witness.** A checkpoint on a lane's own key seeds that lane's
+/// next attempt instead of starting over from `spec.prompt` — the re-entry
+/// half of the durability fix, not just the write side.
+#[test]
+fn a_lanes_own_checkpoint_seeds_its_next_attempt_instead_of_starting_fresh() {
+    let json = killed_lane_checkpoint().to_json().unwrap();
+    let ws = std::path::Path::new("/tmp/ws");
+
+    let (messages, note) = initial_messages(
+        Some(&json),
+        "fresh system prompt".to_string(),
+        "do the task",
+        ws,
+    );
+
+    assert!(
+        note.is_some_and(|n| n.contains("step 4")),
+        "a restored lane must say so, naming the step it resumes at"
+    );
+    assert_eq!(
+        messages.len(),
+        2,
+        "the checkpoint's own transcript rides through, not a fresh prompt-only start"
+    );
+    assert_eq!(
+        messages[0].content, "fresh system prompt",
+        "the system prompt is regenerated, never replayed stale"
+    );
+    assert_eq!(
+        messages[1].content, "do the task",
+        "the checkpoint's own transcript survives, not the raw spec.prompt"
+    );
+}
+
+/// The delta the witness above is measured against: no checkpoint means the
+/// ordinary fresh start, unaffected by any of this.
+#[test]
+fn a_lane_with_no_checkpoint_starts_fresh_as_before() {
+    let ws = std::path::Path::new("/tmp/ws");
+    let (messages, note) =
+        initial_messages(None, "fresh system prompt".to_string(), "do the task", ws);
+
+    assert!(note.is_none());
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].content, "fresh system prompt");
+    assert_eq!(messages[1].content, "do the task");
+}
+
+/// A checkpoint this build cannot parse degrades to a fresh start rather than
+/// a transcript with a system prompt and no user turn — the same "not
+/// preferred" rule `session_persist::restore_conversation` documents for the
+/// lead session's own resume.
+#[test]
+fn an_unparsable_checkpoint_degrades_to_fresh_rather_than_a_userless_transcript() {
+    let ws = std::path::Path::new("/tmp/ws");
+    let (messages, note) = initial_messages(
+        Some("not valid json"),
+        "fresh system prompt".to_string(),
+        "do the task",
+        ws,
+    );
+
+    assert!(note.is_none());
+    assert_eq!(
+        messages.len(),
+        2,
+        "an unreadable checkpoint must not leave a user-less transcript"
+    );
+    assert_eq!(messages[0].content, "fresh system prompt");
+}

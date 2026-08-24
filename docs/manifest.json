@@ -45,6 +45,11 @@
       "status": "proposed",
       "title": "Adaptive Context \u2014 Implementation Plan"
     },
+    "adr-readme": {
+      "path": "docs/adr/README.md",
+      "status": "living",
+      "title": "Architecture Decision Records"
+    },
     "adr/0006-contextframe-vs-compiledcontextframe": {
       "path": "docs/adr/0006-contextframe-vs-compiledcontextframe.md",
       "status": "implemented",
@@ -100,23 +105,6 @@
       ],
       "status": "proposed",
       "title": "Agent-Native Delivery \u2014 the issue tracker as the agent's working memory"
-    },
-    "audit/2026-08-parity-gap-followup": {
-      "path": "docs/audit/2026-08-parity-gap-followup.md",
-      "sections": [
-        1,
-        2,
-        3,
-        4,
-        5
-      ],
-      "status": "archived",
-      "title": "Parity follow-up to the July 2026 audit \u2014 August 2026"
-    },
-    "audit/2026-08-ultraudit-round-3": {
-      "path": "docs/audit/2026-08-04-ultraudit-round-3.md",
-      "status": "archived",
-      "title": "Ultraudit round 3 \u2014 2026-08-04"
     },
     "backlog-self-driving": {
       "path": "docs/spec/backlog-self-driving.md",
@@ -360,6 +348,11 @@
       "path": "docs/spec/filesystem-layout.md",
       "status": "living",
       "title": "Where Stella puts things on your disk"
+    },
+    "onboarding": {
+      "path": "docs/ONBOARDING.md",
+      "status": "living",
+      "title": "Start here \u2014 Stella for new engineers"
     },
     "oxagen-trace-drain": {
       "path": "docs/spec/oxagen-trace-drain.md",

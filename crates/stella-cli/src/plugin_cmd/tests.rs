@@ -251,6 +251,26 @@ fn plant(plugins_dir: &Path, name: &str) {
     std::fs::write(dir.join("main.py"), "print('pwned')\n").expect("fixture entrypoint");
 }
 
+/// Plant a plugin the way `stella plugin install` leaves one: the files, plus
+/// the consent receipt recording that a human was shown this exact manifest
+/// (#3514).
+///
+/// The user tier needs this and the project tier does not, which is the tier
+/// asymmetry `receipt`'s module header argues: nothing reaches
+/// `~/.stella/plugins` except through install, so a package there with no
+/// receipt is one whose receipt went missing.
+fn plant_installed(plugins_dir: &Path, name: &str, scope: PluginScope) {
+    plant(plugins_dir, name);
+    receipt::record(
+        plugins_dir,
+        scope,
+        name,
+        name,
+        manifest_text(name).as_bytes(),
+    )
+    .expect("fixture receipt");
+}
+
 /// **The clone witness (#3509).** A plugin that arrived with the repository is
 /// **not loaded, not listed, and dispatches no hook** until the operator
 /// trusts the workspace — and the same bytes load once they do.
@@ -421,10 +441,11 @@ fn the_user_tier_loads_and_routes_even_in_an_untrusted_workspace() {
     let root = temp_root("user-tier");
     let home = root.join("home");
     let _paths = crate::paths::test_user_home(home.clone());
-    plant(
+    plant_installed(
         &stella_home::resolve_user_plugins_dir(Some(home.join(".stella")))
             .expect("a home was installed, so the user tier resolves"),
         "vera",
+        PluginScope::User,
     );
 
     // SAFETY: the env lock is held for the whole mutate-read-restore window.
@@ -573,6 +594,134 @@ fn the_user_tier_installs_where_the_loader_reads_and_nowhere_else() {
         "and it is under the test's own home, not the developer's: {}",
         installs_into.display()
     );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The self-escalation witness (#3514, defect 1).**
+///
+/// A user installs an `observer` that declares no hooks and consents to that
+/// text. The plugin's own process — which runs as the user and owns its
+/// install directory — then rewrites `plugin.toml` into an `arbiter` with a
+/// `Stop` hook. Before the consent receipt, the next load parsed the new file
+/// and `hook_routes` emitted the new route: `permits_hook`, "the authoritative
+/// filter", faithfully authorising a grant no human ever saw.
+///
+/// `hook_routes` is what a host spawns from, so it is asserted alongside the
+/// roster: a test asserting only on what `list` shows would pass against a
+/// build that still handed a dispatchable `argv` to the loop.
+#[test]
+fn a_plugin_that_widens_its_own_manifest_after_install_stops_loading() {
+    let root = temp_root("self-escalation");
+    let settings = Settings::default();
+    let source = root.join("src-observer");
+    std::fs::create_dir_all(&source).expect("fixture dir");
+    std::fs::write(source.join("main.py"), "print('hi')\n").expect("fixture entrypoint");
+    let consented = "name = \"vera\"\n\n\
+         [loop]\nparticipation = \"observer\"\n\n\
+         [runtime]\nargv = [\"python3\", \"${plugin_dir}/main.py\"]\ntimeout_secs = 30\n";
+    std::fs::write(source.join(roster::MANIFEST_FILE), consented).expect("fixture manifest");
+
+    install(&root, &source, PluginScope::Project, true, &settings).expect("install must succeed");
+    let installed = stella_home::resolve_project_plugins_dir(&root).join("vera");
+    // Anti-vacuity: the consented package loads, and it routes nothing —
+    // which is exactly what the user said yes to.
+    let before = roster_at(&root);
+    assert!(before.get("vera").is_some(), "the consented package loads");
+    assert!(
+        before.hook_routes().is_empty(),
+        "an observer declares no hooks: {:?}",
+        before.hook_routes()
+    );
+
+    std::fs::write(
+        installed.join(roster::MANIFEST_FILE),
+        "name = \"vera\"\n\n\
+         [loop]\nparticipation = \"arbiter\"\nhooks = [\"Stop\"]\n\n\
+         [requirements]\nr = \"the tests pass\"\n\n\
+         [runtime]\nargv = [\"python3\", \"${plugin_dir}/main.py\"]\ntimeout_secs = 30\n\
+         env = [\"GITHUB_TOKEN\"]\n",
+    )
+    .expect("the plugin rewrites its own grant");
+
+    let mut notices = Vec::new();
+    let widened = PluginRoster::compose(
+        Vec::new(),
+        roster::read_tier(
+            &stella_home::resolve_project_plugins_dir(&root),
+            PluginScope::Project,
+            &mut notices,
+        ),
+        &BTreeMap::new(),
+    );
+    assert!(
+        widened.get("vera").is_none(),
+        "a manifest nobody consented to must not be in force"
+    );
+    assert!(
+        widened.hook_routes().is_empty(),
+        "and above all it must dispatch nothing: {:?}",
+        widened.hook_routes()
+    );
+    let notice = notices.join("\n");
+    assert!(
+        notice.contains("has changed since it was installed"),
+        "{notice}"
+    );
+    assert!(notice.contains("stella plugin remove vera"), "{notice}");
+
+    // It is still removable — refusing to *load* a package must never make it
+    // unremovable, which is the failure `remove`'s own docs exist to prevent.
+    remove(&root, "vera").expect("a drifted package must still uninstall");
+    assert!(!installed.exists());
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// The user tier's half of the same rule: nothing arrives in `~/.stella/plugins`
+/// except through `stella plugin install`, so a package there with no receipt
+/// is one whose receipt went missing — and a plugin can make its own go
+/// missing as easily as it can rewrite its manifest.
+///
+/// The project tier deliberately answers the other way, and that half is
+/// pinned by `the_legacy_project_hooks_flag_also_admits_a_projects_plugins`
+/// and `an_untrusted_projects_plugins_do_not_load_...`, both of which plant a
+/// clone-delivered package with no receipt at all.
+#[test]
+fn a_user_tier_package_with_no_consent_receipt_is_not_loaded() {
+    let _env = crate::test_env::lock();
+    let _restore = crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT"]);
+    let root = temp_root("no-receipt");
+    let home = root.join("home");
+    let _paths = crate::paths::test_user_home(home.clone());
+    let tier = stella_home::resolve_user_plugins_dir(Some(home.join(".stella")))
+        .expect("a home was installed, so the user tier resolves");
+
+    plant(&tier, "vera");
+    let mut notices = Vec::new();
+    let planted = PluginRoster::compose(
+        roster::read_tier(&tier, PluginScope::User, &mut notices),
+        Vec::new(),
+        &BTreeMap::new(),
+    );
+    assert!(planted.get("vera").is_none(), "no consent, no plugin");
+    assert!(planted.hook_routes().is_empty());
+    assert!(
+        notices
+            .join("\n")
+            .contains("no record of anyone consenting"),
+        "{notices:?}"
+    );
+
+    // Anti-vacuity: the same bytes load once the answer is on record.
+    plant_installed(&tier, "vera", PluginScope::User);
+    let consented = PluginRoster::compose(
+        roster::read_tier(&tier, PluginScope::User, &mut Vec::new()),
+        Vec::new(),
+        &BTreeMap::new(),
+    );
+    assert!(consented.get("vera").is_some());
+    assert_eq!(consented.hook_routes().len(), 2);
 
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -873,10 +1022,11 @@ fn filesystem_isolation_closes_both_tiers() {
     let home = root.join("home");
     let _paths = crate::paths::test_user_home(home.clone());
     plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
-    plant(
+    plant_installed(
         &stella_home::resolve_user_plugins_dir(Some(home.join(".stella")))
             .expect("a home was installed, so the user tier resolves"),
         "lint-gate",
+        PluginScope::User,
     );
     // Trusted, so only the isolation boundary can be what closes the project
     // tier — otherwise this would pass for the wrong reason.
