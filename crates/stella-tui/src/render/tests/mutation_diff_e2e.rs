@@ -132,10 +132,79 @@ fn fold_batch(model: &mut SessionModel, paths: &[(&str, &str)]) {
     });
 }
 
+/// Drive one `bash` call that mutates several paths — a codemod, a `sed -i`
+/// across a directory — in the order the product emits it.
+///
+/// The input carries a `command` rather than a `path`, because that is what a
+/// shell call's schema holds and it is why the head's subject cell names no
+/// file (#4319).
+fn fold_shell(model: &mut SessionModel, command: &str, paths: &[(&str, &str)]) {
+    model.apply(&AgentEvent::ToolStart {
+        call: stella_protocol::ToolCall {
+            call_id: "c1".into(),
+            name: "bash".into(),
+            input: serde_json::json!({ "command": command }),
+        },
+        sub_agent_id: None,
+    });
+    for (path, marker) in paths {
+        model.apply(&AgentEvent::FileChange {
+            path: (*path).into(),
+            kind: FileChangeKind::Modified,
+            added: 1,
+            removed: 1,
+            diff: Some(patch_for("alpha", marker)),
+        });
+    }
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "c1".into(),
+        output: stella_protocol::ToolOutput::Ok {
+            content: format!("rewrote {} files", paths.len()),
+            data: None,
+        },
+        duration_ms: 120,
+        speculated: false,
+        sub_agent_id: None,
+    });
+}
+
+/// One of the fold drivers above, so a witness can run the same assertions
+/// against `bash` and `apply_edits` without spelling the type twice.
+type FoldCall = fn(&mut SessionModel, &[(&str, &str)]);
+
 /// Render the transcript's last entry against the model's own file state —
 /// the same two arguments the deck passes, sourced the same way.
 fn render_last(model: &SessionModel) -> String {
     render_last_at(model, false)
+}
+
+/// Render the call's **head** — the `ToolStart` entry, which every one of
+/// these transcripts opens with — against the state the rest of the transcript
+/// has since folded.
+///
+/// The deck redraws its settled prefix when a measurement lands (#4154), so
+/// this is the row a reader is actually looking at once the call has returned,
+/// not a snapshot of the instant it dispatched.
+fn render_head(model: &SessionModel) -> String {
+    let mut out = Vec::new();
+    entry_lines(
+        &model.transcript[0],
+        EntryView::at(&model.files, &model.transcript, 0),
+        false,
+        false,
+        false,
+        WIDTH,
+        &mut out,
+    );
+    out.iter()
+        .map(|l| {
+            l.spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// [`render_last`], with the reader's ctrl+o state as the deck passes it.
@@ -351,5 +420,106 @@ fn a_one_path_call_renders_exactly_what_it_did_before() {
             " │      3  }",
         ],
         "a single-path mutation's block is unchanged by #4214"
+    );
+}
+
+/// **Witness (#4319).** The head of a call whose subject names no path states
+/// the same scope and the same summed delta its own result row does.
+///
+/// `bash` and `apply_edits` are the two tools that move several files at once
+/// and neither is one of the five names `kind_for` recognises, so both landed
+/// on a kind with no size field: the head resolved the measurement — the same
+/// `(added, removed)` the row two lines under it prints — and dropped it. The
+/// block was therefore half-sized, which is easy to miss precisely because the
+/// result row is right, and reads as a command that changed nothing.
+#[test]
+fn a_head_whose_subject_names_no_path_states_its_own_scope() {
+    let files = [
+        ("crates/a/src/lib.rs", "bravo"),
+        ("crates/b/src/lib.rs", "charlie"),
+        ("crates/c/src/lib.rs", "delta"),
+    ];
+    let shell: FoldCall = |model, paths| fold_shell(model, "codemod --all", paths);
+    for (label, fold) in [("bash", shell), ("apply_edits", fold_batch as FoldCall)] {
+        let mut model = SessionModel::default();
+        fold(&mut model, &files);
+        let head = render_head(&model);
+        let result = render_last(&model);
+
+        assert!(
+            head.contains("3 files"),
+            "{label}: the head states the scope of its counts — its subject \
+             cell is a command line or a tool name, so the count is the only \
+             thing saying what the numbers are of:\n{head}"
+        );
+        assert!(
+            head.contains("+3") && head.contains("-3"),
+            "{label}: the head states the whole call's summed delta:\n{head}"
+        );
+        assert!(
+            result.contains("3 files") && result.contains("+3") && result.contains("−3"),
+            "{label}: anti-vacuity — the result row this must agree with:\n{result}"
+        );
+    }
+}
+
+/// The counter-test, in the direction that costs something: an unmeasured head
+/// states no size at all.
+///
+/// A head is drawn the moment its call dispatches, before any `FileChange`
+/// exists, and every ordinary shell call — `cargo test`, `git status` —
+/// changes nothing and never gets one. Filling the column with zeros there is
+/// the #4150 defect at a different row: `run cargo test · 0 files +0 -0`
+/// asserts a measurement nobody took.
+#[test]
+fn an_unmeasured_head_states_no_size() {
+    let mut model = SessionModel::default();
+    model.apply(&AgentEvent::ToolStart {
+        call: stella_protocol::ToolCall {
+            call_id: "c1".into(),
+            name: "bash".into(),
+            input: serde_json::json!({ "command": "cargo test -p stella-core" }),
+        },
+        sub_agent_id: None,
+    });
+    let head = render_head(&model);
+
+    assert!(
+        head.contains("cargo test"),
+        "anti-vacuity — the head is drawn:\n{head}"
+    );
+    for absent in ["files", "+0", "-0"] {
+        assert!(
+            !head.contains(absent),
+            "an in-flight call has been measured by nothing and must state \
+             no `{absent}`:\n{head}"
+        );
+    }
+}
+
+/// A one-file shell call reports its delta without the scope chip, exactly as
+/// the result row beneath it does.
+///
+/// The elision rule is the row's own and is not restated here: a `1 files`
+/// column that never varies is a column, and the head and the row must not
+/// disagree about when it appears.
+#[test]
+fn a_one_path_shell_head_states_the_delta_without_a_scope_chip() {
+    let mut model = SessionModel::default();
+    fold_shell(
+        &mut model,
+        "sed -i 's/alpha/bravo/' main.rs",
+        &[("main.rs", "bravo")],
+    );
+    let head = render_head(&model);
+
+    assert!(
+        head.contains("+1") && head.contains("-1"),
+        "the one path's delta is stated:\n{head}"
+    );
+    assert!(
+        !head.contains("file"),
+        "a scope chip over the only file there is would be a column that \
+         never varies, and the result row states none either:\n{head}"
     );
 }

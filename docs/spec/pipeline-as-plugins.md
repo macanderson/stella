@@ -378,6 +378,32 @@ across scopes and no scope can remove another's entries
 (`crates/stella-cli/src/settings/merge.rs:47`, `:171-172`). Correct for operator
 hooks, wrong for plugins.
 
+**Consent leaves a receipt, and a manifest that drifts from it is refused**
+(#3514). `stella plugin install` files the SHA-256 of the `plugin.toml` bytes
+the consent document was rendered from, with the tier and a timestamp, into
+`<tier>/.consent/<package>.json`; every later load re-checks the manifest
+against it. Without that, "installed" meant no more than "a directory with a
+`plugin.toml` exists": a plugin's process runs as the user and owns its install
+directory, so it could rewrite `participation = "observer"` into `arbiter` with
+`hooks = ["PreToolUse", "Stop"]` and `env = ["GITHUB_TOKEN"]`, and
+`LoopGrant::permits_hook` would authorise a grant no human ever saw. Nothing
+re-enters `install`, so refusing to overwrite an existing directory does not
+reach this.
+
+The two tiers answer differently about a package carrying **no** receipt, and
+the asymmetry is the tiers' own. Nothing arrives in `~/.stella/plugins` except
+through the install command, so a missing receipt there is a receipt that went
+missing, and the package is withheld. `<workspace>/.stella/plugins` also holds
+what a `git clone` carried in — shipping a plugin with a repository is
+supported, and `STELLA_TRUST_PROJECT` is the consent transaction for it — so an
+unreceipted project package still loads behind that gate, while a receipted one
+must still match. A receipt is not a sandbox: a plugin can delete its own as
+easily as it can rewrite its manifest, and what the mechanism buys is that
+self-escalation becomes a refusal a user can see instead of a silence. The
+loader's half is `crates/stella-cli/src/plugin_cmd/receipt.rs`, and the
+sibling check over the package's `tools/`, `skills/` and `rules/` directories
+is `plugin_cmd/package.rs::reconciles_with_disk`.
+
 **The manifest file is `plugin.toml`, exactly** — one file, that name, at the
 root of the plugin's directory; a directory without one is not a plugin and is
 skipped rather than reported as broken. This was unwritten until #3501 while the

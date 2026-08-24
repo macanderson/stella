@@ -77,6 +77,7 @@ fn installed(text: &str, dir: &str) -> InstalledPlugin {
         manifest: PluginManifest::from_toml_str(text).expect("fixture must load"),
         dir: PathBuf::from(dir),
         scope: PluginScope::User,
+        consent: crate::plugin_cmd::receipt::ConsentState::Receipted,
     }
 }
 
