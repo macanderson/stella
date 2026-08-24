@@ -542,18 +542,14 @@ fn note_identity_surprises(
     }
 }
 
-/// Parse one plugin directory's manifest. `Ok(None)` = no `plugin.toml`, so
-/// this directory is not a plugin at all.
-pub(crate) fn load_manifest(dir: &Path) -> Result<Option<PluginManifest>, String> {
-    Ok(read_manifest(dir)?.map(|(manifest, _)| manifest))
-}
-
-/// [`load_manifest`], keeping the bytes it parsed.
+/// Parse one plugin directory's manifest, keeping the bytes it parsed.
+/// `Ok(None)` = no `plugin.toml`, so this directory is not a plugin at all.
 ///
 /// The text is what a consent receipt digests (#3514, [`super::receipt`]), and
-/// it is returned rather than re-read so that "the manifest that was parsed"
-/// and "the manifest that was digested" cannot be two different reads of a
-/// file a third party's process is free to rewrite between them.
+/// it rides back with the parse rather than being re-read, so that "the
+/// manifest that was parsed" and "the manifest that was digested" cannot be two
+/// different reads of a file a third party's process is free to rewrite between
+/// them.
 pub(crate) fn read_manifest(dir: &Path) -> Result<Option<(PluginManifest, String)>, String> {
     let path = dir.join(MANIFEST_FILE);
     let text = match std::fs::read_to_string(&path) {
@@ -604,7 +600,7 @@ mod tests {
     /// contract with third-party authors who cannot read this file, it went
     /// unspecified until #3501, and the failure mode of changing it is a
     /// directory full of plugins that load as "not a plugin at all" — silence,
-    /// not an error. `load_manifest` is exercised against a real directory so
+    /// not an error. `read_manifest` is exercised against a real directory so
     /// the pin covers the lookup and not merely the string.
     #[test]
     fn the_manifest_filename_is_the_specified_one() {
@@ -612,7 +608,7 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("a temp dir");
         assert!(
-            load_manifest(dir.path())
+            read_manifest(dir.path())
                 .expect("an unreadable directory is not an error")
                 .is_none(),
             "a directory with no plugin.toml is not a plugin"
@@ -620,10 +616,14 @@ mod tests {
 
         std::fs::write(dir.path().join("plugin.toml"), "name = \"named-by-spec\"")
             .expect("write the manifest");
-        let found = load_manifest(dir.path())
+        let (found, text) = read_manifest(dir.path())
             .expect("the manifest loads")
             .expect("a directory holding plugin.toml is a plugin");
         assert_eq!(found.name, "named-by-spec");
+        assert_eq!(
+            text, "name = \"named-by-spec\"",
+            "the bytes ride back with the parse, so the receipt digests what was read"
+        );
     }
 
     /// A directory whose name begins with a dot is not a plugin, even when it
