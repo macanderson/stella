@@ -168,9 +168,10 @@ mod tests {
         // all three are substring matches in vocabulary order.
         assert_eq!(matches.len(), 3);
         let c = composer_with("/model zai/glm-4");
-        assert_eq!(arg_matches(&c, "/model", &candidates()), vec![
-            "zai/glm-4.5-air"
-        ]);
+        assert_eq!(
+            arg_matches(&c, "/model", &candidates()),
+            vec!["zai/glm-4.5-air"]
+        );
     }
 
     #[test]

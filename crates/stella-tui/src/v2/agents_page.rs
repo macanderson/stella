@@ -368,12 +368,7 @@ fn open_selected(ui: &mut DeckUi, list: &[Row]) -> DeckAction {
 
 /// `⌃x` twice on a live lane stops it — the SUB-AGENTS overlay's rule. A
 /// session row takes no control verb from here.
-fn kill_selected(
-    model: &WorkspaceModel,
-    ui: &mut DeckUi,
-    list: &[Row],
-    armed: bool,
-) -> DeckAction {
+fn kill_selected(model: &WorkspaceModel, ui: &mut DeckUi, list: &[Row], armed: bool) -> DeckAction {
     match list.get(ui.agents_page.sel) {
         Some(Row::Lane(i)) => match model.agents.get(*i) {
             Some(lane) if lane.status.is_terminal() => DeckAction::Handled,
@@ -424,7 +419,10 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
     let mut section = None;
     for (i, row) in list.iter().enumerate() {
         let live = match row {
-            Row::Lane(l) => model.agents.get(*l).is_some_and(|a| !a.status.is_terminal()),
+            Row::Lane(l) => model
+                .agents
+                .get(*l)
+                .is_some_and(|a| !a.status.is_terminal()),
             Row::Session(s) => ui.sessions.get(*s).is_some_and(|s| is_live(s.phase)),
         };
         let heading = if live { "WORKING" } else { "COMPLETED" };
@@ -508,7 +506,11 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
     // The page's popups, anchored above the composer: the scoped slash menu,
     // or `/model`'s argument menu.
     let arg = model_arg_matches(ui);
-    let menu: Vec<String> = if arg.is_empty() { slash_matches(ui) } else { arg };
+    let menu: Vec<String> = if arg.is_empty() {
+        slash_matches(ui)
+    } else {
+        arg
+    };
     if !menu.is_empty() {
         render_menu(ui, &menu, area, foot_area.y + 1, buf);
     }

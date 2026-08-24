@@ -164,7 +164,8 @@ pub(super) fn deck_reserved() -> Vec<&'static str> {
 /// stay queued on purpose: `/clear` cancels the turn, `/init`/`/reload`/
 /// `/profile`/`/add-dir` mutate the live session, and a custom (⚡) command
 /// *is* a prompt once expanded.
-pub(super) const SIDEBAND: &[&str] = &["/help", "/model", "/models", "/theme", "/export", "/donate"];
+pub(super) const SIDEBAND: &[&str] =
+    &["/help", "/model", "/models", "/theme", "/export", "/donate"];
 
 /// Whether `head` (the first `/`-token of a submission) is queue-free.
 pub(crate) fn is_sideband(head: &str) -> bool {
