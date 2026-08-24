@@ -10,9 +10,10 @@ name: docker-serve
 #   - ci.yml's `check` job is a required context. A multi-minute image build
 #     hanging off it would slow every Rust PR to prove something only the
 #     packaging files can break.
-#   - ci.yml uses `paths-ignore` (run unless it's prose); this needs `paths`
-#     (run only when the packaging surface moves). The two cannot be mixed in
-#     one workflow, and combining them by hand is how a filter goes wrong.
+#   - ci.yml runs unless the diff is prose, decided in a job rather than a
+#     trigger; this needs `paths` (run only when the packaging surface moves).
+#     The two shapes cannot be mixed in one workflow, and combining them by
+#     hand is how a filter goes wrong.
 #
 # No `merge_group` trigger for the same reason: `paths` filters are ignored on
 # that event, so queuing any PR at all would build the image.

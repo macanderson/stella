@@ -82,6 +82,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
                          #   + command-docs + brand-case + file-size
+                         #   + website-inputs (a Rust test's website/ inputs
+                         #     are declared, and ci.yml's filter is built
+                         #     from that declaration)
                          #   + god-files
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
@@ -134,11 +137,13 @@ CI enforces the same steps split across four workflows:
 validate`, a release smoke build (thin LTO), and the deleted-test guard
 (`scripts/check-deleted-tests.sh`);
 `docs-guards.yml` runs those two plus a second run of `command-docs`,
-`brand-case`, `gate-parity`, `god-files` and `design-refs`, because all of them
-trigger on the `docs/**` and `*.md` paths `ci.yml` ignores — `design-refs` was
-the last to join, after a docs-only PR was found able to move a document into
-the `docs/design` scratchpad, invalidate every Rust comment citing it, and land
-green (#3888); and
+`website-inputs`, `brand-case`, `gate-parity`, `god-files` and `design-refs`,
+because all of them trigger on the `docs/**`, `website/**` and `*.md` paths
+`ci.yml` skips — `website-inputs` was the last to join, after a website-only PR
+was found able to move a file a Rust test reads and land green, leaving `main`
+red on a test nobody had run (#4632, and #3888 is the same shape one boundary
+over: a docs-only PR moving a document into the `docs/design` scratchpad and
+invalidating every Rust comment citing it); and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
 because a PR that hand-edits a generated schema and nothing else starts neither
 of the other two (#1439) — and `doc-warnings-schema` beside it, because

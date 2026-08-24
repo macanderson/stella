@@ -8,8 +8,10 @@ name: msrv
 # and never urgent. In practice that meant a PR using a 1.91+ API merged
 # green and the break was discovered up to 7 days and an unknown number of
 # commits later, at which point bisecting it is someone's afternoon instead
-# of a review comment (#917). Now also runs on `pull_request`, mirroring
-# ci.yml's `paths-ignore` so a docs-only PR doesn't pay for it. It is not
+# of a review comment (#917). Now also runs on `pull_request`, over the same
+# prose paths ci.yml skips (scripts/ci-rust-scope.sh) so a docs-only PR
+# doesn't pay for it. This one can stay a trigger filter: it reports no
+# required context, so a suppressed run blocks nothing. It is not
 # marked as a required status check in branch protection — that's a repo
 # Settings change outside this file — so until it is, treat a red run here
 # the same as any other non-required check: fix before merging, don't ignore.

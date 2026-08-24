@@ -76,6 +76,7 @@ make shellcheck
 ./scripts/check-invariants.sh
 python3 ./scripts/check-doc-links.py check
 ./scripts/check-command-docs.sh
+./scripts/check-website-inputs.sh
 ./scripts/check-brand-case.sh
 ./scripts/check-file-size.sh
 ./scripts/check-god-files.sh
@@ -124,9 +125,9 @@ touched (#1437).
 
 CI enforces the same steps, split across `ci.yml` (plus a release smoke build);
 `docs-guards.yml`, which runs the prose guards — `invariants`, `doc-links`,
-`command-docs`, `brand-case`, `gate-parity`, `god-files` and `design-refs` — on
-their own because they trigger on the `docs/**` and `*.md` paths that `ci.yml`
-deliberately ignores; `wire-schema.yml`, for the
+`command-docs`, `website-inputs`, `brand-case`, `gate-parity`, `god-files` and
+`design-refs` — on their own because they trigger on the `docs/**`, `website/**`
+and `*.md` paths that `ci.yml` deliberately skips; `wire-schema.yml`, for the
 same reason in the other direction — a PR that only hand-edits a generated
 schema under `docs/wire/` starts neither of the others (#1439); and
 `guard-self-tests.yml`, which runs `prose`, `hue-separation` and

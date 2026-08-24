@@ -37,7 +37,7 @@ CARGO_SCOPE ?= --workspace
 # saved nothing and let a GATE=fast push land stale generated wire artifacts.
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
-                    command-docs brand-case file-size god-files gate-parity left-behind \
+                    command-docs website-inputs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
                     tool-error-class \
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
@@ -299,6 +299,10 @@ doc-adopt: ## Scaffold frontmatter onto a document so it can be cited: make doc-
 .PHONY: command-docs
 command-docs: ## Assert every stella subcommand has a listed reference page (#993)
 	@./scripts/check-command-docs.sh
+
+.PHONY: website-inputs
+website-inputs: ## Assert every website/ path a Rust source reads is declared and present (#4632)
+	@./scripts/check-website-inputs.sh
 
 .PHONY: brand-case
 brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
@@ -758,6 +762,14 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 .PHONY: file-size-test
 file-size-test: ## Test the file-size ratchet's language coverage and its change-relative judgement (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
+
+.PHONY: website-inputs-test
+website-inputs-test: ## Test the website-inputs guard's three failure directions (hermetic; not part of `gate`)
+	./scripts/test-website-inputs.sh
+
+.PHONY: ci-rust-scope-test
+ci-rust-scope-test: ## Test which diffs run the Rust gate, prose skips and fail-open included (hermetic; not part of `gate`)
+	./scripts/test-ci-rust-scope.sh
 
 .PHONY: no-scratch-test
 no-scratch-test: ## Test the session-scratch boundary: the ignore rules and the guard together (#2888; hermetic; not part of `gate`)
