@@ -127,6 +127,18 @@ pub(crate) fn load_workspace_skills_with_authority(
 /// instead of a name collision inside your own load.
 ///
 /// Roster order decides plugin-versus-plugin, matching the tool surface.
+///
+/// # The stamp is this function's, not the file's
+///
+/// Every skill loaded here is stamped with the contributing plugin's name
+/// (#3567), because this is the one place that knows which package's directory
+/// was scanned. A skill's `origin:` frontmatter marker *can* set
+/// [`skills::SkillOrigin`] — so a package could otherwise declare itself the
+/// user's own — and `contributed_by` is deliberately not reachable that way.
+/// It is the same unforgeable-stamp rule
+/// `stella_tools::custom::CustomTool::contributed_by` follows for the tool
+/// surface, and the reason a caller no longer has to parse
+/// [`skills::Skill::source_path`] to answer "which plugin gave me this?".
 fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills) {
     for contributed in crate::plugin_cmd::package::contributed_skill_dirs(workspace_root) {
         let found = skills::load_skills_with_diagnostics(
@@ -137,10 +149,11 @@ fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills
             },
         );
         loaded.diagnostics.extend(found.diagnostics);
-        for skill in found.skills {
+        for mut skill in found.skills {
             if loaded.skills.iter().any(|held| held.name == skill.name) {
                 continue;
             }
+            skill.contributed_by = Some(contributed.plugin.clone());
             loaded.skills.push(skill);
         }
     }

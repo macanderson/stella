@@ -322,7 +322,7 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
     TieredFiles {
         user: crate::rules::FsRuleSource.read_rule_files(user),
         project: if include_project {
-            crate::rules::FsRuleSource.read_rule_files(&plugin_first(project, root))
+            plugin_first(project, root)
         } else {
             Vec::new()
         },
@@ -353,13 +353,37 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
 /// project tier entirely in a workspace that is not trusted to run code, so
 /// nothing reaches here from an untrusted checkout — and `include_project`
 /// above gates the same axis a second time for the same checkout.
-fn plugin_first(project: &[String], root: &Path) -> Vec<String> {
-    let mut dirs: Vec<String> = crate::plugin_cmd::package::contributed_record_dirs(root)
-        .into_iter()
-        .map(|contributed| contributed.dir.display().to_string())
-        .collect();
-    dirs.extend(project.iter().cloned());
-    dirs
+///
+/// # One read per package, so the name survives the read
+///
+/// This used to flatten every contributed directory into the `Vec<String>` a
+/// [`RuleSource`](stella_core::rules::RuleSource) takes, which threw the
+/// plugin's name away at the boundary: downstream saw a path, and "which plugin
+/// gave me this?" was answerable only by matching that path against a package
+/// directory (#3567). Reading each package's directory on its own keeps the
+/// answer as a field — [`RuleFile::contributed_by`] — stamped by the code that
+/// *chose* the directory, which is what makes it unforgeable in the same way
+/// `CustomTool::contributed_by` is.
+///
+/// It is the argument [`TieredFiles`] already makes for the trust tier, one
+/// axis over: flattening at the boundary and re-deriving downstream from a path
+/// prefix puts an attribution on string matching.
+fn plugin_first(project: &[String], root: &Path) -> Vec<RuleFile> {
+    let mut files: Vec<RuleFile> = Vec::new();
+    for contributed in crate::plugin_cmd::package::contributed_record_dirs(root) {
+        let dir = [contributed.dir.display().to_string()];
+        files.extend(
+            crate::rules::FsRuleSource
+                .read_rule_files(&dir)
+                .into_iter()
+                .map(|file| RuleFile {
+                    contributed_by: Some(contributed.plugin.clone()),
+                    ..file
+                }),
+        );
+    }
+    files.extend(crate::rules::FsRuleSource.read_rule_files(project));
+    files
 }
 
 /// This workspace's rule files, kept in their trust tiers.
@@ -471,7 +495,7 @@ fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str
     // collision when the workspace still *has* a record of that lineage, and a
     // grant outlives the file it was written for.
     if let Ok(events) = read_promotions(root) {
-        let repo_owned = repo_owned_lineages(root, files);
+        let repo_owned = repo_owned_lineages(files);
         for lineage in stella_core::records::promotion::blocking_grants(&events).into_keys() {
             if repo_owned.contains(&lineage) {
                 approved_blocking.insert((Trust::Project, lineage));
@@ -506,19 +530,20 @@ fn registry_from(root: &Path, files: &TieredFiles, cache: &SweepCache, now: &str
 /// Cheap by construction: `parse_records` is already run twice on this path
 /// (see [`load_registry_with`]) and this is a third pass over a handful of
 /// small files, which is the same trade that path already documents.
-fn repo_owned_lineages(root: &Path, files: &TieredFiles) -> BTreeSet<String> {
-    let plugin_dirs: Vec<String> = crate::plugin_cmd::package::contributed_record_dirs(root)
-        .into_iter()
-        .map(|contributed| contributed.dir.display().to_string())
-        .collect();
-    // Prefix comparison is exact here rather than heuristic: both strings are
-    // produced from the same `PathBuf`s by the same `display()` call —
-    // `plugin_first` hands these very directories to `read_rule_files`, which
-    // joins each with a file name.
+///
+/// The question is answered from [`RuleFile::contributed_by`], which
+/// [`plugin_first`] stamped. It used to be answered by re-deriving each
+/// package's directory from the roster and testing whether the file's path
+/// started with one — exact rather than heuristic, because both strings came
+/// from the same `PathBuf` through the same `display()` call, and still a
+/// security decision resting on string matching (#3567). A grant armed against
+/// a package's lineage is precisely what this function exists to refuse, so it
+/// asks the field.
+fn repo_owned_lineages(files: &TieredFiles) -> BTreeSet<String> {
     let repo_owned: Vec<RuleFile> = files
         .project
         .iter()
-        .filter(|file| !plugin_dirs.iter().any(|dir| file.path.starts_with(dir)))
+        .filter(|file| file.contributed_by.is_none())
         .cloned()
         .collect();
     parse_records(&repo_owned)

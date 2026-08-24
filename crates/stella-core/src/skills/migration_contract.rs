@@ -320,6 +320,7 @@ fn a_candidate_matching_an_existing_skill_is_dropped() {
         domains: vec!["testing".into()],
         source_path: ".stella/skills/witness-assertions.md".into(),
         origin: SkillOrigin::AutoCreated,
+        contributed_by: None,
     }];
     let observations = (0..3)
         .map(|i| pinned_observation(&format!("reflection:{i}"), 100 + i))
