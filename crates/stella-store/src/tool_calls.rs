@@ -632,6 +632,11 @@ pub(crate) fn refold_tool_calls(tx: &Connection, execution_id: i64) -> rusqlite:
     // seven versions before the column exists. Naming it in the INSERT
     // unconditionally fails that migration, and a failed migration takes the
     // workspace's whole store with it.
+    //
+    // A probe that itself errors reads as "no column", which is the direction
+    // that still writes every other field correctly; the same fault would then
+    // surface on the INSERT below, where it is this function's error to
+    // return rather than one swallowed here.
     let attributed =
         crate::migrations::column_exists(tx, "tool_calls", "sub_agent_id").unwrap_or(false);
     for (seq, call) in calls.iter().enumerate() {
