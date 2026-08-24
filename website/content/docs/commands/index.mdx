@@ -162,7 +162,7 @@ here and the index your terminal shows can never drift apart.
 
 Each command page in this section documents its usage synopsis, behavior, relevant flags, and realistic examples.
 
-Four tests in `stella-cli` keep this page honest. `every_subcommand_has_a_reference_page` diffs the live clap command tree against this section's `meta.json`, so a new subcommand cannot land undocumented. `the_docs_nav_mirrors_these_groups` fails if the sidebar grouping drifts from the one `--help` renders, `the_docs_index_summaries_are_the_clis_own` fails if any summary above differs from the CLI's own string, and `every_global_flag_has_a_card_on_the_index` fails if a session-wide flag ships without a card in the grid below.
+Four tests in `stella-cli` keep this page in sync. `every_subcommand_has_a_reference_page` diffs the live clap command tree against this section's `meta.json`, so a new subcommand cannot land undocumented. `the_docs_nav_mirrors_these_groups` fails if the sidebar grouping drifts from the one `--help` renders, `the_docs_index_summaries_are_the_clis_own` fails if any summary above differs from the CLI's own string, and `every_global_flag_has_a_card_on_the_index` fails if a session-wide flag ships without a card in the grid below.
 
 Two of them are specialized rather than day-to-day. `stella arena` is a benchmark-harness adapter for measuring stella, not for doing work with it; `stella telemetry` operates the managed enterprise spool and is disabled without a signed org-managed enrollment.
 

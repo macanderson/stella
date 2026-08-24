@@ -76,7 +76,7 @@ An attachment a model cannot ingest **never errors the turn**. Sending an
 image to a text-only model would be a hard API failure that loses your
 prompt; stella instead replaces the payload with a short text note telling
 the model exactly what was attached — the filename, the kind, and that it
-cannot view it. The model can then say so honestly, or open the file with a
+cannot view it. The model can then say so, or open the file with a
 tool where that makes sense (a text-extractable PDF, a file worth
 inspecting), instead of hallucinating contents it never saw.
 

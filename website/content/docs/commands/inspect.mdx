@@ -148,7 +148,7 @@ stability invariant is holding.
 
 A single step can involve more than one model call. The engine's own worker call is always `0`; the overflow summarizer that may run during that step's compaction is `1`; a wrapper plugin's management roles allocate `2` and up.
 
-Which roles appear depends on the wrapper — a verification plugin typically issues `triage`, `research`, `plan`, `worker`, and `witness_author`, plus the two repair calls that follow their principal, `plan_repair` and `witness_repair`. Notably **absent**: the `verdict` call and the `distress_guidance` call. Nothing issues either, structurally rather than by default — there is no settings spelling that switches them back on. [Verification is deterministic](/docs/plugins): a fail→pass flip of one normalized command, or an honest `Unverified`.
+Which roles appear depends on the wrapper — a verification plugin typically issues `triage`, `research`, `plan`, `worker`, and `witness_author`, plus the two repair calls that follow their principal, `plan_repair` and `witness_repair`. Notably **absent**: the `verdict` call and the `distress_guidance` call. Nothing issues either, structurally rather than by default — there is no settings spelling that switches them back on. [Verification is deterministic](/docs/plugins): a fail→pass flip of one normalized command, or `Unverified`.
 
 <Callout type="info">
 You can still meet `verdict` (recorded as `judge` in older sessions) and `distress_guidance` on a **stored** execution from before that change — `inspect` reads the record as it was written, and this page describes what a run issues *today*, not what every archived run contains.
@@ -180,7 +180,7 @@ Two failure modes are reported separately, because they mean very different thin
   </OptionCard>
 </CardGrid>
 
-The last two are the same failure read against different journals, and which one you get is not a guess: every execution records the journal era its writer could produce. A journal written before compaction recorded its rewrites mismatches on every compacted block, forever — reporting that as an integrity breach would be an alarm that fires on routine housekeeping, so it does not. A journal that records every rewrite has no such explanation available, and the alarm is the honest reading. `--format json` reports both halves as `journal_era` (`compaction_journaled` / `compaction_unjournaled`) and `digest_mismatch_severity` (`none` / `compaction` / `integrity`).
+The last two are the same failure read against different journals, and which one you get is not a guess: every execution records the journal era its writer could produce. A journal written before compaction recorded its rewrites mismatches on every compacted block, forever — reporting that as an integrity breach would be an alarm that fires on routine housekeeping, so it does not. A journal that records every rewrite has no such explanation available, and the alarm is the right reading. `--format json` reports both halves as `journal_era` (`compaction_journaled` / `compaction_unjournaled`) and `digest_mismatch_severity` (`none` / `compaction` / `integrity`).
 
 The system prefix and the assembled user message are stored as local bytes rather than resolved from the journal, so their digest check is tautological and is deliberately **not** counted as evidence. The proof lives in the journal-resolved kinds.
 

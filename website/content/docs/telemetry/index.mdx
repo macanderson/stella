@@ -204,7 +204,7 @@ sqlite3 -json .stella/private/store.db \
   | jq -r '.[].payload | fromjson | select(.upstream_provider) | "\(.provider) → \(.upstream_provider)"'
 ```
 
-`upstream_provider` is `null` on a direct endpoint (where `provider` is already the honest
+`upstream_provider` is `null` on a direct endpoint (where `provider` is already the
 answer) and on any call that predates the field. Neither [`stella inspect`](/docs/commands/inspect)
 nor [`stella stats`](/docs/commands/stats) surfaces it today — reading it means querying
 `events` directly, as above. [#3054](https://github.com/macanderson/stella/issues/3054)

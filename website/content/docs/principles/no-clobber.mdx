@@ -87,7 +87,7 @@ The map used to live only in memory, which left a gap worth naming plainly: a
 session that died took the whole guarantee with it.
 
 That is worse than it sounds. The resumed session was not merely back to
-square one — it was *less safe than an honest fresh start*. Its restored
+square one — it was *less safe than a fresh start*. Its restored
 transcript still said the agent had read the file, so the model kept acting
 on content it believed it knew, while the guard — having forgotten the read —
 waved the overwrite through. Precisely the combination the

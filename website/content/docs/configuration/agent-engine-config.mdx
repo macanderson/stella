@@ -109,7 +109,7 @@ Or in `stella.toml`, where it is a section of its own:
 "vera/verifier" = "anthropic/claude-fable-5"
 ```
 
-Three things follow, and each is deliberate:
+Three rules follow, each deliberate:
 
 - **A seat with no entry runs on the session's model.** Installing a plugin
   with five participants costs exactly what a single-model session costs
@@ -272,7 +272,7 @@ no tool call and does no work at all.
 
 So the only thing worth configuring here is spending **less** than the model
 allows: bounding cost on a long unattended run, cutting latency, or matching a
-comparator that stops lower. Two ways to say it.
+comparator that stops lower. You can bound cost, cut latency, or match a shorter comparator.
 
 ### `--max-output-tokens` — this run
 
@@ -303,7 +303,7 @@ simply gets its own maximum, so a model that ships tomorrow needs no entry —
 and deleting an entry restores a correct default rather than leaving a stale
 number behind.
 
-### Precedence, and two rules worth knowing
+### Precedence, and two rules
 
 Highest wins:
 
@@ -410,7 +410,7 @@ maps reasoning to the provider's native mechanism:
     meta={[{ label: "Reasoning", value: "thinkingConfig.thinkingLevel" }]}
   >
     Gemini 3 cannot fully disable thinking, so `"off"` maps to the lowest level
-    the model documents — the closest honest expression of "suppress thinking".
+    the model documents — the closest the model will let it get to "suppress thinking".
     `verbosity`, `service_tier`, and `repetition_penalty` are dropped.
   </SpecCard>
   <SpecCard
