@@ -18,15 +18,19 @@
 //! this line is a defect, not a shortcut — `no_hex_literals_in_v2_render_code`
 //! in `tests/v2_status_bar.rs` is what says so.
 
+pub mod agents_page;
 pub mod budget_card;
+pub mod engine_panel;
 pub mod fields;
 pub mod frame;
 pub mod graph;
 pub mod graph_tab;
+pub mod installed;
 pub mod models_card;
 pub mod plan_card;
 pub mod pulse;
 pub mod question;
+pub mod seats;
 pub mod sessions;
 pub mod status_bar;
 pub mod status_source;

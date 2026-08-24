@@ -5,7 +5,7 @@
 //! per-tab scroll/selection, the splash, the out-of-band graph snapshot), and
 //! [`handle_deck_key`] is a pure function of `(key, model, &mut ui)` returning a
 //! [`DeckAction`]. All deck interaction logic lives here, unit-tested — with one
-//! delegation: the Engine tab's key map lives in [`crate::views::engine`], which
+//! delegation: the Engine tab's key map lives in [`crate::v2::engine_panel`], which
 //! owns its own overlay state. Either way [`crate::deck_shell`] stays a
 //! near-logic-free event loop.
 //!
@@ -737,9 +737,13 @@ pub struct DeckUi {
     /// lane with its purpose, its place in the task, and the stop / pause /
     /// resume / restart verbs. Modal while open.
     pub subagents: crate::v2::subagents::SubagentsOverlay,
-    /// Whether the SESSIONS overlay is open (empty-prompt `←` on the Session
-    /// tab, or `/sessions`). Modal while open: ↑/↓ move, `⏎` open (replay),
-    /// `a` archive, `x` delete, `r` refresh, Esc/`←` close.
+    /// The AGENTS page (`←` twice from an empty prompt on the Session tab):
+    /// the full-frame fleet surface — lanes, sessions, and its own composer
+    /// that starts a new agent lane. Modal while open.
+    pub agents_page: crate::v2::agents_page::AgentsPage,
+    /// Whether the SESSIONS overlay is open (`ctrl-e`, `/sessions`). Modal
+    /// while open: ↑/↓ move, `⏎` open (replay), `a` archive, `x` delete,
+    /// `r` refresh, Esc/`←` close.
     pub sessions_open: bool,
     /// The machine-wide session registry snapshot ([`Inbound::Sessions`]),
     /// pre-sorted by the driver; the overlay groups it by phase.
@@ -749,8 +753,8 @@ pub struct DeckUi {
     /// `h` in the overlay: list every session on the machine rather than
     /// this workspace's recent ones and the live ones (see `sessions`).
     pub sessions_show_all: bool,
-    /// Whether the CONTEXT overlay is open (empty-prompt `→` on the Session
-    /// tab, or `/context`): active skills + MCP servers for THIS session,
+    /// Whether the CONTEXT overlay is open (`ctrl-k`, `/context`):
+    /// active skills + MCP servers for THIS session,
     /// rendered from the already-live `skills`/`mcp` snapshots.
     pub context_open: bool,
     /// Vertical scroll offset (rows) for the CONTEXT overlay; render clamps.
@@ -798,7 +802,7 @@ pub struct DeckUi {
     /// The ENGINE panel (SETTINGS tab, `/model-*`): the editor for
     /// `settings.json` → `agent_engine_config`, over a driver-owned snapshot
     /// ([`Inbound::EngineConfig`]). Modal while open.
-    pub engine: crate::views::engine::EngineOverlay,
+    pub engine: crate::v2::engine_panel::EngineOverlay,
     /// The TOOLS panel (SETTINGS tab): the editor for `settings.json` →
     /// `tools` — which of this session's tools are switched off — over a
     /// driver-owned snapshot ([`Inbound::ToolPolicy`]). Modal while open, and
@@ -885,6 +889,7 @@ impl Default for DeckUi {
             accessible: false,
             scrollback: crate::accessible::Scrollback::default(),
             subagents: crate::v2::subagents::SubagentsOverlay::default(),
+            agents_page: crate::v2::agents_page::AgentsPage::default(),
             sessions_open: false,
             sessions_show_all: false,
             sessions: Vec::new(),
@@ -902,7 +907,7 @@ impl Default for DeckUi {
             inbox_sel: 0,
             cards: cards::CardState::default(),
             pending_inputs: Vec::new(),
-            engine: crate::views::engine::EngineOverlay::default(),
+            engine: crate::v2::engine_panel::EngineOverlay::default(),
             tools: crate::views::tools::ToolsOverlay::default(),
             question: crate::v2::question::QuestionOverlay::default(),
             approval: crate::views::approval::ApprovalOverlay::default(),
@@ -936,6 +941,12 @@ impl DeckUi {
     /// when nothing modal owns the keyboard does the composer receive the paste.
     /// Keeps [`crate::deck_shell`] a dumb wire.
     pub fn paste(&mut self, text: &str) {
+        // 0. The AGENTS page is full-frame modal; its composer takes the
+        //    paste (nothing above it holds a text input).
+        if self.agents_page.open {
+            self.agents_page.composer.paste(text);
+            return;
+        }
         // 1. Installed-agents sub-modes are modal while open.
         if self.installed.mode != InstalledMode::Browse {
             match self.installed.mode {
@@ -1314,7 +1325,7 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // the ENGINE panel. Applied by the overlay's own ingest,
     // which guards unsaved local edits; the model fold never sees it.
     if let Inbound::EngineConfig { state, status } = inbound {
-        crate::views::engine::ingest_config(ui, state, status);
+        crate::v2::engine_panel::ingest_config(ui, state, status);
         return;
     }
     // The tool-switch snapshot — the other half of the SETTINGS tab, out-of-band
@@ -1581,6 +1592,7 @@ mod gates;
 /// `↑`/`↓`/`j`/`k`/`⇞`/`⇟`/`Home`/`End` — one vocabulary for every list and body.
 pub mod list_nav;
 mod local;
+mod overlays;
 mod parked;
 /// The session-override pickers' key routing (`/model`, `/agent`).
 pub(crate) mod pickers;
@@ -1594,6 +1606,10 @@ pub use dispatch::{DispatchRoute, MidTurnPrompt, PendingDispatch};
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
 use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
+use overlays::handle_help_key;
+pub(crate) use overlays::{
+    open_context_overlay, open_inbox_overlay, open_inspect_overlay, open_sessions_overlay,
+};
 use queue_editor::handle_queue_key;
 
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
@@ -1648,6 +1664,8 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // exactly like a non-Esc key would.
     let is_esc = matches!(key.code, KeyCode::Esc);
     let esc_armed = ui.esc_armed_at.take();
+    // The double-`←` latch pairs exactly like the double-Esc one above it.
+    let left_armed = ui.agents_page.left_armed_at.take();
 
     // Ctrl-C: clean cancel + quit, from anywhere.
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
@@ -1675,6 +1693,12 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // is long enough to scroll on most terminals.
     if ui.help_open {
         return handle_help_key(key, ui);
+    }
+
+    // The AGENTS page (`←` twice) is full-frame and modal while open — only
+    // quit, the splash, and help (all handled above) precede it.
+    if ui.agents_page.open {
+        return crate::v2::agents_page::handle_key(key, model, ui);
     }
 
     // The INSTALLED AGENTS sub-modes (editor / create flow / version picker)
@@ -1829,7 +1853,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // must never leak into the composer. Scoped to its own tab so a stale
     // focus flag can never trap the keyboard elsewhere.
     if ui.tab == DeckTab::Settings && ui.engine.focused {
-        return crate::views::engine::handle_engine_key(key, ui);
+        return crate::v2::engine_panel::handle_engine_key(key, ui);
     }
     // The TOOLS panel is the SETTINGS tab's second editor and is modal on
     // exactly the same terms — its letter verbs are the engine panel's, so
@@ -1906,6 +1930,12 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // tabs: they quick-pick ask-user answers and must be typeable as the
     // first character of a prompt). The slash popup claims Tab first —
     // completion beats tab-cycling while the menu is open.
+    // `/model <fragment>`: the argument menu opens where the slash menu
+    // closed (see `composer::args`) and claims its keys ahead of tab-cycling,
+    // so Tab completes a model spec instead of leaving the tab.
+    if let Some(action) = local::model_arg_key(key, model, ui) {
+        return action;
+    }
     let slash = slash_matches(model, ui);
     if slash.is_empty() {
         match key.code {
@@ -2004,6 +2034,12 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // the highlighted message — all from an empty composer only, where none
     // of them is editing.
     if composer_empty && key.modifiers.is_empty() {
+        // `←` on the SESSION tab is the AGENTS-page chord: the first press
+        // arms, the second (inside the window) opens the page. Everywhere
+        // else the arrows keep stepping the tab strip.
+        if let Some(action) = crate::v2::agents_page::left_left(key, left_armed, ui) {
+            return action;
+        }
         if let Some(dir) = focus::Dir::of(key.code) {
             return focus::step_tab(dir, ui);
         }
@@ -2049,23 +2085,6 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     handle_composer_key(key, ui, model)
 }
 
-/// The help-overlay key map. The overlay is modal: scrolling keys drive it,
-/// `q`/`Esc`/`?` close it. The content is long enough to scroll on a typical
-/// terminal, so a plain "any key closes" dismiss would make it unreadable.
-fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    let (total, height) = (ui.metrics.help_total, ui.metrics.help_height);
-    if list_nav::closes(key) || matches!(key.code, KeyCode::Char('?')) {
-        ui.help_open = false;
-    } else {
-        list_nav::scroll(key, &mut ui.help_scroll, total, height, true);
-    }
-    // Ctrl-C is handled by the caller (quit precedes every modal context).
-    // Any other key — modified or not — is swallowed so the overlay stays
-    // open and stable; typing into the composer behind it would be
-    // invisible and confusing.
-    DeckAction::Handled
-}
-
 /// Route one submitted prompt. The first submission after a double-Esc hold
 /// goes to the FRONT of the queue (and is what releases the hold) so it runs
 /// before the returned prompt; everything else appends. This is an explicit
@@ -2091,6 +2110,12 @@ fn submit_prompt(ui: &mut DeckUi, model: &WorkspaceModel, text: String) -> DeckA
     if text.trim() == "/clear" {
         ui.dispatch_held = false;
         return DeckAction::Send(WorkspaceInput::SessionClear);
+    }
+    // A queue-free command leaves beside the queue, mid-turn included, and
+    // ahead of a held dispatch — holding prompts must not capture `/export`
+    // into the backlog. See `dispatch::sideband`.
+    if let Some(input) = dispatch::sideband(ui, &text) {
+        return DeckAction::Send(input);
     }
     if ui.dispatch_held {
         ui.dispatch_held = false;
@@ -2132,45 +2157,6 @@ fn handle_slash_key(
 
 // The queue editor's modal keys live in `queue_editor` (split out beside
 // `nav`/`gates` under the god-file rule).
-
-/// Open the SESSIONS overlay (empty-prompt `←`, `/sessions`) and ask the
-/// driver for a fresh registry snapshot.
-pub(crate) fn open_sessions_overlay(ui: &mut DeckUi) -> DeckAction {
-    ui.sessions_open = true;
-    ui.sessions_sel = 0;
-    DeckAction::Send(WorkspaceInput::SessionsRefresh)
-}
-
-/// Open the CONTEXT overlay (empty-prompt `→`, `/context`) and freshen both
-/// snapshots it renders — the second refresh rides `pending_inputs` since a
-/// key returns only one action.
-pub(crate) fn open_context_overlay(ui: &mut DeckUi) -> DeckAction {
-    ui.context_open = true;
-    ui.context_scroll = 0;
-    ui.pending_inputs.push(WorkspaceInput::McpRefresh);
-    DeckAction::Send(WorkspaceInput::Skill(SkillOp::List))
-}
-
-/// Open the INSPECT overlay (`⌃g`, `/inspect`) on its call list and ask the
-/// driver for a fresh index. Opens on the list, never straight into a detail:
-/// which call produced a given transcript line is not knowable from UI state
-/// yet (transcript entries carry no step coordinate), so a human picks.
-pub(crate) fn open_inspect_overlay(ui: &mut DeckUi) -> DeckAction {
-    ui.inspect_open = true;
-    ui.inspect_sel = 0;
-    ui.inspect_view = None;
-    ui.inspect_scroll = 0;
-    ui.inspect_pending = false;
-    DeckAction::Send(WorkspaceInput::InspectRefresh)
-}
-
-/// Open the INBOX overlay (`/inbox`). The driver's poller keeps the
-/// notification snapshot fresh; nothing to request.
-pub(crate) fn open_inbox_overlay(ui: &mut DeckUi) -> DeckAction {
-    ui.inbox_open = true;
-    ui.inbox_sel = 0;
-    DeckAction::Handled
-}
 
 /// The INBOX overlay key map: ↑/↓ select, `⏎` on a session-linked
 /// notification marks it read AND opens that session (closing the overlay);

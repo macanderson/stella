@@ -25,8 +25,14 @@ scratchpad: rewrite, rename and delete in there freely, because no comment,
 test or script is allowed to depend on it. When a design lands, promote it —
 `git mv docs/design/<doc>.md docs/spec/<doc>.md` — and cite it by `doc:<id>`.
 
+**New to the codebase? Read [`ONBOARDING.md`](ONBOARDING.md) first.** It is
+the one-document map: the principles every change follows, the current
+schema (Rust types and SQL tables), and an index of the ADRs below — all in
+plain language, before you go read the specs themselves.
+
 | Path | What it is |
 |---|---|
+| [`ONBOARDING.md`](ONBOARDING.md) | **Start here.** Principles, current schema, and the ADR index — one document for ramping up. |
 | [`adr/`](adr/README.md) | Architecture Decision Records for the adaptive-context work — the ratified answers the specs below are built on. |
 | [`spec/`](spec/) | The specifications code depends on: the diagnostic plane, storage map, serve surface, witness protocol, adaptive context, telemetry receipts, the threat model, and the rest. Cited from rustdoc and enforced by `make design-refs`. |
 | [`design/`](design/) | **Work in flight — nothing outside this directory may cite it.** Proposals and RFCs that have not landed: the directive schema, agent-native delivery, the website information architecture, the pipeline journey. Churn freely. |
