@@ -71,6 +71,7 @@ fn fold_one_call(model: &mut SessionModel, name: &str, path: &str) {
             name: name.into(),
             input: serde_json::json!({ "path": path }),
         },
+        sub_agent_id: None,
     });
     // The per-call work-tree measurement, before the result — see the module
     // doc. Reordering these two is itself the #4155 defect.
@@ -89,6 +90,7 @@ fn fold_one_call(model: &mut SessionModel, name: &str, path: &str) {
         },
         duration_ms: 8,
         speculated: false,
+        sub_agent_id: None,
     });
 }
 
@@ -107,6 +109,7 @@ fn fold_batch(model: &mut SessionModel, paths: &[(&str, &str)]) {
                     .collect::<Vec<_>>(),
             }),
         },
+        sub_agent_id: None,
     });
     for (path, marker) in paths {
         model.apply(&AgentEvent::FileChange {
@@ -125,6 +128,7 @@ fn fold_batch(model: &mut SessionModel, paths: &[(&str, &str)]) {
         },
         duration_ms: 840,
         speculated: false,
+        sub_agent_id: None,
     });
 }
 

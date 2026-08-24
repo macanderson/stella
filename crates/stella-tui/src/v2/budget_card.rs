@@ -1,23 +1,34 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! The spend-cap editor (`/budget`): shows the session's spend against the
 //! cap the budget stream has folded, and takes a new cap as typed input.
 //! The *edit* leaves as `WorkspaceInput::SetBudget`; the number shown here
 //! is only ever the folded one, so an ignored or clamped request can never
 //! render as a cap in force.
+//!
+//! A floating card draws its own frame (`views::cards::card_frame`, named
+//! rather than linked: it is `pub(crate)`, and an intra-doc link to it
+//! resolves only under `--document-private-items`, which the doc gate does not
+//! pass) because it is an overlay rather than a tab body — the frame
+//! [`crate::v2::frame`] carves
+//! out is what it floats *above*, and a card with no border of its own would
+//! read as content the deck had appended to whatever is underneath it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
+use stella_tui_theme::token;
 
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
-use crate::theme;
 use crate::views::cards;
 
 /// Render the budget editor over `frame`.
 pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer) {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
-    let primary = Style::new().fg(theme::TEXT_PRIMARY);
+    let dim = Style::new().fg(token::MUTED);
+    let primary = Style::new().fg(token::TEXT);
     let spent = model.total_cost();
     let mut rows: Vec<Line<'static>> = Vec::new();
     if ui.accessible {
@@ -36,16 +47,13 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
     } else {
         let mut spend_row = vec![
             Span::styled("run     ", dim),
-            Span::styled(
-                format!("${spent:.2}"),
-                Style::new().fg(theme::SUCCESS_BRIGHT),
-            ),
+            Span::styled(format!("${spent:.2}"), Style::new().fg(token::GREEN)),
         ];
         match model.budget_cap_usd {
             Some(cap) if cap > 0.0 => {
                 spend_row.push(Span::styled(format!(" of ${cap:.2} "), dim));
                 let pct = ((spent / cap).clamp(0.0, 1.0) * 100.0).round() as usize;
-                spend_row.extend(cards::mini_fraction_bar(pct, 100, 9, theme::SUCCESS_BRIGHT));
+                spend_row.extend(cards::mini_fraction_bar(pct, 100, 9, token::GREEN));
             }
             _ => spend_row.push(Span::styled(" · no cap set", dim)),
         }
@@ -55,7 +63,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
             Span::styled("$", dim),
             Span::styled(ui.cards.budget_input.clone(), primary),
             // A steady block caret — the reversed cell, never a blink.
-            Span::styled(" ", Style::new().bg(theme::ACCENT)),
+            Span::styled(" ", Style::new().bg(token::GOLD)),
         ]));
         rows.push(Line::from(Span::styled(
             "the cap applies when the driver's budget stream folds it back",

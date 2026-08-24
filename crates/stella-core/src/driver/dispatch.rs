@@ -125,7 +125,10 @@ impl<'a> Engine<'a> {
                     .iter()
                     .enumerate()
                     .map(|(offset, call)| {
-                        let _ = events.send(AgentEvent::ToolStart { call: call.clone() });
+                        let _ = events.send(AgentEvent::ToolStart {
+                            call: call.clone(),
+                            sub_agent_id: None,
+                        });
                         let index = group_start + offset;
                         let harvested = match speculation.remove(&call.call_id) {
                             Some(s) if s.name == call.name && s.input == call.input => Some(s),
@@ -167,6 +170,7 @@ impl<'a> Engine<'a> {
                     output: output.clone(),
                     duration_ms,
                     speculated,
+                    sub_agent_id: None,
                 });
                 indexed.push((
                     index,
@@ -222,6 +226,7 @@ impl<'a> Engine<'a> {
                     output: output.clone(),
                     duration_ms: 0,
                     speculated: false,
+                    sub_agent_id: None,
                 });
                 indexed.push((
                     index,

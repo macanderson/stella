@@ -230,12 +230,14 @@ fn nasty_unicode_transcript_never_panics_at_any_width() {
                     name: text.clone(),
                     input: serde_json::json!({"path": text}),
                 },
+                sub_agent_id: None,
             },
             AgentEvent::ToolResult {
                 call_id: "c".into(),
                 output: ToolOutput::error(text.clone()),
                 duration_ms: 5,
                 speculated: false,
+                sub_agent_id: None,
             },
         ] {
             model.apply_inbound(&Inbound::Event {

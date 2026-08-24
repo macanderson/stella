@@ -190,3 +190,168 @@ fn the_turn_page_folds_a_delegates_bracket_and_metering_against_the_real_schema(
     assert!(a["started_ts"].is_string(), "{out}");
     assert!(a["finished_ts"].is_string(), "{out}");
 }
+
+/// **The witness for #4628.** A turn names the deck lanes it dispatched, and
+/// only those; a lane a person started from the composer is attributed to no
+/// turn; and the sessions view can tell either from a lead turn.
+///
+/// Fails before this change: nothing recorded which turn dispatched a lane.
+/// Its parentage lived only in the deck's in-memory lane registry, so
+/// `/api/execution-subagents` had no turn-scoped query for lanes at all and
+/// `/api/session` served no `parent_execution_id`, leaving a `deck-sub` row
+/// indistinguishable from a lead turn.
+#[test]
+fn a_turn_names_the_lanes_it_dispatched_against_the_real_schema() {
+    let workspace = real_store_workspace();
+
+    let out: serde_json::Value =
+        serde_json::from_slice(&respond(workspace.path(), "/api/execution-subagents?id=1").body)
+            .expect("json");
+    let lanes = out["lanes"].as_array().expect("lanes");
+    assert_eq!(lanes.len(), 1, "one dispatched lane, not both: {out}");
+    assert_eq!(lanes[0]["prompt"], "task #1: rewrite the chunker", "{out}");
+    assert_eq!(lanes[0]["kind"], "deck-sub", "{out}");
+    assert_eq!(lanes[0]["outcome"], "completed", "{out}");
+    // The lane's own transcript is what the row opens, so it must carry the
+    // execution id rather than only a label.
+    assert!(lanes[0]["execution_id"].is_i64(), "{out}");
+
+    // A turn that dispatched nothing says so, rather than inheriting the
+    // session's other lanes.
+    let none: serde_json::Value =
+        serde_json::from_slice(&respond(workspace.path(), "/api/execution-subagents?id=2").body)
+            .expect("json");
+    assert_eq!(none["lanes"], serde_json::json!([]), "{none}");
+
+    // And the sessions view can badge a lane: `kind` says it is one, and
+    // `parent_execution_id` says whether a turn or a person asked for it.
+    let session: serde_json::Value = serde_json::from_slice(
+        &respond(workspace.path(), "/api/session?id=ses-1700000000000-424242").body,
+    )
+    .expect("json");
+    let lanes: Vec<(&str, Option<i64>)> = session["turns"]
+        .as_array()
+        .expect("turns")
+        .iter()
+        .filter(|t| t["kind"] == "deck-sub")
+        .map(|t| {
+            (
+                t["prompt"].as_str().unwrap_or("?"),
+                t["parent_execution_id"].as_i64(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lanes,
+        vec![
+            ("task #1: rewrite the chunker", Some(1)),
+            ("have a look at the logs", None),
+        ],
+        "the dispatched lane names its turn and the composer lane names \
+         nobody: {session}"
+    );
+}
+
+/// **The witness for #4624.** A delegate's tool calls are attributed against
+/// the real migrated schema: `tool_calls` carries the child's id, and
+/// `/api/execution` serves it on both projections so a per-child page can
+/// filter without a second round trip.
+///
+/// Fails before this change: `ToolStart`/`ToolResult` carried no
+/// `sub_agent_id`, `tool_calls` had no column for one, and the steps and tools
+/// SELECTs served neither — so a child's rows sat under the parent execution
+/// id indistinguishable from the lead's own, and "which tools did child X run"
+/// had no answer at all.
+///
+/// The fixture journals the child's pair AFTER its `Finished` bracket on
+/// purpose: independent delegates are dispatched concurrently, so bracket
+/// order attributes nothing and the stamp is the whole mechanism.
+#[test]
+fn a_delegates_tool_calls_are_attributed_to_it_against_the_real_schema() {
+    let workspace = real_store_workspace();
+    let out: serde_json::Value =
+        serde_json::from_slice(&respond(workspace.path(), "/api/execution?id=1").body)
+            .expect("json");
+
+    let tools = out["tools"].as_array().expect("tools");
+    let owners: Vec<(&str, Option<&str>)> = tools
+        .iter()
+        .map(|t| {
+            (
+                t["name"].as_str().unwrap_or("?"),
+                t["sub_agent_id"].as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        owners,
+        vec![("read_file", None), ("search", Some("search-1"))],
+        "NULL is the lead's own call, and the delegate's names itself: {out}"
+    );
+
+    // The metering side of the same question is served on the same payload,
+    // so one page can join spend to activity per child (#4383 + #4624).
+    let steps = out["steps"].as_array().expect("steps");
+    assert!(
+        steps
+            .iter()
+            .any(|s| s["sub_agent_id"].as_str() == Some("search-1")),
+        "the delegate's metered call is attributed too: {out}"
+    );
+    assert!(
+        steps.iter().any(|s| s["sub_agent_id"].is_null()),
+        "and the lead's own reads null rather than being omitted: {out}"
+    );
+}
+
+/// **The witness for #4627.** The transcript itself places the bracket where
+/// it happened, against the real migrated schema.
+///
+/// Fails before this change: `sub_agent` was absent from the journal route's
+/// event-type allowlist, so `/api/execution-journal` returned neither edge and
+/// a turn that fanned out delegates read as the parent doing everything
+/// itself, with an unexplained wall-clock gap between two tool rows. The
+/// sub-agents panel above lists the same children, but a list beside the
+/// timeline cannot say *when* in the turn each one ran.
+#[test]
+fn the_transcript_journal_places_the_sub_agent_bracket_where_it_happened() {
+    let workspace = real_store_workspace();
+    let journal: serde_json::Value =
+        serde_json::from_slice(&respond(workspace.path(), "/api/execution-journal?id=1").body)
+            .expect("json");
+    let brackets: Vec<&serde_json::Value> = journal
+        .as_array()
+        .expect("journal")
+        .iter()
+        .filter(|e| e["type"] == "sub_agent")
+        .collect();
+    assert_eq!(brackets.len(), 2, "both edges, in order: {journal}");
+
+    let started = brackets[0];
+    assert_eq!(started["phase"], "started", "{started}");
+    assert_eq!(started["agent_id"], "search-1", "{started}");
+    assert_eq!(
+        started["instruction_preview"], "find the retry policy",
+        "{started}"
+    );
+    assert_eq!(started["effort"], "high", "{started}");
+    assert_eq!(started["budget_usd"], 0.25, "{started}");
+    assert_eq!(started["depth"], 1, "{started}");
+
+    let finished = brackets[1];
+    assert_eq!(finished["phase"], "finished", "{finished}");
+    assert_eq!(finished["status"], "completed", "{finished}");
+    assert_eq!(finished["cost_usd"], 0.004, "{finished}");
+    assert_eq!(finished["steps"], 1, "{finished}");
+    assert_eq!(finished["absorbed_messages"], 5, "{finished}");
+    // The child's report is the one piece of its transcript that crosses the
+    // boundary, and it arrives as this row's body.
+    assert_eq!(
+        finished["body"], "retry policy lives in retry.rs",
+        "{finished}"
+    );
+    // Two clips, two keys: `report_truncated` is the child's own clamp to the
+    // spec's character cap, `truncated` is this transport's body clip.
+    assert_eq!(finished["report_truncated"], false, "{finished}");
+    assert_eq!(finished["truncated"], false, "{finished}");
+}

@@ -179,6 +179,7 @@ fn a_refused_plan_stops_claiming_a_decision_is_pending() {
         output: ToolOutput::error("the plan was not approved — they said: smaller"),
         duration_ms: 400,
         speculated: false,
+        sub_agent_id: None,
     });
     assert!(
         model.pending_scope_review.is_none(),
@@ -217,6 +218,7 @@ fn a_failing_step_after_approval_is_not_a_refusal() {
         output: ToolOutput::error("no task with id 1"),
         duration_ms: 3,
         speculated: false,
+        sub_agent_id: None,
     });
     assert_eq!(
         model.plan.state,
@@ -235,6 +237,7 @@ fn start_a_plan(model: &mut SessionModel, call_id: &str, steps: &[&str]) {
             name: stella_tools::tasks::START.into(),
             input: serde_json::json!({ "id": "1" }),
         },
+        sub_agent_id: None,
     });
     model.apply(&AgentEvent::ScopeReview {
         proposal: ScopeProposal {

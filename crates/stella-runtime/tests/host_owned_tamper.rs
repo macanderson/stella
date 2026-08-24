@@ -16,9 +16,10 @@
 //! `EvidenceSet` refused as a missing field, and `EvidenceSet::from_observed`
 //! did not exist for the host to merge its own finding through.
 //!
-//! `cfg(unix)` for `wrapper_socket.rs`'s reason and tracked in the same place:
-//! the plugin is a `/bin/sh` script, so this file proves nothing on Windows
-//! until #3497 replaces it with a portable in-tree plugin.
+//! `cfg(unix)` because the plugin is a `/bin/sh` script, so this file proves
+//! nothing on Windows. The route out exists — `wrapper-plugin-fixture`, the
+//! portable plugin #3497 added and `wrapper_socket.rs` now drives — and this
+//! file has not taken it yet; #3497 tracks the ones that have not.
 
 #![cfg(unix)]
 

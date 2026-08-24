@@ -13,6 +13,7 @@ fn call(id: &str, name: &str, input: serde_json::Value) -> AgentEvent {
             name: name.to_string(),
             input,
         },
+        sub_agent_id: None,
     }
 }
 
@@ -25,6 +26,7 @@ fn ok_result(id: &str, content: &str) -> AgentEvent {
         },
         duration_ms: 9,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 
@@ -129,6 +131,7 @@ fn a_failed_tool_marks_its_step_and_its_turn() {
         },
         duration_ms: 3,
         speculated: false,
+        sub_agent_id: None,
     });
     b.finish_turn(Status::Ok);
 
@@ -196,18 +199,47 @@ fn reasoning_deltas_accumulate_into_one_block_per_step() {
 
 // ------------------------------------------------------------ diff recovery
 
+/// The event's patch reaches the renderer whole, and the rendered rows carry
+/// the file's own line numbers. It used to be unpicked into a synthetic
+/// before/after and re-differed, which recovered those numbers only as far as
+/// the blank padding happened to be right (#3577).
 #[test]
-fn a_unified_diff_recovers_both_sides_at_their_original_line_numbers() {
-    let diff = "\
-@@ -3,2 +3,3 @@
- context
--old line
-+new line
-+added line
-";
-    let (before, after) = reconstruct(diff);
-    assert_eq!(before, "\n\ncontext\nold line\n");
-    assert_eq!(after, "\n\ncontext\nnew line\nadded line\n");
+fn a_file_change_renders_at_the_files_own_line_numbers() {
+    let mut b = RunBuilder::new("run", "m");
+    b.start_turn("go");
+    b.push(&call("c1", "edit_file", json!({"path": "a.txt"})));
+    b.push(&ok_result("c1", "ok"));
+    b.push(&AgentEvent::FileChange {
+        path: "a.txt".to_string(),
+        kind: stella_protocol::FileChangeKind::Modified,
+        added: 2,
+        removed: 1,
+        diff: Some("@@ -3,2 +3,3 @@\n context\n-old line\n+new line\n+added line\n".to_string()),
+    });
+    b.finish_turn(Status::Ok);
+
+    let call = b.snapshot().turns[0].steps[0].call.clone().expect("call");
+    let diff = stella_transcript::file_diff::FileDiff::build(&call.files[0]);
+    assert_eq!(diff.hunks.len(), 1);
+    assert_eq!(diff.hunks[0].header, "@@ -3,2 +3,3 @@");
+    assert_eq!(
+        diff.hunks[0]
+            .rows
+            .iter()
+            .map(|r| (r.old_no, r.new_no))
+            .collect::<Vec<_>>(),
+        vec![
+            (Some(3), Some(3)),
+            (Some(4), None),
+            (None, Some(4)),
+            (None, Some(5))
+        ]
+    );
+    assert_eq!(
+        (diff.added, diff.removed),
+        (2, 1),
+        "git's numstat, not a recount"
+    );
 }
 
 #[test]
@@ -272,6 +304,7 @@ fn wall_clock_is_summed_from_the_events_not_read_from_a_clock() {
         },
         duration_ms: 7_000,
         speculated: false,
+        sub_agent_id: None,
     });
     b.push(&call("c2", "bash", json!({"command": "two"})));
     b.push(&AgentEvent::ToolResult {
@@ -282,6 +315,7 @@ fn wall_clock_is_summed_from_the_events_not_read_from_a_clock() {
         },
         duration_ms: 3_000,
         speculated: false,
+        sub_agent_id: None,
     });
     b.finish_turn(Status::Ok);
 
@@ -308,6 +342,7 @@ fn each_turn_starts_its_own_clock() {
         },
         duration_ms: 5_000,
         speculated: false,
+        sub_agent_id: None,
     });
     b.start_turn("second");
     b.push(&call("c2", "bash", json!({"command": "y"})));
@@ -319,6 +354,7 @@ fn each_turn_starts_its_own_clock() {
         },
         duration_ms: 2_000,
         speculated: false,
+        sub_agent_id: None,
     });
     b.finish_turn(Status::Ok);
 

@@ -186,12 +186,14 @@ fn the_whole_rendering_reads_like_this() {
             name: "bash".into(),
             input: serde_json::json!({}),
         },
+        sub_agent_id: None,
     });
     friction.observe(&AgentEvent::ToolResult {
         call_id: "c2".into(),
         output: failed("error[E0599]: no method named `parse_amount`"),
         duration_ms: 12_800,
         speculated: false,
+        sub_agent_id: None,
     });
 
     let transcript = vec![
@@ -496,12 +498,14 @@ fn the_friction_section_names_every_failed_tool_and_the_loop_detector() {
             name: "bash".into(),
             input: serde_json::json!({}),
         },
+        sub_agent_id: None,
     });
     friction.observe(&AgentEvent::ToolResult {
         call_id: "c1".into(),
         output: failed("exit 101: could not compile stella-core"),
         duration_ms: 96_000,
         speculated: false,
+        sub_agent_id: None,
     });
     friction.observe(&AgentEvent::Retry {
         attempt: 1,
@@ -539,6 +543,7 @@ fn a_result_without_its_start_is_recorded_under_its_call_id() {
         output: failed("no such file"),
         duration_ms: 5,
         speculated: false,
+        sub_agent_id: None,
     });
     assert!(
         friction.section(1).contains("orphan: no such file"),
@@ -591,6 +596,7 @@ fn the_digest_is_a_function_of_the_turn() {
                     name: "bash".into(),
                     input: serde_json::json!({}),
                 },
+                sub_agent_id: None,
             });
             friction.observe(&AgentEvent::ToolResult {
                 call_id: id,
@@ -598,6 +604,7 @@ fn the_digest_is_a_function_of_the_turn() {
                 output: ok("fine"),
                 duration_ms: 1_000,
                 speculated: false,
+                sub_agent_id: None,
             });
             friction.observe(&step_usage(step, ModelCallRole::Worker, 0.01, 1_000));
         }

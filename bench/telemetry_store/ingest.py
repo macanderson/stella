@@ -212,6 +212,13 @@ def migrate(conn) -> None:
             "ALTER TABLE trials ADD COLUMN cost_norm_status TEXT NOT NULL "
             f"DEFAULT '{COST_NORM_UNMIGRATED}'"
         )
+    run_columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+    if "migrated" not in run_columns:
+        conn.execute(
+            "ALTER TABLE runs ADD COLUMN migrated INTEGER NOT NULL DEFAULT 0"
+        )
+    if "migration_source" not in run_columns:
+        conn.execute("ALTER TABLE runs ADD COLUMN migration_source TEXT")
 
 
 def connect(db: str) -> sqlite3.Connection:

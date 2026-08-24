@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! The model-routing dialog (`/models`): every role's **resolved** wiring —
 //! the model it will send, the effort and thinking riding with it, and the
 //! setting that decided each.
 //!
 //! # What this replaced, and why
-//!
-//! Two things, and the second is the point.
 //!
 //! It replaced a three-slot card that printed `think` / `work` / `verify` and
 //! one `provider/model` slug apiece. A slug alone cannot answer what anybody
@@ -13,11 +14,11 @@
 //! change it. Those were one-inference-from-silence questions, and this
 //! dialog exists to make them readable instead.
 //!
-//! It also replaced the statline's permanent `T·… W·… J·…` row. Routing is a
+//! It also replaced a permanent `T·… W·… J·…` row of pins. Routing is a
 //! thing you *check*, not a glanceable: the pins do not move during a session,
-//! so a row that never changed was paying rent on every frame. The statline
-//! keeps naming the pin that is actually answering (its MODEL cell), and
-//! nothing more.
+//! so a row that never changed was paying rent on every frame. The status bar
+//! ([`crate::v2::status_bar`]) keeps naming the pin that is actually answering
+//! — its worker cell — and nothing more.
 //!
 //! # It renders; it does not resolve
 //!
@@ -61,14 +62,15 @@
 //!
 //! A role the deck has no word for — one a host contributed, which the table
 //! is open to since #3472 — is named by its own key. That is the one place an
-//! identifier is a label, and it is the honest option: the deck cannot invent
-//! a word for a role it has never heard of, and a category label ("plugin")
-//! would name the row after where it came from rather than after itself.
+//! identifier is a label, and nothing else there is true: the deck cannot
+//! invent a word for a role it has never heard of, and a category label
+//! ("plugin") would name the row after where it came from, not after itself.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use stella_tui_theme::token;
 use unicode_width::UnicodeWidthStr;
 
 use crate::deck::{PipelineRole, WorkspaceModel};
@@ -172,7 +174,7 @@ fn role_rows(
     inner_w: usize,
     accessible: bool,
 ) -> Vec<Line<'static>> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     let parts = [
         row.effort.clone(),
         row.thinking.clone(),
@@ -183,25 +185,22 @@ fn role_rows(
 
     if accessible {
         // A labeled record per role: no column alignment to hear, and every
-        // field named rather than positional.
+        // field carries its own name instead of a position in a grid.
         let mut text = format!("· {word} · model {} · {detail}", row.model);
         if let Some(mark) = mark {
             text.push_str(" · ");
             text.push_str(mark);
         }
-        return vec![Line::from(Span::styled(
-            text,
-            Style::new().fg(theme::TEXT_PRIMARY),
-        ))];
+        return vec![Line::from(Span::styled(text, Style::new().fg(token::TEXT)))];
     }
 
     // The role that most recently served is the one answering right now, and
     // it carries the accent on every surface that names a pin.
     let active = slot_of(&row.role).is_some_and(|slot| model.active_role == Some(slot));
     let model_style = if active {
-        theme::accent().add_modifier(Modifier::BOLD)
+        Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD)
     } else {
-        Style::new().fg(theme::TEXT_PRIMARY)
+        Style::new().fg(token::TEXT)
     };
     let mut head = vec![
         Span::styled(format!("{word:<LABEL_W$}"), dim),
@@ -261,7 +260,7 @@ fn header_rows(
     state: &EngineConfigState,
     accessible: bool,
 ) -> Vec<Line<'static>> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     let on_off = |on: bool| if on { "on" } else { "off" };
     let autos = format!(
         "model {} · effort {} · thinking {}",
@@ -280,12 +279,12 @@ fn header_rows(
         if accessible {
             Line::from(Span::styled(
                 format!("· {label} {value}"),
-                Style::new().fg(theme::TEXT_PRIMARY),
+                Style::new().fg(token::TEXT),
             ))
         } else {
             Line::from(vec![
                 Span::styled(format!("{label:<LABEL_W$}"), dim),
-                Span::styled(value, Style::new().fg(theme::TEXT_PRIMARY)),
+                Span::styled(value, Style::new().fg(token::TEXT)),
             ])
         }
     };
@@ -294,7 +293,7 @@ fn header_rows(
 
 /// Render the model-routing dialog over `frame`.
 pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer) {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     let w = frame.width.min(MODELS_CARD_W);
     let inner_w = w.saturating_sub(4).max(LABEL_W as u16 + 8) as usize;
 
@@ -305,8 +304,8 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer
 
     let mut rows: Vec<Line<'static>> = Vec::new();
     match state.filter(|s| !s.roles.is_empty()) {
-        // Honest rather than convenient: the driver seeds this at startup, so
-        // an empty snapshot means the answer is genuinely not in yet.
+        // The driver seeds this at startup, so an empty snapshot means the
+        // answer is not in yet — say that rather than draw a plausible one.
         None => rows.push(Line::from(Span::styled(
             "routing has not been resolved yet",
             dim,

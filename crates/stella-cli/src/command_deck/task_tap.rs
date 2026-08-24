@@ -14,24 +14,31 @@ mod plan_gate;
 
 pub(crate) use plan_gate::PlanSetup;
 
-/// Mirrors the task board into the event stream: after any `task_*` tool
-/// call the FULL board snapshot rides the turn's channel as
-/// `AgentEvent::TaskUpdate` — persisted by the forwarder, so replay shows
-/// the checklist exactly as it moved — and `task_assign`'s spawn requests
-/// are handed to the driver's supervisor channel. `supervisor: None` is the
-/// worker configuration (v1 delegation runs from the lead only; a worker's
-/// stranded requests are reported on its lane by `crate::subsession`).
+/// Hands `task_assign`'s spawn requests to the driver's supervisor channel,
+/// and turns the board into a **scope**: the same board traffic is what the
+/// plan gate reads to raise `AgentEvent::ScopeReview` before the first step
+/// runs (#4594). One decorator for both because they are one fact observed
+/// twice — see [`plan_gate`] for why the board is the scope and why the gate
+/// asks. `supervisor: None` is the worker configuration (v1 delegation runs
+/// from the lead only; a worker's stranded requests are reported on its lane
+/// by `crate::subsession`).
 ///
-/// It is also where the board becomes a **scope**: the same `task_*` traffic
-/// that produces `TaskUpdate` is what the plan gate reads to raise
-/// `AgentEvent::ScopeReview` before the first step runs (#4594). One
-/// decorator for both because they are one fact observed twice — see
-/// [`plan_gate`] for why the board is the scope and why the gate asks.
+/// The board snapshot itself is **not** published here. It used to be, and
+/// that is precisely why only the deck ever recorded a checklist: a one-shot
+/// `stella run`, `stella goal`, a delegated child and a subsession lane all
+/// move the same board through the same six tools and composed no such
+/// decorator. The mirror now sits on `ToolRegistry::execute` (#4613),
+/// under the event sender every door attaches through
+/// `crate::turn_files::open_turn_streams`, so the deck's stream carries
+/// exactly what it always did and every other door carries it too.
 pub(crate) struct TaskTap<'a> {
     pub(crate) inner: &'a dyn ToolExecutor,
-    pub(crate) events: UnboundedSender<AgentEvent>,
     pub(crate) registry: &'a ToolRegistry,
     pub(crate) supervisor: Option<UnboundedSender<SupervisorMsg>>,
+    /// This turn's execution id, ridden along on every spawn request so the
+    /// lane it becomes can record which turn asked for it (#4628). `None` when
+    /// the session opened no store.
+    pub(crate) dispatched_by: Option<i64>,
     /// `None` when no driver is attached to answer, or when the `plan_review`
     /// policy withholds the gate — it is then not installed rather than
     /// installed and auto-approving.
@@ -54,24 +61,25 @@ impl<'a> TaskTap<'a> {
         inner: &'a dyn ToolExecutor,
         events: UnboundedSender<AgentEvent>,
         registry: &'a ToolRegistry,
-        supervisor: Option<UnboundedSender<SupervisorMsg>>,
+        supervisor: Option<&UnboundedSender<SupervisorMsg>>,
         plan: PlanSetup,
+        dispatched_by: Option<i64>,
     ) -> Self {
         if supervisor.is_some() {
             registry.enable_task_delegation();
         }
-        let plan_gate =
-            plan_gate::PlanGate::install(registry.question_broker(), events.clone(), plan);
+        let supervisor = supervisor.cloned();
+        let plan_gate = plan_gate::PlanGate::install(registry.question_broker(), events, plan);
         Self {
             inner,
-            events,
             registry,
             supervisor,
+            dispatched_by,
             plan_gate,
         }
     }
 
-    /// This lane's board, as the snapshot both the gate and `TaskUpdate` read.
+    /// This lane's board, as the snapshot the plan gate is asked to approve.
     fn board(&self) -> Vec<TaskItem> {
         let board = self.registry.task_board();
         let guard = board.lock().unwrap_or_else(|p| p.into_inner());
@@ -102,14 +110,14 @@ impl ToolExecutor for TaskTap<'_> {
             return refused;
         }
         let output = self.inner.execute(name, input).await;
-        if name.starts_with("task_") {
-            let _ = self.events.send(AgentEvent::TaskUpdate {
-                tasks: self.board(),
-            });
-            if let Some(sup) = &self.supervisor {
-                for request in self.registry.take_spawn_requests() {
-                    let _ = sup.send(SupervisorMsg::SpawnTask(request));
-                }
+        if stella_tools::tasks::is_board_tool(name)
+            && let Some(sup) = &self.supervisor
+        {
+            for request in self.registry.take_spawn_requests() {
+                let _ = sup.send(SupervisorMsg::SpawnTask(crate::subsession::QueuedSpawn {
+                    request,
+                    dispatched_by: self.dispatched_by,
+                }));
             }
         }
         output
@@ -202,12 +210,11 @@ mod tests {
     fn the_task_tap_forwards_parallel_safe_names() {
         let inner = Claiming;
         let registry = ToolRegistry::new(std::path::PathBuf::from("."));
-        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tap = TaskTap {
             inner: &inner,
-            events,
             registry: &registry,
             supervisor: None,
+            dispatched_by: None,
             plan_gate: None,
         };
         assert!(
@@ -309,7 +316,14 @@ mod tests {
     async fn starting_a_plan_puts_the_board_to_the_driver_as_a_scope_review() {
         let (registry, ran, mut rx, events) = gated(3, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            setup("fix the router"),
+            None,
+        );
 
         let out = tap
             .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -351,7 +365,14 @@ mod tests {
             Some(picked("Change it first", Some("do the tests first"))),
         );
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            setup("fix the router"),
+            None,
+        );
 
         let out = tap
             .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -381,7 +402,14 @@ mod tests {
     async fn no_driver_means_no_gate_rather_than_a_gate_that_answers_itself() {
         let (registry, ran, mut rx, events) = gated(5, None);
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            setup("fix the router"),
+            None,
+        );
 
         let out = tap
             .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -403,7 +431,7 @@ mod tests {
     async fn a_short_plan_is_not_worth_a_card() {
         let (registry, ran, mut rx, events) = gated(2, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, setup("tidy up"));
+        let tap = TaskTap::new(&inner, events, &registry, None, setup("tidy up"), None);
 
         tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
             .await;
@@ -422,7 +450,14 @@ mod tests {
     async fn an_approved_plan_is_asked_about_once() {
         let (registry, ran, mut rx, events) = gated(3, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            setup("fix the router"),
+            None,
+        );
 
         for id in ["1", "2", "3"] {
             tap.execute(stella_tools::tasks::START, &serde_json::json!({ "id": id }))
@@ -445,7 +480,14 @@ mod tests {
         let (registry, ran, mut rx, events) =
             gated(3, Some(picked("Change it first", Some("smaller"))));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            setup("fix the router"),
+            None,
+        );
 
         for _ in 0..2 {
             tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -479,7 +521,14 @@ mod tests {
                 .expect("the board accepts a completion");
         }
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, setup("fix the router"));
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            setup("fix the router"),
+            None,
+        );
 
         tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "2"}))
             .await;
@@ -491,6 +540,52 @@ mod tests {
             })
             .expect("three steps are left, so a card goes up");
         assert_eq!(proposal.steps, vec!["step 2", "step 3", "step 4"]);
+    }
+
+    /// **The witness for #4628.** A `task_assign` spawn request reaches the
+    /// supervisor carrying the execution id of the turn that made it, so the
+    /// lane it becomes can stamp `executions.parent_execution_id`.
+    ///
+    /// Fails before this change: `SupervisorMsg::SpawnTask` carried the
+    /// request alone. The dispatcher had to be looked up when a slot freed,
+    /// and a request can wait in `pending_spawns` past the end of the turn
+    /// that made it — so there was nothing to look it up from, and a lane's
+    /// parentage never left the deck's memory.
+    #[tokio::test]
+    async fn a_spawn_request_carries_the_turn_that_made_it() {
+        let registry = ToolRegistry::new(std::path::PathBuf::from("."));
+        {
+            let board = registry.task_board();
+            let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
+            guard.create("rewrite the chunker", None, None);
+        }
+        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (sup_tx, mut sup_rx) = tokio::sync::mpsc::unbounded_channel();
+        // The registry itself is the inner executor: a stub would never run
+        // `task_assign`, so nothing would queue a request and the assertion
+        // below would pass on an empty channel it never filled.
+        let tap = TaskTap::new(
+            &registry,
+            events,
+            &registry,
+            Some(&sup_tx),
+            setup("fix the router"),
+            Some(4242),
+        );
+
+        let out = tap
+            .execute(
+                "task_assign",
+                &serde_json::json!({ "id": "1", "briefing": "do it" }),
+            )
+            .await;
+        assert!(matches!(out, ToolOutput::Ok { .. }), "{out:?}");
+
+        let Ok(SupervisorMsg::SpawnTask(queued)) = sup_rx.try_recv() else {
+            panic!("the request must reach the supervisor");
+        };
+        assert_eq!(queued.request.task_id, "1");
+        assert_eq!(queued.dispatched_by, Some(4242));
     }
 
     /// **The #4611 witness, half one.** The threshold used to be a `const`, so
@@ -513,6 +608,7 @@ mod tests {
                     min_steps: 2,
                 },
             },
+            None,
         );
 
         tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -546,6 +642,7 @@ mod tests {
                     min_steps: 3,
                 },
             },
+            None,
         );
 
         let out = tap
@@ -580,7 +677,7 @@ mod tests {
         };
         let (registry, ran, mut rx, events) = gated(1, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, plan);
+        let tap = TaskTap::new(&inner, events, &registry, None, plan, None);
         tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
             .await;
         assert!(
@@ -598,12 +695,11 @@ mod tests {
     fn the_task_tap_forwards_active_skill_slugs() {
         let inner = Claiming;
         let registry = ToolRegistry::new(std::path::PathBuf::from("."));
-        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tap = TaskTap {
             inner: &inner,
-            events,
             registry: &registry,
             supervisor: None,
+            dispatched_by: None,
             plan_gate: None,
         };
         assert_eq!(
