@@ -319,7 +319,7 @@ the `TOOLS` pane already has and it does not: **rows from the live session**.
 Installed plugins' declared seats, each with the model assigned to it or
 `default`. A session with no plugins shows one row.
 
-`crates/stella-tui/src/views/tools.rs` is the pattern to copy verbatim — its
+`crates/stella-tui/src/v2/tools.rs` is the pattern to copy verbatim — its
 rows come from the driver precisely because MCP and custom tools "exist nowhere
 but the assembled session stack", which is exactly true of plugin seats.
 

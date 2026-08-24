@@ -2,13 +2,11 @@
 //! `render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer)`
 //! — a deterministic draw of the (model, ui) into a sub-area, recording any
 //! viewport metrics it needs for scroll clamping back onto `ui.metrics`.
-//! `tools` is the exception: it is one of the config editors the SETTINGS
-//! tab ([`settings`]) hosts as a pane of its ←/→ nav, not a tab renderer of
-//! its own — it exposes `render_panel(ui, area, buf)` plus its own key
-//! handler, modal while that panel is focused. The AGENTS tab and its
-//! INSTALLED AGENTS pane are [`crate::v2::agents_page`] and
-//! [`crate::v2::installed`]; the AGENTS pane beside `tools` on SETTINGS is
-//! [`crate::v2::engine_panel`].
+//! No SETTINGS pane is left in this module: AGENTS is
+//! [`crate::v2::engine_panel`], TOOLS is [`crate::v2::tools`] and SEATS is
+//! [`crate::v2::seats`], each with its own key handler, modal while that pane
+//! is focused. The AGENTS tab and its INSTALLED AGENTS pane are
+//! [`crate::v2::agents_page`] and [`crate::v2::installed`].
 
 /// The braille spinner's frames — the classic 10-frame dot cycle.
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -34,11 +32,8 @@ pub mod files;
 pub mod graph;
 pub mod issues;
 pub(crate) mod linear;
-pub mod mcp;
 pub mod picker;
 pub mod question;
-pub(crate) mod queue_popup;
 pub mod session;
 pub mod settings;
 pub mod skills;
-pub mod tools;

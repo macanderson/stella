@@ -270,6 +270,10 @@ pub struct EngineConfig {
 /// a verifier needs at least two consultations to observe a fail→pass flip,
 /// and the third admits one more revision round — the empirically common case
 /// of a model landing the fix within three attempts.
+///
+/// Deliberately carries no `MEASURED:` marker (#4572). Two of the three are
+/// structural — a flip cannot be observed in fewer consultations — and the
+/// third is headroom over an observation nobody wrote a sample size for.
 pub const DEFAULT_STOP_HOLDS: u32 = 3;
 
 /// The most `Stop` holds any host may buy, however large its ask.

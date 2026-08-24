@@ -10,7 +10,7 @@
 //! ```
 //!
 //! The third pane of the SETTINGS tab, beside AGENTS and TOOLS, and it exists
-//! for the reason [`crate::views::tools`]'s module doc gives for that one:
+//! for the reason [`crate::v2::tools`]'s module doc gives for that one:
 //!
 //! > MCP tools and customer-registered custom tools exist nowhere but the
 //! > assembled session stack, so the rows come from the driver … never from a

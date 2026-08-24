@@ -13,7 +13,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{DeckAction, DeckUi};
 use crate::envelope::{Secret, WorkspaceInput};
-use crate::views::mcp::{AuthPrompt, AuthStep, McpInspector, McpMode};
+use crate::v2::mcp_tab::{AuthPrompt, AuthStep, McpInspector, McpMode};
 
 /// MCP tab keys. Three sub-modes: Browse (navigate the configured servers and
 /// act on the selection), Search (type a registry query, then Enter to search
