@@ -11,7 +11,7 @@
 //! surface maps onto its own palette — `colored` codes on the plain surface,
 //! `ratatui` styles on the deck.
 //!
-//! The wording is byte-load-bearing: the plain renderer's observable output
+//! The wording is byte-exact: the plain renderer's observable output
 //! is composed as `"  {glyph} {body}"` (plus `" {detail}"` when present), and
 //! the fixture tests at the bottom pin every line to the exact strings the
 //! plain surface printed before the extraction. Change a string here and the
@@ -502,11 +502,18 @@ pub fn scope_review(
     let cost = estimated_cost_usd
         .map(|c| format!(", ~${c:.2}"))
         .unwrap_or_default();
+    // `estimated_files: 0` is *not stated* (see `ScopeProposal`), never a
+    // plan that touches nothing.
+    let files = if estimated_files > 0 {
+        format!(", ~{estimated_files} files")
+    } else {
+        String::new()
+    };
     EventLine {
         glyph: "⌾",
         tone: Tone::Warn,
         strong: true,
-        body: format!("scope review: {summary} ({steps} steps, ~{estimated_files} files{cost})"),
+        body: format!("scope review: {summary} ({steps} steps{files}{cost})"),
         detail: None,
     }
 }
@@ -1117,7 +1124,7 @@ mod tests {
     /// plugin's own name back, verbatim — not a category like "plugin", and
     /// not the nearest host stage it happens to resemble.
     ///
-    /// `triage-lite` is the load-bearing case: it *contains* a host stage's
+    /// `triage-lite` is the decisive case: it *contains* a host stage's
     /// name, so anything that resolved by prefix or substring would silently
     /// relabel it `triage` and claim the turn ran a stage it never ran.
     #[test]
@@ -1207,6 +1214,8 @@ mod tests {
                 tool_calls: 0,
                 complete: true,
                 finish_reason: None,
+                effort: None,
+                max_output_tokens: None,
                 sub_agent_id: None,
             },
             AgentEvent::GoalVerdict {
@@ -1307,6 +1316,7 @@ mod tests {
                 phase: stella_protocol::SubAgentPhase::Started {
                     agent_id: "search-1".into(),
                     instruction_preview: "find it".into(),
+                    effort: None,
                     budget_usd: Some(0.1),
                     write_access: false,
                     depth: 1,

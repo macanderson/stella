@@ -2,7 +2,7 @@
 //! and every way of writing a manifest that would quietly do nothing is a
 //! named load error instead.
 //!
-//! The two fixtures are the load-bearing claim. `wrapper-staged-v1.toml`
+//! The two fixtures are the required claim. `wrapper-staged-v1.toml`
 //! transcribes the order the staged pipeline's `pipeline.rs` ran
 //! (`crates/stella-pipeline`, deleted in #3865);
 //! `wrapper-lean-v1.toml` is a cheaper second shape. They differ in nothing

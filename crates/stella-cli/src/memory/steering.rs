@@ -55,34 +55,38 @@ pub(super) fn frame_candidates(frames: &[RecalledFrame]) -> Vec<SteeringCandidat
 /// Frames and skills carry stable handles (a `nod_…` id or citation label, a
 /// skill slug), so the set of handles is the honest granularity.
 ///
-/// Records are deliberately absent. Their channel renders as one budgeted
-/// block rather than per-handle bytes ([`stella_core::records::Registry::render_volatile_for_turn`]),
-/// so suppressing one record means re-rendering the channel without it, not
-/// filtering a list — a separate change to the renderer, tracked rather than
-/// half-made here.
+/// Records joined the set in #4498: their channel renders as one budgeted
+/// block, so suppressing one means re-rendering the channel without it —
+/// [`stella_core::records::Registry::render_volatile_for_turn_excluding`] is
+/// that door, and these handles are what it is handed.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ProducedSteering {
     frames: std::collections::HashSet<String>,
     skills: std::collections::HashSet<String>,
+    records: std::collections::HashSet<String>,
 }
 
 impl ProducedSteering {
-    /// The handles a rendered block contributed — the frames and skills that
-    /// reached its bytes, not the wider set recall returned.
+    /// The handles a rendered block contributed — the frames, skills and
+    /// records that reached its bytes, not the wider set recall returned.
     ///
     /// `skills` is the plane's selection, and only its `section_fit` prefix
     /// actually renders: [`stella_core::skills::render_skills_section`] stops at
     /// its own token budget and marks the rest omitted. Counting the omitted
     /// tail as produced would suppress a skill the model was never shown, which
-    /// is the one direction this set must not be wrong in.
+    /// is the one direction this set must not be wrong in. `records` carries no
+    /// such asymmetry: [`stella_core::records::RenderedChannel::rendered`] is
+    /// already the post-budget answer.
     pub(super) fn of(
         frames: &[RecalledFrame],
         skills: &[stella_core::skills::SelectedSkill],
+        records: &[String],
     ) -> Self {
         let rendered = &skills[..stella_core::skills::section_fit(skills)];
         Self {
             frames: frames.iter().map(frame_handle).collect(),
             skills: rendered.iter().map(|s| s.skill.name.clone()).collect(),
+            records: records.iter().cloned().collect(),
         }
     }
 
@@ -96,10 +100,17 @@ impl ProducedSteering {
         self.skills.contains(slug)
     }
 
+    /// The record handles already rendered this turn, for the channel's
+    /// exclusion door.
+    pub(super) fn records(&self) -> &std::collections::HashSet<String> {
+        &self.records
+    }
+
     /// Fold another block's handles in.
     fn absorb(&mut self, other: &Self) {
         self.frames.extend(other.frames.iter().cloned());
         self.skills.extend(other.skills.iter().cloned());
+        self.records.extend(other.records.iter().cloned());
     }
 }
 
@@ -164,14 +175,12 @@ pub(super) struct GatheredSteering {
 ///   WILL be injected verbatim by the engine, so a byte-identical block must
 ///   die here.
 ///
-///   The handle set starts EMPTY rather than seeded from history, and that is
-///   a bound, not an oversight: the adapter is handed the rendered
-///   conversation, and a rendered block is not invertible to handles — a
-///   code-graph frame renders under its label while its handle is its node id
-///   (`frame_recall_line` prints an id only for memory frames). So the
-///   turn-opening block's frames can still be repeated once, by the first
-///   answered re-query; what cannot happen any more is the same frame
-///   compounding across every re-query after it.
+///   The handle set is seeded from the turn-opening block's own
+///   [`ProducedSteering`] (#4498), carried in by the driver rather than
+///   recovered from history — a rendered block is not invertible to handles
+///   (a code-graph frame renders under its label while its handle is its node
+///   id), which is why the opening block's `produced` travels with its
+///   telemetry event instead of being re-derived here.
 /// - **Telemetry** — a re-query is a full recall fan-out with provider spend
 ///   behind it, so it reports the same `ContextRecall` event the pre-turn
 ///   block does (#3366). The pre-turn recall runs before the turn's channel
@@ -202,10 +211,13 @@ const MIN_STEPS_BETWEEN: u32 = 2;
 
 impl<'m> SessionRequery<'m> {
     /// A per-turn adapter over this session's memory, seeded with the recall
-    /// blocks `messages` already carries so none is ever re-injected.
+    /// blocks `messages` already carries so none is ever re-injected, and with
+    /// the turn-opening block's own handles so the first answered re-query
+    /// does not repeat its frames, skills or records (#4498).
     pub(crate) fn new(
         memory: &'m super::SessionMemory,
         messages: &[stella_protocol::CompletionMessage],
+        opening: ProducedSteering,
     ) -> Self {
         let produced = messages
             .iter()
@@ -219,7 +231,7 @@ impl<'m> SessionRequery<'m> {
             memory,
             state: std::sync::Mutex::new(RequeryState {
                 produced,
-                produced_steering: ProducedSteering::default(),
+                produced_steering: opening,
                 answered_fingerprint: fingerprint(&[], &[]),
             }),
             events: None,
@@ -249,8 +261,9 @@ pub(crate) fn requery_for_turn<'m>(
     memory: Option<&'m super::SessionMemory>,
     messages: &[stella_protocol::CompletionMessage],
     events: stella_core::EventSender,
+    opening: ProducedSteering,
 ) -> Option<SessionRequery<'m>> {
-    memory.map(|memory| SessionRequery::new(memory, messages).with_events(events))
+    memory.map(|memory| SessionRequery::new(memory, messages, opening).with_events(events))
 }
 
 /// Order-free digest of the drift markers. `BTreeSet` so two signals that
@@ -365,7 +378,7 @@ mod tests {
             "the control: the section renderer renders some and cuts the rest, got {fit}"
         );
 
-        let produced = ProducedSteering::of(&[], &skills);
+        let produced = ProducedSteering::of(&[], &skills, &[]);
         for sel in &skills[..fit] {
             assert!(
                 produced.has_skill(&sel.skill.name),
@@ -386,8 +399,9 @@ mod tests {
     /// every one that reaches [`ProducedSteering::of`] reaches the bytes.
     #[test]
     fn an_empty_selection_produces_nothing_and_does_not_panic() {
-        let produced = ProducedSteering::of(&[], &[]);
+        let produced = ProducedSteering::of(&[], &[], &[]);
         assert!(!produced.has_skill("anything"));
         assert!(!produced.has_frame("nod_anything"));
+        assert!(produced.records().is_empty());
     }
 }

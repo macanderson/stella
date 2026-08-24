@@ -32,6 +32,9 @@
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// An arbiter-grade wrapper, shaped like `plugins/stella-goal`'s real
 /// manifest (`[loop] participation = "arbiter"`, the `Stop` hook it
 /// requires, one requirement, and a `flip = "not-applicable"` oracle
@@ -85,6 +88,7 @@ fn install_arbiter_fixture(workspace: &Path) {
 
 fn run_stella(workspace: &Path, data: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args([
             "--model",
             "openrouter/z-ai/glm-5.1",

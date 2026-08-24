@@ -218,7 +218,7 @@ fn static_prompt_bodies(source: &str) -> Vec<(&str, &str)> {
 /// The constant name declared by a top-level static-prompt line, if this is
 /// one: `[pub(crate) ]const NAME: &str = concat!(`.
 ///
-/// The `concat!` is load-bearing rather than incidental syntax. Both prompts
+/// The `concat!` is required rather than incidental syntax. Both prompts
 /// are compile-time concatenations precisely so the cached prefix stays
 /// byte-stable (invariant 7 / L-E8); a prompt rewritten as a runtime `format!`
 /// stops matching here, and the registry cross-check turns that into a named
@@ -638,7 +638,7 @@ fn both_prompts_make_the_test_suite_the_first_instrument() {
         // The change-shaped half, stated as ordering rather than as a PR
         // submission requirement: the test exists before the edit does.
         "write the failing test before the edit and watch it fail",
-        // The load-bearing sentence — completion is observed, not argued.
+        // The required sentence — completion is observed, not argued.
         "let the test decide you are done",
         "reasoning about whether the work is complete is not a substitute",
     ] {
@@ -721,7 +721,7 @@ fn both_prompts_bind_the_model_to_skills() {
 /// `every_shared_contract_is_invoked_by_every_static_prompt` does not cover it
 /// — hence this pin.
 ///
-/// The two clauses are load-bearing in opposite directions and each fails on
+/// The two clauses are required in opposite directions and each fails on
 /// its own. Without the working-tree-first clause the rule reproduces the exact
 /// measured defect: Stella's one early git probe was `git diff HEAD~5`, which
 /// reads committed history and cannot see an uncommitted change. Without the

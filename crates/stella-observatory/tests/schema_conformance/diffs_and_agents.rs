@@ -163,3 +163,30 @@ fn the_agents_panel_separates_the_two_writers_against_the_real_schema() {
     assert!(kinds.contains(&"definition"), "{session}");
     assert!(kinds.contains(&"delegation"), "{session}");
 }
+
+/// The turn page's sub-agents fold against the real migrated schema: the
+/// `sub_agent` bracket (task, effort, status, summary, both timestamps)
+/// joined with the v33 `telemetry.sub_agent_id` metering rows (model, API
+/// provider, tokens). The fold's own rules are witnessed in the crate's unit
+/// tests; this is the schema-drift gate over both reads.
+#[test]
+fn the_turn_page_folds_a_delegates_bracket_and_metering_against_the_real_schema() {
+    let workspace = real_store_workspace();
+    let out: serde_json::Value =
+        serde_json::from_slice(&respond(workspace.path(), "/api/execution-subagents?id=1").body)
+            .expect("json");
+    let agents = out["agents"].as_array().expect("agents");
+    assert_eq!(agents.len(), 1, "{out}");
+    let a = &agents[0];
+    assert_eq!(a["agent_id"], "search-1", "{out}");
+    assert_eq!(a["instruction_preview"], "find the retry policy", "{out}");
+    assert_eq!(a["effort"], "high", "{out}");
+    assert_eq!(a["status"], "completed", "{out}");
+    assert_eq!(a["summary"], "retry policy lives in retry.rs", "{out}");
+    assert_eq!(a["provider"], "zai", "{out}");
+    assert_eq!(a["model"], "glm-5.2", "{out}");
+    assert_eq!(a["calls"], 1, "{out}");
+    assert_eq!(a["tokens_in"], 300, "{out}");
+    assert!(a["started_ts"].is_string(), "{out}");
+    assert!(a["finished_ts"].is_string(), "{out}");
+}

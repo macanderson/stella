@@ -828,7 +828,7 @@ needs no witness test — say so in the PR template.
 | **3** | Remediation #1–#5 (§9). Item-count rule (§5.6) turns on for new files. | Red band blocks for **new** files. |
 | **4** | Remediation #6–#10. `too_many_lines` to deny with `#[allow]` + reason at each of the 222 sites. | Red band blocks for all files. |
 
-Phase 2 is the load-bearing one, and it has **two** halves that must ship
+Phase 2 is the decisive phase, and it has **two** halves that must ship
 together. The non-increase rule makes the tree monotonically improve; the
 required status check makes the rule binding. Shipping the rule as a pre-push
 hook alone reproduces §3.5 exactly — a 1,703-line file reached `main` past a

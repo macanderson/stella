@@ -4,10 +4,10 @@
 //! backlog it draws from, and both are bounded by the same rule — it owns the
 //! backlog's *hygiene* and none of what an issue *means*.
 //!
-//! Split out of `self_driving_cmd.rs` rather than added to it. That file is
-//! over the 1500-line limit and `doc:backlog-self-driving` §9 records it as
-//! closed to growth, with new logic landing in siblings here (AGENTS.md
-//! § *God files* — plan around them, never into them).
+//! Split out of `self_driving_cmd.rs` rather than added to it. That file
+//! sits close to the 1500-line ratchet and `doc:backlog-self-driving` §9
+//! records it as closed to growth, with new logic landing in siblings here
+//! (AGENTS.md § *God files* — plan around them, never into them).
 
 use stella_autonomy::{Citation, Closure, ClosureRefusal};
 use stella_protocol::issue::IssueProvider;

@@ -37,13 +37,13 @@
 #               `uv run --no-sync pytest -q` there.
 #   no-project  `uv run --with pytest --no-project pytest -q` — no project to
 #               sync, because the suite's subject is standard-library only.
-#               Deliberate, and load-bearing: recomputing a published score from
+#               Deliberate, and required: recomputing a published score from
 #               committed evidence must not need the benchmark harness
 #               installed. Two spellings, distinguished by cwd: a suite named by
 #               path runs from the repository root, a suite named by
-#               `working-directory` runs from that directory (arenabench needs
-#               it — its `[tool.pytest.ini_options]` sets `pythonpath = ["."]`
-#               relative to its own rootdir).
+#               `working-directory` runs from that directory (ArenaBench needed
+#               it until its ejection to its own repository, #2380; the
+#               spelling stays for the next suite whose rootdir matters).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"

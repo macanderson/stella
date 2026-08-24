@@ -138,7 +138,7 @@ fn append(
     // ever exists, not even transiently as something a later refactor could
     // persist by accident. A tool error is the single most likely place in this
     // tree for a credential to appear — a failing curl or psql prints its own
-    // arguments — so this ordering is load-bearing here, not ceremonial.
+    // arguments — so this ordering is required here, not ceremonial.
     let redaction = redact_secrets(&bounded(text));
     let record = ObservationRecord::new(
         source,

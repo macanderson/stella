@@ -82,7 +82,7 @@ const MAX_UNCHANGED_READS: u64 = 24;
 /// The refusal [`MAX_UNCHANGED_READS`] produces.
 ///
 /// **Byte-identical across calls by construction** — it names the path and the
-/// file's size, never the running tally. That is load-bearing rather than
+/// file's size, never the running tally. That is required rather than
 /// tidy: this refusal is a `ToolOutput::error`, which loop comparison does not
 /// strip a footer from, so a tally inside it would make every refusal a
 /// different string and leave a model that ignores the ceiling exactly as
@@ -469,6 +469,10 @@ impl Tool for ReadFile {
                 unread.join(", ")
             ));
         }
+        // No structured `data` on the plural form: line coverage is a
+        // per-file fact, and one shown/total pair over an interleaved batch
+        // would attribute every file's lines to none of them. The single form
+        // is the producer the deck's read head resolves (#4297).
         ToolOutput::ok(rendered)
     }
 }
@@ -515,7 +519,10 @@ impl ReadFile {
         // `stella_core::workspace_scope` on why a parallel checkout of the
         // same repository is the read an agent must not silently get.
         if let Some(refusal) = ctx.refuse_read(path) {
-            return ToolOutput::error(refusal);
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::PermissionDenied,
+                refusal,
+            );
         }
 
         // Read from whichever allowed root holds this path, not from the
@@ -541,7 +548,10 @@ impl ReadFile {
         let handle = match crate::rootfd::RootHandle::open(&root) {
             Ok(handle) => std::sync::Arc::new(handle),
             Err(e) => {
-                return ToolOutput::error(format!("cannot open workspace root: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("cannot open workspace root: {e}"),
+                );
             }
         };
 
@@ -576,28 +586,43 @@ impl ReadFile {
         let bytes = match loaded {
             Ok(Ok(Loaded::Bytes(bytes))) => bytes,
             Ok(Ok(Loaded::Directory)) => {
-                return ToolOutput::error(format!(
-                    "`{path}` is a directory, not a file — list it with \
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    format!(
+                        "`{path}` is a directory, not a file — list it with \
                          glob({{\"pattern\": \"*\", \"path\": \"{path}\"}})"
-                ));
+                    ),
+                );
             }
             Ok(Ok(Loaded::TooLarge { bytes })) => {
-                return ToolOutput::error(format!(
-                    "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    format!(
+                        "`{path}` is {} MB, past read_file's {} MB ceiling — the whole file is \
                          loaded to render any range, so offset/limit would not help. Search it \
                          with grep, or page it with bash (`sed -n '1,200p' {path}`).",
-                    bytes / (1024 * 1024),
-                    MAX_FILE_BYTES / (1024 * 1024)
-                ));
+                        bytes / (1024 * 1024),
+                        MAX_FILE_BYTES / (1024 * 1024)
+                    ),
+                );
             }
             Ok(Err(e)) if e.is_escape() => {
-                return ToolOutput::error(format!("path `{path}` escapes workspace root ({e})"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::PermissionDenied,
+                    format!("path `{path}` escapes workspace root ({e})"),
+                );
             }
             Ok(Err(e)) => {
-                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Environment,
+                    format!("failed to read `{path}`: {e}"),
+                );
             }
             Err(e) => {
-                return ToolOutput::error(format!("failed to read `{path}`: {e}"));
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::Internal,
+                    format!("failed to read `{path}`: {e}"),
+                );
             }
         };
 
@@ -642,7 +667,10 @@ impl ReadFile {
                 // it toward an action that can never succeed via `read_file`.
                 let whole_file_read = start == 0 && end == lines.len();
                 if !whole_file_read && tally.since_change > MAX_UNCHANGED_READS {
-                    return ToolOutput::error(unchanged_read_ceiling(path, lines.len()));
+                    return ToolOutput::classified_error(
+                        stella_protocol::ErrorClass::RefusedByPolicy,
+                        unchanged_read_ceiling(path, lines.len()),
+                    );
                 }
 
                 if start >= lines.len() {
@@ -658,15 +686,21 @@ impl ReadFile {
                     // and never the 0-based index derived from it — "offset 4
                     // is past end" for a call that said 5 sent the model
                     // hunting for an off-by-one that wasn't there.
-                    return ToolOutput::ok(format!(
-                        "(file has {total} lines; the requested offset is past the end)\
-                         {READ_FOOTER_OPEN}0/{total}{READ_FOOTER_TALLY_MID}{reads}\
-                         {READ_FOOTER_TALLY_END}{READ_FOOTER_CLAUSE_SEP}requested offset \
-                         {offset} is past the end{READ_FOOTER_CLOSE}",
-                        total = lines.len(),
-                        reads = tally.reads,
-                        offset = offset.unwrap_or(1),
-                    ));
+                    return ToolOutput::ok_with_data(
+                        format!(
+                            "(file has {total} lines; the requested offset is past the end)\
+                             {READ_FOOTER_OPEN}0/{total}{READ_FOOTER_TALLY_MID}{reads}\
+                             {READ_FOOTER_TALLY_END}{READ_FOOTER_CLAUSE_SEP}requested offset \
+                             {offset} is past the end{READ_FOOTER_CLOSE}",
+                            total = lines.len(),
+                            reads = tally.reads,
+                            offset = offset.unwrap_or(1),
+                        ),
+                        // A past-end read still read the file; it showed none
+                        // of it. Same producer, same keys — constant per file
+                        // state, so two past-end sweeps still compare equal.
+                        serde_json::json!({ "lines_shown": 0, "lines_total": lines.len() }),
+                    );
                 }
 
                 // `write!` into one pre-sized buffer rather than a `format!`
@@ -744,9 +778,24 @@ impl ReadFile {
                     path,
                     shown == total && clipped_lines == 0 && !payload_capped,
                 );
-                ToolOutput::ok(numbered)
+                // The counts ride as structured `data` alongside the prose, so
+                // a consumer that wants the measurement (the deck's read head,
+                // #4297) reads the producer's own numbers instead of parsing
+                // the footer back out of a payload that is capped and whose
+                // shape belongs to loop comparison. Both numbers, because a
+                // truncated read must be statable as truncated: `shown` is
+                // what actually entered context, `total` what is on disk.
+                // Deterministic for a given file state and window, so it
+                // cannot re-blind the loop detector the footer strip exists
+                // for (`comparable_output` keeps `data` in the comparison).
+                ToolOutput::ok_with_data(
+                    numbered,
+                    serde_json::json!({ "lines_shown": shown, "lines_total": total }),
+                )
             }
-            Err(message) => ToolOutput::error(message),
+            Err(message) => {
+                ToolOutput::classified_error(stella_protocol::ErrorClass::InvalidInput, message)
+            }
         }
     }
 }

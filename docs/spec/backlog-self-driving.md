@@ -564,8 +564,8 @@ a lens **and a baseline**. So:
 - The ladder resets to `rubric` when the baseline has moved by a declared
   threshold since the sweep that exhausted it — *N* merged commits or *D* days,
   recorded as `last_clean_head` in `calibration.json`, which is already carried
-  through `Calibration::extra` and was already required closely enough that
-  dropping it broke watch mode once.
+  through `Calibration::extra` and was already required enough that dropping
+  it broke watch mode once.
 
 A re-pass therefore yields exactly the findings the new code introduced, and
 nothing else. That is not make-work; it is the only honest reading of what a dry

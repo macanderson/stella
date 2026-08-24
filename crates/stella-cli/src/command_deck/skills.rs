@@ -172,41 +172,6 @@ pub(crate) fn is_sideband(head: &str) -> bool {
     SIDEBAND.contains(&head)
 }
 
-#[cfg(test)]
-mod sideband_tests {
-    use super::*;
-
-    /// Every queue-free name is a real builtin, and the turn-coupled
-    /// exceptions are not on the list.
-    #[test]
-    fn the_sideband_list_is_a_subset_of_the_builtins() {
-        for name in SIDEBAND {
-            assert!(
-                DECK_BUILTINS.iter().any(|(n, ..)| n == name),
-                "{name} is queue-free but not a builtin"
-            );
-        }
-        for name in ["/clear", "/init", "/reload", "/profile", "/add-dir"] {
-            assert!(!is_sideband(name), "{name} is turn-coupled by design");
-        }
-    }
-
-    /// The deck's vocabulary carries the flag, so the routing decision is
-    /// declared once here and read everywhere.
-    #[test]
-    fn the_vocabulary_carries_the_sideband_flag() {
-        let commands = deck_slash_commands(&crate::extensions::CustomExtensions::default());
-        for c in &commands {
-            assert_eq!(
-                c.sideband,
-                is_sideband(&c.name),
-                "{} disagrees with the SIDEBAND list",
-                c.name
-            );
-        }
-    }
-}
-
 // SKILLS tab: driver-side ops (the deck routes `WorkspaceInput::Skill`)
 
 /// Snapshot the installed skills across BOTH scopes into an [`Inbound::Skills`].
@@ -650,6 +615,41 @@ pub(super) fn handle_skills_input(
                         .await;
                 let _ = in_tx.send(skills_snapshot_created(&root, Some(status), created));
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod sideband_tests {
+    use super::*;
+
+    /// Every queue-free name is a real builtin, and the turn-coupled
+    /// exceptions are not on the list.
+    #[test]
+    fn the_sideband_list_is_a_subset_of_the_builtins() {
+        for name in SIDEBAND {
+            assert!(
+                DECK_BUILTINS.iter().any(|(n, ..)| n == name),
+                "{name} is queue-free but not a builtin"
+            );
+        }
+        for name in ["/clear", "/init", "/reload", "/profile", "/add-dir"] {
+            assert!(!is_sideband(name), "{name} is turn-coupled by design");
+        }
+    }
+
+    /// The deck's vocabulary carries the flag, so the routing decision is
+    /// declared once here and read everywhere.
+    #[test]
+    fn the_vocabulary_carries_the_sideband_flag() {
+        let commands = deck_slash_commands(&crate::extensions::CustomExtensions::default());
+        for c in &commands {
+            assert_eq!(
+                c.sideband,
+                is_sideband(&c.name),
+                "{} disagrees with the SIDEBAND list",
+                c.name
+            );
         }
     }
 }

@@ -14,7 +14,7 @@
 //! break:
 //!
 //! 1. **The manifests still load** against *this* repository's
-//!    `PluginManifest::from_toml_str`. This is the load-bearing one: it is the
+//!    `PluginManifest::from_toml_str`. This is the decisive tier: it is the
 //!    assertion that turns red when a grammar change here orphans the examples,
 //!    which is the exact failure §9 rule 4 exists to catch.
 //! 2. **Rule 1 still holds** — the three manifests are byte-identical except

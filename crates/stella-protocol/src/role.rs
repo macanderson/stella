@@ -123,7 +123,7 @@ mod tests {
 mod rename_compat_tests {
     use super::*;
 
-    /// **The rename's load-bearing property.** `Role::Verifier` shipped on the
+    /// **The rename's required property.** `Role::Verifier` shipped on the
     /// wire as `judge`, and it is persisted in settings and role pins as well
     /// as in recorded streams. Reading the old token is not a nicety — without
     /// it every existing pin silently orphans and every stored session fails

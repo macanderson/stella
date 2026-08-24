@@ -161,6 +161,16 @@ pub enum TranscriptEntry {
         /// claim window's (`super::inline_diff::ClaimWindow::claim`) and the
         /// renderer does not re-derive it.
         diff: Vec<InlineDiffRef>,
+        /// The line coverage the tool reported for itself in its structured
+        /// `data` payload — `read_file`'s producer (#4297). Its own carrier,
+        /// deliberately not a widening of the mutation path above: a read
+        /// stamps no [`InlineDiffRef`] because it changes nothing, and the
+        /// number here is the producer's own measurement off the wire, never
+        /// a recount of the rendered body (#2290's defect) — that body is
+        /// capped at `OUTPUT_BUDGET` besides. `None` for every tool that
+        /// reports no coverage, which is every result written before the
+        /// payload existed.
+        read_size: Option<ReadSize>,
     },
     /// A model call was retried (surfaced only once the step commits — the
     /// engine defers these, L-E10).
@@ -381,4 +391,34 @@ pub struct InlineDiffRef {
     /// It resolves for as long as that mutation is remembered, and dangles
     /// (rendering nothing) when nothing measured a net change to the path.
     pub seq: u32,
+}
+
+/// The line coverage a `read_file` result reported for itself (#4297).
+///
+/// Both numbers, because a truncated read must be statable as truncated:
+/// rendering `total` alone would silently overstate what entered context, and
+/// `shown` alone would silently understate the file. The pair comes off the
+/// wire as the producer's structured `data` (`lines_shown` / `lines_total` in
+/// `stella_tools::read`), never parsed back out of the rendered footer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadSize {
+    /// Lines actually handed to the model — what a truncated read put in
+    /// context.
+    pub shown: u32,
+    /// Lines in the file at read time.
+    pub total: u32,
+}
+
+impl ReadSize {
+    /// Both counts out of a tool result's structured `data`, or `None` when
+    /// either is absent or does not fit — a coverage the fold cannot state
+    /// exactly is not stated at all, never saturated into a plausible lie.
+    #[must_use]
+    pub fn from_data(data: &serde_json::Value) -> Option<Self> {
+        let count = |key: &str| u32::try_from(data.get(key)?.as_u64()?).ok();
+        Some(ReadSize {
+            shown: count("lines_shown")?,
+            total: count("lines_total")?,
+        })
+    }
 }

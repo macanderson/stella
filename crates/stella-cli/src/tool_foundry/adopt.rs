@@ -395,7 +395,10 @@ impl ToolExecutor for Builtins {
     }
 
     async fn execute(&self, name: &str, _: &Value) -> ToolOutput {
-        ToolOutput::error(format!("no tool named `{name}` is available"))
+        ToolOutput::classified_error(
+            stella_protocol::ErrorClass::Internal,
+            format!("no tool named `{name}` is available"),
+        )
     }
 }
 

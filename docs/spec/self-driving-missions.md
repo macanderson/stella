@@ -379,7 +379,7 @@ Two adapters ship first, and the set is open:
 
 | `kind` | What it wraps | Metrics declared |
 |---|---|---|
-| `arenabench` | A match via the existing arena machinery: per-seat `sut_ref` pins each twin (landed — `Contestant.sut_ref` in `arenabench/arenabench/model.py`), trial artifacts and `stella-events.jsonl` come back as today. | `solve_rate`, `priced_cost`, `clock_time`, `tokens_total` — computed by the `TrialMetrics → ArmTrials` bridge of foundry Phase 0, from the trace, not the surface summary. |
+| `arenabench` | A match via the existing arena machinery: per-seat `sut_ref` pins each twin (landed — `Contestant.sut_ref` in the arenabench repo's `model.py`), trial artifacts and `stella-events.jsonl` come back as today. | `solve_rate`, `priced_cost`, `clock_time`, `tokens_total` — computed by the `TrialMetrics → ArmTrials` bridge of foundry Phase 0, from the trace, not the surface summary. |
 | `command` | Any executable in the system's own repository. | Whatever the manifest declares and the witness run confirms (§5.2). |
 
 ### 5.2 Declared metrics — parity, not assumption
@@ -512,7 +512,7 @@ operator's ask was explicitly "no time limit, but resources are finite."
 
 ### 8.1 Pre-registration
 
-The hypothesis card is foundry §5.1's, with the prediction made load-bearing
+The hypothesis card is foundry §5.1's, with the prediction made required
 and the arms made plural:
 
 ```json

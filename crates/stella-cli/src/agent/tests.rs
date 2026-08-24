@@ -42,7 +42,7 @@ fn a_machine_format_turn_reflects_like_a_text_one() {
     }
 }
 
-/// The two per-turn facts are load-bearing, not decoration.
+/// The two per-turn facts are required, not decoration.
 ///
 /// A turn with nothing in it to learn from, or one with no workspace memory
 /// open to record into, spends no reflection call — that is what keeps the
@@ -160,6 +160,8 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
         tool_calls: 1,
         complete: true,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
         sub_agent_id: None,
     };
 
@@ -914,6 +916,8 @@ fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
             tool_calls: 0,
             complete: true,
             finish_reason: None,
+            effort: None,
+            max_output_tokens: None,
             sub_agent_id: None,
         }],
     };

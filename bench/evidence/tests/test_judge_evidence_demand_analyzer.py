@@ -108,7 +108,7 @@ def test_a_pre_ladder_turn_is_unscorable_rather_than_zero(tmp_path: Path) -> Non
     assert summary["turns"] == 1
     assert summary["turns_scorable"] == 0
     assert summary["turns_no_ladder"] == 1
-    # The load-bearing assertion: an unscorable turn contributes to NO rate.
+    # The decisive assertion: an unscorable turn contributes to NO rate.
     assert summary["standalone_judge_passes"] == 0
     assert summary["judge_passes"] == 0
 

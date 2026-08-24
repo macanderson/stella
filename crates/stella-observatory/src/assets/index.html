@@ -446,7 +446,8 @@ nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
   letter-spacing:.005em;padding:11px 13px;margin-bottom:-1px}
 .tabs button:hover{color:var(--text);background:var(--accent-wash)}
 .tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
-.tf-wrap{margin-left:auto;display:flex;align-items:center;gap:var(--sp1);padding:6px 0}
+.tf-wrap{display:flex;align-items:center;justify-content:flex-end;
+  gap:var(--sp1);padding:0 0 var(--sp2)}
 .tf-label{font:var(--fs-micro)/1 var(--mono);color:var(--text-3)}
 .tf{display:flex;align-items:stretch;border:1px solid var(--control-edge);
     border-radius:var(--radius-sm);overflow:hidden}
@@ -674,39 +675,40 @@ pre.cfg{font:var(--fs-micro)/1.6 var(--mono);color:var(--text-2);background:var(
 .hl-str,.hl-num{color:var(--text-2)}
 .hl-com{color:var(--text-3);font-style:italic}
 
-/* ── Context-receipt call list ────────────────────────────────────────────
-   One row per recorded model call. A row used to carry two buttons that
-   wrote into a shared panel below the whole list — every call is nearly a
-   superset of the one before it, so reading down the list re-read the same
-   growing prefix each time. A row is now a single control that focuses the
-   call inspector (below) on that call instead. */
-.ctx-row{display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp1);
-  padding:9px 11px;border:1px solid var(--hairline);border-radius:var(--radius-sm);
-  margin-bottom:6px;font:var(--fs-sm)/1.5 var(--mono);color:var(--text-2);
-  cursor:pointer;width:100%;text-align:left;background:none}
-.ctx-row:hover,.ctx-row:focus-visible{border-color:var(--accent-edge);background:var(--accent-wash)}
-.ctx-row.latest{border-color:var(--control-edge)}
-.ctx-row .who{color:var(--text);font-weight:600}
-.ctx-row .spacer{margin-left:auto}
-.ctx-list{max-height:264px;overflow-y:auto;padding-right:4px;
-          border-bottom:1px solid var(--hairline);margin-bottom:var(--sp2)}
 .ctx-verdict{font:var(--fs-sm)/1.6 var(--mono);margin-bottom:var(--sp1)}
 
 /* ── Call inspector ────────────────────────────────────────────────────────
-   What a row above focuses: one call's context, ← / → through every other
-   recorded call without re-clicking a row, and a toggle between "what got
-   added since the previous call of this role" (the default) and "the full
-   prompt at this point" — the same two payloads the row's two buttons used
-   to fetch, now one call at a time instead of accreting on a shared panel.
+   One model call's prompt, opened from the inspect control on that call's
+   metering row in the rendered transcript: ← / → through every other
+   recorded call without leaving it, and a toggle between "what got added
+   since the previous call of this role" (the default) and "the full prompt
+   at this point", system prompt included.
 
-   This is a block in the page's own flow, not an overlay: "inspecting a
-   turn is a route, not an overlay" is this very page's own reason for
-   existing (see the doc comment above sentContextSectionHtml and
-   tests::http_surface::inspecting_a_turn_is_a_page_not_a_drawer) — a dialog
-   here would reproduce, for one call, exactly the width-and-address
-   complaints that retired the drawer for the whole turn. */
-.ctx-inspect{border:1px solid var(--hairline-strong);border-radius:var(--radius);
-  background:var(--surface)}
+   A native dialog over the transcript, deliberately unlike the turn itself:
+   "inspecting a turn is a route, not an overlay"
+   (tests::http_surface::inspecting_a_turn_is_a_page_not_a_drawer) still
+   holds — a turn has an address and a width. One call's prompt is a detail
+   *of* the transcript the reader is standing in; sending it to its own page
+   would lose the place in the run the reader is auditing. */
+.ctx-dialog{background:var(--surface);color:var(--text);border:1px solid var(--hairline-strong);
+  border-radius:var(--radius);padding:0;width:min(980px,92vw)}
+.ctx-dialog::backdrop{background:rgba(0,0,0,.55)}
+.ctx-inspect{background:var(--surface)}
+
+/* ── Agent profile cards ──────────────────────────────────────────────────
+   One card per seat the turn ran; see the builder's comment for what a card
+   can honestly print and what it names as unrecorded instead of omitting. */
+.prof-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:var(--sp2)}
+.prof-card{border:1px solid var(--hairline);border-radius:var(--radius);
+  background:var(--surface);padding:var(--sp2)}
+.prof-head{font:var(--fs-sm)/1.5 var(--mono);color:var(--text);margin-bottom:var(--sp1)}
+.prof-rows{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;
+  font:var(--fs-micro)/1.6 var(--mono);margin:0}
+.prof-rows dt{color:var(--text-3)}
+.prof-rows dd{color:var(--text-2);word-break:break-word;margin:0}
+.prof-vendor{color:var(--text)}
+.prof-gap{color:var(--text-3);font-style:italic}
+.prof-offer{margin-top:var(--sp1);border-top:1px solid var(--hairline);padding-top:var(--sp1)}
 .ctx-inspect-head{display:flex;align-items:center;gap:var(--sp2);
   padding:var(--sp2);border-bottom:1px solid var(--hairline-strong)}
 .ctx-inspect-title{flex:1;min-width:0}
@@ -869,15 +871,6 @@ footer b{color:var(--identity);font-weight:600}
       <button role="tab" id="tab-hub" aria-controls="panel-hub" data-tab="hub">Org / hub</button>
       <button role="tab" id="tab-config" aria-controls="panel-config" data-tab="config">Config</button>
     </div>
-    <div class="tf-wrap">
-      <span class="tf-label" id="tfLabel">Window</span>
-      <div class="tf" id="tf" role="radiogroup" aria-labelledby="tfLabel">
-        <button role="radio" data-tf="24h">24h</button>
-        <button role="radio" data-tf="7d">7d</button>
-        <button role="radio" data-tf="30d">30d</button>
-        <button role="radio" data-tf="all" aria-checked="true">All</button>
-      </div>
-    </div>
   </nav>
 
   <main id="main" tabindex="-1">
@@ -935,6 +928,31 @@ footer b{color:var(--identity);font-weight:600}
       <nav class="tx-rail" id="tx-rail" aria-label="Sections of this transcript"></nav>
       <div id="tx-main"></div>
     </div>
+    <!-- The prompt inspector, opened from a metering row's inspect control in
+         the rendered transcript. A native dialog: modality, focus trapping
+         and Escape come from the element, and the transcript underneath is
+         the context the reader returns to — the inspector is one call's
+         prompt, not a page of its own. -->
+    <dialog class="ctx-dialog" id="ctx-dialog" aria-label="Prompt sent to one model call">
+      <div class="ctx-inspect ctx-inspect-modal" id="ctxInspect">
+        <div class="ctx-inspect-head">
+          <button type="button" class="ctx-nav" id="ctxPrev" title="Previous call (←)" aria-label="Previous call">←</button>
+          <div class="ctx-inspect-title">
+            <h3 id="ctxTitle"></h3>
+            <p id="ctxSub"></p>
+          </div>
+          <button type="button" class="ctx-nav" id="ctxNext" title="Next call (→)" aria-label="Next call">→</button>
+          <button type="button" class="ctx-nav" id="ctxClose" title="Close (Esc)" aria-label="Close">✕</button>
+        </div>
+        <div class="ctx-inspect-toolbar">
+          <div class="ctx-toggle" role="tablist" aria-label="View">
+            <button type="button" role="tab" data-view="diff" id="ctxViewDiff">Added since previous call</button>
+            <button type="button" role="tab" data-view="full" id="ctxViewFull">Full prompt at this point</button>
+          </div>
+        </div>
+        <div class="ctx-inspect-body" id="ctxBody" tabindex="-1"></div>
+      </div>
+    </dialog>
   </section>
 
   <!-- ══ ORG / HUB ═════════════════════════════════════════════════════ -->
@@ -973,6 +991,15 @@ footer b{color:var(--identity);font-weight:600}
 
   <!-- ══ OVERVIEW ══════════════════════════════════════════════════════ -->
   <section data-tab="overview" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" tabindex="0" class="on">
+    <div class="tf-wrap">
+      <span class="tf-label" id="tfLabel-overview">Window</span>
+      <div class="tf" role="radiogroup" aria-labelledby="tfLabel-overview">
+        <button role="radio" data-tf="24h">24h</button>
+        <button role="radio" data-tf="7d">7d</button>
+        <button role="radio" data-tf="30d">30d</button>
+        <button role="radio" data-tf="all" aria-checked="true">All</button>
+      </div>
+    </div>
     <div class="grid kpis" id="kpis"></div>
     <div class="grid cols-2">
       <div class="card">
@@ -1021,6 +1048,15 @@ footer b{color:var(--identity);font-weight:600}
 
   <!-- ══ ACTIVITY ══════════════════════════════════════════════════════ -->
   <section data-tab="activity" id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" tabindex="0">
+    <div class="tf-wrap">
+      <span class="tf-label" id="tfLabel-activity">Window</span>
+      <div class="tf" role="radiogroup" aria-labelledby="tfLabel-activity">
+        <button role="radio" data-tf="24h">24h</button>
+        <button role="radio" data-tf="7d">7d</button>
+        <button role="radio" data-tf="30d">30d</button>
+        <button role="radio" data-tf="all" aria-checked="true">All</button>
+      </div>
+    </div>
     <div id="act-undated"></div>
     <div class="grid cols-2e">
       <div class="card">
@@ -1318,6 +1354,9 @@ function initThemeToggle() {
       localStorage.setItem(THEME_KEY, next);
     } catch (e) {}
     sync();
+    // An open rendered transcript keys its scheme off this attribute too,
+    // via the retargeted stylesheet in its shadow root.
+    retintTranscript();
   });
   sync();
 }
@@ -1796,7 +1835,9 @@ function renderTools(rows) {
   $("tools").querySelectorAll(".hbar").forEach((el, i) => {
     const r = top[i];
     el.addEventListener("mousemove", ev => showTip(ev,
-      `<b>${esc(r.name)}</b>${fmtInt(r.calls)} calls · ${fmtInt(r.errors)} errors<br>` +
+      `<b>${esc(r.name)}</b>${fmtInt(r.calls)} calls · ${fmtInt(r.errors)} errors` +
+      Object.entries(r.errors_by_class || {})
+        .map(([cls, n]) => ` · ${esc(cls)} ${fmtInt(n)}`).join("") + `<br>` +
       `p50 ${fmtMs(r.p50_ms)} · p90 ${fmtMs(r.p90_ms)} · p99 ${fmtMs(r.p99_ms)} · ` +
       `max ${fmtMs(r.max_ms)} · ${fmtTok(r.bytes_out)}B returned`));
     el.addEventListener("mouseleave", hideTip);
@@ -1953,6 +1994,9 @@ let txFrom = "sessions";             // route the ← button returns to
    and refilled from /api/session when you arrive by URL instead. */
 let txSiblings = { session: null, ids: [] };
 let txRailObserver = null;
+/* The focused sub-agent when the route is `#transcript/<id>/sub/<agent>`:
+   which child of which turn, plus the sibling order ← / → cycle through. */
+let txSub = null;                    // { exec, ids: [agent_id…], idx } | null
 
 /* Navigation is a hash change, not a function call, so the back button, a
    reload and a pasted link all land in the same place. */
@@ -1961,83 +2005,29 @@ const goTranscript = (id) => {
   txFrom = isTab(state.tab) && state.tab !== "transcript" ? state.tab : "sessions";
   location.hash = "transcript/" + id;
 };
-
-/* One transcript entry's HTML — shared by the initial page render and the
-   incremental refresh below, so the two can never draw the same entry type
-   differently. Every model/workspace-derived string routes through esc(). */
-function journalEntryHtml(e) {
-  if (e.type === "stage") return `<div class="jrnl-stage">stage · ${esc(e.label ?? "")}</div>`;
-  if (e.type === "speculation_discarded")
-    return `<div class="jrnl"><div class="kick">◌ speculative ${esc(e.name ?? "")} discarded · ${esc(e.reason ?? "")}</div></div>`;
-  /* A parked span explains a wall-clock gap that contains no other events
-     (#1857) — without its own arm it would fall through to "answer" and draw
-     a blank row exactly where the transcript most needs to say something. */
-  if (e.type === "turn_parked")
-    return `<div class="jrnl"><div class="kick">⏳ parked · ${esc(e.description ?? "")} · every ${esc(String(e.poll_interval_secs ?? "?"))}s, up to ${esc(String(e.deadline_secs ?? "?"))}s</div></div>`;
-  if (e.type === "turn_woken")
-    return `<div class="jrnl"><div class="kick">▶ woke · ${e.reason === "changed" ? "the watched state changed" : e.reason === "deadline_expired" ? "the deadline expired with no change" : esc(e.reason ?? "")} · ${esc(String(e.polls_used ?? 0))} probe(s)</div></div>`;
-  /* The delivery decision (#2942) — the same fall-through-to-"answer" trap as
-     the parked/woken rows above: without its own arm a reader asking "did this
-     candidate's work land?" gets a blank row instead of the answer. */
-  if (e.type === "candidate_delivery") {
-    if (e.outcome === "delivered") {
-      const files = num(e.created) + num(e.modified) + num(e.deleted);
-      const proof = e.proven ? "proven" : "unproven";
-      return `<div class="jrnl"><div class="kick">📦 delivered · ${fmtInt(files)} file(s) +${fmtInt(e.lines_added ?? 0)}/-${fmtInt(e.lines_removed ?? 0)} · ${proof}</div></div>`;
-    }
-    const reason =
-      e.reason === "nothing_created" ? "no workspace was ever created" :
-      e.reason === "integrity_refusal" ? "an integrity refusal" :
-      e.reason === "adopt_failed" ? "adoption failed (git apply refused)" :
-      esc(e.reason ?? "");
-    return `<div class="jrnl err"><div class="kick">⊘ delivery declined · ${reason}</div></div>`;
-  }
-  /* A file the turn changed, with its diff inline — the deck's transcript
-     row (#2421), which this page had no equivalent of: "Files touched" in the
-     side rail listed paths and counts, and the transcript itself said nothing
-     at all about what the run actually wrote. Same renderer, same cap, same
-     elision as every other diff here.
-
-     The counts come from the event (git's numstat), never from counting
-     sigils in the rendering: the diff is capped, so re-deriving would report
-     the size of the VIEW as the size of the change. */
-  if (e.type === "file_change") {
-    const verb = { created: "＋ created", modified: "± edited",
-                   deleted: "－ deleted", read: "→ read" }[e.kind] ?? "± changed";
-    const delta = (e.kind === "read") ? "" :
-      ` · <span style="color:var(--ok)">+${fmtInt(e.added ?? 0)}</span>` +
-      ` <span style="color:var(--bad)">−${fmtInt(e.removed ?? 0)}</span>`;
-    const head = `<div class="kick">${verb} ${esc(e.path ?? "")}${delta}</div>`;
-    const hunks = (e.hunks ?? []).length ? diffHunksHtml(e) : "";
-    return `<div class="jrnl">${head}${hunks}</div>`;
-  }
-  /* The Command Deck's rails (`crates/stella-tui/src/render/row.rs::Rail`):
-     `●` opens a call, `⎿` its result, `✗` a failed one — a distinct glyph for
-     the failure so it is findable by margin-scan alone. `stella observe` and
-     `stella run` are looking at the same journal, and a reader who lives in
-     one should not have to relearn the other.
-
-     The result row names its tool. `ToolResult` carries only a `call_id` on
-     the wire, so the name is resolved server-side from the matching
-     `tool_start` (`journal::tool_names`) — before that, every result row in
-     this dashboard read `✓ result` and a reader scrolling a fan-out could not
-     tell which row answered which call. */
-  const lines = e.body ? e.body.split("\n").length : 0;
-  const bits = [];
-  if (e.duration_ms != null) bits.push(fmtMs(e.duration_ms));
-  if (lines > 1) bits.push(`${lines} lines`);
-  /* ⚡ marks a speculated result: the call was read-only and began executing
-     while the model was still streaming, so its duration overlapped the model
-     call instead of following it — not latency the run spent waiting. */
-  if (e.speculated) bits.push("⚡ speculated");
-  const head =
-    e.type === "tool_start" ? `● ${esc(e.name ?? "tool")}` :
-    e.type === "tool_result"
-      ? `${e.ok ? "⎿" : "✗"} ${esc(e.name ?? "tool")}${bits.length ? ` · ${bits.join(" · ")}` : ""}`
-    : e.type === "reasoning" ? "reasoning" : "answer";
-  return `<div class="jrnl${e.type === "tool_result" && !e.ok ? " err" : ""}">
-    <div class="kick">${head}${e.truncated ? ` · <span style="color:var(--warn)">clipped</span>` : ""}</div>
-    ${e.body ? `<pre class="jrnl-body">${maybeHighlight(e.body)}</pre>` : ""}</div>`;
+/* Focus one of a turn's sub-agents: the turn page reloads assuming the
+   child. Same hash-navigation contract as goTranscript. */
+const goSubagent = (execId, agentId) => {
+  if (!Number.isFinite(execId) || !agentId) return;
+  location.hash = `transcript/${execId}/sub/${encodeURIComponent(agentId)}`;
+};
+/* Best-effort vendor from the model slug — display only, never load-bearing.
+   A gateway slug ("moonshotai/kimi-k3") names its vendor outright; a bare
+   slug is matched by family, and an unknown family shows nothing rather
+   than a guess. */
+function modelVendor(model) {
+  const m = String(model ?? "").toLowerCase();
+  if (!m) return "";
+  const cut = m.indexOf("/");
+  if (cut > 0) return m.slice(0, cut);
+  const families = [
+    ["claude", "anthropic"], ["gpt", "openai"], ["o1", "openai"], ["o3", "openai"],
+    ["o4", "openai"], ["gemini", "google"], ["glm", "z.ai"], ["deepseek", "deepseek"],
+    ["kimi", "moonshotai"], ["grok", "xai"], ["llama", "meta"], ["qwen", "qwen"],
+    ["mistral", "mistralai"],
+  ];
+  const hit = families.find(([p]) => m.startsWith(p));
+  return hit ? hit[1] : "";
 }
 
 /* One execution's behavioural-tendency chips: every nonzero counter the
@@ -2069,65 +2059,168 @@ function tendencyChipsHtml(td) {
   return chips.join(" ");
 }
 
-/* ── sent context (#1475) ────────────────────────────────────────────────
-   What a model call was *given*, as opposed to what the run did: the
-   message array rebuilt server-side from that call's context receipt, the
-   same view `stella inspect <execution> --step N` prints. One row per
-   recorded call — the receipt plane's own step rows, keyed
-   (turn, step, call_seq). A row used to carry two buttons that wrote into a
-   shared panel below the whole list; a real turn in this workspace has 202
-   of these, and because a call's context is nearly a superset of the call
-   before it, reading down that list re-read the same growing prefix each
-   time. A row now focuses the call inspector below on that call instead —
-   diff against the previous call of the same role by default, ← / → to the
-   rest without re-clicking a row. The inspector is a normal block in the
-   page's own flow, not a dialog: this page's own reason for existing is
-   that inspecting a turn is a route, not an overlay (see
-   tests::http_surface::inspecting_a_turn_is_a_page_not_a_drawer), and that
-   holds one level down for a single call exactly as it does for the whole
-   turn. Every string here is workspace-influenced text (a system prompt is
-   the most workspace-influenced text on the page), so all of it goes
-   through esc(). */
-function sentContextSectionHtml(cx) {
-  // A store with no receipts is a state, not a failure: say which state, in
-  // the words `stella inspect` uses for the same case.
-  if (!cx || !cx.receipts_recorded) {
-    return `<div class="empty">${
-      esc(cx?.note ?? "No context receipts were recorded for this run.")}</div>`;
+/* ── rendered transcript embedding ───────────────────────────────────────
+   The transcript on this page IS the shared stella-transcript renderer's
+   markup, served as a fragment by /api/transcript-html and embedded in a
+   shadow root so its stylesheet and the dashboard's cannot bleed into each
+   other. The stylesheet is fetched once from /assets/transcript.css and
+   retargeted from :root to :host, because a shadow tree has no :root to
+   hang custom properties on. The stylesheet keys its light scheme off
+   prefers-color-scheme, which knows the OS but not this page's toggle, so
+   an explicit theme choice rewrites that media condition to always or
+   never. The server escapes every workspace-derived string before it
+   reaches this markup. */
+let txCssRaw = null;
+async function transcriptCss() {
+  if (txCssRaw == null) {
+    try { txCssRaw = await (await fetch("/assets/transcript.css")).text(); }
+    catch (e) { txCssRaw = ""; }
   }
-  const calls = cx.calls ?? [];
-  if (!calls.length) return `<div class="empty">No calls were recorded for this run.</div>`;
-  const rows = calls.map((c, i) => `<button type="button" class="ctx-row${
-      i === calls.length - 1 ? " latest" : ""}"
-      data-turn="${esc(String(c.turn))}" data-step="${esc(String(c.step))}"
-      data-seq="${esc(String(c.call_seq))}"
-      title="inspect step ${fmtInt(c.step)} · ${esc(c.call_role)}">
-      <span class="who">step ${fmtInt(c.step)} · ${esc(c.call_role)}</span>
-      <span>${esc(c.provider)}/${esc(c.model)} · ${fmtTok(c.estimated_input_tokens)} tok${
-        num(c.turn) || num(c.call_seq) ? ` · turn ${fmtInt(c.turn)} seq ${fmtInt(c.call_seq)}` : ""}</span>
-      <span class="spacer"></span>
-    </button>`).join("");
-  /* Still a fixed-height scroll box above the inspector, not a page-length
-     wall of rows — 202 of them was three screens even before the panel that
-     sits below it. */
-  return `<div class="ctx-list">${rows}</div>
-    <div class="ctx-inspect" id="ctxInspect">
-      <div class="ctx-inspect-head">
-        <button type="button" class="ctx-nav" id="ctxPrev" title="Previous call (←)" aria-label="Previous call">←</button>
-        <div class="ctx-inspect-title">
-          <h3 id="ctxTitle"></h3>
-          <p id="ctxSub"></p>
-        </div>
-        <button type="button" class="ctx-nav" id="ctxNext" title="Next call (→)" aria-label="Next call">→</button>
-      </div>
-      <div class="ctx-inspect-toolbar">
-        <div class="ctx-toggle" role="tablist" aria-label="View">
-          <button type="button" role="tab" data-view="diff" id="ctxViewDiff">Added since previous call</button>
-          <button type="button" role="tab" data-view="full" id="ctxViewFull">Full prompt at this point</button>
-        </div>
-      </div>
-      <div class="ctx-inspect-body" id="ctxBody" tabindex="-1"></div>
-    </div>`;
+  return txCssRaw;
+}
+function themedTranscriptCss(css) {
+  let out = css.split(":root").join(":host");
+  const stamped = document.documentElement.dataset.theme;
+  if (stamped === "light") out = out.replace("@media (prefers-color-scheme: light)", "@media all");
+  if (stamped === "dark") out = out.replace("@media (prefers-color-scheme: light)", "@media not all");
+  return out;
+}
+/* Repaint the shadow style in place when the theme toggle flips, so an open
+   transcript follows the page instead of the OS. */
+function retintTranscript() {
+  const holder = $("tx-render");
+  const style = holder?.shadowRoot?.querySelector("style");
+  if (style && txCssRaw != null) style.textContent = themedTranscriptCss(txCssRaw);
+}
+/* Paint (or repaint, on live refresh) the fragment and rebind the inspect
+   controls its metering rows carry. The `live` class is the stylesheet's
+   opt-in for showing those controls at all — a standalone or exported
+   rendering keeps them hidden because it has no inspector to open. */
+async function paintRenderedTranscript(fragment) {
+  const holder = $("tx-render");
+  if (!holder) return;
+  const css = await transcriptCss();
+  const shadow = holder.shadowRoot || holder.attachShadow({ mode: "open" });
+  shadow.innerHTML = `<style>${themedTranscriptCss(css)}</style><div class="wrap">${fragment}</div>`;
+  holder.classList.add("live");
+  for (const btn of shadow.querySelectorAll("button.inspect")) {
+    btn.addEventListener("click", (ev) => {
+      /* The control sits inside a summary: without preventDefault the click
+         would also toggle the fold it rides on. */
+      ev.preventDefault();
+      ev.stopPropagation();
+      openCtxDialog(+btn.dataset.step, btn.dataset.role);
+    });
+  }
+}
+
+/* ── agent profile cards ─────────────────────────────────────────────────
+   One card per seat the turn ran — the worker, the overflow summarizer, a
+   verdict call, a sub-agent — each printing the model binding the run's own
+   receipts recorded (api provider, slug, per-call context budget, realized
+   tokens, cache traffic, latency, the upstream vendor a gateway routed to)
+   and, from the local model catalog, the defaults that model offers:
+   context window, output ceiling, reasoning support, knowledge cutoff and
+   pricing. The resolved reasoning effort and the requested output cap ride
+   `step_usage` (#4565), so they read as "not recorded" only on a journal
+   written before that. What this build still does not persist it says out
+   loud instead of omitting: a custom prompt override is a config-plane fact
+   no event carries yet (#3906). */
+function profileSeats(calls, usage) {
+  const seats = new Map();
+  for (const c of calls) {
+    const key = [c.call_role, c.provider, c.model].join(" ");
+    if (!seats.has(key)) {
+      seats.set(key, { role: c.call_role, provider: c.provider, model: c.model,
+        calls: 0, budget: 0, est: 0, rows: [] });
+    }
+    const s = seats.get(key);
+    s.calls += 1;
+    s.budget = Math.max(s.budget, num(c.effective_budget_tokens));
+    s.est += num(c.estimated_input_tokens);
+  }
+  for (const u of usage) {
+    const key = [u.role, u.provider, u.model].join(" ");
+    const s = seats.get(key);
+    if (s) s.rows.push(u);
+    else if (u.role != null) {
+      /* A metered call with no receipt (receipts disabled, or a sub-agent
+         seat) still deserves a card — the metering row is the binding. */
+      seats.set(key, { role: u.role ?? "call", provider: u.provider ?? "?",
+        model: u.model ?? "?", calls: 1, budget: 0, est: 0, rows: [u] });
+    }
+  }
+  return [...seats.values()];
+}
+function seatCardHtml(s) {
+  const upstreams = [...new Set(s.rows.map(u => u.upstream_provider).filter(Boolean))];
+  const inTok = s.rows.reduce((a, u) => a + num(u.input_tokens), 0);
+  const outTok = s.rows.reduce((a, u) => a + num(u.output_tokens), 0);
+  const cached = s.rows.reduce((a, u) => a + num(u.cached_input_tokens), 0);
+  const written = s.rows.reduce((a, u) => a + num(u.cache_write_tokens), 0);
+  const ms = s.rows.reduce((a, u) => a + num(u.duration_ms), 0);
+  const efforts = [...new Set(s.rows.map(u => u.effort).filter(Boolean))];
+  const caps = [...new Set(s.rows.map(u => u.max_output_tokens).filter(v => v != null))];
+  const agents = [...new Set(s.rows.map(u => u.sub_agent_id).filter(Boolean))];
+  const notRecorded = `<span class="prof-gap" title="No event carries this yet: it lives only in the session's config plane, so an honest per-turn card cannot claim it.">not recorded for this run</span>`;
+  const notInJournal = `<span class="prof-gap" title="This journal predates the metering record carrying the request's effort and output cap, so an honest card cannot claim either.">not recorded for this run</span>`;
+  return `<div class="prof-card">
+    <div class="prof-head"><b>${esc(s.role)}</b>
+      <span class="badge dim">${fmtInt(s.calls)} call${s.calls === 1 ? "" : "s"}</span>${
+      agents.map(a => ` <span class="badge dim">sub-agent ${esc(a)}</span>`).join("")}</div>
+    <dl class="prof-rows">
+      <dt>api provider</dt><dd>${esc(s.provider)}</dd>
+      <dt>model slug</dt><dd>${esc(s.model)}</dd>
+      <dt>model provider</dt><dd class="prof-vendor">${
+        upstreams.length ? esc(upstreams.join(", ")) + " (served upstream)" : "—"}</dd>
+      <dt>context budget</dt><dd>${s.budget ? fmtTok(s.budget) + " tok/call" : "—"}</dd>
+      <dt>realized</dt><dd>${fmtTok(inTok + cached)} in (${fmtTok(cached)} cached · ${
+        fmtTok(written)} written) · ${fmtTok(outTok)} out</dd>
+      <dt>model latency</dt><dd>${s.rows.length
+        ? `${fmtMs(ms)} total · ${fmtMs(ms / s.rows.length)} / call` : "—"}</dd>
+      <dt>effort</dt><dd>${efforts.length ? esc(efforts.join(", ")) : notInJournal}</dd>
+      <dt>output cap</dt><dd>${caps.length ? caps.map(fmtTok).join(", ") + " tok" : notInJournal}</dd>
+      <dt>custom prompt</dt><dd>${notRecorded}</dd>
+    </dl>
+    <div class="prof-offer" data-provider="${esc(s.provider)}" data-slug="${esc(s.model)}">
+      <span class="kick">loading the model catalog…</span></div>
+  </div>`;
+}
+/* Fill each card's offered-defaults block from the local model catalog —
+   async, per distinct (provider, slug), after the cards are in the DOM. */
+async function fillProfileOffers(root) {
+  const blocks = [...root.querySelectorAll(".prof-offer")];
+  const wanted = new Map();
+  for (const b of blocks) {
+    wanted.set(b.dataset.provider + " " + b.dataset.slug, b.dataset);
+  }
+  for (const [key, ds] of wanted) {
+    let card = null;
+    try {
+      card = await api(`/api/model-card?provider=${encodeURIComponent(ds.provider)}`
+        + `&slug=${encodeURIComponent(ds.slug)}`);
+    } catch (e) { card = null; }
+    const html = card && card.found
+      ? `<dl class="prof-rows">
+          <dt>catalog</dt><dd>${esc(card.display_name ?? card.slug)}${
+            card.family ? ` · ${esc(card.family)}` : ""} · model provider ${esc(card.model_provider)}</dd>
+          <dt>context window</dt><dd>${card.context_window ? fmtTok(card.context_window) + " tok" : "—"}</dd>
+          <dt>max output</dt><dd>${card.max_output_tokens ? fmtTok(card.max_output_tokens) + " tok" : "—"}</dd>
+          <dt>reasoning</dt><dd>${card.supports_reasoning == null ? "—"
+            : card.supports_reasoning ? "supported" : "not supported (a pinned effort is dropped)"}</dd>
+          <dt>knowledge</dt><dd>${card.knowledge ? esc(card.knowledge) : "—"}</dd>
+          <dt>pricing /Mtok</dt><dd>${[
+              ["input", card.input_usd_per_mtok],
+              ["output", card.output_usd_per_mtok],
+              ["cached", card.cached_input_usd_per_mtok],
+              ["cache write", card.cache_write_usd_per_mtok],
+            ].filter(([, v]) => v != null).map(([k, v]) => `${k} $${v}`).join(" · ") || "—"}</dd>
+        </dl>`
+      : `<span class="kick">${esc(card?.note ?? "this model has no card in the local catalog")}</span>`;
+    for (const b of blocks) {
+      if (b.dataset.provider + " " + b.dataset.slug === key) b.innerHTML = html;
+    }
+  }
 }
 /* The two failure modes stay separate, as they do on the CLI: an unresolved
    block is a documented coverage gap, a digest mismatch is a torn-journal or
@@ -2331,6 +2424,18 @@ function ctxInspectKeydown(e) {
   if (e.key === "ArrowLeft") { e.preventDefault(); ctxStep(-1); }
   else if (e.key === "ArrowRight") { e.preventDefault(); ctxStep(1); }
 }
+/* The dialog's controls are static markup (panel-transcript carries them),
+   so they bind once here rather than on every page open. */
+(function initCtxDialog() {
+  const dlg = $("ctx-dialog");
+  if (!dlg) return;
+  $("ctxPrev").addEventListener("click", () => ctxStep(-1));
+  $("ctxNext").addEventListener("click", () => ctxStep(1));
+  $("ctxViewDiff").addEventListener("click", () => ctxSetView("diff"));
+  $("ctxViewFull").addEventListener("click", () => ctxSetView("full"));
+  $("ctxClose").addEventListener("click", () => dlg.close());
+  $("ctxInspect").addEventListener("keydown", ctxInspectKeydown);
+})();
 
 /* The rail: one link per section actually rendered, with its count. Built
    from the same list the sections are, so a section can never be listed and
@@ -2399,7 +2504,88 @@ function downloadTranscriptJson(execution, journal, calls, steps, tools, files, 
   a.remove();
   URL.revokeObjectURL(url);
 }
-async function openTranscript(id, full = false) {
+/* One sub-agent's page: the turn panel, assumed by the child. A delegate
+   opens no execution row of its own and its narration stays private to the
+   parent engine, so this page states what IS recorded — the started/finished
+   bracket (task, effort, budget, status, summary) joined with the metering
+   rows stamped with its agent id (model, API provider, tokens, spend) — and
+   hands everything else back to the parent turn. */
+function renderSubagentFocus(d, agents, i) {
+  const a = agents[i];
+  const head = $("tx-head"), main = $("tx-main");
+  const started = utc(a.started_ts), finished = utc(a.finished_ts);
+  const dur = started && finished ? finished.getTime() - started.getTime() : null;
+  const vendor = modelVendor(a.model);
+  head.innerHTML = `
+    <div class="tx-crumbs">
+      <button type="button" class="tx-back" id="tx-sub-up">← parent turn</button>
+      <span>Sessions</span><span class="sep">/</span>
+      <span>${esc(clip(d.session_id ?? "session unknown", 40))}</span><span class="sep">/</span>
+      <span>Execution ${fmtInt(d.id)}</span><span class="sep">/</span>
+      <span>${esc(a.agent_id)}</span>
+    </div>
+    <h2 class="tx-prompt">${esc(a.instruction_preview ?? a.agent_id)}</h2>
+    <p class="tx-meta">${badge(a.status ?? (d.finished_at == null ? "running" : "unfinished"))}
+      <span>sub-agent ${fmtInt(i + 1)} of ${fmtInt(agents.length)}</span><span class="sep">·</span>
+      <span>${a.model
+        ? `${esc(a.model)}${num(a.models) > 1 ? ` (+${fmtInt(a.models - 1)} more)` : ""}`
+        : "no calls metered"}</span>
+      ${vendor ? `<span class="sep">·</span><span>model by ${esc(vendor)}</span>` : ""}
+      ${a.provider ? `<span class="sep">·</span><span>via ${esc(a.provider)}</span>` : ""}
+      ${a.effort ? `<span class="sep">·</span><span>effort ${esc(a.effort)}</span>` : ""}
+      <span class="sep">·</span>
+      <span>${fmtTok(a.tokens_in)} in · ${fmtTok(a.tokens_out)} out</span><span class="sep">·</span>
+      <span>${fmtUsd(a.cost_usd)}</span></p>
+    <p class="tx-meta" style="margin-top:6px">
+      <span title="${esc(a.started_ts ?? "")} UTC">started ${a.started_ts ? ago(a.started_ts) : "—"}</span>
+      <span class="sep">·</span>
+      <span title="${esc(a.finished_ts ?? "")} UTC">${
+        a.finished_ts ? `stopped ${ago(a.finished_ts)}` : "no finish recorded"}</span>
+      ${dur != null ? `<span class="sep">·</span><span>ran ${fmtMs(dur)}</span>` : ""}
+      ${a.budget_usd != null ? `<span class="sep">·</span><span>budget ${fmtUsd(a.budget_usd)}</span>` : ""}
+      <span class="sep">·</span><span>${a.write_access ? "writes" : "read-only"}</span>
+      <span class="sep">·</span><span>depth ${fmtInt(a.depth)}</span></p>
+    <div class="tx-steps">
+      <button type="button" class="tx-step" id="tx-sub-prev"${i > 0 ? "" : " disabled"}>← previous sub-agent</button>
+      <button type="button" class="tx-step" id="tx-sub-next"${
+        i < agents.length - 1 ? "" : " disabled"}>next sub-agent →</button>
+      <span class="kick">← / → cycle this turn's ${fmtInt(agents.length)} sub-agents ·
+        esc back to the parent turn</span>
+    </div>`;
+  $("tx-sub-up").addEventListener("click", () => goTranscript(d.id));
+  if (i > 0)
+    $("tx-sub-prev").addEventListener("click", () => goSubagent(d.id, agents[i - 1].agent_id));
+  if (i < agents.length - 1)
+    $("tx-sub-next").addEventListener("click", () => goSubagent(d.id, agents[i + 1].agent_id));
+
+  const sect = (id_, label, kick, inner) =>
+    `<section class="tx-sect" id="${id_}"><h2>${label}</h2>
+      <div class="kick">${kick}</div>${inner}</section>`;
+  main.innerHTML =
+    sect("tx-sub-result", "Result",
+      "The report handed back to the parent — the only thing that entered its transcript.",
+      a.summary
+        ? `<p style="font:var(--fs-base)/1.7 var(--mono);color:var(--text-2)">${esc(a.summary)}${
+            a.truncated ? ` <span class="badge dim">clipped to fit</span>` : ""}</p>${
+            a.reason ? `<p class="kick">why it ended: ${esc(a.reason)}</p>` : ""}`
+        : `<div class="empty">No finish recorded${a.reason ? ` — ${esc(a.reason)}` : ""}. ${
+            d.finished_at == null
+              ? "The parent turn is still running."
+              : "The parent turn is over; the bracket never closed."}</div>`)
+    + sect("tx-sub-usage", "Spend",
+      "Summed from the telemetry rows stamped with this agent id.",
+      num(a.calls)
+        ? `<div class="step-row"><span>${fmtInt(a.calls)} calls</span>
+            <span>${fmtTok(a.tokens_in)} in · ${fmtTok(a.tokens_out)} out</span>
+            <span>${fmtUsd(a.cost_usd)}${
+              num(a.steps) ? ` · ${fmtInt(a.steps)} steps` : ""}</span></div>`
+        : `<div class="empty">No metered calls carry this agent id.</div>`);
+  buildRail([
+    { id: "tx-sub-result", label: "Result" },
+    { id: "tx-sub-usage", label: "Spend" },
+  ]);
+}
+async function openTranscript(id, full = false, sub = "") {
   if (!Number.isFinite(id)) return;
   const head = $("tx-head"), main = $("tx-main");
   let d = null;
@@ -2414,20 +2600,44 @@ async function openTranscript(id, full = false) {
       the masthead reports the connection.</div>`;
     $("tx-back").addEventListener("click", leaveTranscript);
     tx = null;
+    txSub = null;
     return;
   }
-  /* Three more folds of the same run, each its own endpoint and each fetched
-     once per page-open (never on the 5s poll): the transcript replay folded
-     from the events journal, the receipt index, and the behavioural
-     tendencies. `full` lifts the per-body clip on the transcript. Every
-     string in all three is model or workspace output — the most
-     attacker-influenced text on the page — so each one goes through esc(). */
-  const [j, cx, td] = await Promise.all([
+  /* Five more folds of the same run, each its own endpoint and each fetched
+     once per page-open (never on the 5s poll): the journal (for the JSON
+     download and the profile cards' metering rows), the receipt index, the
+     behavioural tendencies, the rendered transcript fragment the page
+     embeds, and the sub-agents the turn fanned out. `full` lifts the
+     per-body clip on the journal. Every string in the JSON payloads is
+     model or workspace output — the most attacker-influenced text on the
+     page — so each one goes through esc(); the fragment arrives already
+     escaped by the renderer. */
+  const [j, cx, td, frag, sa] = await Promise.all([
     api(`/api/execution-journal?id=${encodeURIComponent(id)}${full ? "&full=1" : ""}`).catch(() => null),
     api(`/api/execution-context?id=${encodeURIComponent(id)}`).catch(() => null),
     api(`/api/execution-tendencies?id=${encodeURIComponent(id)}`).catch(() => null),
+    fetch(`/api/transcript-html?id=${encodeURIComponent(id)}`)
+      .then(r => r.ok ? r.text() : "").catch(() => ""),
+    api(`/api/execution-subagents?id=${encodeURIComponent(id)}`).catch(() => null),
   ]);
   await txLoadSiblings(d.session_id);
+
+  /* A `/sub/<agent>` route assumes one of the turn's children: the panel
+     renders that sub-agent instead of the parent's data. An agent id the
+     turn never fanned out falls back to the parent view, address repaired —
+     the URL must not claim a child that is not there. */
+  const agents = (sa && Array.isArray(sa.agents)) ? sa.agents : [];
+  let subId = "";
+  try { subId = decodeURIComponent(sub || ""); } catch { subId = ""; }
+  const subIdx = subId ? agents.findIndex(a => a.agent_id === subId) : -1;
+  if (subId && subIdx < 0) history.replaceState(null, "", `#transcript/${id}`);
+  if (subIdx >= 0) {
+    renderSubagentFocus(d, agents, subIdx);
+    txSub = { exec: id, ids: agents.map(a => a.agent_id), idx: subIdx };
+    tx = { id, full, lastSeq: -1, finished: true };
+    return;
+  }
+  txSub = null;
 
   const entries = Array.isArray(j) ? j : [];
   const stillRunning = d.finished_at == null;
@@ -2465,20 +2675,6 @@ async function openTranscript(id, full = false) {
       <button type="button" class="tx-step" id="tx-download"
         title="Everything on this page — journal, metadata and the call receipt index — as one JSON file">
         ⬇ download transcript JSON</button>
-      <!-- The rendered view (/transcript), served by stella-transcript —
-           the same renderer the TUI draws from, with folds, digests and real
-           diffs. Opens in its own tab because it is a standalone page: it
-           carries its own styles and shares nothing with this one. The rows
-           below remain the flat journal until the two are reconciled.
-           No backticks in this comment: it sits inside a JS template
-           literal, so one would close the template early and take the whole
-           script down with it. Guarded by the test
-           inline_script_html_comments_carry_no_backtick in
-           tests/inline_script_backticks.rs. -->
-      <a class="tx-step" id="tx-rendered" target="_blank" rel="noopener"
-         href="/transcript?id=${encodeURIComponent(d.id)}"
-         title="Folds, digests and file diffs — the same renderer the TUI uses">
-        ▤ rendered transcript</a>
       <span class="kick">the same view as
         <code>stella inspect ${fmtInt(d.id)}</code></span>
     </div>`;
@@ -2518,23 +2714,46 @@ async function openTranscript(id, full = false) {
     `<section class="tx-sect" id="${id_}"><h2>${label}</h2>
       <div class="kick">${kick}</div>${inner}</section>`;
 
-  /* Context first, deliberately: what a call was *given* is the question the
-     drawer buried deepest and the one this page exists to surface. The
-     transcript — what the run then did — follows it. */
+  /* The profile first — who ran this turn and on what binding — then the
+     rendered transcript, which is the page's substance: the shared
+     stella-transcript renderer's markup, embedded here so what the run did,
+     what each call cost, and what each call was sent (the ⧉ prompt control
+     on a metering row) are all read in one place. */
+  const usage = entries.filter(e => e.type === "step_usage");
+  const seats = profileSeats(calls, usage);
   main.innerHTML =
-    sect("tx-context", "Prompt &amp; what changed",
-      "One row per recorded model call — open one for the unified diff against the "
-      + "previous call of that role, or step ← / → through every other call without "
-      + "leaving it.",
-      sentContextSectionHtml(cx))
-    + sect("tx-transcript", `Transcript${full ? " · full" : ""}`,
-      "Answer text, reasoning and tool traffic, folded from the events journal.",
-      `<div id="jrnl-list">${entries.map(journalEntryHtml).join("")}</div>${
-        entries.length || stillRunning ? "" : `<div class="empty">No journal entries for this run.</div>`}${
-        entries.some(e => e.truncated)
-          ? `<button type="button" class="jrnl-full" id="jrnl-full">show full bodies</button>` : ""}`)
+    sect("tx-profile", "Agent profile",
+      "One card per seat this turn ran — the model binding the run's own "
+      + "receipts recorded, and the defaults the local model catalog says "
+      + "that model offers.",
+      seats.length ? `<div class="prof-grid">${seats.map(seatCardHtml).join("")}</div>`
+        : `<div class="empty">No model calls were metered or receipted for this run.</div>`)
+    + sect("tx-transcript", "Transcript",
+      "The rendered run — folds, digests, real file diffs, and one metering "
+      + "row per model call (provider, upstream, tokens, cache traffic, "
+      + "latency). Open a metering row's ⧉ prompt control to inspect exactly "
+      + "what that call was sent, as a diff against the previous call.",
+      frag ? `<div id="tx-render"></div>`
+           : `<div class="empty">The rendered transcript could not be loaded.</div>`)
+    + sect("tx-subagents", "Sub-agents",
+      "The delegate children this turn fanned out. Open one and the page assumes it — "
+      + "← / → then cycle the fan-out, esc returns here.",
+      agents.map(a => {
+        const vendor = modelVendor(a.model);
+        return `<div class="step-row sub-row" data-sub="${esc(a.agent_id)}" role="link"
+          tabindex="0" style="cursor:pointer">
+        <span class="name">${esc(a.agent_id)}</span>
+        <span>${esc(a.status ?? (stillRunning ? "running" : "unfinished"))}${
+          a.model ? ` · ${esc(a.model)}` : ""}${
+          vendor ? ` <span class="badge dim">${esc(vendor)}</span>` : ""}${
+          a.provider ? ` · via ${esc(a.provider)}` : ""}${
+          a.effort ? ` · effort ${esc(a.effort)}` : ""}</span>
+        <span>${a.started_ts ? ago(a.started_ts) : "—"} · ${fmtUsd(a.cost_usd)} ·
+          ${fmtTok(num(a.tokens_in) + num(a.tokens_out))} tok</span>
+      </div>`;
+      }).join("") || `<div class="empty">This turn fanned out no sub-agents.</div>`)
     + sect("tx-steps", "Steps",
-      "Per-step tokens and latency. The bar is total tokens; the teal head is input.",
+      "Per-step tokens and latency. The bar is total tokens; the leading segment is input.",
       stepRows || `<div class="empty">No steps recorded for this run.</div>`)
     + sect("tx-tools", "Tool calls", "In call order, with duration and result size.",
       toolRows || `<div class="empty">This run called no tools.</div>`)
@@ -2542,87 +2761,104 @@ async function openTranscript(id, full = false) {
       fileRows || `<div class="empty">This run touched no files.</div>`)
     + (rf ? sect("tx-reflection", "Self-reflection",
       "What the agent said about its own turn once it was over.",
+      /* `partial_run` leads: a cancelled run's reflection covers only what
+         ran, and a cancelled run with NO self-review still gets this section
+         so the reader sees why there is nothing to grade (#4538). */
       `<p style="font:var(--fs-base)/1.7 var(--mono);color:var(--text-2)">
+        ${rf.partial_run ? `<span class="badge warn">partial run</span> the turn was cancelled before it finished<br>` : ""}
         ${rf.self_rating != null ? `rated ${esc(String(rf.self_rating))}/10 · ` : ""}
         ${rf.delivered != null ? (rf.delivered ? "delivered" : "not delivered") : ""}
-        ${rf.what_to_improve ? `<br>improve: ${esc(rf.what_to_improve)}` : ""}</p>`) : "");
+        ${rf.what_went_well ? `<br>went well: ${esc(rf.what_went_well)}` : ""}
+        ${rf.what_to_improve ? `<br>improve: ${esc(rf.what_to_improve)}` : ""}
+        ${rf.critique ? `<br>critique: ${esc(rf.critique)}` : ""}</p>`) : "");
 
   buildRail([
-    { id: "tx-context", label: "Prompt & changes", n: calls.length },
+    { id: "tx-profile", label: "Agent profile", n: seats.length },
     { id: "tx-transcript", label: "Transcript", n: entries.length },
+    { id: "tx-subagents", label: "Sub-agents", n: agents.length },
     { id: "tx-steps", label: "Steps", n: steps.length },
     { id: "tx-tools", label: "Tool calls", n: tools.length },
     { id: "tx-files", label: "Files", n: files.length },
     ...(rf ? [{ id: "tx-reflection", label: "Reflection" }] : []),
   ]);
 
-  const fullBtn = $("jrnl-full");
-  if (fullBtn) fullBtn.addEventListener("click", () => openTranscript(id, true));
-  for (const row of main.querySelectorAll(".ctx-row")) {
-    const rowIdx = calls.findIndex(c =>
-      num(c.turn) === +row.dataset.turn && num(c.step) === +row.dataset.step
-      && num(c.call_seq) === +row.dataset.seq);
-    row.addEventListener("click", () => focusCtxCall(id, calls, rowIdx));
+  for (const row of main.querySelectorAll(".sub-row")) {
+    const open = () => goSubagent(id, row.dataset.sub);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (ev) => { if (ev.key === "Enter") open(); });
   }
-  /* Focus the newest call's diff without being asked. The whole point of
-     this section is that this is the interesting artifact, and behind a
-     click it was being missed entirely. The newest call is chosen because a
-     role's FIRST call has no previous call to diff against — its base
-     resolves to the prompt as submitted, so it renders the entire prompt as
-     one wall of additions, which is the least useful thing the endpoint can
-     return; the toggle still reaches that full prompt on request.
-     #ctxInspect only exists in the DOM when sentContextSectionHtml actually
-     rendered one (i.e. there is at least one call to inspect). */
-  const inspect = $("ctxInspect");
-  if (inspect && calls.length) {
-    $("ctxPrev").addEventListener("click", () => ctxStep(-1));
-    $("ctxNext").addEventListener("click", () => ctxStep(1));
-    $("ctxViewDiff").addEventListener("click", () => ctxSetView("diff"));
-    $("ctxViewFull").addEventListener("click", () => ctxSetView("full"));
-    inspect.addEventListener("keydown", ctxInspectKeydown);
-    focusCtxCall(id, calls, calls.length - 1);
-  } else {
-    ctxInspect = null;
-  }
-
+  /* The dialog walks the same receipt index the inspect controls anchor
+     into; stale state from the previous page must not survive into it. */
+  ctxInspect = null;
   tx = {
     id,
     full,
+    calls,
     lastSeq: entries.length ? entries[entries.length - 1].seq : -1,
     finished: !stillRunning,
   };
+  if (frag) await paintRenderedTranscript(frag);
+  fillProfileOffers(main);
 }
 
-/* Append newly-persisted journal entries to an open, still-running
-   transcript (#1476) instead of re-fetching the whole thing. Piggybacked on
-   the page's existing poll — both `pollOnce` and the live-stream tick
-   handler call this right after they notice the cursor moved — so an idle
-   workspace pays only for the `after_seq` query's index probe, and a busy
-   one appends rather than re-downloads. `full` mode carries over: the
-   incremental fetch asks for the same clip setting the page opened with. */
+/* Open the prompt inspector on the call a metering row anchors: matched by
+   (step, role) in the receipt index — `call_seq` is a receipt-plane ordinal
+   the metering event does not carry, and within one execution (one turn)
+   the pair is the same address. An anchor with no receipt falls back to the
+   nearest recorded call rather than refusing to open. */
+function openCtxDialog(step, role) {
+  const dlg = $("ctx-dialog");
+  const calls = tx?.calls ?? [];
+  if (!dlg || !tx || !calls.length) return;
+  let idx = calls.findIndex(c => num(c.step) === step && c.call_role === role);
+  if (idx < 0) idx = calls.findIndex(c => num(c.step) === step);
+  if (idx < 0) idx = calls.length - 1;
+  if (!dlg.open) dlg.showModal();
+  focusCtxCall(tx.id, calls, idx);
+  $("ctxBody").focus();
+}
+
+/* Refresh an open, still-running transcript when the poll notices the
+   cursor moved (#1476's slot in the poll, kept under its old name so both
+   callers — `pollOnce` and the live-stream tick — stay wired). The cheap
+   `after_seq` probe still decides whether anything happened; when it did,
+   the rendered fragment is re-fetched whole and repainted, because the
+   shared renderer draws a tree, not an appendable list. The renderer pins
+   running work open, so the repaint lands the reader back on the live step —
+   and every fold the reader toggled by hand is put back the way they left it
+   (#4566): fold ids are stable NodeId keys (`t0s3`…), so the open/closed
+   state of each identified fold is read out of the shadow DOM before the
+   repaint and reapplied after. Folds new to this paint (the args fold has no
+   id) keep the renderer's own pin-open rules. */
 async function refreshTranscriptJournal() {
   if (!tx || tx.finished) return;
   if (state.tab !== "transcript") { tx = null; return; }
-  const { id, full, lastSeq } = tx;
+  const { id, lastSeq } = tx;
   let j = null;
   try {
-    j = await api(`/api/execution-journal?id=${encodeURIComponent(id)}&after_seq=${lastSeq}${full ? "&full=1" : ""}`);
+    j = await api(`/api/execution-journal?id=${encodeURIComponent(id)}&after_seq=${lastSeq}`);
   } catch {
     return;
   }
   const entries = Array.isArray(j) ? j : [];
   if (!entries.length) return;
-  const list = $("jrnl-list");
-  if (list) list.insertAdjacentHTML("beforeend", entries.map(journalEntryHtml).join(""));
-  if (entries.some(e => e.truncated) && !$("jrnl-full")) {
-    const sect = $("tx-transcript");
-    if (sect) {
-      sect.insertAdjacentHTML("beforeend",
-        `<button type="button" class="jrnl-full" id="jrnl-full">show full bodies</button>`);
-      $("jrnl-full").addEventListener("click", () => openTranscript(id, true));
-    }
-  }
   tx.lastSeq = entries[entries.length - 1].seq;
+  let frag = "";
+  try {
+    const r = await fetch(`/api/transcript-html?id=${encodeURIComponent(id)}`);
+    frag = r.ok ? await r.text() : "";
+  } catch {
+    return;
+  }
+  if (!frag || !tx || tx.id !== id) return;
+  const folds = { open: new Set(), shut: new Set() };
+  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? [])
+    (d.open ? folds.open : folds.shut).add(d.id);
+  await paintRenderedTranscript(frag);
+  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? []) {
+    if (folds.open.has(d.id)) d.open = true;
+    else if (folds.shut.has(d.id)) d.open = false;
+  }
 }
 /* The main poll already re-fetches `/api/executions` (with `finished_at`)
    on every cursor move — reuse that instead of a dedicated per-tick
@@ -2640,7 +2876,10 @@ function leaveTranscript() {
 }
 function closeTranscript() {
   tx = null;
+  txSub = null;
   ctxInspect = null;
+  const dlg = $("ctx-dialog");
+  if (dlg?.open) dlg.close();
   if (txRailObserver) { txRailObserver.disconnect(); txRailObserver = null; }
   $("tab-transcript").hidden = true;
   $("tx-head").innerHTML = "";
@@ -2648,7 +2887,26 @@ function closeTranscript() {
   $("tx-main").innerHTML = "";
 }
 addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.tab === "transcript") leaveTranscript();
+  if (state.tab !== "transcript") return;
+  // Escape inside the open prompt inspector closes the dialog (the element
+  // handles that itself); only a second Escape leaves the turn.
+  if ($("ctx-dialog")?.open) return;
+  if (e.key === "Escape") {
+    // From a focused sub-agent, esc climbs to the parent turn; from the
+    // parent turn it leaves the transcript, as it always did.
+    if (txSub) goTranscript(txSub.exec); else leaveTranscript();
+    return;
+  }
+  /* ← / → cycle a focused sub-agent through its turn's fan-out. Only with a
+     child focused, and never out of a text field or past a modifier chord. */
+  if (!txSub || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  const at = txSub.idx + (e.key === "ArrowRight" ? 1 : -1);
+  if (at < 0 || at >= txSub.ids.length) return;
+  e.preventDefault();
+  goSubagent(txSub.exec, txSub.ids[at]);
 });
 
 /* ── projects switcher ───────────────────────────────────────────────── */
@@ -3772,12 +4030,15 @@ function renderSessions(d) {
 function turnRowHtml(t, i) {
   const rating = t.reflection && t.reflection.self_rating != null
     ? `${fmtInt(t.reflection.self_rating)}/10` : "—";
+  /* Skills and MCP chips render in the LAST column, deliberately: they used
+     to ride inside the Turn cell, and a turn that applied several skills
+     pushed outcome, tokens and cost behind the table's horizontal scroll —
+     the data a reader scans this table for, hidden by the decoration. */
   return `<tr class="click" data-exec="${fmtInt(t.id)}">
     <td class="num">${fmtInt(i + 1)}</td>
-    <td><span class="name" title="execution ${fmtInt(t.id)}">${esc(clip(t.prompt ?? "", 80))}</span>${
-      (t.skills ?? []).map(s => ` <span class="badge accent">${esc(s)}</span>`).join("")}${
-      (t.mcp_servers ?? []).map(s => ` <span class="badge dim">${esc(s)}</span>`).join("")}</td>
+    <td><span class="name" title="execution ${fmtInt(t.id)}">${esc(clip(t.prompt ?? "", 80))}</span></td>
     <td>${badge(t.outcome)}</td>
+    <td><span title="${esc(t.provider)}/${esc(t.model)}">${esc(t.provider)}/${esc(clip(t.model ?? "", 24))}</span></td>
     <td class="num">${fmtInt(t.steps)}</td>
     <td class="num">${fmtInt(t.tool_calls)}${num(t.tool_errors)
       ? ` <span style="color:var(--bad)">✕${fmtInt(t.tool_errors)}</span>` : ""}</td>
@@ -3788,11 +4049,16 @@ function turnRowHtml(t, i) {
         ? ` <button type="button" class="turn-diff" data-jturn="${num(t.journal_turn)}"
              title="what this turn changed on disk, from the work journal">±&nbsp;diff</button>` : ""}</td>
     <td class="num">${fmtTok(t.input_tokens)}·${fmtTok(t.output_tokens)}</td>
-    <td class="num">${cachePct(t.cache_read_tokens, t.cache_miss_tokens)}</td>
+    <td class="num" title="prompt-cache hit rate · ${fmtTok(t.cache_write_tokens)} written to cache">${
+      cachePct(t.cache_read_tokens, t.cache_miss_tokens)}</td>
+    <td class="num" title="model wall clock, summed over steps">${fmtMs(t.model_ms)}</td>
     <td class="num">${num(t.retries) ? `<span style="color:var(--warn)">${fmtInt(t.retries)}</span>` : "0"}</td>
     <td class="num">${fmtUsd(t.cost_usd)}</td>
     <td class="num">${rating}</td>
     <td class="num">${num(t.receipts) ? "✓" : "—"}</td>
+    <td>${
+      (t.skills ?? []).map(s => `<span class="badge accent">${esc(s)}</span> `).join("")}${
+      (t.mcp_servers ?? []).map(s => `<span class="badge dim">${esc(s)}</span> `).join("") || "—"}</td>
     <td class="go">open ↗</td></tr>`;
 }
 async function openSession(id, quiet) {
@@ -3833,10 +4099,11 @@ async function openSession(id, quiet) {
     ${d?.turns_truncated ? `<div class="feed-item"><b>Note</b> — showing the newest
       turns only; older turns were clipped from this view.</div>` : ""}`;
   $("ses-turns").innerHTML = turns.length ? `<table><thead><tr>
-      <th class="num">#</th><th>Turn</th><th>Outcome</th><th class="num">Steps</th>
+      <th class="num">#</th><th>Turn</th><th>Outcome</th><th>Model</th><th class="num">Steps</th>
       <th class="num">Tools</th><th class="num">Files</th><th class="num">Tok in·out</th>
-      <th class="num">Cache</th><th class="num">Retries</th><th class="num">Cost</th>
-      <th class="num">Rated</th><th class="num">Receipts</th><th></th></tr></thead><tbody>
+      <th class="num">Cache</th><th class="num">Latency</th><th class="num">Retries</th>
+      <th class="num">Cost</th><th class="num">Rated</th><th class="num">Receipts</th>
+      <th>Skills</th><th></th></tr></thead><tbody>
     ${turns.map(turnRowHtml).join("")}</tbody></table>`
     : `<div class="empty">No turns stamped for this session yet${
        reg ? " — it may not have completed a turn" : ""}.</div>`;
@@ -4028,7 +4295,8 @@ function switchTab(tab, arg = "") {
     // that row's offset, which is exactly the "it appeared below the fold"
     // failure this page was built to end.
     scrollTo(0, 0);
-    openTranscript(Number(arg));
+    const [txId, , txAgent = ""] = arg.split("/");
+    openTranscript(Number(txId), false, txAgent);
   } else {
     loadTab(tab, false);
   }
@@ -4074,7 +4342,9 @@ function parseRoute(hash) {
 function routeTo(hash) {
   const { tab, arg } = parseRoute(hash);
   if (!isTab(tab)) return false;
-  if (tab === "transcript" && !/^\d+$/.test(arg)) return false;
+  // `<execution>` alone, or `<execution>/sub/<agent>` for one of the turn's
+  // sub-agents assumed into the page.
+  if (tab === "transcript" && !/^\d+(\/sub\/[^/]+)?$/.test(arg)) return false;
   switchTab(tab, arg);
   return true;
 }
@@ -4084,35 +4354,47 @@ function routeTo(hash) {
    `#transcript/notanumber` in the bar while something else is rendered is a
    URL that lies, and this page's whole premise is that the URL is the truth. */
 const currentRoute = () =>
-  state.tab === "transcript" && tx ? `transcript/${tx.id}` : state.tab;
+  state.tab === "transcript" && tx
+    ? `transcript/${tx.id}`
+      + (txSub ? `/sub/${encodeURIComponent(txSub.ids[txSub.idx])}` : "")
+    : state.tab;
 addEventListener("hashchange", () => {
   if (!routeTo(location.hash)) history.replaceState(null, "", "#" + currentRoute());
 });
 
 /* ── time window: a real radiogroup, arrow-key operable ──────────────── */
-const TFS = [...$("tf").querySelectorAll('button[role="radio"]')];
-function setTf(b) {
-  state.tf = b.dataset.tf;
-  TFS.forEach(x => {
-    const on = x === b;
+/* One control inside each page it filters — Overview (KPIs, timeline,
+   executions, via inTf) and Activity (the daily charts, via inTfDay) —
+   rather than one in the nav, where it stood above ten tabs that ignore it
+   and was reported as broken for exactly that reason. The instances share
+   `state.tf`, so a window chosen on one page is the window on the other. */
+const TF_GROUPS = [...document.querySelectorAll(".tf")];
+const tfRadios = (g) => [...g.querySelectorAll('button[role="radio"]')];
+function setTf(tf) {
+  state.tf = tf;
+  TF_GROUPS.forEach(g => tfRadios(g).forEach(x => {
+    const on = x.dataset.tf === tf;
     x.setAttribute("aria-checked", on ? "true" : "false");
     x.tabIndex = on ? 0 : -1;
-  });
+  }));
   renderKpis(); renderTimeline(); renderExecutions(); renderActivity();
 }
-TFS.forEach(b => { b.tabIndex = b.getAttribute("aria-checked") === "true" ? 0 : -1; });
-$("tf").addEventListener("click", (ev) => {
-  const b = ev.target.closest('button[role="radio"]');
-  if (b) setTf(b);
-});
-$("tf").addEventListener("keydown", (ev) => {
-  const i = TFS.indexOf(document.activeElement);
-  if (i < 0) return;
-  const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
-  if (!(ev.key in step)) return;
-  ev.preventDefault();
-  const b = TFS[(i + step[ev.key] + TFS.length) % TFS.length];
-  b.focus(); setTf(b);
+TF_GROUPS.forEach(g => {
+  tfRadios(g).forEach(b => { b.tabIndex = b.dataset.tf === state.tf ? 0 : -1; });
+  g.addEventListener("click", (ev) => {
+    const b = ev.target.closest('button[role="radio"]');
+    if (b) setTf(b.dataset.tf);
+  });
+  g.addEventListener("keydown", (ev) => {
+    const rs = tfRadios(g);
+    const i = rs.indexOf(document.activeElement);
+    if (i < 0) return;
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    if (!(ev.key in step)) return;
+    ev.preventDefault();
+    const b = rs[(i + step[ev.key] + rs.length) % rs.length];
+    b.focus(); setTf(b.dataset.tf);
+  });
 });
 
 /* ── connection state ────────────────────────────────────────────────── */

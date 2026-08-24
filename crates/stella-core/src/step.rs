@@ -759,7 +759,14 @@ pub(crate) fn close_open_tool_calls(
             .into_iter()
             .map(|call| ToolResult {
                 call_id: call.call_id.clone(),
-                output: ToolOutput::error(message.to_string()),
+                // Every caller closes an open call here because the *engine*
+                // decided to stop the turn (cancel, budget abort, soft-stop,
+                // provider fallback) — working as designed, never a tool
+                // defect, so this is a policy-plane refusal, not `Internal`.
+                output: ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::RefusedByPolicy,
+                    message.to_string(),
+                ),
             })
             .collect()
     };
@@ -1087,7 +1094,7 @@ impl SummarizerHealth {
 /// What one compaction pass did: what it cost, and whether it rewrote the
 /// transcript in place.
 ///
-/// `#[must_use]` is load-bearing. `rewrote` is the only signal that the two
+/// `#[must_use]` is required. `rewrote` is the only signal that the two
 /// position-keyed memos — the loop detector's result identities and the receipt
 /// ledger's block digests — must drop their keys, and a caller that ignored it
 /// would leave both serving digests for bytes that no longer exist. Making the

@@ -86,7 +86,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
                          #   + typed-errors
+                         #   + tool-error-class (#3167 unclassified-ToolOutput::error ratchet)
                          #   + dead-code-allows
+                         #   + measured-constants (a MEASURED: constant is pinned by a test)
                          #   + diagnostic-codes
                          #   + consumer-sites (Behavioral 'site' strings point at live code)
                          #   + bench-suites
@@ -104,6 +106,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
                          #   + doc-warnings (rustdoc -D warnings)
+                         #   + doc-warnings-schema (the same, for the
+                         #     `schema`-gated wire-contract modules the
+                         #     default-feature run never compiles)
                          #   + lint (clippy -D warnings)
                          #   + test (test --workspace)
                          #   + tool-docs (docs/tools/ vs the declarations)
@@ -136,7 +141,11 @@ the `docs/design` scratchpad, invalidate every Rust comment citing it, and land
 green (#3888); and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
 because a PR that hand-edits a generated schema and nothing else starts neither
-of the other two (#1439); and `guard-self-tests.yml` runs the three steps
+of the other two (#1439) — and `doc-warnings-schema` beside it, because
+`ci.yml`'s `cargo doc --workspace` runs with default features and every module
+that describes the wire format sits behind an off-by-default `schema` one, so
+rustdoc compiled none of them anywhere (#4584); this workflow already builds
+those three crates with the feature on; and `guard-self-tests.yml` runs the three steps
 ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
 `prose` exists to judge — alongside the hermetic suites that prove a guard can
 still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
@@ -313,13 +322,14 @@ The same diff also decides whether the hook runs `make bench-test` — the Pytho
 bench suites, which are gated by `.github/workflows/bench.yml` and are not a
 `make gate` step because they cost minutes. The hook selects on that workflow's
 own scope filter, read from it by `scripts/bench-suites.sh filter` rather than
-copied, so a push touching `bench/**`, `arenabench/**`,
+copied, so a push touching `bench/**`,
 `crates/stella-model/src/catalog.rs` or the workflow itself runs them before it
 leaves the machine. `GATE=fast` skips them out loud, on the same "no tests"
 contract it applies to cargo. This existed nowhere until #2847: the workflow ran
 seven pytest suites, `make bench-test` ran three, and `main` went red on
-2026-08-11 on a deterministic arenabench failure with no local command that
-would have caught it.
+2026-08-11 on a deterministic failure in the arenabench suite (in-tree then,
+ejected to its own repository since — #2380) with no local command that would
+have caught it.
 
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
 `cargo deny check advisories bans sources licenses`). All four are real
@@ -444,7 +454,11 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
      200 with an empty stream). Every streaming dialect arms a bounded
      per-session latch and re-issues the retried attempt as a unary request
      — the shared chat-completions adapter first (#2686), then Messages,
-     Responses and `generateContent` (#2746); Bedrock is already unary.
+     Responses and `generateContent` (#2746). Bedrock is already unary, and
+     that row names a witness like every other (#4557): "no stream to fall
+     back from" holds only while the single unary path classifies its own
+     read-bound expiry as terminal rather than as a retryable transport
+     fault, which is #547's retry storm.
    - **`OverflowPosture`** — whether this provider's context-overflow
      rejection is recognised as one, so the engine's reactive recovery
      fires instead of aborting the turn (#2680). `Detected` names the wire
@@ -913,6 +927,30 @@ this before assuming two of them mean the same thing:
   Deletion is the other answer. Test paths, `#[cfg(test)]` bodies, and the
   platform-conditional `cfg_attr` form are excluded by construction rather than
   by allowlist. `make dead-code-allows-test` covers the guard's own directions.
+- **A constant set by a measurement carries `/// MEASURED:` and a test.** The
+  marker line says what was measured, when, and over how many samples; some
+  test then names the constant, so a merge that reverts the value fails
+  something. Enforced by `scripts/check-measured-constants.sh`
+  (`make measured-constants`), which fails on a marked constant no test
+  mentions, on a marker recording no measurement, and on one sitting above
+  something that is not a `const` or a `static`. It has no baseline, because
+  the marker is opt-in and a marked constant is one somebody marked in the same
+  change; `make measured-constants-test` covers the guard's own directions.
+
+  This is #2495's option 2, chosen over per-constant assertions as an unwritten
+  policy for the reason the issue gives: an unwritten policy is opt-in and the
+  next tuned constant forgets. The failure it exists for already shipped —
+  #2414 moved a triage latency ceiling from 10s to 30s after measuring that
+  27 of 34 triage calls burned the full 10s and returned nothing; #2462
+  rewrote the surrounding struct literal from a branch that predated it and
+  carried the 10s back over the top. Git reported no conflict, no test failed,
+  and the field's own doc comment was left describing a number the struct no
+  longer had. It was found weeks later, by someone starting the follow-up
+  issue that depended on the 30s ceiling.
+
+  What the marker is **not** for: a bound, a protocol value, or a number
+  chosen by taste. Marking one of those makes the marker mean less everywhere
+  it appears, and the guard cannot tell the difference — a reviewer can.
 - **Name things for what they are, not what they were.** If you rename a
   concept, chase it through comments and docs in the same PR — stale comments
   are treated as bugs in review.

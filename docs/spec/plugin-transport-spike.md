@@ -69,7 +69,7 @@ against the same protocol and counting what it took.
 
 **Environment.** Measured inside this run's container; absolute milliseconds
 will differ on other hardware. The *ratios* between conditions, and their
-sign, are what is load-bearing, and the harness was run twice back to back to
+sign, are what is essential, and the harness was run twice back to back to
 confirm they reproduce (both runs included below).
 
 **Harness.** `/tmp/claude-0/-home-user-stella/6b8efc55-944b-55a4-a6fd-b89df01fe544/scratchpad/transport-spike/`

@@ -36,10 +36,10 @@
 //! the future token is not preserved across a round trip. Growing one of
 //! those vocabularies is still a one-directional change.
 //!
-//! [`context_event::LifecycleEventEnvelope`] remains the right home for
-//! internal lifecycle events: it adds an explicit `schema_version` and keeps
-//! stella-internal vocabulary off the public event stream. It is no longer
-//! the *only* way to stay readable by an older binary.
+//! There is no second, internal event channel: the `LifecycleEventEnvelope`
+//! that used to offer one was deleted unwired (#3135). An event that must
+//! survive an older reader rides [`event::AgentEvent`] and its `Unknown`
+//! fallback.
 
 #![forbid(unsafe_code)]
 // AGENTS.md rule #5: library code never panics on runtime data. This crate's
@@ -98,7 +98,7 @@ pub use completion::{
     FinishReason, GenerationParams, MessageRole, PartialUsage, ReasoningEffort, ServiceTier,
     Verbosity,
 };
-pub use context_event::{CompiledContextFrameBuilt, LifecycleEvent, LifecycleEventEnvelope};
+pub use context_event::CompiledContextFrameBuilt;
 pub use contract::{ContractError, Provenance, RiskLevel, ToolContract};
 pub use delivery_event::{DeliveryDecline, DeliveryOutcome};
 // The payload of a gate's refusal (#3380). Lives here, not beside the decision

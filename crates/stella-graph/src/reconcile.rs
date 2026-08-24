@@ -22,7 +22,7 @@
 //! Missing the moment costs latency and never costs correctness, which is
 //! precisely the property a hook does not have.
 //!
-//! # The load-bearing caveat: this is an accelerator, not an oracle
+//! # The caveat this whole design depends on: this is an accelerator, not an oracle
 //!
 //! A git diff describes **committed** history. It says nothing about the
 //! uncommitted working tree, which is where a coding agent spends its entire
@@ -495,7 +495,7 @@ mod tests {
             );
         }
 
-        /// `--no-renames` is load-bearing: with rename detection on, git
+        /// `--no-renames` is required: with rename detection on, git
         /// reports only the destination, and the source path's rows would sit
         /// in the index forever pointing at a file that no longer exists.
         #[test]

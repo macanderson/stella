@@ -2,7 +2,7 @@
 >
 > `design/tui-v2/SPEC.md` §2–4 replaces this brief: §2 is the palette and the
 > hue clamp, §3 the wordmark, §4 the glyph language. Where this document and
-> that SPEC disagree, the SPEC is right. Two disagreements are load-bearing, so
+> that SPEC disagree, the SPEC is right. Two disagreements are required, so
 > they are named rather than left for a reader to discover:
 >
 > - **The lockup below is retired.** This brief specifies `≡✦ stella`; SPEC 3.3
@@ -25,7 +25,7 @@ stella is Latin for star. The mark is a comet — a four-point star with three t
 
 ## the text-native logomark
 
-The lockup in plain text is exactly this, and it's load-bearing everywhere:
+The lockup in plain text is exactly this, and it's required everywhere:
 
 ```
 ≡✦ stella

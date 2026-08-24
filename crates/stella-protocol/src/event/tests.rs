@@ -687,6 +687,7 @@ fn scope_proposal_roundtrips_its_scope_card_facts_and_stays_additive() {
         write_globs: vec!["apps/api/**".into(), "apps/app/automations/**".into()],
         read_globs: vec!["packages/shared/**".into()],
         shell_policy: Some("allowlisted".into()),
+        revision: Some(3),
     };
     let json = serde_json::to_string(&full).unwrap();
     let back: ScopeProposal = serde_json::from_str(&json).unwrap();
@@ -893,6 +894,8 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
         tool_calls: 4,
         complete: true,
         finish_reason: None,
+        effort: Some(crate::completion::ReasoningEffort::High),
+        max_output_tokens: Some(64_000),
         sub_agent_id: None,
     };
     let json = serde_json::to_string(&event).unwrap();
@@ -911,6 +914,8 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
             estimated_input_tokens,
             retries,
             tool_calls,
+            effort,
+            max_output_tokens,
             ..
         } => {
             assert_eq!(step, 3);
@@ -922,8 +927,35 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
             assert_eq!(estimated_input_tokens, 11_200);
             assert_eq!(retries, 1);
             assert_eq!(tool_calls, 4);
+            assert_eq!(effort, Some(crate::completion::ReasoningEffort::High));
+            assert_eq!(max_output_tokens, Some(64_000));
         }
         other => panic!("unexpected variant: {other:?}"),
+    }
+}
+
+#[test]
+fn step_usage_from_a_pre_request_shape_stream_still_parses() {
+    // Backward compatibility: a `step_usage` line serialized before `effort`
+    // and `max_output_tokens` existed must deserialize with both absent
+    // ("the journal cannot say what the request asked for") — the
+    // additive-only wire contract. Absence is not a pin and not "no ceiling
+    // was hit" (#4565).
+    let legacy = r#"{"type":"step_usage","step":3,"model":"glm-5.2","input_tokens":12000,
+        "output_tokens":450,"cached_input_tokens":9000,"estimated_input_tokens":11200,
+        "cache_write_tokens":2500,"cost_usd":0.0042,"duration_ms":1830,"retries":1,
+        "tool_calls":4}"#;
+    let back: AgentEvent = serde_json::from_str(legacy).unwrap();
+    match back {
+        AgentEvent::StepUsage {
+            effort,
+            max_output_tokens,
+            ..
+        } => {
+            assert_eq!(effort, None);
+            assert_eq!(max_output_tokens, None);
+        }
+        other => panic!("not a step_usage row: {other:?}"),
     }
 }
 
@@ -1125,7 +1157,7 @@ fn step_manifest_preserves_block_order_and_the_effective_budget() {
     };
     let value = serde_json::to_value(&event).unwrap();
     assert_eq!(value["type"], "step_manifest");
-    // Order is load-bearing — the manifest IS the wire sequence.
+    // Order is required — the manifest IS the wire sequence.
     assert_eq!(value["blocks"][0]["block_id"], "blk_sys");
     assert_eq!(value["blocks"][1]["block_id"], "blk_tail");
     assert_eq!(value["effective_budget_tokens"], 136_363);

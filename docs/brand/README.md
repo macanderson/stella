@@ -46,6 +46,12 @@ python3 docs/brand/spinners/build_spinners.py  # GIFs, from the animated SVGs
 python3 docs/brand/social/build_social.py      # see "social art" below
 ```
 
+The website carries byte-copies of the logo SVGs and PWA icons (plus an RGBA
+re-encode of `favicon.ico`), and that mirror is generated too: `make
+brand-sync` (or `build_marks.py --sync-site`) produces it, and
+`website/src/lib/brand-parity.test.ts` fails `pnpm test` on any drift. A
+recolour therefore ends with the sync, never with hand-run `cp` (#3983).
+
 All four need `rsvg-convert` (`brew install librsvg`); the spinners also need
 `ffmpeg`, and the social art needs JetBrains Mono installed as a desktop font.
 

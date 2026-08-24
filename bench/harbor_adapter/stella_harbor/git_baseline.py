@@ -68,7 +68,7 @@ def git_baseline_script(workdir: str | None) -> str:
     workspace it could not baseline runs exactly as every published number
     did (diff-blind), it just says so in metadata instead of silently.
 
-    Branch order is load-bearing:
+    Branch order is decisive:
 
     - ``[ -e .git ]`` runs before ``rev-parse`` so a repository git refuses
       to read (dubious ownership) still reads as *preexisting* rather than

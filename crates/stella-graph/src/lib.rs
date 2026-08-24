@@ -13,7 +13,9 @@
 //! # What it does
 //!
 //! - **Indexes** Rust, TypeScript, TSX, JavaScript, Python, SQL, Go, Java, C,
-//!   C++, and PHP (see [`Language`]): symbols (functions, methods,
+//!   C++, PHP, Markdown, and the published context records under
+//!   `.stella/rules/` (see [`Language`] and [`admitted`]): symbols (functions,
+//!   methods,
 //!   structs/classes/enums/traits/interfaces; for SQL, tables/views/schema
 //!   enums — the rows the schema gate reads), import edges
 //!   (`file → module/file`), and **unresolved call sites** (#335 B1: the
@@ -54,6 +56,7 @@
 //! # }
 //! ```
 
+pub mod admitted;
 mod error;
 mod frames;
 mod generated;
@@ -66,6 +69,7 @@ mod markdown;
 mod parse;
 mod queries;
 pub mod reconcile;
+mod record_toml;
 mod rust_resolve;
 pub mod storage;
 mod store;

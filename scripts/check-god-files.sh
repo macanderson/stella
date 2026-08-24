@@ -137,7 +137,7 @@ backticked_paths() {
 # items matters: the surrounding prose names the *sibling modules split out of*
 # each god file as the precedent to follow (`registry/process_tools.rs` out of
 # `registry.rs`), and those are examples of the remedy, not more god files.
-# `|| true` is load-bearing under `set -o pipefail`: a README whose section
+# `|| true` is required under `set -o pipefail`: a README whose section
 # carries no bullet list at all is not an error here, it is the case this guard
 # most needs to report — a crate that just gained its first god file while its
 # README still says it has none. Without it, grep's exit 1 kills the script

@@ -108,7 +108,12 @@ number_word() {
   35) echo thirty-five ;; 36) echo thirty-six ;; 37) echo thirty-seven ;;
   38) echo thirty-eight ;; 39) echo thirty-nine ;; 40) echo forty ;;
   41) echo forty-one ;; 42) echo forty-two ;; 43) echo forty-three ;;
-  44) echo forty-four ;; 45) echo forty-five ;;
+  44) echo forty-four ;; 45) echo forty-five ;; 46) echo forty-six ;;
+  47) echo forty-seven ;; 48) echo forty-eight ;; 49) echo forty-nine ;;
+  50) echo fifty ;; 51) echo fifty-one ;; 52) echo fifty-two ;;
+  53) echo fifty-three ;; 54) echo fifty-four ;; 55) echo fifty-five ;;
+  56) echo fifty-six ;; 57) echo fifty-seven ;; 58) echo fifty-eight ;;
+  59) echo fifty-nine ;; 60) echo sixty ;;
   *) echo "" ;;
   esac
 }
@@ -137,10 +142,17 @@ step_command() {
   # hand-copied second list in ci.yml and a third here drifted from it (#3375).
   # A raw command in this fence would be a fourth.
   shellcheck) echo 'make shellcheck' ;;
+  # Spelled as a make target for shellcheck's reason: which crates get
+  # documented under which feature spelling is the Makefile recipe's list and
+  # nowhere else's, and a raw command here would be the second copy (#4584).
+  # It must not be 'cargo doc' either — that is `doc-warnings`' alias, and two
+  # steps sharing one needle makes both checks vacuous.
+  doc-warnings-schema) echo 'make doc-warnings-schema' ;;
   # The Python guards, whose scripts the `.sh` default below does not fit.
   doc-links) echo 'check-doc-links' ;;
   module-reachability) echo 'check-module-reachability' ;;
   typed-errors) echo 'check-typed-errors' ;;
+  tool-error-class) echo 'check-tool-error-class' ;;
   dead-code-allows) echo 'check-dead-code-allows' ;;
   tokens) echo 'check-tokens' ;;
   hue-separation) echo 'check-hue-separation' ;;

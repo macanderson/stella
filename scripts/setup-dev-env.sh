@@ -258,7 +258,7 @@ cargo-watch|opt|make watch / watch-core / watch-lint (hard-errors without it)|ca
 docker|opt|make serve-image + scripts/smoke-serve-image.sh|manual|
 node|opt|the website/ docs build|brew|node
 pnpm|opt|website/ uses pnpm exclusively (never npm)|brew|pnpm
-uv|opt|make bench-test — every Python suite .github/workflows/bench.yml gates; .githooks/pre-push runs it for a push that touches bench/ or arenabench/ (#2847)|brew|uv
+uv|opt|make bench-test — every Python suite .github/workflows/bench.yml gates; .githooks/pre-push runs it for a push that touches bench/ (#2847)|brew|uv
 gsed|opt|scripts/release.sh + release.yml use GNU-only sed ranges; BSD sed no-ops them|brew|gnu-sed
 zig|opt|scripts/release.sh cross-builds via cargo-zigbuild|brew|zig
 EOF
@@ -482,7 +482,7 @@ hdr "make gate vs CI"
 # CONTRIBUTING.md to GATE_STEPS, but it never saw this third copy, so it rotted
 # unguarded in exactly the direction #1437 warns about: under-reporting, which
 # lets a reader run the short list, see green, and believe the gate is green.
-# `|| true` is load-bearing, not defensive noise: this script runs under
+# `|| true` is required, not defensive noise: this script runs under
 # `set -euo pipefail`, where a command substitution that exits non-zero
 # aborts the assignment and therefore the whole run -- which would make the
 # fallback on the next line unreachable and kill setup outright on a machine

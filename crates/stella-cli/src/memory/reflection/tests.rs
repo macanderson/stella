@@ -346,7 +346,7 @@ async fn reflection_dispatches_low_effort_with_a_cap_that_leaves_room_to_think()
 /// Reflection dispatches on the model the triage pin selected, and built its
 /// request with `reasoning: None` regardless — so `agents.triage.reasoning:
 /// off` selected the model for a call it could not reach. The effort half is
-/// asserted in the same breath: reflection's own low pin is a default, and an
+/// asserted alongside it: reflection's own low pin is a default, and an
 /// operator's explicit setting is the more specific statement about the call.
 #[tokio::test]
 async fn the_triage_posture_reaches_the_reflection_wire() {
@@ -647,6 +647,8 @@ fn journal() -> Vec<stella_protocol::AgentEvent> {
             tool_calls: 1,
             complete: true,
             finish_reason: None,
+            effort: None,
+            max_output_tokens: None,
             sub_agent_id: None,
         },
     ]
@@ -956,6 +958,8 @@ async fn the_prompt_names_where_the_turn_spent_itself() {
         tool_calls: 3,
         complete: true,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
         sub_agent_id: None,
     });
     friction.observe(&stella_protocol::AgentEvent::LoopDetected {

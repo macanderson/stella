@@ -43,7 +43,7 @@
 //! record on the way out — including when the peer hung up unanswered, and
 //! including when the connection failed. The router's twenty-odd exits do not know
 //! a record exists. See `src/observe/record.rs` for why that indirection is
-//! load-bearing rather than decorative.
+//! necessary rather than decorative.
 //!
 //! # A stream is a subscription, not a fire-and-forget
 //!

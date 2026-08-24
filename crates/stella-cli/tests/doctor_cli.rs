@@ -13,6 +13,9 @@ use std::process::{Command, Output};
 
 use stella_store::Store;
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// A workspace with a real, cleanly closed `store.db` holding one execution.
 fn workspace_with_store() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -55,6 +58,7 @@ fn doctor(dir: &tempfile::TempDir, args: &[&str]) -> Output {
     let home = dir.path().join("scratch-home");
     std::fs::create_dir_all(&home).expect("scratch home");
     Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .arg("doctor")
         .args(args)
         .current_dir(dir.path())

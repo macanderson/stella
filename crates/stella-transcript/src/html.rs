@@ -214,6 +214,18 @@ fn note_block(
     let node = NodeId::Note { turn: ti, note: ni };
     let foldable = !note.detail.is_empty();
     let open = foldable && state.is_open(run, node);
+    // The inspect control rides the summary line so it is visible without
+    // unfolding. Inert without a host page: the stylesheet hides it unless a
+    // shadow host opts in, so a mailed standalone transcript never shows a
+    // button that does nothing.
+    let inspect = note.inspect.as_ref().map_or_else(String::new, |anchor| {
+        format!(
+            " <button type=\"button\" class=\"inspect\" data-step=\"{}\" data-role=\"{}\" \
+             title=\"inspect the prompt this call was sent\">⧉ prompt</button>",
+            anchor.step,
+            escape(&anchor.role)
+        )
+    });
     let _ = write!(
         out,
         "<div class=\"note note-{}\"><div class=\"notegut\">{}</div>",
@@ -224,7 +236,7 @@ fn note_block(
         let _ = write!(
             out,
             "<details class=\"note-fold\" id=\"{}\"{}><summary>\
-             <span class=\"chev\">▶</span> {}</summary><div class=\"note-detail\">",
+             <span class=\"chev\">▶</span> {}{inspect}</summary><div class=\"note-detail\">",
             node.key(),
             open_attr(open),
             escape(&note.summary)
@@ -236,7 +248,7 @@ fn note_block(
     } else {
         let _ = write!(
             out,
-            "<div class=\"note-summary\">{}</div>",
+            "<div class=\"note-summary\">{}{inspect}</div>",
             escape(&note.summary)
         );
     }

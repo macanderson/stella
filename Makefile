@@ -39,7 +39,9 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
                     command-docs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
-                    dead-code-allows diagnostic-codes consumer-sites bench-suites wire-paths \
+                    tool-error-class \
+                    dead-code-allows measured-constants diagnostic-codes consumer-sites \
+                    bench-suites wire-paths \
                     tokens hue-separation contrast transcript-surfaces prose \
                     deck-fit-all-test deck-paths css-vars reserved-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
@@ -58,8 +60,8 @@ GATE_NO_BUILD := lockfile-sync format-check
 # CONTRIBUTING.md to the real list instead of a hand-copied one. Both documents
 # had already re-rotted twice, in the same direction each time: a guard was
 # added here and the prose kept the old count (#1437).
-GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings lint test tool-docs \
-               self-driving-test
+GATE_STEPS := $(GATE_GUARDS) $(GATE_NO_BUILD) doc-warnings doc-warnings-schema \
+               lint test tool-docs self-driving-test
 
 # The hermetic guard self-tests — `scripts/test-*.sh` — that deliberately run
 # in NO workflow, and why each one does not. Every other suite runs server-side
@@ -211,9 +213,8 @@ record-demo-video: ## Re-cut docs/demo/stella-deck.mp4 from the command deck (FI
 # suites, this target ran three, and the arenabench failure that reddened `main`
 # on 2026-08-11 had no local command that would have caught it.
 #
-# Deliberately NOT a `make gate` step. It takes minutes (arenabench alone is
-# ~70s) and would tax every Rust-only push for a question that push cannot have
-# changed. .githooks/pre-push runs it instead for a push whose diff matches the
+# Deliberately NOT a `make gate` step. It takes minutes and would tax every
+# Rust-only push for a question that push cannot have changed. .githooks/pre-push runs it instead for a push whose diff matches the
 # workflow's own scope filter, so the suites are gated where they are relevant
 # and free where they are not. `make bench-suites` — which IS a gate step —
 # holds the arrangement together without running a single test.
@@ -302,6 +303,10 @@ command-docs: ## Assert every stella subcommand has a listed reference page (#99
 .PHONY: brand-case
 brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
 	@./scripts/check-brand-case.sh
+
+.PHONY: brand-sync
+brand-sync: ## Mirror docs/brand/ outputs into website/ — the copy brand-parity.test.ts checks (#3983)
+	@python3 docs/brand/sync_site.py
 
 # The generated per-tool reference. Deliberately NOT scoped by CARGO_SCOPE:
 # the artifact is derived from stella-tools' catalog and stella-cli's session
@@ -393,8 +398,20 @@ typed-errors-update: ## Retighten the invariant-#5 ratchet (run after typing sig
 typed-errors-test: ## Test the invariant-#5 ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-typed-errors.sh
 
+.PHONY: tool-error-class
+tool-error-class: ## Assert no NEW unclassified ToolOutput::error( site (#3167)
+	@python3 ./scripts/check-tool-error-class.py
+
+.PHONY: tool-error-class-update
+tool-error-class-update: ## Retighten the #3167 ratchet (run after classifying a site)
+	@python3 ./scripts/check-tool-error-class.py --update
+
+.PHONY: tool-error-class-test
+tool-error-class-test: ## Test the #3167 ratchet's direction (hermetic; not part of `gate`)
+	./scripts/test-tool-error-class.sh
+
 .PHONY: prose
-prose: ## Assert no content-free prose was added (down-only ratchet)
+prose: ## Assert no content-free prose or banned vocabulary was added (down-only ratchet)
 	@python3 ./scripts/check-prose.py
 
 .PHONY: prose-report
@@ -448,6 +465,14 @@ dead-code-allows-update: ## Retighten the dead-code-suppression ratchet (run aft
 dead-code-allows-test: ## Test the dead-code ratchet's direction (hermetic; not part of `gate`)
 	./scripts/test-dead-code-allows.sh
 
+.PHONY: measured-constants
+measured-constants: ## Assert every constant marked `MEASURED:` is named by a test (#2495)
+	@./scripts/check-measured-constants.sh
+
+.PHONY: measured-constants-test
+measured-constants-test: ## Test the measured-constants guard's directions (hermetic; not part of `gate`)
+	./scripts/test-measured-constants.sh
+
 .PHONY: shellcheck-guard-test
 shellcheck-guard-test: ## Test the shellcheck step's presence guard (hermetic; not part of `gate`)
 	./scripts/test-shellcheck-guard.sh
@@ -471,6 +496,38 @@ consumer-sites-test: ## Test the consumer-sites guard's failure directions (herm
 .PHONY: doc-warnings
 doc-warnings: ## Assert rustdoc is clean workspace-wide, private items included (#634, #2336; CARGO_SCOPE to narrow)
 	RUSTDOCFLAGS="-D warnings" cargo doc $(CARGO_SCOPE) --no-deps --document-private-items --keep-going
+
+# The crates that describe the wire format behind an off-by-default `schema`
+# feature, and the feature spellings that turn it on for each. Named once here
+# because two recipe lines and one workflow read the list; a second copy is the
+# drift `shellcheck` above already paid for (#3375).
+SCHEMA_DOC_CRATES := -p stella-protocol -p stella-plugin -p stella-serve
+SCHEMA_DOC_FEATURES := stella-protocol/schema,stella-plugin/schema,stella-serve/schema
+
+# The modules `doc-warnings` cannot see. It runs with default features, and
+# describing the wire format is deliberately off by default in all three crates
+# that do it — so `stella-protocol::schema_export` (the TypeScript printer all
+# three artifacts are printed by), `stella-plugin::{wire_corpus,wire_schema}`
+# and `stella-serve::schema_export` were documented by no CI job at all. #4582
+# found a broken `[AgentEvent]` intra-doc link in the last of those by hand,
+# and nothing in the gate would have found the next one (#4584).
+#
+# Both rustdoc forms, because they answer different questions and neither
+# subsumes the other: the plain run is what a consumer of the published docs
+# sees, and `--document-private-items` is the only one that checks links inside
+# a private or `pub(crate)` item (#2336) — a link TO a private item passes the
+# second and fails the first.
+#
+# Three crates rather than the workspace, and never `--all-features`: what is
+# uncovered is exactly the modules the default run skips, and the feature is
+# additive, so this costs seconds. `--keep-going` for `doc-warnings`' reason —
+# one failing crate must not mask the ones behind it.
+.PHONY: doc-warnings-schema
+doc-warnings-schema: ## Assert rustdoc is clean for the `schema`-gated wire-contract modules (#4584)
+	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_DOC_CRATES) \
+	  --features $(SCHEMA_DOC_FEATURES) --no-deps --keep-going
+	RUSTDOCFLAGS="-D warnings" cargo doc $(SCHEMA_DOC_CRATES) \
+	  --features $(SCHEMA_DOC_FEATURES) --no-deps --document-private-items --keep-going
 
 # The presence guard exists because the failure it replaces was
 # indistinguishable from a real finding: on a machine without the binary this
@@ -880,7 +937,7 @@ contest: ## Stella vs Claude Code (num_tasks= versus_model= max_throughput= [tar
 # `arenabench run` itself.
 .PHONY: run-match
 run-match: ## Launch one arenabench match, credentialled from ~/.env.global.local (match=path/to.toml [ARENA_ARGS=…])
-	@[ -n "$(match)" ] || { echo "usage: make run-match match=arenabench/matches/<name>.toml"; exit 2; }
+	@[ -n "$(match)" ] || { echo "usage: make run-match match=path/to/<name>.toml  (templates live in the arenabench repo's matches/)"; exit 2; }
 	scripts/arena-local.sh $(match) $(ARENA_ARGS)
 
 .PHONY: arena-scripts-test

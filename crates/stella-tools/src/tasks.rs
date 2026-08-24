@@ -22,6 +22,14 @@ use stella_protocol::{
 
 use crate::registry::Tool;
 
+/// The tool name that means *this plan starts now*.
+///
+/// Named rather than spelled twice because a host keys behaviour on it: the
+/// deck's plan gate (`command_deck::task_tap::plan_gate`) raises its scope
+/// review on this call and no other, and a rename that reached the schema but
+/// not that host would silently retire the gate.
+pub const START: &str = "task_start";
+
 /// The session's task board, shared between the six `task_*` tool instances
 /// and the `ToolRegistry` (which snapshots it into `AgentEvent::TaskUpdate`
 /// via [`crate::ToolRegistry::task_board`]).
@@ -46,12 +54,31 @@ pub type SpawnDispatch = Arc<AtomicBool>;
 fn require_str<'a>(input: &'a Value, field: &str) -> Result<&'a str, ToolOutput> {
     match input.get(field).and_then(|v| v.as_str()) {
         Some(s) if !s.trim().is_empty() => Ok(s),
-        Some(_) => Err(ToolOutput::error(format!(
-            "field `{field}` must be a non-empty string"
-        ))),
-        None => Err(ToolOutput::error(format!(
-            "missing required string field `{field}`"
-        ))),
+        Some(_) => Err(ToolOutput::classified_error(
+            stella_protocol::ErrorClass::InvalidInput,
+            format!("field `{field}` must be a non-empty string"),
+        )),
+        None => Err(ToolOutput::classified_error(
+            stella_protocol::ErrorClass::InvalidInput,
+            format!("missing required string field `{field}`"),
+        )),
+    }
+}
+
+/// Map a task-board state-machine refusal to its [`stella_protocol::ErrorClass`]
+/// (#3167): an unknown id is the model naming a task that is not on the board
+/// at all, while every other variant is the model attempting a transition the
+/// board's current state does not allow.
+fn board_error_class(e: &stella_core::tasks::TaskBoardError) -> stella_protocol::ErrorClass {
+    match e {
+        stella_core::tasks::TaskBoardError::UnknownTask { .. } => {
+            stella_protocol::ErrorClass::NotFound
+        }
+        stella_core::tasks::TaskBoardError::Terminal { .. }
+        | stella_core::tasks::TaskBoardError::AnotherTaskInProgress { .. }
+        | stella_core::tasks::TaskBoardError::ContractUnsatisfied { .. } => {
+            stella_protocol::ErrorClass::InvalidInput
+        }
     }
 }
 
@@ -158,7 +185,10 @@ impl Tool for TaskCreate {
         // to write four lines that changed no file and read nothing.
         if let Some(entries) = input.get("tasks").and_then(Value::as_array) {
             if entries.is_empty() {
-                return ToolOutput::error("field `tasks` was empty — pass at least one task");
+                return ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    "field `tasks` was empty — pass at least one task",
+                );
             }
             let mut board = self.0.lock().unwrap_or_else(|p| p.into_inner());
             let mut created: Vec<String> = Vec::with_capacity(entries.len());
@@ -172,9 +202,12 @@ impl Tool for TaskCreate {
                         Err(e) => return e,
                     },
                     _ => {
-                        return ToolOutput::error(format!(
-                            "tasks[{i}] must be a non-empty string or an object with `subject`"
-                        ));
+                        return ToolOutput::classified_error(
+                            stella_protocol::ErrorClass::InvalidInput,
+                            format!(
+                                "tasks[{i}] must be a non-empty string or an object with `subject`"
+                            ),
+                        );
                     }
                 };
                 let contract = match parse_contract(entry) {
@@ -278,7 +311,7 @@ pub struct TaskStart(pub TaskBoardHandle);
 impl Tool for TaskStart {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
-            name: "task_start".into(),
+            name: START.into(),
             description: "Mark a board task in_progress — the task you are personally working \
                           on right now. Keep exactly ONE task in_progress at a time: complete \
                           the current task before starting the next. (task_assign marks \
@@ -310,7 +343,7 @@ impl Tool for TaskStart {
                 content: format!("task #{} `{}` is now in_progress", item.id, item.subject),
                 data: None,
             },
-            Err(e) => ToolOutput::error(e.to_string()),
+            Err(e) => ToolOutput::classified_error(board_error_class(&e), e.to_string()),
         }
     }
 }
@@ -342,7 +375,8 @@ fn parse_contract(input: &Value) -> Result<Option<TaskContract>, ToolOutput> {
         return Ok(Some(TaskContract::ReadOnly));
     }
     let Some(items) = raw.as_array() else {
-        return Err(ToolOutput::error(
+        return Err(ToolOutput::classified_error(
+            stella_protocol::ErrorClass::InvalidInput,
             "definition_of_done must be \"read_only\" for a task that produces no \
              diff, or a non-empty array of checks",
         ));
@@ -352,9 +386,12 @@ fn parse_contract(input: &Value) -> Result<Option<TaskContract>, ToolOutput> {
         let statement = match item.get("statement").and_then(Value::as_str) {
             Some(t) if !t.trim().is_empty() => t.to_string(),
             _ => {
-                return Err(ToolOutput::error(format!(
-                    "definition_of_done[{i}] needs a non-empty `statement` saying what must be true"
-                )));
+                return Err(ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    format!(
+                        "definition_of_done[{i}] needs a non-empty `statement` saying what must be true"
+                    ),
+                ));
             }
         };
         let mechanism = item
@@ -367,16 +404,20 @@ fn parse_contract(input: &Value) -> Result<Option<TaskContract>, ToolOutput> {
             Some("model") => Judge::Model,
             Some("deterministic") | None => Judge::Deterministic,
             Some(other) => {
-                return Err(ToolOutput::error(format!(
-                    "definition_of_done[{i}].judge must be \"deterministic\" or \"model\", got {other:?}"
-                )));
+                return Err(ToolOutput::classified_error(
+                    stella_protocol::ErrorClass::InvalidInput,
+                    format!(
+                        "definition_of_done[{i}].judge must be \"deterministic\" or \"model\", got {other:?}"
+                    ),
+                ));
             }
         };
         checks.push(Check::new(statement, CheckMechanism::new(mechanism, judge)));
     }
     match DefinitionOfDone::from_vec(checks) {
         Some(dod) => Ok(Some(TaskContract::DefinitionOfDone(dod))),
-        None => Err(ToolOutput::error(
+        None => Err(ToolOutput::classified_error(
+            stella_protocol::ErrorClass::InvalidInput,
             "definition_of_done was an empty array — a task that produces diffs \
              must say what would make it done, or declare \"read_only\"",
         )),
@@ -421,7 +462,7 @@ impl Tool for TaskComplete {
                 content: format!("task #{} `{}` completed", item.id, item.subject),
                 data: None,
             },
-            Err(e) => ToolOutput::error(e.to_string()),
+            Err(e) => ToolOutput::classified_error(board_error_class(&e), e.to_string()),
         }
     }
 }
@@ -469,7 +510,7 @@ impl Tool for TaskCancel {
                     data: None,
                 }
             }
-            Err(e) => ToolOutput::error(e.to_string()),
+            Err(e) => ToolOutput::classified_error(board_error_class(&e), e.to_string()),
         }
     }
 }
@@ -524,7 +565,8 @@ impl Tool for TaskAssign {
         // session came to believe six sub-agents were working for it while its
         // queue grew and nothing ran.
         if !self.2.load(Ordering::Acquire) {
-            return ToolOutput::error(
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::Environment,
                 "delegation is unavailable in this session — nothing will run the \
                  sub-agent, so the task would sit unstarted; do the work directly \
                  with your own tools",
@@ -538,7 +580,7 @@ impl Tool for TaskAssign {
             match board.assign(id, owner.clone()) {
                 Ok(item) => (item.subject.clone(), item.description.clone()),
                 Err(e) => {
-                    return ToolOutput::error(e.to_string());
+                    return ToolOutput::classified_error(board_error_class(&e), e.to_string());
                 }
             }
         };
@@ -818,6 +860,27 @@ mod tests {
         // Unknown ids also surface the board's own message.
         let unknown = error(exec(&TaskComplete(board), serde_json::json!({"id": "9"})).await);
         assert!(unknown.contains("no task with id 9"), "{unknown}");
+    }
+
+    /// The #3167 witness: `TaskBoardError`'s own `Display` reaches the model
+    /// byte-for-byte — the loop detector and the prompt cache compare it —
+    /// but an unknown id now carries `ErrorClass::NotFound` rather than the
+    /// `class: None` every board refusal shared before this sweep classified
+    /// them via `board_error_class`.
+    #[tokio::test]
+    async fn an_unknown_task_id_keeps_the_boards_own_prose_and_gains_a_class() {
+        let (board, _queue) = handles();
+        let out = exec(&TaskComplete(board), serde_json::json!({"id": "9"})).await;
+        match out {
+            ToolOutput::Error { message, class } => {
+                assert_eq!(
+                    message,
+                    "no task with id 9 — call task_list to see the board"
+                );
+                assert_eq!(class, Some(stella_protocol::ErrorClass::NotFound));
+            }
+            other => panic!("expected an error, got {other:?}"),
+        }
     }
 
     #[tokio::test]

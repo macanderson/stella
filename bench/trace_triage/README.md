@@ -95,7 +95,7 @@ next comparison is against the truth.
 | `agent-timeout` | harbor's own `AgentTimeoutError` classification |
 | `witness-unavailable` | `proof` `step.kind == "witness_unavailable"`, split per reason |
 | `oracle-flip-ungraded` | an oracle flip (baseline fail, candidate pass) on a trial graded 0 |
-| `tool-error-envelope` | an error envelope wrapping substantial output before `[exit code: N]` |
+| `tool-error-envelope` | an error envelope wrapping substantial output before `[exit code: N]`, unless its `class` names a refusal |
 | `repeated-identical-tool-call` | adjacent identical `(tool, args)` with byte-identical output |
 | `role-model-census-mismatch` | `(role, model)` off `step_usage` against the run's declared seat |
 | `no-post-verdict-file-change` | no `verdict` at all, or a verdict with no `file_change` after it |
@@ -130,7 +130,7 @@ cohort split that separates "the run is broken" from "the agent did badly"
 a loss), and it writes `postmortem.md` / `postmortem.json` into the match
 `arenabench assemble` folded the run into.
 
-A healthy run gets one clean paragraph. That is the load-bearing behaviour, not
+A healthy run gets one clean paragraph. That is the required behaviour, not
 a nicety: a detector that always fires is noise, and noise is how a real
 finding gets ignored.
 

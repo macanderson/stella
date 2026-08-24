@@ -47,7 +47,7 @@
 //!
 //! # A batch, and a note per answer
 //!
-//! Both shapes are load-bearing rather than decoration. A batch because the
+//! Both shapes are required rather than decoration. A batch because the
 //! questions an agent needs settled arrive together, and asking them one call
 //! at a time costs a model round trip apiece. A note per answer because an
 //! option list alone forces the driver to pick the least-wrong option and
@@ -57,7 +57,7 @@
 //! # Why this tool is `read_only`
 //!
 //! It changes nothing — no file, no board, no state that outlives the call —
-//! so the flag is simply true. But it is load-bearing twice beyond honesty:
+//! so the flag is simply true. But it is required twice beyond honesty:
 //!
 //! - `stella_core::ports::ReadOnlyTools` filters on exactly this flag, so a
 //!   delegated sub-agent can still reach the tool. That is the whole
@@ -113,7 +113,7 @@ impl AskQuestion {
     /// time**.
     ///
     /// Reading the slot per call rather than capturing a broker once is the
-    /// load-bearing half: the host attaches its responder after this tool is
+    /// required half: the host attaches its responder after this tool is
     /// already registered, and a captured broker would stay headless for the
     /// life of the session. See [`QuestionSlot`].
     #[must_use]
@@ -689,7 +689,7 @@ mod tests {
         }
     }
 
-    /// The schema's two flags are the load-bearing ones — `read_only` is what
+    /// The schema's two flags are the required ones — `read_only` is what
     /// lets a delegated child reach the tool at all, and `speculation_safe`
     /// being false is what stops a human being asked twice.
     #[test]

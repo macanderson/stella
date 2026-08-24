@@ -430,7 +430,7 @@ struct RecallSegment<'a> {
 /// Split the assembled recall message into per-item segments.
 ///
 /// **The segments concatenate back to the input byte for byte**, and that is
-/// the load-bearing property, not the split itself: reconstruction rebuilds the
+/// the required property, not the split itself: reconstruction rebuilds the
 /// message by appending each block's preimage in manifest order, so a split
 /// that lost or duplicated a separator would break byte-exact reconstruction —
 /// the one signal this whole plane exists to provide.
@@ -1021,7 +1021,7 @@ impl ReceiptLedger {
     /// to [`Self::emit_step_receipt`]: that call is reached through
     /// `run_model_call`, which is already at the argument limit. A ledger that is
     /// never told keeps `TranscriptRevision::default()` and therefore memoizes
-    /// across rewrites — which is why the driver sets it in the same breath as
+    /// across rewrites — which is why the driver sets it in the same step as
     /// the compaction pass that can cause one, and why
     /// `a_rewritten_block_is_never_served_from_the_digest_memo` exists.
     pub fn set_transcript_revision(&mut self, revision: TranscriptRevision) {

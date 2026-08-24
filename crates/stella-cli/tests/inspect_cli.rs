@@ -10,6 +10,9 @@ use std::process::Command;
 
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store};
 
+mod common;
+use common::SealsEmbedderBackend;
+
 /// Digest helper matching `stella-core`'s block identity: the store verifies
 /// journal-resolved blocks against this, and skips the check for gap kinds
 /// (which carry their bytes locally), so a placeholder is fine here.
@@ -215,6 +218,7 @@ fn worker_manifest(step: u64, blocks: Vec<ManifestBlockRow>) -> StepManifestRow 
 
 fn inspect(dir: &tempfile::TempDir, args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .arg("inspect")
         .args(args)
         .current_dir(dir.path())
@@ -491,6 +495,7 @@ fn first_reaches_back_to_the_first_turn_of_the_session() {
 fn diff_without_a_step_says_which_flag_is_missing() {
     let (dir, id) = seeded_workspace();
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args(["inspect", &id.to_string(), "--diff"])
         .current_dir(dir.path())
         .env_remove("CLICOLOR_FORCE")
@@ -509,6 +514,7 @@ fn diff_without_a_step_says_which_flag_is_missing() {
 fn inspect_names_a_missing_receipt_instead_of_printing_an_empty_transcript() {
     let (dir, id) = seeded_workspace();
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
         .args(["inspect", &id.to_string(), "--step", "99"])
         .current_dir(dir.path())
         .output()
@@ -521,5 +527,208 @@ fn inspect_names_a_missing_receipt_instead_of_printing_an_empty_transcript() {
     assert!(
         stderr.contains("no receipt"),
         "says what was missing: {stderr}"
+    );
+}
+
+/// A prompt shaped the way `assemble_system_prompt` shapes one: the base
+/// persona, the session-environment block, workspace memories, workspace
+/// rules, and the SessionStart hook context.
+///
+/// The headings here are a copy of the bytes the assembler emits, and
+/// deliberately so: `stella-cli` ships no library, so an integration test
+/// cannot reach the constants. The copy is safe because it is not the source
+/// of truth for anything — `agent/prompt/provenance.rs`'s own tests pin the
+/// marker table against the emitting constants, and the concatenation
+/// assertion below holds whatever the split does. What this fixture has to be
+/// is a *realistic* prompt, which it is.
+const SYSTEM_SECTIONED: &str = "You are Stella.\
+\n\n## Session environment\nWorkspace root: /w — a git repository\
+\n\nWorkspace memories (lessons from previous sessions — apply them):\n\n### one\nlesson\n\
+\n\n## Workspace rules (cite the ^handle of any you apply)\n\n### Must\n- rule ^r1\
+\n\nSession context (from SessionStart hooks):\nhook output";
+
+/// One execution with two worker calls: step 0 was sent a sectioned system
+/// prompt, and step 1 was sent no `system_prefix` block at all — the receipt
+/// shape that must say so rather than print an empty prompt.
+fn seeded_provenance_workspace() -> (tempfile::TempDir, i64) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store = Store::open(dir.path()).expect("store");
+    let id = store
+        .begin_execution("run", "explain the prompt", "anthropic", "opus")
+        .expect("execution");
+
+    store
+        .record_context_block(id, &block("blk_prov", "system_prefix", SYSTEM_SECTIONED))
+        .expect("sectioned system block");
+    store
+        .record_context_block(id, &block("blk_goal", "user_goal", "explain the prompt"))
+        .expect("goal block");
+
+    for (step, blocks) in [
+        (0, vec![entry("blk_prov", 0), entry("blk_goal", 1)]),
+        // No system block: the goal is the whole call.
+        (1, vec![entry("blk_goal", 0)]),
+    ] {
+        store
+            .record_step_manifest(
+                id,
+                &StepManifestRow {
+                    turn_instance: 0,
+                    step,
+                    call_seq: 0,
+                    provider: "anthropic".into(),
+                    model: "opus".into(),
+                    call_role: "worker".into(),
+                    effective_budget_tokens: 136_363,
+                    calibration_factor: 1.1,
+                    estimated_input_tokens: 20,
+                    stall_seconds_requested: None,
+                    compiled_frame_id: None,
+                    frame_hash: None,
+                    blocks,
+                },
+            )
+            .expect("manifest");
+    }
+    (dir, id)
+}
+
+/// The feature #4602 asks for: the terminal reader gets the same sectioned
+/// provenance view the Observatory has — every span headed by what it is and
+/// by the setting surface that produced it.
+#[test]
+fn system_prompt_sections_name_the_setting_behind_each_span() {
+    let (dir, id) = seeded_provenance_workspace();
+    let out = inspect(
+        &dir,
+        &[&id.to_string(), "--step", "0", "--system-prompt", "--full"],
+    );
+
+    for label in [
+        "Base instructions",
+        "Session environment",
+        "Workspace memories",
+        "Workspace rules",
+        "SessionStart hook context",
+    ] {
+        assert!(
+            out.contains(label),
+            "section {label} is missing from: {out}"
+        );
+    }
+    // A label alone would only rename the bytes. The setting surface is what
+    // turns "this paragraph exists" into "this is the knob that put it here".
+    for source in [
+        ".stella/memories/*.md",
+        ".stella/rules/*.toml",
+        "hooks.SessionStart",
+    ] {
+        assert!(out.contains(source), "no attribution for {source}: {out}");
+    }
+    assert!(
+        out.contains("Workspace root: /w"),
+        "sections carry their bodies, not just their headings: {out}"
+    );
+}
+
+/// The property the whole view rests on: however the boundaries fall, the
+/// sections are the exact bytes the call was sent, in order. A reader who
+/// distrusts a boundary has lost nothing by reading the sections.
+#[test]
+fn the_sections_concatenate_to_the_bytes_the_call_was_sent() {
+    let (dir, id) = seeded_provenance_workspace();
+    let out = inspect(
+        &dir,
+        &[
+            &id.to_string(),
+            "--step",
+            "0",
+            "--system-prompt",
+            "--format",
+            "json",
+        ],
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&out).expect("valid json");
+    assert_eq!(parsed["found"], true, "{out}");
+    let sections = parsed["sections"].as_array().expect("sections array");
+    assert_eq!(
+        sections
+            .iter()
+            .map(|s| s["label"].as_str().expect("label"))
+            .collect::<Vec<_>>(),
+        [
+            "Base instructions",
+            "Session environment",
+            "Workspace memories",
+            "Workspace rules",
+            "SessionStart hook context",
+        ],
+        "{out}"
+    );
+    let rebuilt: String = sections
+        .iter()
+        .map(|s| s["body"].as_str().expect("body"))
+        .collect();
+    assert_eq!(
+        rebuilt, SYSTEM_SECTIONED,
+        "the sections must reproduce the prompt byte-for-byte"
+    );
+    assert_eq!(parsed["bytes"], SYSTEM_SECTIONED.len());
+}
+
+/// A call whose receipt holds no `system_prefix` block says so. Printing an
+/// empty prompt would read as "the model was sent nothing", which is a claim
+/// the receipt does not make.
+#[test]
+fn a_call_with_no_system_prefix_says_so_instead_of_printing_an_empty_prompt() {
+    let (dir, id) = seeded_provenance_workspace();
+    let out = inspect(&dir, &[&id.to_string(), "--step", "1", "--system-prompt"]);
+    assert!(
+        out.contains("no system_prefix block resolved"),
+        "names the gap: {out}"
+    );
+
+    let json = inspect(
+        &dir,
+        &[
+            &id.to_string(),
+            "--step",
+            "1",
+            "--system-prompt",
+            "--format",
+            "json",
+        ],
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    assert_eq!(
+        parsed["found"], false,
+        "a script must tell an absent prompt from an empty one: {json}"
+    );
+    assert!(parsed["sections"].as_array().expect("array").is_empty());
+}
+
+/// `--system-prompt` and `--diff` are two whole-output views of one call.
+/// Letting either win silently would answer a question the caller did not ask.
+#[test]
+fn system_prompt_and_diff_together_are_refused_rather_than_one_winning() {
+    let (dir, id) = seeded_provenance_workspace();
+    let output = Command::new(env!("CARGO_BIN_EXE_stella"))
+        .without_embedder_backend()
+        .args([
+            "inspect",
+            &id.to_string(),
+            "--step",
+            "0",
+            "--system-prompt",
+            "--diff",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .expect("run");
+    assert!(!output.status.success(), "the combination is refused");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--diff --only system"),
+        "names the flag that answers the question they were reaching for: {stderr}"
     );
 }

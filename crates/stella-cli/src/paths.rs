@@ -36,6 +36,11 @@
 //! data-dir resolution needs neither `test_env::lock` nor `EnvRestore`. Those
 //! remain for genuinely env-shaped fixtures, such as provider credential
 //! variables.
+//!
+//! The redirect is what needs no lock. A test that *also reads the ambient
+//! environment and asserts on what it read* still does, because two reads
+//! either side of a window are not thread-safe just because neither of them
+//! writes — see `a_redirect_needs_no_process_environment_mutation` (#4516).
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -322,13 +327,24 @@ mod tests {
     use super::*;
 
     /// Witness for #1139: redirecting home and data-dir resolution takes no
-    /// process-environment mutation, so it needs neither the binary-wide env
-    /// lock nor a restore guard — and cannot race a test on another thread.
+    /// process-environment mutation, so it needs no `EnvRestore` and no
+    /// `unsafe`. That absence is the assertion.
     ///
-    /// Note what this test does NOT do: there is no `test_env::lock()`, no
-    /// `EnvRestore`, and no `unsafe`. That absence is the assertion.
+    /// # Why the lock is held anyway
+    ///
+    /// The absence of a *restore* is what the claim is about; the absence of
+    /// the *lock* was a different claim, and a false one (#4516). Reading
+    /// `HOME` at the top and comparing it at the bottom is a read-read window
+    /// over shared state: `stella_home_moves_the_settings_tier_and_not_only_the_data_tier`,
+    /// three tests down, sets `HOME` to `/tmp/stella-2178-user-home` under
+    /// this same lock, and that is exactly the value one failure on #4504's
+    /// branch reported. What `test_paths` mutates is proved by this test
+    /// carrying no mutation of its own, which the lock does not weaken —
+    /// holding it only stops a concurrent test's legitimate mutation being
+    /// read as this one's.
     #[test]
     fn a_redirect_needs_no_process_environment_mutation() {
+        let _env = crate::test_env::lock();
         let home = PathBuf::from("/tmp/stella-paths-witness");
         let ambient = std::env::var_os(stella_home::HOME_ENV);
 

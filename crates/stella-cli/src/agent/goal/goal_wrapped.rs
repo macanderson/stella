@@ -240,6 +240,17 @@ pub(crate) async fn run_goal_wrapped_turn(
     // pinned before the first one (#3835). Minted by the caller, in the same
     // breath as the wrapper it belongs to.
     candidate: &crate::wrapper_candidate::GrantedCandidate,
+    // `--require-verdict` (#3554, this door #4543): gate the exit status on
+    // the LAST round's wrapper verdict — the round whose work ships; every
+    // earlier round's refusal was superseded by another round being driven.
+    // An unmet goal already fails ahead of this gate, so the gate only ever
+    // turns a met goal whose wrapper did not vouch for it into a failure.
+    // Today every wrapper this door admits carries an empty rule (arbiter
+    // grade is refused, #3832, and only arbiter admits `[requirements]`), so
+    // `judge` answers `Met` and the gate passes vacuously — the wiring is
+    // door parity for the day a non-arbiter grade can carry a rule, and the
+    // refusal without `--pipeline` is real either way.
+    require_verdict: bool,
     // One ledger per round, folded from this arc's journal and read by the
     // caller's reflection (#3976). The wrapped arm folds it exactly as
     // `run_goal_turn` does, and it covers the rounds this door drove — not the
@@ -390,7 +401,7 @@ pub(crate) async fn run_goal_wrapped_turn(
             // `crate::wrapper_plugin::reject_arbiter_wrapper_on_goal` before
             // `run_goal_cmd` ever calls into this loop (#3832), so this arm
             // is unreachable for any wrapper actually bound here today. Kept
-            // as a named, load-bearing assertion rather than deleted: it is
+            // as a named, required assertion rather than deleted: it is
             // what turns a future hole in that pre-flight check (a grade
             // change, a bypassed call site) into a refused round instead of a
             // silent `turn_instance` collision.
@@ -536,6 +547,25 @@ pub(crate) async fn run_goal_wrapped_turn(
                 turn_start.elapsed(),
             );
             println!();
+            // The last round's verdict is the run's (#4543): a met goal still
+            // fails under `--require-verdict` when the wrapper that drove its
+            // final round did not vouch for it. A run that reached `Met` drove
+            // at least one round, so an absent report here is a driver bug
+            // worth failing on, not a case to wave through.
+            if let Some(refusal) = crate::wrapper_plugin::verdict_refusal(
+                require_verdict,
+                &last_report
+                    .as_ref()
+                    .ok_or_else(|| {
+                        crate::failure::CliFailure::from(
+                            "--require-verdict: no round was dispatched, so there is no verdict"
+                                .to_string(),
+                        )
+                    })?
+                    .outcome,
+            ) {
+                return Err(crate::failure::CliFailure::from(refusal));
+            }
             Ok(())
         }
         GoalOutcome::Unmet {

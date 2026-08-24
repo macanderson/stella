@@ -23,7 +23,7 @@ load generator for `scripts/record-demo.sh`, nothing more.
 The deck's **own render**, over the **scripted session fixture** — not a live
 agent run against a provider.
 
-That distinction is load-bearing and is stated here rather than left for a
+That distinction is required and is stated here rather than left for a
 viewer to infer. Every glyph in the film comes from `render_deck`: the real
 layouts, the real palette, the real panel geometry, the real diff rendering,
 the real `agent_engine_config` editor. The session driving them is

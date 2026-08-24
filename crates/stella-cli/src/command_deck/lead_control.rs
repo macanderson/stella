@@ -87,17 +87,18 @@ impl LeadPause {
     /// stale control that must read as a no-op, so it is dropped rather than
     /// reported.
     ///
-    /// The status emitted here is load-bearing, not decoration: `p` is a
+    /// The status emitted here is required, not decoration: `p` is a
     /// *toggle* resolved against the row's current status, so a pause that
     /// parked the turn without painting the row would leave the next `p`
     /// sending Pause again — a lane the user could park and never release.
     ///
     /// `Restart` is not a lead verb, by the fleet's own rule: a restart is the
     /// caller re-dispatching, which the deck already offers (stop, then submit
-    /// again), and there is no retained lead spec to respawn from. `Stop`
-    /// never arrives here — the driver's own arm claims it, for both lanes —
-    /// and is matched only so a newly added control cannot be silently
-    /// swallowed.
+    /// again), and there is no retained lead spec to respawn from. `Delete`
+    /// is not one either: the lead's row IS the session, and taking the
+    /// session down is quit, not a row removal. `Stop` never arrives here —
+    /// the driver's own arm claims it, for both lanes — and is matched only
+    /// so a newly added control cannot be silently swallowed.
     pub(super) fn control(&self, control: AgentControl, in_tx: &UnboundedSender<Inbound>) {
         let status = match control {
             AgentControl::Pause => {
@@ -110,7 +111,7 @@ impl LeadPause {
                 self.painted_paused.store(false, Ordering::SeqCst);
                 AgentStatus::Running
             }
-            AgentControl::Restart | AgentControl::Stop => return,
+            AgentControl::Restart | AgentControl::Stop | AgentControl::Delete => return,
         };
         let _ = in_tx.send(Inbound::Status {
             agent: LEAD.to_string(),

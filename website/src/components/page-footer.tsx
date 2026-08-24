@@ -4,9 +4,10 @@
  * The per-page footer every docs page renders: a share menu, the repository
  * link, the sponsor link, and the licence line.
  *
- * This is the only client component on the site. It earns that: the share menu
- * needs an open/closed state, an outside-click listener, and the clipboard —
- * none of which a server component can do. Everything else here is static.
+ * One of the two client components on the site (the other is the "Copy page"
+ * menu in `page-actions.tsx`). It earns that: the share menu needs an
+ * open/closed state, an outside-click listener, and the clipboard — none of
+ * which a server component can do. Everything else here is static.
  *
  * Taste rules: quiet chrome (a rule and muted text, no fills and no gradients),
  * share targets are plain text rows rather than a wall of faux brand icons, and

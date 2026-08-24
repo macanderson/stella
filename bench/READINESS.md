@@ -765,6 +765,6 @@ grepped to zero hits in this workspace on 2026-08-21 (#4103):
 `the_benchmark_posture_splits_worker_and_verifier_only_on_the_witness_arm`,
 `the_flat_pipeline_verifier_model_alone_resolves_role_verifier_to_the_witness_author`,
 and `pipeline::tests::witness_isolation::requiring_an_independent_witness_refuses_before_spending_anything`.
-The last is the load-bearing one: it is what this document cited as the reason a
+The last is the one that decides it: it is what this document cited as the reason a
 witness arm without an independent author "produces no number at all", and it
 had not existed for the whole time that claim stood.

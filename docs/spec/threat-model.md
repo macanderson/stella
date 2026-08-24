@@ -87,7 +87,7 @@ already is the user.
 
 ### B1 — Repository content → configuration authority
 
-The load-bearing boundary. `Settings::load`
+The boundary everything else depends on. `Settings::load`
 (`crates/stella-cli/src/settings/merge.rs:205`) merges user, managed, and project
 scopes per provider id and per field, and the project scope is treated as
 untrusted input.

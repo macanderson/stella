@@ -4,7 +4,7 @@
 //! Hooks are shell commands declared in workspace settings that fire on
 //! agent lifecycle events, receiving the event payload as JSON on stdin
 //! (Claude Code parity). Seven events are wired, each with distinct,
-//! load-bearing behavior:
+//! required behavior:
 //!
 //!   - [`HookEvent::SessionStart`] — runs once before the turn. Anything a
 //!     hook prints to stdout is appended to the system prompt as

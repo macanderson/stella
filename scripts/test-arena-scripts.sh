@@ -369,7 +369,7 @@ LOCAL_TMP="$(mktemp -d)"
 # not changed. A leaked fixture does not fail the run that leaks it.
 trap 'cleanup_fakes; rm -rf "$STUB_DIR" "$RUN_HOME" "$LOCAL_TMP"' EXIT
 LOCAL_ROOT="$LOCAL_TMP/repo"
-mkdir -p "$LOCAL_ROOT/scripts" "$LOCAL_ROOT/arenabench/arenabench" \
+mkdir -p "$LOCAL_ROOT/scripts" \
          "$LOCAL_ROOT/bench/harbor_adapter/stella_harbor"
 cp "$LOCAL_SH" "$LOCAL_PY" "$LOCAL_ROOT/scripts/"
 : > "$LOCAL_ROOT/match.toml"

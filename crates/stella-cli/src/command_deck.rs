@@ -95,6 +95,7 @@ mod command_side;
 mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;
+mod inspect_service;
 mod lead_control;
 mod model_cmd;
 mod pr_observe;
@@ -107,16 +108,17 @@ mod slash_pump;
 mod steering;
 mod task_tap;
 mod theme_cmd;
+mod worker_control;
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
 
-use crate::memory::{SessionMemory, TurnFriction, inject_recall_block};
+use crate::memory::{SessionMemory, TurnFriction};
 use crate::runtime::TokioSleeper;
 use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
-use task_tap::TaskTap;
+use task_tap::{TaskTap, plan_goal};
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
@@ -840,7 +842,7 @@ pub async fn run_deck_session(
     let mut pending_spawns: VecDeque<stella_core::tasks::SpawnRequest> = VecDeque::new();
     // Lanes whose Restart arrived while the worker was still live: stop
     // first, respawn on its Ended.
-    let mut pending_restarts: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut pending_controls = worker_control::Pending::default();
     // Worker spend not yet metered into the session budget guard — applied
     // at the loop top, where the guard is free (budget aborts happen at
     // safe boundaries only).
@@ -918,7 +920,7 @@ pub async fn run_deck_session(
                         handle_supervisor_msg(
                             msg,
                             &mut subs,
-                            &mut pending_restarts,
+                            &mut pending_controls,
                             &mut pending_spawns,
                             &mut queue,
                             dispatch.held(),
@@ -943,11 +945,11 @@ pub async fn run_deck_session(
                     // Worker controls work between lead turns too — the
                     // lead being idle says nothing about a running worker.
                     Some(WorkspaceInput::Control { agent, control }) if agent != LEAD => {
-                        service_worker_control(
+                        worker_control::service(
                             &agent,
                             control,
                             &mut subs,
-                            &mut pending_restarts,
+                            &mut pending_controls,
                             cfg,
                             budget_limit,
                             &session_record.id,
@@ -983,7 +985,7 @@ pub async fn run_deck_session(
                         text
                     }
                     // The agents page's new-task prompt: a lane, never the
-                    // lead's next turn — that is the variant's whole meaning.
+                    // lead's next turn — that is this message's whole meaning.
                     Some(WorkspaceInput::SpawnLane { text }) => {
                         subsession::spawn_lane_or_notice(
                             text,
@@ -1398,7 +1400,12 @@ pub async fn run_deck_session(
                                 },
                                 &in_tx,
                             )
-                            && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
+                            && !inspect_service::service_inspect_action(
+                                &other,
+                                &store,
+                                last_execution_id,
+                                &in_tx,
+                            )
                             && !handle_agents_input(&other, cfg, &in_tx)
                             && !issues::handle_issues_input(&other, cfg, &in_tx)
                             && !handle_engine_config_input(&other, cfg, &mut settings_stale, &in_tx)
@@ -1542,7 +1549,7 @@ pub async fn run_deck_session(
         // the turn itself appends.
         // Phase 2 (#713): the deck recalled and reported nothing. The event
         // is carried to `run_lead_turn`, which owns the turn's channel.
-        let mut recall_event = None;
+        let mut recall = crate::memory::OpeningRecall::default();
         if let Some(m) = &mut memory {
             // The A/B control, armed before recall (#1221).
             m.arm_recall_control();
@@ -1557,8 +1564,7 @@ pub async fn run_deck_session(
             let touched =
                 stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
             let recalled = m.recall_block_reported(&prompt, &touched).await;
-            recall_event = recalled.telemetry_event();
-            inject_recall_block(&mut messages, recalled.text);
+            recall = crate::memory::inject_opening_recall(&mut messages, recalled);
         }
         let turn_base = messages.len();
         // Attach any media files the prompt names (including `⌃V`
@@ -1653,7 +1659,7 @@ pub async fn run_deck_session(
                 &lead_holder,
                 &steering,
                 &lead_pause,
-                recall_event,
+                recall,
                 memory.as_ref(),
                 &mut friction,
             );
@@ -1669,7 +1675,7 @@ pub async fn run_deck_session(
                         handle_supervisor_msg(
                             msg,
                             &mut subs,
-                            &mut pending_restarts,
+                            &mut pending_controls,
                             &mut pending_spawns,
                             &mut queue,
                             dispatch.held(),
@@ -1826,13 +1832,13 @@ pub async fn run_deck_session(
                                 subs.stop(&agent);
                             }
                         }
-                        // Worker Pause/Resume/Restart while the lead works.
+                        // Worker Pause/Resume/Restart/Delete while the lead works.
                         Some(WorkspaceInput::Control { agent, control }) if agent != LEAD => {
-                            service_worker_control(
+                            worker_control::service(
                                 &agent,
                                 control,
                                 &mut subs,
-                                &mut pending_restarts,
+                                &mut pending_controls,
                                 cfg,
                                 budget_limit,
                                 &session_record.id,
@@ -1864,8 +1870,9 @@ pub async fn run_deck_session(
                         // lead's next prompt.
                         Some(WorkspaceInput::ScopeChangeRequest { .. }) => {
                             queue.push_back(
-                                "The user wants to change the approved scope: propose an \
-                                 updated scope (raise a scope review with the revised plan)."
+                                "The user wants to change the approved scope: revise the task \
+                                 board (task_create / task_cancel) and start the revised plan \
+                                 — that is what raises a fresh scope review for them."
                                     .to_string(),
                             );
                         }
@@ -2025,7 +2032,7 @@ pub async fn run_deck_session(
                             input @ (WorkspaceInput::InspectRefresh
                             | WorkspaceInput::InspectCall { .. }),
                         ) => {
-                            service_inspect_action(&input, &store, last_execution_id, &in_tx);
+                            inspect_service::service_inspect_action(&input, &store, last_execution_id, &in_tx);
                         }
                         // Navigation waits for the road to clear: switching
                         // sessions mid-turn would tear down live work, so the
@@ -2573,112 +2580,6 @@ fn service_registry_action(
     true
 }
 
-/// The INSPECT overlay's driver half: answer the recorded-call index and the
-/// reconstruction of one call. Returns `false` for anything else so the caller
-/// can keep trying the other service handlers.
-///
-/// Both arms are blocking SQLite reads — `reconstruct_call` replays the block
-/// registry and the event journal — so they run on `spawn_blocking` and answer
-/// out of band, the same shape as [`WorkspaceInput::FocusGraphFile`]. Stalling
-/// the event pump to rebuild a prompt would stutter a live turn.
-fn service_inspect_action(
-    input: &WorkspaceInput,
-    store: &Option<Arc<Store>>,
-    execution_id: Option<i64>,
-    in_tx: &mpsc::UnboundedSender<Inbound>,
-) -> bool {
-    if !matches!(
-        input,
-        WorkspaceInput::InspectRefresh | WorkspaceInput::InspectCall { .. }
-    ) {
-        return false;
-    }
-    // No store (claim mode, or it failed to open) or no turn yet: answer with
-    // an empty index rather than silence, so the overlay renders its "nothing
-    // recorded yet" line instead of looking hung.
-    let (Some(store), Some(execution_id)) = (store.clone(), execution_id) else {
-        let _ = in_tx.send(Inbound::RecordedCalls(Vec::new()));
-        return true;
-    };
-    let in_tx = in_tx.clone();
-    match input {
-        WorkspaceInput::InspectRefresh => {
-            tokio::task::spawn_blocking(move || {
-                let calls = store.recorded_calls(execution_id).unwrap_or_default();
-                let _ = in_tx.send(Inbound::RecordedCalls(
-                    calls.iter().map(recorded_call_info).collect(),
-                ));
-            });
-        }
-        WorkspaceInput::InspectCall {
-            turn_instance,
-            step,
-            call_seq,
-        } => {
-            let (turn_instance, step, call_seq) = (*turn_instance, *step, *call_seq);
-            tokio::task::spawn_blocking(move || {
-                let Ok(recon) = store.reconstruct_call(execution_id, turn_instance, step, call_seq)
-                else {
-                    let _ = in_tx.send(Inbound::RecordedCalls(Vec::new()));
-                    return;
-                };
-                // Re-read the header so the detail can name the model/role that
-                // served this call; the reconstruction itself carries only the
-                // messages.
-                let call = store
-                    .recorded_calls(execution_id)
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|c| {
-                        (c.turn_instance, c.step, c.call_seq) == (turn_instance, step, call_seq)
-                    })
-                    .map(recorded_call_info)
-                    .unwrap_or_else(|| stella_tui::RecordedCallInfo {
-                        turn_instance,
-                        step,
-                        call_seq,
-                        call_role: "unknown".into(),
-                        provider: "unknown".into(),
-                        model: "unknown".into(),
-                        estimated_input_tokens: 0,
-                    });
-                let _ = in_tx.send(Inbound::InspectedCall(Box::new(stella_tui::InspectView {
-                    call,
-                    messages: recon
-                        .messages
-                        .iter()
-                        // The CLI's `stella inspect` renderer, reused verbatim:
-                        // the overlay shows wire shape, and the two surfaces
-                        // must not disagree about what a message looked like.
-                        .map(|m| stella_tui::InspectMessage {
-                            role: crate::inspect::role_tag(m.role).to_string(),
-                            content: crate::inspect::message_body(m),
-                        })
-                        .collect(),
-                    verified: recon.is_verified(),
-                    unresolved: recon.unresolved.len(),
-                    digest_mismatches: recon.digest_mismatches.len(),
-                    journal_era: crate::inspect::deck_journal_era(recon.journal_era),
-                })));
-            });
-        }
-        _ => unreachable!("guarded by the matches! above"),
-    }
-    true
-}
-
-fn recorded_call_info(call: &stella_store::RecordedCall) -> stella_tui::RecordedCallInfo {
-    stella_tui::RecordedCallInfo {
-        turn_instance: call.turn_instance,
-        step: call.step,
-        call_seq: call.call_seq,
-        call_role: call.call_role.clone(),
-        provider: call.provider.clone(),
-        model: call.model.clone(),
-        estimated_input_tokens: call.estimated_input_tokens,
-    }
-}
-
 /// The inbox snapshot for the deck (badge + overlay), newest first.
 fn notifications_inbound(store: &stella_store::NotificationStore) -> Inbound {
     let items = store
@@ -2706,7 +2607,7 @@ fn notifications_inbound(store: &stella_store::NotificationStore) -> Inbound {
 fn handle_supervisor_msg(
     msg: SupervisorMsg,
     subs: &mut SubSessions,
-    pending_restarts: &mut std::collections::HashSet<String>,
+    pending_controls: &mut worker_control::Pending,
     pending_spawns: &mut VecDeque<stella_core::tasks::SpawnRequest>,
     queue: &mut crate::session_persist::DurableQueue,
     dispatch_held: bool,
@@ -2763,9 +2664,14 @@ fn handle_supervisor_msg(
             // from a replaced worker must not steal its replacement's slot
             // (or, below, respawn the lane a second time).
             let freed = subs.ended(&lane, generation);
+            // A Delete accepted while this worker was live takes the row
+            // down now — and outranks a Restart armed earlier: the later
+            // intent won at `worker_control::service`.
+            let deleted =
+                freed && worker_control::finish_delete(&lane, pending_controls, subs, in_tx);
             // A Restart that arrived while this worker was live respawns it
             // now — restart takes the freed slot ahead of parked spawns.
-            if freed && pending_restarts.remove(&lane) {
+            if freed && !deleted && pending_controls.restarts.remove(&lane) {
                 let _ = subsession::respawn(
                     &lane,
                     subs,
@@ -2828,63 +2734,6 @@ fn handle_supervisor_msg(
                 in_tx,
                 sup_tx,
             );
-        }
-    }
-}
-
-/// Route one Pause/Resume/Stop/Restart at a worker lane. Pause parks the
-/// worker at its next step boundary (never mid-tool — the engine's
-/// `TurnGate`); Resume releases it; Restart respawns the lane from its
-/// retained spec, stopping the live worker first when necessary.
-#[allow(clippy::too_many_arguments)]
-fn service_worker_control(
-    lane: &str,
-    control: stella_tui::AgentControl,
-    subs: &mut SubSessions,
-    pending_restarts: &mut std::collections::HashSet<String>,
-    cfg: &Config,
-    budget_limit: Option<f64>,
-    session_id: &str,
-    workspace_name: &str,
-    in_tx: &UnboundedSender<Inbound>,
-    sup_tx: &UnboundedSender<SupervisorMsg>,
-) {
-    match control {
-        stella_tui::AgentControl::Stop => {
-            subs.stop(lane);
-        }
-        stella_tui::AgentControl::Pause => {
-            if subs.set_paused(lane, true) {
-                let _ = in_tx.send(Inbound::Status {
-                    agent: lane.to_string(),
-                    status: AgentStatus::Paused,
-                });
-            }
-        }
-        stella_tui::AgentControl::Resume => {
-            if subs.set_paused(lane, false) {
-                let _ = in_tx.send(Inbound::Status {
-                    agent: lane.to_string(),
-                    status: AgentStatus::Running,
-                });
-            }
-        }
-        stella_tui::AgentControl::Restart => {
-            if subs.is_live(lane) {
-                pending_restarts.insert(lane.to_string());
-                subs.stop(lane);
-            } else {
-                let _ = subsession::respawn(
-                    lane,
-                    subs,
-                    cfg,
-                    budget_limit,
-                    session_id,
-                    workspace_name,
-                    in_tx,
-                    sup_tx,
-                );
-            }
         }
     }
 }
@@ -3637,15 +3486,20 @@ async fn run_lead_turn(
     steering: &Arc<subsession::SteeringTap>,
     // Owned by the driver loop, so its input arms can flip it mid-turn (#1219).
     pause: &lead_control::LeadPause,
-    // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
-    // because recall runs before this channel exists.
-    recall_event: Option<AgentEvent>,
+    // Phase 2 (#713): this turn's `ContextRecall` and the opening block's
+    // re-query seed (#4498), carried in because recall precedes this channel.
+    recall: crate::memory::OpeningRecall,
     session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
     friction: &mut TurnFriction,            // #3962: filled from the lane's own stream
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let requery = crate::memory::requery_for_turn(session_memory, messages, tx.clone().into());
+    let requery = crate::memory::requery_for_turn(
+        session_memory,
+        messages,
+        tx.clone().into(),
+        recall.produced,
+    );
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
@@ -3655,7 +3509,7 @@ async fn run_lead_turn(
         Some(registry.task_board()),
     );
     // First event of the turn: what recall put in front of the model.
-    if let Some(event) = recall_event {
+    if let Some(event) = recall.event {
         let _ = tx.send(event);
     }
 
@@ -3686,7 +3540,10 @@ async fn run_lead_turn(
             Principal::User,
             registry.hook_bus(),
         );
-        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()));
+        // The plan gate's headline, taken before the engine borrows
+        // `messages` mutably (`task_tap::plan_gate`, #4594).
+        let goal = plan_goal(messages);
+        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()), goal);
         let hook_runner = HostHookRunner;
         let mut engine = Engine::with_sleeper(
             provider,

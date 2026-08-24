@@ -72,6 +72,59 @@ async fn respects_offset_and_limit() {
     let _ = tokio::fs::remove_file(&full).await;
 }
 
+/// The #4297 witness: a successful read reports its own line coverage as
+/// structured `data` — both numbers, so a truncated read is statable as
+/// truncated. On main the counts existed only inside the rendered footer,
+/// which is capped prose whose shape belongs to loop comparison — the deck
+/// parsing it back out would be #2290's substitution all over again.
+#[tokio::test]
+async fn a_read_reports_its_line_coverage_as_structured_data() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a\nb\nc\nd\ne\n").unwrap();
+
+    // Whole file: shown == total.
+    let whole = ReadFile::default()
+        .execute(&serde_json::json!({"path": "a.txt"}), &cx(dir.path()))
+        .await;
+    let ToolOutput::Ok { data, .. } = whole else {
+        panic!("expected ok");
+    };
+    assert_eq!(
+        data,
+        Some(serde_json::json!({"lines_shown": 5, "lines_total": 5}))
+    );
+
+    // Ranged: what entered context, against what is on disk.
+    let ranged = ReadFile::default()
+        .execute(
+            &serde_json::json!({"path": "a.txt", "offset": 2, "limit": 2}),
+            &cx(dir.path()),
+        )
+        .await;
+    let ToolOutput::Ok { data, .. } = ranged else {
+        panic!("expected ok");
+    };
+    assert_eq!(
+        data,
+        Some(serde_json::json!({"lines_shown": 2, "lines_total": 5}))
+    );
+
+    // Past the end: still a successful read, and it showed none of it.
+    let past = ReadFile::default()
+        .execute(
+            &serde_json::json!({"path": "a.txt", "offset": 99}),
+            &cx(dir.path()),
+        )
+        .await;
+    let ToolOutput::Ok { data, .. } = past else {
+        panic!("expected ok");
+    };
+    assert_eq!(
+        data,
+        Some(serde_json::json!({"lines_shown": 0, "lines_total": 5}))
+    );
+}
+
 /// The #3144 witness: a wrong-typed `offset`/`limit` is refused, never
 /// silently defaulted. On main, `{"limit": "200"}` vanished into the
 /// default window — no refusal, no note, wrong-sized read.
@@ -352,6 +405,7 @@ async fn a_monotonic_paging_sweep_is_refused_before_it_burns_a_turn() {
 
     let mut refused_at = None;
     let mut refusals = Vec::new();
+    let mut classes = Vec::new();
     for step in 0..40u64 {
         let out = tool
             .execute(
@@ -363,9 +417,10 @@ async fn a_monotonic_paging_sweep_is_refused_before_it_burns_a_turn() {
                 &ctx,
             )
             .await;
-        if let ToolOutput::Error { message, .. } = out {
+        if let ToolOutput::Error { message, class } = out {
             refused_at.get_or_insert(step);
             refusals.push(message);
+            classes.push(class);
         }
     }
     let refused_at = refused_at.expect("the sweep must be refused, not run to the cap");
@@ -388,6 +443,15 @@ async fn a_monotonic_paging_sweep_is_refused_before_it_burns_a_turn() {
     // ceiling is a wall rather than a redirection.
     assert!(refusals[0].contains("omitting `limit`"), "{}", refusals[0]);
     assert!(refusals[0].contains("`search`"), "{}", refusals[0]);
+    // The #3167 witness: this ceiling is a tool policy working as designed
+    // (never a tool defect), so it earns `RefusedByPolicy` — the same class
+    // as the four approval/extension-policy denials, and never `Internal`.
+    assert!(
+        classes
+            .iter()
+            .all(|c| *c == Some(stella_protocol::ErrorClass::RefusedByPolicy)),
+        "{classes:?}"
+    );
 }
 
 /// The remedy the refusal advertises has to actually work: once the

@@ -31,7 +31,7 @@
 //! | `context_write.calls` / `.upserts` / `.superseded` | `context_write` and its two counts |
 //! | `subagent.spawned` / `.refused` | `sub_agent` `started`, and a `finished` whose status is `refused` |
 //!
-//! Three choices in there are load-bearing:
+//! Three choices in there are required:
 //!
 //! * **Tools are keyed by name, never by a class.** A foundry-authored tool is
 //!   indistinguishable from a built-in on the wire — `ToolCall` carries a

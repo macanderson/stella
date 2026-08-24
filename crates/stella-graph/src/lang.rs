@@ -1,9 +1,13 @@
 //! The set of languages the code graph indexes, and the mapping from a file
-//! extension to its tree-sitter grammar + query pair.
+//! path to its tree-sitter grammar + query pair.
 //!
 //! Grammars are **native**, not WASM: each one is linked in at build time
 //! from its own `tree-sitter-*` crate, so there is no runtime loader and no
 //! asset to resolve relative to the binary's install path.
+//!
+//! Two languages carry no grammar at all and are read by this crate's own
+//! line scans instead — [`crate::markdown`] and [`crate::record_toml`] — which is
+//! why they are indexable in every build, trimmed or not.
 
 use std::path::Path;
 
@@ -26,16 +30,29 @@ pub enum Language {
     Cpp,
     Php,
     /// Prose, split on its heading hierarchy by this crate's private
-    /// `markdown` module rather than by a grammar — the one language here
-    /// whose parser is this crate's own, and so the one that is present in
-    /// every build.
+    /// `markdown` module rather than by a grammar — one of the two languages
+    /// here whose parser is this crate's own, and so present in every build.
     Markdown,
+    /// A published **context record**, split on its table headers by this
+    /// crate's private `record_toml` module (#4492). Like [`Language::Markdown`] it
+    /// carries no grammar and is present in every build; unlike every other
+    /// language here its extension alone does not qualify a file — only a
+    /// `.toml` under `.stella/rules/` is one
+    /// ([`crate::admitted::is_context_record`]).
+    Toml,
 }
 
 impl Language {
-    /// Classify a path by extension, or `None` if it is not an indexable
-    /// source file. This is the single gate the directory walk
-    /// (`crate::walk`) uses to decide what to open.
+    /// Classify a path, or `None` if it is not an indexable source file. This
+    /// is the single gate the directory walk (`crate::walk`) uses to decide
+    /// what to open.
+    ///
+    /// The extension decides for every language but one. `.toml` is the
+    /// extension of every build manifest in a Rust tree, so it qualifies a
+    /// file only under `.stella/rules/`, where it is a published context
+    /// record ([`Language::Toml`], #4492). Reading the path rather than the
+    /// extension there is what keeps `Cargo.toml` out of an index whose whole
+    /// purpose is ranking prose.
     ///
     /// `None` also covers "the extension is known but its grammar was not
     /// compiled into this build" (#1268).
@@ -68,6 +85,7 @@ impl Language {
             "php" => Language::Php,
             "sql" => Language::Sql,
             "md" | "markdown" => Language::Markdown,
+            "toml" if crate::admitted::is_context_record(path) => Language::Toml,
             _ => return None,
         };
         lang.is_compiled_in().then_some(lang)
@@ -85,7 +103,7 @@ impl Language {
     }
 
     /// Every language the enum knows, compiled in or not.
-    pub const ALL: [Language; 12] = [
+    pub const ALL: [Language; 13] = [
         Language::Rust,
         Language::Python,
         Language::JavaScript,
@@ -98,31 +116,33 @@ impl Language {
         Language::Cpp,
         Language::Php,
         Language::Markdown,
+        Language::Toml,
     ];
 
     /// Whether this build can parse this language.
     ///
     /// For every grammar-backed language that is "did this build compile the
-    /// grammar in" (#1268). [`Language::Markdown`] is parsed by this crate's
-    /// private `markdown` module, a line scan with no feature gate and nothing
-    /// to link, so it is always available — which is why this is not simply
+    /// grammar in" (#1268). [`Language::Markdown`] and [`Language::Toml`] are
+    /// parsed by this crate's own line scans, with no feature gate and nothing
+    /// to link, so they are always available — which is why this is not simply
     /// `ts_language().is_some()`.
     pub fn is_compiled_in(self) -> bool {
         match self {
-            Language::Markdown => true,
+            Language::Markdown | Language::Toml => true,
             _ => self.ts_language().is_some(),
         }
     }
 
     /// Whether this language is parsed by a tree-sitter grammar rather than
-    /// by this crate's own reader. Only [`Language::Markdown`] answers `false`.
+    /// by this crate's own reader. Only [`Language::Markdown`] and
+    /// [`Language::Toml`] answer `false`.
     ///
     /// Test-only: production code has no reason to distinguish "compiled in"
     /// from "conceptually grammar-backed" ([`Language::is_compiled_in`]
     /// already answers the question anything else would ask).
     #[cfg(test)]
     pub(crate) fn is_grammar_backed(self) -> bool {
-        !matches!(self, Language::Markdown)
+        !matches!(self, Language::Markdown | Language::Toml)
     }
 
     /// Stable lowercase tag stored in `code_graph_files.language` and used in
@@ -141,6 +161,7 @@ impl Language {
             Language::Cpp => "cpp",
             Language::Php => "php",
             Language::Markdown => "markdown",
+            Language::Toml => "toml",
         }
     }
 
@@ -179,8 +200,8 @@ impl Language {
             // and the PHP-only grammar cannot parse those at all.
             #[cfg(feature = "lang-php")]
             Language::Php => tree_sitter_php::LANGUAGE_PHP.into(),
-            // Markdown has no grammar by design, not by trimming — see
-            // [`Language::is_compiled_in`].
+            // Markdown and TOML have no grammar by design, not by trimming —
+            // see [`Language::is_compiled_in`].
             #[allow(unreachable_patterns)]
             _ => return None,
         })
@@ -199,7 +220,7 @@ impl Language {
             Language::C => queries::C_SYMBOLS,
             Language::Cpp => queries::CPP_SYMBOLS,
             Language::Php => queries::PHP_SYMBOLS,
-            Language::Markdown => NO_QUERY,
+            Language::Markdown | Language::Toml => NO_QUERY,
         }
     }
 
@@ -216,7 +237,7 @@ impl Language {
             Language::C => queries::C_IMPORTS,
             Language::Cpp => queries::CPP_IMPORTS,
             Language::Php => queries::PHP_IMPORTS,
-            Language::Markdown => NO_QUERY,
+            Language::Markdown | Language::Toml => NO_QUERY,
         }
     }
 
@@ -233,7 +254,7 @@ impl Language {
             Language::C => queries::C_CALLS,
             Language::Cpp => queries::CPP_CALLS,
             Language::Php => queries::PHP_CALLS,
-            Language::Markdown => NO_QUERY,
+            Language::Markdown | Language::Toml => NO_QUERY,
         }
     }
 }
@@ -338,14 +359,49 @@ mod tests {
         }
     }
 
-    /// Markdown carries no grammar and is still always indexable — the one
-    /// language whose reader ships with this crate rather than with a
-    /// `lang-*` feature.
+    /// Markdown and TOML carry no grammar and are still always indexable —
+    /// the two languages whose readers ship with this crate rather than with
+    /// a `lang-*` feature.
     #[test]
-    fn markdown_is_indexable_in_every_build() {
-        assert!(Language::Markdown.is_compiled_in());
-        assert!(!Language::Markdown.is_grammar_backed());
-        assert_eq!(Language::Markdown.ts_language(), None);
+    fn markdown_and_toml_are_indexable_in_every_build() {
+        for lang in [Language::Markdown, Language::Toml] {
+            assert!(lang.is_compiled_in(), "{} must be indexable", lang.tag());
+            assert!(!lang.is_grammar_backed());
+            assert_eq!(lang.ts_language(), None);
+        }
+    }
+
+    /// **The witness for #4492's classifier half.** A published context record
+    /// is a document the index can rank; a `Cargo.toml` sharing its extension
+    /// is not, and never becomes one. Both sides are asserted in one test
+    /// because either alone is satisfiable by the wrong answer — mapping every
+    /// `.toml` would pass the first, mapping none would pass the second.
+    #[test]
+    fn only_a_context_record_is_a_toml_document() {
+        for record in [
+            ".stella/rules/ctx.demo.toml",
+            "/abs/proj/.stella/rules/governance.toml",
+        ] {
+            assert_eq!(
+                Language::from_path(Path::new(record)),
+                Some(Language::Toml),
+                "`{record}` is a published context record and must be indexable (#4492)"
+            );
+        }
+        for manifest in [
+            "Cargo.toml",
+            "crates/stella-graph/Cargo.toml",
+            "deny.toml",
+            "rust-toolchain.toml",
+            ".stella/tools/mine.toml",
+            ".stella/private/leaked.toml",
+        ] {
+            assert_eq!(
+                Language::from_path(Path::new(manifest)),
+                None,
+                "`{manifest}` must not become an indexable document"
+            );
+        }
     }
 
     /// The `default` feature set must reproduce the language coverage that

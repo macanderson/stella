@@ -118,9 +118,10 @@ impl Grammars {
             Language::C => self.c.as_ref(),
             Language::Cpp => self.cpp.as_ref(),
             Language::Php => self.php.as_ref(),
-            // Markdown is read by `crate::markdown`, not by a grammar, and
-            // `parse_file` answers it before it reaches here.
-            Language::Markdown => None,
+            // Markdown and TOML are read by this crate's own line scans, not
+            // by a grammar, and `parse_file` answers both before either
+            // reaches here.
+            Language::Markdown | Language::Toml => None,
         }
     }
 }
@@ -169,6 +170,18 @@ pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> O
             calls: Vec::new(),
         });
     }
+    // TOML likewise (#4492). A context record names no other file, so it has
+    // no import edges — unlike markdown, whose links are exactly the relation
+    // `code_graph_imports` models. A record with no table headers is still a
+    // successful parse: a file the index knows about, with a file-level
+    // vector, the same contract markdown's headingless document has.
+    if lang == Language::Toml {
+        return Some(Parsed {
+            symbols: crate::record_toml::tables(source),
+            imports: Vec::new(),
+            calls: Vec::new(),
+        });
+    }
     let pack = grammars.pack(lang)?;
     let mut parser = Parser::new();
     if parser.set_language(&pack.language).is_err() {
@@ -196,9 +209,10 @@ pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> O
             extract_ts_imports(&pack.imports, root, src)
         }
         Language::Sql => Vec::new(), // SQL has no imports
-        // Unreachable: markdown returned above, before the pack lookup —
-        // its link edges ride that early return (#3103).
-        Language::Markdown => Vec::new(),
+        // Unreachable: markdown and TOML both returned above, before the pack
+        // lookup — markdown's link edges ride that early return (#3103), and
+        // a context record has no edges to extract (#4492).
+        Language::Markdown | Language::Toml => Vec::new(),
         Language::Go => extract_go_imports(&pack.imports, root, src),
         Language::Java => extract_java_imports(&pack.imports, root, src),
         // C++ shares C's reader: `#include` is the same preprocessor

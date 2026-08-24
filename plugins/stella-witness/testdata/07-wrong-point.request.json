@@ -1,5 +1,5 @@
 {
-  "point": "before_turn",
+  "point": "judge",
   "body": {
     "protocol_version": 1,
     "wrapper": "witness-v1",

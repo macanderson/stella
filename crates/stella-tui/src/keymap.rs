@@ -523,13 +523,15 @@ pub const BINDINGS: &[Binding] = &[
     ),
     row(
         "ctrl-a",
-        "SUB-AGENTS — n nudge · f flag · ^x^x kill · p pause · r restart",
+        "SUB-AGENTS — o open · n nudge · f flag · x stop · xx delete · r resume · rr restart",
         Everywhere,
         &[
             "ctrl_a_opens_the_sub_agents_overlay_from_any_tab",
             "the_keys_control_the_selected_lane",
             "nudge_steers_the_lane_and_flag_tells_the_dispatcher",
             "ctrl_x_twice_kills_the_selected_lane_and_any_other_key_disarms",
+            "x_stops_the_lane_and_a_second_x_deletes_it",
+            "o_opens_the_selected_lane_like_enter",
         ],
     ),
     row(

@@ -226,7 +226,7 @@ pub fn line_span(content: &str, start_line: u32, end_line: u32) -> String {
 /// carry chunks from several files at once, but a file's rows still go to
 /// [`store_chunk_vectors`] together, once its last vector has landed.
 ///
-/// The `EXISTS` on symbols is load-bearing rather than tidiness. Without it a
+/// The `EXISTS` on symbols is required rather than tidiness. Without it a
 /// file with no symbols at all — an empty source file, a markdown document with
 /// no headings — matches "carries no chunk vector" trivially and would be
 /// selected on every pass forever, which is the very bug this predicate exists

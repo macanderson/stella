@@ -7,8 +7,9 @@ pixel form of artwork whose source is `logo/svg/`. Nothing in `logo/png/` or
 the exports had no builder, so a regeneration reached for whatever renderer was
 nearby. Commit 10781aa31 did exactly that and committed 52 torn PNGs.
 
-    python3 docs/brand/build_marks.py            # rewrite every export
-    python3 docs/brand/build_marks.py --check    # validate, write nothing
+    python3 docs/brand/build_marks.py             # rewrite every export
+    python3 docs/brand/build_marks.py --check     # validate, write nothing
+    python3 docs/brand/build_marks.py --sync-site # ...and mirror into website/
 
 `--check` deliberately does not compare bytes. librsvg's output shifts between
 releases, so a byte comparison would fail the build on a Homebrew upgrade while
@@ -142,26 +143,10 @@ def icon_markup(icon: Icon) -> str:
 
 
 def write_ico(out: Path, pngs: dict[int, bytes]) -> None:
-    """Pack PNG-encoded entries into an ICO.
-
-    PNG-in-ICO has been read by every browser since IE11 and keeps the file to
-    a few KB where BMP entries would need an AND mask per size. The header is
-    6 bytes, then one 16-byte directory entry each, then the payloads — a size
-    of 256 is written as 0, which is why nothing here may exceed 255.
-    """
-    sizes = sorted(pngs)
-    if any(s > 255 for s in sizes):
-        raise SystemExit("an ICO entry cannot exceed 255px; use a PNG icon instead")
-    header = struct.pack("<HHH", 0, 1, len(sizes))
-    offset = 6 + 16 * len(sizes)
-    entries, payloads = b"", b""
-    for s in sizes:
-        data = pngs[s]
-        entries += struct.pack(
-            "<BBBBHHII", s, s, 0, 0, 1, 32, len(data), offset + len(payloads)
-        )
-        payloads += data
-    out.write_bytes(header + entries + payloads)
+    """Pack PNG-encoded entries into an ICO file — `cometkit.pack_ico`, which
+    `sync_site.py`'s RGBA re-encode shares, so the two ICOs cannot disagree on
+    the container format."""
+    out.write_bytes(ck.pack_ico(pngs))
 
 
 # ---------------------------------------------------------------------------
@@ -363,7 +348,15 @@ def build() -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--check", action="store_true", help="validate only, write nothing")
+    ap.add_argument(
+        "--sync-site",
+        action="store_true",
+        help="after building, mirror the outputs into website/ (sync_site.py), "
+        "so regenerating and mirroring are one action",
+    )
     args = ap.parse_args()
+    if args.check and args.sync_site:
+        ap.error("--check writes nothing; it cannot be combined with --sync-site")
 
     check_svg_parity()
     check_sources()
@@ -383,6 +376,10 @@ def main() -> int:
         raise SystemExit("build wrote something the check rejects")
     check_exported_gold()
     print(f"\n{len(LOGO_EXPORTS)} logo exports, {len(ICONS)} icons, 1 ico")
+    if args.sync_site:
+        import sync_site  # noqa: PLC0415  (the flag is opt-in; so is the import)
+
+        sync_site.main()
     return 0
 
 

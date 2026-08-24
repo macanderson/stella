@@ -106,7 +106,7 @@ pub const SEMANTIC_DESCRIPTION: &str = "Find code. This is the ONLY search you n
 /// The description advertised when no embedder resolved — what the name and
 /// file-scan rungs can actually keep.
 ///
-/// Every clause is load-bearing, and both failure directions are real:
+/// Every clause is required, and both failure directions are real:
 ///
 /// - **`WORDS` … `literally`** takes the emphasis slot the other variant
 ///   spends on `MEANING`, so the caps land on the mechanism instead of on a
@@ -320,7 +320,10 @@ impl Tool for Search {
             Err(err) => return ToolOutput::from(err),
         };
         if query.trim().is_empty() {
-            return ToolOutput::error(QUERY_REQUIRED);
+            return ToolOutput::classified_error(
+                stella_protocol::ErrorClass::InvalidInput,
+                QUERY_REQUIRED,
+            );
         }
         // The cache is moved out, used, and put back rather than held across
         // the await: a `MutexGuard` is not `Send`, and holding one over the

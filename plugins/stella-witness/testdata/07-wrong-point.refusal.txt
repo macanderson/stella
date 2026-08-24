@@ -1,1 +1,1 @@
-stella-witness: this plugin answers only `after_turn`; it was asked `before_turn`
+stella-witness: this plugin answers only `before_turn` and `after_turn`; it was asked `judge`

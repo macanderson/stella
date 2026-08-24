@@ -74,7 +74,8 @@ fn execution_journal_replays_transcript_without_deltas() {
             "tool_result",
             "text",
             "text",
-            "file_change"
+            "file_change",
+            "step_usage"
         ],
         "seq order, text_delta excluded"
     );
@@ -90,6 +91,10 @@ fn execution_journal_replays_transcript_without_deltas() {
     assert_eq!(v[4]["body"], "added the function");
     assert_eq!(v[4]["truncated"], false);
     assert_eq!(v[5]["body"], "and named it well");
+    // The metering row lifts what the dispatched request asked for (#4565) —
+    // the profile card renders "not recorded for this run" without these.
+    assert_eq!(v[7]["effort"], "high");
+    assert_eq!(v[7]["max_output_tokens"], 32000);
     // No execution 2 events were seeded — an empty transcript, not an error.
     let none = respond(ws.path(), "/api/execution-journal?id=2");
     let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
@@ -178,8 +183,9 @@ fn streamed_reasoning_fragments_fold_into_one_block_per_run() {
     assert_eq!(types, ["tool_start", "tool_result", "reasoning"]);
 }
 
-/// `/transcript` renders the journal through `stella-transcript` — the same
-/// code the TUI draws from — rather than through the page's own JavaScript.
+/// `/api/transcript-html` renders the journal through `stella-transcript` —
+/// the same code the TUI draws from — rather than through the page's own
+/// JavaScript, as a fragment the turn page embeds in a shadow root.
 ///
 /// The assertions are about the *structural* fixes, not about pixels: a tool
 /// call and its result are one node, and the call's command is stated once. A
@@ -187,15 +193,15 @@ fn streamed_reasoning_fragments_fold_into_one_block_per_run() {
 #[test]
 fn transcript_route_renders_one_node_per_call_stating_the_command_once() {
     let ws = seeded_workspace();
-    let response = respond(ws.path(), "/transcript?id=1");
+    let response = respond(ws.path(), "/api/transcript-html?id=1");
     assert_eq!(response.status, "200 OK");
     assert_eq!(response.content_type, "text/html; charset=utf-8");
     let html = String::from_utf8(response.body).unwrap();
 
-    // Standalone: its own styles ride with it, so it needs nothing from
-    // index.html.
-    assert!(html.starts_with("<!DOCTYPE html>"));
-    assert!(html.contains("--del-word"), "the stylesheet is inlined");
+    // A fragment for embedding, not a standalone document: the styles live
+    // at /assets/transcript.css and the host page injects them.
+    assert!(html.starts_with("<div class=\"frame\""), "{html}");
+    assert!(!html.contains("<!DOCTYPE html>"));
 
     // One step, carrying both halves of the call.
     assert_eq!(
@@ -218,11 +224,61 @@ fn transcript_route_renders_one_node_per_call_stating_the_command_once() {
     assert!(html.contains("and named it well"));
 }
 
+/// The seeded `step_usage` event becomes a metering note: the per-call audit
+/// row (provider, model, tokens, cache traffic, latency) with the inspect
+/// control the turn page wires to its prompt inspector, anchored by
+/// (step, role).
+#[test]
+fn transcript_fragment_carries_a_metering_row_with_an_inspect_anchor() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/transcript-html?id=1");
+    let html = String::from_utf8(response.body).unwrap();
+
+    assert!(html.contains("note-meter"), "no metering note:\n{html}");
+    assert!(
+        html.contains("step 1 · worker · zai · glm-5.2"),
+        "the metering summary does not lead with the binding:\n{html}"
+    );
+    assert!(
+        html.contains("class=\"inspect\" data-step=\"1\" data-role=\"worker\""),
+        "the inspect control lost its anchor:\n{html}"
+    );
+    // The fold detail carries the cache split — the figures a cache
+    // investigation needs per call, not per turn.
+    assert!(html.contains("29.1k from prompt cache"), "{html}");
+    assert!(html.contains("1.2k written to cache"), "{html}");
+}
+
+/// The transcript stylesheet is served as an asset, byte-identical to the
+/// renderer crate's one copy, so the embedding page and a test can both hold
+/// it to the same contract.
+#[test]
+fn transcript_stylesheet_is_served_as_an_asset() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/assets/transcript.css");
+    assert_eq!(response.status, "200 OK");
+    assert_eq!(response.content_type, "text/css; charset=utf-8");
+    let css = String::from_utf8(response.body).unwrap();
+    assert_eq!(css, stella_transcript::html::STYLE);
+    assert!(css.contains("--del-word"));
+}
+
+/// The standalone `/transcript` page is consolidated into the turn page —
+/// gone, not redirected: the fragment route is an implementation detail of
+/// the dashboard, and the page-level address it replaced answered the same
+/// question in a second rendering.
+#[test]
+fn the_standalone_transcript_page_is_gone() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/transcript?id=1");
+    assert_eq!(response.status, "404 Not Found");
+}
+
 /// An execution with no events is an empty transcript, not a 500.
 #[test]
 fn transcript_route_renders_an_execution_with_no_events() {
     let ws = seeded_workspace();
-    let response = respond(ws.path(), "/transcript?id=2");
+    let response = respond(ws.path(), "/api/transcript-html?id=2");
     assert_eq!(response.status, "200 OK");
     let html = String::from_utf8(response.body).unwrap();
     assert!(!html.contains("class=\"step"));
@@ -232,10 +288,182 @@ fn transcript_route_renders_an_execution_with_no_events() {
 #[test]
 fn transcript_route_names_the_parameter_it_is_missing() {
     let ws = seeded_workspace();
-    let response = respond(ws.path(), "/transcript");
+    let response = respond(ws.path(), "/api/transcript-html");
     assert_eq!(response.status, "400 Bad Request");
     let body = String::from_utf8(response.body).unwrap();
     assert!(body.contains("id"), "{body}");
+}
+
+/// **The #4538 witness.** `execution_reflection.partial_run` (schema v32,
+/// #3808) reaches the panel: a cancelled run whose only reflection row came
+/// from finalize — no self-review to gate on — must render the flag instead
+/// of `reflection: null`, and a graded reflection must carry the flag beside
+/// its grade, so the panel can say "this covers a partial run" either way.
+///
+/// The shared fixture predates the column on purpose (every other test in
+/// this file is the pre-v32 degrade witness: the flag is silently absent and
+/// nothing else changes); this one migrates its own copy forward.
+#[test]
+fn a_cancelled_runs_reflection_reads_partial_run_not_null() {
+    let ws = seeded_workspace();
+    let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE execution_reflection
+           ADD COLUMN partial_run INTEGER NOT NULL DEFAULT 0;
+         INSERT INTO executions
+           (kind, prompt, provider, model, outcome, session_id, cost_usd)
+         VALUES ('run', 'refactor the parser', 'zai', 'glm-5.2',
+                 'cancelled', 'ses-1', 0.01);
+         INSERT INTO execution_reflection (execution_id, partial_run)
+         VALUES (3, 1);",
+    )
+    .unwrap();
+    drop(conn);
+
+    let cancelled = respond(ws.path(), "/api/execution?id=3");
+    let v: serde_json::Value = serde_json::from_slice(&cancelled.body).unwrap();
+    assert_eq!(
+        v["reflection"],
+        serde_json::json!({ "partial_run": true }),
+        "a finalize-only row on a cancelled run is a reason, not a null: {v}"
+    );
+
+    let graded = respond(ws.path(), "/api/execution?id=1");
+    let v: serde_json::Value = serde_json::from_slice(&graded.body).unwrap();
+    assert_eq!(v["reflection"]["self_rating"], 8);
+    assert_eq!(
+        v["reflection"]["partial_run"], false,
+        "a graded full-run reflection states the flag rather than omitting it: {v}"
+    );
+}
+
+/// `/api/model-card` names its missing parameters; the card itself is read
+/// from the user-tier catalog, which a seeded workspace deliberately does not
+/// fabricate.
+#[test]
+fn model_card_route_names_its_missing_parameters() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/model-card?provider=zai");
+    assert_eq!(response.status, "400 Bad Request");
+    let body = String::from_utf8(response.body).unwrap();
+    assert!(body.contains("slug"), "{body}");
+}
+
+/// A catalog file shaped like `stella-store::catalog`'s DDL (the hand-written
+/// subset discipline `seeded_workspace` documents), holding one card with two
+/// versions so the newest-version pick is observable.
+fn seeded_catalog(dir: &TempDir) -> std::path::PathBuf {
+    let path = dir.path().join("catalog.db");
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE model_cards (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           api_provider TEXT NOT NULL, model_provider TEXT NOT NULL,
+           slug TEXT NOT NULL, display_name TEXT, family TEXT,
+           source TEXT NOT NULL DEFAULT 'test');
+         CREATE TABLE model_card_versions (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           model_card_id INTEGER NOT NULL, version INTEGER NOT NULL,
+           input_usd_per_mtok REAL, output_usd_per_mtok REAL,
+           cached_input_usd_per_mtok REAL, cache_write_usd_per_mtok REAL,
+           context_window INTEGER, max_output_tokens INTEGER,
+           release_date TEXT, last_updated TEXT,
+           supports_reasoning INTEGER, supports_tools INTEGER, knowledge TEXT,
+           source TEXT NOT NULL DEFAULT 'test',
+           content_hash TEXT NOT NULL DEFAULT '');
+         INSERT INTO model_cards
+           (api_provider, model_provider, slug, display_name, family)
+         VALUES ('openrouter', 'anthropic', 'claude-x', 'Claude X', 'claude');
+         INSERT INTO model_card_versions
+           (model_card_id, version, input_usd_per_mtok, output_usd_per_mtok,
+            cached_input_usd_per_mtok, cache_write_usd_per_mtok,
+            context_window, max_output_tokens, release_date, last_updated,
+            supports_reasoning, supports_tools, knowledge)
+         VALUES
+           (1, 1, 1.0, 4.0, 0.1, 1.25, 100000, 32000,
+            '2026-01-01', '2026-02-01', 0, 1, '2025-04'),
+           (1, 2, 3.0, 15.0, 0.3, 3.75, 200000, 64000,
+            '2026-03-01', '2026-04-01', 1, 1, '2025-10');",
+    )
+    .unwrap();
+    path
+}
+
+/// **The found path (#4567).** Against a seeded catalog, the card resolves
+/// the newest version's row — every column the route serves, including the
+/// api-provider/model-provider split the profile card exists to print.
+///
+/// Calls [`model_card::model_card`] with the catalog path threaded as a
+/// parameter: the env-derived default (`stella_home::data_dir()`) reads
+/// process-wide `STELLA_HOME`/`STELLA_DATA_DIR`, and setting those in one
+/// test races every parallel test in the binary.
+#[test]
+fn model_card_serves_the_newest_version_of_a_seeded_card() {
+    let dir = TempDir::new().unwrap();
+    let path = seeded_catalog(&dir);
+    let card = crate::model_card::model_card(&path, "openrouter", "claude-x").unwrap();
+    assert_eq!(
+        card,
+        serde_json::json!({
+            "found": true,
+            "api_provider": "openrouter",
+            "model_provider": "anthropic",
+            "slug": "claude-x",
+            "display_name": "Claude X",
+            "family": "claude",
+            "context_window": 200_000,
+            "max_output_tokens": 64_000,
+            "supports_reasoning": true,
+            "supports_tools": true,
+            "knowledge": "2025-10",
+            "release_date": "2026-03-01",
+            "last_updated": "2026-04-01",
+            "input_usd_per_mtok": 3.0,
+            "output_usd_per_mtok": 15.0,
+            "cached_input_usd_per_mtok": 0.3,
+            "cache_write_usd_per_mtok": 3.75,
+        }),
+        "version 2's figures, version 1's nowhere"
+    );
+
+    // A card the catalog does not hold, and a catalog that does not exist:
+    // both are states, not failures.
+    let missing = crate::model_card::model_card(&path, "openrouter", "no-such").unwrap();
+    assert_eq!(missing["found"], false, "{missing}");
+    let absent =
+        crate::model_card::model_card(&dir.path().join("nowhere.db"), "openrouter", "claude-x")
+            .unwrap();
+    assert_eq!(absent["found"], false, "{absent}");
+    assert_eq!(absent["note"], "no model catalog on this machine");
+}
+
+/// **The degrade path (#4567).** A catalog written before the capability
+/// columns (`supports_reasoning` et al, added by `CATALOG_MIGRATIONS`) fails
+/// the prepare, and that must read as the same state as no catalog — never a
+/// 500 on the turn page.
+#[test]
+fn model_card_degrades_a_catalog_older_than_its_columns() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("catalog.db");
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE model_cards (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               api_provider TEXT NOT NULL, model_provider TEXT NOT NULL,
+               slug TEXT NOT NULL);
+             CREATE TABLE model_card_versions (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               model_card_id INTEGER NOT NULL, version INTEGER NOT NULL);
+             INSERT INTO model_cards (api_provider, model_provider, slug)
+             VALUES ('openrouter', 'anthropic', 'claude-x');
+             INSERT INTO model_card_versions (model_card_id, version)
+             VALUES (1, 1);",
+        )
+        .unwrap();
+    let card = crate::model_card::model_card(&path, "openrouter", "claude-x").unwrap();
+    assert_eq!(card["found"], false, "{card}");
+    assert_eq!(card["note"], "catalog schema too old");
 }
 
 /// `after_seq` (#1476) narrows the transcript to rows newer than the
@@ -246,7 +474,8 @@ fn transcript_route_names_the_parameter_it_is_missing() {
 fn execution_journal_after_seq_returns_only_newer_rows() {
     let ws = seeded_workspace();
     // Seq 3 is the tool_start row; only tool_result (4), the two text rows
-    // (5, 6) and the file_change (7) — all > 3 — should come back.
+    // (5, 6), the file_change (7) and the step_usage metering row (8) — all
+    // > 3 — should come back.
     let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=3");
     let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let seqs: Vec<i64> = v
@@ -255,7 +484,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
         .iter()
         .map(|e| e["seq"].as_i64().unwrap())
         .collect();
-    assert_eq!(seqs, [4, 5, 6, 7], "only rows with seq > 3 come back");
+    assert_eq!(seqs, [4, 5, 6, 7, 8], "only rows with seq > 3 come back");
     // A cursor past every seeded row degrades to empty, not an error.
     let none = respond(ws.path(), "/api/execution-journal?id=1&after_seq=99");
     let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();
@@ -266,7 +495,7 @@ fn execution_journal_after_seq_returns_only_newer_rows() {
     let v: serde_json::Value = serde_json::from_slice(&all.body).unwrap();
     assert_eq!(
         v.as_array().unwrap().len(),
-        7,
+        8,
         "seq 0 survives after_seq=-1"
     );
 }
@@ -555,13 +784,13 @@ fn a_long_file_change_diff_is_elided_from_the_middle_and_says_so() {
     let conn = rusqlite::Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
     conn.execute(
         "INSERT INTO events (execution_id, seq, event_type, payload)
-         VALUES (1, 8, 'file_change', ?1)",
+         VALUES (1, 9, 'file_change', ?1)",
         [payload.to_string()],
     )
     .unwrap();
     drop(conn);
 
-    let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=7");
+    let response = respond(ws.path(), "/api/execution-journal?id=1&after_seq=8");
     let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
     let change = &v.as_array().unwrap()[0];
     let hunks = change["hunks"].as_array().expect("hunks");
@@ -595,7 +824,7 @@ fn a_long_file_change_diff_is_elided_from_the_middle_and_says_so() {
     );
 
     // `?full=1` is the reader who asked for everything.
-    let full = respond(ws.path(), "/api/execution-journal?id=1&after_seq=7&full=1");
+    let full = respond(ws.path(), "/api/execution-journal?id=1&after_seq=8&full=1");
     let v: serde_json::Value = serde_json::from_slice(&full.body).unwrap();
     let change = &v.as_array().unwrap()[0];
     assert_eq!(change["elided"], 0, "nothing withheld under ?full=1");

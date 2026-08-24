@@ -101,10 +101,15 @@ done
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADAPTER="$ROOT/bench/harbor_adapter"
-ARENA_PKG="$ROOT/arenabench"
+# `arenabench` is installed, not vendored — ejected to
+# https://github.com/macanderson/arenabench (#2380). ARENABENCH_CHECKOUT
+# points at a source checkout instead, riding PYTHONPATH.
+ARENA_CHECKOUT="${ARENABENCH_CHECKOUT:-}"
 
-[ -d "$ARENA_PKG/arenabench" ] || die "no arenabench package at $ARENA_PKG"
 [ -d "$ADAPTER/stella_harbor" ] || die "no harbor adapter at $ADAPTER"
+if [ -n "$ARENA_CHECKOUT" ] && [ ! -d "$ARENA_CHECKOUT/arenabench" ]; then
+  die "ARENABENCH_CHECKOUT=$ARENA_CHECKOUT has no arenabench package in it"
+fi
 
 # ---------------------------------------------------------------------------
 # 1. source freshness — the cheapest refusal, and the only one a human may
@@ -191,19 +196,25 @@ fi
 
 PY="${ARENA_PYTHON:-$ADAPTER/.venv/bin/python}"
 [ -x "$PY" ] || die "no interpreter at $PY
-  Create the adapter venv (the only one that imports both \`arenabench\` and
-  \`stella_harbor\`):
+  Create the adapter venv (the one interpreter expected to import both
+  \`arenabench\` and \`stella_harbor\`):
       uv sync --project bench/harbor_adapter --locked --extra dev
-  Or point ARENA_PYTHON at an interpreter that already can."
+      uv pip install --python bench/harbor_adapter/.venv/bin/python \\
+        'git+https://github.com/macanderson/arenabench'
+  Or point ARENA_PYTHON at an interpreter that already can, or
+  ARENABENCH_CHECKOUT at a source checkout."
 
 export ARENABENCH_STELLA_ADAPTER="$ADAPTER"
-export PYTHONPATH="$ARENA_PKG:$ADAPTER${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="${ARENA_CHECKOUT:+$ARENA_CHECKOUT:}$ADAPTER${PYTHONPATH:+:$PYTHONPATH}"
 
 if ! IMPORT_ERR="$("$PY" -c 'import arenabench, stella_harbor' 2>&1)"; then
   die "$PY cannot import both modules:
 $IMPORT_ERR
-  \`arenabench/.venv\` imports arenabench but has no \`harbor\`, which makes
-  every Stella seat exit 0 having measured nothing."
+  \`arenabench\` missing: install it into this interpreter —
+      uv pip install --python $PY 'git+https://github.com/macanderson/arenabench'
+  — or set ARENABENCH_CHECKOUT to a source checkout.
+  \`harbor\`/\`stella_harbor\` missing: recreate the adapter venv —
+      uv sync --project bench/harbor_adapter --locked --extra dev"
 fi
 
 # ---------------------------------------------------------------------------
@@ -221,7 +232,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 printf '\n'
-# Argument order is load-bearing, not stylistic. `arena_local.py` collects the
+# Argument order is required, not stylistic. `arena_local.py` collects the
 # `arenabench run` passthrough with `nargs=REMAINDER`, and argparse stops
 # parsing options at the first positional — so every flag must precede
 # $TEMPLATE and the passthrough must follow it. Built the other way round,

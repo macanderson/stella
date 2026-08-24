@@ -28,7 +28,7 @@
 //! That is the exact symptom #4155 and #4175 were each reported as, twice, and
 //! it is what this file exists to make loud.
 //!
-//! The event ordering here is the product's own and is load-bearing: the
+//! The event ordering here is the product's own and is required: the
 //! registry measures a solo mutating call the moment it returns and publishes on
 //! the channel the engine then sends `ToolResult` on, so `FileChange` folds
 //! **before** the row that made it (`stella_tools::call_measure`, #4175).

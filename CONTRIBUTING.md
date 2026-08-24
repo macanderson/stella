@@ -85,7 +85,9 @@ python3 ./scripts/check-doc-links.py check
 ./scripts/check-stat-portability.sh
 python3 ./scripts/check-module-reachability.py
 python3 ./scripts/check-typed-errors.py
+python3 ./scripts/check-tool-error-class.py
 python3 ./scripts/check-dead-code-allows.py
+./scripts/check-measured-constants.sh
 ./scripts/check-diagnostic-codes.sh
 ./scripts/check-consumer-sites.sh
 ./scripts/check-bench-suites.sh
@@ -104,6 +106,7 @@ python3 ./scripts/check-css-vars.py
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --keep-going
+make doc-warnings-schema
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ./scripts/check-tool-docs.sh
@@ -159,7 +162,7 @@ for all 28 members (#1135). It falls back to the whole workspace for a push to
 build script / the gate machinery, and for anything it cannot narrow with
 confidence. See what it would choose with `make impacted`.
 
-If the diff touches the Python bench tooling (`bench/**`, `arenabench/**`,
+If the diff touches the Python bench tooling (`bench/**`,
 `crates/stella-model/src/catalog.rs`, or `.github/workflows/bench.yml`) the hook
 also runs `make bench-test`, which runs every pytest suite that workflow gates
 and needs [uv](https://docs.astral.sh/uv/). It is not a `make gate` step — it

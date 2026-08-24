@@ -141,7 +141,7 @@ mod tests {
     /// table, and leaves when the driver stops sending it — which is what
     /// happens when whatever contributed it is removed.
     ///
-    /// Both directions, because only the second one is load-bearing: a table
+    /// Both directions, because only the second one is required: a table
     /// that could admit a role but not lose one would keep printing a routing
     /// answer for something that no longer routes anywhere, which is the exact
     /// failure this dialog exists to prevent.

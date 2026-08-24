@@ -191,7 +191,16 @@ pub static CACHE_POSTURE: &[(&str, CachePosture)] = &[
                         over one 17-minute session it held for the last 17 calls and not \
                         the first 32, leaving 20 of 69 calls reading zero cached tokens \
                         for 54% of the spend. Only a non-empty upstream_pin \
-                        (provider.order + allow_fallbacks:false) actually fixes the route",
+                        (provider.order + allow_fallbacks:false) actually fixes the route. \
+                        The gateway honours the root-level placement for Anthropic routes, \
+                        verified from recorded field usage rather than a live probe \
+                        (#1854): of 1,684 anthropic/* calls this adapter made between \
+                        2026-07-26 and 2026-08-16, 1,373 read cached tokens (95.8M of \
+                        107.5M input, 89%) and 1,557 recorded cache writes — and the \
+                        adapter has only ever sent the root-level form, never per-part \
+                        markers, so with Anthropic caching being explicit opt-in through \
+                        the gateway those reads could not occur if the root field were \
+                        dropped",
             witness: "openrouter_identity_sends_root_level_cache_control",
         },
     ),
@@ -693,7 +702,23 @@ pub enum StreamFallbackPosture {
     /// Allowed only with a note a reviewer can check.
     StreamingOnly { note: &'static str },
     /// The adapter is already unary — there is no stream to fall back from.
-    AlwaysUnary { note: &'static str },
+    ///
+    /// Carries a witness like [`Self::UnaryFallback`], and for the reason that
+    /// variant does: "there is no stream to fall back from" is only a safe row
+    /// while the single unary path classifies its own read-bound expiry as
+    /// `Terminal` rather than retryable `Transport` (#547). Every streaming
+    /// dialect proves that about its fallback leg with a
+    /// `…_unary_body_read_timeout_is_terminal_never_a_retry_storm` test; the
+    /// adapter whose *only* leg is unary owes the same proof, and until #4557
+    /// this arm carried a note instead and the parity test skipped it.
+    AlwaysUnary {
+        /// Why this adapter has no streaming path, for humans reading the
+        /// matrix.
+        note: &'static str,
+        /// Name of the test function that proves the unary path's read-bound
+        /// expiry is terminal. Checked for existence by this module's tests.
+        witness: &'static str,
+    },
 }
 
 /// One stream-fallback row per provider id constructible by the CLI — same
@@ -714,6 +739,7 @@ pub static STREAM_FALLBACK_POSTURE: &[(&str, StreamFallbackPosture)] = &[
         StreamFallbackPosture::AlwaysUnary {
             note: "the adapter calls Converse, not ConverseStream — every completion is \
                    already unary, so there is no stream to fall back from",
+            witness: "a_bedrock_unary_body_read_timeout_is_terminal_never_a_retry_storm",
         },
     ),
     (
@@ -1033,15 +1059,22 @@ mod tests {
     /// completeness test in `stella-cli` (that half landed in the same PR).
     /// So a `UnaryFallback` row could name a test that had been renamed away
     /// and nothing would notice — the exact rot the other four axes are
-    /// guarded against. The no-fallback variants carry a note, not a witness.
+    /// guarded against.
+    ///
+    /// `AlwaysUnary` is held to it too (#4557). Its claim — no stream, so no
+    /// fallback — rests on the single unary path classifying its own read-bound
+    /// expiry as terminal, and that is a wire fact with a wiremock witness like
+    /// any other. `StreamingOnly` is the one arm that still carries a note
+    /// alone: it declares an *absent* recovery path, so there is no behavior
+    /// for a test to observe.
     #[test]
     fn every_stream_fallback_witness_test_exists_in_the_adapter_sources() {
         let sources = adapter_sources();
         for (id, posture) in STREAM_FALLBACK_POSTURE {
             let witness = match posture {
-                StreamFallbackPosture::UnaryFallback { witness, .. } => witness,
-                StreamFallbackPosture::StreamingOnly { .. }
-                | StreamFallbackPosture::AlwaysUnary { .. } => continue,
+                StreamFallbackPosture::UnaryFallback { witness, .. }
+                | StreamFallbackPosture::AlwaysUnary { witness, .. } => witness,
+                StreamFallbackPosture::StreamingOnly { .. } => continue,
             };
             let needle = format!("fn {witness}(");
             assert!(

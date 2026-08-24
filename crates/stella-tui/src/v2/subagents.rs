@@ -19,7 +19,7 @@
 //! │   ↳ d:1  running · inside lead's turn                                    │
 //! │     Survey how the three planes share a store.                           │
 //! │     inside lead's turn · no control plane: stop lead to stop it          │
-//! ╰ ↑↓ · →↵ open · n nudge · f flag · l lead · ^x^x kill · p pause · r ── esc ╯
+//! ╰ ↑↓ · o↵ open · n nudge · f flag · x stop·xx delete · r resume·rr restart ─ esc ╯
 //! ```
 //!
 //! Three rows per entry. The head is its vitals — status, **quiet time**
@@ -33,11 +33,14 @@
 //! JSON result; the fold's humanized one-liner is the most a row quotes.
 //!
 //! The verbs ride the wire the old AGENTS dashboard used
-//! ([`WorkspaceInput::Control`], #4334): `ctrl-x` twice kills (`s` too, for
-//! the hand that knows the old key), `p` pauses a running lane and resumes a
-//! paused one, `r` restarts from the lane's retained spec, and `→` or `⏎`
-//! opens the lane — focuses its transcript on the SESSION tab, where the
-//! composer steers it and `⌫` comes back. `l` is the way back to the lead.
+//! ([`WorkspaceInput::Control`], #4334): `x` stops the selected lane and a
+//! second `x` **deletes** it — its row leaves the deck for good, retained
+//! spec included (`ctrl-x` twice and `s` still stop, for the hand that knows
+//! the old keys); `r` resumes a paused lane and a second `r` **restarts** it
+//! from the retained spec — back to step 1, not to where it was; `p` pauses
+//! a running lane and resumes a paused one; and `o`, `→` or `⏎` opens the
+//! lane — focuses its transcript on the SESSION tab, where the composer
+//! steers it and `⌫` or Esc comes back. `l` is the way back to the lead.
 //! Two verbs are this overlay's own ([`rows`] carries their text): `n`
 //! **nudges** the lane for a one-line position report, and `f` **flags** it
 //! to whoever dispatched it, vitals attached, asking them to check, stop, or
@@ -45,12 +48,13 @@
 //! plane: its control keys are swallowed and the footer says so; `⏎` opens
 //! its parent and `f` flags it to its parent.
 //!
-//! Kill takes two presses because it is the one verb here with no undo: a
+//! A verb with no undo takes two presses: a deleted row cannot come back, a
 //! stopped worker's turn future is dropped, and Restart begins again from
-//! the spec, not from where it was. The first press arms and the footer says
-//! so; any other key disarms — the same shape the queue editor's clear-all
-//! and the SKILLS uninstall use.
+//! the spec, not from where it was. The first press arms — on the row it was
+//! pressed on ([`arm`]) — and the footer says what the second press does;
+//! any other key disarms, moving the cursor included.
 
+pub mod arm;
 pub mod lifecycle;
 pub mod rows;
 
@@ -73,16 +77,16 @@ use rows::Row;
 /// Rows one entry spends, plus one blank between entries.
 const ROWS_PER_LANE: usize = 4;
 
-/// The overlay's own state: whether it is up, the selected row, whether the
-/// first `ctrl-x` of a kill has been pressed, and the last thing a key did
-/// that the footer should say.
+/// The overlay's own state: whether it is up, the selected row, which
+/// two-press verb (if any) is armed on which lane, and the last thing a key
+/// did that the footer should say.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SubagentsOverlay {
     pub open: bool,
     pub sel: usize,
-    /// `ctrl-x` was pressed once on the selected lane; the next `ctrl-x`
-    /// kills it, any other key disarms.
-    pub kill_armed: bool,
+    /// A two-press verb's first press landed on a lane; its second press
+    /// fires, any other key disarms. See [`arm`].
+    pub armed: Option<arm::Armed>,
     /// One line the footer shows after a verb — `nudged sub:2`, `flagged
     /// sub:2 to lead`, or why a key did nothing. Cleared by the next key.
     pub notice: Option<String>,
@@ -124,24 +128,25 @@ pub fn lanes(model: &WorkspaceModel) -> Vec<(usize, &AgentEntry)> {
 pub fn open(ui: &mut DeckUi) -> DeckAction {
     ui.subagents.open = true;
     ui.subagents.sel = 0;
-    ui.subagents.kill_armed = false;
+    ui.subagents.armed = None;
     ui.subagents.notice = None;
     DeckAction::Handled
 }
 
-/// The overlay's keys: the list keys select, `→`/`⏎` open the row (focus
-/// its transcript — a child's parent's), `l` back to the lead, `n` nudge,
-/// `f` flag to the dispatcher, `ctrl-x` twice (or `s`) stop, `p` pause a
-/// running lane / resume a paused one, `r` restart, Esc/`←`/`q` close.
-/// Modal: every other key is swallowed.
+/// The overlay's keys: the list keys select, `o`/`→`/`⏎` open the row
+/// (focus its transcript — a child's parent's), `l` back to the lead, `n`
+/// nudge, `f` flag to the dispatcher, `x` stop and `x x` delete the row
+/// (`ctrl-x` twice or `s` stop too), `p` pause a running lane / resume a
+/// paused one, `r` resume and `r r` restart from the spec, Esc/`←`/`q`
+/// close. Modal: every other key is swallowed.
 pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
     let list = rows::rows(model);
     let count = list.len();
     ui.subagents.sel = ui.subagents.sel.min(count.saturating_sub(1));
     ui.subagents.notice = None;
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    // The kill arm survives exactly one key: the second `ctrl-x`.
-    let armed = std::mem::take(&mut ui.subagents.kill_armed);
+    // A two-press arm survives exactly one key: its verb's second press.
+    let armed = ui.subagents.armed.take();
 
     if list_nav::closes(key) || matches!(key.code, KeyCode::Left) {
         ui.subagents.open = false;
@@ -182,7 +187,8 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
         DeckAction::Handled
     };
     match key.code {
-        KeyCode::Enter | KeyCode::Right => match selected {
+        KeyCode::Enter | KeyCode::Right | KeyCode::Char('o') | KeyCode::Char('O') => match selected
+        {
             Some(row) => {
                 ui.subagents.open = false;
                 ui.focus_agent(row.opens());
@@ -241,10 +247,33 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
             Some(row) if !row.controllable() => no_plane(ui, row),
             Some(row) => match lane(row) {
                 Some(l) if l.status.is_terminal() => DeckAction::Handled,
-                Some(l) if armed => control(l, AgentControl::Stop),
-                Some(_) => {
-                    ui.subagents.kill_armed = true;
+                Some(l) if arm::fires(&armed, arm::ArmedVerb::Kill, &l.meta.id) => {
+                    control(l, AgentControl::Stop)
+                }
+                Some(l) => {
+                    ui.subagents.armed = Some(arm::Armed::new(arm::ArmedVerb::Kill, &l.meta.id));
                     DeckAction::Handled
+                }
+                None => DeckAction::Handled,
+            },
+            None => DeckAction::Handled,
+        },
+        // `x` stops the lane where it stands; a second `x` deletes it — the
+        // row leaves the deck for good, spec included. On a lane already
+        // finished the first press only arms: there is nothing to stop.
+        KeyCode::Char('x') => match selected {
+            Some(row) if !row.controllable() => no_plane(ui, row),
+            Some(row) => match lane(row) {
+                Some(l) if arm::fires(&armed, arm::ArmedVerb::Delete, &l.meta.id) => {
+                    control(l, AgentControl::Delete)
+                }
+                Some(l) => {
+                    ui.subagents.armed = Some(arm::Armed::new(arm::ArmedVerb::Delete, &l.meta.id));
+                    if l.status.is_terminal() {
+                        DeckAction::Handled
+                    } else {
+                        control(l, AgentControl::Stop)
+                    }
                 }
                 None => DeckAction::Handled,
             },
@@ -267,10 +296,23 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
             },
             None => DeckAction::Handled,
         },
+        // `r` resumes a paused lane; a second `r` restarts — respawns the
+        // lane from its retained spec, back to step 1. On a lane that is not
+        // paused the first press only arms the restart.
         KeyCode::Char('r') => match selected {
             Some(row) if !row.controllable() => no_plane(ui, row),
             Some(row) => match lane(row) {
-                Some(l) => control(l, AgentControl::Restart),
+                Some(l) if arm::fires(&armed, arm::ArmedVerb::Restart, &l.meta.id) => {
+                    control(l, AgentControl::Restart)
+                }
+                Some(l) => {
+                    ui.subagents.armed = Some(arm::Armed::new(arm::ArmedVerb::Restart, &l.meta.id));
+                    if l.status == AgentStatus::Paused {
+                        control(l, AgentControl::Resume)
+                    } else {
+                        DeckAction::Handled
+                    }
+                }
                 None => DeckAction::Handled,
             },
             None => DeckAction::Handled,
@@ -501,16 +543,16 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         ));
     }
     title.push(Span::raw(" "));
-    let footer = if ui.subagents.kill_armed {
+    let footer = if let Some(armed) = &ui.subagents.armed {
         Span::styled(
-            " ctrl-x again kills the selected lane · any other key keeps it ",
+            armed.footer(),
             Style::new().fg(token::RED).add_modifier(Modifier::BOLD),
         )
     } else if let Some(notice) = &ui.subagents.notice {
         Span::styled(format!(" {notice} "), Style::new().fg(token::GOLD))
     } else {
         Span::styled(
-            " ↑↓ · →↵ open · n nudge · f flag · l lead · ^x^x kill · p pause/resume · r restart · esc ",
+            " ↑↓ · o↵ open · n nudge · f flag · l lead · x stop·xx delete · r resume·rr restart · p pause · esc ",
             dim,
         )
     };
@@ -573,6 +615,7 @@ mod tests {
                 phase: SubAgentPhase::Started {
                     agent_id: id.to_string(),
                     instruction_preview: preview.to_string(),
+                    effort: None,
                     write_access: false,
                     budget_usd: Some(0.5),
                     depth: 1,
@@ -597,7 +640,8 @@ mod tests {
 
     /// **The witness for #4334.** The verbs reach the wire for the row under
     /// the cursor: `s` stops, `p` pauses a running lane and resumes a paused
-    /// one, `r` restarts, and `⏎` focuses the lane and closes the overlay.
+    /// one, `r` resumes and a second `r` restarts, and `⏎` focuses the lane
+    /// and closes the overlay.
     #[test]
     fn the_keys_control_the_selected_lane() {
         let model = model_with(&[
@@ -628,7 +672,13 @@ mod tests {
         );
         assert_eq!(
             sent(handle_key(key(KeyCode::Char('r')), &model, &mut ui)),
-            ("sub:2".to_string(), AgentControl::Restart)
+            ("sub:2".to_string(), AgentControl::Resume),
+            "the first r on a paused lane resumes it and arms the restart"
+        );
+        assert_eq!(
+            sent(handle_key(key(KeyCode::Char('r')), &model, &mut ui)),
+            ("sub:2".to_string(), AgentControl::Restart),
+            "the second r restarts from the retained spec"
         );
         assert_eq!(
             handle_key(key(KeyCode::Enter), &model, &mut ui),
@@ -639,6 +689,81 @@ mod tests {
             ui.focused, 2,
             "and focuses the lane's transcript (index into model.agents)"
         );
+    }
+
+    /// **The witness for `x` and `x x`.** The first `x` stops the selected
+    /// lane and arms its deletion; the second `x` deletes — the row-removal
+    /// verb the driver answers with a deregister. The arm is scoped to the
+    /// row, so moving the cursor between presses disarms, and on a finished
+    /// lane the first press only arms: there is nothing left to stop.
+    #[test]
+    fn x_stops_the_lane_and_a_second_x_deletes_it() {
+        let model = model_with(&[
+            ("sub:1", AgentStatus::Running),
+            ("sub:2", AgentStatus::Done),
+        ]);
+        let mut ui = DeckUi::default();
+        open(&mut ui);
+
+        assert_eq!(
+            handle_key(key(KeyCode::Char('x')), &model, &mut ui),
+            DeckAction::Send(WorkspaceInput::Control {
+                agent: "sub:1".into(),
+                control: AgentControl::Stop,
+            }),
+            "the first x stops the running lane"
+        );
+        assert!(
+            arm::fires(&ui.subagents.armed, arm::ArmedVerb::Delete, "sub:1"),
+            "…and arms its deletion: {:?}",
+            ui.subagents.armed
+        );
+        let text = text_of(&model, &ui, 110, 14);
+        assert!(text.contains("x again removes sub:1"), "{text}");
+        assert_eq!(
+            handle_key(key(KeyCode::Char('x')), &model, &mut ui),
+            DeckAction::Send(WorkspaceInput::Control {
+                agent: "sub:1".into(),
+                control: AgentControl::Delete,
+            }),
+            "the second x deletes"
+        );
+        assert!(ui.subagents.armed.is_none());
+
+        // The arm is the row's: moving the cursor stands it down.
+        handle_key(key(KeyCode::Char('x')), &model, &mut ui);
+        handle_key(key(KeyCode::Char('j')), &model, &mut ui);
+        assert!(ui.subagents.armed.is_none(), "moving the cursor disarms");
+
+        // A finished lane has nothing to stop: the first press only arms.
+        assert_eq!(
+            handle_key(key(KeyCode::Char('x')), &model, &mut ui),
+            DeckAction::Handled
+        );
+        assert_eq!(
+            handle_key(key(KeyCode::Char('x')), &model, &mut ui),
+            DeckAction::Send(WorkspaceInput::Control {
+                agent: "sub:2".into(),
+                control: AgentControl::Delete,
+            }),
+            "…and the second press removes the finished row"
+        );
+    }
+
+    /// **The witness for `o`.** `o` opens the selected lane exactly like `⏎`
+    /// — closes the overlay and focuses the lane's transcript, where the
+    /// composer steers it.
+    #[test]
+    fn o_opens_the_selected_lane_like_enter() {
+        let model = model_with(&[("sub:1", AgentStatus::Running)]);
+        let mut ui = DeckUi::default();
+        open(&mut ui);
+        assert_eq!(
+            handle_key(key(KeyCode::Char('o')), &model, &mut ui),
+            DeckAction::Handled
+        );
+        assert!(!ui.subagents.open, "o closes the overlay");
+        assert_eq!(ui.focused, 1, "and focuses the lane's transcript");
     }
 
     /// **The witness for `n` and `f`.** A nudge is a steer at the lane asking
@@ -727,6 +852,7 @@ mod tests {
             key(KeyCode::Char('s')),
             key(KeyCode::Char('p')),
             key(KeyCode::Char('r')),
+            key(KeyCode::Char('x')),
             ctrl_x,
             ctrl_x,
         ] {
@@ -735,7 +861,7 @@ mod tests {
                 DeckAction::Handled,
                 "swallowed, never sent"
             );
-            assert!(!ui.subagents.kill_armed, "a child never arms a kill");
+            assert!(ui.subagents.armed.is_none(), "a child never arms a verb");
             assert!(
                 ui.subagents
                     .notice
@@ -938,7 +1064,10 @@ mod tests {
         let ctrl_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
 
         assert_eq!(handle_key(ctrl_x, &model, &mut ui), DeckAction::Handled);
-        assert!(ui.subagents.kill_armed, "the first press arms");
+        assert!(
+            arm::fires(&ui.subagents.armed, arm::ArmedVerb::Kill, "sub:1"),
+            "the first press arms"
+        );
         assert_eq!(
             handle_key(ctrl_x, &model, &mut ui),
             DeckAction::Send(WorkspaceInput::Control {
@@ -947,21 +1076,21 @@ mod tests {
             }),
             "the second press kills"
         );
-        assert!(!ui.subagents.kill_armed);
+        assert!(ui.subagents.armed.is_none());
 
         handle_key(ctrl_x, &model, &mut ui);
         handle_key(key(KeyCode::Up), &model, &mut ui);
-        assert!(!ui.subagents.kill_armed, "another key disarms");
+        assert!(ui.subagents.armed.is_none(), "another key disarms");
         assert_eq!(
             handle_key(ctrl_x, &model, &mut ui),
             DeckAction::Handled,
             "…so the next ctrl-x only arms again"
         );
 
-        ui.subagents.kill_armed = false;
+        ui.subagents.armed = None;
         handle_key(key(KeyCode::Down), &model, &mut ui);
         handle_key(ctrl_x, &model, &mut ui);
-        assert!(!ui.subagents.kill_armed, "a finished lane never arms");
+        assert!(ui.subagents.armed.is_none(), "a finished lane never arms");
     }
 
     /// The armed state is visible: the footer says the next ctrl-x kills.
@@ -970,7 +1099,7 @@ mod tests {
         let model = model_with(&[("sub:1", AgentStatus::Running)]);
         let mut ui = DeckUi::default();
         open(&mut ui);
-        ui.subagents.kill_armed = true;
+        ui.subagents.armed = Some(arm::Armed::new(arm::ArmedVerb::Kill, "sub:1"));
         let text = text_of(&model, &ui, 100, 12);
         assert!(text.contains("ctrl-x again kills"), "{text}");
     }

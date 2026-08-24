@@ -45,6 +45,39 @@ impl RecalledBlock {
     }
 }
 
+/// What a turn-opening recall leaves behind for the turn runner: the
+/// telemetry event to put on the channel the runner opens, and the handles
+/// the injected block rendered, which seed the mid-turn re-query so its first
+/// answer does not repeat the opening block (#4498).
+///
+/// The two travel together because they are two residues of one injection —
+/// carrying only the event was exactly how the seed got lost: the block's
+/// `produced` died at the call site while its event rode on.
+#[derive(Debug, Default)]
+pub(crate) struct OpeningRecall {
+    /// This turn's `ContextRecall`, if recall ran — emitted by the turn
+    /// runner, which owns the event channel recall precedes.
+    pub(crate) event: Option<stella_protocol::AgentEvent>,
+    /// The frames, skills and records the opening block rendered, by steering
+    /// handle — the re-query adapter's seed.
+    pub(crate) produced: super::steering::ProducedSteering,
+}
+
+/// Inject `recalled`'s block ([`inject_recall_block`]) and keep what the turn
+/// runner still needs of it — the one seam through which an opening recall
+/// reaches a turn, so no call site can inject the block and drop the seed.
+pub(crate) fn inject_opening_recall(
+    messages: &mut Vec<CompletionMessage>,
+    recalled: RecalledBlock,
+) -> OpeningRecall {
+    let event = recalled.telemetry_event();
+    inject_recall_block(messages, recalled.text);
+    OpeningRecall {
+        event,
+        produced: recalled.produced,
+    }
+}
+
 /// How many characters of volatile records ride the recall block.
 ///
 /// Bounded for the same reason the baked prefix bounds memories, and it lives
@@ -224,7 +257,11 @@ impl SessionMemory {
 
         let frames = kept_frames(&recall.frames, &set);
         let kept = kept_skills(&selected.selected, &set);
-        let produced = super::steering::ProducedSteering::of(&frames, &kept);
+        let record_handles = record
+            .as_ref()
+            .map(|(_, rendered)| rendered.rendered.clone())
+            .unwrap_or_default();
+        let produced = super::steering::ProducedSteering::of(&frames, &kept, &record_handles);
 
         let mut sections: Vec<String> = Vec::new();
         if let Some(section) = render_context_section(&frames) {
@@ -281,7 +318,8 @@ impl SessionMemory {
     /// the same gates, for the same reasons.
     ///
     /// `produced` is what this turn's earlier blocks already rendered, and
-    /// every frame and skill in it is left out of this one (#4236). Drift is
+    /// every frame, skill and record in it is left out of this one (#4236,
+    /// records since #4498). Drift is
     /// incremental — a re-query answering `{A, B, C, D}` after one that
     /// answered `{A, B, C}` differs by one frame — so a block deduped by its
     /// bytes alone is a block that always differs and is therefore always
@@ -327,7 +365,15 @@ impl SessionMemory {
             };
             (
                 registry,
-                registry.render_volatile_for_turn(&facts, Some(RECORD_CHANNEL_BUDGET)),
+                // The per-record half of the #4498 dedup: the channel renders
+                // as one budgeted block, so leaving out what the turn has seen
+                // means re-rendering without those records, not filtering a
+                // list — the exclusion door is the registry's.
+                registry.render_volatile_for_turn_excluding(
+                    &facts,
+                    Some(RECORD_CHANNEL_BUDGET),
+                    produced.records(),
+                ),
             )
         });
 
@@ -354,7 +400,11 @@ impl SessionMemory {
             .into_iter()
             .filter(|sel| !produced.has_skill(&sel.skill.name))
             .collect();
-        let block_produced = super::steering::ProducedSteering::of(&frames, &kept);
+        let record_handles = record
+            .as_ref()
+            .map(|(_, rendered)| rendered.rendered.clone())
+            .unwrap_or_default();
+        let block_produced = super::steering::ProducedSteering::of(&frames, &kept, &record_handles);
 
         let mut sections: Vec<String> = Vec::new();
         if let Some(section) = render_context_section(&frames) {

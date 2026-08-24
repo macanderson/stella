@@ -34,7 +34,7 @@
 //!
 //! # What may be dropped, and what never may
 //!
-//! Only [`ServerFrame::Event`] is droppable. Everything else is load-bearing
+//! Only [`ServerFrame::Event`] is droppable. Everything else is required
 //! and self-limiting:
 //!
 //! - `ToolRequest` / `ProviderRequest` are reverse RPC — the turn is *parked*

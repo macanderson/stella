@@ -29,7 +29,7 @@
 //! # Why this flow serializes
 //!
 //! `ask_question` advertises `read_only: true` — truthfully, it changes
-//! nothing — and that is load-bearing twice over: it is what lets a
+//! nothing — and that is required twice over: it is what lets a
 //! `ReadOnlyTools`-wrapped child call the tool at all, and it is what makes
 //! the engine's dispatcher run sibling calls **concurrently**. The second
 //! consequence is a hazard the approval flow never had: two questions
@@ -137,6 +137,21 @@ impl QuestionBroker {
             ttl,
             gate: Arc::new(tokio::sync::Mutex::new(())),
         }
+    }
+
+    /// Whether anyone is actually attached to answer.
+    ///
+    /// For callers that must decide whether to *install* a gate at all rather
+    /// than whether to ask one question. A tool asks unconditionally and lets
+    /// [`Self::ask`] resolve the unattended case, because a question the model
+    /// chose to ask deserves the decide-it-yourself instruction back. A
+    /// host-raised gate is the other shape: with nobody to answer it, the
+    /// move that says something true is not to raise it — see [`stella_protocol::AgentEvent`]'s
+    /// `HunkReview` doc, which states the rule for the sibling gate ("the gate
+    /// is not installed rather than installed and auto-approving").
+    #[must_use]
+    pub fn is_attached(&self) -> bool {
+        self.responder.is_some()
     }
 
     /// Ask `request` and return how it resolved.

@@ -1229,26 +1229,8 @@ impl Store {
             )
             .optional()?
             .flatten();
-        let tool_histogram = {
-            let mut stmt = conn.prepare(
-                "SELECT name, surface, COUNT(*), \
-                        SUM(CASE WHEN state = 'error' THEN 1 ELSE 0 END) \
-                 FROM tool_calls WHERE execution_id = ?1 GROUP BY name, surface",
-            )?;
-            let rows = stmt.query_map(params![execution_id], |r| {
-                Ok(usage::ToolBucket {
-                    tool: r.get(0)?,
-                    surface: r.get(1)?,
-                    calls: r.get(2)?,
-                    errors: r.get(3)?,
-                })
-            })?;
-            let mut v = Vec::new();
-            for row in rows {
-                v.push(row?);
-            }
-            v
-        };
+        let tool_histogram = tool_calls::tool_histogram(&conn, execution_id)?;
+        let error_class_histogram = tool_calls::error_class_histogram(&conn, execution_id)?;
         drop(conn);
 
         let day = started_at.get(0..10).unwrap_or("").to_string();
@@ -1280,6 +1262,7 @@ impl Store {
             started_at,
             day,
             tool_histogram,
+            error_class_histogram,
         }))
     }
 

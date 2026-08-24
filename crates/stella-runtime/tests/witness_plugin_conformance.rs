@@ -172,6 +172,112 @@ async fn every_response_vector_answers_with_its_golden_evidence() {
     assert!(graded >= 5, "only {graded} response vectors ran");
 }
 
+/// One `before_turn` request over `root`, with the invocation `program` +
+/// `args` and a red baseline.
+fn declaring_request(root: &Path, program: &str, args: &[&str]) -> WrapperRequest {
+    let args = args
+        .iter()
+        .map(|arg| serde_json::Value::String((*arg).to_string()))
+        .collect::<Vec<_>>();
+    serde_json::from_value(serde_json::json!({
+        "point": "before_turn",
+        "body": {
+            "protocol_version": 1,
+            "wrapper": "witness-v1",
+            "stage": "verify",
+            "round": 0,
+            "goal": "g",
+            "candidate": {
+                "handle": "host-tree",
+                "root": root.display().to_string(),
+                "test": { "program": program, "args": args, "baseline": "failed" },
+            },
+        },
+    }))
+    .expect("a well-formed request")
+}
+
+/// **The witness for #4534.** The shipped plugin names the artifact its flip
+/// will be judged against, for the invocation shape that names none itself.
+///
+/// This plugin declared `after_turn` alone, so it could not answer with
+/// `BeforeTurnResponse::witness` at all — which made the one shipped
+/// verification plugin the one that could never reach a credited flip on a
+/// cargo witness. `cargo test --test flip` names `flip`; the artifact is
+/// `tests/flip.rs` by cargo's convention and by nothing in the invocation, and
+/// the host is deliberately forbidden from deriving it (#3587,
+/// `crates/stella-cli/src/wrapper_candidate.rs`).
+///
+/// What the host does with the declaration — snapshot it, compare after the
+/// turn, and refuse the round credit when it was rewritten — is
+/// `wrapper_candidate.rs`'s own tests, because the snapshot needs a filesystem
+/// identity this crate does not compute. `wrapper_declared_witness.rs` covers
+/// the dispatch seam between the two.
+#[tokio::test]
+async fn the_plugin_names_the_artifact_the_invocation_does_not() {
+    let manifest = manifest();
+    let wrapper = transport(&manifest);
+    let tree = tempfile::tempdir().expect("a scratch tree");
+    fs::create_dir_all(tree.path().join("tests")).expect("a tests directory");
+    fs::write(tree.path().join("tests/flip.rs"), "// the witness\n").expect("the witness");
+
+    let WrapperRequest::BeforeTurn(request) =
+        declaring_request(tree.path(), "cargo", &["test", "--test", "flip"])
+    else {
+        unreachable!("built as before_turn")
+    };
+    let declared = wrapper
+        .before_turn(request)
+        .await
+        .expect("the plugin answers the point it declares");
+    assert_eq!(
+        declared.witness,
+        vec!["tests/flip.rs".to_string()],
+        "the runner's convention is the plugin's to state, and the host's to watch"
+    );
+    // A verifier that steered the turn it is about to judge would be grading
+    // its own work, so the declaration is the whole of the contribution.
+    assert!(declared.context.is_empty() && declared.role.is_none() && declared.scope.is_empty());
+}
+
+/// The other direction, which is what keeps the test above from passing for
+/// the wrong reason: an invocation whose artifact this plugin cannot point at
+/// declares **nothing**, rather than a path it hopes exists.
+///
+/// A wrong guess would cost nothing on the host side — a path that is not
+/// there never becomes a watch — but it would put a claim on the wire that the
+/// plugin cannot stand behind, and a reader of the trace could not tell it from
+/// one it can.
+#[tokio::test]
+async fn an_invocation_with_no_reachable_artifact_declares_nothing() {
+    let manifest = manifest();
+    let wrapper = transport(&manifest);
+    let tree = tempfile::tempdir().expect("a scratch tree");
+
+    for (program, args) in [
+        // Names a filter, never a file.
+        ("dotnet", vec!["test", "--filter", "Category=Flip"]),
+        // Names a file that is not in this tree.
+        ("pytest", vec!["tests/test_absent.py"]),
+        // Cargo's convention, pointed at a target that does not exist.
+        ("cargo", vec!["test", "--test", "absent"]),
+    ] {
+        let WrapperRequest::BeforeTurn(request) = declaring_request(tree.path(), program, &args)
+        else {
+            unreachable!("built as before_turn")
+        };
+        let declared = wrapper
+            .before_turn(request)
+            .await
+            .expect("the plugin answers the point it declares");
+        assert!(
+            declared.witness.is_empty(),
+            "{program} {args:?} declared {:?}",
+            declared.witness
+        );
+    }
+}
+
 /// **The property (`doc:pipeline-as-plugins` §8's first ask).** A pass with no
 /// prior failing observation of the same command proves nothing.
 ///
@@ -373,9 +479,9 @@ fn the_shipped_manifest_declares_exactly_what_this_plugin_does() {
     );
     assert_eq!(
         manifest.loop_grant.points,
-        vec![WrapperPoint::AfterTurn],
-        "the flip needs the work to have happened, and the red half is already pinned in the \
-         grant — so there is nothing to do before a turn runs, and nothing is declared"
+        vec![WrapperPoint::BeforeTurn, WrapperPoint::AfterTurn],
+        "the artifacts the flip is judged against are named before the turn; the flip itself \
+         is observed after it (#4534)"
     );
     assert!(
         manifest.loop_grant.calls.is_empty(),

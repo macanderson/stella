@@ -13,7 +13,7 @@
 //! # Composition, not restatement
 //!
 //! [`ToolContract`] **contains** the schema rather than re-declaring its
-//! fields. That is deliberate and load-bearing for invariant #7: the bytes
+//! fields. That is deliberate and required for invariant #7: the bytes
 //! advertised to the model are literally today's [`crate::ToolSchema`],
 //! serialized by today's code, so introducing contracts cannot perturb the
 //! prompt-cache prefix. A future field added *here* is a governance fact that
@@ -123,7 +123,7 @@ pub enum Provenance {
     /// Self-declared by something outside the binary — an MCP server's tool
     /// annotations, a `.stella/tools/*.toml` manifest. Every claim is a
     /// *claim*; see [`ToolContract::trusted_read_only`] for the one place
-    /// that distinction is load-bearing today.
+    /// that distinction is required today.
     ///
     /// Unknown tokens read as this variant: a provenance a newer build knows
     /// about is, from here, exactly "not one we can vouch for".

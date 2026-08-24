@@ -16,7 +16,7 @@ use stella_protocol::AgentEvent;
 
 mod inspect;
 
-pub use inspect::{InspectMessage, InspectView, JournalEra, RecordedCallInfo};
+pub use inspect::{InspectMessage, InspectSection, InspectView, JournalEra, RecordedCallInfo};
 
 use stella_tools::search::readiness::IndexReadiness;
 
@@ -815,7 +815,7 @@ pub enum WorkspaceInput {
     /// telling the truth about the turn). `/export` is the canonical case:
     /// it used to sit in the queue popup as a "pending prompt" until the
     /// lead finished. The turn-coupled exceptions (`/clear`, `/init`,
-    /// `/reload`, custom expansions) never ride this variant.
+    /// `/reload`, custom expansions) never ride this route.
     Command { text: String },
     /// The agents page's "describe a task for a new session": start a NEW
     /// sub-agent lane running `text`, whatever the lead is doing. The driver
@@ -1139,19 +1139,21 @@ impl std::fmt::Debug for Secret {
 }
 
 /// The agent-control verbs surfaced by the dashboard, each sent as a
-/// [`WorkspaceInput::Control`]. All four are live: the Agents tab binds `s`
+/// [`WorkspaceInput::Control`]. All five are live: the Agents tab binds `s`
 /// (Stop), `p` (Pause/Resume, toggled by the row's current status), and `r`
 /// (Restart), and Esc sends Stop for the focused agent. The driver honors
-/// Pause/Resume/Restart on worker lanes — pause parks the worker at its next
-/// step boundary (never mid-tool), restart respawns the lane from its
-/// retained spec — and treats them as no-ops on the lead, whose interrupt is
-/// Esc (Stop).
+/// Pause/Resume/Restart/Delete on worker lanes — pause parks the worker at
+/// its next step boundary (never mid-tool), restart respawns the lane from
+/// its retained spec, delete stops the worker if one is live and then takes
+/// the lane's row off the deck for good, spec included — and treats them as
+/// no-ops on the lead, whose interrupt is Esc (Stop).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgentControl {
     Pause,
     Resume,
     Stop,
     Restart,
+    Delete,
 }
 
 impl AgentControl {
@@ -1161,6 +1163,7 @@ impl AgentControl {
             AgentControl::Resume => "resume",
             AgentControl::Stop => "stop",
             AgentControl::Restart => "restart",
+            AgentControl::Delete => "delete",
         }
     }
 }
