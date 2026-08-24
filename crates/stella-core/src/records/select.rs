@@ -179,6 +179,29 @@ mod tests {
         );
     }
 
+    /// Why `benchmark` had to be its own ratified name rather than being folded
+    /// onto `run` (#4263, ADR 0012 Decision 5): a bench-evidence rule scoped
+    /// `run` fires on ordinary agent work, and the word "run" is in nearly every
+    /// prompt that starts one.
+    #[test]
+    fn benchmark_selects_a_bench_turn_and_not_an_ordinary_run() {
+        let bench = scoped(&[], &["benchmark"], &[]);
+        let running = scoped(&[], &["run"], &[]);
+        let ordinary = facts("run the agent on this issue and open a PR", &[]);
+        assert!(applies_this_turn(
+            Some(&bench),
+            &facts("benchmark the new adapter against Claude Code", &[])
+        ));
+        assert!(
+            !applies_this_turn(Some(&bench), &ordinary),
+            "a bench-only rule must stay out of an ordinary run"
+        );
+        assert!(
+            applies_this_turn(Some(&running), &ordinary),
+            "which is exactly what `run` would have done in its place"
+        );
+    }
+
     #[test]
     fn dimensions_are_disjunctive_across_not_conjunctive() {
         // The licensing dogfood record: relevant when the turn names the file
