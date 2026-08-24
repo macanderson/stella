@@ -468,7 +468,7 @@ mod tests {
         let messages = vec![
             CompletionMessage::user("an older request"),
             CompletionMessage::user("fix the auth redirect loop\nand add a test"),
-            CompletionMessage::user(&format!(
+            CompletionMessage::user(format!(
                 "{}\n\nRelevant context: …",
                 stella_core::receipts::RECALL_MARKER
             )),

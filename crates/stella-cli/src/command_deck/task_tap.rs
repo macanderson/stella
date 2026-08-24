@@ -274,7 +274,7 @@ mod tests {
             let board = registry.task_board();
             let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
             for i in 0..steps {
-                guard.create(&format!("step {}", i + 1), None, None);
+                guard.create(format!("step {}", i + 1), None, None);
             }
         }
         let (events, rx) = tokio::sync::mpsc::unbounded_channel();
