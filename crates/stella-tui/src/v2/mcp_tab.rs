@@ -12,6 +12,8 @@
 //!       linear  ·  Issues, projects, cycles, and documents.
 //!
 //!  registry · web · s search · new servers land disabled
+//!
+//!  installed stripe
 //!  ↵ tools · ctrl+o inspect · a auth · o login · e enable · x remove
 //! ```
 //!
@@ -24,18 +26,23 @@
 //! in the config (see `stella_mcp::ServerCard`), the endpoint is the fallback
 //! when no description exists, and ctrl+o opens the full detail.
 //!
-//! Content only: the tab row, pulse row, hint row and status bar are the
-//! deck's own bands ([`super::frame`], [`super::pulse`], [`super::status_bar`])
-//! and are already drawn around this area. The footer here is not a second
-//! hint row — the MCP verbs are unhinted in [`crate::keymap`], so this list is
-//! the only place they are written down.
+//! Three bands, the shape the other ported panes carry: the mode's own pane,
+//! then the driver's last word, then the keys. The bottom two are one line each
+//! and pinned to the floor, so the verbs sit on the same row whether two
+//! servers are configured or twenty — a legend that slides up the pane with the
+//! content is one the eye has to hunt for every time.
+//!
+//! The deck's own bands ([`super::frame`], [`super::pulse`],
+//! [`super::status_bar`]) are drawn around this area. The key row here is not a
+//! second copy of the deck's hint row — the MCP verbs are unhinted in
+//! [`crate::keymap`], so this pane is the only place they are written down.
 //!
 //! State lives entirely in [`McpTabState`], which the driver feeds out of
 //! band and [`crate::deck_ui`]'s key handler mutates; the drawing below only
 //! reads it.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
@@ -191,8 +198,19 @@ impl McpTabState {
     }
 }
 
-/// Draw the tab into the content area the deck carved out.
+/// Draw the tab into the content area the deck carved out: the mode's pane,
+/// the driver's last word, and the pinned key row.
 pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+    if area.width < 4 || area.height == 0 {
+        return; // no readable pane fits — draw nothing rather than garbage
+    }
+    let bands = Layout::vertical([
+        Constraint::Min(0),    // header · the mode's pane
+        Constraint::Length(1), // the driver's last word
+        Constraint::Length(1), // keys
+    ])
+    .split(area);
+
     let state = &ui.mcp;
     let connected = state.servers.iter().filter(|s| s.connected).count();
     let muted = Style::new().fg(token::MUTED);
@@ -220,32 +238,54 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     let mut lines: Vec<Line> = vec![Line::from(head)];
     match state.mode {
         McpMode::Browse => {
-            render_browse(state, &mut lines, area.width.saturating_sub(4) as usize);
+            render_browse(state, &mut lines, bands[0].width.saturating_sub(4) as usize);
             render_browse_tail(state, &mut lines);
         }
         McpMode::Search => render_search(state, &mut lines),
         McpMode::Auth => render_auth(state, &mut lines),
     }
-
-    // A transient status line (action feedback), then the keybind footer.
-    lines.push(Line::default());
-    if let Some(status) = &state.status {
-        lines.push(Line::from(Span::styled(
-            format!(" {status}"),
-            Style::new().fg(token::GOLD),
-        )));
-    }
-    lines.push(footer(state.mode));
-
     Paragraph::new(lines)
         .wrap(Wrap { trim: false })
-        .render(area, buf);
+        .render(bands[0], buf);
 
-    // The inspector is the topmost surface — drawn over the list it describes,
-    // after it, so it is never clipped by the list's own layout.
+    render_status(state, bands[1], buf);
+    render_keys(state, bands[2], buf);
+
+    // The inspector is the topmost surface — drawn over the whole area, after
+    // the bands, so it is never clipped by the list's own layout.
     if ui.mcp.inspector.is_some() {
         detail::render(ui, area, buf);
     }
+}
+
+/// The driver's last word on an install, a login, or an enable — or the local
+/// refusal that replaced it. Blank while there is nothing to say.
+fn render_status(state: &McpTabState, area: Rect, buf: &mut Buffer) {
+    if area.height == 0 {
+        return;
+    }
+    let Some(status) = &state.status else {
+        return;
+    };
+    Paragraph::new(Line::from(Span::styled(
+        format!(" {status}"),
+        Style::new().fg(token::GOLD),
+    )))
+    .render(area, buf);
+}
+
+/// The pinned key row: the verbs of whichever mode holds the keyboard.
+///
+/// Blank while the inspector is up. The popup is centered and shorter than the
+/// pane, so this row stays uncovered — and the inspector is modal
+/// ([`crate::deck_ui::mcp_keys`] returns before every mode), so `a auth` and
+/// `x remove` would be advertised at the moment they do nothing. Its own verbs
+/// are in its border title, which is where an overlay's legend belongs.
+fn render_keys(state: &McpTabState, area: Rect, buf: &mut Buffer) {
+    if area.height == 0 || state.inspector.is_some() {
+        return;
+    }
+    Paragraph::new(footer(state.mode)).render(area, buf);
 }
 
 /// How wide the name column is padded to, so the badges that follow line up
@@ -741,6 +781,88 @@ mod tests {
     #[test]
     fn the_footer_advertises_the_inspector() {
         assert!(flat(&footer(McpMode::Browse)).contains("ctrl+o"));
+    }
+
+    /// Read one row of a rendered buffer as text.
+    fn row(buf: &Buffer, y: u16) -> String {
+        (0..buf.area.width)
+            .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect()
+    }
+
+    /// **The witness (#4676).** The key legend is its own band on the floor of
+    /// the pane, not the last line of the content paragraph — so it lands on
+    /// the same row whether one server is configured or ten. Folded into the
+    /// content it rode the list, which is what every sibling pane's port fixed
+    /// by giving the legend a `Constraint::Length(1)` of its own.
+    #[test]
+    fn the_key_row_is_pinned_to_the_floor_whatever_the_list_holds() {
+        let area = Rect::new(0, 0, 120, 20);
+        let floor = area.height - 1;
+        let mut last_row = None;
+        for count in [1usize, 6] {
+            let mut ui = DeckUi {
+                mcp: McpTabState {
+                    servers: vec![stripe(); count],
+                    status: Some("installed stripe".into()),
+                    ..McpTabState::default()
+                },
+                ..DeckUi::default()
+            };
+            let mut buf = Buffer::empty(area);
+            render(&WorkspaceModel::default(), &mut ui, area, &mut buf);
+
+            assert!(
+                row(&buf, floor).contains("ctrl+o inspect"),
+                "{count} servers: the legend left the floor:\n{}",
+                row(&buf, floor)
+            );
+            assert!(
+                row(&buf, floor - 1).contains("installed stripe"),
+                "{count} servers: the driver's last word sits above the legend:\n{}",
+                row(&buf, floor - 1)
+            );
+            // The content band never paints the legend itself.
+            let content: String = (0..floor - 1).map(|y| row(&buf, y)).collect();
+            assert!(
+                !content.contains("ctrl+o"),
+                "{count} servers: the legend is still inside the content:\n{content}"
+            );
+            let painted = row(&buf, floor);
+            assert!(
+                last_row
+                    .replace(painted.clone())
+                    .is_none_or(|p| p == painted),
+                "the legend moved between list lengths"
+            );
+        }
+    }
+
+    /// The floor row is uncovered by the centered popup, and the popup is
+    /// modal — so the pane's verbs come off it while the inspector is up
+    /// rather than advertising keys that do nothing.
+    #[test]
+    fn the_key_row_yields_to_the_modal_inspector() {
+        let area = Rect::new(0, 0, 120, 20);
+        let mut ui = DeckUi {
+            mcp: McpTabState {
+                servers: vec![stripe()],
+                inspector: Some(McpInspector {
+                    server: "mcp".into(),
+                    detail: None,
+                    scroll: 0,
+                }),
+                ..McpTabState::default()
+            },
+            ..DeckUi::default()
+        };
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::default(), &mut ui, area, &mut buf);
+        let screen: String = (0..area.height).map(|y| row(&buf, y)).collect();
+        assert!(
+            !screen.contains("ctrl+o inspect"),
+            "the inspector is already open; its own verbs are in its title:\n{screen}"
+        );
     }
 
     /// **The witness for the port.** Every span the tab paints resolves to a
