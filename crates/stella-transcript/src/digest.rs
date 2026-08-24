@@ -529,17 +529,36 @@ pub struct TurnDigest {
     pub chips: Vec<Chip>,
 }
 
-/// Build a turn's collapsed digest.
+/// The rollup chips a whole turn closes with: step count, wall time, and the
+/// accounting figures.
+///
+/// Takes the three figures rather than a `&Turn` so a renderer holding only a
+/// turn's tail can still state whole-turn totals — it passes the settled
+/// prefix's contribution summed into each argument, and the chips come out
+/// byte-identical to a fold over the full turn ([`turn_digest`] is this same
+/// assembly fed from one `&Turn`).
 #[must_use]
-pub fn turn_digest(turn: &crate::model::Turn, width: usize, style: ChipStyle) -> TurnDigest {
+pub fn turn_chips(
+    steps: usize,
+    duration_ms: u64,
+    rollup: Accounting,
+    style: ChipStyle,
+) -> Vec<Chip> {
     // A turn's wall time reads as `m:ss` rather than as a step's `1.4s`: turns
     // run for minutes, and a column of `41.0s`/`132.0s` is harder to compare at
     // a glance than `0:41`/`2:12`.
     let mut chips = vec![
-        Chip::mute(format!("{} steps", turn.steps.len())),
-        Chip::mute(format_offset(turn.duration_ms)),
+        Chip::mute(format!("{steps} steps")),
+        Chip::mute(format_offset(duration_ms)),
     ];
-    chips.extend(accounting_chips(turn.rollup(), style));
+    chips.extend(accounting_chips(rollup, style));
+    chips
+}
+
+/// Build a turn's collapsed digest.
+#[must_use]
+pub fn turn_digest(turn: &crate::model::Turn, width: usize, style: ChipStyle) -> TurnDigest {
+    let chips = turn_chips(turn.steps.len(), turn.duration_ms, turn.rollup(), style);
     TurnDigest {
         name: turn.name.clone(),
         status: turn.status,

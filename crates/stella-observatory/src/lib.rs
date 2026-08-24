@@ -196,6 +196,67 @@ fn render_transcript(obs: &Observatory, id: i64) -> Result<String, db::DbError> 
     Ok(stella_transcript::html::render_run(&run, &state))
 }
 
+/// One incremental tick of a live turn's transcript (#4566): only the journal
+/// rows after the echoed cursor are read and folded, and only the turn's
+/// unsettled tail is re-rendered.
+///
+/// The response splits the fragments by finality. `settled` is markup that
+/// became final since the cursor — the page appends it once and never touches
+/// it again; `tail` is the still-moving region the page replaces every tick;
+/// `cursor` is the next tick's resume point, echoed back verbatim; `finished`
+/// tells the page to stop polling and repaint whole, which is where the turn
+/// summary's status finally leaves `running`. A missing or malformed cursor
+/// degrades to a full-size tick, never to an error.
+fn render_transcript_tail(
+    obs: &Observatory,
+    id: i64,
+    cursor: Option<serde_json::Value>,
+) -> Result<serde_json::Value, db::DbError> {
+    let execution = obs.execution(id)?;
+    let mut carry = cursor
+        .as_ref()
+        .and_then(transcript_view::TailCursor::from_value)
+        .unwrap_or_else(|| transcript_view::TailCursor::start(0));
+    let journal = obs.execution_journal(id, true, (carry.seq >= 0).then_some(carry.seq))?;
+    let rows = journal.as_array().cloned().unwrap_or_default();
+    if carry.seq < 0 {
+        // Nothing settled yet, so the whole journal was read: pin the run's
+        // time base to its first row. Re-derived on every such tick — a base
+        // pinned before any rows existed would freeze at zero.
+        carry.base_ts = rows.first().and_then(|r| r["ts"].as_i64()).unwrap_or(0);
+    }
+    let (mut run, facts) = transcript_view::build_run_tail(&execution, &rows, &carry);
+    if run.turns[0].answer.is_none()
+        && let Some(seq) = carry.answer_seq
+    {
+        // The answer predates this suffix; recover it by point read so the
+        // re-rendered close keeps stating it.
+        let prior = obs.execution_journal_entry(id, seq)?;
+        if let Some(body) = prior["body"].as_str() {
+            run.turns[0].answer = Some(body.to_string());
+        }
+    }
+    let state = stella_transcript::FoldState::new();
+    let base = stella_transcript::html::TailBase {
+        steps: carry.steps,
+        notes: carry.notes,
+        prose: carry.prose,
+        carried: carry.carried,
+        prev_offset_ms: carry.prev_offset_ms,
+    };
+    let tail = stella_transcript::html::render_turn_tail(&run, &state, 0, &base);
+    let (newly, next) = transcript_view::advance_cursor(&carry, &run.turns[0], &facts);
+    let settled: String = tail.blocks[..newly].concat();
+    let mut moving: String = tail.blocks[newly..].concat();
+    moving.push_str(&tail.close);
+    Ok(serde_json::json!({
+        "settled": settled,
+        "tail": moving,
+        "cursor": next.to_value(),
+        "finished": execution["finished_at"].as_str().is_some(),
+    }))
+}
+
 /// The path with any query string removed.
 fn route_of(path: &str) -> &str {
     path.split_once('?').map_or(path, |(route, _)| route)
@@ -288,6 +349,18 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
                 },
                 Err(err) => Response::error("500 Internal Server Error", &err.to_string()),
             };
+        }
+        // One incremental tick of a live transcript (#4566): JSON `{settled,
+        // tail, cursor, finished}`. Sibling of `/api/transcript-html`, which
+        // stays the whole-fragment answer for first paints, finished runs and
+        // any client that dropped its cursor.
+        "/api/transcript-tail" => {
+            let Some(id) = query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) else {
+                return Response::error("400 Bad Request", "missing ?id=<execution id>");
+            };
+            let cursor =
+                query_param(query, "cursor").and_then(|raw| serde_json::from_str(&raw).ok());
+            render_transcript_tail(&obs, id, cursor)
         }
         "/api/meta" => Ok(obs.meta()),
         // The live plane's two one-shot faces. `/api/v1/cursor` is the

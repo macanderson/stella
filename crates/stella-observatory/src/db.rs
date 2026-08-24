@@ -458,6 +458,15 @@ impl Observatory {
         crate::journal::entries(&conn, id, full, after_seq)
     }
 
+    /// One journal row by seq, unclipped — the tail protocol's answer
+    /// recovery (#4566). `Value::Null` when the store or row is absent.
+    pub fn execution_journal_entry(&self, id: i64, seq: i64) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(Value::Null);
+        };
+        crate::journal::entry_at(&conn, id, seq, true)
+    }
+
     /// One model call's **sent context** (#1475): the messages that call was
     /// given, rebuilt from its persisted receipt and the event journal — what
     /// `stella inspect <execution> --step N` prints in the terminal.

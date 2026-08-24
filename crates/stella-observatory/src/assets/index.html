@@ -2076,7 +2076,14 @@ async function paintRenderedTranscript(fragment) {
   const shadow = holder.shadowRoot || holder.attachShadow({ mode: "open" });
   shadow.innerHTML = `<style>${themedTranscriptCss(css)}</style><div class="wrap">${fragment}</div>`;
   holder.classList.add("live");
-  for (const btn of shadow.querySelectorAll("button.inspect")) {
+  bindInspectControls(shadow);
+}
+/* Wire the ⧉ prompt controls under `root` to the inspector. Called on the
+   whole shadow after a full paint, and on just-inserted fragments after an
+   incremental splice — a settled fragment keeps its listeners, so rebinding
+   only what is new never doubles one up. */
+function bindInspectControls(root) {
+  for (const btn of root.querySelectorAll("button.inspect")) {
     btn.addEventListener("click", (ev) => {
       /* The control sits inside a summary: without preventDefault the click
          would also toggle the fold it rides on. */
@@ -2084,6 +2091,23 @@ async function paintRenderedTranscript(fragment) {
       ev.stopPropagation();
       openCtxDialog(+btn.dataset.step, btn.dataset.role);
     });
+  }
+}
+/* The open/closed state of every identified fold in the transcript shadow —
+   captured before any repaint and reapplied after (#4566), so a fold the
+   reader toggled by hand survives. Fold ids are the renderer's stable NodeId
+   keys (`t0s3`…); folds new to a paint (the args fold has no id) keep the
+   renderer's own pin-open rules. */
+function captureTranscriptFolds() {
+  const folds = { open: new Set(), shut: new Set() };
+  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? [])
+    (d.open ? folds.open : folds.shut).add(d.id);
+  return folds;
+}
+function reapplyTranscriptFolds(folds) {
+  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? []) {
+    if (folds.open.has(d.id)) d.open = true;
+    else if (folds.shut.has(d.id)) d.open = false;
   }
 }
 
@@ -2671,14 +2695,15 @@ function openCtxDialog(step, role) {
    cursor moved (#1476's slot in the poll, kept under its old name so both
    callers — `pollOnce` and the live-stream tick — stay wired). The cheap
    `after_seq` probe still decides whether anything happened; when it did,
-   the rendered fragment is re-fetched whole and repainted, because the
-   shared renderer draws a tree, not an appendable list. The renderer pins
-   running work open, so the repaint lands the reader back on the live step —
-   and every fold the reader toggled by hand is put back the way they left it
-   (#4566): fold ids are stable NodeId keys (`t0s3`…), so the open/closed
-   state of each identified fold is read out of the shadow DOM before the
-   repaint and reapplied after. Folds new to this paint (the args fold has no
-   id) keep the renderer's own pin-open rules. */
+   one `/api/transcript-tail` tick fetches only what changed (#4566): the
+   server folds only the journal rows past the echoed cursor and returns
+   `settled` markup (final — appended once, never touched again) plus the
+   still-moving `tail` this function swaps for the one it inserted last
+   tick. The settled DOM keeps the reader's fold toggles natively; the
+   replaced tail gets them back from the capture/reapply pass. When the run
+   finishes — or the page has no spliceable turn to work with — the whole
+   fragment is repainted once, which is where the turn summary's status
+   finally leaves `running`. */
 async function refreshTranscriptJournal() {
   if (!tx || tx.finished) return;
   if (state.tab !== "transcript") { tx = null; return; }
@@ -2692,6 +2717,46 @@ async function refreshTranscriptJournal() {
   const entries = Array.isArray(j) ? j : [];
   if (!entries.length) return;
   tx.lastSeq = entries[entries.length - 1].seq;
+  let t = null;
+  try {
+    const echo = tx.tailCursor
+      ? `&cursor=${encodeURIComponent(JSON.stringify(tx.tailCursor))}` : "";
+    t = await api(`/api/transcript-tail?id=${encodeURIComponent(id)}${echo}`);
+  } catch {
+    return;
+  }
+  if (!tx || tx.id !== id || typeof t?.tail !== "string") return;
+  const turnEl = $("tx-render")?.shadowRoot?.getElementById("t0");
+  if (!turnEl) { await repaintWholeTranscript(id); return; }
+  const folds = captureTranscriptFolds();
+  if (tx.tailNodes) {
+    for (const n of tx.tailNodes) n.remove();
+  } else {
+    /* First tick: everything after the summary and the prompt block is the
+       body this protocol now owns. */
+    while (turnEl.children.length > 2) turnEl.lastElementChild.remove();
+  }
+  const insert = (html) => {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    const nodes = [...tpl.content.children];
+    turnEl.append(tpl.content);
+    for (const n of nodes) bindInspectControls(n);
+    return nodes;
+  };
+  insert(t.settled ?? "");
+  tx.tailNodes = insert(t.tail);
+  tx.tailCursor = t.cursor ?? null;
+  reapplyTranscriptFolds(folds);
+  if (t.finished) {
+    tx.finished = true;
+    await repaintWholeTranscript(id);
+  }
+}
+/* The whole-fragment path: first paints, finished runs, and any tick the
+   splice cannot serve. Also the reset point for the incremental state — a
+   full paint invalidates the tracked tail nodes and the cursor with them. */
+async function repaintWholeTranscript(id) {
   let frag = "";
   try {
     const r = await fetch(`/api/transcript-html?id=${encodeURIComponent(id)}`);
@@ -2700,14 +2765,11 @@ async function refreshTranscriptJournal() {
     return;
   }
   if (!frag || !tx || tx.id !== id) return;
-  const folds = { open: new Set(), shut: new Set() };
-  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? [])
-    (d.open ? folds.open : folds.shut).add(d.id);
+  const folds = captureTranscriptFolds();
   await paintRenderedTranscript(frag);
-  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? []) {
-    if (folds.open.has(d.id)) d.open = true;
-    else if (folds.shut.has(d.id)) d.open = false;
-  }
+  reapplyTranscriptFolds(folds);
+  tx.tailNodes = null;
+  tx.tailCursor = null;
 }
 /* The main poll already re-fetches `/api/executions` (with `finished_at`)
    on every cursor move — reuse that instead of a dedicated per-tick

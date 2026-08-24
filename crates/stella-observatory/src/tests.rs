@@ -11,6 +11,10 @@ use super::*;
 /// shared `seeded_workspace` fixtures through this file's own `use super::*`.
 mod execution_routes;
 
+// The incremental transcript protocol (#4566): ticked composition equals the
+// full render at every journal length.
+mod transcript_tail;
+
 /// The raw HTTP surface tests -- a child module for the same reason.
 mod http_surface;
 

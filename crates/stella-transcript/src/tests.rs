@@ -17,6 +17,10 @@ mod fields_projection;
 // The turn frame, and the append-only property the plain surface streams on.
 mod frame;
 
+// The HTML tail: settled step groups are final, and a tail rendered from a
+// partial model splices byte-for-byte into the full render (#4566).
+mod tail;
+
 // The width contract, and the generator that proves it over content nobody
 // wrote by hand.
 mod width;

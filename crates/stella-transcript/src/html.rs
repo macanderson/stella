@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use crate::digest::{self, Chip};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::FoldState;
-use crate::model::{Call, FileStatus, NodeId, Run, Status, Step, Turn};
+use crate::model::{Accounting, Call, FileStatus, NodeId, Run, Status, Step, Turn};
 use crate::syntax;
 use crate::word::Span;
 
@@ -99,7 +99,136 @@ fn run_bar(out: &mut String, run: &Run, state: &FoldState) {
     out.push_str("</div></div>");
 }
 
+/// Key offsets for a body rendered apart from its settled prefix.
+///
+/// Fold ids (`t0s3`…) number nodes over the whole turn, and a reader's open
+/// folds survive a live repaint only because those ids are stable. A tail
+/// render holds a model containing only the turn's unsettled suffix, so its
+/// local indices start at zero — these offsets restore the whole-turn
+/// numbering on every emitted id. Zero everywhere for a full render, where
+/// local and whole-turn indices are the same thing.
+#[derive(Debug, Clone, Copy, Default)]
+struct KeyBase {
+    step: usize,
+    note: usize,
+    prose: usize,
+}
+
+/// What the settled prefix contributed that a tail's own markup still needs.
+///
+/// Everything here is derivable from the steps before the tail: the three
+/// index offsets continue the fold-id numbering, `carried` and the offsets of
+/// time keep the receipt and the time column stating whole-turn facts.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TailBase {
+    /// Steps settled before this tail — the whole-turn index of its first step.
+    pub steps: usize,
+    /// Notes settled before this tail.
+    pub notes: usize,
+    /// Prose blocks settled before this tail.
+    pub prose: usize,
+    /// The settled steps' accounting, summed into the receipt's rollup.
+    pub carried: Accounting,
+    /// The last settled step's time offset. Blanks the first tail step's time
+    /// cell when it repeats this value — exactly the dedup a full render
+    /// applies between adjacent steps — and stands in as the turn's wall time
+    /// while the tail has no steps of its own.
+    pub prev_offset_ms: Option<u64>,
+}
+
+/// One turn's body from a step boundary on, as spliceable fragments.
+///
+/// Each entry in `blocks` is one step group — the notes and prose ahead of a
+/// step, then the step — and `close` is everything a turn ends with: trailing
+/// notes and prose, the answer, and the open-turn receipt. Every fragment is a
+/// sequence of complete elements, children of the turn's `<details>`, so a
+/// host page can splice them into a live DOM; none of them carries the
+/// enclosing `</details>` or frame markup.
+#[derive(Debug, Clone, Default)]
+pub struct TurnTail {
+    /// One fragment per tail step, in order.
+    pub blocks: Vec<String>,
+    /// The turn's closing region, re-rendered wholesale on every tick.
+    pub close: String,
+}
+
+/// Render one turn's body from `base` on, for splicing into an already-painted
+/// page.
+///
+/// The streaming contract, [`crate::grid::render_turn_lines`]'s for this
+/// surface: a settled step group's markup is final the moment it is produced —
+/// `blocks[i]` for a settled step never changes as the turn grows — while
+/// `close` re-renders every time. `run.turns[index]` holds only the tail
+/// (steps, notes and prose from the boundary on, indices counted from zero);
+/// fold ids are emitted with `base`'s offsets so they continue the whole
+/// turn's numbering, and open/pin decisions consult the tail-local model —
+/// which is what keeps a running step pinned open. Explicit per-node
+/// open/close overrides in `state` are not consulted under whole-turn ids;
+/// the shipping caller renders with a fresh [`FoldState`].
+#[must_use]
+pub fn render_turn_tail(run: &Run, state: &FoldState, index: usize, base: &TailBase) -> TurnTail {
+    let Some(turn) = run.turns.get(index) else {
+        return TurnTail::default();
+    };
+    let keys = KeyBase {
+        step: base.steps,
+        note: base.notes,
+        prose: base.prose,
+    };
+    let mut offsets = digest::offsets(&turn.steps);
+    if let (Some(prev), Some(first)) = (base.prev_offset_ms, offsets.first_mut())
+        && *first == digest::format_offset(prev)
+    {
+        first.clear();
+    }
+    let mut blocks = Vec::with_capacity(turn.steps.len());
+    for si in 0..turn.steps.len() {
+        let mut group = String::new();
+        step_group(&mut group, run, state, turn, index, si, &offsets[si], keys);
+        blocks.push(group);
+    }
+    // `turn.duration_ms` is the whole turn's wall time, not the tail's: the
+    // model builder carries it forward (a fold sets it from the last step it
+    // saw, settled or not), the same way `carried` brings the settled steps'
+    // accounting into the rollup.
+    let chips = digest::turn_chips(
+        base.steps + turn.steps.len(),
+        turn.duration_ms,
+        base.carried.merged(turn.rollup()),
+        digest::ChipStyle::Roomy,
+    );
+    let mut close = String::new();
+    turn_close(&mut close, run, state, turn, index, keys, &chips);
+    TurnTail { blocks, close }
+}
+
 fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index: usize) {
+    let dig = digest::turn_digest(turn, 64, digest::ChipStyle::Roomy);
+    turn_head(out, run, state, turn, index, &dig);
+    let keys = KeyBase::default();
+    let offsets = digest::offsets(&turn.steps);
+    for si in 0..turn.steps.len() {
+        step_group(out, run, state, turn, index, si, &offsets[si], keys);
+    }
+    turn_close(out, run, state, turn, index, keys, &dig.chips);
+    out.push_str("</details>");
+}
+
+/// The turn's opening rail: `<details>`, summary, and the reader's prompt.
+///
+/// Nothing here reads past the settled prefix while a turn is running — the
+/// status word stays `running`, an open turn's summary carries no digest, and
+/// the prompt was known before the first step — which is what lets a live page
+/// keep this region untouched across incremental repaints and repaint it once
+/// when the run finishes.
+fn turn_head(
+    out: &mut String,
+    run: &Run,
+    state: &FoldState,
+    turn: &Turn,
+    index: usize,
+    dig: &digest::TurnDigest,
+) {
     let node = NodeId::Turn(index);
     let open = state.is_open(run, node);
     let _ = write!(
@@ -115,7 +244,6 @@ fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index
         status_word(turn.status),
     );
 
-    let dig = digest::turn_digest(turn, 64, digest::ChipStyle::Roomy);
     if !open {
         let _ = write!(
             out,
@@ -142,14 +270,66 @@ fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index
     out.push_str("</div></summary>");
 
     role_block(out, "you", "YOU", &escape_paragraphs(&turn.prompt), false);
-    steps_and_prose(out, run, state, turn, index);
+}
+
+/// The turn's closing region: trailing notes and prose, the answer, and the
+/// open-turn receipt. Everything after the last step group and before the
+/// `</details>` the caller emits.
+fn turn_close(
+    out: &mut String,
+    run: &Run,
+    state: &FoldState,
+    turn: &Turn,
+    index: usize,
+    keys: KeyBase,
+    chip_list: &[Chip],
+) {
+    for (ni, note) in turn.notes.iter().enumerate() {
+        if note.before_step >= turn.steps.len() {
+            note_block(out, run, state, note, index, ni, keys);
+        }
+    }
+    for (pi, prose) in turn.prose.iter().enumerate() {
+        if prose.before_step >= turn.steps.len() {
+            prose_block(out, run, state, prose, index, pi, keys);
+        }
+    }
     if let Some(answer) = &turn.answer {
         role_block(out, "agent", "AGENT", &escape_paragraphs(answer), true);
     }
-    if open {
-        turn_receipt(out, turn, &dig.chips);
+    if state.is_open(run, NodeId::Turn(index)) {
+        turn_receipt(out, turn.status, chip_list);
     }
-    out.push_str("</details>");
+}
+
+/// A prefix of what [`render_run`] emits: the frame, the run bar, one turn's
+/// head, and its first `upto` step groups. Byte-for-byte the leading span of
+/// the full render — the identity the tail tests assert, and the region a live
+/// page keeps untouched while it splices tails in behind it.
+#[cfg(test)]
+pub(crate) fn render_run_prefix(run: &Run, state: &FoldState, index: usize, upto: usize) -> String {
+    let mut out = String::new();
+    out.push_str("<div class=\"frame\">");
+    run_bar(&mut out, run, state);
+    let Some(turn) = run.turns.get(index) else {
+        return out;
+    };
+    let dig = digest::turn_digest(turn, 64, digest::ChipStyle::Roomy);
+    turn_head(&mut out, run, state, turn, index, &dig);
+    let offsets = digest::offsets(&turn.steps);
+    for si in 0..upto.min(turn.steps.len()) {
+        step_group(
+            &mut out,
+            run,
+            state,
+            turn,
+            index,
+            si,
+            &offsets[si],
+            KeyBase::default(),
+        );
+    }
+    out
 }
 
 /// The expanded turn's closing receipt — `grid::turn_frame_bottom`'s counterpart.
@@ -160,43 +340,43 @@ fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index
 /// time as the turn runs, and neither fact exists when the top rail goes out.
 /// Keeping the web surface in step is what stops a reader who compares
 /// `stella run`'s scrollback with `stella observe` from finding two documents.
-fn turn_receipt(out: &mut String, turn: &Turn, chip_list: &[Chip]) {
+fn turn_receipt(out: &mut String, status: Status, chip_list: &[Chip]) {
     let _ = write!(
         out,
         "<div class=\"turnreceipt\"><span class=\"st {}\">{} {}</span>",
-        turn.status.token(),
-        turn.status.glyph(),
-        status_word(turn.status),
+        status.token(),
+        status.glyph(),
+        status_word(status),
     );
     chips(out, chip_list);
     out.push_str("</div>");
 }
 
-fn steps_and_prose(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, ti: usize) {
-    let offsets = digest::offsets(&turn.steps);
-    for (si, step) in turn.steps.iter().enumerate() {
-        for (ni, note) in turn.notes.iter().enumerate() {
-            if note.before_step == si {
-                note_block(out, run, state, note, ti, ni);
-            }
-        }
-        for (pi, prose) in turn.prose.iter().enumerate() {
-            if prose.before_step == si {
-                prose_block(out, run, state, prose, ti, pi);
-            }
-        }
-        step_block(out, run, state, step, ti, si, &offsets[si]);
-    }
+/// One step group: the notes and prose ahead of step `si`, then the step.
+/// The unit of incremental repaint — a settled group's bytes never change as
+/// the turn grows, which is what [`render_turn_tail`]'s contract rests on.
+#[allow(clippy::too_many_arguments)] // the seven are one call shape: the model, the fold, and the addresses
+fn step_group(
+    out: &mut String,
+    run: &Run,
+    state: &FoldState,
+    turn: &Turn,
+    ti: usize,
+    si: usize,
+    offset: &str,
+    keys: KeyBase,
+) {
     for (ni, note) in turn.notes.iter().enumerate() {
-        if note.before_step >= turn.steps.len() {
-            note_block(out, run, state, note, ti, ni);
+        if note.before_step == si {
+            note_block(out, run, state, note, ti, ni, keys);
         }
     }
     for (pi, prose) in turn.prose.iter().enumerate() {
-        if prose.before_step >= turn.steps.len() {
-            prose_block(out, run, state, prose, ti, pi);
+        if prose.before_step == si {
+            prose_block(out, run, state, prose, ti, pi, keys);
         }
     }
+    step_block(out, run, state, &turn.steps[si], ti, si, offset, keys);
 }
 
 /// One non-call row. Mirrors [`note_lines`](crate::grid) on the character grid:
@@ -210,8 +390,12 @@ fn note_block(
     note: &crate::model::Note,
     ti: usize,
     ni: usize,
+    keys: KeyBase,
 ) {
-    let node = NodeId::Note { turn: ti, note: ni };
+    let node = NodeId::Note {
+        turn: ti,
+        note: keys.note + ni,
+    };
     let foldable = !note.detail.is_empty();
     let open = foldable && state.is_open(run, node);
     // The inspect control rides the summary line so it is visible without
@@ -262,10 +446,11 @@ fn prose_block(
     prose: &crate::model::Prose,
     ti: usize,
     pi: usize,
+    keys: KeyBase,
 ) {
     let node = NodeId::Prose {
         turn: ti,
-        prose: pi,
+        prose: keys.prose + pi,
     };
     let open = state.is_open(run, node);
     let head = digest::first_sentence(&prose.text);
@@ -295,6 +480,7 @@ fn prose_block(
     out.push_str("</details></div></div>");
 }
 
+#[allow(clippy::too_many_arguments)] // one call shape — see `step_group`
 fn step_block(
     out: &mut String,
     run: &Run,
@@ -303,9 +489,16 @@ fn step_block(
     ti: usize,
     si: usize,
     offset: &str,
+    keys: KeyBase,
 ) {
-    let node = NodeId::Step { turn: ti, step: si };
-    let open = state.is_open(run, node);
+    // The id continues the whole turn's numbering; the open decision indexes
+    // the model actually in hand, so a running step still pins itself open
+    // when the renderer holds only the turn's tail.
+    let node = NodeId::Step {
+        turn: ti,
+        step: keys.step + si,
+    };
+    let open = state.is_open(run, NodeId::Step { turn: ti, step: si });
     let dig = digest::step_digest(step, OBJECT_WIDTH);
     let err = if dig.status == Status::Error {
         " err"
@@ -348,12 +541,13 @@ fn step_block(
 
     if let Some(call) = &step.call {
         out.push_str("<div class=\"body\"><div class=\"body-inner\">");
-        call_body(out, run, state, call, &dig.object, ti, si);
+        call_body(out, run, state, call, &dig.object, ti, si, keys);
         out.push_str("</div></div>");
     }
     out.push_str("</details>");
 }
 
+#[allow(clippy::too_many_arguments)] // one call shape — see `step_group`
 fn call_body(
     out: &mut String,
     run: &Run,
@@ -362,6 +556,7 @@ fn call_body(
     shown: &str,
     ti: usize,
     si: usize,
+    keys: KeyBase,
 ) {
     if let Some(command) = digest::command_bar(call, shown) {
         let _ = write!(
@@ -374,11 +569,11 @@ fn call_body(
 
     if call.tool.is_mutation() {
         for (fi, change) in call.files.iter().enumerate() {
-            file_diff(out, run, state, &FileDiff::build(change), ti, si, fi);
+            file_diff(out, run, state, &FileDiff::build(change), ti, si, fi, keys);
         }
         return;
     }
-    output_body(out, run, state, call, ti, si);
+    output_body(out, run, state, call, ti, si, keys);
 }
 
 /// The `args` toggle — only rendered when there is something the header did not
@@ -402,7 +597,16 @@ fn args_toggle(out: &mut String, call: &Call) {
     out.push_str("</dl></details>");
 }
 
-fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: usize, si: usize) {
+#[allow(clippy::too_many_arguments)] // one call shape — see `step_group`
+fn output_body(
+    out: &mut String,
+    run: &Run,
+    state: &FoldState,
+    call: &Call,
+    ti: usize,
+    si: usize,
+    keys: KeyBase,
+) {
     let fold = digest::fold_output(&call.output, &call.header_object);
     // Decided once, from the whole body, so the head, the hidden middle and the
     // tail cannot disagree — and from the *body* rather than per line, because a
@@ -410,8 +614,12 @@ fn output_body(out: &mut String, run: &Run, state: &FoldState, call: &Call, ti: 
     // and the Command Deck make the same decision from the same shared function
     // (#3644, #4036).
     let paint = syntax::lines_body_paint(call.read_path(), &fold.body);
-    let node = NodeId::Output { turn: ti, step: si };
-    let open = state.is_open(run, node);
+    // Same split as `step_block`: whole-turn id, tail-local pin lookup.
+    let node = NodeId::Output {
+        turn: ti,
+        step: keys.step + si,
+    };
+    let open = state.is_open(run, NodeId::Output { turn: ti, step: si });
 
     if fold.echo_hidden {
         out.push_str("<div class=\"echo\">echo hidden</div>");
@@ -524,6 +732,7 @@ fn tok_class(t: syntax::Tok) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // one call shape — see `step_group`
 fn file_diff(
     out: &mut String,
     run: &Run,
@@ -532,10 +741,13 @@ fn file_diff(
     ti: usize,
     si: usize,
     fi: usize,
+    keys: KeyBase,
 ) {
+    // File and hunk folds never pin, and their defaults read only the zoom,
+    // so the whole-turn-keyed node serves the lookup as well as the id.
     let node = NodeId::File {
         turn: ti,
-        step: si,
+        step: keys.step + si,
         file: fi,
     };
     let open = state.is_open(run, node);
@@ -576,7 +788,7 @@ fn file_diff(
     for (hi, hunk) in diff.hunks.iter().enumerate() {
         let hunk_node = NodeId::Hunk {
             turn: ti,
-            step: si,
+            step: keys.step + si,
             file: fi,
             hunk: hi,
         };

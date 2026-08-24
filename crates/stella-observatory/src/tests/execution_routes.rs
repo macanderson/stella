@@ -267,6 +267,70 @@ fn transcript_stylesheet_is_served_as_an_asset() {
 /// gone, not redirected: the fragment route is an implementation detail of
 /// the dashboard, and the page-level address it replaced answered the same
 /// question in a second rendering.
+/// The incremental tick route (#4566): one call with no cursor covers the
+/// whole turn, its echoed cursor drives the next call, and the composition —
+/// settled plus tail — matches the whole-fragment route's turn body. The
+/// fold-level equivalence is proven per journal length in
+/// `tests::transcript_tail`; this pins the HTTP wiring: parameter parsing,
+/// the JSON shape, and agreement with `/api/transcript-html`.
+#[test]
+fn transcript_tail_route_ticks_and_agrees_with_the_full_fragment() {
+    let ws = seeded_workspace();
+    let response = respond(ws.path(), "/api/transcript-tail?id=1");
+    assert_eq!(response.status, "200 OK");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    assert!(v["cursor"].is_object(), "{v}");
+    // The fixture row leaves finished_at NULL, which must read as a live run.
+    assert_eq!(v["finished"], false);
+
+    let full = respond(ws.path(), "/api/transcript-html?id=1");
+    let full = String::from_utf8(full.body).unwrap();
+    let composed = format!(
+        "{}{}</details></div>",
+        v["settled"].as_str().unwrap(),
+        v["tail"].as_str().unwrap()
+    );
+    assert!(
+        full.ends_with(&composed),
+        "the first tick's fragments do not splice into the full fragment"
+    );
+
+    // A second tick, echoing the cursor: quiet journal, so nothing settles
+    // and the tail comes back unchanged.
+    let echo = percent_encode(&v["cursor"].to_string());
+    let again = respond(
+        ws.path(),
+        &format!("/api/transcript-tail?id=1&cursor={echo}"),
+    );
+    assert_eq!(again.status, "200 OK");
+    let w: serde_json::Value = serde_json::from_slice(&again.body).unwrap();
+    assert_eq!(w["settled"], "");
+    assert_eq!(w["tail"], v["tail"]);
+    assert_eq!(w["cursor"], v["cursor"]);
+
+    // A mangled echo degrades to a full-size tick rather than an error.
+    let mangled = respond(ws.path(), "/api/transcript-tail?id=1&cursor=%7Bnope");
+    assert_eq!(mangled.status, "200 OK");
+
+    let missing = respond(ws.path(), "/api/transcript-tail");
+    assert_eq!(missing.status, "400 Bad Request");
+}
+
+/// Query-encode one value for the tests above — `{`, `}` and `"` are the
+/// characters a JSON cursor actually carries.
+fn percent_encode(raw: &str) -> String {
+    let mut out = String::new();
+    for b in raw.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 #[test]
 fn the_standalone_transcript_page_is_gone() {
     let ws = seeded_workspace();

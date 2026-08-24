@@ -110,6 +110,37 @@ pub(crate) fn entries(
     ))
 }
 
+/// One journal row by its seq, projected exactly as [`entries`] would project
+/// it — the incremental tail protocol's answer recovery (#4566): a poll whose
+/// suffix carries no `text` row re-reads the one the cursor remembers, an
+/// indexed point read rather than a rescan.
+///
+/// `Value::Null` when the row does not exist (or the schema predates the
+/// events table): the caller renders without an answer rather than failing
+/// the tick. Tool names are not resolved — the one caller reads `text` rows,
+/// which never need them.
+pub(crate) fn entry_at(conn: &Connection, id: i64, seq: i64, full: bool) -> Result<Value, DbError> {
+    let sql = "SELECT seq, ts, event_type, payload
+         FROM events WHERE execution_id = ?1 AND seq = ?2";
+    let mut stmt = match conn.prepare(sql) {
+        Ok(stmt) => stmt,
+        Err(e) if is_missing_schema(&e) => return Ok(Value::Null),
+        Err(e) => return Err(e.into()),
+    };
+    let row = stmt
+        .query_map([id, seq], |r| {
+            Ok(json!({
+                "seq": r.get::<_, i64>(0)?,
+                "ts": r.get::<_, String>(1)?,
+                "type": r.get::<_, String>(2)?,
+                "payload": r.get::<_, String>(3)?,
+            }))
+        })?
+        .next()
+        .transpose()?;
+    Ok(row.map_or(Value::Null, |row| journal_entry(row, full, &HashMap::new())))
+}
+
 /// Rejoin a run of consecutive `reasoning` rows into the one block of thought
 /// it was streamed from.
 ///
