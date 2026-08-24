@@ -177,7 +177,7 @@ pub(crate) fn parse_file(grammars: &Grammars, lang: Language, source: &str) -> O
     // vector, the same contract markdown's headingless document has.
     if lang == Language::Toml {
         return Some(Parsed {
-            symbols: crate::toml::tables(source),
+            symbols: crate::record_toml::tables(source),
             imports: Vec::new(),
             calls: Vec::new(),
         });

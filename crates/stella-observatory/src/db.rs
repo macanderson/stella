@@ -596,6 +596,17 @@ impl Observatory {
         crate::sessions::execution_tendencies(&conn, id)
     }
 
+    /// The sub-agents one turn fanned out, one row per `delegate` child —
+    /// the `sub_agent` bracket joined with the child-stamped `telemetry`
+    /// rows. The fold (and the sanctioned-`events`-read argument) lives in
+    /// `turn_agents`.
+    pub fn execution_subagents(&self, id: i64) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(json!({ "execution_id": id, "agents": [] }));
+        };
+        crate::turn_agents::execution_subagents(&conn, id)
+    }
+
     /// Per-(provider, model) usage — the same rows `stella stats` prints,
     /// same semantics (`resolved` = outcome `completed`, `off-grid` = local).
     pub fn models(&self) -> Result<Value, DbError> {
@@ -651,11 +662,12 @@ impl Observatory {
     }
 
     /// Tool leaderboard over the newest `TOOL_CALL_SCAN_WINDOW` calls:
-    /// calls, failures, latency, bytes returned. The p50 is computed here
-    /// (SQLite has no percentile function).
+    /// calls, failures (with a per-`error_class` split), latency, bytes
+    /// returned. The p50 is computed here (SQLite has no percentile
+    /// function).
     ///
     /// Accumulates into `ToolAgg` rather than a bare tuple so the fold and
-    /// the row-building loop name the same four quantities.
+    /// the row-building loop name the same quantities.
     pub fn tools(&self) -> Result<Value, DbError> {
         let Some(conn) = self.store() else {
             return Ok(json!([]));
@@ -667,12 +679,25 @@ impl Observatory {
         // the whole history was unbounded, and calls old enough to age out of
         // the window no longer describe how the tools behave today anyway.
         let sql = format!(
-            "SELECT name, state, duration_ms, bytes_out FROM tool_calls
+            "SELECT name, state, duration_ms, bytes_out, error_class FROM tool_calls
+             ORDER BY rowid DESC LIMIT {TOOL_CALL_SCAN_WINDOW}"
+        );
+        // `error_class` arrived in store schema v25, and this reader never
+        // migrates the files it opens (see `is_missing_schema`). An older
+        // store re-prepares with a literal '' in the column's place, so it
+        // keeps its full leaderboard — every error unclassified — instead of
+        // losing the panel to one missing column.
+        let fallback = format!(
+            "SELECT name, state, duration_ms, bytes_out, '' FROM tool_calls
              ORDER BY rowid DESC LIMIT {TOOL_CALL_SCAN_WINDOW}"
         );
         let mut stmt = match conn.prepare(&sql) {
             Ok(stmt) => stmt,
-            Err(e) if is_missing_schema(&e) => return Ok(json!([])),
+            Err(e) if is_missing_schema(&e) => match conn.prepare(&fallback) {
+                Ok(stmt) => stmt,
+                Err(e) if is_missing_schema(&e) => return Ok(json!([])),
+                Err(e) => return Err(e.into()),
+            },
             Err(e) => return Err(e.into()),
         };
         let scanned = stmt.query_map([], |r| {
@@ -681,12 +706,13 @@ impl Observatory {
                 r.get::<_, String>(1)?,
                 r.get::<_, i64>(2)?,
                 r.get::<_, i64>(3)?,
+                r.get::<_, String>(4)?,
             ))
         })?;
         let mut by_name: std::collections::BTreeMap<String, ToolAgg> =
             std::collections::BTreeMap::new();
         for call in scanned {
-            let (name, state, duration_ms, bytes_out) = call?;
+            let (name, state, duration_ms, bytes_out, error_class) = call?;
             let entry = by_name.entry(name).or_default();
             entry.calls += 1;
             // An abandoned call is a fact about its turn, not the tool: it
@@ -694,7 +720,20 @@ impl Observatory {
             // not yet migrated to v24 still spells abandonment 'error'; its
             // rates stay conservatively inflated until its next CLI open.
             match state.as_str() {
-                "error" => entry.errors += 1,
+                "error" => {
+                    entry.errors += 1;
+                    // '' is the store's spelling for "not audited into a
+                    // class yet" (the v25 default). It counts under
+                    // "unclassified" — a key deliberately outside the wire
+                    // vocabulary of `stella-protocol`'s `ErrorClass`, so it
+                    // can never collide with a real class token.
+                    let class = if error_class.is_empty() {
+                        "unclassified".to_owned()
+                    } else {
+                        error_class
+                    };
+                    *entry.errors_by_class.entry(class).or_insert(0) += 1;
+                }
                 "abandoned" => entry.abandoned += 1,
                 _ => {}
             }
@@ -729,6 +768,7 @@ impl Observatory {
                     "name": name,
                     "calls": agg.calls,
                     "errors": agg.errors,
+                    "errors_by_class": agg.errors_by_class,
                     "abandoned": agg.abandoned,
                     "p50_ms": p50,
                     "p90_ms": p90,
@@ -1247,6 +1287,10 @@ fn rules_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
 struct ToolAgg {
     calls: i64,
     errors: i64,
+    /// `errors` partitioned by the store's `error_class` token, with `''`
+    /// counted as `"unclassified"`. The values sum to `errors`; abandoned
+    /// calls land in no bucket.
+    errors_by_class: std::collections::BTreeMap<String, i64>,
     /// Calls whose turn ended before they returned — counted apart from
     /// `errors` because abandonment is a fact about the turn, not the tool
     /// (#3146).

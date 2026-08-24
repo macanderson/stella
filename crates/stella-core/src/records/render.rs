@@ -67,7 +67,12 @@ use super::sweep::Disposition;
 /// the heading is amortised across every record in the block, so the instruction
 /// costs a handful of tokens once instead of a clause per bullet — the same argument
 /// that made grouping by force worth doing.
-const CACHED_HEADING: &str = "\n## Workspace rules (cite the ^handle of any you apply)";
+/// Public because it is also a **provenance marker**: `stella inspect
+/// --system-prompt` and the deck's INSPECT overlay label the span of a
+/// reconstructed prompt that this channel produced, and they find it by these
+/// exact bytes. Sharing the constant is what stops the label drifting from the
+/// heading — see `stella-cli`'s `agent/prompt/provenance.rs`.
+pub const CACHED_HEADING: &str = "\n## Workspace rules (cite the ^handle of any you apply)";
 
 /// The default budget for the cached record channel, in characters (#2709).
 ///

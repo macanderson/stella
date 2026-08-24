@@ -155,6 +155,7 @@ pub(crate) struct InspectArgs {
     pub(crate) diff: Option<DiffBase>,
     pub(crate) context: usize,
     pub(crate) only: RoleFilter,
+    pub(crate) system_prompt: bool,
 }
 
 /// `stella inspect [id] [--turn T] [--step N] [--call-seq S] [--diff [BASE]]`.
@@ -166,7 +167,25 @@ pub(crate) fn run_inspect(args: &InspectArgs) -> Result<(), String> {
             "--diff compares one call against an earlier one, so it needs to know which: \
              add --step <STEP> (`stella inspect {id}` lists them)"
         )),
+        // Same shape as `--diff` above, and the same remedy: both name one
+        // call, so neither can answer without being told which.
+        (Some(id), None) if args.system_prompt => Err(format!(
+            "--system-prompt sections the prompt one call was sent, so it needs to know which: \
+             add --step <STEP> (`stella inspect {id}` lists them)"
+        )),
         (Some(id), None) => list_calls(&store, id, args.format),
+        // Two views of one call, and each renders the whole output: silently
+        // letting one win would answer a question the caller did not ask.
+        // `--diff --only system` is the intersection they are reaching for.
+        (Some(_), Some(_)) if args.system_prompt && args.diff.is_some() => Err(
+            "--system-prompt and --diff are two different views of one call: --system-prompt \
+             sections what was sent, --diff shows what moved. For the prompt's delta alone, \
+             use --diff --only system"
+                .to_string(),
+        ),
+        (Some(id), Some(step)) if args.system_prompt => {
+            show_system_prompt(&store, id, args.turn, step, args.call_seq, args)
+        }
         (Some(id), Some(step)) => match args.diff {
             Some(base) => show_diff(&store, id, step, base, args),
             None => show_call(
@@ -397,8 +416,25 @@ fn list_calls(store: &Store, execution_id: i64, format: QueryFormat) -> Result<(
     // same id saw byte-identical context; that comparison is the column's job,
     // so the id is shown rather than the full hash it prefixes.
     let any_frame = calls.iter().any(|c| c.compiled_frame_id.is_some());
+    // A gateway call names the vendor it was routed to (#3054); the column
+    // widens to fit only when some call actually has one — capped so a
+    // pathological vendor string cannot unbound the table — and a
+    // direct-endpoint listing keeps its shape.
+    let providers: Vec<String> = calls
+        .iter()
+        .map(|call| match &call.upstream_provider {
+            Some(upstream) => format!("{}\u{2192}{upstream}", call.provider),
+            None => call.provider.clone(),
+        })
+        .collect();
+    let provider_width = providers
+        .iter()
+        .map(|p| p.chars().count())
+        .max()
+        .unwrap_or(0)
+        .clamp(10, 32);
     println!(
-        "{:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {:>9}{}",
+        "{:>4}  {:>4}  {:>3}  {:<14}  {:<provider_width$}  {:>9}{}",
         "TURN",
         "STEP",
         "SEQ",
@@ -407,14 +443,14 @@ fn list_calls(store: &Store, execution_id: i64, format: QueryFormat) -> Result<(
         "EST TOK",
         if any_frame { "  FRAME" } else { "" }
     );
-    for call in &calls {
+    for (call, provider) in calls.iter().zip(&providers) {
         println!(
-            "{:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {:>9}{}",
+            "{:>4}  {:>4}  {:>3}  {:<14}  {:<provider_width$}  {:>9}{}",
             call.turn_instance,
             call.step,
             call.call_seq,
             truncate(&call.call_role, 14),
-            truncate(&call.provider, 10),
+            truncate(provider, provider_width),
             call.estimated_input_tokens,
             match (&call.compiled_frame_id, any_frame) {
                 (Some(id), _) => format!("  {id}"),
@@ -509,6 +545,115 @@ fn print_reconstruction(
         "\nstella inspect {execution_id} --step {step} --diff \
          to see only what changed since the previous call of this role."
     );
+}
+
+/// The system prefix one call was sent, split into provenance-labelled
+/// sections — `stella inspect <id> --step N --system-prompt`.
+///
+/// The whole context answers "what did the model see"; this answers the
+/// question a reader actually arrives with when the answer is hundreds of
+/// stable lines: *which setting put this paragraph here?* The split itself is
+/// [`crate::agent::prompt::provenance`], which reads the assembler's own
+/// section-opener constants rather than a copy of their bytes.
+fn show_system_prompt(
+    store: &Store,
+    execution_id: i64,
+    turn: u32,
+    step: u64,
+    call_seq: u64,
+    args: &InspectArgs,
+) -> Result<(), String> {
+    let recon = store
+        .reconstruct_call(execution_id, turn, step, call_seq)
+        .map_err(|e| format!("cannot reconstruct: {e}"))?;
+    // A system message that resolved to no bytes is the same answer as no
+    // system message at all, and both must say so out loud: printing an empty
+    // prompt would read as "the model was sent nothing", which is a claim the
+    // receipt does not make.
+    let prefix = recon
+        .messages
+        .iter()
+        .find(|m| m.role == MessageRole::System)
+        .map(|m| m.content.as_str())
+        .filter(|content| !content.is_empty());
+    let Some(prefix) = prefix else {
+        return no_system_prefix(execution_id, turn, step, call_seq, args.format);
+    };
+    let sections = crate::agent::prompt::provenance::sections(prefix);
+    match args.format {
+        QueryFormat::Json => print_json(&Versioned::new(SystemPromptJson {
+            found: true,
+            bytes: prefix.len(),
+            sections: sections
+                .iter()
+                .map(|s| SectionJson {
+                    label: s.label,
+                    source: s.source,
+                    body: s.body.to_string(),
+                })
+                .collect(),
+        })),
+        QueryFormat::Text => {
+            println!("execution {execution_id} · turn {turn} · step {step} · call-seq {call_seq}");
+            println!(
+                "system prompt · {} section(s) · {} bytes{}",
+                sections.len(),
+                prefix.len(),
+                if args.full { ", full bodies" } else { "" }
+            );
+            for section in &sections {
+                println!("\n─── {} ───", section.label.bold());
+                println!("{}", format!("from: {}", section.source).dimmed());
+                let body = section.body;
+                if args.full || body.len() <= DEFAULT_BODY_LIMIT {
+                    println!("{body}");
+                } else {
+                    let cut = floor_char_boundary(body, DEFAULT_BODY_LIMIT);
+                    println!(
+                        "{}\n… {} more bytes (--full to print, --format json for the exact bytes)",
+                        &body[..cut],
+                        body.len() - cut
+                    );
+                }
+            }
+            // The boundaries are found by scanning for the assembler's
+            // headings, so a memory that quotes one can move a boundary. The
+            // whole is exact either way, and saying so is what lets a reader
+            // trust the view without having to trust the heuristic.
+            println!(
+                "\nthe sections above concatenate to the exact bytes this call was sent; \
+                 section boundaries are found by the assembler's own headings."
+            );
+            Ok(())
+        }
+    }
+}
+
+/// What every surface says when the addressed call resolved no `system_prefix`
+/// bytes. Never an empty prompt: "nothing was recorded" and "the model was
+/// sent nothing" are different claims, and only the first one is true.
+fn no_system_prefix(
+    execution_id: i64,
+    turn: u32,
+    step: u64,
+    call_seq: u64,
+    format: QueryFormat,
+) -> Result<(), String> {
+    match format {
+        QueryFormat::Json => print_json(&Versioned::new(SystemPromptJson {
+            found: false,
+            bytes: 0,
+            sections: Vec::new(),
+        })),
+        QueryFormat::Text => {
+            println!("execution {execution_id} · turn {turn} · step {step} · call-seq {call_seq}");
+            println!(
+                "no system_prefix block resolved for this call — `stella inspect \
+                 {execution_id} --step {step}` shows what the receipt does hold"
+            );
+            Ok(())
+        }
+    }
 }
 
 /// The digest-mismatch line, or `None` when nothing mismatched.
@@ -879,7 +1024,8 @@ fn diff_json(
 /// tool calls/results it carried (they are separate blocks in the receipt but
 /// belong to one message on the wire).
 ///
-/// Shared with the deck's INSPECT overlay (`command_deck::service_inspect_action`):
+/// Shared with the deck's INSPECT overlay
+/// (`command_deck::inspect_service::service_inspect_action`):
 /// the CLI and the deck must never disagree about what a message looked like,
 /// so there is one renderer, not a copy per surface.
 pub(crate) fn message_body(message: &CompletionMessage) -> String {
@@ -942,6 +1088,11 @@ struct CallJson {
     call_seq: u64,
     call_role: String,
     provider: String,
+    /// The vendor a gateway routed this call to (#3054). Omitted rather than
+    /// null when no upstream was named — a direct endpoint, or a receipt
+    /// recorded before the column existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upstream_provider: Option<String>,
     model: String,
     estimated_input_tokens: u64,
     /// Phase 2 (#713): the compiled frame's identity, when the lifecycle was
@@ -957,6 +1108,28 @@ struct CallJson {
 struct MessageJson {
     role: &'static str,
     content: String,
+}
+
+/// One provenance-labelled span of a system prompt.
+#[derive(Serialize)]
+struct SectionJson {
+    /// What this span is — `Base instructions`, `Workspace rules`, …
+    label: &'static str,
+    /// The configuration surface that produced it.
+    source: &'static str,
+    /// The exact bytes, marker heading included. Never elided in JSON: the
+    /// concatenation property is the reason a script would read this at all.
+    body: String,
+}
+
+#[derive(Serialize)]
+struct SystemPromptJson {
+    /// Whether the addressed call resolved any `system_prefix` bytes. A script
+    /// must be able to tell "nothing recorded" from "an empty prompt" without
+    /// inferring it from an empty array.
+    found: bool,
+    bytes: usize,
+    sections: Vec<SectionJson>,
 }
 
 #[derive(Serialize)]
@@ -1029,6 +1202,7 @@ fn call_json(call: &RecordedCall) -> CallJson {
         call_seq: call.call_seq,
         call_role: call.call_role.clone(),
         provider: call.provider.clone(),
+        upstream_provider: call.upstream_provider.clone(),
         model: call.model.clone(),
         estimated_input_tokens: call.estimated_input_tokens,
         compiled_frame_id: call.compiled_frame_id.clone(),

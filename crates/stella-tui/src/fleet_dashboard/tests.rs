@@ -64,20 +64,20 @@ fn grid_shows_tasks_statuses_last_action_and_header_clocks() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: tool_start("edit_file", "path", "src/auth/session.rs"),
+            event: Box::new(tool_start("edit_file", "path", "src/auth/session.rs")),
         },
         Instant::now(),
     );
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: AgentEvent::FileChange {
+            event: Box::new(AgentEvent::FileChange {
                 path: "src/auth/session.rs".into(),
                 kind: FileChangeKind::Modified,
                 added: 2,
                 removed: 1,
                 diff: Some("@@\n+a\n+b\n-c\n".into()),
-            },
+            }),
         },
         Instant::now(),
     );
@@ -125,9 +125,9 @@ fn last_action_holds_tool_while_reasoning_but_thinks_before_any_action() {
     board.apply(
         FleetMsg::Event {
             id: "t2".into(),
-            event: AgentEvent::Reasoning {
+            event: Box::new(AgentEvent::Reasoning {
                 delta: "hmm".into(),
-            },
+            }),
         },
         Instant::now(),
     );
@@ -138,16 +138,16 @@ fn last_action_holds_tool_while_reasoning_but_thinks_before_any_action() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: tool_start("bash", "command", "cargo test retry_loop"),
+            event: Box::new(tool_start("bash", "command", "cargo test retry_loop")),
         },
         Instant::now(),
     );
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: AgentEvent::Reasoning {
+            event: Box::new(AgentEvent::Reasoning {
                 delta: "now what".into(),
-            },
+            }),
         },
         Instant::now(),
     );
@@ -190,11 +190,11 @@ fn default_sort_is_blocked_then_running_then_queued_then_finished() {
     board.apply(
         FleetMsg::Event {
             id: "block".into(),
-            event: AgentEvent::AskUser {
+            event: Box::new(AgentEvent::AskUser {
                 id: "q1".into(),
                 question: "approve write?".into(),
                 options: vec![],
-            },
+            }),
         },
         Instant::now(),
     );
@@ -275,7 +275,7 @@ fn terminal_status_freezes_elapsed_and_wins_over_late_events() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: tool_start("bash", "command", "echo late"),
+            event: Box::new(tool_start("bash", "command", "echo late")),
         },
         start + Duration::from_secs(9),
     );
@@ -492,5 +492,56 @@ fn detach_keys_are_unchanged_by_the_supervisor_surface() {
             now
         ),
         KeyAction::Detach
+    );
+}
+
+/// **The other half of the #4612 witness.** A lane goes `Blocked` when a card
+/// goes up, and every card a lane can raise is answered by the parked call's
+/// own result — `ask_user` returns the answer as its tool result, and the plan
+/// gate returns the driver's change request as `task_start`'s error. Nothing
+/// walked the row back, so the lane read `blocked` for the whole window the
+/// model spent re-planning, with nobody waiting on anything.
+#[test]
+fn a_lane_stops_reading_blocked_once_its_card_is_answered() {
+    let now = Instant::now();
+    let mut board = FleetBoard::new("stella", &seed(), now);
+    board.apply(
+        FleetMsg::Status {
+            id: "t1".into(),
+            status: FleetStatus::Running,
+        },
+        now,
+    );
+    board.apply(
+        FleetMsg::Event {
+            id: "t1".into(),
+            event: AgentEvent::ScopeReview {
+                proposal: stella_protocol::ScopeProposal {
+                    summary: "ship the migration".into(),
+                    steps: vec!["migrate".into(), "backfill".into(), "cut over".into()],
+                    ..Default::default()
+                },
+            },
+        },
+        now,
+    );
+    assert_eq!(board.rows[0].status, FleetStatus::Blocked);
+
+    board.apply(
+        FleetMsg::Event {
+            id: "t1".into(),
+            event: AgentEvent::ToolResult {
+                call_id: "c1".into(),
+                output: stella_protocol::ToolOutput::error("the plan was not approved"),
+                duration_ms: 400,
+                speculated: false,
+            },
+        },
+        now,
+    );
+    assert_eq!(
+        board.rows[0].status,
+        FleetStatus::Running,
+        "the card was answered, so the lane is working again"
     );
 }

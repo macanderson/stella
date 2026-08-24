@@ -199,6 +199,29 @@ pub(super) fn migrate_v29_to_v30(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
+/// v33 → v34: who actually served a gateway-routed call, on the receipt
+/// header (#3054).
+///
+/// `AgentEvent::StepUsage` has carried `upstream_provider` since #2786, but
+/// only inside the raw `events` payload: `step_receipt.provider` is always
+/// the gateway's own id (`openrouter`) for a gateway call, so `stella
+/// inspect` — which reads receipts, not events — could not answer "which
+/// vendor served this call" for any stored execution. One nullable column on
+/// the header, projected from the manifest the engine already emits at the
+/// settled boundary, where the served vendor is known.
+///
+/// Nullable with no default and no backfill: NULL means "no upstream was
+/// named" — every direct-endpoint call, and every pre-v34 row, where the
+/// answer genuinely was not recorded on this table. The `events` payload
+/// remains the only source for history, and inventing a backfill from it
+/// here would make one migration re-parse every journal ever written.
+pub(super) fn migrate_v33_to_v34(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if !column_exists(tx, "step_receipt", "upstream_provider")? {
+        tx.execute_batch("ALTER TABLE step_receipt ADD COLUMN upstream_provider TEXT;")?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

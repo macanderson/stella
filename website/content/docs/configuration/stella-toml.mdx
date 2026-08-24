@@ -397,6 +397,32 @@ per_usd = 0.05   # price a dollar of spend at a tenth of the default
 weight steered nothing. A file that still sets it loads normally and reports the key as
 unrecognized.
 
+### `[plan_review]`
+
+The deck's plan gate: before the first step of a plan runs, the task board goes to whoever is
+driving, as a card they can approve or send back. Both of its facts live here rather than
+compiled in (#4611). Whole-block last-wins, like `[ui]` and `[reward]` — the switch and the
+threshold are one policy, so a scope that declares either states both.
+
+<CardGrid size="sm">
+  <OptionCard name="plan_review.enabled" defaultValue="on">
+    `off` withholds the gate, and no card is ever raised. Distinct from an unattended run,
+    which installs no gate anyway because nobody is there to answer one.
+  </OptionCard>
+  <OptionCard name="plan_review.min_steps" defaultValue="3">
+    How many **open** board rows raise a card. `1` asks about every plan; `0` is refused,
+    because an empty board has no open rows and `enabled` is how you say off.
+  </OptionCard>
+</CardGrid>
+
+```toml title="stella.toml"
+[plan_review]
+min_steps = 5    # only stop me for plans of five steps or more
+```
+
+`stella run --plan-mode` overrides both for one invocation: the gate is installed and every plan is
+put to the driver, whatever the file says.
+
 ### `[self_driving]`
 
 What [`stella self-driving`](/docs/commands/self-driving) signs its work with, which checks

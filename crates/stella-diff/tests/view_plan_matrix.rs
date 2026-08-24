@@ -133,9 +133,10 @@ fn the_view_policy_still_matches_its_committed_matrix() {
         "the view policy no longer matches {}.{first}\n\n\
          If the change is intended: re-bless with\n  \
          BLESS=1 cargo test -p stella-diff --test view_plan_matrix\n\
-         and then port it to arenabench/ui/lib/diff-view.ts, which is checked\n\
-         against this same file by\n  \
-         node arenabench/ui/scripts/check-diff-view-parity.mjs",
+         then port it to ui/lib/diff-view.ts in the arenabench repo\n\
+         (github.com/macanderson/arenabench) and copy the regenerated matrix\n\
+         over its vendored ui/golden/view-plan-matrix.txt — its CI holds\n\
+         the port to that file.",
         path.display()
     );
 }

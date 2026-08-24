@@ -209,10 +209,15 @@ impl ResumeFrame {
             ));
         }
         if frame.isolation_possible {
+            // No durable staleness map exists to restore (#3780): the only
+            // overwrite guard is the in-process read ledger, and a resumed
+            // turn starts it empty — so this must promise re-reads, never a
+            // restored map.
             lines.push(
                 "  execution MAY have been isolated in a candidate worktree, which died with \
                  the process — the resumed turn writes into the workspace, guarded only by \
-                 the restored staleness map"
+                 the in-process overwrite guard, which starts empty on a resume: an existing \
+                 file cannot be overwritten until the resumed turn has re-read all of it"
                     .to_string(),
             );
         }
@@ -315,6 +320,30 @@ mod tests {
         assert_eq!(bare.advisory(), None);
         assert_eq!(bare.completed_label(), "resumed_complete");
         assert!(!bare.completed_banner(7).contains("UNVERIFIED"));
+    }
+
+    /// **The #3780 witness.** The isolation advisory steers a human's
+    /// let-it-run decision, so it may claim only the guard that exists: the
+    /// in-process overwrite guard, which a resume starts empty. It used to
+    /// tell the operator the resumed turn was "guarded only by the restored
+    /// staleness map" — a map (`observed.json`) that was never written and
+    /// never restored, so the sentence reassured them with a guarantee the
+    /// code did not have.
+    #[test]
+    fn the_isolation_advisory_claims_only_the_guard_that_exists() {
+        let frame = ResumeFrame::Pipeline(Box::new(pipeline_frame()));
+        let text = frame
+            .advisory()
+            .expect("a pipeline frame advises")
+            .join("\n");
+        assert!(
+            !text.contains("staleness map"),
+            "the advisory must not claim a durable map nothing writes or restores: {text}"
+        );
+        assert!(
+            text.contains("starts empty on a resume"),
+            "the guard that DOES hold — the in-process one, empty at resume — is named: {text}"
+        );
     }
 
     /// A run with no witness author is not told its (nonexistent) flip went

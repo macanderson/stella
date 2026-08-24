@@ -447,7 +447,7 @@ impl CheckpointSink for JournalCheckpointSink {
         let _ = self
             .bound
             .journal
-            .record_checkpoint(json, None, pipeline.as_deref());
+            .record_checkpoint(json, pipeline.as_deref());
     }
 
     /// Idempotent by [`WorkJournal::clear_checkpoint`]'s own contract, and free

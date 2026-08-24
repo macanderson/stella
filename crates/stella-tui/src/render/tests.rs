@@ -115,6 +115,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             duration_ms: 3,
             speculated: false,
             diff: Vec::new(),
+            read_size: None,
         },
         TranscriptEntry::Retry {
             attempt: 1,
@@ -391,6 +392,10 @@ fn the_receipt_reports_what_the_turn_measured() {
         tool_calls: 0,
         complete: true,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     });
     // files ← FileChange, distinct paths

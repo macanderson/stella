@@ -48,7 +48,7 @@ The asymmetry is deliberate and enforced: **a revert settles a pass as a false p
 
 A revert also outranks a green CI run for the same pass: it is the later and better-informed statement.
 
-## Honest limits
+## Limits
 
 - `Pending`/`Running` CI states reconcile nothing — absence of a verdict is not a verdict.
 - A session's events do not record which verdict a given commit implements, so a commit is attributed to every unsettled pass before it. A session that produced two passes and one commit counts a revert twice. This errs toward reporting the verifier as *worse* than it is, which is the safe direction here.

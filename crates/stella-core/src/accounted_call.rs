@@ -316,6 +316,7 @@ pub async fn run_accounted_call(
                 crate::receipts::ServedBy {
                     role: call.role,
                     provider,
+                    upstream_provider: result.upstream_provider.as_deref(),
                     model: &result.model,
                 },
                 events,
@@ -346,6 +347,14 @@ pub async fn run_accounted_call(
         // Management calls truncate too — a verifier verdict or a plan cut off at
         // the ceiling is exactly the silent failure this field exists to name.
         finish_reason: result.finish_reason,
+        effort: call.request.effort,
+        max_output_tokens: call.request.max_output_tokens,
+        // The generation shape of the ask, from the request actually
+        // dispatched (#4621). A management call's sampling posture is
+        // otherwise unanswerable from the trace: it is not the session's, and
+        // the settings file at read time is a different question.
+        temperature: call.request.temperature,
+        params: call.request.params,
         sub_agent_id: None,
     });
     let budget_outcome = budget.record_spend(result.cost_usd);
@@ -537,6 +546,117 @@ mod tests {
                 .expect("wire")
                 .contains("private failed body")
         );
+    }
+
+    /// #4565's witness for the auxiliary path: the metering record claims the
+    /// effort and ceiling the dispatched request carried, exactly as the
+    /// engine's own step loop does. Fails before #4565, when `StepUsage` had
+    /// neither field.
+    #[tokio::test]
+    async fn step_usage_carries_the_requests_effort_and_output_ceiling() {
+        let provider = Succeeds;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let _ = run_accounted_call(
+            AccountedCall {
+                provider: &provider,
+                role: ModelCallRole::Summarization,
+                model_hint: "configured-model".into(),
+                request: CompletionRequest {
+                    messages: vec![CompletionMessage::user("work")],
+                    max_output_tokens: Some(8_192),
+                    temperature: None,
+                    effort: Some(stella_protocol::completion::ReasoningEffort::Low),
+                    tools: Vec::new(),
+                    reasoning: None,
+                    params: None,
+                },
+                retry_policy: RetryPolicy::new(1, 0, 0),
+                timeout: None,
+                estimated_input_tokens: 1,
+                receipt: None,
+            },
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let usage = events
+            .iter()
+            .find(|event| matches!(event, AgentEvent::StepUsage { .. }))
+            .expect("a settled call emits its metering record");
+        assert!(
+            matches!(
+                usage,
+                AgentEvent::StepUsage {
+                    effort: Some(stella_protocol::completion::ReasoningEffort::Low),
+                    max_output_tokens: Some(8_192),
+                    ..
+                }
+            ),
+            "the metering record must carry the dispatched request's effort \
+             and ceiling: {usage:?}"
+        );
+    }
+
+    /// **Witness (#4621).** The auxiliary path stamps the generation shape
+    /// too. It matters more here than on the engine's own loop: a management
+    /// call's sampling posture is not the session's, so without this row the
+    /// trace cannot say what a summarizer or a plugin seat was asked for at
+    /// all. Fails before #4621, when `StepUsage` had neither field.
+    #[tokio::test]
+    async fn step_usage_carries_the_requests_generation_params() {
+        let provider = Succeeds;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+        let asked = stella_protocol::completion::GenerationParams {
+            top_k: Some(20),
+            seed: Some(4_621),
+            verbosity: Some(stella_protocol::completion::Verbosity::Low),
+            ..Default::default()
+        };
+        let _ = run_accounted_call(
+            AccountedCall {
+                provider: &provider,
+                role: ModelCallRole::Summarization,
+                model_hint: "configured-model".into(),
+                request: CompletionRequest {
+                    messages: vec![CompletionMessage::user("work")],
+                    max_output_tokens: None,
+                    temperature: Some(0.35),
+                    effort: None,
+                    tools: Vec::new(),
+                    reasoning: None,
+                    params: Some(asked),
+                },
+                retry_policy: RetryPolicy::new(1, 0, 0),
+                timeout: None,
+                estimated_input_tokens: 1,
+                receipt: None,
+            },
+            &mut budget,
+            &EventSender::new(tx),
+            &NoopSleeper,
+        )
+        .await;
+
+        let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        let usage = events
+            .iter()
+            .find(|event| matches!(event, AgentEvent::StepUsage { .. }))
+            .expect("a settled call emits its metering record");
+        let AgentEvent::StepUsage {
+            temperature,
+            params,
+            ..
+        } = usage
+        else {
+            unreachable!("filtered to StepUsage above")
+        };
+        assert_eq!(*temperature, Some(0.35), "{usage:?}");
+        assert_eq!(*params, Some(asked), "{usage:?}");
     }
 
     struct Succeeds;

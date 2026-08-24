@@ -29,7 +29,7 @@ fn scripted_turn() -> (TurnHead, Vec<Event>, Receipt) {
     );
     skill.footer = Some("  injected 10-layer feature contract · used 42× this repo".into());
 
-    let mut read = Event::new(EventKind::Read, "…/lifecycle.rs");
+    let mut read = Event::new(EventKind::Read { lines: None }, "…/lifecycle.rs");
     read.duration_ms = 3;
 
     let mut edit = Event::new(
@@ -95,8 +95,9 @@ fn a_scripted_turn_renders_begin_events_and_receipt() {
         "── turn 14 execute · kimi-k3 · budget $0.60",
         "✦ skill oxagen-feature · auto",
         "injected 10-layer feature contract",
-        // No size column: a read has no producer for one, so the head states
-        // its path and stops (#4180).
+        // No size column while nothing has reported one: this head carries
+        // `lines: None`, so it states its path and stops (#4180; #4297 is the
+        // producer that fills it).
         "▸ read …/lifecycle.rs",
         "● edit …/self_driving_cmd.rs +3 -1",
         "● run cargo test -p stella-core",
@@ -122,7 +123,7 @@ fn a_turn_rule_spans_the_full_width() {
 #[test]
 fn every_event_row_shows_its_rail_in_the_correct_metal() {
     let cases = [
-        (EventKind::Read, token::MUTED),
+        (EventKind::Read { lines: None }, token::MUTED),
         (
             EventKind::Edit {
                 extent: Extent::delta(1, 0),
@@ -181,7 +182,7 @@ fn every_event_row_shows_its_rail_in_the_correct_metal() {
 /// SPEC 6.3: reads collapse by default, edits expand.
 #[test]
 fn reads_collapse_and_edits_expand_by_default() {
-    assert!(EventKind::Read.collapses_by_default());
+    assert!(EventKind::Read { lines: None }.collapses_by_default());
     assert!(
         !EventKind::Edit {
             extent: Extent::delta(1, 1)
@@ -299,7 +300,7 @@ fn a_partial_test_pass_is_not_green() {
 /// `crates/stella-tui/src/render/…` strings differing only in their last cells.
 #[test]
 fn a_path_subject_dims_its_directory_and_brightens_its_basename() {
-    let mut event = Event::new(EventKind::Read, Subject::path("a/b/c.rs"));
+    let mut event = Event::new(EventKind::Read { lines: None }, Subject::path("a/b/c.rs"));
     event.collapsed = Some(false);
     let spans = head_row(&event, token::SILVER, W).spans;
 
@@ -362,7 +363,7 @@ fn a_command_subject_stays_one_unemphasised_span() {
 #[test]
 fn every_head_glyph_is_in_the_vocabulary() {
     let kinds = [
-        EventKind::Read,
+        EventKind::Read { lines: None },
         EventKind::Edit {
             extent: Extent::delta(2, 1),
         },

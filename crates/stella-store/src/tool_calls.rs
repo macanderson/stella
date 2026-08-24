@@ -778,6 +778,62 @@ impl Store {
     }
 }
 
+/// One execution's per-tool call/error buckets for the usage hub —
+/// [`Store::execution_rollup`]'s histogram, computed here because this table
+/// is where the counted facts live.
+pub(crate) fn tool_histogram(
+    conn: &Connection,
+    execution_id: i64,
+) -> Result<Vec<crate::usage::ToolBucket>> {
+    let mut stmt = conn.prepare(
+        "SELECT name, surface, COUNT(*), \
+                SUM(CASE WHEN state = 'error' THEN 1 ELSE 0 END) \
+         FROM tool_calls WHERE execution_id = ?1 GROUP BY name, surface",
+    )?;
+    let rows = stmt.query_map(params![execution_id], |r| {
+        Ok(crate::usage::ToolBucket {
+            tool: r.get(0)?,
+            surface: r.get(1)?,
+            calls: r.get(2)?,
+            errors: r.get(3)?,
+        })
+    })?;
+    let mut v = Vec::new();
+    for row in rows {
+        v.push(row?);
+    }
+    Ok(v)
+}
+
+/// The classified split of [`tool_histogram`]'s `errors` (#4550): the same
+/// `state = 'error'` rows, grouped also by `error_class` (`''` for a site not
+/// yet audited into a class). Abandonment is not an error here for the same
+/// reason it is not one there (#3146).
+pub(crate) fn error_class_histogram(
+    conn: &Connection,
+    execution_id: i64,
+) -> Result<Vec<crate::usage::ErrorClassBucket>> {
+    let mut stmt = conn.prepare(
+        "SELECT name, surface, error_class, COUNT(*) \
+         FROM tool_calls WHERE execution_id = ?1 AND state = 'error' \
+         GROUP BY name, surface, error_class \
+         ORDER BY name, surface, error_class",
+    )?;
+    let rows = stmt.query_map(params![execution_id], |r| {
+        Ok(crate::usage::ErrorClassBucket {
+            tool: r.get(0)?,
+            surface: r.get(1)?,
+            class: r.get(2)?,
+            errors: r.get(3)?,
+        })
+    })?;
+    let mut v = Vec::new();
+    for row in rows {
+        v.push(row?);
+    }
+    Ok(v)
+}
+
 mod orphan_sweep;
 
 #[cfg(test)]

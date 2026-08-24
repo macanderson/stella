@@ -36,6 +36,7 @@ fn tool_result(name: &str, ok: bool, path: Option<&str>, body: &str) -> Transcri
         duration_ms: 7,
         speculated: false,
         diff: Vec::new(),
+        read_size: None,
     }
 }
 
@@ -55,6 +56,7 @@ fn result_for(path: Option<&str>, body: &str) -> TranscriptEntry {
         duration_ms: 7,
         speculated: false,
         diff: Vec::new(),
+        read_size: None,
     }
 }
 

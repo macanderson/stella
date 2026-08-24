@@ -1300,6 +1300,7 @@ mod tests {
                 name: "reviewer".to_string(),
                 description: "reviews diffs".to_string(),
                 tools: None,
+                model: None,
                 body: "You review.".to_string(),
                 source_path: "x/reviewer.md".to_string(),
             }],

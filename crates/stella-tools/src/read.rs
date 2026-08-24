@@ -469,6 +469,10 @@ impl Tool for ReadFile {
                 unread.join(", ")
             ));
         }
+        // No structured `data` on the plural form: line coverage is a
+        // per-file fact, and one shown/total pair over an interleaved batch
+        // would attribute every file's lines to none of them. The single form
+        // is the producer the deck's read head resolves (#4297).
         ToolOutput::ok(rendered)
     }
 }
@@ -682,15 +686,21 @@ impl ReadFile {
                     // and never the 0-based index derived from it — "offset 4
                     // is past end" for a call that said 5 sent the model
                     // hunting for an off-by-one that wasn't there.
-                    return ToolOutput::ok(format!(
-                        "(file has {total} lines; the requested offset is past the end)\
-                         {READ_FOOTER_OPEN}0/{total}{READ_FOOTER_TALLY_MID}{reads}\
-                         {READ_FOOTER_TALLY_END}{READ_FOOTER_CLAUSE_SEP}requested offset \
-                         {offset} is past the end{READ_FOOTER_CLOSE}",
-                        total = lines.len(),
-                        reads = tally.reads,
-                        offset = offset.unwrap_or(1),
-                    ));
+                    return ToolOutput::ok_with_data(
+                        format!(
+                            "(file has {total} lines; the requested offset is past the end)\
+                             {READ_FOOTER_OPEN}0/{total}{READ_FOOTER_TALLY_MID}{reads}\
+                             {READ_FOOTER_TALLY_END}{READ_FOOTER_CLAUSE_SEP}requested offset \
+                             {offset} is past the end{READ_FOOTER_CLOSE}",
+                            total = lines.len(),
+                            reads = tally.reads,
+                            offset = offset.unwrap_or(1),
+                        ),
+                        // A past-end read still read the file; it showed none
+                        // of it. Same producer, same keys — constant per file
+                        // state, so two past-end sweeps still compare equal.
+                        serde_json::json!({ "lines_shown": 0, "lines_total": lines.len() }),
+                    );
                 }
 
                 // `write!` into one pre-sized buffer rather than a `format!`
@@ -768,7 +778,20 @@ impl ReadFile {
                     path,
                     shown == total && clipped_lines == 0 && !payload_capped,
                 );
-                ToolOutput::ok(numbered)
+                // The counts ride as structured `data` alongside the prose, so
+                // a consumer that wants the measurement (the deck's read head,
+                // #4297) reads the producer's own numbers instead of parsing
+                // the footer back out of a payload that is capped and whose
+                // shape belongs to loop comparison. Both numbers, because a
+                // truncated read must be statable as truncated: `shown` is
+                // what actually entered context, `total` what is on disk.
+                // Deterministic for a given file state and window, so it
+                // cannot re-blind the loop detector the footer strip exists
+                // for (`comparable_output` keeps `data` in the comparison).
+                ToolOutput::ok_with_data(
+                    numbered,
+                    serde_json::json!({ "lines_shown": shown, "lines_total": total }),
+                )
             }
             Err(message) => {
                 ToolOutput::classified_error(stella_protocol::ErrorClass::InvalidInput, message)

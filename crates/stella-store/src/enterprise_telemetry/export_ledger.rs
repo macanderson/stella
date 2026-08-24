@@ -290,6 +290,16 @@ impl crate::Store {
     /// bounded (1..=256) — an unbounded page would let one
     /// call materialize an entire backlog. A legacy row with no nonce has one
     /// minted and persisted as it is read, so callers never see an empty one.
+    ///
+    /// Decision (#4484): an enrolled org's billing export never receives a
+    /// flagged floor row for an execution whose usage never completed, even
+    /// though #4479 lets that floor stand in the *local* rollup and
+    /// `stella usage report`. SOC 2's processing-integrity criterion holds a
+    /// billing trail to complete and accurate inputs, and an admittedly
+    /// incomplete envelope fails that test regardless of the flag riding
+    /// along with it. This gate — and the one it enforces via
+    /// `usage_complete = 1` — stays as-is; do not widen it to admit flagged
+    /// floors without a fresh egress-policy decision (architecture rule 3).
     pub fn pending_enterprise_export_page(
         &self,
         sink_fingerprint: &str,

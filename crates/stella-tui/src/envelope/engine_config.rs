@@ -138,6 +138,11 @@ pub struct EngineConfigState {
     pub effort_auto: bool,
     /// Auto per-agent reasoning (on for verifier/worker, off for triage).
     pub reasoning_auto: bool,
+    /// Minimal base persona: the session's built-in system prompt reduced to
+    /// a bare tool advertisement, leaving the prose to the prompt-mutating
+    /// settings (the `default` agent's custom prompt, workspace memories,
+    /// rules). The `agent_engine_config.minimal_prompt` toggle.
+    pub minimal_prompt: bool,
     /// The model slugs the model pickers offer (`allowed_models`). Empty
     /// means "no restriction" — pickers fall back to `catalog_models`.
     pub allowed_models: Vec<String>,

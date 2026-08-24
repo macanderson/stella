@@ -53,6 +53,7 @@ fn result(name: &str, ok: bool, body: &str) -> TranscriptEntry {
         duration_ms: 17,
         speculated: false,
         diff: Vec::new(),
+        read_size: None,
     }
 }
 

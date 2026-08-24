@@ -144,6 +144,7 @@ fn esc_steps_back_from_the_detail_to_the_list_before_closing() {
             messages: vec![crate::envelope::InspectMessage {
                 role: "system".into(),
                 content: "You are Stella.".into(),
+                sections: Vec::new(),
             }],
             verified: true,
             unresolved: 0,

@@ -393,6 +393,10 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
                 "tool_calls",
                 "complete",
                 "finish_reason",
+                "effort",
+                "max_output_tokens",
+                "temperature",
+                "params",
                 "sub_agent_id",
             ] {
                 if !payload[key].is_null() {

@@ -740,6 +740,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             diff,
             context,
             only,
+            system_prompt,
         }) => {
             // Reads the local receipt tables only — no provider, no API key.
             return inspect::run_inspect(&inspect::InspectArgs {
@@ -752,6 +753,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 diff: *diff,
                 context: *context,
                 only: *only,
+                system_prompt: *system_prompt,
             })
             .map_err(failure::CliFailure::from);
         }
@@ -981,6 +983,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
     cfg.turn_timeout = cli.globals.turn_timeout;
     cfg.max_output_tokens = cli.globals.max_output_tokens;
     cfg.plan_mode = cli.globals.plan_mode;
+    cfg.minimal_prompt = cli.globals.minimal;
     // `--tools` is the lowest-authority scope (#1263): folded in AFTER
     // settings so it can only narrow what they already allowed. `narrow_with`
     // is the intersection, not a key-level merge, which is what lets the

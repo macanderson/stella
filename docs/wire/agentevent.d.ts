@@ -457,6 +457,49 @@ export type FinishReason = "stop" | "length" | "tool_calls" | "content_filter";
 export type FlipOutcome = "unobserved" | "not_achieved" | "achieved";
 
 /**
+ * Optional sampling/routing parameter overrides riding a
+ * [`CompletionRequest`]. Every field is independently optional —
+ * "include" semantics: `None` leaves the provider's own default in place,
+ * `Some` puts the value on the wire. Each adapter forwards the subset its
+ * dialect supports and silently drops the rest (a param the provider
+ * can't express must never fail the request).
+ */
+export interface GenerationParams {
+  /**
+   * Penalize tokens by their frequency in the text so far.
+   */
+  frequency_penalty?: number | null;
+  /**
+   * Penalize tokens that have appeared at all in the text so far.
+   */
+  presence_penalty?: number | null;
+  /**
+   * Multiplicative repetition penalty (>1 discourages, <1 encourages).
+   */
+  repetition_penalty?: number | null;
+  /**
+   * Random seed for deterministic outputs, where supported.
+   */
+  seed?: number | null;
+  /**
+   * Which capacity tier to route to ([`ServiceTier`]).
+   */
+  service_tier?: ServiceTier | null;
+  /**
+   * Limit sampling to the k highest-probability tokens.
+   */
+  top_k?: number | null;
+  /**
+   * Nucleus sampling: cumulative-probability cutoff.
+   */
+  top_p?: number | null;
+  /**
+   * How much detail to ask for ([`Verbosity`]).
+   */
+  verbosity?: Verbosity | null;
+}
+
+/**
  * What a `HunkReview` gate presents for per-hunk approval before a mutating
  * tool call writes anything (#1265).
  *
@@ -978,14 +1021,21 @@ export interface ProviderShare {
 }
 
 /**
+ * Reasoning effort forwarded to models with a thinking/extended-reasoning
+ * mode. One enum, mapped per-adapter to the provider's own parameter name
+ * ("reasoning_param").
+ */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
  * What a `ScopeReview` gate presents for approval before a large plan
  * executes (L-E5).
  *
- * The fields after `estimated_cost_usd` are the scope-card grid's facts
- * (repo/branch, read/write globs, shell policy) — all additive
- * (`serde(default)`), so streams recorded before they existed parse with
- * every one absent, and a proposal that names none serializes exactly as it
- * always has.
+ * Everything after `estimated_cost_usd` is additive (`serde(default)`), so
+ * streams recorded before those fields existed parse with every one absent,
+ * and a proposal that names none serializes exactly as it always has:
+ * `repo`/`branch`, the read and write globs and the shell policy are the
+ * scope-card grid's facts, and `revision` is the plan breadcrumb's.
  */
 export interface ScopeProposal {
   /**
@@ -999,6 +1049,12 @@ export interface ScopeProposal {
   /**
    * How many files the plan expects to touch — the magnitude the gate's
    * thresholds are compared against.
+   *
+   * `0` is *not stated*, the same as an empty glob list below, and a
+   * surface must render it as nothing rather than as "~0 files": a
+   * producer that knows the steps but not the blast radius is the common
+   * case, and a plan claiming it touches no files is a different and
+   * false statement.
    */
   estimated_files: number;
   /**
@@ -1010,6 +1066,19 @@ export interface ScopeProposal {
    * path), when the planner named one.
    */
   repo?: string | null;
+  /**
+   * Which revision of the plan this is: `1` for a plan's first proposal,
+   * incremented each time a changed plan is re-proposed. What a producer
+   * counts a plan's lifetime as is its own to decide — the deck's gate
+   * resets per turn, because that is where the deck also drops the plan
+   * it was holding.
+   *
+   * `None` means the producer does not track revisions — every recording
+   * written before this field existed decodes that way, and a surface
+   * rendering a breadcrumb must say nothing rather than claim `r1` for a
+   * plan whose history it cannot see (#4333).
+   */
+  revision?: number | null;
   /**
    * The shell policy in force for the run (e.g. `allowlisted`,
    * `read-only`, `none`), when stated.
@@ -1028,6 +1097,13 @@ export interface ScopeProposal {
    */
   write_globs?: string[];
 }
+
+/**
+ * Provider service tier: `Priority` routes to faster paid-tier capacity,
+ * `Flex` to cheaper capacity with slower response times. Only applied by
+ * providers that support tiered service; others use their default tier.
+ */
+export type ServiceTier = "auto" | "default" | "flex" | "priority";
 
 /**
  * The name of a stage boundary — an OPEN vocabulary. The host's own boundaries are listed in `examples`; an installed plugin may contribute a stage under any other name, so a consumer must branch on the names it knows and keep a default arm rather than treating an unlisted value as invalid.
@@ -1084,6 +1160,14 @@ export type SubAgentPhase = {
    * Nesting depth: `1` for a child of the top-level turn.
    */
   depth: number;
+  /**
+   * The reasoning effort the child's model calls are pinned to, as
+   * resolved at dispatch — the spec's override or, absent one, the
+   * parent engine's own setting. `None` when neither pins one. This
+   * is the only durable record of a child's effort: the metering
+   * rows carry the child's model and provider but not this.
+   */
+  effort?: ReasoningEffort | null;
   /**
    * The child's task, truncated for display. Never the full prompt —
    * the prompt can be large and the event stream is journaled.
@@ -1278,6 +1362,13 @@ export type ToolOutput = {
  * envelope. Error bodies and prompts are deliberately unrepresentable.
  */
 export type UsageIncompleteReason = "provider_error" | "timeout" | "cancelled";
+
+/**
+ * Response-detail level for providers with a verbosity parameter (OpenAI's
+ * `text.verbosity`). Adapters whose wire has no equivalent ignore it — the
+ * same never-fail contract as [`ReasoningEffort`].
+ */
+export type Verbosity = "low" | "medium" | "high";
 
 /**
  * Evidence backing a `Verdict`. `deterministic` distinguishes the
@@ -1698,6 +1789,10 @@ export type AgentEvent = {
   cost_usd: number;
   duration_ms: number;
   /**
+   * The reasoning effort the dispatched request actually carried -- the resolved value after auto-mode and per-model downgrade, never the configured one. Absent when the request pinned no effort or the stream predates this field; absence is not a pin.
+   */
+  effort?: ReasoningEffort | null;
+  /**
    * The engine's RAW (uncalibrated) pre-call estimate of the input it
    * sent — paired with `input_tokens` (plus cache-write tokens, which
    * are real prompt tokens split out only for pricing) this is one
@@ -1717,6 +1812,10 @@ export type AgentEvent = {
    */
   finish_reason?: FinishReason | null;
   input_tokens: number;
+  /**
+   * The output-token ceiling the dispatched request asked for -- the effective per-call value after the turn's standing clamp, so it can move between steps of one turn. Paired with finish_reason == length it names the ceiling the cut-off happened at. Absent when the request asked for no ceiling or the stream predates this field.
+   */
+  max_output_tokens?: number | null;
   model: string;
   /**
    * Authoritative model output for calls that do not emit a separate
@@ -1726,6 +1825,10 @@ export type AgentEvent = {
    */
   output_text?: string | null;
   output_tokens: number;
+  /**
+   * The sampling and routing overrides the dispatched request carried -- top_p, top_k, the penalties, seed, verbosity, service_tier. Content-free: every field is a number or a closed enum. Absent when the request carried no overrides, or when the stream predates this field.
+   */
+  params?: GenerationParams | null;
   /**
    * Provider which actually served this call, never the session's
    * configured default. Empty only on legacy events.
@@ -1758,6 +1861,10 @@ export type AgentEvent = {
    * Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text.
    */
   sub_agent_id?: string | null;
+  /**
+   * The sampling temperature the dispatched request carried. Absent when the request pinned none, or when the stream predates this field; absence is not zero -- an unpinned temperature is the provider's own default.
+   */
+  temperature?: number | null;
   tool_calls: number;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
@@ -2013,6 +2120,18 @@ export type AgentEvent = {
    */
   turn_instance: number;
   type: "step_manifest";
+  /**
+   * The upstream the gateway routed this call to, when it names one —
+   * the same contract as [`AgentEvent::StepUsage`]'s field of this
+   * name, carried here because this event is what the store projects
+   * into the durable `step_receipt` row (#3054): without it a stored
+   * receipt says `openrouter` for every gateway call and `stella
+   * inspect` cannot answer "which vendor served this call" for a past
+   * execution. `None` on direct endpoints, where `provider` is
+   * already the answer, and on every manifest recorded before this
+   * field existed (hence `serde(default)`).
+   */
+  upstream_provider?: string | null;
 } | {
   step: ProofStep;
   /**

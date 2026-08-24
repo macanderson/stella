@@ -214,7 +214,8 @@ fi
 # `.github/workflows/bench.yml` gates seven pytest suites; `make bench-test`
 # used to run three of them, so four had no local command at all. #2844 merged
 # on 2026-08-11 with that workflow already reporting `failure`, on a
-# DETERMINISTIC arenabench failure any local run of the file would have caught,
+# DETERMINISTIC failure (in the arenabench suite, in-tree until #2380's
+# ejection) any local run of the file would have caught,
 # and `main` went red. This hook is the repository's stated answer to
 # `enforce_admins` being off, and for those suites it had nothing to run.
 #
@@ -223,7 +224,7 @@ fi
 # here — unlike wire-schema's list above, which is still two answers to one
 # question. scripts/check-bench-suites.sh fails the gate if a copy reappears.
 #
-# It costs minutes when it fires (arenabench alone is ~70s), which is why it
+# It costs minutes when it fires, which is why it
 # fires only on a matching diff, and why `GATE=fast` — whose contract is
 # "no tests" — skips it out loud rather than silently.
 

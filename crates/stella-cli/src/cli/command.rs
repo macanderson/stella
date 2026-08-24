@@ -596,6 +596,14 @@ pub(crate) enum Command {
         /// that would otherwise bury the prompt's own delta
         #[arg(long, value_enum, default_value = "all")]
         only: inspect::RoleFilter,
+
+        /// Show only this call's system prompt, split into provenance-labelled
+        /// sections: which setting put each span there — the built-in persona,
+        /// the session environment, workspace memories, workspace rules, the
+        /// SessionStart hook context. The sections concatenate back to the
+        /// exact bytes the model was sent
+        #[arg(long = "system-prompt")]
+        system_prompt: bool,
     },
 
     /// Pass calibration: false-positive rate vs CI and reverts

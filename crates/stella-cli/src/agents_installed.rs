@@ -431,6 +431,9 @@ pub fn creation_messages(description: &str) -> Vec<CompletionMessage> {
                   - `name` must be short, kebab-case, and specific.\n\
                   - Include the `tools:` line ONLY when the agent should be restricted to a \
                   subset of tools; omit it entirely to grant all tools.\n\
+                  - An optional `model: provider/slug` line pins the model the agent runs \
+                  on; omit it to ride the session's model. Include it only when the user's \
+                  description asks for a specific model.\n\
                   - The body must be a complete, self-contained system prompt.\n\
                   - Respond with ONLY the complete markdown file — no code fences, no \
                   commentary before or after.";

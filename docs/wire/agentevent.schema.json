@@ -729,6 +729,84 @@
         }
       ]
     },
+    "GenerationParams": {
+      "description": "Optional sampling/routing parameter overrides riding a\n[`CompletionRequest`]. Every field is independently optional —\n\"include\" semantics: `None` leaves the provider's own default in place,\n`Some` puts the value on the wire. Each adapter forwards the subset its\ndialect supports and silently drops the rest (a param the provider\ncan't express must never fail the request).",
+      "properties": {
+        "frequency_penalty": {
+          "description": "Penalize tokens by their frequency in the text so far.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "presence_penalty": {
+          "description": "Penalize tokens that have appeared at all in the text so far.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "repetition_penalty": {
+          "description": "Multiplicative repetition penalty (>1 discourages, <1 encourages).",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "seed": {
+          "description": "Random seed for deterministic outputs, where supported.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "service_tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceTier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which capacity tier to route to ([`ServiceTier`])."
+        },
+        "top_k": {
+          "description": "Limit sampling to the k highest-probability tokens.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "top_p": {
+          "description": "Nucleus sampling: cumulative-probability cutoff.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "verbosity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Verbosity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How much detail to ask for ([`Verbosity`])."
+        }
+      },
+      "type": "object"
+    },
     "HunkProposal": {
       "description": "What a `HunkReview` gate presents for per-hunk approval before a mutating\ntool call writes anything (#1265).\n\nThe hunks are a **flat, ordered list across every file the call touches**,\nnot a per-file tree: the reviewer's answer is a set of indices into this\nlist, and one flat coordinate space is what keeps that answer unambiguous\nwhen two files change in the same call.",
       "properties": {
@@ -1580,8 +1658,38 @@
       ],
       "type": "object"
     },
+    "ReasoningEffort": {
+      "description": "Reasoning effort forwarded to models with a thinking/extended-reasoning\nmode. One enum, mapped per-adapter to the provider's own parameter name\n(\"reasoning_param\").",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Least thinking — cheapest and fastest.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "The middle setting most adapters treat as their default.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "More thinking, for harder steps.",
+          "type": "string"
+        },
+        {
+          "const": "xhigh",
+          "description": "Above `High`, where the provider exposes a fourth level.",
+          "type": "string"
+        },
+        {
+          "const": "max",
+          "description": "The provider's ceiling.",
+          "type": "string"
+        }
+      ]
+    },
     "ScopeProposal": {
-      "description": "What a `ScopeReview` gate presents for approval before a large plan\nexecutes (L-E5).\n\nThe fields after `estimated_cost_usd` are the scope-card grid's facts\n(repo/branch, read/write globs, shell policy) — all additive\n(`serde(default)`), so streams recorded before they existed parse with\nevery one absent, and a proposal that names none serializes exactly as it\nalways has.",
+      "description": "What a `ScopeReview` gate presents for approval before a large plan\nexecutes (L-E5).\n\nEverything after `estimated_cost_usd` is additive (`serde(default)`), so\nstreams recorded before those fields existed parse with every one absent,\nand a proposal that names none serializes exactly as it always has:\n`repo`/`branch`, the read and write globs and the shell policy are the\nscope-card grid's facts, and `revision` is the plan breadcrumb's.",
       "properties": {
         "branch": {
           "description": "The branch the work lands on, when named.",
@@ -1599,7 +1707,7 @@
           ]
         },
         "estimated_files": {
-          "description": "How many files the plan expects to touch — the magnitude the gate's\nthresholds are compared against.",
+          "description": "How many files the plan expects to touch — the magnitude the gate's\nthresholds are compared against.\n\n`0` is *not stated*, the same as an empty glob list below, and a\nsurface must render it as nothing rather than as \"~0 files\": a\nproducer that knows the steps but not the blast radius is the common\ncase, and a plan claiming it touches no files is a different and\nfalse statement.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1615,6 +1723,15 @@
           "description": "The repository the scope binds to (`owner/name`, or a workspace\npath), when the planner named one.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "description": "Which revision of the plan this is: `1` for a plan's first proposal,\nincremented each time a changed plan is re-proposed. What a producer\ncounts a plan's lifetime as is its own to decide — the deck's gate\nresets per turn, because that is where the deck also drops the plan\nit was holding.\n\n`None` means the producer does not track revisions — every recording\nwritten before this field existed decodes that way, and a surface\nrendering a breadcrumb must say nothing rather than claim `r1` for a\nplan whose history it cannot see (#4333).",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
             "null"
           ]
         },
@@ -1650,6 +1767,31 @@
         "estimated_files"
       ],
       "type": "object"
+    },
+    "ServiceTier": {
+      "description": "Provider service tier: `Priority` routes to faster paid-tier capacity,\n`Flex` to cheaper capacity with slower response times. Only applied by\nproviders that support tiered service; others use their default tier.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Let the provider pick the tier.",
+          "type": "string"
+        },
+        {
+          "const": "default",
+          "description": "The account's standard tier.",
+          "type": "string"
+        },
+        {
+          "const": "flex",
+          "description": "Cheaper capacity, slower responses.",
+          "type": "string"
+        },
+        {
+          "const": "priority",
+          "description": "Faster paid-tier capacity.",
+          "type": "string"
+        }
+      ]
     },
     "StageName": {
       "description": "The name of a stage boundary — an OPEN vocabulary. The host's own boundaries are listed in `examples`; an installed plugin may contribute a stage under any other name, so a consumer must branch on the names it knows and keep a default arm rather than treating an unlisted value as invalid.",
@@ -1733,6 +1875,17 @@
               "maximum": 255,
               "minimum": 0,
               "type": "integer"
+            },
+            "effort": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReasoningEffort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The reasoning effort the child's model calls are pinned to, as\nresolved at dispatch — the spec's override or, absent one, the\nparent engine's own setting. `None` when neither pins one. This\nis the only durable record of a child's effort: the metering\nrows carry the child's model and provider but not this."
             },
             "instruction_preview": {
               "description": "The child's task, truncated for display. Never the full prompt —\nthe prompt can be large and the event stream is journaled.",
@@ -2046,6 +2199,26 @@
         {
           "const": "cancelled",
           "description": "The caller dropped the turn (hard cancel) while a paid provider\nattempt was still in flight — the call may have real server-side\ncost whose usage is unknowable. Emitted by the engine's drop guard,\nwhich is armed only for exactly that window (a call that settles\nnormally reports through its ordinary `StepUsage` envelope instead).",
+          "type": "string"
+        }
+      ]
+    },
+    "Verbosity": {
+      "description": "Response-detail level for providers with a verbosity parameter (OpenAI's\n`text.verbosity`). Adapters whose wire has no equivalent ignore it — the\nsame never-fail contract as [`ReasoningEffort`].",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Terse answers.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "The provider's usual level of detail.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "Expansive answers.",
           "type": "string"
         }
       ]
@@ -2800,6 +2973,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The reasoning effort the dispatched request actually carried -- the resolved value after auto-mode and per-model downgrade, never the configured one. Absent when the request pinned no effort or the stream predates this field; absence is not a pin."
+        },
         "estimated_input_tokens": {
           "default": 0,
           "description": "The engine's RAW (uncalibrated) pre-call estimate of the input it\nsent — paired with `input_tokens` (plus cache-write tokens, which\nare real prompt tokens split out only for pricing) this is one\ndrift sample, the feedback that calibrates future estimates per\nmodel (`stella-core::estimator::Calibration`). Raw by contract:\nconsumers rebuild the correction from these pairs, and a\ncorrected estimate here would compound the correction on every\nround trip. Attachment weight is excluded — the media estimate is\na deliberate ~80× over-estimate of billed tokens, right for\ncontext pressure and poison as a drift sample. `0` means no\nestimate was taken (pre-drift emitters — hence `serde(default)`,\nso old streams still parse).",
@@ -2823,6 +3007,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "max_output_tokens": {
+          "description": "The output-token ceiling the dispatched request asked for -- the effective per-call value after the turn's standing clamp, so it can move between steps of one turn. Paired with finish_reason == length it names the ceiling the cut-off happened at. Absent when the request asked for no ceiling or the stream predates this field.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "model": {
           "type": "string"
         },
@@ -2837,6 +3030,17 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The sampling and routing overrides the dispatched request carried -- top_p, top_k, the penalties, seed, verbosity, service_tier. Content-free: every field is a number or a closed enum. Absent when the request carried no overrides, or when the stream predates this field."
         },
         "provider": {
           "default": "",
@@ -2871,6 +3075,14 @@
           "description": "Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "temperature": {
+          "description": "The sampling temperature the dispatched request carried. Absent when the request pinned none, or when the stream predates this field; absence is not zero -- an unpinned temperature is the provider's own default.",
+          "format": "float",
+          "type": [
+            "number",
             "null"
           ]
         },
@@ -3335,6 +3547,13 @@
         "type": {
           "const": "step_manifest",
           "type": "string"
+        },
+        "upstream_provider": {
+          "description": "The upstream the gateway routed this call to, when it names one —\nthe same contract as [`AgentEvent::StepUsage`]'s field of this\nname, carried here because this event is what the store projects\ninto the durable `step_receipt` row (#3054): without it a stored\nreceipt says `openrouter` for every gateway call and `stella\ninspect` cannot answer \"which vendor served this call\" for a past\nexecution. `None` on direct endpoints, where `provider` is\nalready the answer, and on every manifest recorded before this\nfield existed (hence `serde(default)`).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

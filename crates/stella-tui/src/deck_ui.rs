@@ -814,6 +814,12 @@ pub struct DeckUi {
     /// tighter gate than a decision being deliberated, and it carries the
     /// shorter of the two deadlines.
     pub approval: crate::views::approval::ApprovalOverlay,
+    /// The `/model` picker: switch this session's model. Modal while open;
+    /// rows come live from `engine.state` (see [`crate::views::picker`]).
+    pub model_picker: crate::views::picker::ListPicker,
+    /// The `/agent` picker: assume an installed agent this session. Modal
+    /// while open; rows come live from `installed.entries`.
+    pub agent_picker: crate::views::picker::ListPicker,
 }
 
 impl Default for DeckUi {
@@ -900,6 +906,8 @@ impl Default for DeckUi {
             tools: crate::views::tools::ToolsOverlay::default(),
             question: crate::views::question::QuestionOverlay::default(),
             approval: crate::views::approval::ApprovalOverlay::default(),
+            model_picker: crate::views::picker::ListPicker::default(),
+            agent_picker: crate::views::picker::ListPicker::default(),
         }
     }
 }
@@ -1574,6 +1582,8 @@ mod gates;
 pub mod list_nav;
 mod local;
 mod parked;
+/// The session-override pickers' key routing (`/model`, `/agent`).
+pub(crate) mod pickers;
 pub mod sessions;
 /// Esc-with-something-to-say — see [`steer`].
 mod steer;
@@ -1843,7 +1853,12 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     if ui.inspect_open {
         return handle_inspect_key(key, ui);
     }
-    // The floating cards (`/plan` · `/models` ·
+    // The session-override pickers (`/model`, `/agent`) are modal on the
+    // same terms as the overlays above.
+    if let Some(action) = pickers::handle_key(key, ui) {
+        return action;
+    }
+    // The floating cards (`/plan` · `/info` ·
     // `/budget`) are modal exactly like the overlays above: the topmost card
     // claims every key — Esc closes it before any other Esc meaning fires.
     if let Some(action) = cards::handle_card_key(key, model, ui) {

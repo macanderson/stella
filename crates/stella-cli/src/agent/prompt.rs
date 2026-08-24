@@ -410,9 +410,54 @@ Rules:
 - When a choice is ambiguous and getting it wrong would be costly, take the reversible option and name the ambiguity in your answer; otherwise proceed with your best judgment."#
 );
 
+/// The minimal base persona (`--minimal` / `[agents] minimal_prompt`): the
+/// tool surface, stated once, and nothing else. It exists for the operator who
+/// wants the prompt-mutating settings — `agents.default.prompt`, workspace
+/// memories, rules, SessionStart hook context — to be the whole voice of the
+/// system prompt, with the built-in persona reduced to advertising what the
+/// schemas cannot: which tools exist as a surface.
+///
+/// Deliberately a plain literal rather than a `concat!` of the shared
+/// contracts. `prompt/parity.rs` scans this file for `concat!` prompts and
+/// holds each one to every shared contract; the minimal persona's defining
+/// property is that it embeds none of them, so it stays outside that scan and
+/// is pinned the other way — `prompt/tests.rs` asserts no contract's bytes
+/// reach it. What it is still held to is the tool catalog: `prompt/tool_names.rs`
+/// checks it names every built-in and no retired one, via
+/// `parity::BASE_PROMPTS`.
+///
+/// When minimal mode is on, a configured `agents.default.prompt` appends AFTER
+/// this base instead of replacing it (see [`resolved_base`]) — the custom
+/// prompt is the prose channel minimal mode exists to hand over, and the tool
+/// advertisement is the one thing it should not have to restate.
+pub(crate) const MINIMAL_SYSTEM_PROMPT: &str = r#"You are Stella, a terminal coding agent.
+
+Your tools are declared in the schemas. The working surface is one shell (bash), the file tools (read_file, write_file, edit_file, delete_file) and one search. Coordination is the task board (task_create, task_list, task_start, task_complete, task_cancel, task_assign), delegate for handing a subtask to a sub-agent, the scratch state plane (save_state, get_state, list_state, delete_state), get_environment for platform facts, and ask_question to put a decision to whoever is driving you. Use exactly what is advertised; never assume a capability no schema names."#;
+
 /// Cap on memory characters appended to the system prompt — memories ride
 /// the prompt cache on every call, so they must stay dense.
 const MEMORY_PROMPT_BUDGET_CHARS: usize = 16_000;
+
+/// The session-environment block's opening bytes.
+///
+/// Named, rather than written inline at the one `push_str` that emits it,
+/// because [`provenance`] labels the reconstructed prompt by finding these
+/// exact bytes: a heading reworded here would silently relabel a span in
+/// `stella inspect --system-prompt` and the deck's INSPECT overlay. Sharing
+/// the constant is what makes that impossible.
+pub(crate) const SESSION_ENVIRONMENT_HEADER: &str = "\n\n## Session environment\n";
+
+/// The workspace-memories block's opening bytes — a [`provenance`] marker on
+/// the same terms as [`SESSION_ENVIRONMENT_HEADER`].
+pub(crate) const MEMORIES_HEADER: &str =
+    "\n\nWorkspace memories (lessons from previous sessions — apply them):\n";
+
+/// The fail-closed memories notice's opening bytes — a [`provenance`] marker
+/// on the same terms as [`SESSION_ENVIRONMENT_HEADER`]. Distinct from
+/// [`MEMORIES_HEADER`] because the two mean opposite things: one says the
+/// memories are here, the other says they were withheld.
+pub(crate) const MEMORIES_OMITTED_PREFIX: &str =
+    "\n\nWorkspace memories were omitted from this prompt: ";
 
 // The A/B recall measurement rate lived here as a `pub(crate)` constant every
 // driver had to pass by hand, and exactly one of them did. It is now
@@ -549,7 +594,7 @@ fn append_session_environment(
         " — not a git repository"
     };
     prompt.push_str(&format!(
-        "\n\n## Session environment\nWorkspace root: {}{repo_note}\nPlatform: {} {}",
+        "{SESSION_ENVIRONMENT_HEADER}Workspace root: {}{repo_note}\nPlatform: {} {}",
         workspace_root.display(),
         std::env::consts::OS,
         std::env::consts::ARCH,
@@ -657,9 +702,8 @@ fn append_workspace_memories(prompt: &mut String, workspace_root: &std::path::Pa
         Ok(suppression) => suppression,
         Err(error) => {
             prompt.push_str(&format!(
-                "
-
-Workspace memories were omitted from this prompt: {error}. They are still on disk in .stella/memories/ and will return once the suppression state is readable."
+                "{MEMORIES_OMITTED_PREFIX}{error}. They are still on disk in .stella/memories/ \
+                 and will return once the suppression state is readable."
             ));
             return;
         }
@@ -704,12 +748,7 @@ Workspace memories were omitted from this prompt: {error}. They are still on dis
     if memories.is_empty() {
         return;
     }
-    prompt.push_str(&format!(
-        "
-
-Workspace memories (lessons from previous sessions — apply them):
-{memories}"
-    ));
+    prompt.push_str(&format!("{MEMORIES_HEADER}{memories}"));
     if dropped > 0 {
         prompt.push_str(&format!(
             "
@@ -730,6 +769,36 @@ fn custom_prompt_base(cfg: &Config) -> Option<String> {
         .filter(|p| !p.trim().is_empty())
 }
 
+/// The BASE instruction set this session sends, before workspace context
+/// appends: `builtin` is the persona the calling surface would use on its own
+/// (`SYSTEM_PROMPT` or `PIPELINE_SYSTEM_PROMPT`).
+///
+/// - Minimal mode off (the default): a configured `agents.default.prompt`
+///   replaces `builtin`, exactly as it always has.
+/// - Minimal mode on (`--minimal` / `[agents] minimal_prompt = "on"`): the
+///   base is [`MINIMAL_SYSTEM_PROMPT`], and a configured custom prompt appends
+///   after it rather than replacing it — minimal mode's contract is that the
+///   user's prompt-mutating fields carry the prose while the base only
+///   advertises the tools, so the custom prompt rides on top of the
+///   advertisement instead of having to restate it.
+///
+/// Deterministic for a fixed config, so the byte-stable prefix discipline
+/// (L-E8) is untouched.
+fn resolved_base(cfg: &Config, builtin: &'static str) -> std::borrow::Cow<'static, str> {
+    use std::borrow::Cow;
+    let custom = custom_prompt_base(cfg);
+    if cfg.minimal_prompt_enabled() {
+        return match custom {
+            Some(custom) => Cow::Owned(format!("{MINIMAL_SYSTEM_PROMPT}\n\n{custom}")),
+            None => Cow::Borrowed(MINIMAL_SYSTEM_PROMPT),
+        };
+    }
+    match custom {
+        Some(custom) => Cow::Owned(custom),
+        None => Cow::Borrowed(builtin),
+    }
+}
+
 /// The raw step-loop system prompt plus workspace memories (`pub(crate)`:
 /// the Command Deck session assembles the same prompt). `workspace_root`
 /// is a parameter (not read off `cfg`) because fleet workers assemble the
@@ -739,14 +808,14 @@ pub(crate) fn build_system_prompt(
     workspace_root: &std::path::Path,
     active_rules: &crate::rules::ResolvedRules,
 ) -> String {
-    let base = custom_prompt_base(cfg);
+    let base = resolved_base(cfg, SYSTEM_PROMPT);
     // The raw step loop always runs the session default (`build_provider`
     // reads `cfg` directly, and `--model` is already folded into it), so the
     // non-pipeline persona resolves its own model ref — true at every surface.
     let session_default =
         stella_protocol::role::ModelRef::new(cfg.provider.id, cfg.model_id.clone());
     assemble_system_prompt(
-        base.as_deref().unwrap_or(SYSTEM_PROMPT),
+        &base,
         workspace_root,
         &cfg.authority,
         active_rules,
@@ -767,14 +836,8 @@ pub(crate) fn build_pipeline_system_prompt(
     active_rules: &crate::rules::ResolvedRules,
     worker: Option<&stella_protocol::role::ModelRef>,
 ) -> String {
-    let base = custom_prompt_base(cfg);
-    assemble_system_prompt(
-        base.as_deref().unwrap_or(PIPELINE_SYSTEM_PROMPT),
-        workspace_root,
-        &cfg.authority,
-        active_rules,
-        worker,
-    )
+    let base = resolved_base(cfg, PIPELINE_SYSTEM_PROMPT);
+    assemble_system_prompt(&base, workspace_root, &cfg.authority, active_rules, worker)
 }
 
 /// The exact prompt claim-mode isolation must yield: the pipeline persona
@@ -791,6 +854,11 @@ pub(crate) fn expected_isolated_pipeline_prompt(workspace_root: &std::path::Path
     append_session_environment(&mut expected, workspace_root, None);
     expected
 }
+
+/// The read side of the assembly above: which setting produced each span of an
+/// already-assembled prompt. A submodule of this one so its marker table can
+/// name the constants the appenders push, instead of copying their bytes.
+pub(crate) mod provenance;
 
 /// The structural half of the shared-contract discipline: the tests above are
 /// written one per contract, so they cover the contracts that exist and say
