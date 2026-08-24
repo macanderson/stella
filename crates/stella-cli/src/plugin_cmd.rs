@@ -22,6 +22,16 @@
 //! thing a user can add to their machine; defaulting to no with an explicit
 //! override keeps the automated case possible and deliberate.
 //!
+//! # And the answer is written down
+//!
+//! Consent is a transaction, so it leaves a **receipt**: [`receipt::record`]
+//! digests the `plugin.toml` bytes the document was rendered from and files
+//! them beside the package, and every later load checks the manifest against
+//! it. Without that, "installed" meant nothing more than "a directory with a
+//! `plugin.toml` exists" — and a plugin's own process, which runs as the user
+//! and owns that directory, could rewrite its grant into one no human ever saw
+//! (#3514). See [`receipt`] for what the receipt does and does not buy.
+//!
 //! # Uninstall actually uninstalls
 //!
 //! Removing a plugin deletes its directory — in **every** tier that holds the
@@ -40,6 +50,7 @@ use crate::settings::{Settings, Toggle};
 pub(crate) mod configure;
 pub(crate) mod package;
 pub(crate) mod process;
+pub(crate) mod receipt;
 pub(crate) mod roster;
 
 use roster::{MANIFEST_FILE, PluginRoster, PluginScope};
@@ -161,7 +172,12 @@ fn install(
     yes: bool,
     settings: &Settings,
 ) -> Result<(), String> {
-    let manifest = roster::load_manifest(source)?.ok_or_else(|| {
+    // The bytes as well as the parse: the consent document below is rendered
+    // from this manifest, and the receipt filed after the copy must digest the
+    // same read (#3514). Re-reading the file to hash it would leave a window
+    // in which the source is swapped for another manifest between the document
+    // and the record of it.
+    let (manifest, consented) = roster::read_manifest(source)?.ok_or_else(|| {
         format!(
             "{} holds no {MANIFEST_FILE}, so it is not a plugin",
             source.display()
@@ -280,6 +296,18 @@ fn install(
 
     stage_and_commit(source, &tier, &destination)?;
 
+    // The receipt (#3514), before anything else can fail: from here on the
+    // package is on disk, and a package on disk with no record of the answer
+    // is exactly the state that let a plugin rewrite its own grant. Both
+    // failures below roll the install back whole rather than leaving one.
+    if let Err(reason) =
+        record_consent(&tier, scope, name, &manifest.name, &consented, &destination)
+    {
+        discard(&destination);
+        receipt::forget(&tier, name);
+        return Err(format!("`{name}` was not installed: {reason}"));
+    }
+
     // The configuration write (#3999). Last, because it is the only step that
     // reaches outside the tier — and rolled back whole on failure, on
     // `stage_and_commit`'s reasoning: a package installed with its declared
@@ -295,6 +323,7 @@ fn install(
         && let Err(reason) = install_configuration(&manifest, target, &destination)
     {
         discard(&destination);
+        receipt::forget(&tier, name);
         return Err(format!(
             "`{name}` could not configure {}: {reason}\n\nIt was not installed.",
             target.path().display()
@@ -332,6 +361,36 @@ fn install(
         );
     }
     Ok(())
+}
+
+/// File the consent receipt for a package that has just been copied into
+/// place, after proving the copy is the manifest the human read (#3514).
+///
+/// The comparison is what makes the receipt mean the document rather than the
+/// bytes: `consented` is the text [`stella_plugin::consent_text`] was rendered
+/// from, and the installed `plugin.toml` is what every later load will digest.
+/// A source directory rewritten between the two — the package's own author's
+/// process is free to do it, and so is anything else running as the user —
+/// would otherwise install a grant nobody was shown and file a receipt saying
+/// somebody was.
+fn record_consent(
+    tier: &Path,
+    scope: PluginScope,
+    entry: &str,
+    plugin: &str,
+    consented: &str,
+    destination: &Path,
+) -> Result<(), String> {
+    let installed = std::fs::read_to_string(destination.join(MANIFEST_FILE))
+        .map_err(|error| format!("cannot re-read the installed manifest: {error}"))?;
+    if installed != consented {
+        return Err(format!(
+            "{} changed while it was being installed, so the copy is not the manifest the \
+             declaration above described",
+            destination.join(MANIFEST_FILE).display()
+        ));
+    }
+    receipt::record(tier, scope, entry, plugin, consented.as_bytes())
 }
 
 /// Apply a package's `[[configure]]` table, leaving nothing half-done (#3999).
@@ -602,6 +661,14 @@ fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
             if let Err(error) = remove_plugin_dir(&tier, &dir) {
                 failures.push(error);
                 continue;
+            }
+            // The receipt goes with the package it is about (#3514). Left
+            // behind, it would admit a later directory of the same name
+            // carrying the same manifest — planted rather than installed, and
+            // so never shown to anyone. A receipt records an answer, and no
+            // answer stands once the thing it was about is gone.
+            if let Some(entry) = dir.file_name().and_then(|entry| entry.to_str()) {
+                receipt::forget(&tier, entry);
             }
             println!(
                 "removed `{name}` ({}) from {}",
