@@ -836,3 +836,71 @@ fn a_long_file_change_diff_is_elided_from_the_middle_and_says_so() {
         .sum();
     assert_eq!(shown, adds);
 }
+
+/// A still-running execution, seeded with one settled call and a second still
+/// in flight (`tool_start` with no matching `tool_result`) — the shape a live
+/// poll's `&from_step=` targets.
+fn seed_running_execution(ws: &TempDir) {
+    let conn = Connection::open(ws.path().join(".stella/private/store.db")).unwrap();
+    conn.execute_batch(
+        "INSERT INTO executions (id, kind, prompt, provider, model, outcome, cost_usd)
+         VALUES (3, 'run', 'watch the build', 'zai', 'glm-5.2', NULL, 0.0);",
+    )
+    .unwrap();
+    conn.execute_batch(
+        r#"INSERT INTO events (execution_id, seq, event_type, payload) VALUES
+             (3, 0, 'tool_start', '{"type":"tool_start","call":{"call_id":"c1","name":"read_file","input":{"path":"a.rs"}}}'),
+             (3, 1, 'tool_result', '{"type":"tool_result","call_id":"c1","output":{"ok":{"content":"fn a() {}"}},"duration_ms":5,"speculated":false}'),
+             (3, 2, 'tool_start', '{"type":"tool_start","call":{"call_id":"c2","name":"bash","input":{"command":"cargo test"}}}');"#,
+    )
+    .unwrap();
+}
+
+/// **#4566's fix shape (a) witness.** `&from_step=1` resumes from the
+/// still-open second step: the response is JSON, carries the re-rendered
+/// running step and its receipt, and never repeats the already-settled first
+/// step. This is the capability #4593 (fix shape (b), client-side fold
+/// preservation) deliberately left open — it fails to compile against a
+/// pre-#4566-shape-(a) tree, because `from_step` was not a recognised query
+/// parameter and the route always returned `text/html`.
+#[test]
+fn transcript_tail_resumes_from_the_still_open_step() {
+    let ws = seeded_workspace();
+    seed_running_execution(&ws);
+
+    let response = respond(ws.path(), "/api/transcript-html?id=3&from_step=1");
+    assert_eq!(response.status, "200 OK");
+    assert_eq!(response.content_type, "application/json");
+    let v: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+    let blocks = v["blocks"].as_str().expect("blocks field");
+    let receipt = v["receipt"].as_str().expect("receipt field");
+
+    assert!(
+        blocks.contains("id=\"t0s1\""),
+        "the still-open step must be in the tail: {blocks}"
+    );
+    assert!(
+        !blocks.contains("id=\"t0s0\""),
+        "the already-settled step must not repeat: {blocks}"
+    );
+    assert!(blocks.contains("cargo test"), "{blocks}");
+    assert!(receipt.contains("id=\"t0-receipt\""), "{receipt}");
+}
+
+/// A cursor the run does not recognise (past what it actually holds, e.g. a
+/// stale tab after a server restart) degrades to the same full fragment the
+/// route serves without `&from_step=` at all, rather than 500ing or silently
+/// omitting content.
+#[test]
+fn transcript_tail_with_a_stale_cursor_falls_back_to_the_full_fragment() {
+    let ws = seeded_workspace();
+    seed_running_execution(&ws);
+
+    let response = respond(ws.path(), "/api/transcript-html?id=3&from_step=99");
+    assert_eq!(response.status, "200 OK");
+    assert_eq!(response.content_type, "text/html; charset=utf-8");
+    let html = String::from_utf8(response.body).unwrap();
+    assert!(html.starts_with("<div class=\"frame\""), "{html}");
+    assert!(html.contains("id=\"t0s0\""), "{html}");
+    assert!(html.contains("id=\"t0s1\""), "{html}");
+}
