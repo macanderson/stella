@@ -33,12 +33,12 @@
 ☰  plan  5/7  ·  Workflows canvas
 
 ⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
-                                                ┌ agent  1/2 · this session only ──── ↑↓ move · ⏎ assume · esc ┐
+
+
+                                                ╭ agent · 1/2 · this session only ─────────────────────────────╮
                                                 │▸ reviewer  project  reviews a diff against the house rules   │
                                                 │  release-captain  user  cuts a release: bump, changelog, tag │
-                                                └──────────────────────────────────────────────────────────────┘
-
-
+                                                ╰──────────────────────────────────── ↑↓ move · ⏎ assume · esc ╯
 
 >>>
  ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands

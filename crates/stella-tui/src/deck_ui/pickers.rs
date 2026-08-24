@@ -7,7 +7,7 @@
 //! (not a link: that module is private).
 //!
 //! The pickers' rows are read live off the deck state here at the moment of
-//! choice (see [`crate::views::picker`] on why they are never snapshotted),
+//! choice (see [`crate::v2::picker`] on why they are never snapshotted),
 //! so `⏎` maps the highlighted index onto whatever the list holds NOW — a
 //! list that moved under the highlight sends the row the user is looking
 //! at, not the one they opened on.
@@ -15,7 +15,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::envelope::WorkspaceInput;
-use crate::views::picker::{self, PickerAction};
+use crate::v2::picker::{self, PickerAction};
 
 use super::{DeckAction, DeckUi};
 
