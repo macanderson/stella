@@ -253,6 +253,15 @@ pub enum Inbound {
     /// later `StepUsage` replaces it with what actually served. Sending it is
     /// optional — a driver that never does behaves exactly as before.
     ConfiguredRoles(Vec<(crate::deck::PipelineRole, crate::deck::RolePin)>),
+    /// A deliberate mid-session re-pin: replace the named roles' pins,
+    /// served evidence included. The driver sends this after a session model
+    /// switch (`/model`, an assumed agent's `model:`), where
+    /// [`Inbound::ConfiguredRoles`]'s never-overwrite fold is the wrong
+    /// contract — the old served pin describes calls of a model that no
+    /// longer serves, and keeping it would have the statline name the wrong
+    /// model until the next `StepUsage`. Two variants rather than a flag:
+    /// startup intent must never clobber evidence, a switch must.
+    RolePinsReset(Vec<(crate::deck::PipelineRole, crate::deck::RolePin)>),
     /// Derived prompt-cache economics for one agent's latest model call —
     /// dollars saved and the provider's cache TTL — computed by the
     /// pricing-aware producer (the CLI has the model catalog; the deck does

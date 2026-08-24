@@ -241,7 +241,9 @@ fn announce_switch(
 ) {
     lead_meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
     let _ = in_tx.send(Inbound::Register(lead_meta.clone()));
-    let _ = in_tx.send(Inbound::ConfiguredRoles(override_role_pins(cfg)));
+    // The reset variant, not `ConfiguredRoles`: the worker pin must replace
+    // the served evidence of the model that no longer serves.
+    let _ = in_tx.send(Inbound::RolePinsReset(override_role_pins(cfg)));
     let _ = in_tx.send(super::engine_config_inbound(cfg, None));
     // Empty when the caller folds its own line (an assumed agent's declared
     // model rides the assume note instead of a second one).
