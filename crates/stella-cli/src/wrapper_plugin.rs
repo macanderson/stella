@@ -119,8 +119,8 @@
 //! wrappers this door does accept, a round's dispatch always drives exactly
 //! one internal turn, at the round's own `turn_instance`; and the goal
 //! round's own execution row (opened once, before the loop, exactly like
-//! [`RawTurnDriver`]'s door opens one) records `bound`'s variant id for the
-//! whole run, honest because every round under that row really was
+//! [`RawTurnDriver`]'s door opens one) records the id `bound` resolved for the
+//! whole run, which is true of it because every round under that row really was
 //! dispatched through it.
 //!
 //! The goal door serves `child_turn` too, through [`round_driver_host`]
@@ -1235,10 +1235,16 @@ pub(crate) async fn run_wrapped(
         .map(|spend| spend.cost_usd)
         .chain(bound.fanout_spends().iter().map(|spend| spend.cost_usd))
         .sum();
-    stream.close(registry, plugin_spend).await;
     // Before the pop, so the whole run is judged rather than every round but
     // its last.
     let aborted = report.is_err() || ended_abnormally(&driver.results);
+    stream
+        .close(
+            registry,
+            if aborted { "aborted" } else { "completed" },
+            plugin_spend,
+        )
+        .await;
     let last = driver.results.pop();
     // A run that ended before anything scored its candidates keeps their work
     // as patches, because the sweep below deletes checkouts and branches

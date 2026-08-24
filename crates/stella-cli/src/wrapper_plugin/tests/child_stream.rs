@@ -35,7 +35,7 @@ struct MeteringDispatcher {
 
 impl MeteringDispatcher {
     /// One child's metering record, built through the wire shape rather than
-    /// the variant literal: `StepUsage` carries two dozen fields, most of them
+    /// a struct literal: `StepUsage` carries two dozen fields, most of them
     /// `serde(default)`, and a literal here would need editing every time one
     /// is added without saying anything more than this does.
     fn step_usage(spec: &SubAgentSpec) -> AgentEvent {
@@ -78,10 +78,10 @@ impl SubAgentDispatcher for MeteringDispatcher {
     }
 }
 
-/// A wrapper that asks for a model call at **both** points, which is what
-/// makes the round in between load-bearing: `before_turn` runs before the
-/// round's own stream exists and `after_turn` runs after that stream has been
-/// closed, so the two points are on opposite sides of the slot being cleared.
+/// A wrapper that asks for a model call at **both** points, which is what the
+/// round in between is here to test: `before_turn` runs before the round's own
+/// stream exists and `after_turn` runs after that stream has been closed, so
+/// the two points sit on opposite sides of the slot being cleared.
 const ASKING_MANIFEST: &str = r#"
 name = "asking-wrapper"
 [loop]
@@ -165,7 +165,7 @@ fn asking_plugin(
     ));
     let roster = roster(vec![installed(ASKING_MANIFEST, &dir.to_string_lossy())]);
     let wrapper = bind_installed(&roster, "asking-v1", &mut |_| {})
-        .expect("the installed plugin declares this variant")
+        .expect("the installed plugin declares this wrapper id")
         .serving(|_| WrapperHost::recalling(no_recall()).with_child_turns(Arc::clone(&plane)))
         .expect("it binds");
     (wrapper, found_a_stream)

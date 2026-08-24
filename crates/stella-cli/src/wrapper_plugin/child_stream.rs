@@ -26,8 +26,8 @@
 //! records a call as a step of a turn it was not part of, in one direction or
 //! the other. One run-scoped `plugin` row for the whole dispatch is the shape
 //! that is true: it says "this run's plugin-side model calls", it carries the
-//! wrapper's variant id and the session id like every other row this door
-//! opens, and it joins to the rounds beside it through
+//! plugin's declared `[wrapper] id` and the session id like every other row
+//! this door opens, and it joins to the rounds beside it through
 //! `executions.session_id`.
 //!
 //! **Who owns the channel: this type, for the span of the dispatch.** It is
@@ -67,7 +67,7 @@ use crate::config::Config;
 ///
 /// A kind of its own rather than `"run"`: these rows are not turns, and a
 /// consumer counting a session's turns must be able to tell them apart without
-/// reading the variant column.
+/// reading the `pipeline_variant` column.
 pub(crate) const PLUGIN_EXECUTION_KIND: &str = "plugin";
 
 /// One wrapped run's between-rounds event stream, with the execution row its
@@ -94,7 +94,7 @@ impl PluginChildStream {
         format: OutputFormat,
         prompt: &str,
         session: &str,
-        variant: &str,
+        wrapper_id: &str,
     ) -> Self {
         let execution = crate::agent::persistence::begin_execution(
             store,
@@ -102,7 +102,7 @@ impl PluginChildStream {
             prompt,
             cfg,
             Some(session),
-            Some(variant),
+            Some(wrapper_id),
         );
         let (raw_tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
         let tx = EventSender::new(raw_tx);
@@ -148,15 +148,25 @@ impl PluginChildStream {
         );
     }
 
-    /// Close the stream, finish its execution row at `cost_usd`, and return
-    /// what the renderer drained.
+    /// Close the stream, finish its execution row, and return what the renderer
+    /// drained.
     ///
     /// Detaching, dropping this type's own sender and awaiting the drain are
     /// one operation for #960's reason: any of the three left undone keeps the
-    /// channel alive and the renderer pending. The row is finished
-    /// best-effort — a run whose work is done is not made less done by a store
-    /// that would not write.
-    pub(crate) async fn close(self, registry: &ToolRegistry, cost_usd: f64) -> RendererOutcome {
+    /// channel alive and the renderer pending.
+    ///
+    /// `ended` is the *run's* ending, not the plugin's: these calls were bought
+    /// in service of the rounds beside them, and a row that always read
+    /// `completed` would describe an aborted run's plugin spend as a finished
+    /// piece of work. `cost_usd` is every model call this host made on the
+    /// plugin's behalf. Both are written best-effort — a run whose work is done
+    /// is not made less done by a store that would not write.
+    pub(crate) async fn close(
+        self,
+        registry: &ToolRegistry,
+        ended: &str,
+        cost_usd: f64,
+    ) -> RendererOutcome {
         let Self {
             tx,
             execution,
@@ -164,7 +174,7 @@ impl PluginChildStream {
         } = self;
         let outcome = crate::agent::persistence::close_event_stream(registry, tx, renderer).await;
         if let Some((store, id)) = execution {
-            let _ = store.finish_execution(id, "completed", cost_usd);
+            let _ = store.finish_execution(id, ended, cost_usd);
         }
         outcome
     }
@@ -185,6 +195,8 @@ pub(crate) struct RepublishingDriver<'a> {
 }
 
 impl<'a> RepublishingDriver<'a> {
+    /// Wrap `inner` so `stream` is back on `registry` after each round it
+    /// drives.
     pub(crate) fn new(
         inner: &'a mut dyn TurnDriver,
         registry: &'a ToolRegistry,
