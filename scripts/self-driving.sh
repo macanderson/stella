@@ -75,7 +75,10 @@ readonly RIG_KEY="${SELF_DRIVING_RIG_KEY:-${STELLA_HOME:-$HOME/.stella}/keys/tb9
 
 # The head-to-head match: Claude Code vs Stella on Terminal-Bench 2.1, same
 # model on both arms so the agent architecture is the variable under test.
-readonly H2H_MATCH="${SELF_DRIVING_MATCH:-arenabench/matches/fable5-claude-code-vs-stella.toml}"
+# The match templates left with ArenaBench's ejection (#2380): name one with
+# SELF_DRIVING_MATCH, or point ARENABENCH_CHECKOUT at a checkout of
+# https://github.com/macanderson/arenabench to use its default template.
+readonly H2H_MATCH="${SELF_DRIVING_MATCH:-${ARENABENCH_CHECKOUT:+$ARENABENCH_CHECKOUT/matches/fable5-claude-code-vs-stella.toml}}"
 
 # The controller ceilings, the floors, the aperture ladder, and the dry-streak
 # target all live in the binary now (stella-core::self_driving), still answering
@@ -583,6 +586,9 @@ bench_h2h() {
   # repo root. The rig's own copy is always addressed relative to ~/stella,
   # so an absolute local override only affects the local arm.
   local match_path="$H2H_MATCH"
+  [ -n "$match_path" ] || die "no match template: set SELF_DRIVING_MATCH, or
+     ARENABENCH_CHECKOUT to a checkout of the arenabench repo — the match
+     templates live there since the ejection (#2380)."
   case "$match_path" in
     /*) : ;;
     *) match_path="$REPO_ROOT/$match_path" ;;

@@ -66,7 +66,13 @@ pub enum FleetMsg {
     /// A task exists — its row appears, `Queued`, before it is dispatched.
     Register { id: String, title: String },
     /// One `AgentEvent` belonging to one task's worker.
-    Event { id: String, event: AgentEvent },
+    ///
+    /// Boxed, because every other message here is a pair of `String`s and an
+    /// `AgentEvent` is several times the size of the largest of them. Inline,
+    /// it would set the size of every fleet message — the register and status
+    /// rows included, which the driver sends far more of than it sends events
+    /// for any one task.
+    Event { id: String, event: Box<AgentEvent> },
     /// A supervisor lifecycle transition (dispatch → `Running`, and the
     /// authoritative terminal verdict from the worker's own `WorkerOutcome`,
     /// which distinguishes done/failed more reliably than inferring from the
@@ -450,6 +456,17 @@ impl FleetBoard {
                 };
                 if !preview.is_empty() {
                     row.last_output = Some(preview);
+                }
+                // A row is `Blocked` because a card went up, and every card
+                // here is answered by the parked call's own result — `ask_user`
+                // returns the answer as its tool result, and the plan gate
+                // returns the driver's change request as `task_start`'s error
+                // (#4612). So a result means the wait is over, whichever way it
+                // went. Without this the lane read `blocked` for the whole
+                // window the model spent re-planning, with nobody waiting on
+                // anything.
+                if row.status == FleetStatus::Blocked {
+                    row.status = FleetStatus::Running;
                 }
             }
             AgentEvent::Reasoning { .. } => {

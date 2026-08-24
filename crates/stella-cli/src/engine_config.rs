@@ -653,6 +653,7 @@ pub fn state_from_settings(
         auto_mode: engine.auto_mode_on(),
         effort_auto: engine.effort_auto_on(),
         reasoning_auto: engine.reasoning_auto_on(),
+        minimal_prompt: engine.minimal_prompt_on(),
         allowed_models: engine.allowed_models().to_vec(),
         providers,
         catalog_models,
@@ -708,6 +709,11 @@ pub fn settings_from_state(state: &EngineConfigState) -> AgentEngineConfig {
             Toggle::Off
         }),
         reasoning_auto: Some(if state.reasoning_auto {
+            Toggle::On
+        } else {
+            Toggle::Off
+        }),
+        minimal_prompt: Some(if state.minimal_prompt {
             Toggle::On
         } else {
             Toggle::Off
@@ -1234,6 +1240,7 @@ mod tests {
             r#"{"default_model": "openrouter/openai/gpt-5.5",
                 "allowed_models": ["anthropic/claude-fable-5"],
                 "auto_mode": "off", "effort_auto": "on", "reasoning_auto": "off",
+                "minimal_prompt": "on",
                 "agents": {"default": {"provider": "openrouter", "effort": "high",
                                       "reasoning": "on",
                                       "params": {"temperature": 0.2, "top_k": 40,
@@ -1250,6 +1257,10 @@ mod tests {
         );
         assert!(!state.auto_mode);
         assert!(state.effort_auto);
+        assert!(
+            state.minimal_prompt,
+            "the minimal-prompt toggle reaches the deck"
+        );
         let agent = state.agent(EngineRole::Default).expect("default state");
         assert_eq!(agent.model.as_deref(), Some("openrouter/openai/gpt-5.5"));
         assert_eq!(agent.provider.as_deref(), Some("openrouter"));
@@ -1277,6 +1288,7 @@ mod tests {
         // preserved, not dropped).
         assert_eq!(back.auto_mode, Some(Toggle::Off));
         assert_eq!(back.effort_auto, Some(Toggle::On));
+        assert_eq!(back.minimal_prompt, Some(Toggle::On));
         // The round trip is stable: state → settings → state is identity
         // for the fields the snapshot carries.
         let state2 = state_from_settings(

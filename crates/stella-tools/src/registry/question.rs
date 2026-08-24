@@ -139,6 +139,21 @@ impl QuestionBroker {
         }
     }
 
+    /// Whether anyone is actually attached to answer.
+    ///
+    /// For callers that must decide whether to *install* a gate at all rather
+    /// than whether to ask one question. A tool asks unconditionally and lets
+    /// [`Self::ask`] resolve the unattended case, because a question the model
+    /// chose to ask deserves the decide-it-yourself instruction back. A
+    /// host-raised gate is the other shape: with nobody to answer it, the
+    /// move that says something true is not to raise it — see [`stella_protocol::AgentEvent`]'s
+    /// `HunkReview` doc, which states the rule for the sibling gate ("the gate
+    /// is not installed rather than installed and auto-approving").
+    #[must_use]
+    pub fn is_attached(&self) -> bool {
+        self.responder.is_some()
+    }
+
     /// Ask `request` and return how it resolved.
     ///
     /// Takes the fairness gate first, then starts the TTL — queueing behind

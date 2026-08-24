@@ -3,7 +3,8 @@
 
 //! A machine-checked description of the **serve transport** wire format.
 //!
-//! `stella-protocol`'s `schema_export` describes [`AgentEvent`] — the payload.
+//! `stella-protocol`'s `schema_export` describes
+//! [`AgentEvent`](stella_protocol::AgentEvent) — the payload.
 //! This module describes the envelope around it: the [`ServerFrame`] union a
 //! host reads off the SSE stream, and the two result bodies it POSTs back.
 //! Together they are everything a client of `stella-serve` parses or produces.
@@ -18,6 +19,27 @@
 //! The TypeScript printer is *not* duplicated: this calls
 //! [`stella_protocol::schema_export::typescript_declarations_with_header`], so
 //! there is one subset of JSON Schema to keep in step rather than two.
+//!
+//! # Why the definitions are hoisted before anything is printed
+//!
+//! `schemars` numbers every reference from the root of the document it is
+//! generating, and it re-emits a shared payload type into *each* root that
+//! reaches it. Five roots printed one after another therefore produced a
+//! `.d.ts` declaring `ToolCall`, `CompletionUsage`, `FinishReason` and seven
+//! more twice each — `TS2300: Duplicate identifier`, so the artifact did not
+//! compile for the TypeScript consumer it exists for (#4583). The same
+//! numbering left [`inbound_schema`] dangling: four derived schemas nested
+//! whole under `#/$defs/…` kept fifteen `#/$defs/…` references pointing at
+//! definitions the composite root did not have.
+//!
+//! Both are the one defect, and one `hoist` is the one fix: every root's `$defs`
+//! is lifted into a single map, so each payload type is defined once and every
+//! reference resolves against the document that carries it. A name defined two
+//! different ways is a [`ServeSchemaError::Conflict`] rather than a silent
+//! overwrite — publishing one Rust type's shape under another's name is a
+//! failure no consumer could detect. This is the pattern `stella-plugin`'s
+//! `wrapper_schema` uses (#4535); the printer is shared, so the flattening
+//! discipline is too.
 //!
 //! # What the schema cannot say
 //!
@@ -34,11 +56,36 @@
 //!   deliberately has no `seq`: it describes what the server can no longer
 //!   supply rather than something that happened in the turn.
 
-use serde_json::Value;
-use stella_protocol::schema_export::{UnsupportedSchema, typescript_declarations_with_header};
+use serde_json::{Map, Value};
+use stella_protocol::schema_export::{
+    Discriminant, UnsupportedSchema, typescript_declarations_with_header,
+};
 
 use crate::engine_overrides::EngineOverrides;
 use crate::frame::{ProviderDeltaIn, ProviderResultIn, ServerFrame, ToolResultIn};
+
+/// Why the transport's wire contract could not be published.
+///
+/// Every arm is a defect in this crate rather than in a caller's input — the
+/// exporter reads nothing but this workspace's own types — so each one stops
+/// the export rather than degrading it. A `.d.ts` that lies is worse than an
+/// exporter that refused to write one.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ServeSchemaError {
+    /// `schemars` produced something other than an object for a named root.
+    #[error("the derived schema for `{0}` is not a JSON object")]
+    NotAnObject(&'static str),
+    /// Two roots define the same `$defs` name with different bodies, so
+    /// hoisting them into one map would have to discard one.
+    #[error(
+        "two roots define `{0}` with different bodies — one of them would be lost when the \
+         documents are flattened into one `$defs`"
+    )]
+    Conflict(String),
+    /// The shared TypeScript printer met a construct it does not model.
+    #[error(transparent)]
+    Unsupported(#[from] UnsupportedSchema),
+}
 
 /// The JSON Schema (2020-12) for one outbound frame.
 #[must_use]
@@ -71,6 +118,47 @@ pub fn engine_overrides_schema() -> Value {
     schemars::schema_for!(EngineOverrides).to_value()
 }
 
+/// One body a host POSTs to the transport, as both published artifacts need it.
+struct InboundBody {
+    /// The name it is published under in `$defs`, and declared under in the
+    /// `.d.ts`.
+    name: &'static str,
+    /// Its derived schema.
+    schema: fn() -> Value,
+    /// The banner it rides under in the printed `.d.ts`. Empty for a body that
+    /// belongs to the section above it.
+    banner: &'static str,
+}
+
+/// Every inbound body a host can POST.
+///
+/// One table rather than two ordered lists. Both artifacts enumerate these
+/// bodies, and when the enumeration lived at eight call sites the omission this
+/// module's exact-set test guards against — a body added to the transport and
+/// published in neither — had two places to hide instead of one.
+static INBOUND_BODIES: &[InboundBody] = &[
+    InboundBody {
+        name: "ToolResultIn",
+        schema: tool_result_schema,
+        banner: INBOUND_HEADER,
+    },
+    InboundBody {
+        name: "ProviderResultIn",
+        schema: provider_result_schema,
+        banner: "",
+    },
+    InboundBody {
+        name: "ProviderDeltaIn",
+        schema: provider_delta_schema,
+        banner: DELTA_HEADER,
+    },
+    InboundBody {
+        name: "EngineOverrides",
+        schema: engine_overrides_schema,
+        banner: ENGINE_HEADER,
+    },
+];
+
 /// Every inbound body in one document, as a `$defs` container.
 ///
 /// A container rather than a `oneOf`: these are the bodies of **different
@@ -80,9 +168,34 @@ pub fn engine_overrides_schema() -> Value {
 /// printer rejected exactly that framing when it was tried, because a `oneOf`
 /// with no `type` const is not something it can print an honest discriminated
 /// union from. The printer was right; the modeling was wrong.
-#[must_use]
-pub fn inbound_schema() -> Value {
-    serde_json::json!({
+///
+/// Each body's own payload definitions are hoisted into the container's `$defs`
+/// beside it, for the reason the module header states: `schemars` writes every
+/// reference from *its* document's root, so nesting four derived schemas whole
+/// leaves every `#/$defs/…` inside them pointing at nothing.
+///
+/// # Errors
+///
+/// [`ServeSchemaError::NotAnObject`] if a derived root is not an object, and
+/// [`ServeSchemaError::Conflict`] if two bodies define one name two different
+/// ways.
+pub fn inbound_schema() -> Result<Value, ServeSchemaError> {
+    let mut defs = Map::new();
+    let mut bodies = Vec::with_capacity(INBOUND_BODIES.len());
+    for body in INBOUND_BODIES {
+        bodies.push((body.name, hoist(body.name, (body.schema)(), &mut defs)?));
+    }
+    // The bodies go in after every payload type, and through the same refusal:
+    // a body sharing a payload type's name would otherwise publish one shape
+    // under the other's name, whichever way the two happened to be ordered.
+    for (name, body) in bodies {
+        if defs.contains_key(name) {
+            return Err(ServeSchemaError::Conflict(name.to_string()));
+        }
+        defs.insert(name.to_string(), body);
+    }
+
+    Ok(serde_json::json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "StellaServeInbound",
         "description":
@@ -96,52 +209,96 @@ pub fn inbound_schema() -> Value {
              optional `engine` object on POST /v1/turns and \
              POST /v1/sessions/{id}/turns, published here because it is wire \
              contract. This document is a definitions container, not a union: \
-             the bodies are not interchangeable and carry no discriminant.",
-        "$defs": {
-            "ToolResultIn": tool_result_schema(),
-            "ProviderResultIn": provider_result_schema(),
-            "ProviderDeltaIn": provider_delta_schema(),
-            "EngineOverrides": engine_overrides_schema(),
-        },
-    })
+             the bodies are not interchangeable and carry no discriminant. \
+             Every payload type they reference is defined here beside them, \
+             once each.",
+        "$defs": Value::Object(defs),
+    }))
+}
+
+/// Move `schema`'s own `$defs` into `defs` and return what is left of it.
+///
+/// Add-only and conflict-refusing: a name already present keeps its first
+/// definition when the two agree byte-for-byte, and stops the export when they
+/// do not. Silently overwriting would publish one Rust type's shape under
+/// another's name, which no consumer could detect and no test here would see.
+///
+/// `$schema` goes with it. A nested subschema declaring its own dialect is
+/// legal and meaningless — the document that carries it states the dialect
+/// once — and leaving it would put two `$schema` keys in one document for a
+/// reader to reconcile.
+fn hoist(
+    name: &'static str,
+    schema: Value,
+    defs: &mut Map<String, Value>,
+) -> Result<Value, ServeSchemaError> {
+    let Value::Object(mut root) = schema else {
+        return Err(ServeSchemaError::NotAnObject(name));
+    };
+    root.remove("$schema");
+    let Some(Value::Object(nested)) = root.remove("$defs") else {
+        return Ok(Value::Object(root));
+    };
+    for (defined, body) in nested {
+        match defs.get(&defined) {
+            Some(existing) if existing != &body => {
+                return Err(ServeSchemaError::Conflict(defined));
+            }
+            Some(_) => {}
+            None => {
+                defs.insert(defined, body);
+            }
+        }
+    }
+    Ok(Value::Object(root))
 }
 
 /// Every committed artifact, as `(filename, contents)`.
 ///
 /// # Errors
 ///
-/// [`UnsupportedSchema`] when a generated schema uses a construct the shared
-/// TypeScript printer does not model. Loud rather than approximate: a `.d.ts`
-/// that lies is worse than no `.d.ts`.
-pub fn artifacts() -> Result<Vec<(&'static str, String)>, UnsupportedSchema> {
+/// [`ServeSchemaError`], as [`inbound_schema`], plus
+/// [`ServeSchemaError::Unsupported`] when a generated schema uses a construct
+/// the shared TypeScript printer does not model. Loud rather than approximate:
+/// a `.d.ts` that lies is worse than no `.d.ts`.
+pub fn artifacts() -> Result<Vec<(&'static str, String)>, ServeSchemaError> {
     let outbound = server_frame_schema();
 
-    let mut ts = typescript_declarations_with_header(&outbound, OUTBOUND_HEADER)?;
+    // One definition set across every root the `.d.ts` prints. Each root
+    // carries its own copy of every payload type it reaches, so printing five
+    // of them back to back declared ten identifiers twice — `TS2300` (#4583).
+    let mut defs = Map::new();
+    let mut frame = hoist("ServerFrame", outbound.clone(), &mut defs)?;
+    let mut sections = Vec::with_capacity(INBOUND_BODIES.len());
+    for body in INBOUND_BODIES {
+        sections.push((hoist(body.name, (body.schema)(), &mut defs)?, body.banner));
+    }
+
+    // The whole definition set rides with the first document printed, and the
+    // four that follow declare only their own root. Nothing is lost by that:
+    // TypeScript declarations are order-independent within a file, so an
+    // interface referring to one printed above it resolves exactly as it did
+    // when every root carried its own copy.
+    frame["$defs"] = Value::Object(defs);
+    let mut ts =
+        typescript_declarations_with_header(&frame, OUTBOUND_HEADER, Discriminant::EVENT_TYPE)?;
     ts.push_str(ENVELOPE_SUFFIX);
-    // Printed one root at a time, for the reason `inbound_schema` documents:
-    // they are two endpoint bodies, so each prints as its own interface rather
-    // than as an arm of a union nothing discriminates.
-    ts.push_str(&typescript_declarations_with_header(
-        &tool_result_schema(),
-        INBOUND_HEADER,
-    )?);
-    ts.push_str(&typescript_declarations_with_header(
-        &provider_result_schema(),
-        "",
-    )?);
-    ts.push_str(&typescript_declarations_with_header(
-        &provider_delta_schema(),
-        DELTA_HEADER,
-    )?);
-    ts.push_str(&typescript_declarations_with_header(
-        &engine_overrides_schema(),
-        ENGINE_HEADER,
-    )?);
+    // Still one root at a time, for the reason `inbound_schema` documents: they
+    // are the bodies of different endpoints, so each prints as its own
+    // interface under its own banner rather than as an arm of a union nothing
+    // discriminates.
+    for (root, header) in &sections {
+        ts.push_str(&typescript_declarations_with_header(
+            root,
+            header,
+            Discriminant::EVENT_TYPE,
+        )?);
+    }
 
     let mut json =
         serde_json::to_string_pretty(&outbound).expect("a JSON Schema is always serializable");
     json.push('\n');
-    let mut inbound_json = serde_json::to_string_pretty(&inbound_schema())
+    let mut inbound_json = serde_json::to_string_pretty(&inbound_schema()?)
         .expect("a JSON Schema is always serializable");
     inbound_json.push('\n');
 
@@ -274,25 +431,196 @@ mod tests {
     /// adding it here, which is the point: an exact set turns "I forgot to
     /// export it" into a failing test rather than a silently incomplete
     /// contract.
+    ///
+    /// The exact half is asserted on [`INBOUND_BODIES`] and the reaches-the-
+    /// document half on the generated `$defs`, because since #4583 that map
+    /// also carries every payload type the bodies reference. Asserting the
+    /// whole map exactly would pin the payload graph of four Rust types, which
+    /// changes for reasons that have nothing to do with an endpoint gaining a
+    /// body.
     #[test]
     fn every_inbound_body_is_published_in_the_contract() {
-        let schema = inbound_schema();
-        let defs = schema["$defs"]
-            .as_object()
-            .expect("the inbound document is a $defs container");
-
-        let mut published: Vec<&str> = defs.keys().map(String::as_str).collect();
-        published.sort_unstable();
-
+        let published: Vec<&str> = INBOUND_BODIES.iter().map(|body| body.name).collect();
         assert_eq!(
             published,
             [
-                "EngineOverrides",
-                "ProviderDeltaIn",
+                "ToolResultIn",
                 "ProviderResultIn",
-                "ToolResultIn"
+                "ProviderDeltaIn",
+                "EngineOverrides"
             ],
             "the published inbound bodies drifted from the ones a host can POST"
+        );
+
+        let schema = inbound_schema().expect("the container assembles");
+        let defs = schema["$defs"]
+            .as_object()
+            .expect("the inbound document is a $defs container");
+        for name in published {
+            assert!(defs.contains_key(name), "{name} never reached the document");
+        }
+    }
+
+    /// **The witness for #4583.** Every `$ref` in the published inbound
+    /// document resolves against the published inbound document.
+    ///
+    /// It did not, and nothing said so: `schemars` numbers references from the
+    /// root of the document it generates, so nesting four derived schemas whole
+    /// under `#/$defs/…` left fifteen of their own `#/$defs/…` pointing at
+    /// definitions the composite root did not have. A host that ran the
+    /// document through a validator got fifteen unresolvable references; one
+    /// who did not, got a document that looked authoritative.
+    #[test]
+    fn every_reference_in_the_published_inbound_document_resolves_within_it() {
+        let document = inbound_schema().expect("the container assembles");
+        let defs = document
+            .get("$defs")
+            .and_then(Value::as_object)
+            .expect("a container");
+
+        fn references(node: &Value, found: &mut Vec<String>) {
+            match node {
+                Value::Object(map) => {
+                    for (key, value) in map {
+                        if key == "$ref" {
+                            if let Some(reference) = value.as_str() {
+                                found.push(reference.to_string());
+                            }
+                        } else {
+                            references(value, found);
+                        }
+                    }
+                }
+                Value::Array(items) => items.iter().for_each(|item| references(item, found)),
+                _ => {}
+            }
+        }
+
+        let mut found = Vec::new();
+        references(&document, &mut found);
+        assert!(
+            !found.is_empty(),
+            "the document references its payload types"
+        );
+        for reference in found {
+            let name = reference
+                .strip_prefix("#/$defs/")
+                .unwrap_or_else(|| panic!("{reference} is not a local definition reference"));
+            assert!(defs.contains_key(name), "{reference} resolves to nothing");
+        }
+    }
+
+    /// The definitions are hoisted, not duplicated: a payload type two bodies
+    /// carry is declared once, and hoisting does not reshape it.
+    #[test]
+    fn a_type_two_documents_carry_is_defined_once() {
+        let document = inbound_schema().expect("the container assembles");
+        let defs = document
+            .get("$defs")
+            .and_then(Value::as_object)
+            .expect("a container");
+        // `GenerationParams` rides inside `EngineOverrides` and inside the
+        // frame's own `CompletionRequest`, so it is in two derived roots.
+        assert!(defs.contains_key("GenerationParams"));
+        assert_eq!(
+            defs.get("GenerationParams"),
+            server_frame_schema()
+                .get("$defs")
+                .and_then(|defs| defs.get("GenerationParams")),
+            "hoisting must not reshape a definition"
+        );
+    }
+
+    /// **The witness for #4583's stated repro.** One `export` per name. A
+    /// `.d.ts` that declares an identifier twice is a `tsc` error (TS2300), so
+    /// a duplicate makes the published artifact unusable by the audience it
+    /// exists for — and ten of them shipped, because five roots each carried
+    /// their own copy of every payload type they reach.
+    #[test]
+    fn no_identifier_is_exported_twice() {
+        let artifacts = artifacts().expect("every artifact prints");
+        let (_, declarations) = artifacts
+            .iter()
+            .find(|(name, _)| *name == "serveframe.d.ts")
+            .expect("the .d.ts is committed beside the schemas");
+        let mut exported: Vec<&str> = declarations
+            .lines()
+            .filter_map(|line| line.strip_prefix("export "))
+            .filter_map(|rest| {
+                rest.strip_prefix("interface ")
+                    .or(rest.strip_prefix("type "))
+            })
+            .map(|rest| rest.split_whitespace().next().unwrap_or(rest))
+            .collect();
+        let count = exported.len();
+        exported.sort_unstable();
+        exported.dedup();
+        assert_eq!(count, exported.len(), "an identifier is declared twice");
+    }
+
+    /// Every root the `.d.ts` prints still names its own type, so dedup did not
+    /// silently drop a declaration along with the duplicates.
+    #[test]
+    fn every_root_and_every_payload_type_is_still_declared() {
+        let artifacts = artifacts().expect("every artifact prints");
+        let (_, declarations) = artifacts
+            .iter()
+            .find(|(name, _)| *name == "serveframe.d.ts")
+            .expect("the .d.ts is committed beside the schemas");
+
+        let mut expected: Vec<String> = vec!["ServerFrame".to_string()];
+        expected.extend(INBOUND_BODIES.iter().map(|body| body.name.to_string()));
+        expected.extend(
+            server_frame_schema()["$defs"]
+                .as_object()
+                .expect("the frame defines its payload types")
+                .keys()
+                .cloned(),
+        );
+        for body in INBOUND_BODIES {
+            if let Some(defs) = (body.schema)()["$defs"].as_object() {
+                expected.extend(defs.keys().cloned());
+            }
+        }
+
+        for name in expected {
+            assert!(
+                declarations.contains(&format!("export interface {name} "))
+                    || declarations.contains(&format!("export type {name} =")),
+                "no declaration emitted for {name}"
+            );
+        }
+    }
+
+    /// A name defined two different ways stops the export rather than losing
+    /// one of the two. Nothing in this crate produces one today, which is
+    /// exactly why the refusal needs a test: the arm is unreachable from the
+    /// shipped types and would otherwise be unexercised until the day it fires.
+    #[test]
+    fn two_definitions_of_one_name_refuse_rather_than_overwrite() {
+        let mut defs = Map::new();
+        defs.insert(
+            "ToolCall".to_string(),
+            serde_json::json!({"type": "string"}),
+        );
+        let clash = serde_json::json!({
+            "$defs": { "ToolCall": { "type": "integer" } },
+            "type": "object",
+            "properties": {},
+        });
+        let err = hoist("ToolResultIn", clash, &mut defs).unwrap_err();
+        assert_eq!(err, ServeSchemaError::Conflict("ToolCall".to_string()));
+    }
+
+    /// Running the exporter twice writes the same bytes, which is what lets
+    /// `scripts/check-wire-schema.sh` treat any diff as real drift. Hoisting
+    /// walks two maps and inserts into a third, and an order-dependent walk
+    /// there would make the guard report drift on every other run.
+    #[test]
+    fn export_is_deterministic() {
+        assert_eq!(
+            artifacts().expect("every artifact prints"),
+            artifacts().expect("every artifact prints")
         );
     }
 }

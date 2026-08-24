@@ -7,10 +7,11 @@ Generated files. Do not edit them by hand.
 | `agentevent.schema.json` | JSON Schema 2020-12 for `AgentEvent` and its whole payload graph |
 | `agentevent.d.ts` | The same contract as TypeScript declarations |
 | `serveframe.schema.json` | JSON Schema for `ServerFrame`, the `stella-serve` transport envelope |
-| `serveinbound.schema.json` | The two bodies a host POSTs back to answer a reverse request |
+| `serveinbound.schema.json` | The bodies a host POSTs to the transport — three that answer a reverse request, plus the optional `engine` object on a turn — and every payload type they reference |
 | `serveframe.d.ts` | Both of the above as TypeScript, plus the `seq` envelope |
 | `wrapper.wire.json` | Every message the wrapper socket carries, in both its fullest and its emptiest legal form |
 | `wrapper.schema.json` | JSON Schema for the socket's two point messages, `WrapperRequest` and `WrapperResponse` |
+| `wrapper.d.ts` | The same contract as TypeScript declarations, plus the `WrapperPoint` union |
 
 All are derived from the Rust types and committed, so a change to the wire
 format lands as a reviewable diff instead of as something a consumer discovers.
@@ -27,7 +28,7 @@ again: it is spoken between the host and an out-of-process plugin in whatever
 language its author chose, and neither of the other two artifacts describes a
 byte of it.
 
-### The wrapper socket ships two artifacts, and neither subsumes the other
+### The wrapper socket ships a corpus as well as a schema, and neither subsumes the other
 
 `wrapper.wire.json` is a **corpus**: every message serialized through the same
 `Serialize` impls the transport uses, twice each — once with every optional
@@ -53,7 +54,17 @@ it has.
 The corpus is not superseded and is not going away: a schema describes shapes,
 and the corpus pins the bytes a plugin's parser actually meets, which a schema
 cannot be run backwards to recover. `crates/stella-plugin/src/wire_schema.rs`
-argues the split, including why this is the one contract here with no `.d.ts`.
+argues the split where a reader meets it.
+
+`wrapper.d.ts` prints that schema through the same
+`stella_protocol::schema_export` the other two `.d.ts` artifacts use. It could
+not, until #4535: the printer assumed a union tagged on `type`, and this
+socket's envelope is tagged on `point`, so the one contract whose audience
+writes TypeScript was the one contract with no declarations to import. Printing
+it also flattened the composite document — `schemars` numbers every `$ref` from
+the root of the document it generates, so nesting two derived schemas whole left
+seventeen references pointing at definitions the composite root did not have.
+They resolve now, and each payload type is declared once instead of twice.
 
 ## The one attached property, and why it is not derived
 
@@ -132,8 +143,7 @@ making an optional field required breaks every consumer at once.
 
 A `"type"` this schema does not list is **not** an error. It is an event from a
 newer stella, and a forward-compatible consumer keeps the line intact and moves
-on — which is what `AgentEvent::Unknown` does on the Rust side, and what
-`crates/stella-pipeline/tests/fixtures/from_a_newer_stella.jsonl` pins executably.
+on — which is what `AgentEvent::Unknown` does on the Rust side.
 
 `AgentEvent::Unknown` itself therefore has no schema member: it carries no wire
 tag of its own, and re-serializes as the foreign object it wrapped. Validating
@@ -167,8 +177,7 @@ than counting `complete`.
 
 Structural invariants that span *several* events — legal stage ordering,
 `tool_start`/`tool_result` pairing, a single terminal `complete`, monotonic
-budget — cannot be expressed in JSON Schema at all. They live in
-`stella_pipeline::replay::validate_stream`, and
-`crates/stella-pipeline/tests/stream_conformance.rs` runs them over recorded fixtures.
-A stream that validates against this schema line by line can still be an
-illegal stream.
+budget — cannot be expressed in JSON Schema at all, so a stream that validates
+against this schema line by line can still be an illegal stream. The validator
+that used to check them (`stella_pipeline::replay`) went with the crate #3865
+deleted from this workspace; nothing in this tree checks them today.

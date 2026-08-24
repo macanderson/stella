@@ -50,7 +50,7 @@ pub(crate) mod outcome;
 mod output;
 pub(crate) mod persistence;
 mod presence;
-mod prompt;
+pub(crate) mod prompt;
 mod reflect;
 pub(crate) mod resume;
 pub(crate) mod seats;
@@ -174,8 +174,8 @@ pub(crate) struct RawRunSummary {
 /// exact-match handlers in the loop only claim the bare forms). Must cover
 /// every `/`-command the loop below handles.
 const REPL_RESERVED: &[&str] = &[
-    "/exit", "/quit", "/models", "/config", "/help", "/clear", "/agents", "/init", "/rename",
-    "/color", "/goal",
+    "/exit", "/quit", "/info", "/models", "/config", "/help", "/clear", "/agents", "/init",
+    "/rename", "/color", "/goal",
 ];
 
 /// The usage line for an argument-requiring local command invoked bare (or
@@ -325,16 +325,24 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         if input == "/exit" || input == "/quit" || input == "exit" {
             break;
         }
-        if input == "/models" || input == "/models list" {
+        // `/info` (né `/models` — the old head still routes) lists the
+        // configured providers and models.
+        if matches!(input, "/info" | "/info list" | "/models" | "/models list") {
             cfg.print_models();
             continue;
         }
-        // `/models refresh` is handled model-free: when the configured model
+        // `/info refresh` is handled model-free: when the configured model
         // itself is broken, the catalog re-sync is part of digging out —
         // routing it into a model turn would fail on the very error being
         // fixed. (Changing a model happens in the deck's SETTINGS tab, via
         // `--model`, or by editing settings.json — not through a command.)
-        if input == "/models refresh" || input == "/models refresh --force" {
+        if matches!(
+            input,
+            "/info refresh"
+                | "/info refresh --force"
+                | "/models refresh"
+                | "/models refresh --force"
+        ) {
             println!();
             if let Err(e) = crate::model_catalog::run_refresh(input.ends_with("--force")).await {
                 println!("  {} refresh failed: {e}", "✗".red());
@@ -536,7 +544,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
         ));
         println!();
 
-        let mut recall_event = None;
+        let mut recall = crate::memory::OpeningRecall::default();
         if let Some(m) = &mut memory {
             // Proposal 4: A/B recall measurement — on every `rate`-th turn in
             // this workspace, suppress recall so the outcome is comparable to
@@ -546,8 +554,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             let touched =
                 stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
             let recalled = m.recall_block_reported(input, &touched).await;
-            recall_event = recalled.telemetry_event();
-            inject_recall_block(&mut messages, recalled.text);
+            recall = crate::memory::inject_opening_recall(&mut messages, recalled);
         }
 
         // Everything `run_turn` appends past here is this turn's work; the
@@ -573,7 +580,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             persistence::TurnDoor::new("chat"),
             input,
             Some(presence.id()),
-            recall_event,
+            recall,
             memory.as_mut(),
             Some(&mut friction),
         )
@@ -1159,13 +1166,14 @@ pub(crate) async fn run_turn(
     door: persistence::TurnDoor<'_>,
     prompt: &str,
     session: Option<&str>,
-    // Phase 2 (#713): this turn's `ContextRecall`, if recall ran. Recall
-    // happens before the turn's event channel exists — it has to, because its
-    // frames go into the messages the turn is built from — so the caller hands
-    // the event forward rather than emitting it into a stream that is not
-    // there yet. Passed rather than re-derived: re-running recall to report it
-    // would double the retrieval cost of every interactive turn.
-    recall_event: Option<AgentEvent>,
+    // Phase 2 (#713): this turn's `ContextRecall`, if recall ran, plus the
+    // opening block's produced handles (#4498). Recall happens before the
+    // turn's event channel exists — it has to, because its frames go into the
+    // messages the turn is built from — so the caller hands the residue
+    // forward rather than emitting into a stream that is not there yet.
+    // Passed rather than re-derived: re-running recall to report it would
+    // double the retrieval cost of every interactive turn.
+    recall: crate::memory::OpeningRecall,
     // The caller's session memory, borrowed for the duration of the turn so
     // the execution seam can stamp this execution's id and record its
     // skill-version usage before the turn runs — the caller reflects with the
@@ -1194,8 +1202,15 @@ pub(crate) async fn run_turn(
     // The proactive re-query (#3243 Phase 3): the engine consults this at
     // every step boundary; the adapter's hysteresis makes an undrifted turn
     // free. Seeded from `messages` so the turn-opening block is never
-    // re-injected, and given `tx` so its own recall is metered (#3366).
-    let requery = crate::memory::requery_for_turn(session_memory.as_deref(), messages, tx.clone());
+    // re-injected, from that block's own handles so the first answer does not
+    // repeat its frames (#4498), and given `tx` so its own recall is metered
+    // (#3366).
+    let requery = crate::memory::requery_for_turn(
+        session_memory.as_deref(),
+        messages,
+        tx.clone(),
+        recall.produced,
+    );
     persistence::attach_run_streams(registry, cfg, &tx, execution.as_ref());
     let renderer = spawn_renderer(
         rx,
@@ -1207,7 +1222,7 @@ pub(crate) async fn run_turn(
     );
     // Recall's frames, then this run's own opening stage boundary — see
     // `output::open_raw_turn` for the ordering and for why it lives there.
-    output::open_raw_turn(&tx, recall_event, cfg.authority.withheld.as_ref());
+    output::open_raw_turn(&tx, recall.event, cfg.authority.withheld.as_ref());
 
     // Mid-turn fallback (#2679): on an exhausted retry ladder the engine
     // re-resolves the worker role through this session router.
@@ -1328,8 +1343,8 @@ fn print_help() {
     println!("  {}\n", "Stella Commands".bright_cyan().bold());
     println!("  {}  Send a prompt to the agent", "type message".dimmed());
     println!(
-        "  {}       List configured providers and models (`/models refresh` re-syncs the catalog)",
-        "/models".bright_magenta()
+        "  {}         List configured providers and models (`/info refresh` re-syncs the catalog)",
+        "/info".bright_magenta()
     );
     println!(
         "  {}        Show current configuration",

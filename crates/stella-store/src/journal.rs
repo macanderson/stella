@@ -23,7 +23,7 @@
 //! ## Two stores, and which is canonical for what
 //!
 //! A session's durable state does not all live here. The files above are the
-//! sidecar; the agent's file changes, the no-clobber staleness map, and the
+//! sidecar; the agent's file changes and the
 //! **in-flight turn's resume point** live in the workspace's git-backed record
 //! ([`crate::work_journal`]). That is two stores holding conversation, so the
 //! split has to be stated rather than left to be inferred:
@@ -34,7 +34,7 @@
 //! | the conversation **between** turns | `history.json` |
 //! | the pending prompt backlog | `queue.json` |
 //! | the conversation **inside** an interrupted turn | the work journal's `CHECKPOINT_BLOB` |
-//! | what the agent wrote, and what it last saw | the work journal's commits and `OBSERVED_BLOB` |
+//! | what the agent wrote | the work journal's commits |
 //!
 //! The two conversation stores never describe the same instant, which is what
 //! keeps this from being the ambiguity it looks like. A checkpoint exists only
@@ -105,7 +105,17 @@ pub enum JournalRecord {
         model: Option<String>,
     },
     /// One `AgentEvent` belonging to one agent — the transcript stream.
-    Event { agent: String, event: AgentEvent },
+    ///
+    /// Boxed, because every other record here is a handful of `String`s and
+    /// an `AgentEvent` is several times the size of the largest of them.
+    /// Inline, it would set the size of every record the journal moves, the
+    /// status and lifecycle rows included. The `Box` is invisible on the wire
+    /// — `serde` reads and writes through it — so the journal format is
+    /// unchanged.
+    Event {
+        agent: String,
+        event: Box<AgentEvent>,
+    },
     /// A supervisor lifecycle transition (snake_case, e.g. `waiting_input`).
     /// `waiting_input` doubles as the settle marker for prompts that were
     /// handled without a model turn (`/help`, `/init`, …).
@@ -138,7 +148,7 @@ impl JournalRecord {
             | JournalRecord::Pipeline { .. } => true,
             JournalRecord::Event { event, .. } => {
                 matches!(
-                    event,
+                    **event,
                     AgentEvent::TurnComplete { .. }
                         | AgentEvent::RunComplete { .. }
                         | AgentEvent::Error { .. }
@@ -212,10 +222,10 @@ impl SessionJournal {
             // — and, arriving one per token, tear the coalescing runs below
             // into per-fragment flushes. Replay renders identically without
             // them.
-            if matches!(event, AgentEvent::TextDelta { .. }) {
+            if matches!(**event, AgentEvent::TextDelta { .. }) {
                 return Ok(());
             }
-            let (kind, delta) = match event {
+            let (kind, delta) = match &**event {
                 AgentEvent::Text { text } => (DeltaKind::Text, text),
                 AgentEvent::Reasoning { delta } => (DeltaKind::Reasoning, delta),
                 _ => {
@@ -258,7 +268,7 @@ impl SessionJournal {
         };
         self.write_line_unsynced(&JournalRecord::Event {
             agent: p.agent,
-            event,
+            event: Box::new(event),
         })
     }
 
@@ -406,7 +416,7 @@ pub fn unsettled_prompts(records: &[JournalRecord]) -> Vec<(String, String)> {
             }
             JournalRecord::Event { agent, event } => {
                 if matches!(
-                    event,
+                    **event,
                     AgentEvent::TurnComplete { .. }
                         | AgentEvent::RunComplete { .. }
                         | AgentEvent::Error {
@@ -445,10 +455,10 @@ pub fn last_pipeline(records: &[JournalRecord]) -> Option<bool> {
 /// interruptions instead of silently resetting to zero.
 pub fn last_spent_usd(records: &[JournalRecord]) -> Option<f64> {
     records.iter().rev().find_map(|r| match r {
-        JournalRecord::Event {
-            event: AgentEvent::BudgetTick { spent_usd, .. },
-            ..
-        } => Some(*spent_usd),
+        JournalRecord::Event { event, .. } => match &**event {
+            AgentEvent::BudgetTick { spent_usd, .. } => Some(*spent_usd),
+            _ => None,
+        },
         _ => None,
     })
 }
@@ -493,17 +503,17 @@ mod tests {
     fn text(agent: &str, delta: &str) -> JournalRecord {
         JournalRecord::Event {
             agent: agent.into(),
-            event: AgentEvent::Text { text: delta.into() },
+            event: Box::new(AgentEvent::Text { text: delta.into() }),
         }
     }
 
     fn complete(agent: &str) -> JournalRecord {
         JournalRecord::Event {
             agent: agent.into(),
-            event: AgentEvent::TurnComplete {
+            event: Box::new(AgentEvent::TurnComplete {
                 model: "m".into(),
                 cost_usd: 0.0,
-            },
+            }),
         }
     }
 
@@ -533,9 +543,9 @@ mod tests {
             // the pending run — the run below must still coalesce whole.
             j.write(&JournalRecord::Event {
                 agent: "lead".into(),
-                event: AgentEvent::TextDelta {
+                event: Box::new(AgentEvent::TextDelta {
                     delta: "hel".into(),
-                },
+                }),
             })
             .unwrap();
             j.write(&text("lead", "lo")).unwrap();
@@ -566,7 +576,7 @@ mod tests {
             j.write(&text("lead", "lo")).unwrap();
             j.write(&JournalRecord::Event {
                 agent: "lead".into(),
-                event: AgentEvent::Reasoning { delta: "hm".into() },
+                event: Box::new(AgentEvent::Reasoning { delta: "hm".into() }),
             })
             .unwrap();
             j.write(&text("lead", " world")).unwrap();
@@ -587,7 +597,7 @@ mod tests {
                 text("lead", "hello"),
                 JournalRecord::Event {
                     agent: "lead".into(),
-                    event: AgentEvent::Reasoning { delta: "hm".into() },
+                    event: Box::new(AgentEvent::Reasoning { delta: "hm".into() }),
                 },
                 text("lead", " world"),
                 complete("lead"),
@@ -663,10 +673,10 @@ mod tests {
             started(&a, "two"),
             JournalRecord::Event {
                 agent: a.clone(),
-                event: AgentEvent::Error {
+                event: Box::new(AgentEvent::Error {
                     message: "store write failed".into(),
                     retryable: true,
-                },
+                }),
             },
         ];
         assert_eq!(
@@ -678,10 +688,10 @@ mod tests {
             started(&a, "two"),
             JournalRecord::Event {
                 agent: a.clone(),
-                event: AgentEvent::Error {
+                event: Box::new(AgentEvent::Error {
                     message: "turn stopped by user".into(),
                     retryable: false,
-                },
+                }),
             },
         ];
         assert_eq!(unsettled_prompts(&aborted), vec![]);
@@ -757,26 +767,26 @@ mod tests {
             JournalRecord::Pipeline { on: true },
             JournalRecord::Event {
                 agent: "lead".into(),
-                event: AgentEvent::BudgetTick {
+                event: Box::new(AgentEvent::BudgetTick {
                     spent_usd: 0.5,
                     limit_usd: None,
                     mode: stella_protocol::BudgetMode::Observed,
                     session_spent_usd: None,
                     session_limit_usd: None,
                     deadline_remaining_ms: None,
-                },
+                }),
             },
             JournalRecord::Pipeline { on: false },
             JournalRecord::Event {
                 agent: "lead".into(),
-                event: AgentEvent::BudgetTick {
+                event: Box::new(AgentEvent::BudgetTick {
                     spent_usd: 1.25,
                     limit_usd: None,
                     mode: stella_protocol::BudgetMode::Observed,
                     session_spent_usd: None,
                     session_limit_usd: None,
                     deadline_remaining_ms: None,
-                },
+                }),
             },
         ];
         assert_eq!(last_pipeline(&records), Some(false));

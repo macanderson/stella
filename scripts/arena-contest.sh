@@ -74,10 +74,11 @@ else
   printf '  (this machine — concurrency %s)\n' "$concurrency"
 fi
 
-# `uv run` keeps the tool on its own locked dependency set; the cloud verbs
-# need the optional boto3 extra and say so themselves if it is absent.
-runner=(uv run --project arenabench arenabench)
-command -v uv >/dev/null 2>&1 || runner=(python3 -m arenabench)
+# An installed `arenabench` — its home is
+# https://github.com/macanderson/arenabench since the #2380 ejection. The
+# cloud verbs need the optional boto3 extra and say so themselves if absent.
+runner=(arenabench)
+command -v arenabench >/dev/null 2>&1 || runner=(python3 -m arenabench)
 
 argv=(contest
   --versus-model "$versus_model"
@@ -99,5 +100,5 @@ set -x
 set +x
 
 if [ "$target" = local ]; then
-  printf '\nrun it with:\n  uv run --project arenabench arenabench run %s\n' "$toml"
+  printf '\nrun it with:\n  arenabench run %s\n' "$toml"
 fi

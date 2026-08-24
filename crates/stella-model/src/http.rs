@@ -1,8 +1,14 @@
 //! Shared HTTP plumbing for every provider adapter: a `reqwest` client with a
-//! bounded connect timeout, and an idle-timeout wrapper around per-chunk
-//! stream reads. Centralized so every provider adapter gets identical
-//! timeout-and-retry-classification behavior — a hung TCP connect or a
-//! provider that opens a stream and then goes silent must surface as a
+//! bounded connect timeout, and two clocks over a stream's body rather than
+//! one — [`FIRST_BYTE_TIMEOUT`] on the wait for its *first* chunk, and the
+//! longer [`STREAM_IDLE_TIMEOUT`] on the wait for each chunk after that. They
+//! are separate because they mean different things: a gap between fragments
+//! is a model thinking and its expiry is a stall, while a response that sent
+//! its headers and then no body byte is a buffering proxy and its expiry is
+//! *fallback-eligible* — the session re-issues the retry unary
+//! ([`crate::stream_recovery`]). Centralized so every provider adapter gets
+//! identical timeout-and-retry-classification behavior — a hung TCP connect
+//! or a provider that opens a stream and then goes silent must surface as a
 //! *retryable* `Transport` error, not an unbounded hang.
 
 use std::time::Duration;

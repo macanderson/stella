@@ -1340,11 +1340,7 @@ impl<'a> Engine<'a> {
             // The same estimate `StepUsage` reports below, not a second walk.
             estimated_input_tokens,
             step,
-            crate::receipts::ServedBy {
-                role: self.call_role,
-                provider: self.active_provider().id(),
-                model: &result.model,
-            },
+            settlement::served_by(self.call_role, self.active_provider().id(), &result),
             events,
         );
 
@@ -1361,6 +1357,10 @@ impl<'a> Engine<'a> {
                 estimated_input_tokens,
                 duration_ms: call_duration_ms,
                 retries: retries.len() as u32,
+                // Read off `req` itself, so the metering record and the wire
+                // agree by construction rather than by two sites reading the
+                // same bindings and being trusted to keep doing so.
+                request: settlement::RequestShape::of(&req),
             },
         );
         let speculation = speculation_future.await;

@@ -2,7 +2,7 @@ use super::*;
 
 /// The docs' provider cards must not drift from [`PROVIDERS`].
 ///
-/// `website/src/components/provider-cards.tsx` holds one typed record per
+/// `website/src/components/provider-catalog.ts` holds one typed record per
 /// provider, rendered as the card grid on both the API Providers index and the
 /// getting-started walkthrough. Before it existed the same facts were typed
 /// into a markdown table on each page, and they had already drifted: Bedrock's
@@ -21,13 +21,13 @@ use super::*;
 /// docs to speak the enum's language rather than the reader's.
 #[test]
 fn provider_cards_match_the_registry() {
-    let Some(source) = read_provider_cards() else {
+    let Some(source) = read_provider_catalog() else {
         return;
     };
-    let cards = parse_provider_cards(&source);
+    let cards = parse_provider_catalog(&source);
     assert!(
         cards.len() >= PROVIDERS.len(),
-        "parsed only {} cards from provider-cards.tsx — the parser has \
+        "parsed only {} cards from provider-catalog.ts — the parser has \
          probably gone stale against the file's shape",
         cards.len()
     );
@@ -38,7 +38,7 @@ fn provider_cards_match_the_registry() {
             .find(|c| c.id == provider.id)
             .unwrap_or_else(|| {
                 panic!(
-                    "provider `{}` has no card in provider-cards.tsx — every \
+                    "provider `{}` has no card in provider-catalog.ts — every \
                      supported provider must appear in the docs grid",
                     provider.id
                 )
@@ -116,14 +116,14 @@ fn provider_cards_match_the_registry() {
     for card in &cards {
         assert!(
             PROVIDERS.iter().any(|p| p.id == card.id) || card.id == LOCAL_PROVIDER.id,
-            "provider-cards.tsx documents `{}`, which is not a provider \
+            "provider-catalog.ts documents `{}`, which is not a provider \
              Stella supports",
             card.id
         );
     }
 }
 
-/// A card's pinned fields, as written in the TSX record.
+/// A card's pinned fields, as written in the catalog record.
 struct ProviderCard {
     id: String,
     href: String,
@@ -134,9 +134,16 @@ struct ProviderCard {
 /// The docs tree, or `None` when it isn't checked out — same posture as
 /// `stella-tools/tests/docs_in_sync.rs`: a repo-hygiene gate, not a runtime
 /// invariant. Note the granularity — a missing *tree* skips, but a missing
-/// file inside a present tree panics, so renaming the component cannot
-/// silently disable this test.
-fn read_provider_cards() -> Option<String> {
+/// file inside a present tree panics, so renaming the module cannot silently
+/// disable this test.
+///
+/// The records used to live in `provider-cards.tsx` beside the rendering.
+/// #4588 split them into this plain `.ts` module so the markdown export path
+/// (`src/lib/page-markdown.ts`, exercised by `node --test`, which strips types
+/// but cannot parse JSX) could read them too. The card component now only
+/// imports the catalog, so this test kept parsing a file with no records left
+/// in it and turned `main` red on a zero-card count.
+fn read_provider_catalog() -> Option<String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()?
         .parent()?;
@@ -144,7 +151,7 @@ fn read_provider_cards() -> Option<String> {
     if !website.is_dir() {
         return None;
     }
-    let path = website.join("src/components/provider-cards.tsx");
+    let path = website.join("src/components/provider-catalog.ts");
     Some(
         std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("{} is missing or unreadable: {e}", path.display())),
@@ -153,10 +160,16 @@ fn read_provider_cards() -> Option<String> {
 
 /// Every `{ id: "…", …, env: "…", defaultModel: "…" }` record inside the
 /// `PROVIDER_CATALOG` array.
-fn parse_provider_cards(source: &str) -> Vec<ProviderCard> {
+///
+/// Anchored on the `export const` declaration rather than on the bare name,
+/// because the bare name also matches an `import { PROVIDER_CATALOG }` line —
+/// which is exactly what the card component became when #4588 moved the
+/// records out. Matching the import left the parser scanning a file with no
+/// records and reporting zero rather than failing on the file it was handed.
+fn parse_provider_catalog(source: &str) -> Vec<ProviderCard> {
     let start = source
-        .find("PROVIDER_CATALOG")
-        .expect("provider-cards.tsx no longer declares PROVIDER_CATALOG");
+        .find("export const PROVIDER_CATALOG")
+        .expect("provider-catalog.ts no longer declares `export const PROVIDER_CATALOG`");
     let body = &source[start..];
 
     let mut out = vec![];
@@ -168,14 +181,13 @@ fn parse_provider_cards(source: &str) -> Vec<ProviderCard> {
         let end = rest[1..].find("id: \"").map_or(rest.len(), |next| next + 1);
         let record = &rest[..end];
 
-        let Some(id) = tsx_field(record, "id") else {
+        let Some(id) = ts_field(record, "id") else {
             continue;
         };
         out.push(ProviderCard {
-            href: tsx_field(record, "href")
-                .unwrap_or_else(|| panic!("the `{id}` card has no href")),
-            env: tsx_field(record, "env").unwrap_or_else(|| panic!("the `{id}` card has no env")),
-            default_model: tsx_field(record, "defaultModel")
+            href: ts_field(record, "href").unwrap_or_else(|| panic!("the `{id}` card has no href")),
+            env: ts_field(record, "env").unwrap_or_else(|| panic!("the `{id}` card has no env")),
+            default_model: ts_field(record, "defaultModel")
                 .unwrap_or_else(|| panic!("the `{id}` card has no defaultModel")),
             id,
         });
@@ -183,8 +195,8 @@ fn parse_provider_cards(source: &str) -> Vec<ProviderCard> {
     out
 }
 
-/// The value of a `key: "value"` field in a TSX object literal.
-fn tsx_field(record: &str, key: &str) -> Option<String> {
+/// The value of a `key: "value"` field in a TypeScript object literal.
+fn ts_field(record: &str, key: &str) -> Option<String> {
     let needle = format!("{key}: \"");
     let start = record.find(&needle)? + needle.len();
     let rest = &record[start..];

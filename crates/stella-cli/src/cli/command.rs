@@ -195,6 +195,17 @@ pub(crate) enum Command {
         /// `--pipeline` names a wrapper that can honor it (#3835).
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
+
+        /// Exit non-zero unless the `--pipeline` wrapper declared its
+        /// requirements met (#3554, on this door #4543). The LAST round's
+        /// verdict decides — the round whose work ships — because every
+        /// earlier round's refusal was superseded by another round being
+        /// driven. A goal the verifier left unmet already fails on its own,
+        /// ahead of this gate. Refused without `--pipeline`, where nothing
+        /// declares a verdict; see `wrapper_plugin::verdict_gate` for why it
+        /// is opt-in.
+        #[arg(long)]
+        require_verdict: bool,
     },
 
     /// Watch CI for a branch or PR and fix it until green
@@ -402,6 +413,16 @@ pub(crate) enum Command {
         #[arg(long, value_name = "SECS")]
         task_timeout: Option<u64>,
 
+        /// Fail any attempt whose `--pipeline` wrapper did not declare its
+        /// requirements met (#3554, on this door #4543). PER ATTEMPT: an
+        /// unmet or undecided verdict fails that attempt by name, and a
+        /// failed attempt fails the run — the rule every failed task already
+        /// follows. The attempt's own abort wins when both fire. Refused
+        /// without `--pipeline`, where nothing declares a verdict; see
+        /// `wrapper_plugin::verdict_gate` for why it is opt-in.
+        #[arg(long)]
+        require_verdict: bool,
+
         /// Output shape: text, json, or stream-json
         ///
         /// Anything but `text` keeps the live grid off and the run headless,
@@ -575,6 +596,14 @@ pub(crate) enum Command {
         /// that would otherwise bury the prompt's own delta
         #[arg(long, value_enum, default_value = "all")]
         only: inspect::RoleFilter,
+
+        /// Show only this call's system prompt, split into provenance-labelled
+        /// sections: which setting put each span there — the built-in persona,
+        /// the session environment, workspace memories, workspace rules, the
+        /// SessionStart hook context. The sections concatenate back to the
+        /// exact bytes the model was sent
+        #[arg(long = "system-prompt")]
+        system_prompt: bool,
     },
 
     /// Pass calibration: false-positive rate vs CI and reverts

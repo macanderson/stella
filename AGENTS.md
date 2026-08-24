@@ -82,6 +82,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + license-allowlist-parity + repro-wiring
                          #   + shellcheck + invariants + doc-links
                          #   + command-docs + brand-case + file-size
+                         #   + website-inputs (a Rust test's website/ inputs
+                         #     are declared, and ci.yml's filter is built
+                         #     from that declaration)
                          #   + god-files
                          #   + gate-parity + left-behind + role-names
                          #   + stat-portability + module-reachability
@@ -106,6 +109,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
                          #   + doc-warnings (rustdoc -D warnings)
+                         #   + doc-warnings-schema (the same, for the
+                         #     `schema`-gated wire-contract modules the
+                         #     default-feature run never compiles)
                          #   + lint (clippy -D warnings)
                          #   + test (test --workspace)
                          #   + tool-docs (docs/tools/ vs the declarations)
@@ -131,14 +137,20 @@ CI enforces the same steps split across four workflows:
 validate`, a release smoke build (thin LTO), and the deleted-test guard
 (`scripts/check-deleted-tests.sh`);
 `docs-guards.yml` runs those two plus a second run of `command-docs`,
-`brand-case`, `gate-parity`, `god-files` and `design-refs`, because all of them
-trigger on the `docs/**` and `*.md` paths `ci.yml` ignores — `design-refs` was
-the last to join, after a docs-only PR was found able to move a document into
-the `docs/design` scratchpad, invalidate every Rust comment citing it, and land
-green (#3888); and
+`website-inputs`, `brand-case`, `gate-parity`, `god-files` and `design-refs`,
+because all of them trigger on the `docs/**`, `website/**` and `*.md` paths
+`ci.yml` skips — `website-inputs` was the last to join, after a website-only PR
+was found able to move a file a Rust test reads and land green, leaving `main`
+red on a test nobody had run (#4632, and #3888 is the same shape one boundary
+over: a docs-only PR moving a document into the `docs/design` scratchpad and
+invalidating every Rust comment citing it); and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
 because a PR that hand-edits a generated schema and nothing else starts neither
-of the other two (#1439); and `guard-self-tests.yml` runs the three steps
+of the other two (#1439) — and `doc-warnings-schema` beside it, because
+`ci.yml`'s `cargo doc --workspace` runs with default features and every module
+that describes the wire format sits behind an off-by-default `schema` one, so
+rustdoc compiled none of them anywhere (#4584); this workflow already builds
+those three crates with the feature on; and `guard-self-tests.yml` runs the three steps
 ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
 `prose` exists to judge — alongside the hermetic suites that prove a guard can
 still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
@@ -315,13 +327,14 @@ The same diff also decides whether the hook runs `make bench-test` — the Pytho
 bench suites, which are gated by `.github/workflows/bench.yml` and are not a
 `make gate` step because they cost minutes. The hook selects on that workflow's
 own scope filter, read from it by `scripts/bench-suites.sh filter` rather than
-copied, so a push touching `bench/**`, `arenabench/**`,
+copied, so a push touching `bench/**`,
 `crates/stella-model/src/catalog.rs` or the workflow itself runs them before it
 leaves the machine. `GATE=fast` skips them out loud, on the same "no tests"
 contract it applies to cargo. This existed nowhere until #2847: the workflow ran
 seven pytest suites, `make bench-test` ran three, and `main` went red on
-2026-08-11 on a deterministic arenabench failure with no local command that
-would have caught it.
+2026-08-11 on a deterministic failure in the arenabench suite (in-tree then,
+ejected to its own repository since — #2380) with no local command that would
+have caught it.
 
 Supply-chain checks run as a separate CI job: `make supply-chain` (or
 `cargo deny check advisories bans sources licenses`). All four are real
@@ -446,7 +459,11 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
      200 with an empty stream). Every streaming dialect arms a bounded
      per-session latch and re-issues the retried attempt as a unary request
      — the shared chat-completions adapter first (#2686), then Messages,
-     Responses and `generateContent` (#2746); Bedrock is already unary.
+     Responses and `generateContent` (#2746). Bedrock is already unary, and
+     that row names a witness like every other (#4557): "no stream to fall
+     back from" holds only while the single unary path classifies its own
+     read-bound expiry as terminal rather than as a retryable transport
+     fault, which is #547's retry storm.
    - **`OverflowPosture`** — whether this provider's context-overflow
      rejection is recognised as one, so the engine's reactive recovery
      fires instead of aborting the turn (#2680). `Detected` names the wire
@@ -742,6 +759,19 @@ inputs, not review afterthoughts:
   crossing is genuinely irreducible, say so out loud with
   `./scripts/check-file-size.sh --update --grandfather <path>` and justify it
   in review.
+- **`make file-size-update` raises; `make file-size-retighten` lowers** (#4657).
+  The update moves the ceilings that must move for your tree to pass and leaves
+  every other entry at the number it had, so a PR repairing a red `main` edits
+  exactly the lines it needs. It used to lower them all to their size on the
+  branch it ran on, which made the repair PR the carrier of the next break: it
+  is the one PR guaranteed to be racing every other merge, because main is red
+  and everyone is waiting on it. #4652 repaired `driver.rs` and `usage.rs` and
+  in the same run lowered `command_deck.rs` from 3752 to 3656 against a main
+  whose copy was 3737; that is #4654, and it held every open PR for half an
+  hour. Reclaiming the slack a split earned is `file-size-retighten`, and it is
+  a PR of its own — safe precisely when nothing is blocked on it. Both modes
+  still retire an entry whose file dropped under the limit or is gone, because
+  the check hard-fails on those and names the update as the only remedy.
 
 **The ratchet judges your change, not the tree** (#2004). A file over the line
 fails only when `current > max(its own limit, size in the base tree)` — where
@@ -759,8 +789,8 @@ every growing PR must write, and three times running two PRs that each wrote it
 correctly composed into a red `main` that then failed everyone downstream. Two
 consequences for planning: **do not "fix" a red ratchet you did not cause** by
 folding a baseline regeneration into an unrelated PR — land it on its own from
-a fresh `main`; and note that splitting a god file buys structure, not slack,
-since `--update` retightens every ceiling to its file's current size.
+a fresh `main`; and note that splitting a god file buys structure, not slack
+until someone runs `make file-size-retighten`, which is a separate PR.
 
 The workspace's Rust god files, by crate (the bench harness's Python offenders
 sit in the same baseline). Each file's ceiling lives in

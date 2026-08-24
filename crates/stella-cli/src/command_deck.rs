@@ -94,11 +94,13 @@ mod authoring;
 mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;
+mod inspect_service;
 mod lead_control;
 mod model_cmd;
 mod pr_observe;
 mod profile_cmd;
 mod session_clear;
+mod session_override;
 mod sessions_view;
 mod settings_io;
 mod settle;
@@ -109,14 +111,14 @@ mod theme_cmd;
 mod worker_control;
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
 
-use crate::memory::{SessionMemory, TurnFriction, inject_recall_block};
+use crate::memory::{SessionMemory, TurnFriction};
 use crate::runtime::TokioSleeper;
 use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
-use task_tap::TaskTap;
+use task_tap::{PlanSetup, TaskTap};
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
@@ -337,7 +339,9 @@ pub async fn run_deck_session(
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Deck,
     )?;
-    let provider = agent::build_provider(cfg)?;
+    // `mut`: `/model` (and an assumed agent's declared `model:`) swaps the
+    // adapter between turns — see `session_override`.
+    let mut provider = agent::build_provider(cfg)?;
     let registry: Arc<ToolRegistry> = Arc::new(crate::write_dirs::registry_for(cfg));
 
     // ── Channels: engine → deck (Inbound) and deck → driver (WorkspaceInput)
@@ -462,20 +466,27 @@ pub async fn run_deck_session(
     // personas on a mere resume would breach invariant #7. Chosen ONCE, byte-
     // stable (L-E8): see `session_persist::initial_pipeline_persona`.
     let pipeline_persona = crate::session_persist::initial_pipeline_persona(resume_state.as_ref());
-    let mut system_prompt = agent::with_session_hook_context(
-        if pipeline_persona {
-            // Assembled once per session, before any turn resolves wiring: no
-            // model line rather than a possibly-false one (#2721).
-            agent::build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules, None)
-        } else {
-            agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
-        },
-        cfg,
-    )
-    .await;
+    let bare_prompt = if pipeline_persona {
+        // Assembled once per session, before any turn resolves wiring: no
+        // model line rather than a possibly-false one (#2721).
+        agent::build_pipeline_system_prompt(cfg, &cfg.workspace_root, &active_rules, None)
+    } else {
+        agent::build_system_prompt(cfg, &cfg.workspace_root, &active_rules)
+    };
+    let mut system_prompt = agent::with_session_hook_context(bare_prompt.clone(), cfg).await;
+    // What the SessionStart hooks appended, captured once: a session model
+    // switch rebuilds the prompt around the NEW model line and re-appends
+    // this verbatim — hooks run once per session, not once per switch.
+    let hook_context_suffix = system_prompt[bare_prompt.len()..].to_string();
     // The persona-free prompt an assumed agent's block is appended to
     // (`WorkspaceInput::AgentAssume`), so assuming twice never stacks.
-    let base_system_prompt = system_prompt.clone();
+    let mut base_system_prompt = system_prompt.clone();
+    // The assumed persona itself, kept so a model switch can re-append it to
+    // the rebuilt base — and the session's own tool policy, the floor every
+    // assumed agent's `tools:` grant narrows from (never the previous
+    // agent's, so scopes swap rather than compound).
+    let mut assumed_persona: Option<String> = None;
+    let base_tool_policy = cfg.tool_policy.clone();
     let mut messages = vec![CompletionMessage::system(system_prompt.clone())];
     if let Some(rs) = &mut resume_state {
         messages = crate::session_persist::restore_messages(
@@ -590,7 +601,9 @@ pub async fn run_deck_session(
         .with_role("lead")
         .with_pid(std::process::id());
     lead_meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
-    let _ = in_tx.send(Inbound::Register(lead_meta));
+    // A clone, not a move: a session model switch re-registers the lead with
+    // its new model (`session_override`), so the meta stays owned here.
+    let _ = in_tx.send(Inbound::Register(lead_meta.clone()));
     // Name all three pipeline pins before the first turn: without this the
     // statline's MODEL cell can name nothing until a role has already served.
     let pins = model_cmd::configured_role_pins(cfg);
@@ -1056,27 +1069,46 @@ pub async fn run_deck_session(
                     // runs as that agent. Between turns only — the prompt
                     // is byte-stable across a turn (invariant #7).
                     Some(WorkspaceInput::AgentAssume { name, scope }) => {
-                        match authoring::assumed_persona(&cfg.workspace_root, &name, scope) {
-                            Ok(persona) => {
-                                system_prompt = format!("{base_system_prompt}\n\n{persona}");
-                                if let Some(first) = messages.first_mut()
-                                    && first.role == stella_protocol::MessageRole::System
-                                {
-                                    first.content = system_prompt.clone();
-                                }
-                                let _ = in_tx.send(Inbound::AgentAssumed {
-                                    name: Some(name.clone()),
-                                });
-                                let _ = in_tx.send(chrome_note(format!(
-                                    "the lead is now {name} — from the next turn on"
-                                )));
-                            }
-                            Err(error) => {
-                                let _ = in_tx.send(Inbound::AgentAssumed { name: None });
-                                let _ = in_tx
-                                    .send(chrome_note(format!("cannot assume {name}: {error}")));
-                            }
-                        }
+                        session_override::assume_agent(
+                            &name,
+                            scope,
+                            cfg,
+                            &mut provider,
+                            session_override::PromptPlane {
+                                base_system_prompt: &mut base_system_prompt,
+                                system_prompt: &mut system_prompt,
+                                messages: &mut messages,
+                            },
+                            &hook_context_suffix,
+                            &mut assumed_persona,
+                            pipeline_persona,
+                            &active_rules,
+                            &base_tool_policy,
+                            &mut lead_meta,
+                            &in_tx,
+                        );
+                        continue 'session;
+                    }
+                    // `/model` (picked or typed): swap this session's model —
+                    // between turns only, like AgentAssume above, because the
+                    // prompt prefix and the provider handle both move.
+                    Some(WorkspaceInput::ModelOverride { spec }) => {
+                        session_override::apply_model_override(
+                            &spec,
+                            cfg,
+                            &mut provider,
+                            session_override::PromptPlane {
+                                base_system_prompt: &mut base_system_prompt,
+                                system_prompt: &mut system_prompt,
+                                messages: &mut messages,
+                            },
+                            &hook_context_suffix,
+                            assumed_persona.as_deref(),
+                            pipeline_persona,
+                            &active_rules,
+                            &mut lead_meta,
+                            &in_tx,
+                        );
                         continue 'session;
                     }
                     Some(WorkspaceInput::AgentCreate { description, scope }) => {
@@ -1371,7 +1403,12 @@ pub async fn run_deck_session(
                                 },
                                 &in_tx,
                             )
-                            && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
+                            && !inspect_service::service_inspect_action(
+                                &other,
+                                &store,
+                                last_execution_id,
+                                &in_tx,
+                            )
                             && !handle_agents_input(&other, cfg, &in_tx)
                             && !issues::handle_issues_input(&other, cfg, &in_tx)
                             && !handle_engine_config_input(&other, cfg, &mut settings_stale, &in_tx)
@@ -1439,7 +1476,10 @@ pub async fn run_deck_session(
             slash_pump::CommandWake::Finished(command) => command,
             slash_pump::CommandWake::Quit => break 'session,
         };
-        if matches!(command, DeckCommand::Handled | DeckCommand::InitCompleted) {
+        if matches!(
+            command,
+            DeckCommand::Handled | DeckCommand::InitCompleted | DeckCommand::SessionModel(_)
+        ) {
             // A handled command emits its answer as `Text`, which flips the
             // lead to `Running` in the deck's fold — but no turn is in flight.
             // Return it to `WaitingInput` so the dashboard reflects reality.
@@ -1460,6 +1500,25 @@ pub async fn run_deck_session(
             // expanded template.
             DeckCommand::Expanded(text) => text,
             DeckCommand::Handled => continue 'session,
+            DeckCommand::SessionModel(id) => {
+                session_override::apply_model_override(
+                    &id,
+                    cfg,
+                    &mut provider,
+                    session_override::PromptPlane {
+                        base_system_prompt: &mut base_system_prompt,
+                        system_prompt: &mut system_prompt,
+                        messages: &mut messages,
+                    },
+                    &hook_context_suffix,
+                    assumed_persona.as_deref(),
+                    pipeline_persona,
+                    &active_rules,
+                    &mut lead_meta,
+                    &in_tx,
+                );
+                continue 'session;
+            }
             DeckCommand::InitCompleted => {
                 // `/init` changed the taxonomy and rebuilt the index. Re-open
                 // memory so recall/reflection use the new domains this session
@@ -1515,7 +1574,7 @@ pub async fn run_deck_session(
         // the turn itself appends.
         // Phase 2 (#713): the deck recalled and reported nothing. The event
         // is carried to `run_lead_turn`, which owns the turn's channel.
-        let mut recall_event = None;
+        let mut recall = crate::memory::OpeningRecall::default();
         if let Some(m) = &mut memory {
             // The A/B control, armed before recall (#1221).
             m.arm_recall_control();
@@ -1530,8 +1589,7 @@ pub async fn run_deck_session(
             let touched =
                 stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
             let recalled = m.recall_block_reported(&prompt, &touched).await;
-            recall_event = recalled.telemetry_event();
-            inject_recall_block(&mut messages, recalled.text);
+            recall = crate::memory::inject_opening_recall(&mut messages, recalled);
         }
         let turn_base = messages.len();
         // Attach any media files the prompt names (including `⌃V`
@@ -1626,7 +1684,7 @@ pub async fn run_deck_session(
                 &lead_holder,
                 &steering,
                 &lead_pause,
-                recall_event,
+                recall,
                 memory.as_ref(),
                 &mut friction,
             );
@@ -1815,8 +1873,9 @@ pub async fn run_deck_session(
                         // lead's next prompt.
                         Some(WorkspaceInput::ScopeChangeRequest { .. }) => {
                             queue.push_back(
-                                "The user wants to change the approved scope: propose an \
-                                 updated scope (raise a scope review with the revised plan)."
+                                "The user wants to change the approved scope: revise the task \
+                                 board (task_create / task_cancel) and start the revised plan \
+                                 — that is what raises a fresh scope review for them."
                                     .to_string(),
                             );
                         }
@@ -1976,7 +2035,7 @@ pub async fn run_deck_session(
                             input @ (WorkspaceInput::InspectRefresh
                             | WorkspaceInput::InspectCall { .. }),
                         ) => {
-                            service_inspect_action(&input, &store, last_execution_id, &in_tx);
+                            inspect_service::service_inspect_action(&input, &store, last_execution_id, &in_tx);
                         }
                         // Navigation waits for the road to clear: switching
                         // sessions mid-turn would tear down live work, so the
@@ -1984,6 +2043,14 @@ pub async fn run_deck_session(
                         Some(WorkspaceInput::AgentAssume { name, .. }) => {
                             let _ = deck_tx.send(chrome_note(format!(
                                 "a turn is running — press a on {name} again once it settles"
+                            )));
+                        }
+                        // A model switch moves the provider handle and the
+                        // prompt prefix, both of which the running turn is
+                        // using — between turns only, like AgentAssume.
+                        Some(WorkspaceInput::ModelOverride { spec }) => {
+                            let _ = deck_tx.send(chrome_note(format!(
+                                "a turn is running — pick {spec} again once it settles"
                             )));
                         }
                         Some(WorkspaceInput::SessionResume { .. } | WorkspaceInput::SessionNew) => {
@@ -2522,112 +2589,6 @@ fn service_registry_action(
         _ => return false,
     }
     true
-}
-
-/// The INSPECT overlay's driver half: answer the recorded-call index and the
-/// reconstruction of one call. Returns `false` for anything else so the caller
-/// can keep trying the other service handlers.
-///
-/// Both arms are blocking SQLite reads — `reconstruct_call` replays the block
-/// registry and the event journal — so they run on `spawn_blocking` and answer
-/// out of band, the same shape as [`WorkspaceInput::FocusGraphFile`]. Stalling
-/// the event pump to rebuild a prompt would stutter a live turn.
-fn service_inspect_action(
-    input: &WorkspaceInput,
-    store: &Option<Arc<Store>>,
-    execution_id: Option<i64>,
-    in_tx: &mpsc::UnboundedSender<Inbound>,
-) -> bool {
-    if !matches!(
-        input,
-        WorkspaceInput::InspectRefresh | WorkspaceInput::InspectCall { .. }
-    ) {
-        return false;
-    }
-    // No store (claim mode, or it failed to open) or no turn yet: answer with
-    // an empty index rather than silence, so the overlay renders its "nothing
-    // recorded yet" line instead of looking hung.
-    let (Some(store), Some(execution_id)) = (store.clone(), execution_id) else {
-        let _ = in_tx.send(Inbound::RecordedCalls(Vec::new()));
-        return true;
-    };
-    let in_tx = in_tx.clone();
-    match input {
-        WorkspaceInput::InspectRefresh => {
-            tokio::task::spawn_blocking(move || {
-                let calls = store.recorded_calls(execution_id).unwrap_or_default();
-                let _ = in_tx.send(Inbound::RecordedCalls(
-                    calls.iter().map(recorded_call_info).collect(),
-                ));
-            });
-        }
-        WorkspaceInput::InspectCall {
-            turn_instance,
-            step,
-            call_seq,
-        } => {
-            let (turn_instance, step, call_seq) = (*turn_instance, *step, *call_seq);
-            tokio::task::spawn_blocking(move || {
-                let Ok(recon) = store.reconstruct_call(execution_id, turn_instance, step, call_seq)
-                else {
-                    let _ = in_tx.send(Inbound::RecordedCalls(Vec::new()));
-                    return;
-                };
-                // Re-read the header so the detail can name the model/role that
-                // served this call; the reconstruction itself carries only the
-                // messages.
-                let call = store
-                    .recorded_calls(execution_id)
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|c| {
-                        (c.turn_instance, c.step, c.call_seq) == (turn_instance, step, call_seq)
-                    })
-                    .map(recorded_call_info)
-                    .unwrap_or_else(|| stella_tui::RecordedCallInfo {
-                        turn_instance,
-                        step,
-                        call_seq,
-                        call_role: "unknown".into(),
-                        provider: "unknown".into(),
-                        model: "unknown".into(),
-                        estimated_input_tokens: 0,
-                    });
-                let _ = in_tx.send(Inbound::InspectedCall(Box::new(stella_tui::InspectView {
-                    call,
-                    messages: recon
-                        .messages
-                        .iter()
-                        // The CLI's `stella inspect` renderer, reused verbatim:
-                        // the overlay shows wire shape, and the two surfaces
-                        // must not disagree about what a message looked like.
-                        .map(|m| stella_tui::InspectMessage {
-                            role: crate::inspect::role_tag(m.role).to_string(),
-                            content: crate::inspect::message_body(m),
-                        })
-                        .collect(),
-                    verified: recon.is_verified(),
-                    unresolved: recon.unresolved.len(),
-                    digest_mismatches: recon.digest_mismatches.len(),
-                    journal_era: crate::inspect::deck_journal_era(recon.journal_era),
-                })));
-            });
-        }
-        _ => unreachable!("guarded by the matches! above"),
-    }
-    true
-}
-
-fn recorded_call_info(call: &stella_store::RecordedCall) -> stella_tui::RecordedCallInfo {
-    stella_tui::RecordedCallInfo {
-        turn_instance: call.turn_instance,
-        step: call.step,
-        call_seq: call.call_seq,
-        call_role: call.call_role.clone(),
-        provider: call.provider.clone(),
-        model: call.model.clone(),
-        estimated_input_tokens: call.estimated_input_tokens,
-    }
 }
 
 /// The inbox snapshot for the deck (badge + overlay), newest first.
@@ -3183,24 +3144,31 @@ enum DeckCommand {
     /// derived state (memory domains, Graph tab, custom extensions) which the
     /// new taxonomy/index changed.
     InitCompleted,
+    /// `/model <provider/slug>` typed in full: skip the turn and apply the
+    /// session-only model switch. Carried back to the driver loop rather
+    /// than applied in `run_deck_command`, because the switch moves state
+    /// only the loop owns (the provider handle, the prompt plane, the lead's
+    /// registered meta) — see `session_override`.
+    SessionModel(String),
 }
 
 // The deck's productized vocabulary (`DECK_BUILTINS`) and the
 // reserved-name guard (`deck_reserved`) live in `skills`, beside the
 // slash-menu builder that consumes them (the god-file rule).
 
-/// An argument-carrying form of `/models` — handled model-free: when the
-/// configured model itself is broken, `/models refresh` is how the user
-/// digs out, and routing it into a model turn fails on the very error
-/// being fixed. Parsed conservatively — a single recognized token (plus
-/// `refresh --force`); anything sentence-like stays a prompt, matching
-/// the "`/init do the thing` is a model prompt" rule.
+/// An argument-carrying form of `/info` (né `/models` — the old head still
+/// parses) — handled model-free: when the configured model itself is
+/// broken, `/info refresh` is how the user digs out, and routing it into a
+/// model turn fails on the very error being fixed. Parsed conservatively —
+/// a single recognized token (plus `refresh --force`); anything
+/// sentence-like stays a prompt, matching the "`/init do the thing` is a
+/// model prompt" rule.
 enum ModelsCommand {
-    /// `/models refresh [--force]` — re-sync the catalog, no model call.
+    /// `/info refresh [--force]` — re-sync the catalog, no model call.
     Refresh { force: bool },
-    /// `/models list` — the same listing the bare `/models` prints.
+    /// `/info list` — the same listing the bare `/info` prints.
     List,
-    /// `/models <typo>` — one unrecognized token: a mistyped subcommand,
+    /// `/info <typo>` — one unrecognized token: a mistyped subcommand,
     /// answered with usage instead of a wasted model call.
     Usage(String),
 }
@@ -3210,7 +3178,7 @@ enum ModelsCommand {
 fn parse_models_command(trimmed: &str) -> Option<ModelsCommand> {
     let (head, rest) = trimmed.split_once(char::is_whitespace)?;
     let rest = rest.trim();
-    if head != "/models" || rest.is_empty() {
+    if !matches!(head, "/info" | "/models") || rest.is_empty() {
         return None;
     }
     let mut words = rest.split_whitespace();
@@ -3395,7 +3363,7 @@ fn handle_agents_input(
 /// transcript as `Text` events — the deck renders exclusively from events, so
 /// printing to stdout (which the alternate screen owns) is never an option.
 ///
-/// Vocabulary: `/help`, `/clear`, `/models`, `/init`, `/agents`.
+/// Vocabulary: `/help`, `/clear`, `/info`, `/model`, `/init`, `/agents`.
 /// `/files`, `/diff`, `/graph` are deck-local (tab switches) and
 /// consumed TUI-side; an unknown bare `/command` gets a hint rather than a
 /// wasted model call. Every productized command is no-argument, so the
@@ -3450,10 +3418,15 @@ async fn run_deck_command(
                 agent: LEAD.to_string(),
             });
         }
+        // Bare `/model` is normally consumed deck-side (it opens the session
+        // model picker); a queued or replayed one lands here and gets the
+        // textual summary instead of silence.
         "/model" => {
             say(model_cmd::current_summary(cfg));
         }
-        "/models" => {
+        // `/info` — provider/model information (`/models` before the rename;
+        // the old name still routes, undiscoverably, like `/tasks` → `/plan`).
+        "/info" | "/models" => {
             say(Config::available_models_plain(None));
         }
         "/theme" => {
@@ -3504,25 +3477,33 @@ async fn run_deck_command(
         // tab, the transcript-page overlays) are normally consumed TUI-side,
         // but a queued one reaches here — accept it as handled (a no-op)
         // rather than calling it "unknown".
-        "/files" | "/diff" | "/graph" | "/agents" | "/skills" | "/mcp" | "/mcp-search"
-        | "/settings" | "/sessions" | "/subagents" | "/context" | "/inspect" | "/inbox" => {}
+        "/files" | "/diff" | "/graph" | "/agents" | "/agent" | "/skills" | "/mcp"
+        | "/mcp-search" | "/settings" | "/sessions" | "/subagents" | "/context" | "/inspect"
+        | "/inbox" => {}
         _ => {
             if let Some(reply) = add_dir::handle(trimmed, cfg, registry) {
                 say(reply);
                 return DeckCommand::Handled;
             }
-            // `/model <provider/slug>` — set the persistent default model.
-            // Validation + the settings write live in `model_cmd` (parity
-            // with the SETTINGS tab); handled before the whitespace check
-            // below, which would otherwise mistake `/model x` for a prompt.
+            // `/model <provider/slug>` — switch THIS session's model (the
+            // typed twin of the picker); `/model default <provider/slug>` —
+            // persist the default for future sessions. Validation + the
+            // settings write live in `model_cmd` (parity with the SETTINGS
+            // tab); handled before the whitespace check below, which would
+            // otherwise mistake `/model x` for a prompt.
             if let Some(command) = model_cmd::parse_model_command(trimmed) {
                 match command {
                     model_cmd::ModelCommand::Usage => say(
-                        "usage: `/model <provider/slug>` — e.g. `/model zai/glm-5.2`. \
-                         Run `/model` alone to see the current default and the list."
+                        "usage: `/model <provider/slug>` switches this session's model \
+                         (e.g. `/model zai/glm-5.2`); `/model default <provider/slug>` \
+                         persists the default for new sessions; `/model` alone opens \
+                         the picker."
                             .to_string(),
                     ),
-                    model_cmd::ModelCommand::Set(id) => {
+                    model_cmd::ModelCommand::Override(id) => {
+                        return DeckCommand::SessionModel(id);
+                    }
+                    model_cmd::ModelCommand::Default(id) => {
                         match model_cmd::set_default_model(cfg, &id) {
                             Ok(msg) => {
                                 say(msg);
@@ -3558,7 +3539,7 @@ async fn run_deck_command(
                 }
                 return DeckCommand::Handled;
             }
-            // The `/models` argument forms first (see [`ModelsCommand`]):
+            // The `/info` argument forms first (see [`ModelsCommand`]):
             // handled model-free — a catalog refresh is part of digging out
             // of a broken model setting, so it can never be allowed to
             // depend on a working model.
@@ -3575,8 +3556,8 @@ async fn run_deck_command(
                     }
                     ModelsCommand::List => say(Config::available_models_plain(None)),
                     ModelsCommand::Usage(word) => say(format!(
-                        "`/models {word}` — unknown subcommand; try `/models` or `/models list` \
-                         (the listing) or `/models refresh [--force]` (re-sync the catalog)"
+                        "`/info {word}` — unknown subcommand; try `/info` or `/info list` \
+                         (the listing) or `/info refresh [--force]` (re-sync the catalog)"
                     )),
                 }
                 return DeckCommand::Handled;
@@ -3598,7 +3579,7 @@ async fn run_deck_command(
                 return DeckCommand::Prompt;
             }
             say(format!(
-                "unknown command `{trimmed}` — try /help, /clear, /models, /theme, /init, /agents, /export, /donate, /files, /diff, /graph"
+                "unknown command `{trimmed}` — try /help, /clear, /info, /model, /agent, /theme, /init, /agents, /export, /donate, /files, /diff, /graph"
             ));
         }
     }
@@ -3625,15 +3606,20 @@ async fn run_lead_turn(
     steering: &Arc<subsession::SteeringTap>,
     // Owned by the driver loop, so its input arms can flip it mid-turn (#1219).
     pause: &lead_control::LeadPause,
-    // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
-    // because recall runs before this channel exists.
-    recall_event: Option<AgentEvent>,
+    // Phase 2 (#713): this turn's `ContextRecall` and the opening block's
+    // re-query seed (#4498), carried in because recall precedes this channel.
+    recall: crate::memory::OpeningRecall,
     session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
     friction: &mut TurnFriction,            // #3962: filled from the lane's own stream
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let requery = crate::memory::requery_for_turn(session_memory, messages, tx.clone().into());
+    let requery = crate::memory::requery_for_turn(
+        session_memory,
+        messages,
+        tx.clone().into(),
+        recall.produced,
+    );
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
@@ -3643,7 +3629,7 @@ async fn run_lead_turn(
         Some(registry.task_board()),
     );
     // First event of the turn: what recall put in front of the model.
-    if let Some(event) = recall_event {
+    if let Some(event) = recall.event {
         let _ = tx.send(event);
     }
 
@@ -3674,7 +3660,10 @@ async fn run_lead_turn(
             Principal::User,
             registry.hook_bus(),
         );
-        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()));
+        // The plan gate's headline and policy, taken before the engine borrows
+        // `messages` mutably (`task_tap::plan_gate`, #4594/#4611).
+        let plan = PlanSetup::for_turn(messages, cfg);
+        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()), plan);
         let hook_runner = HostHookRunner;
         let mut engine = Engine::with_sleeper(
             provider,

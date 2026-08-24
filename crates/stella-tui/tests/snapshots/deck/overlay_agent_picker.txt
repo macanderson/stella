@@ -1,0 +1,45 @@
+# deck golden · overlay_agent_picker
+# the /agent session picker — installed definitions with scope and description
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
+── turn 1 triage ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
+    symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
+    memory  event-log REPL                                                                                                                90 tok
+    ⋯ ctrl+o for provenance and budget
+
+── PLAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Planning the automations cluster: list, editor, triggers, workflows.
+
+☰  plan  4/7  ·  Wire the triggers API
+
+── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ │ ⊙ apps/app/automations/page.tsx
+ │ ⎿ 312 lines                                                                                                                               42ms
+
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations()
+ │     11 +  const [q, setQ] = useState("")
+ │     12 +  const filtered = filter(items, q)
+ │     13 +  const onNew = () => open()
+
+☰  plan  5/7  ·  Workflows canvas
+
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
+                                                ┌ agent  1/2 · this session only ──── ↑↓ move · ⏎ assume · esc ┐
+                                                │▸ reviewer  project  reviews a diff against the house rules   │
+                                                │  release-captain  user  cuts a release: bump, changelog, tag │
+                                                └──────────────────────────────────────────────────────────────┘
+
+
+
+>>>
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

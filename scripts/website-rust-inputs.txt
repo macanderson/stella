@@ -1,0 +1,56 @@
+# Every path under website/ that a Rust source in crates/ names, and what kind
+# of naming it is. See scripts/check-website-inputs.sh and #4632.
+#
+# Format: <kind> <path>
+#
+#   read     a Rust test reads this file (or this directory) as an input, so a
+#            diff touching it MUST run the Rust gate. `.github/workflows/ci.yml`
+#            builds its carve-out from these lines, so the filter cannot drift
+#            from the inventory — there is only one list.
+#
+#            A `read` path names a directory when the tests walk one; coverage
+#            then extends to everything under it.
+#
+#   mention  prose names it — a doc comment, a module header, an assertion
+#            message. Nothing reads it, so a diff touching it is prose and the
+#            gate stays skipped. Exact match only: a mention of a directory
+#            does not cover the files inside it, or one line here would silence
+#            the guard for a whole subtree.
+#
+# Moving an entry from `mention` to `read` is what a reviewer checks when a
+# test starts reading a file the tree only used to talk about. Nothing can
+# decide that automatically; declaring it is what makes it reviewable.
+
+# ── read ─────────────────────────────────────────────────────────────────────
+
+# The command reference pages: the subcommand index, the per-command summaries,
+# and every flag's card since #3041. Asserted about by crates/stella-cli's
+# src/tests.rs, src/tests/flag_docs.rs and src/cli/help/tests.rs.
+read website/content/docs/commands/
+
+# The stella.toml reference page. Every root section the parser accepts must
+# carry a heading here — crates/stella-cli/src/settings/completeness.rs, #4425.
+read website/content/docs/configuration/stella-toml.mdx
+
+# The docs' copy of the provider registry, pinned field-by-field against
+# PROVIDERS by crates/stella-cli/src/config/tests/docs_sync.rs. #4588 moved the
+# records into this file in a website-only diff, which skipped the Rust gate on
+# both the pull_request and the push side and left `main` red on a test nobody
+# had run.
+read website/src/components/provider-catalog.ts
+
+# ── mention ──────────────────────────────────────────────────────────────────
+
+# crates/stella-tools/src/registry.rs points a reader at the hooks reference.
+mention website/content/docs/agent-tools/hooks.mdx
+
+# crates/stella-cli/src/main.rs points at where the scripting contract is
+# stated for consumers.
+mention website/content/docs/scripting.mdx
+
+# crates/stella-cli/src/tests/flag_docs.rs's module doc names the docs root.
+mention website/content/docs/
+
+# crates/stella-tui/src/palette.rs's module doc corrects a claim about which
+# sheet the v1 palette is mirrored in.
+mention website/src/app/tokens.css

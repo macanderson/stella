@@ -32,11 +32,21 @@ description = "Watch the test named by the candidate grant go from red to green,
 [loop]
 participation = "arbiter"
 hooks = ["Stop"]
-# `after_turn` only. The flip this plugin observes needs the work to have
-# happened, and the red half it compares against is already pinned by the host
-# in the grant (`TestPlan::baseline`) — so there is nothing for this plugin to
-# do before a turn runs, and it declares nothing it does not implement (#3501).
-points = ["after_turn"]
+# `before_turn` names the artifacts the flip will be judged against; the flip
+# itself is observed at `after_turn`, once the work has happened.
+#
+# The second point contributes no context, no role and no scope — only
+# `BeforeTurnResponse::witness`, and only where the invocation the grant names
+# does not already name its own files. `pytest tests/test_x.py` names one in the
+# argv and the host watches it without anyone declaring anything; `cargo test
+# --test flip` names `flip`, whose artifact is `tests/flip.rs` by cargo's
+# convention and by nothing in the invocation. The host is deliberately
+# forbidden from guessing that (`crates/stella-cli/src/wrapper_candidate.rs`),
+# so the plugin whose flip it is says it instead, and the host still does the
+# watching. Before #4534 this plugin could not say it: it declared `after_turn`
+# alone, so the one shipped verification plugin was the one that could never
+# reach a credited flip on a cargo witness (#3587).
+points = ["before_turn", "after_turn"]
 # Four rounds of correction. The host clamps this against its own ceiling and
 # says so out loud when it does (#3841).
 max_holds = 4

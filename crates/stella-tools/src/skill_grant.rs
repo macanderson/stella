@@ -43,8 +43,11 @@
 //! grant for an inline skill's span, and a forked skill's grant is resolved
 //! to concrete names ([`resolve_grant`]) and enforced structurally by
 //! `stella_core::ports::GrantedTools` inside the child turn. No shipped
-//! surface mounts skill invocation today, so nothing constructs a grant in
-//! production.
+//! surface mounts skill invocation today; the one production constructor of
+//! a grant is the deck's assumed-agent scope (`stella-cli`'s
+//! `command_deck::session_override`), which folds an agent definition's
+//! `tools:` list into the session policy via [`ToolPolicy::narrow_with`] —
+//! the fold #2800 made agree with the per-name intersection.
 
 use crate::policy::{ToolPolicy, WILDCARD};
 

@@ -76,6 +76,7 @@ make shellcheck
 ./scripts/check-invariants.sh
 python3 ./scripts/check-doc-links.py check
 ./scripts/check-command-docs.sh
+./scripts/check-website-inputs.sh
 ./scripts/check-brand-case.sh
 ./scripts/check-file-size.sh
 ./scripts/check-god-files.sh
@@ -106,6 +107,7 @@ python3 ./scripts/check-css-vars.py
 ./scripts/check-lockfile-sync.sh
 cargo fmt --check
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items --keep-going
+make doc-warnings-schema
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ./scripts/check-tool-docs.sh
@@ -123,9 +125,9 @@ touched (#1437).
 
 CI enforces the same steps, split across `ci.yml` (plus a release smoke build);
 `docs-guards.yml`, which runs the prose guards — `invariants`, `doc-links`,
-`command-docs`, `brand-case`, `gate-parity`, `god-files` and `design-refs` — on
-their own because they trigger on the `docs/**` and `*.md` paths that `ci.yml`
-deliberately ignores; `wire-schema.yml`, for the
+`command-docs`, `website-inputs`, `brand-case`, `gate-parity`, `god-files` and
+`design-refs` — on their own because they trigger on the `docs/**`, `website/**`
+and `*.md` paths that `ci.yml` deliberately skips; `wire-schema.yml`, for the
 same reason in the other direction — a PR that only hand-edits a generated
 schema under `docs/wire/` starts neither of the others (#1439); and
 `guard-self-tests.yml`, which runs `prose`, `hue-separation` and
@@ -161,7 +163,7 @@ for all 28 members (#1135). It falls back to the whole workspace for a push to
 build script / the gate machinery, and for anything it cannot narrow with
 confidence. See what it would choose with `make impacted`.
 
-If the diff touches the Python bench tooling (`bench/**`, `arenabench/**`,
+If the diff touches the Python bench tooling (`bench/**`,
 `crates/stella-model/src/catalog.rs`, or `.github/workflows/bench.yml`) the hook
 also runs `make bench-test`, which runs every pytest suite that workflow gates
 and needs [uv](https://docs.astral.sh/uv/). It is not a `make gate` step — it

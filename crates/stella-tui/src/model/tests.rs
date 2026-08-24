@@ -237,6 +237,7 @@ fn manifest(role: ModelCallRole, call_seq: u64, model: &str) -> AgentEvent {
         call_seq,
         role,
         provider: "openrouter".into(),
+        upstream_provider: None,
         model: model.into(),
         blocks: Vec::new(),
         effective_budget_tokens: 100_000,

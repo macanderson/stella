@@ -12,6 +12,8 @@
 #     ARENA_PORT      same as --port
 #     ARENA_PYTHON    interpreter override — must import BOTH `arenabench` and
 #                     `stella_harbor`; see "Which interpreter" below
+#     ARENABENCH_CHECKOUT  a source checkout of the ejected arenabench repo,
+#                     rides PYTHONPATH instead of an installed package
 #     STELLA_BINARY   the SUT the seats run (default ~/.arenabench/sut/stella)
 # --help text ends here.
 #
@@ -24,9 +26,10 @@
 # WHICH INTERPRETER
 #
 # The `harbor run` subprocess a seat spawns has to import `stella_harbor`, and
-# `stella_harbor` imports `harbor`. Only the adapter's own venv
-# (bench/harbor_adapter/.venv) has both that and `arenabench`'s dependencies —
-# `arenabench/.venv` imports `arenabench` perfectly and then dies on
+# `stella_harbor` imports `harbor`. The adapter's own venv
+# (bench/harbor_adapter/.venv) has `harbor`; `arenabench` is installed into it
+# from https://github.com/macanderson/arenabench (its home since the #2380
+# ejection). An interpreter with `arenabench` but no `harbor` dies on
 # `ModuleNotFoundError: No module named 'harbor'` inside the seat. Worse, when
 # the import fails, harbor_agent.py's fallback binds `_Base = object` and
 # Harbor raises `TypeError: ArenaStellaAgent() takes no arguments` — and still
@@ -112,19 +115,27 @@ die() { printf '%serror:%s %s\n' "$red" "$reset" "$*" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADAPTER="$ROOT/bench/harbor_adapter"
-ARENA_PKG="$ROOT/arenabench"
+# The arenabench package is installed, not vendored: it ejected to
+# https://github.com/macanderson/arenabench (#2380). A source checkout still
+# works — point ARENABENCH_CHECKOUT at it and it rides PYTHONPATH.
+ARENA_CHECKOUT="${ARENABENCH_CHECKOUT:-}"
 ARENA_HOME="${ARENABENCH_HOME:-$HOME/.arenabench}"
 
-[ -d "$ARENA_PKG/arenabench" ] || die "no arenabench package at $ARENA_PKG"
 [ -d "$ADAPTER/stella_harbor" ] || die "no harbor adapter at $ADAPTER"
+if [ -n "$ARENA_CHECKOUT" ] && [ ! -d "$ARENA_CHECKOUT/arenabench" ]; then
+  die "ARENABENCH_CHECKOUT=$ARENA_CHECKOUT has no arenabench package in it"
+fi
 
 PY="${ARENA_PYTHON:-$ADAPTER/.venv/bin/python}"
 if [ ! -x "$PY" ]; then
   die "no interpreter at $PY
-  Create the adapter venv (it is the only one that can import both
+  Create the adapter venv (it is the one interpreter expected to import both
   \`arenabench\` and \`stella_harbor\`):
       uv sync --project bench/harbor_adapter --locked --extra dev
-  Or point ARENA_PYTHON at an interpreter that already can."
+      uv pip install --python bench/harbor_adapter/.venv/bin/python \\
+        'git+https://github.com/macanderson/arenabench'
+  Or point ARENA_PYTHON at an interpreter that already can, or
+  ARENABENCH_CHECKOUT at a source checkout."
 fi
 
 # The SUT the seats will run. Checked for ELF magic, not merely for existence:
@@ -143,22 +154,27 @@ else
 fi
 
 export ARENABENCH_STELLA_ADAPTER="$ADAPTER"
-export PYTHONPATH="$ARENA_PKG:$ADAPTER${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="${ARENA_CHECKOUT:+$ARENA_CHECKOUT:}$ADAPTER${PYTHONPATH:+:$PYTHONPATH}"
 if [ -f "$SUT" ]; then export STELLA_BINARY="$SUT"; fi
 
 # The preflight that turns a silent, exit-0 seat failure into one line here.
+# The two failure modes stay distinguishable: no arenabench at all (install
+# it), and arenabench importable but no harbor (which makes every Stella seat
+# exit 0 having measured nothing).
 if ! IMPORT_ERR="$("$PY" -c 'import arenabench, stella_harbor' 2>&1)"; then
   die "$PY cannot import both modules:
 $IMPORT_ERR
-  The adapter venv (bench/harbor_adapter/.venv) is the interpreter that can.
-  \`arenabench/.venv\` imports arenabench but has no \`harbor\`, which makes
-  every Stella seat exit 0 having measured nothing."
+  \`arenabench\` missing: install it into this interpreter —
+      uv pip install --python $PY 'git+https://github.com/macanderson/arenabench'
+  — or set ARENABENCH_CHECKOUT to a source checkout.
+  \`harbor\`/\`stella_harbor\` missing: recreate the adapter venv —
+      uv sync --project bench/harbor_adapter --locked --extra dev"
 fi
 
 printf '%sarenabench serve%s\n' "$bold" "$reset"
 printf '  interpreter  %s\n' "$PY"
 printf '  adapter      %s\n' "$ADAPTER"
-printf '  package      %s\n' "$ARENA_PKG"
+printf '  package      %s\n' "${ARENA_CHECKOUT:-installed}"
 printf '  workspace    %s\n' "$ARENA_HOME"
 printf '  SUT binary   %s%s\n' "$SUT" "${SUT_NOTE:+  $SUT_NOTE}"
 

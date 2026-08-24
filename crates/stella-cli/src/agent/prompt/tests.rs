@@ -641,3 +641,196 @@ fn forgetting_one_authored_memory_does_not_suppress_a_similar_one() {
         "the forgotten one does not: {prompt}"
     );
 }
+
+/// The provenance markers are the bytes a really-assembled prompt carries, in
+/// the order the splitter expects — asserted from the *producing* side, so a
+/// reworded heading fails here even if the marker table were changed to match
+/// it (#4602).
+///
+/// Both inspectors share the marker table — `stella inspect --system-prompt`
+/// and the deck's INSPECT overlay — and the Observatory keeps an acknowledged
+/// copy of it that this test is the producing half of.
+#[test]
+fn the_provenance_markers_are_what_this_assembler_emits() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let root = workspace.path();
+    // Memories are what an authority-permitting session appends, and the rules
+    // channel renders its heading only for a non-empty record set, so the
+    // marker coverage here is deliberately split: the two headings that ship
+    // unconditionally are asserted on a real assembly, and the other three are
+    // asserted to be exactly the constants the emitting sites push.
+    let assembled = super::assemble_system_prompt(
+        super::SYSTEM_PROMPT,
+        root,
+        &crate::settings::AuthorityPolicy::default(),
+        &crate::rules::ResolvedRules::default(),
+        None,
+    );
+    assert!(
+        assembled.contains(super::SESSION_ENVIRONMENT_HEADER),
+        "the environment marker must be the bytes the assembler pushes: {assembled}"
+    );
+    assert!(
+        assembled.starts_with(super::SYSTEM_PROMPT),
+        "everything before the first marker is the base instruction set, which is \
+         what lets the splitter label the leading span without a marker of its own"
+    );
+
+    // The rules heading arrives through the record channel, which owns it —
+    // the splitter's copy is joined from that constant plus the newline
+    // `assemble_system_prompt` pushes before the rendered channel.
+    assert!(
+        stella_core::records::CACHED_HEADING.starts_with("\n## Workspace rules"),
+        "the rules marker is derived from this constant"
+    );
+
+    // A workspace with a memory in it appends the memories marker, so the
+    // section the splitter labels `.stella/memories/*.md` is one a real
+    // assembly produces rather than one only the table believes in.
+    let memories = root.join(".stella/memories");
+    std::fs::create_dir_all(&memories).expect("memories dir");
+    std::fs::write(memories.join("one.md"), "A_REAL_LESSON").expect("memory file");
+    let mut appended = String::new();
+    append_workspace_memories(&mut appended, root);
+    assert!(
+        appended.starts_with(super::MEMORIES_HEADER),
+        "the memories marker must be the bytes the appender pushes: {appended}"
+    );
+    assert!(appended.contains("A_REAL_LESSON"), "{appended}");
+}
+
+/// **Witness for minimal mode.** With `--minimal` (or `[agents]
+/// minimal_prompt = "on"`) the session's base persona is
+/// `MINIMAL_SYSTEM_PROMPT` — a bare tool advertisement — while the workspace
+/// context the operator controls still appends. A configured
+/// `agents.default.prompt` appends AFTER the minimal base instead of
+/// replacing it, because minimal mode's contract is that the user's
+/// prompt-mutating fields carry the prose and the base only advertises the
+/// tools.
+#[test]
+fn minimal_mode_swaps_the_base_and_keeps_the_operators_prompt_channels() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let root = workspace.path();
+    let rules = crate::rules::ResolvedRules::default();
+    let mut cfg = crate::config::Config::for_tests(
+        crate::config::PROVIDERS[0].clone(),
+        "test-model".to_string(),
+    );
+    cfg.workspace_root = root.to_path_buf();
+
+    // Off (the default): the full persona, exactly as before the flag existed.
+    let full = super::build_system_prompt(&cfg, root, &rules);
+    assert!(
+        full.starts_with(super::SYSTEM_PROMPT),
+        "with minimal off the built-in persona is the base"
+    );
+
+    // The flag alone flips the base…
+    cfg.minimal_prompt = true;
+    let minimal = super::build_system_prompt(&cfg, root, &rules);
+    assert!(
+        minimal.starts_with(super::MINIMAL_SYSTEM_PROMPT),
+        "--minimal swaps the base persona: {minimal}"
+    );
+    assert!(
+        minimal.contains("## Session environment"),
+        "the computed environment block still ships in minimal mode"
+    );
+    assert!(
+        !minimal.contains("A RANK CEILING note"),
+        "none of the full persona's steering prose survives into minimal mode"
+    );
+    // …and the pipeline surface honours the same mode.
+    let pipeline = super::build_pipeline_system_prompt(&cfg, root, &rules, None);
+    assert!(
+        pipeline.starts_with(super::MINIMAL_SYSTEM_PROMPT),
+        "stella run's persona is minimal too: {pipeline}"
+    );
+
+    // The settings spelling flips it without the flag.
+    cfg.minimal_prompt = false;
+    cfg.engine_settings = Some(crate::settings::AgentEngineConfig {
+        minimal_prompt: Some(crate::settings::Toggle::On),
+        ..Default::default()
+    });
+    let via_settings = super::build_system_prompt(&cfg, root, &rules);
+    assert!(
+        via_settings.starts_with(super::MINIMAL_SYSTEM_PROMPT),
+        "[agents] minimal_prompt = \"on\" enables the mode durably"
+    );
+
+    // A custom prompt appends after the minimal base rather than replacing it.
+    let custom = "OPERATOR PROSE: be terse.";
+    cfg.engine_settings = Some(crate::settings::AgentEngineConfig {
+        minimal_prompt: Some(crate::settings::Toggle::On),
+        agents: Some(crate::settings::AgentEngineAgents {
+            default: Some(crate::settings::AgentEngineAgent {
+                prompt: Some(custom.to_string()),
+                ..Default::default()
+            }),
+        }),
+        ..Default::default()
+    });
+    let with_custom = super::build_system_prompt(&cfg, root, &rules);
+    let expected = format!("{}\n\n{custom}", super::MINIMAL_SYSTEM_PROMPT);
+    assert!(
+        with_custom.starts_with(&expected),
+        "the custom prompt rides after the tool advertisement: {with_custom}"
+    );
+
+    // With minimal OFF the custom prompt replaces the base, exactly as it
+    // always has — the mode changes nothing it did not claim.
+    cfg.engine_settings = Some(crate::settings::AgentEngineConfig {
+        agents: Some(crate::settings::AgentEngineAgents {
+            default: Some(crate::settings::AgentEngineAgent {
+                prompt: Some(custom.to_string()),
+                ..Default::default()
+            }),
+        }),
+        ..Default::default()
+    });
+    let replaced = super::build_system_prompt(&cfg, root, &rules);
+    assert!(
+        replaced.starts_with(custom) && !replaced.contains(super::MINIMAL_SYSTEM_PROMPT),
+        "minimal off: agents.default.prompt replaces the base as before"
+    );
+}
+
+/// The Observatory keeps an acknowledged copy of the marker table
+/// (`crates/stella-observatory/src/system_prompt.rs` — that crate links no
+/// workspace crate but `stella-home`, so it cannot import [`super::provenance`]).
+/// This pins each copied marker to the constant its emit site pushes, so a
+/// reworded heading fails here naming the Observatory file to update.
+#[test]
+fn the_observatory_marker_copy_matches_the_emitting_constants() {
+    for (observatory_copy, emitted) in [
+        (
+            "\n\n## Session environment\n",
+            super::SESSION_ENVIRONMENT_HEADER,
+        ),
+        (
+            "\n\nWorkspace memories (lessons from previous sessions — apply them):\n",
+            super::MEMORIES_HEADER,
+        ),
+        (
+            "\n\nWorkspace memories were omitted from this prompt: ",
+            super::MEMORIES_OMITTED_PREFIX,
+        ),
+        (
+            "\n\nSession context (from SessionStart hooks):\n",
+            crate::agent::engine::SESSION_HOOK_CONTEXT_HEADER,
+        ),
+    ] {
+        assert_eq!(
+            observatory_copy, emitted,
+            "a marker moved — update crates/stella-observatory/src/system_prompt.rs's MARKERS"
+        );
+    }
+    // The rules marker is the record channel's heading behind the newline
+    // `assemble_system_prompt` pushes before the rendered channel.
+    assert_eq!(
+        format!("\n{}", stella_core::records::CACHED_HEADING),
+        "\n\n## Workspace rules (cite the ^handle of any you apply)",
+        "the rules heading moved — update the Observatory MARKERS"
+    );
+}

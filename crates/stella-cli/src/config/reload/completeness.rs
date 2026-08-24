@@ -69,6 +69,7 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
         turn_timeout,
         max_output_tokens,
         plan_mode,
+        minimal_prompt,
         workspace_root,
         durability: _,
         output_ceilings: _,
@@ -79,6 +80,7 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
         tool_policy,
         ignore_gitignore,
         reward_policy,
+        plan_review,
         create_worktrees,
         allowed_write_dirs,
         authority,
@@ -133,6 +135,14 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
             name: "plan_mode",
             posture: Posture::StartupOnly(INVOCATION),
             moved: plan_mode != &before.plan_mode,
+        },
+        Field {
+            name: "minimal_prompt",
+            // Only the FLAG half lives here; the settings spelling rides
+            // `engine_settings`, which does reload — but the assembled prompt
+            // is fixed at session start either way (L-E8).
+            posture: Posture::StartupOnly(INVOCATION),
+            moved: minimal_prompt != &before.minimal_prompt,
         },
         Field {
             name: "workspace_root",
@@ -193,6 +203,11 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
             name: "reward_policy",
             posture: Posture::Reloaded,
             moved: reward_policy != &before.reward_policy,
+        },
+        Field {
+            name: "plan_review",
+            posture: Posture::Reloaded,
+            moved: plan_review != &before.plan_review,
         },
         Field {
             name: "create_worktrees",
@@ -257,7 +272,8 @@ const EVERY_RELOADABLE_KEY: &str = r#"{
   "tools": { "bash": "off" },
   "ignore_gitignore": "off",
   "create_worktrees": "never",
-  "reward": { "deterministic_weight": 2.0 }
+  "reward": { "deterministic_weight": 2.0 },
+  "plan_review": { "enabled": "off", "min_steps": 7 }
 }"#;
 
 /// The org-managed half of the same document.

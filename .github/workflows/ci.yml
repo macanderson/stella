@@ -16,16 +16,24 @@ on:
   # and `**/*.md` to run the prose guards. It is deliberately isolated from
   # this workflow.
   pull_request:
-  # A push to `main` is not gated by required contexts, so the trigger-level
-  # filter is still safe here — a docs-only merge does not start the Rust
-  # gate at all. Keep this list and the `changes` job's regex in agreement.
+  # Deliberately NO `paths-ignore` here either, and for a second reason on top
+  # of the one above (#4606). This trigger carried the prose list, with a
+  # comment asking a human to keep it in agreement with the `changes` job's
+  # regex — which is what a repository writes when it cannot enforce
+  # something, and they were not in agreement. `paths-ignore` has no negation,
+  # so "ignore website/** except the files a Rust test reads" is not
+  # expressible; the job's carve-out could exist and the trigger's could not.
+  #
+  # A merge whose diff was confined to `website/` therefore started no Rust
+  # gate at all — not skipped-and-reported, never started. That is how #4588
+  # left `main` red on `config::tests::docs_sync` with nothing saying so, until
+  # the next commit that touched a crate went red and took three more with it.
+  #
+  # The `changes` job now answers for pushes too, from the same script the
+  # pull_request side uses. A prose-only merge pays one checkout and one diff
+  # instead of an hour of Rust — the same saving, decided in one place.
   push:
     branches: [main]
-    paths-ignore:
-      - "website/**"
-      - "docs/**"
-      - "*.md"
-      - ".github/ISSUE_TEMPLATE/**"
   # Merge queue: GitHub tests each queued PR against the current queue tip
   # before it lands, so two individually-green PRs can't combine into a red
   # `main` (see #306). The queue evaluates the required checks on the
@@ -74,12 +82,12 @@ jobs:
     outputs:
       rust: ${{ steps.scope.outputs.rust }}
     steps:
-      # Full history, pull requests only: the scope check diffs against the PR
-      # base, and a shallow clone may not contain the merge base. Every other
-      # event runs the full gate without looking at the diff, so it needs no
-      # checkout at all.
+      # Full history, for the two events that have a diff to look at: the scope
+      # check needs both endpoints, and a shallow clone may not contain the
+      # base. The merge queue and a manual dispatch run the full gate without
+      # looking at anything, so they need no checkout at all.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
         with:
           fetch-depth: 0
 
@@ -88,38 +96,31 @@ jobs:
         env:
           # Via env rather than inlined into the shell, so a ref name can
           # never be read as script (same shape as empty-diff.yml).
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          #
+          # `base.sha` for a pull request, `event.before` for a push — the
+          # previous tip of `main`, which is exactly what that merge changed.
+          # Only one of the two is ever set, so the `||` picks it.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          # Anything that is not a PR — a push to main, the merge queue, a
-          # manual dispatch — always runs the full gate: main and the queued
-          # merge result are what the green claim is about.
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "rust=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          # The prose paths, mirroring the push trigger's paths-ignore above:
-          # website/, docs/, .github/ISSUE_TEMPLATE/, and root-level *.md
-          # only (`[^/]+\.md$` stops at the first `/`, like the glob `*.md` —
-          # a crate's own README still pays the gate, which is what we want).
-          # `grep -v` inverts: any changed file OUTSIDE those paths means the
-          # gate runs. An empty diff runs nothing here — reporting that PR is
-          # empty-diff.yml's job.
-          #
-          # The one prose path that is not prose-only: a command reference page
-          # is asserted about by `stella-cli`'s own tests — the subcommand
-          # index, the per-command summaries, and since #3041 every flag's card
-          # — so editing one without running them is exactly the hole that
-          # sends `check-command-docs.sh` to `docs-guards.yml` a second time.
-          # A deleted card is a red test, and a test that never ran is green.
-          if git diff --name-only "$BASE_SHA"...HEAD \
-            | grep -Evq '^(website/|docs/|\.github/ISSUE_TEMPLATE/)|^[^/]+\.md$'; then
-            echo "rust=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "$BASE_SHA"...HEAD \
-            | grep -q '^website/content/docs/commands/'; then
-            echo "rust=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "rust=false" >> "$GITHUB_OUTPUT"
+          # The merge queue and a manual dispatch always run the full gate:
+          # the queued merge result is what the green claim is about, and a
+          # dispatch is someone asking for the gate by hand.
+          case "$EVENT_NAME" in
+            pull_request | push) ;;
+            *)
+              echo "rust=true" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          # The rule itself lives in one script, called from one place, for
+          # both events (#4606). It used to be written twice — here, and as
+          # `paths-ignore` on the push trigger — with a comment asking a human
+          # to keep the copies in agreement, which they were not.
+          rust="$(./scripts/ci-rust-scope.sh "$BASE_SHA" HEAD)"
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          if [ "$rust" = "false" ]; then
             echo "Prose-only diff — the Rust gate is skipped." >> "$GITHUB_STEP_SUMMARY"
             echo "Both required contexts still report (as skipped), so the PR can merge." >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -253,6 +254,16 @@ jobs:
       - name: every subcommand has a reference page
         if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
         run: ./scripts/check-command-docs.sh
+
+      # Also toolchain-free. The `website/` paths a Rust test reads are the
+      # ones the `changes` job above must NOT treat as prose, and that list was
+      # kept by hand in the workflow with no relation to the tests — it was
+      # already missing `stella-toml.mdx` when this landed (#4632). It runs
+      # here so a Rust diff that starts reading a new website file is declared,
+      # and in docs-guards.yml so a website-only diff that moves one is caught.
+      - name: every website path a Rust source reads is declared
+        if: ${{ !cancelled() && steps.checkout.outcome == 'success' }}
+        run: ./scripts/check-website-inputs.sh
 
       # Also toolchain-free. The brand's lowercase rule was documented in two
       # places and enforced in none — 389 capitalised uses accumulated in the

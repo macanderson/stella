@@ -312,11 +312,17 @@ pub struct Config {
     /// reaches for when a configured value is the thing going wrong.
     pub max_output_tokens: Option<u32>,
     /// User-invoked plan mode (#1264): force the scope-review gate for this
-    /// run whatever the plan's size. Stamped from `--plan` in `main`, like
+    /// run whatever the plan's size. Stamped from `--plan-mode` in `main`, like
     /// [`Self::turn_timeout`], because `Config::load` has no view of the
     /// parsed CLI and giving it one for a value it never consults would widen
     /// its signature to carry something straight through.
     pub plan_mode: bool,
+    /// `--minimal`: force the minimal base persona for this invocation.
+    /// Stamped from the flag in `main` like [`Self::plan_mode`]; the settings
+    /// spelling (`agent_engine_config.minimal_prompt` / TOML
+    /// `[agents] minimal_prompt`) rides [`Self::engine_settings`], and
+    /// [`Self::minimal_prompt_enabled`] is the one derivation consumers read.
+    pub minimal_prompt: bool,
     pub workspace_root: std::path::PathBuf,
     /// Where this session's turns write their resume point — the handle every
     /// engine this session builds reads its `checkpoint_sink` from.
@@ -385,6 +391,18 @@ pub struct Config {
     /// re-checking it — and a workspace with an impossible weight fails at
     /// launch, by name, instead of quietly mislabelling every turn.
     pub reward_policy: crate::reward::RewardPolicy,
+    /// Whether the deck's plan gate is installed and how big a plan has to be
+    /// before it fires (settings `plan_review`, #4611). Resolved and VALIDATED
+    /// once here, like [`Self::reward_policy`], so a workspace with an
+    /// impossible threshold fails at launch by name instead of behaving in a
+    /// way nobody wrote.
+    ///
+    /// [`Self::plan_mode`] is deliberately NOT folded in here: this is what
+    /// the settings chain said, and the flag is what this invocation said.
+    /// The read site composes them
+    /// ([`crate::settings::PlanReviewPolicy::for_run`]) so neither source can
+    /// be applied without the other.
+    pub plan_review: crate::settings::PlanReviewPolicy,
     /// Whether a run does its work in a throwaway git worktree instead of this
     /// checkout (settings `create_worktrees`). Default `ask`, put once at
     /// triage and only when the run is going to change files.
@@ -590,6 +608,7 @@ impl Config {
         cfg.tool_policy = settings.tool_policy();
         cfg.ignore_gitignore = settings.ignore_gitignore();
         cfg.reward_policy = settings.reward_policy()?;
+        cfg.plan_review = settings.plan_review()?;
         cfg.create_worktrees = settings.create_worktrees();
         // Config and flag compose here, once, so no consumer downstream can
         // apply only one of the two sources.
@@ -734,6 +753,7 @@ impl Config {
                     turn_timeout: None,
                     max_output_tokens: None,
                     plan_mode: false,
+                    minimal_prompt: false,
                     // Unbound: the session whose sidecar this points at is
                     // resolved by the driver, after config load. See the
                     // field's doc comment.
@@ -748,6 +768,7 @@ impl Config {
                     tool_policy: Default::default(),
                     ignore_gitignore: true,
                     reward_policy: crate::reward::RewardPolicy::default(),
+                    plan_review: crate::settings::PlanReviewPolicy::default(),
                     create_worktrees: Default::default(),
                     allowed_write_dirs: Vec::new(),
                     authority: crate::settings::AuthorityPolicy::default(),
@@ -948,6 +969,7 @@ impl Config {
             turn_timeout: None,
             max_output_tokens: None,
             plan_mode: false,
+            minimal_prompt: false,
             // Unbound until a driver resolves this run's session record — see
             // the field's doc comment.
             durability: crate::durability::SessionDurability::default(),
@@ -964,6 +986,7 @@ impl Config {
             tool_policy: Default::default(),
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
+            plan_review: crate::settings::PlanReviewPolicy::default(),
             create_worktrees: Default::default(),
             allowed_write_dirs: Vec::new(),
             authority: crate::settings::AuthorityPolicy::default(),
@@ -998,6 +1021,19 @@ impl Config {
         if self.cache_ttl.is_none() {
             self.cache_ttl = Some(stella_model::CacheTtl::OneHour);
         }
+    }
+
+    /// Whether this session runs the minimal base persona: the `--minimal`
+    /// flag, or `agent_engine_config.minimal_prompt` (`[agents]
+    /// minimal_prompt` in TOML) resolved `on` through the settings scope
+    /// chain. The flag can only turn the mode ON for one invocation — a
+    /// project that configured it stays minimal with or without the flag.
+    pub fn minimal_prompt_enabled(&self) -> bool {
+        self.minimal_prompt
+            || self
+                .engine_settings
+                .as_ref()
+                .is_some_and(|e| e.minimal_prompt_on())
     }
 }
 
@@ -1116,6 +1152,7 @@ impl Config {
             turn_timeout: None,
             max_output_tokens: None,
             plan_mode: false,
+            minimal_prompt: false,
             model_pinned_by_flag: false,
             durability: Default::default(),
             output_ceilings: Default::default(),
@@ -1131,6 +1168,7 @@ impl Config {
             tool_policy: Default::default(),
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
+            plan_review: crate::settings::PlanReviewPolicy::default(),
             authority: crate::settings::AuthorityPolicy::default(),
             credential_advisories: Vec::new(),
             aux_credentials: Default::default(),

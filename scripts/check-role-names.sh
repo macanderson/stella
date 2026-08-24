@@ -41,9 +41,10 @@
 # five, which is what the settings surface now actually is.
 #
 # The guard therefore checks the UNION. That is deliberate and it is the
-# honest reading: arenabench and the harbor adapter still WRITE
-# `pipeline_verifier_model`, Stella still recognizes it, and the two must agree
-# on its spelling for exactly as long as that is true. When slice 6 (#3910)
+# honest reading: the harbor adapter still WRITES `pipeline_verifier_model`
+# (as does ArenaBench, whose producers are checked by its own repo's guard
+# since the ejection, #2380), Stella still recognizes it, and the writers and
+# the reader must agree on its spelling for exactly as long as that is true. When slice 6 (#3910)
 # stops the Python writing them — once a role name travels with the run as
 # trace data (#3906) — this guard and its GATE_STEPS entry go together, and
 # `RETIRED_ENGINE_AGENT_NAMES` can shrink to nothing.
@@ -204,26 +205,11 @@ expect_flat_keys_known() {
 # again when one moves is half the work this guard does; a producer that
 # vanishes should be deleted from here in the same PR, never silently skipped.
 
-# 1. arenabench's canonical tuple.
-p="arenabench/arenabench/model.py"
-if [ -f "$p" ]; then
-  expect_exact_set "$p" "ROLES tuple" \
-    "$(grep -E '^ROLES: *tuple' "$p" | quoted_tokens)"
-else
-  note "FAIL — $p is gone; update this guard's producer list."
-  fail=1
-fi
-
-# 2. arenabench's per-role loop, which drives what a seat actually writes.
-p="arenabench/arenabench/harbor_agent.py"
-if [ -f "$p" ]; then
-  expect_exact_set "$p" "per-role loop" \
-    "$(grep -E 'for role in \(' "$p" | quoted_tokens)"
-  expect_flat_keys_known "$p"
-else
-  note "FAIL — $p is gone; update this guard's producer list."
-  fail=1
-fi
+# 1-2 were ArenaBench's producers (model.py's ROLES tuple and
+#     harbor_agent.py's per-role loop). They left with the ejection to
+#     https://github.com/macanderson/arenabench (#2380), which carries its own
+#     half of this guard; the boundary that still crosses repos is the harbor
+#     adapter below. Numbering kept stable — citations name these entries.
 
 # 3. The Observatory's agent filter — a JS literal, invisible to every Rust and
 #    Python test in the tree. This is one of the two that silently vanished a

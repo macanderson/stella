@@ -18,7 +18,7 @@ name: main-red-hold
 # their own files. The canary runs on `push` to main and must judge the merged
 # tree; this runs on `pull_request` and must reach a human while there is
 # still a decision to make. Folding it into ci.yml would also hide it behind
-# that workflow's `paths-ignore`, and "main does not compile" is not a fact
+# that workflow's prose filter, and "main does not compile" is not a fact
 # about which paths a PR touched.
 #
 # Deliberately NOT wired into `merge_group`: a queue builds the merged result,

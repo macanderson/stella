@@ -60,6 +60,16 @@ from run_trace import Run, Trial
 _SUBSTANTIAL_OUTPUT_CHARS = 200
 _SUBSTANTIAL_OUTPUT_LINES = 3
 
+# The `ErrorClass` tokens (`crates/stella-protocol/src/tool.rs`) that name a
+# refusal rather than a command envelope: the executor declined or could not
+# address the request, so the message wraps a denial, never output the model
+# needed. `environment`, `timeout`, `internal`, and `other` stay eligible —
+# a command that ran can still hand back a page of real output under any of
+# them — and an absent class (old traces, unclassified errors) claims nothing.
+_REFUSAL_ERROR_CLASSES = frozenset(
+    {"invalid_input", "not_found", "permission_denied", "refused_by_policy"}
+)
+
 
 @dataclass(frozen=True)
 class Occurrence:
@@ -495,15 +505,27 @@ def _tool_error_envelope(run: Run) -> list[Finding]:
     at. So the predicate *is* the identity: everything it matches is the same
     defect, and the discriminator is spent on nothing.
 
+    The executor's own `ErrorClass` is the primary discriminator. An error it
+    classified `invalid_input`, `not_found`, `permission_denied`, or
+    `refused_by_policy` wraps a denial, never command output, and is skipped
+    before any string matching — whatever its message happens to contain. An
+    `environment` or `timeout` error, and any unclassified one (old traces and
+    unclassified errors are both classless on the wire), falls through to the
+    heuristics below, so a classless trace behaves exactly as it did before
+    the class existed.
+
     The `[exit code:` trailer is required rather than optional for the same
     reason. A guard refusal (`refused before running: … graded tree …`) is also
     an error envelope, and it is a different defect with its own issue — it
     carries no useful output, only a refusal, so demanding the trailer keeps the
-    two apart without asking the normalizer to tell them apart by prose.
+    two apart on a classless trace without asking the normalizer to tell them
+    apart by prose.
     """
     matches: list[tuple[Trial, Any]] = []
     for trial in run.trials:
         for call in trial.tool_calls:
+            if call.error_class in _REFUSAL_ERROR_CLASSES:
+                continue
             message = call.error_message
             if not message or "[exit code:" not in message:
                 continue
@@ -530,6 +552,7 @@ def _tool_error_envelope(run: Run) -> list[Finding]:
                 location=(
                     f"tool `{call.name}`, call_id `{call.call_id}`, "
                     f"stella-events.jsonl:{call.result_index}"
+                    + (f", error class `{call.error_class}`" if call.error_class else "")
                 ),
                 excerpt=(
                     "call.input:\n"
@@ -565,9 +588,11 @@ def _tool_error_envelope(run: Run) -> list[Finding]:
                 f"{len(seen_trials)} trial(s) — one occurrence shown per trial."
             ),
             caveats=[
-                "Requires the `[exit code: N]` trailer, so a guard refusal is not counted "
-                "here: it is an error envelope too, but it wraps a refusal rather than "
-                "output, and it is a different defect."
+                "An error the executor classified as a refusal (`invalid_input`, "
+                "`not_found`, `permission_denied`, `refused_by_policy`) is never counted "
+                "here: it wraps a denial rather than output, and it is a different "
+                "defect. On a classless trace the `[exit code: N]` trailer requirement "
+                "keeps the same two apart."
             ],
         )
     ]

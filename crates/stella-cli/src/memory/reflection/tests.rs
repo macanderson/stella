@@ -647,6 +647,10 @@ fn journal() -> Vec<stella_protocol::AgentEvent> {
             tool_calls: 1,
             complete: true,
             finish_reason: None,
+            effort: None,
+            max_output_tokens: None,
+            temperature: None,
+            params: None,
             sub_agent_id: None,
         },
     ]
@@ -956,6 +960,10 @@ async fn the_prompt_names_where_the_turn_spent_itself() {
         tool_calls: 3,
         complete: true,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     });
     friction.observe(&stella_protocol::AgentEvent::LoopDetected {

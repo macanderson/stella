@@ -338,6 +338,10 @@ fn step_usage_accumulates_tokens_and_file_change_fills_ledger() {
             tool_calls: 1,
             complete: true,
             finish_reason: None,
+            effort: None,
+            max_output_tokens: None,
+            temperature: None,
+            params: None,
             sub_agent_id: None,
         },
     ));
@@ -382,6 +386,10 @@ fn an_auxiliary_call_spends_on_the_row_without_relabelling_its_model() {
         tool_calls: 0,
         complete: true,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     };
     let mut w = WorkspaceModel::new();
@@ -403,6 +411,46 @@ fn an_auxiliary_call_spends_on_the_row_without_relabelling_its_model() {
     // the worker's.
     assert_eq!(lead.tokens_in, 2000);
     assert!((lead.cost_usd - 0.04).abs() < 1e-9);
+}
+
+/// **The witness for the #4625 statline half.** `ConfiguredRoles` never
+/// overwrites a served pin (startup intent must not clobber evidence), so a
+/// session model switch pushes `RolePinsReset`, which must — otherwise the
+/// statline names the replaced model until the new one's first `StepUsage`.
+#[test]
+fn a_role_pins_reset_replaces_served_evidence_where_configured_roles_must_not() {
+    let pin = |provider: &str, model: &str, served: bool| RolePin {
+        provider: provider.into(),
+        model: model.into(),
+        served,
+    };
+    let mut w = WorkspaceModel::new();
+    w.apply_inbound(&reg("lead"));
+    // Evidence: the worker served on zai/glm-5.2.
+    w.role_pins
+        .insert(PipelineRole::Worker, pin("zai", "glm-5.2", true));
+
+    // Startup-shaped intent must not clobber it…
+    w.apply_inbound(&Inbound::ConfiguredRoles(vec![(
+        PipelineRole::Worker,
+        pin("anthropic", "claude-opus-5", false),
+    )]));
+    assert_eq!(
+        w.role_pins[&PipelineRole::Worker].slug(),
+        "zai/glm-5.2",
+        "configured intent overwrote served evidence"
+    );
+
+    // …and the deliberate switch must.
+    w.apply_inbound(&Inbound::RolePinsReset(vec![(
+        PipelineRole::Worker,
+        pin("anthropic", "claude-opus-5", false),
+    )]));
+    assert_eq!(
+        w.role_pins[&PipelineRole::Worker].slug(),
+        "anthropic/claude-opus-5",
+        "the switch's re-pin must replace the stale served pin"
+    );
 }
 
 #[test]
@@ -476,6 +524,10 @@ fn context_tokens_track_the_latest_window_not_the_cumulative_input() {
         tool_calls: 0,
         complete: true,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     };
     // Three calls of 150k each: cumulative 450k dwarfs the 200k window, but
@@ -512,6 +564,10 @@ fn budget_tick_sets_live_spend_without_double_counting_step_usage() {
         tool_calls: 0,
         complete: true,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     };
     let mut w = WorkspaceModel::new();

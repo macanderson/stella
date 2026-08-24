@@ -86,7 +86,7 @@ use live_tool_calls::migrate_v17_to_v18;
 use pipeline_variant::migrate_v25_to_v26;
 use receipts::{
     migrate_v10_to_v11, migrate_v11_to_v12, migrate_v12_to_v13, migrate_v14_to_v15,
-    migrate_v15_to_v16, migrate_v29_to_v30,
+    migrate_v15_to_v16, migrate_v29_to_v30, migrate_v33_to_v34,
 };
 use schema_removal::migrate_v16_to_v17;
 use token_unit::migrate_v18_to_v19;
@@ -101,7 +101,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 33] = [
+pub(crate) const MIGRATIONS: [Migration; 34] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -273,6 +273,13 @@ pub(crate) const MIGRATIONS: [Migration; 33] = [
     // rather than a gap, and nothing in the journal can attribute a historical
     // row without the guess the column exists to end. See the module's own doc.
     sub_agent_calls::migrate_v32_to_v33,
+    // v33 → v34: `step_receipt` grows `upstream_provider` — the vendor a
+    // gateway routed the call to (#3054), which until now lived only in the
+    // raw `events` payload. Additive, column-guarded ADD COLUMN, nullable
+    // with no default and no backfill: NULL is "no upstream was named" —
+    // every direct-endpoint call and every pre-v34 row. See the module's
+    // own doc.
+    migrate_v33_to_v34,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -320,7 +327,8 @@ pub(crate) const MIGRATIONS: [Migration; 33] = [
     //   v30 → v31: CLAIMED above by the `agent_uses.kind` discriminator (#3822).
     //   v31 → v32: CLAIMED above by `execution_reflection.partial_run` (#3808).
     //   v32 → v33: CLAIMED above by `telemetry.sub_agent_id` (#4383).
-    // Nothing is reserved now: take v33 → v34 and add your own line here.
+    //   v33 → v34: CLAIMED above by `step_receipt.upstream_provider` (#3054).
+    // Nothing is reserved now: take v34 → v35 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

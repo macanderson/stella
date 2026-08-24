@@ -47,6 +47,9 @@ from stella_harbor import (  # noqa: E402 - after importorskip by design
 # re-export kept alive only for a test is a public surface nobody asked for.
 from stella_harbor.posture import (  # noqa: E402 - after importorskip by design
     _BENCHMARKED_SLUGS,
+    _MINIMAL_PROMPT_ENV,
+    read_posture_selectors,
+    resolve_minimal_prompt,
     resolve_model_timeout,
 )
 
@@ -1093,6 +1096,76 @@ def _engine_agent_names() -> frozenset[str]:
     # the one that exists.
     retired = _parse_rust_str_slice(source, "RETIRED_ENGINE_AGENT_NAMES")
     return names | retired
+
+
+class TestMinimalPromptArm:
+    """The base persona, as a selectable hashed arm (#4650).
+
+    `minimal_prompt` runs the session on a bare tool-advertisement persona, so
+    the operator's prompt fields carry the prose. Comparing it against the
+    shipped persona is the obvious experiment and the harness could not state
+    it: no selector wrote the key, and the launcher's disclosed-posture
+    vocabulary did not list it, so an arm had nowhere to declare the mode.
+
+    Nothing here decides what the arm measures. It makes it expressible.
+    """
+
+    _MODEL = "openrouter/anthropic/claude-sonnet-5"
+
+    def test_unset_omits_the_key_and_reproduces_the_frozen_posture(self) -> None:
+        """Absent is the shipped persona, which is what every registered digest
+        describes. Writing `minimal_prompt: "off"` unconditionally would
+        re-hash every arm in `bench/READINESS.md` §8.4 to describe postures
+        that behave exactly as the recorded ones do."""
+        base, base_json, base_digest = _benchmark_engine_posture(self._MODEL)
+        explicit = _benchmark_engine_posture(self._MODEL, minimal_prompt=None)
+        assert base_json == explicit[1]
+        assert base_digest == explicit[2]
+        assert "minimal_prompt" not in base
+
+    def test_each_setting_declares_itself_and_declares_only_itself(self) -> None:
+        """Three states, and the digest tells all three apart: unset, `on`,
+        `off`. `off` is expressible on purpose — an arm that measured the
+        shipped persona deliberately must be able to say so, and absence
+        already means something else."""
+        base, _base_json, base_digest = _benchmark_engine_posture(self._MODEL)
+        on, _on_json, on_digest = _benchmark_engine_posture(
+            self._MODEL, minimal_prompt=True
+        )
+        off, _off_json, off_digest = _benchmark_engine_posture(
+            self._MODEL, minimal_prompt=False
+        )
+        assert on["minimal_prompt"] == "on"
+        assert off["minimal_prompt"] == "off"
+        assert len({base_digest, on_digest, off_digest}) == 3
+        for key in ("default_model", "allowed_models", "agents"):
+            assert on[key] == base[key]
+            assert off[key] == base[key]
+
+    def test_the_selector_reaches_the_builder_through_the_one_reader(self) -> None:
+        """Collection and the exec boundary both go through
+        `read_posture_selectors`, so the selector has to be resolved there or
+        the two paths compute different postures and the run is refused."""
+        assert resolve_minimal_prompt(None) is None
+        assert resolve_minimal_prompt("on") is True
+        assert resolve_minimal_prompt("off") is False
+        with pytest.raises(ValueError):
+            resolve_minimal_prompt("maybe")
+
+        selectors = read_posture_selectors({_MINIMAL_PROMPT_ENV: "on"}.get)
+        assert selectors["minimal_prompt"] is True
+        posture, _json, _digest = _benchmark_engine_posture(self._MODEL, **selectors)
+        assert posture["minimal_prompt"] == "on"
+
+    def test_the_key_is_inside_the_launcher_vocabulary(self) -> None:
+        """The seam fails closed on any root key outside `ENGINE_ROOT_FIELDS`,
+        so an arm that pins the mode is a refused run unless Rust admits the
+        key. Read from the authority, never from a copy."""
+        posture, _json, _digest = _benchmark_engine_posture(
+            self._MODEL, minimal_prompt=True
+        )
+        assert "minimal_prompt" in _engine_root_fields()
+        assert set(posture) <= _engine_root_fields()
 
 
 class TestLauncherVocabularyParity:

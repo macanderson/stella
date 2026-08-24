@@ -7,7 +7,9 @@
 #   docs/wire/serveframe.schema.json    JSON Schema for the stella-serve frame
 #   docs/wire/serveinbound.schema.json  …and the two bodies a host POSTs back
 #   docs/wire/serveframe.d.ts           …and their TypeScript declarations
-#   docs/wire/wrapper.wire.json         the wrapper socket's two messages
+#   docs/wire/wrapper.wire.json         the wrapper socket's messages, as bytes
+#   docs/wire/wrapper.schema.json       …and as JSON Schema
+#   docs/wire/wrapper.d.ts              …and as TypeScript declarations
 #
 # Three exporters. `AgentEvent` is the payload (consumed by the TUI,
 # by --output-format stream-json, AND by the server); a `ServerFrame` is the
@@ -18,12 +20,12 @@
 # to keep in step rather than two.
 #
 # The third is the wrapper socket (`doc:wrapper-socket` §3 commitment 2), and it
-# is a different *kind* of artifact on purpose: a corpus of every message in its
-# fullest and emptiest legal form rather than a JSON Schema. A schemars schema
-# needs a `JsonSchema` impl on the types, and hand-writing one beside
-# `stella-plugin`'s would be the second copy this whole directory exists to
-# avoid. `crates/stella-plugin/src/wire_corpus.rs` states exactly what the
-# corpus catches and what only the schema would (#3532).
+# alone ships a *corpus* as well: every message in its fullest and emptiest
+# legal form, which is what pins the bytes a plugin's parser meets in whatever
+# language it was written. Its schema and its declarations print through the
+# same two paths the other two contracts take.
+# `crates/stella-plugin/src/wire_corpus.rs` states exactly what the corpus
+# catches and what only the schema would (#3532).
 #
 # `AgentEvent` is the wire format for three surfaces at once — the TUI folds
 # it, `--output-format stream-json` prints it, and stella-serve streams it over

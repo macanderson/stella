@@ -64,7 +64,11 @@ Group every hub row by org, provider, and model, and total it. Rows are ordered 
   </OptionCard>
   <OptionCard name="--by-tool">
     Per-tool reliability instead of per-model spend: cross-project calls, errors, and the
-    derived error rate per `(tool, surface)`, read from the hub's tool rollup. This is the
+    derived error rate per `(tool, surface)`, read from the hub's tool rollup. Each row also
+    splits its errors by `ErrorClass` token
+    (`errors_by_class` in JSON/CSV, `CLASSES` in the table; `unclassified` for calls recorded
+    before their error site was audited), so "bash's error rate excluding `invalid_input`"
+    is arithmetic, not string matching. This is the
     scriptable surface for a tool-reliability ceiling — the same numbers the Observatory
     leaderboard draws, unwindowed and pipeable. Cannot combine with `--org` (the rollup is
     project-keyed, and a silently unhonored filter would misreport). Named `--by-tool`

@@ -198,6 +198,19 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
 
+    // The session-override pickers (`/model`, `/agent`): modal cards like
+    // the floating ones above; the parked asks still win the top.
+    if ui.model_picker.open {
+        guarded_overlay(buf, area, "model picker", |b| {
+            views::picker::render_model(model, ui, area, b)
+        });
+    }
+    if ui.agent_picker.open {
+        guarded_overlay(buf, area, "agent picker", |b| {
+            views::picker::render_agent(ui, area, b)
+        });
+    }
+
     // The parked asks (#4220, #4240) — see `parked` for the stacking rule.
     parked::render(ui, area, buf);
 
@@ -233,9 +246,11 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         || ui.inbox_open
         || ui.context_open
         || ui.inspect_open
-        // The floating cards are modal while up (their handler owns every
-        // key ahead of the composer — see `deck_ui::cards`).
+        // The floating cards and the session-override pickers are modal
+        // while up (their handlers own every key ahead of the composer —
+        // see `deck_ui::cards` / `deck_ui::pickers`).
         || ui.cards.is_open()
+        || crate::deck_ui::pickers::owns_keyboard(ui)
         || slash_open
         // The routing card holds the user's words and owns every key until
         // they say where they go — it is checked first in `handle_deck_key`.
@@ -640,21 +655,35 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
                 Style::default().fg(theme::SUCCESS),
             )));
         }
+        let body_width = (w as usize).saturating_sub(6);
         for (index, message) in view.messages.iter().enumerate() {
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
                 format!("  ─── [{index}] {} ───", message.role),
                 theme::accent().add_modifier(Modifier::BOLD),
             )));
-            // Wrap by hand: Paragraph's own wrap would fight the scroll offset
-            // (rows would no longer equal lines, so the clamp below would lie).
-            for raw in message.content.lines() {
-                for chunk in wrap_chars(raw, (w as usize).saturating_sub(6)) {
+            // A message the driver could break down by provenance — the system
+            // prefix — renders as its sections instead of one wall, each headed
+            // by the setting that produced it. The bodies concatenate to
+            // `content`, so nothing is hidden by taking this branch; a message
+            // with no breakdown takes the flat path it always did.
+            if message.sections.is_empty() {
+                push_wrapped(&mut lines, &message.content, body_width);
+                continue;
+            }
+            for section in &message.sections {
+                lines.push(Line::from(Span::styled(
+                    format!("    ┌ {}", section.label),
+                    theme::accent(),
+                )));
+                let attribution = format!("from: {}", section.source);
+                for chunk in wrap_chars(&attribution, body_width.saturating_sub(2)) {
                     lines.push(Line::from(Span::styled(
-                        format!("    {chunk}"),
-                        Style::default().fg(theme::INK),
+                        format!("    │ {chunk}"),
+                        theme::muted(),
                     )));
                 }
+                push_wrapped(&mut lines, &section.body, body_width);
             }
         }
         lines.push(Line::default());
@@ -732,6 +761,23 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         .block(block)
         .scroll((scroll_row, 0))
         .render(popup, buf);
+}
+
+/// Push a multi-line body into the INSPECT overlay's line buffer, hard-wrapped
+/// and indented.
+///
+/// Wrapped by hand rather than by `Paragraph`: the overlay scrolls by row
+/// offset, so its own wrap would make rows stop equalling lines and the scroll
+/// clamp would lie about how far there is left to go.
+fn push_wrapped(lines: &mut Vec<Line<'static>>, body: &str, width: usize) {
+    for raw in body.lines() {
+        for chunk in wrap_chars(raw, width) {
+            lines.push(Line::from(Span::styled(
+                format!("    {chunk}"),
+                Style::default().fg(theme::INK),
+            )));
+        }
+    }
 }
 
 /// Hard-wrap one logical line to `width` characters, char-safe. Returns at

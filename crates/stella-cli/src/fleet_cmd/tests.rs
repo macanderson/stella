@@ -169,6 +169,10 @@ async fn fleet_attempt_persists_usage_before_complete_closeout() {
         tool_calls: 0,
         complete: true,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     })
     .expect("event");
@@ -519,6 +523,7 @@ fn steered_config(workspace_root: PathBuf) -> Config {
         turn_timeout: None,
         max_output_tokens: None,
         plan_mode: false,
+        minimal_prompt: false,
         model_pinned_by_flag: false,
         durability: Default::default(),
         output_ceilings: Default::default(),
@@ -533,6 +538,7 @@ fn steered_config(workspace_root: PathBuf) -> Config {
         tool_policy: Default::default(),
         ignore_gitignore: true,
         reward_policy: crate::reward::RewardPolicy::default(),
+        plan_review: crate::settings::PlanReviewPolicy::default(),
         // Workspace skills sit behind the project-trust boundary, so a witness
         // about a worker receiving one has to open the session the way a
         // trusted project does.
@@ -953,5 +959,35 @@ async fn two_attempts_at_one_task_are_one_task_to_governance() {
         std::collections::BTreeSet::from(["fleet:migrate-billing"]),
         "the field the distinct-task threshold counts must hold ONE task for a \
          retry wave at one task: {distinct:?}"
+    );
+}
+
+/// **Witness (#3883, live-dashboard half).** Wrapper report lines are held
+/// while the grid owns the terminal — appended per attempt under one lock so
+/// two concurrent workers' reports interleave per report, never per line —
+/// and drained once, in arrival order, when the grid tears down.
+#[test]
+fn held_wrapper_reports_stay_whole_per_attempt_and_drain_once() {
+    let held = wrapped::HeldReports::default();
+    // Two attempts' reports, arriving whole — the shape `AttemptWrapper::
+    // settle` hands over, each line already naming its task.
+    held.hold(vec![
+        "  ! [t1] wrapper: fault".to_string(),
+        "  ◇ [t1] met".to_string(),
+    ]);
+    held.hold(vec!["  ◇ [t2] met".to_string()]);
+    // An empty report holds nothing — a clean attempt must not cost a lock
+    // entry or an empty line at teardown.
+    held.hold(Vec::new());
+
+    let drained = held.drain();
+    assert_eq!(
+        drained,
+        ["  ! [t1] wrapper: fault", "  ◇ [t1] met", "  ◇ [t2] met",],
+        "arrival order, attempts contiguous"
+    );
+    assert!(
+        held.drain().is_empty(),
+        "a second drain finds nothing — teardown prints each line once"
     );
 }

@@ -56,7 +56,9 @@ mod self_driving;
 mod self_driving_sessions;
 mod sent_context;
 mod sessions;
+mod system_prompt;
 mod transcript_view;
+mod turn_agents;
 
 use accept::{AcceptAction, AcceptBackoff};
 use std::net::SocketAddr;
@@ -196,6 +198,51 @@ fn render_transcript(obs: &Observatory, id: i64) -> Result<String, db::DbError> 
     Ok(stella_transcript::html::render_run(&run, &state))
 }
 
+/// The tail half of [`render_transcript`]: only the step/note/prose blocks a
+/// still-running execution has grown since the caller's `cursor`, plus a
+/// fresh receipt (#4566's fix shape (a) — the fragment-diff half fix shape
+/// (b), landed in #4593, deliberately left open).
+///
+/// The journal is still refolded whole on every call —
+/// [`transcript_view::build_run`] is a cheap, allocation-only walk over rows
+/// an indexed query already fetched, not the cost #4566 is about. The cost
+/// this cuts is [`stella_transcript::html::render_turn_tail`]'s: escaping,
+/// syntax highlighting and diff-table construction over content the previous
+/// tick already rendered in full, which is where a long-running turn's poll
+/// cost actually grows.
+///
+/// `Ok(None)` means `cursor` no longer describes this run (stale after a
+/// server restart, or simply invalid input) — the caller falls back to
+/// [`render_transcript`]'s full fragment.
+fn render_transcript_tail(
+    obs: &Observatory,
+    id: i64,
+    cursor: stella_transcript::html::TailCursor,
+) -> Result<Option<stella_transcript::html::TurnTail>, db::DbError> {
+    let execution = obs.execution(id)?;
+    let journal = obs.execution_journal(id, true, None)?;
+    let rows = journal.as_array().cloned().unwrap_or_default();
+    let run = transcript_view::build_run(&execution, &rows);
+    let state = stella_transcript::FoldState::new();
+    Ok(stella_transcript::html::render_turn_tail(
+        &run, &state, 0, cursor,
+    ))
+}
+
+/// The full-fragment `200 OK`/`500` response [`render_transcript`] produces —
+/// shared by the plain full-fragment route and the tail route's fallback when
+/// its cursor is stale.
+fn full_transcript_response(obs: &Observatory, id: i64) -> Response {
+    match render_transcript(obs, id) {
+        Ok(body) => Response {
+            status: "200 OK",
+            content_type: "text/html; charset=utf-8",
+            body: body.into_bytes(),
+        },
+        Err(err) => Response::error("500 Internal Server Error", &err.to_string()),
+    }
+}
+
 /// The path with any query string removed.
 fn route_of(path: &str) -> &str {
     path.split_once('?').map_or(path, |(route, _)| route)
@@ -276,16 +323,39 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         // markup is rendered by `stella-transcript` and embedded by the
         // dashboard's turn page. The standalone `/transcript` page this
         // replaces is gone — one run, one rendering, one place to read it.
+        //
+        // `&from_step=N` switches to the tail protocol (#4566's fix shape
+        // (a)): the dashboard's live poll sends back the step/note/prose
+        // counts it already painted (`from_note`/`from_prose` default to `0`,
+        // matched to `from_step` defaulting the whole route to the plain
+        // full-fragment path above), and the response becomes JSON —
+        // `{"blocks": "...", "receipt": "..."}` — for the caller to splice in
+        // rather than repaint. A cursor the run no longer recognises falls
+        // back to the same full fragment the caller would have gotten without
+        // `from_step` at all.
         "/api/transcript-html" => {
             let Some(id) = query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) else {
                 return Response::error("400 Bad Request", "missing ?id=<execution id>");
             };
-            return match render_transcript(&obs, id) {
-                Ok(body) => Response {
-                    status: "200 OK",
-                    content_type: "text/html; charset=utf-8",
-                    body: body.into_bytes(),
-                },
+            let Some(step) = query_param(query, "from_step").and_then(|v| v.parse::<usize>().ok())
+            else {
+                return full_transcript_response(&obs, id);
+            };
+            let cursor = stella_transcript::html::TailCursor {
+                step,
+                note: query_param(query, "from_note")
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(0),
+                prose: query_param(query, "from_prose")
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .unwrap_or(0),
+            };
+            return match render_transcript_tail(&obs, id, cursor) {
+                Ok(Some(tail)) => Response::json(serde_json::json!({
+                    "blocks": tail.blocks,
+                    "receipt": tail.receipt,
+                })),
+                Ok(None) => full_transcript_response(&obs, id),
                 Err(err) => Response::error("500 Internal Server Error", &err.to_string()),
             };
         }
@@ -315,7 +385,7 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             else {
                 return Response::error("400 Bad Request", "missing ?provider=&slug=");
             };
-            model_card::model_card(&provider, &slug)
+            model_card::model_card(&model_card::default_catalog_db(), &provider, &slug)
         }
         // The transcript replay (#1461). `full=1` lifts the per-body clip —
         // fetched whole on drawer-open. `after_seq=<n>` (#1476) narrows to
@@ -429,6 +499,15 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         "/api/execution-tendencies" => {
             match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
                 Some(id) => obs.execution_tendencies(id),
+                None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
+            }
+        }
+        // The sub-agents one turn fanned out — the `sub_agent` bracket joined
+        // with the child-stamped metering rows, one row per child, for the
+        // turn page's sub-agents panel.
+        "/api/execution-subagents" => {
+            match query_param(query, "id").and_then(|v| v.parse::<i64>().ok()) {
+                Some(id) => obs.execution_subagents(id),
                 None => return Response::error("400 Bad Request", "missing ?id=<execution id>"),
             }
         }

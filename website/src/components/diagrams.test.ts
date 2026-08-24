@@ -4,6 +4,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
+import { DIAGRAM_DESCRIPTIONS } from "./diagram-descriptions.ts";
+
 /**
  * Guards the glyph trap in `src/components/diagrams.tsx`.
  *
@@ -71,6 +73,7 @@ function paintedSource(): string {
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^[ \t]*\/\/.*$/gm, "")
     .replace(/aria-label="[^"]*"/g, "")
+    .replace(/aria-label=\{[^}]*\}/g, "")
     .replace(/<title>[\s\S]*?<\/title>/g, "");
 }
 
@@ -132,4 +135,29 @@ test("the allowlist itself stays honest about the missing arrows", () => {
   // the allowlist" fails loudly instead of quietly restoring the bug.
   assert.ok(!ALLOWED_NON_ASCII.has("→"), "U+2192 is not in the font subset");
   assert.ok(!ALLOWED_NON_ASCII.has("←"), "U+2190 is not in the font subset");
+});
+
+test("every diagram component has a description, and vice versa", () => {
+  // The aria-labels moved to `diagram-descriptions.ts` so the markdown export
+  // (Copy page / llms.mdx) can reuse them; this is what keeps the record and
+  // the components in lockstep — a diagram added on one side only fails here.
+  const source = readFileSync(DIAGRAMS, "utf8");
+  const components = [...source.matchAll(/export function (\w+Diagram)\(\)/g)].map((m) => m[1]).sort();
+  const described = Object.keys(DIAGRAM_DESCRIPTIONS).sort();
+  assert.deepEqual(
+    described,
+    components,
+    "diagram-descriptions.ts and diagrams.tsx disagree: " +
+      `only in descriptions: ${described.filter((n) => !components.includes(n)).join(", ") || "—"}; ` +
+      `only in components: ${components.filter((n) => !described.includes(n)).join(", ") || "—"}`,
+  );
+  // And each component actually reads its own entry — a copy-pasted
+  // `DIAGRAM_DESCRIPTIONS.OtherDiagram` would pass the set check above while
+  // labelling the picture with the wrong sentence.
+  for (const name of components) {
+    assert.ok(
+      source.includes(`aria-label={DIAGRAM_DESCRIPTIONS.${name}}`),
+      `${name} does not read DIAGRAM_DESCRIPTIONS.${name} as its aria-label`,
+    );
+  }
 });

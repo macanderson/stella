@@ -1,17 +1,23 @@
-//! The `/model` slash command — set the persistent default model from the
-//! prompt, at parity with the SETTINGS tab. Kept out of the already-large
-//! `command_deck` dispatcher: the parser, the catalog validation, and the
-//! settings write live here; `command_deck` only wires them to `say`.
+//! The `/model` slash command's argument forms. `/model <id>` switches THIS
+//! session's model (the typed twin of the picker the bare form opens —
+//! `command_deck::session_override` applies it); `/model default <id>`
+//! persists the default for future sessions, at parity with the SETTINGS
+//! tab. Kept out of the already-large `command_deck` dispatcher: the
+//! parser, the catalog validation, and the settings write live here;
+//! `command_deck` only wires them.
 
 use crate::config::Config;
 
-/// `/model …` — the persistent default-model setter (singular; `/models`
-/// is the plural catalog command). A valid model id is one whitespace-free
-/// token (`zai/glm-5.2`, `openrouter/openai/gpt-5.5`), so anything else is
-/// answered with usage rather than a wasted model call.
+/// `/model …` (singular; `/info` is the catalog command). A valid model id
+/// is one whitespace-free token (`zai/glm-5.2`,
+/// `openrouter/openai/gpt-5.5`), so anything else is answered with usage
+/// rather than a wasted model call.
 pub enum ModelCommand {
-    /// `/model <id>` — one token to validate and persist as the default.
-    Set(String),
+    /// `/model <id>` — switch this session's model, session-only.
+    Override(String),
+    /// `/model default <id>` — validate and persist as the default for
+    /// sessions started from now on.
+    Default(String),
     /// `/model <two or more tokens>` — not a model id.
     Usage,
 }
@@ -25,9 +31,11 @@ pub fn parse_model_command(trimmed: &str) -> Option<ModelCommand> {
         return None;
     }
     let mut words = rest.split_whitespace();
-    match (words.next(), words.next()) {
-        (Some(id), None) => Some(ModelCommand::Set(id.to_string())),
-        // No token (all whitespace) or more than one — not a model id.
+    match (words.next(), words.next(), words.next()) {
+        (Some("default"), Some(id), None) => Some(ModelCommand::Default(id.to_string())),
+        (Some(id), None, _) if id != "default" => Some(ModelCommand::Override(id.to_string())),
+        // No token (all whitespace), a bare `default`, or a sentence — not
+        // a model id.
         _ => Some(ModelCommand::Usage),
     }
 }
@@ -44,7 +52,8 @@ pub fn current_summary(cfg: &Config) -> String {
     format!(
         "default model (new sessions): {persisted}\n\
          this session is running:      {}/{}\n\n\
-         set the default with `/model <provider/slug>` (e.g. `/model zai/glm-5.2`):\n\n{}",
+         switch this session with `/model <provider/slug>` (e.g. `/model zai/glm-5.2`); \
+         persist the default with `/model default <provider/slug>`:\n\n{}",
         cfg.provider.id,
         cfg.model_id,
         Config::available_models_plain(None),
@@ -52,7 +61,7 @@ pub fn current_summary(cfg: &Config) -> String {
 }
 
 /// The pins this session is configured to run for triage / worker / verifier,
-/// for the statline's MODEL cell and the `/models` dialog's standing column.
+/// for the statline's MODEL cell and the `/info` dialog's standing column.
 ///
 /// The deck otherwise learns a role's pin only from that role's first
 /// `AgentEvent::StepUsage`, so before any turn it can say nothing, and a role
@@ -109,11 +118,12 @@ pub fn configured_role_pins(
         .collect()
 }
 
-/// Validate `id` against the catalog (exactly as the settings tab's default
-/// resolves, via [`crate::engine_config::parse_model_spec`]) and persist it
-/// as `default_model` in user-scope settings through the same `save_to` the
-/// tab calls. `Ok` = saved, carrying the confirmation to show; `Err` = a
-/// message to show without saving.
+/// Validate `id` against the workspace's `[models].allowed` ceiling and
+/// against the catalog (exactly as the settings tab's default resolves, via
+/// [`crate::engine_config::parse_model_spec`]) and persist it as
+/// `default_model` in user-scope settings through the same `save_to` the tab
+/// calls. `Ok` = saved, carrying the confirmation to show; `Err` = a message
+/// to show without saving.
 pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
     // Recognize any built-in or currently-configured provider as a valid
     // `provider/` prefix (a built-in needs no key yet — the credential is
@@ -130,10 +140,37 @@ pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
     };
     let Some(spec) = crate::engine_config::parse_model_spec(id, &is_provider) else {
         return Err(format!(
-            "model `{id}` not recognized — use `provider/slug` (e.g. `/model zai/glm-5.2`), \
-             or run `/models` to list what your configured providers offer"
+            "model `{id}` not recognized — use `provider/slug` (e.g. `/model default \
+             zai/glm-5.2`), or run `/info` to list what your configured providers offer"
         ));
     };
+    // The same `[models].allowed` ceiling `/model <id>` answers to, from the
+    // same MERGED view, because the two forms are one command: a default the
+    // live switch would refuse is a file that is broken on arrival, and the
+    // persist form is the half with the longer blast radius — a session
+    // override dies with the session, a default seeds every session after it
+    // (#4659).
+    //
+    // The merge is read for the CHECK only; the write below still reads and
+    // rewrites the user file alone, so a project's list can veto a write
+    // without a project's pins reaching user scope. That direction is the
+    // deliberate one: an org-managed or project list restricting this
+    // workspace is exactly the restriction that should stop a machine-wide
+    // default being set from inside it, and the way past it is to set the
+    // default from outside the workspace or to widen the list — both of which
+    // the refusal names by naming the list.
+    let allowed = crate::settings::Settings::load(&cfg.workspace_root)
+        .ok()
+        .and_then(|s| s.agent_engine_config)
+        .map(|e| e.allowed_models().to_vec())
+        .unwrap_or_default();
+    let full_spec = format!("{}/{}", spec.provider, spec.model);
+    if !crate::settings::allowed_models::admits(&allowed, &full_spec, id) {
+        return Err(format!(
+            "`{id}` was not saved — {}",
+            crate::settings::allowed_models::denial(&allowed, &full_spec)
+        ));
+    }
     // Validated at SET time, not at first use (#895). Parsing only proves the
     // string has a shape; this proves the provider will serve the WIRE slug —
     // catching `openrouter/auto`, which parses cleanly and then reaches the
@@ -224,6 +261,7 @@ mod tests {
             turn_timeout: None,
             max_output_tokens: None,
             plan_mode: false,
+            minimal_prompt: false,
             model_pinned_by_flag: false,
             durability: Default::default(),
             output_ceilings: Default::default(),
@@ -238,6 +276,7 @@ mod tests {
             tool_policy: Default::default(),
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
+            plan_review: crate::settings::PlanReviewPolicy::default(),
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: None,
             credential_advisories: Vec::new(),
@@ -390,21 +429,94 @@ mod tests {
         );
     }
 
+    /// **Witness (#4659).** The two halves of `/model` answer to the same
+    /// list: a spec the live switch refuses cannot be written as the default
+    /// either, and the file is left untouched when it is refused.
+    ///
+    /// Asserted as an agreement rather than as two independent refusals,
+    /// because the defect was not that the persist path was too permissive in
+    /// isolation — it was that the two halves of one command disagreed, so
+    /// `/model X` was refused and `/model default X` seeded every session
+    /// started afterwards with exactly that model.
     #[test]
-    fn parse_model_command_takes_one_id_and_separates_from_models() {
+    fn the_persist_path_refuses_what_the_live_switch_refuses() {
+        let (td, _guard) = scratch();
+        let workspace = td.path().join("repo");
+        std::fs::create_dir_all(workspace.join(".stella")).unwrap();
+        std::fs::write(
+            workspace.join(".stella/settings.json"),
+            r#"{"agent_engine_config": {"allowed_models": ["anthropic/claude-opus-5"]}}"#,
+        )
+        .unwrap();
+        let mut cfg = test_config(workspace);
+
+        let Err(switch_refusal) = crate::command_deck::session_override::switch_session_model(
+            &mut cfg,
+            "anthropic/claude-sonnet-5",
+        ) else {
+            panic!("premise: the live switch refuses an off-list model");
+        };
+
+        let write_refusal = set_default_model(&cfg, "anthropic/claude-sonnet-5")
+            .expect_err("so the persist path must refuse it too");
+        assert_eq!(
+            switch_refusal,
+            write_refusal
+                .strip_prefix("`anthropic/claude-sonnet-5` was not saved — ")
+                .unwrap_or(&write_refusal),
+            "both halves must give the same reason"
+        );
+        assert!(
+            !td.path().join("home/.stella/settings.json").exists(),
+            "a refused default must leave the user's settings untouched"
+        );
+
+        // The on-list spec still writes: the ceiling narrows the vocabulary,
+        // it does not disable the command.
+        set_default_model(&cfg, "anthropic/claude-opus-5").expect("an on-list default saves");
+        let raw: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(td.path().join("home/.stella/settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            raw.pointer("/agent_engine_config/default_model")
+                .and_then(|v| v.as_str()),
+            Some("anthropic/claude-opus-5")
+        );
+    }
+
+    /// **The witness for the override form.** `/model <id>` is a
+    /// session-only Override; the persist meaning moved behind the explicit
+    /// `default` word — an id alone must never write settings again.
+    #[test]
+    fn parse_model_command_separates_override_from_default() {
         // A single whitespace-free id (including nested OpenRouter slugs and
-        // bare catalog slugs) is a Set; the value is validated downstream.
+        // bare catalog slugs) is an Override; the value is validated downstream.
         assert!(matches!(
             parse_model_command("/model zai/glm-5.2"),
-            Some(ModelCommand::Set(id)) if id == "zai/glm-5.2"
+            Some(ModelCommand::Override(id)) if id == "zai/glm-5.2"
         ));
         assert!(matches!(
             parse_model_command("/model openrouter/openai/gpt-5.5"),
-            Some(ModelCommand::Set(id)) if id == "openrouter/openai/gpt-5.5"
+            Some(ModelCommand::Override(id)) if id == "openrouter/openai/gpt-5.5"
         ));
         assert!(matches!(
             parse_model_command("/model glm-5.2"),
-            Some(ModelCommand::Set(id)) if id == "glm-5.2"
+            Some(ModelCommand::Override(id)) if id == "glm-5.2"
+        ));
+        // The persist form takes the explicit `default` word.
+        assert!(matches!(
+            parse_model_command("/model default zai/glm-5.2"),
+            Some(ModelCommand::Default(id)) if id == "zai/glm-5.2"
+        ));
+        // A bare `default` names no model; a trailing word is a sentence.
+        assert!(matches!(
+            parse_model_command("/model default"),
+            Some(ModelCommand::Usage)
+        ));
+        assert!(matches!(
+            parse_model_command("/model default zai/glm-5.2 please"),
+            Some(ModelCommand::Usage)
         ));
         // More than one token is not a model id → usage, never a model call.
         assert!(matches!(
@@ -413,9 +525,10 @@ mod tests {
         ));
         // Bare `/model` has no whitespace to split — the exact-match arm owns it.
         assert!(parse_model_command("/model").is_none());
-        // `/model` must not swallow the plural `/models`, nor the removed
-        // `/model-<role>` heads.
+        // `/model` must not swallow the plural heads (`/info refresh` and the
+        // legacy `/models refresh`), nor the removed `/model-<role>` heads.
         assert!(parse_model_command("/models refresh").is_none());
+        assert!(parse_model_command("/info refresh").is_none());
         assert!(parse_model_command("/model-default zai/glm-5.2").is_none());
     }
 }

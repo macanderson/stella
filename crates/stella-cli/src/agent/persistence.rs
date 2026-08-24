@@ -917,6 +917,7 @@ pub(crate) fn persist_event_detailed(
         call_seq,
         role,
         provider,
+        upstream_provider,
         model,
         blocks,
         effective_budget_tokens,
@@ -933,6 +934,10 @@ pub(crate) fn persist_event_detailed(
                 step: *step as u64,
                 call_seq: *call_seq,
                 provider: provider.clone(),
+                // Who actually served a gateway-routed call (#3054) — the
+                // projection that finally lands `upstream_provider` in a
+                // real column instead of only the raw `events` payload.
+                upstream_provider: upstream_provider.clone(),
                 model: model.clone(),
                 call_role: enum_tag(role),
                 effective_budget_tokens: *effective_budget_tokens,

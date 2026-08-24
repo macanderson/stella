@@ -2,8 +2,8 @@ name: docs
 
 # The docs site's CI: lint, typecheck, and a production build of
 # website/. Scoped to the paths that can affect the site, the mirror
-# image of ci.yml's paths-ignore — every PR runs exactly one of the two
-# (or both, when it genuinely touches both worlds).
+# image of ci.yml's prose list (scripts/ci-rust-scope.sh) — every PR runs
+# exactly one of the two (or both, when it genuinely touches both worlds).
 on:
   pull_request:
     paths:
