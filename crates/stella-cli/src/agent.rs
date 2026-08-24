@@ -50,7 +50,7 @@ pub(crate) mod outcome;
 mod output;
 pub(crate) mod persistence;
 mod presence;
-mod prompt;
+pub(crate) mod prompt;
 mod reflect;
 pub(crate) mod resume;
 pub(crate) mod seats;

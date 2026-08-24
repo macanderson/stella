@@ -32,6 +32,27 @@ impl RecordedCallInfo {
     }
 }
 
+/// One provenance-labelled span of a system prompt: which setting put these
+/// bytes in the prompt this call was sent.
+///
+/// The split is the driver's, not this crate's — the markers are the prompt
+/// assembler's own section-opener constants, which live in `stella-cli` where
+/// the assembler does (`agent/prompt/provenance.rs`). The overlay renders what
+/// it is handed and knows no headings, exactly as it knows no protocol types.
+///
+/// The bodies concatenate, in order, to the exact bytes the call was sent, so
+/// a reader who distrusts a boundary has lost nothing by reading the sections
+/// instead of the raw message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InspectSection {
+    /// What this span is, in a reader's words — `Workspace rules`, …
+    pub label: String,
+    /// The configuration surface that produced it.
+    pub source: String,
+    /// The exact bytes, marker heading included.
+    pub body: String,
+}
+
 /// One message of a reconstructed call, flattened for display: tool calls and
 /// results are already rendered into `content` by the driver, so the overlay
 /// never needs the protocol types.
@@ -39,6 +60,11 @@ impl RecordedCallInfo {
 pub struct InspectMessage {
     pub role: String,
     pub content: String,
+    /// The provenance breakdown of `content`, when the driver could compute
+    /// one — the system prefix, and nothing else. Empty everywhere else, and
+    /// the overlay falls back to `content` when it is: a message with no
+    /// breakdown renders exactly as it always did.
+    pub sections: Vec<InspectSection>,
 }
 
 /// Which compaction-journaling era wrote the journal a reconstruction came
