@@ -14,22 +14,25 @@ mod plan_gate;
 
 pub(crate) use plan_gate::plan_goal;
 
-/// Mirrors the task board into the event stream: after any `task_*` tool
-/// call the FULL board snapshot rides the turn's channel as
-/// `AgentEvent::TaskUpdate` — persisted by the forwarder, so replay shows
-/// the checklist exactly as it moved — and `task_assign`'s spawn requests
-/// are handed to the driver's supervisor channel. `supervisor: None` is the
-/// worker configuration (v1 delegation runs from the lead only; a worker's
-/// stranded requests are reported on its lane by `crate::subsession`).
+/// Hands `task_assign`'s spawn requests to the driver's supervisor channel,
+/// and turns the board into a **scope**: the same board traffic is what the
+/// plan gate reads to raise `AgentEvent::ScopeReview` before the first step
+/// runs (#4594). One decorator for both because they are one fact observed
+/// twice — see [`plan_gate`] for why the board is the scope and why the gate
+/// asks. `supervisor: None` is the worker configuration (v1 delegation runs
+/// from the lead only; a worker's stranded requests are reported on its lane
+/// by `crate::subsession`).
 ///
-/// It is also where the board becomes a **scope**: the same `task_*` traffic
-/// that produces `TaskUpdate` is what the plan gate reads to raise
-/// `AgentEvent::ScopeReview` before the first step runs (#4594). One
-/// decorator for both because they are one fact observed twice — see
-/// [`plan_gate`] for why the board is the scope and why the gate asks.
+/// The board snapshot itself is **not** published here. It used to be, and
+/// that is precisely why only the Command Deck ever recorded a checklist: a
+/// one-shot `stella run`, `stella goal`, a delegated child and a subsession
+/// lane all move the same board through the same six tools and composed no
+/// such decorator. The mirror now sits on `ToolRegistry::execute` (#4613),
+/// under the event sender every door attaches through
+/// `crate::turn_files::open_turn_streams`, so the deck's stream carries
+/// exactly what it always did and every other door carries it too.
 pub(crate) struct TaskTap<'a> {
     pub(crate) inner: &'a dyn ToolExecutor,
-    pub(crate) events: UnboundedSender<AgentEvent>,
     pub(crate) registry: &'a ToolRegistry,
     pub(crate) supervisor: Option<UnboundedSender<SupervisorMsg>>,
     /// `None` when no driver is attached to answer — the gate is then not
@@ -58,18 +61,16 @@ impl<'a> TaskTap<'a> {
         if supervisor.is_some() {
             registry.enable_task_delegation();
         }
-        let plan_gate =
-            plan_gate::PlanGate::install(registry.question_broker(), events.clone(), goal);
+        let plan_gate = plan_gate::PlanGate::install(registry.question_broker(), events, goal);
         Self {
             inner,
-            events,
             registry,
             supervisor,
             plan_gate,
         }
     }
 
-    /// This lane's board, as the snapshot both the gate and `TaskUpdate` read.
+    /// This lane's board, as the snapshot the plan gate is asked to approve.
     fn board(&self) -> Vec<TaskItem> {
         let board = self.registry.task_board();
         let guard = board.lock().unwrap_or_else(|p| p.into_inner());
@@ -100,14 +101,11 @@ impl ToolExecutor for TaskTap<'_> {
             return refused;
         }
         let output = self.inner.execute(name, input).await;
-        if name.starts_with("task_") {
-            let _ = self.events.send(AgentEvent::TaskUpdate {
-                tasks: self.board(),
-            });
-            if let Some(sup) = &self.supervisor {
-                for request in self.registry.take_spawn_requests() {
-                    let _ = sup.send(SupervisorMsg::SpawnTask(request));
-                }
+        if stella_tools::tasks::is_board_tool(name)
+            && let Some(sup) = &self.supervisor
+        {
+            for request in self.registry.take_spawn_requests() {
+                let _ = sup.send(SupervisorMsg::SpawnTask(request));
             }
         }
         output
@@ -200,10 +198,8 @@ mod tests {
     fn the_task_tap_forwards_parallel_safe_names() {
         let inner = Claiming;
         let registry = ToolRegistry::new(std::path::PathBuf::from("."));
-        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tap = TaskTap {
             inner: &inner,
-            events,
             registry: &registry,
             supervisor: None,
             plan_gate: None,
@@ -489,10 +485,8 @@ mod tests {
     fn the_task_tap_forwards_active_skill_slugs() {
         let inner = Claiming;
         let registry = ToolRegistry::new(std::path::PathBuf::from("."));
-        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
         let tap = TaskTap {
             inner: &inner,
-            events,
             registry: &registry,
             supervisor: None,
             plan_gate: None,

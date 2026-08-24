@@ -575,3 +575,67 @@ async fn a_delegate_call_records_an_agent_use_row() {
         "the drain discipline holds — a second drain has nothing"
     );
 }
+
+/// **The witness for #4613.** A board tool publishes the whole board on the
+/// turn's event stream, from the registry — so every door that opens a stream
+/// records the checklist, not only the one that composed a decorator.
+///
+/// Fails before this change: `AgentEvent::TaskUpdate` had exactly two
+/// producers in the tree and both were the Command Deck, so a one-shot
+/// `stella run`, `stella goal`, a delegated child and a subsession lane moved
+/// this same board and emitted nothing at all about it. Nothing reached the
+/// stream here.
+#[tokio::test]
+async fn a_board_tool_publishes_the_whole_board_on_the_turn_s_stream() {
+    use stella_protocol::{AgentEvent, TaskStatus};
+
+    let (_root, reg) = bare_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    reg.attach_events(stella_core::EventSender::new(tx));
+
+    let out = reg
+        .execute(
+            "task_create",
+            &serde_json::json!({ "tasks": ["read the router", "fix the router"] }),
+        )
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+
+    let Ok(AgentEvent::TaskUpdate { tasks }) = rx.try_recv() else {
+        panic!("the board move must reach the stream");
+    };
+    let subjects: Vec<&str> = tasks.iter().map(|t| t.subject.as_str()).collect();
+    assert_eq!(subjects, ["read the router", "fix the router"]);
+
+    // The snapshot is the WHOLE board every time, not a delta: a replay folds
+    // the last one it saw and needs no history to be correct.
+    let out = reg
+        .execute("task_start", &serde_json::json!({ "id": "1" }))
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+    let Ok(AgentEvent::TaskUpdate { tasks }) = rx.try_recv() else {
+        panic!("the second board move must reach the stream too");
+    };
+    assert_eq!(tasks.len(), 2, "the full board, not the row that moved");
+    assert_eq!(tasks[0].status, TaskStatus::InProgress);
+    assert_eq!(tasks[1].status, TaskStatus::Pending);
+}
+
+/// A registry with no stream attached runs the same call and publishes
+/// nothing — the mirror is a debt to a turn's channel, not a side effect a
+/// host without one pays for.
+#[tokio::test]
+async fn a_board_tool_with_no_stream_attached_publishes_nothing() {
+    let (_root, reg) = bare_registry();
+    let out = reg
+        .execute(
+            "task_create",
+            &serde_json::json!({ "subject": "no listener" }),
+        )
+        .await;
+    assert!(!out.is_error(), "{out:?}");
+    assert!(
+        reg.events().is_none(),
+        "anti-vacuity: this registry really has no sender to publish onto"
+    );
+}
