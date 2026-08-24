@@ -1216,6 +1216,8 @@ mod tests {
                 finish_reason: None,
                 effort: None,
                 max_output_tokens: None,
+                temperature: None,
+                params: None,
                 sub_agent_id: None,
             },
             AgentEvent::GoalVerdict {

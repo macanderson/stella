@@ -355,6 +355,10 @@ export type AgentEvent = {
   output_text?: string | null;
   output_tokens: number;
   /**
+   * The sampling and routing overrides the dispatched request carried -- top_p, top_k, the penalties, seed, verbosity, service_tier. Content-free: every field is a number or a closed enum. Absent when the request carried no overrides, or when the stream predates this field.
+   */
+  params?: GenerationParams | null;
+  /**
    * Provider which actually served this call, never the session's
    * configured default. Empty only on legacy events.
    *
@@ -386,6 +390,10 @@ export type AgentEvent = {
    * Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text.
    */
   sub_agent_id?: string | null;
+  /**
+   * The sampling temperature the dispatched request carried. Absent when the request pinned none, or when the stream predates this field; absence is not zero -- an unpinned temperature is the provider's own default.
+   */
+  temperature?: number | null;
   tool_calls: number;
   type: "step_usage";
   /**

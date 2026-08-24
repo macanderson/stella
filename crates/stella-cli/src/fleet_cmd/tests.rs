@@ -171,6 +171,8 @@ async fn fleet_attempt_persists_usage_before_complete_closeout() {
         finish_reason: None,
         effort: None,
         max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     })
     .expect("event");

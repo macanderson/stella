@@ -77,13 +77,36 @@ pub struct AgentEngineConfig {
     /// from. Entries are `provider/slug` strings. Empty/absent = no
     /// restriction (pickers fall back to the seed catalog).
     ///
-    /// It is the ceiling on **seat assignments** too, and not only on what a
-    /// picker will offer: a seat naming a model outside a non-empty list is
-    /// refused with a notice and falls back to the session's model, the same
-    /// answer an unassigned seat gets (see [`crate::agent::seats`]). Without
-    /// that, an operator who narrowed their vocabulary to two models could
-    /// still be billed for a third by one line in a plugin's seat map — which
-    /// is precisely the restriction this list exists to express.
+    /// It is the ceiling on every model chosen **while a session is running**,
+    /// and not only on what a picker will offer. Four surfaces answer to it,
+    /// through one matching rule and one refusal sentence
+    /// ([`crate::settings::allowed_models`]):
+    ///
+    /// - the pickers' vocabulary, and `auto_mode`'s selection from it;
+    /// - `/model <spec>`, the typed twin of the picker;
+    /// - `/model default <spec>`, which persists the session default;
+    /// - **seat assignments** — a seat naming a model outside a non-empty list
+    ///   is refused with a notice and falls back to the session's model, the
+    ///   same answer an unassigned seat gets (see [`crate::agent::seats`]).
+    ///   Without that, an operator who narrowed their vocabulary to two models
+    ///   could still be billed for a third by one line in a plugin's seat map —
+    ///   which is precisely the restriction this list exists to express.
+    ///
+    /// The list binds `/model default` from the **merged** view while the write
+    /// itself stays user-scope, so a project's or an org's restriction can veto
+    /// a machine-wide default set from inside the restricted workspace. The two
+    /// halves of `/model` refusing different models is the defect that shape
+    /// exists to prevent (#4659): a session override dies with the session, a
+    /// default seeds every session started after it.
+    ///
+    /// **The session default resolved at startup is deliberately exempt** —
+    /// `--model`, and a `default_model` read from a settings file, are honoured
+    /// whatever this list says. They are the configuration this list is part of,
+    /// and a ceiling that vetoed the file it is written in would make one bad
+    /// edit unbootable with no in-session way to repair it. So an off-list
+    /// `default_model` still starts a session, and is refused the moment the
+    /// same operator retypes it as `/model default` — the direction that never
+    /// strands anyone outside their own workspace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_models: Option<Vec<String>>,
     /// Which model each **plugin-declared seat** runs on.

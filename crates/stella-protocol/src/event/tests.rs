@@ -896,6 +896,13 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
         finish_reason: None,
         effort: Some(crate::completion::ReasoningEffort::High),
         max_output_tokens: Some(64_000),
+        temperature: Some(0.7),
+        params: Some(crate::completion::GenerationParams {
+            top_p: Some(0.95),
+            seed: Some(1_234_567),
+            service_tier: Some(crate::completion::ServiceTier::Flex),
+            ..Default::default()
+        }),
         sub_agent_id: None,
     };
     let json = serde_json::to_string(&event).unwrap();
@@ -916,6 +923,8 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
             tool_calls,
             effort,
             max_output_tokens,
+            temperature,
+            params,
             ..
         } => {
             assert_eq!(step, 3);
@@ -929,6 +938,18 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
             assert_eq!(tool_calls, 4);
             assert_eq!(effort, Some(crate::completion::ReasoningEffort::High));
             assert_eq!(max_output_tokens, Some(64_000));
+            assert_eq!(temperature, Some(0.7));
+            let params = params.expect("the generation shape survives the round trip");
+            assert_eq!(params.top_p, Some(0.95));
+            assert_eq!(params.seed, Some(1_234_567));
+            assert_eq!(
+                params.service_tier,
+                Some(crate::completion::ServiceTier::Flex)
+            );
+            // The fields the request left unset stay unset rather than
+            // acquiring a zero on the way through the wire.
+            assert_eq!(params.top_k, None);
+            assert_eq!(params.frequency_penalty, None);
         }
         other => panic!("unexpected variant: {other:?}"),
     }
@@ -936,11 +957,11 @@ fn step_usage_roundtrips_as_a_complete_metering_record() {
 
 #[test]
 fn step_usage_from_a_pre_request_shape_stream_still_parses() {
-    // Backward compatibility: a `step_usage` line serialized before `effort`
-    // and `max_output_tokens` existed must deserialize with both absent
-    // ("the journal cannot say what the request asked for") — the
-    // additive-only wire contract. Absence is not a pin and not "no ceiling
-    // was hit" (#4565).
+    // Backward compatibility: a `step_usage` line serialized before the
+    // ask-side fields existed must deserialize with all of them absent ("the
+    // journal cannot say what the request asked for") — the additive-only
+    // wire contract. Absence is not a pin, not "no ceiling was hit" (#4565),
+    // and not a temperature of zero (#4621).
     let legacy = r#"{"type":"step_usage","step":3,"model":"glm-5.2","input_tokens":12000,
         "output_tokens":450,"cached_input_tokens":9000,"estimated_input_tokens":11200,
         "cache_write_tokens":2500,"cost_usd":0.0042,"duration_ms":1830,"retries":1,
@@ -950,10 +971,14 @@ fn step_usage_from_a_pre_request_shape_stream_still_parses() {
         AgentEvent::StepUsage {
             effort,
             max_output_tokens,
+            temperature,
+            params,
             ..
         } => {
             assert_eq!(effort, None);
             assert_eq!(max_output_tokens, None);
+            assert_eq!(temperature, None);
+            assert_eq!(params, None);
         }
         other => panic!("not a step_usage row: {other:?}"),
     }

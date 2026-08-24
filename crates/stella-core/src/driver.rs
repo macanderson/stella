@@ -1357,11 +1357,10 @@ impl<'a> Engine<'a> {
                 estimated_input_tokens,
                 duration_ms: call_duration_ms,
                 retries: retries.len() as u32,
-                // The same two bindings `req` was built from above
-                // (`req_config.effort`, `call.max_output_tokens`), so the
-                // metering record and the wire agree by construction.
-                effort: self.config.effort,
-                max_output_tokens: call.max_output_tokens,
+                // Read off `req` itself, so the metering record and the wire
+                // agree by construction rather than by two sites reading the
+                // same bindings and being trusted to keep doing so.
+                request: settlement::RequestShape::of(&req),
             },
         );
         let speculation = speculation_future.await;

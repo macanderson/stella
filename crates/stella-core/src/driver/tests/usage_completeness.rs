@@ -424,6 +424,73 @@ async fn step_usage_carries_the_requests_effort_and_output_ceiling() {
     );
 }
 
+/// **Witness (#4621).** The third row of the profile card's gap: the metering
+/// record carries the generation shape the request was dispatched with, so a
+/// run's sampling posture is answerable from the trace instead of from
+/// whatever settings file the operator had at the time.
+///
+/// Fails before #4621, when `StepUsage` had neither field — and would keep
+/// failing if the emitter re-derived the values from the engine config rather
+/// than reading the request it dispatched, which is what
+/// `settlement::RequestShape::of` exists to make impossible.
+#[tokio::test]
+async fn step_usage_carries_the_requests_generation_params() {
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result("done"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let asked = stella_protocol::completion::GenerationParams {
+        top_p: Some(0.9),
+        seed: Some(4_621),
+        service_tier: Some(stella_protocol::completion::ServiceTier::Flex),
+        ..Default::default()
+    };
+    let config = EngineConfig {
+        temperature: Some(0.15),
+        params: Some(asked),
+        ..EngineConfig::default()
+    };
+    let engine = Engine::with_sleeper(&provider, &tools, config, &sleeper);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("work"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    let outcome = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    let events = drain_events(&mut rx);
+    let usage = events
+        .iter()
+        .find(|event| matches!(event, AgentEvent::StepUsage { .. }))
+        .expect("a committed step emits its metering record");
+    let AgentEvent::StepUsage {
+        temperature,
+        params,
+        ..
+    } = usage
+    else {
+        unreachable!("filtered to StepUsage above")
+    };
+    assert_eq!(
+        *temperature,
+        Some(0.15),
+        "the metering record must carry the dispatched temperature: {usage:?}"
+    );
+    assert_eq!(
+        *params,
+        Some(asked),
+        "and the sampling overrides that went with it: {usage:?}"
+    );
+}
+
 fn overflow_messages() -> Vec<CompletionMessage> {
     let mut messages = vec![
         CompletionMessage::system("sys"),

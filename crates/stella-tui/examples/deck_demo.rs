@@ -458,6 +458,8 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             finish_reason: None,
             effort: None,
             max_output_tokens: None,
+            temperature: None,
+            params: None,
             sub_agent_id: None,
         }),
         ev(AgentEvent::BudgetTick {

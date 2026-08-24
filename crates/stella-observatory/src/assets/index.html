@@ -2153,6 +2153,26 @@ function profileSeats(calls, usage) {
   }
   return [...seats.values()];
 }
+/* The generation shape one metering row's request carried, as one line:
+   `temperature` plus whatever of `params` was pinned. Empty string when the
+   request pinned nothing at all, which is how the card tells "the request
+   asked for the provider's own defaults" from "this journal predates the
+   field" — the caller decides which of those two it is looking at. */
+const GEN_PARAM_LABELS = [
+  ["top_p", "top_p"], ["top_k", "top_k"],
+  ["frequency_penalty", "freq penalty"], ["presence_penalty", "presence penalty"],
+  ["repetition_penalty", "repetition penalty"], ["seed", "seed"],
+  ["verbosity", "verbosity"], ["service_tier", "tier"],
+];
+function genShape(u) {
+  const parts = [];
+  if (u.temperature != null) parts.push(`temperature ${u.temperature}`);
+  const p = u.params || {};
+  for (const [key, label] of GEN_PARAM_LABELS) {
+    if (p[key] != null) parts.push(`${label} ${p[key]}`);
+  }
+  return parts.join(" · ");
+}
 function seatCardHtml(s) {
   const upstreams = [...new Set(s.rows.map(u => u.upstream_provider).filter(Boolean))];
   const inTok = s.rows.reduce((a, u) => a + num(u.input_tokens), 0);
@@ -2163,8 +2183,17 @@ function seatCardHtml(s) {
   const efforts = [...new Set(s.rows.map(u => u.effort).filter(Boolean))];
   const caps = [...new Set(s.rows.map(u => u.max_output_tokens).filter(v => v != null))];
   const agents = [...new Set(s.rows.map(u => u.sub_agent_id).filter(Boolean))];
+  // A row that carries neither field asked for the provider's own defaults, and
+  // one from an older journal could not have said so — the two are told apart
+  // by whether ANY row on this card carries either, since a run's rows are all
+  // written by one build.
+  const gens = [...new Set(s.rows.map(genShape).filter(Boolean))];
+  const genRecorded = s.rows.some(u => u.temperature != null || u.params != null);
   const notRecorded = `<span class="prof-gap" title="No event carries this yet: it lives only in the session's config plane, so an honest per-turn card cannot claim it.">not recorded for this run</span>`;
   const notInJournal = `<span class="prof-gap" title="This journal predates the metering record carrying the request's effort and output cap, so an honest card cannot claim either.">not recorded for this run</span>`;
+  const genGap = genRecorded
+    ? `<span class="prof-gap" title="Every call on this card pinned no temperature and no sampling override, so the provider's own defaults decided.">provider defaults</span>`
+    : `<span class="prof-gap" title="This journal predates the metering record carrying the request's generation params, so an honest card cannot claim them.">not recorded for this run</span>`;
   return `<div class="prof-card">
     <div class="prof-head"><b>${esc(s.role)}</b>
       <span class="badge dim">${fmtInt(s.calls)} call${s.calls === 1 ? "" : "s"}</span>${
@@ -2181,6 +2210,7 @@ function seatCardHtml(s) {
         ? `${fmtMs(ms)} total · ${fmtMs(ms / s.rows.length)} / call` : "—"}</dd>
       <dt>effort</dt><dd>${efforts.length ? esc(efforts.join(", ")) : notInJournal}</dd>
       <dt>output cap</dt><dd>${caps.length ? caps.map(fmtTok).join(", ") + " tok" : notInJournal}</dd>
+      <dt>generation</dt><dd>${gens.length ? esc(gens.join(" / ")) : genGap}</dd>
       <dt>custom prompt</dt><dd>${notRecorded}</dd>
     </dl>
     <div class="prof-offer" data-provider="${esc(s.provider)}" data-slug="${esc(s.model)}">

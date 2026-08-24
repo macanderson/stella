@@ -118,11 +118,12 @@ pub fn configured_role_pins(
         .collect()
 }
 
-/// Validate `id` against the catalog (exactly as the settings tab's default
-/// resolves, via [`crate::engine_config::parse_model_spec`]) and persist it
-/// as `default_model` in user-scope settings through the same `save_to` the
-/// tab calls. `Ok` = saved, carrying the confirmation to show; `Err` = a
-/// message to show without saving.
+/// Validate `id` against the workspace's `[models].allowed` ceiling and
+/// against the catalog (exactly as the settings tab's default resolves, via
+/// [`crate::engine_config::parse_model_spec`]) and persist it as
+/// `default_model` in user-scope settings through the same `save_to` the tab
+/// calls. `Ok` = saved, carrying the confirmation to show; `Err` = a message
+/// to show without saving.
 pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
     // Recognize any built-in or currently-configured provider as a valid
     // `provider/` prefix (a built-in needs no key yet — the credential is
@@ -143,6 +144,33 @@ pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
              zai/glm-5.2`), or run `/info` to list what your configured providers offer"
         ));
     };
+    // The same `[models].allowed` ceiling `/model <id>` answers to, from the
+    // same MERGED view, because the two forms are one command: a default the
+    // live switch would refuse is a file that is broken on arrival, and the
+    // persist form is the half with the longer blast radius — a session
+    // override dies with the session, a default seeds every session after it
+    // (#4659).
+    //
+    // The merge is read for the CHECK only; the write below still reads and
+    // rewrites the user file alone, so a project's list can veto a write
+    // without a project's pins reaching user scope. That direction is the
+    // deliberate one: an org-managed or project list restricting this
+    // workspace is exactly the restriction that should stop a machine-wide
+    // default being set from inside it, and the way past it is to set the
+    // default from outside the workspace or to widen the list — both of which
+    // the refusal names by naming the list.
+    let allowed = crate::settings::Settings::load(&cfg.workspace_root)
+        .ok()
+        .and_then(|s| s.agent_engine_config)
+        .map(|e| e.allowed_models().to_vec())
+        .unwrap_or_default();
+    let full_spec = format!("{}/{}", spec.provider, spec.model);
+    if !crate::settings::allowed_models::admits(&allowed, &full_spec, id) {
+        return Err(format!(
+            "`{id}` was not saved — {}",
+            crate::settings::allowed_models::denial(&allowed, &full_spec)
+        ));
+    }
     // Validated at SET time, not at first use (#895). Parsing only proves the
     // string has a shape; this proves the provider will serve the WIRE slug —
     // catching `openrouter/auto`, which parses cleanly and then reaches the
@@ -398,6 +426,62 @@ mod tests {
             raw.pointer("/agent_engine_config/default_model")
                 .and_then(|v| v.as_str()),
             Some("openrouter/openai/gpt-5.5")
+        );
+    }
+
+    /// **Witness (#4659).** The two halves of `/model` answer to the same
+    /// list: a spec the live switch refuses cannot be written as the default
+    /// either, and the file is left untouched when it is refused.
+    ///
+    /// Asserted as an agreement rather than as two independent refusals,
+    /// because the defect was not that the persist path was too permissive in
+    /// isolation — it was that the two halves of one command disagreed, so
+    /// `/model X` was refused and `/model default X` seeded every session
+    /// started afterwards with exactly that model.
+    #[test]
+    fn the_persist_path_refuses_what_the_live_switch_refuses() {
+        let (td, _guard) = scratch();
+        let workspace = td.path().join("repo");
+        std::fs::create_dir_all(workspace.join(".stella")).unwrap();
+        std::fs::write(
+            workspace.join(".stella/settings.json"),
+            r#"{"agent_engine_config": {"allowed_models": ["anthropic/claude-opus-5"]}}"#,
+        )
+        .unwrap();
+        let mut cfg = test_config(workspace);
+
+        let Err(switch_refusal) = crate::command_deck::session_override::switch_session_model(
+            &mut cfg,
+            "anthropic/claude-sonnet-5",
+        ) else {
+            panic!("premise: the live switch refuses an off-list model");
+        };
+
+        let write_refusal = set_default_model(&cfg, "anthropic/claude-sonnet-5")
+            .expect_err("so the persist path must refuse it too");
+        assert_eq!(
+            switch_refusal,
+            write_refusal
+                .strip_prefix("`anthropic/claude-sonnet-5` was not saved — ")
+                .unwrap_or(&write_refusal),
+            "both halves must give the same reason"
+        );
+        assert!(
+            !td.path().join("home/.stella/settings.json").exists(),
+            "a refused default must leave the user's settings untouched"
+        );
+
+        // The on-list spec still writes: the ceiling narrows the vocabulary,
+        // it does not disable the command.
+        set_default_model(&cfg, "anthropic/claude-opus-5").expect("an on-list default saves");
+        let raw: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(td.path().join("home/.stella/settings.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            raw.pointer("/agent_engine_config/default_model")
+                .and_then(|v| v.as_str()),
+            Some("anthropic/claude-opus-5")
         );
     }
 
