@@ -447,6 +447,7 @@ nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
 .tabs button:hover{color:var(--text);background:var(--accent-wash)}
 .tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
 .tf-wrap{margin-left:auto;display:flex;align-items:center;gap:var(--sp1);padding:6px 0}
+.tf-wrap[hidden]{display:none}
 .tf-label{font:var(--fs-micro)/1 var(--mono);color:var(--text-3)}
 .tf{display:flex;align-items:stretch;border:1px solid var(--control-edge);
     border-radius:var(--radius-sm);overflow:hidden}
@@ -870,7 +871,10 @@ footer b{color:var(--identity);font-weight:600}
       <button role="tab" id="tab-hub" aria-controls="panel-hub" data-tab="hub">Org / hub</button>
       <button role="tab" id="tab-config" aria-controls="panel-config" data-tab="config">Config</button>
     </div>
-    <div class="tf-wrap">
+    <!-- Shown only on the tabs whose surfaces the window actually filters
+         (TF_TABS in the script below). Everywhere else the control used to
+         sit in the nav and silently do nothing, which reads as broken. -->
+    <div class="tf-wrap" id="tfWrap">
       <span class="tf-label" id="tfLabel">Window</span>
       <div class="tf" id="tf" role="radiogroup" aria-labelledby="tfLabel">
         <button role="radio" data-tf="24h">24h</button>
@@ -4090,11 +4094,19 @@ const TABS = [...document.querySelectorAll('#tabs button[role="tab"]')];
    must not park focus on a `hidden` button — so the arrow keys walk the
    visible tabs, which is also the set the reader can see. */
 const visibleTabs = () => TABS.filter(b => !b.hidden);
+/* The tabs whose surfaces re-render under the time window (inTf/inTfDay):
+   Overview's KPIs, timeline and executions table, and Activity's daily
+   charts. Every other tab shows all-time or configuration state, so the
+   window control hides there — a visible control that filters nothing on
+   the tab in front of the reader is indistinguishable from a broken one.
+   The selection itself survives in state.tf while hidden. */
+const TF_TABS = new Set(["overview", "activity"]);
 function switchTab(tab, arg = "") {
   // A transcript route with no execution behind it is not a route.
   if (tab === "transcript" && !arg) { location.hash = "sessions"; return; }
   const left = state.tab === "transcript" && tab !== "transcript";
   state.tab = tab;
+  $("tfWrap").hidden = !TF_TABS.has(tab);
   if (tab === "transcript") $("tab-transcript").hidden = false;
   TABS.forEach(b => {
     const on = b.dataset.tab === tab;

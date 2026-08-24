@@ -13,6 +13,9 @@
  *
  * What is checked here is what a reader would notice being wrong:
  *
+ * - a transcript that opens on anything but the prompt — the task instruction
+ *   rides the reserved seq 0 and must head the reading order however late its
+ *   `block_registered` lands in the stream (#4039);
  * - an errors-only view that shows a failure without the call that caused it;
  * - a JSON fold whose close is on the wrong line, which silently swallows the
  *   rest of the payload;
@@ -30,6 +33,7 @@ import {
   isFailedResult,
   lineText,
   mergeToolRows,
+  orderEntries,
   rawExchange,
 } from "../lib/transcript-view.ts";
 
@@ -56,6 +60,33 @@ const entry = (seq, kind, extra = {}) => ({
   body: extra.body ?? "",
   meta: extra.meta ?? {},
 });
+
+// -- the prompt heads the transcript ---------------------------------------
+
+// The wire carries the task instruction as a `block_registered` event that
+// lands AFTER the trial's first stage rule, so arrival order buries the
+// question under a row of the answer. The reader stamps it with the reserved
+// seq 0 (`arenabench/arenabench/transcript.py`), and this is the other half of
+// that contract: the reading order is `seq` order, so the entry list begins
+// with the prompt row.
+console.log("prompt ordering");
+{
+  const arrived = [
+    entry(1, "stage", { title: "execute" }),
+    entry(2, "tool", { title: "bash", meta: { call_id: "c1" } }),
+    entry(0, "prompt", { title: "prompt", body: "Fix the bug." }),
+  ];
+  const ordered = orderEntries(arrived);
+  eq("the entry list begins with the prompt row", ordered[0].kind, "prompt");
+  eq("and everything else keeps its order", ordered.map((e) => e.seq), [0, 1, 2]);
+  eq("the input list is not reordered in place", arrived[2].kind, "prompt");
+
+  // The prompt is its own row: nothing folds into it, and it does not
+  // displace the call/result pairing behind it.
+  const rows = mergeToolRows(ordered);
+  eq("the prompt is its own row and stays first", rows[0].entry.kind, "prompt");
+  check("with nothing folded into it", rows[0].result === undefined);
+}
 
 // -- one row per call ------------------------------------------------------
 

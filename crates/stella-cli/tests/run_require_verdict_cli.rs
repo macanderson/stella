@@ -18,6 +18,15 @@
 //! - `--require-verdict` with no `--pipeline` is refused rather than
 //!   accepted and silently ignored.
 //!
+//! #4543 took the flag to the other two wrapper-driving doors, witnessed
+//! here in the same three directions where each door can reach them:
+//! `stella fleet` gates PER ATTEMPT (an unmet verdict fails that attempt,
+//! and a failed attempt fails the run), and `stella goal` reads the LAST
+//! round's verdict — vacuously `Met` today, since this door refuses the
+//! arbiter grade that could carry a rule (#3832), so its witnesses pin the
+//! refusal without `--pipeline` and the accepted arm's exit-by-the-goal's-
+//! own-result, both of which fail on a binary without the flag.
+//!
 //! Deliberately a real subprocess against a real (mocked) HTTP endpoint,
 //! matching `run_exits_cli.rs` and `goal_wrapped_dispatch_cli.rs`: the
 //! property is the process's exit status, which no unit test can observe.
@@ -131,7 +140,8 @@ async fn mock_worker() -> MockServer {
     server
 }
 
-/// One `stella run`, returning its exit status and stderr.
+/// One hermetic `stella` invocation: the door's own arguments after the
+/// session flags, exit status plus both streams back.
 ///
 /// The hermeticity discipline is `goal_wrapped_dispatch_cli.rs`'s, and for the
 /// same reason: `STELLA_HOME` moves the user tier so no
@@ -140,7 +150,7 @@ async fn mock_worker() -> MockServer {
 /// with the developer's money. The embedding backend the session's code-graph
 /// build warms is sealed by `without_embedder_backend` — this test spelled
 /// that removal out by hand until the shared helper landed (#4542).
-fn run(workspace: &Path, base_url: &str, extra: &[&str]) -> (Option<i32>, String) {
+fn stella(workspace: &Path, base_url: &str, door: &[&str]) -> (Option<i32>, String, String) {
     let data = tempfile::tempdir().expect("data dir");
     let home = tempfile::tempdir().expect("stella home");
     let mut args: Vec<&str> = vec![
@@ -152,10 +162,8 @@ fn run(workspace: &Path, base_url: &str, extra: &[&str]) -> (Option<i32>, String
         base_url,
         "--spend-limit",
         "5.0",
-        "run",
-        "do the thing, then stop",
     ];
-    args.extend_from_slice(extra);
+    args.extend_from_slice(door);
 
     let output = Command::new(env!("CARGO_BIN_EXE_stella"))
         .without_embedder_backend()
@@ -180,8 +188,17 @@ fn run(workspace: &Path, base_url: &str, extra: &[&str]) -> (Option<i32>, String
 
     (
         output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
     )
+}
+
+/// One `stella run`, returning its exit status and stderr.
+fn run(workspace: &Path, base_url: &str, extra: &[&str]) -> (Option<i32>, String) {
+    let mut door: Vec<&str> = vec!["run", "do the thing, then stop"];
+    door.extend_from_slice(extra);
+    let (code, _, stderr) = stella(workspace, base_url, &door);
+    (code, stderr)
 }
 
 /// A workspace with the fixture wrapper installed and one source file, so the
@@ -241,5 +258,251 @@ fn require_verdict_is_refused_without_a_wrapper() {
     assert!(
         stderr.contains("--require-verdict"),
         "and it names the flag: {stderr}"
+    );
+}
+
+/// [`workspace`] as a git repository with one commit — `stella fleet` pins
+/// its base to a sha before dispatching anything.
+fn fleet_workspace() -> tempfile::TempDir {
+    let ws = workspace();
+    for args in [
+        vec!["init", "-q"],
+        vec![
+            "-c",
+            "user.email=fleet@test",
+            "-c",
+            "user.name=fleet",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+    ] {
+        let status = Command::new("git")
+            .args(&args)
+            .current_dir(ws.path())
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?} failed");
+    }
+    ws
+}
+
+/// **Witness (#4543, the fleet door).** The same arbiter fixture, driven as
+/// one fleet attempt: without the flag its unmet verdict is reported and the
+/// run exits on the attempt's own result; with `--require-verdict` the
+/// attempt fails by name — and a failed attempt fails the run, the rule
+/// every failed task already follows.
+#[tokio::test]
+async fn an_unmet_verdict_fails_a_fleet_attempt_only_when_the_caller_asks() {
+    let server = mock_worker().await;
+
+    let ws = fleet_workspace();
+    let (code, stdout, stderr) = stella(
+        ws.path(),
+        &server.uri(),
+        &["fleet", "--pipeline", VARIANT, "do the thing, then stop"],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "an unmet verdict is reported, not fatal, without --require-verdict: \
+         {stdout}\n{stderr}"
+    );
+
+    let ws = fleet_workspace();
+    let (code, stdout, stderr) = stella(
+        ws.path(),
+        &server.uri(),
+        &[
+            "fleet",
+            "--pipeline",
+            VARIANT,
+            "--require-verdict",
+            "do the thing, then stop",
+        ],
+    );
+    assert_ne!(
+        code,
+        Some(0),
+        "--require-verdict must turn an unmet attempt verdict into a failing \
+         run: {stdout}\n{stderr}"
+    );
+    let combined = format!("{stdout}\n{stderr}");
+    assert!(
+        combined.contains("--require-verdict"),
+        "the failure names the flag that caused it: {combined}"
+    );
+    assert!(
+        combined.contains("proven"),
+        "and the requirement that was left unmet: {combined}"
+    );
+}
+
+/// The fleet door's raw arm refuses the flag exactly as `stella run`'s does:
+/// no `--pipeline`, no verdict, no silent drop.
+#[test]
+fn fleet_refuses_require_verdict_without_a_wrapper() {
+    let ws = fleet_workspace();
+    let (code, stdout, stderr) = stella(
+        ws.path(),
+        "http://127.0.0.1:1",
+        &["fleet", "--require-verdict", "do the thing, then stop"],
+    );
+    assert_ne!(
+        code,
+        Some(0),
+        "the refusal is a failure: {stdout}\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--require-verdict"),
+        "and it names the flag: {stderr}"
+    );
+}
+
+/// A steering-grade fixture for the goal door, which refuses the arbiter
+/// grade [`PLUGIN_TOML`] declares (#3832). No `[requirements]`, no
+/// `[oracle]` — the only shape this door admits — so `judge` answers `Met`
+/// on an empty rule and the gate below can only ever pass today. The wiring
+/// is still the witnessable half: the flag parses, reads the last round's
+/// report, and exits by the goal's own result.
+const GOAL_PLUGIN_TOML: &str = r#"
+name = "goal-verdict-fixture"
+[loop]
+participation = "steering"
+points = ["before_turn", "after_turn"]
+[runtime]
+argv = ["/bin/sh", "${plugin_dir}/main.sh"]
+timeout_secs = 30
+env = ["PATH"]
+[wrapper]
+id = "goal-verdict-fixture-v1"
+[[wrapper.stages]]
+name = "execute"
+"#;
+
+/// Answer each point with the smallest valid body; `after_turn` reports an
+/// observation nothing in the manifest reads.
+const GOAL_PLUGIN_SCRIPT: &str = r#"#!/bin/sh
+input=$(cat)
+case "$input" in
+  *'"point":"after_turn"'*)
+    printf '%s\n' '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted"}}}'
+    ;;
+  *)
+    printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1}}'
+    ;;
+esac
+"#;
+
+/// Install the goal fixture beside the arbiter one.
+fn install_goal_fixture(workspace: &Path) {
+    let dir = workspace
+        .join(".stella")
+        .join("plugins")
+        .join("goal-verdict-fixture");
+    std::fs::create_dir_all(&dir).expect("plugin dir");
+    std::fs::write(dir.join("plugin.toml"), GOAL_PLUGIN_TOML).expect("plugin.toml");
+    let script = dir.join("main.sh");
+    std::fs::write(&script, GOAL_PLUGIN_SCRIPT).expect("main.sh");
+    let mut perms = std::fs::metadata(&script)
+        .expect("script metadata")
+        .permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&script, perms).expect("chmod +x");
+}
+
+/// A goal loop that ends after one round: the worker answers text, the
+/// verifier — told apart by its own system prompt's wording, which never
+/// reaches the worker's — answers met on the first ask.
+async fn mock_one_round_goal_loop() -> MockServer {
+    use wiremock::matchers::body_string_contains;
+
+    /// wiremock's missing negation: route worker calls away from the
+    /// verifier's mock without matching on the (fragile) worker prompt.
+    struct NotContains(&'static str);
+    impl wiremock::Match for NotContains {
+        fn matches(&self, request: &wiremock::Request) -> bool {
+            !String::from_utf8_lossy(&request.body).contains(self.0)
+        }
+    }
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(NotContains("impartial verifier"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            sse_completion("did the requested work"),
+            "text/event-stream",
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_string_contains("impartial verifier"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            sse_completion(r#"{"met": true, "reasoning": "done", "feedback": ""}"#),
+            "text/event-stream",
+        ))
+        .mount(&server)
+        .await;
+    server
+}
+
+/// **Witness (#4543, the goal door).** `stella goal` takes the flag and, with
+/// a wrapper bound, exits by the goal's own result — the last round's verdict
+/// is `Met` for every wrapper this door admits (see [`GOAL_PLUGIN_TOML`]), so
+/// the gate passes and a met goal still exits `0`. Fails on a binary without
+/// the flag: clap refuses `--require-verdict` outright.
+#[tokio::test]
+async fn goal_takes_the_flag_and_exits_by_the_goals_own_result() {
+    let server = mock_one_round_goal_loop().await;
+    let ws = tempfile::tempdir().expect("workspace");
+    install_goal_fixture(ws.path());
+    std::fs::write(ws.path().join("lib.rs"), "pub fn hello() {}\n").expect("source file");
+
+    let (code, stdout, stderr) = stella(
+        ws.path(),
+        &server.uri(),
+        &[
+            "goal",
+            "--pipeline",
+            "goal-verdict-fixture-v1",
+            "--require-verdict",
+            "say the work is done, then stop",
+        ],
+    );
+    assert_eq!(
+        code,
+        Some(0),
+        "a met goal whose last-round verdict is Met exits 0 under the flag: \
+         {stdout}\n{stderr}"
+    );
+}
+
+/// The goal door's raw arm refuses the flag exactly as `stella run`'s does.
+/// Fails on a binary without the flag too, but for clap's reason rather than
+/// the gate's — so the assertion pins the refusal's own wording.
+#[test]
+fn goal_refuses_require_verdict_without_a_wrapper() {
+    let ws = tempfile::tempdir().expect("workspace");
+    let (code, stdout, stderr) = stella(
+        ws.path(),
+        "http://127.0.0.1:1",
+        &[
+            "goal",
+            "--require-verdict",
+            "say the work is done, then stop",
+        ],
+    );
+    assert_ne!(
+        code,
+        Some(0),
+        "the refusal is a failure: {stdout}\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--require-verdict has no verdict to read on the raw loop"),
+        "the refusal is the gate's, not the parser's: {stderr}"
     );
 }

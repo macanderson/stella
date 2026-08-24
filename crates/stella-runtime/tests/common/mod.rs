@@ -9,6 +9,12 @@
 //! second copy of it is a second BLESS path to keep in step and the last two
 //! harnesses had none at all.
 //!
+//! A host-call vector is graded by a second file as well — its `.stderr.txt`
+//! degradation report — and that grading lives in `tests/hostcall/mod.rs`
+//! rather than here, because only the two harnesses that play the host
+//! themselves can capture a child's stderr and an item the other four cannot
+//! call is dead code in four binaries.
+//!
 //! Not compiled as a test binary of its own — `tests/` subdirectories are
 //! modules, and each harness pulls this in with `mod common;`.
 

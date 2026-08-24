@@ -15,6 +15,7 @@ import {
   erroredSeqs,
   indexByCallId,
   mergeToolRows,
+  orderEntries,
   rawExchange,
   type RawExchange,
 } from "@/lib/transcript-view";
@@ -75,6 +76,10 @@ function pacedDelay(gapSeconds: number, speed: number): number {
 
 /** Filterable groups, in reading order. Unknown kinds always render. */
 const GROUPS: Array<{ key: string; label: string; kinds: string[] }> = [
+  // Its own group, never bundled with "responses": the prompt is the question
+  // the whole page is read against (#4039), and turning the agent's prose off
+  // must not also hide what was asked.
+  { key: "prompt", label: "prompt", kinds: ["prompt"] },
   { key: "text", label: "responses", kinds: ["text"] },
   { key: "reasoning", label: "thinking", kinds: ["reasoning"] },
   { key: "tool", label: "tools", kinds: ["tool"] },
@@ -119,7 +124,7 @@ function useTranscript(matchId: string, contestantId: string, task: string) {
       for (const entry of payload.entries) bySeq.set(entry.seq, entry);
       if (bySeq.size) {
         setWaiting(false);
-        setEntries([...bySeq.values()].sort((a, b) => a.seq - b.seq));
+        setEntries(orderEntries([...bySeq.values()]));
       }
     });
     source.addEventListener("end", () => {

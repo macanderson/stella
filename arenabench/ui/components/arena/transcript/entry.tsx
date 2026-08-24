@@ -275,6 +275,54 @@ export function usageLine(entry: TranscriptEntry): string {
 
 const THINKING_PREVIEW_LINES = 5;
 
+/** Lines of the task instruction shown before the rest sits behind "more".
+ *
+ * Generous where `THINKING_PREVIEW_LINES` is tight, because the two fold for
+ * different reasons: thinking is the quietest text on the page, while the
+ * prompt is the anchor everything below is read against and is *never*
+ * folded away — a Frontier-Bench instruction runs to hundreds of lines, and
+ * the fold exists only so one of those cannot push the trial itself off
+ * screen. The remainder is a disclosure away, not gone. */
+const PROMPT_PREVIEW_LINES = 30;
+
+/**
+ * The trial's task instruction — the `YOU` half of the conversation the
+ * transcript-spec addendum §1 lays out (Prompt → Prose → Steps → Answer).
+ *
+ * Its own component because the long-instruction fold is component-local
+ * state: the page's per-`seq` fold maps (`openResults`/`thinkingOverrides`)
+ * are the machinery a prompt row deliberately does not participate in — those
+ * reset per trial and default closed, and the prompt must default open.
+ */
+function PromptEntry({ entry, query }: { entry: TranscriptEntry; query: string }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const body = entry.body || entry.title || "";
+  const lines = body.split("\n");
+  const folded = !expanded && lines.length > PROMPT_PREVIEW_LINES;
+  const shown = folded ? lines.slice(0, PROMPT_PREVIEW_LINES) : lines;
+  return (
+    <div className="tx-role you">
+      <div className="tx-rolegut">
+        <span className="tx-roletag">YOU</span>
+      </div>
+      <div className="tx-prose">
+        <Highlight text={shown.join("\n")} query={query} />
+        {folded && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="cursor-pointer text-[10.5px] text-dim hover:text-muted"
+            >
+              ⋯ {lines.length - PROMPT_PREVIEW_LINES} more lines
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Collapsed-result line budgets, matching the deck and the export surfaces:
  * six lines either way, anchored on the salient point.
  *
@@ -847,6 +895,14 @@ export function Entry({
   isAnswer?: boolean;
 }) {
   const body = entry.body || "";
+
+  if (entry.kind === "prompt") {
+    // The question the whole page is read against, first and role-badged
+    // (#4039). The `.tx-role.you` styles sat in `transcript-surface.css`
+    // unreferenced from the day they were written — only the `agent` half of
+    // the conversation was ever emitted.
+    return <PromptEntry entry={entry} query={query} />;
+  }
 
   if (entry.kind === "stage") {
     // A section rule, not a row: the label is the stage.

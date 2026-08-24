@@ -195,6 +195,17 @@ pub(crate) enum Command {
         /// `--pipeline` names a wrapper that can honor it (#3835).
         #[arg(long, value_name = "CMD")]
         test_command: Option<String>,
+
+        /// Exit non-zero unless the `--pipeline` wrapper declared its
+        /// requirements met (#3554, on this door #4543). The LAST round's
+        /// verdict decides — the round whose work ships — because every
+        /// earlier round's refusal was superseded by another round being
+        /// driven. A goal the verifier left unmet already fails on its own,
+        /// ahead of this gate. Refused without `--pipeline`, where nothing
+        /// declares a verdict; see `wrapper_plugin::verdict_gate` for why it
+        /// is opt-in.
+        #[arg(long)]
+        require_verdict: bool,
     },
 
     /// Watch CI for a branch or PR and fix it until green
@@ -401,6 +412,16 @@ pub(crate) enum Command {
         /// a hung worker on a piped or CI run. Unset = unbounded.
         #[arg(long, value_name = "SECS")]
         task_timeout: Option<u64>,
+
+        /// Fail any attempt whose `--pipeline` wrapper did not declare its
+        /// requirements met (#3554, on this door #4543). PER ATTEMPT: an
+        /// unmet or undecided verdict fails that attempt by name, and a
+        /// failed attempt fails the run — the rule every failed task already
+        /// follows. The attempt's own abort wins when both fire. Refused
+        /// without `--pipeline`, where nothing declares a verdict; see
+        /// `wrapper_plugin::verdict_gate` for why it is opt-in.
+        #[arg(long)]
+        require_verdict: bool,
 
         /// Output shape: text, json, or stream-json
         ///

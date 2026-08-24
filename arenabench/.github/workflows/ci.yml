@@ -52,6 +52,12 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
+      # No dependencies — Node strips the type annotations natively — so it
+      # runs before `npm ci` and fails fast on a reading-tools regression.
+      - name: the transcript reading-tool checks pass
+        working-directory: ui
+        run: node scripts/check-transcript-view.mjs
+
       - name: npm ci
         working-directory: ui
         run: npm ci
