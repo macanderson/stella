@@ -35,7 +35,7 @@
 //! own `"tools"` object — because a whole-map save would copy the other two
 //! scopes' switches into the file being written and freeze them there.
 //!
-//! # Two invariants worth stating
+//! # Two rules
 //!
 //! 1. **Most specific key wins, and toggling writes the most specific key.**
 //!    Toggling one tool writes its exact name, never its group; toggling a
@@ -324,9 +324,8 @@ fn toggle_row(ui: &mut DeckUi) -> DeckAction {
             // Member-level edits are dropped first: they are more specific and
             // would outrank the header the user just used, making it look
             // broken. Member-level keys already SAVED still outrank it — the
-            // row keeps reporting the key that did it, which is the honest
-            // answer rather than a silent rewrite of settings the user did not
-            // select.
+            // row keeps reporting the key that did it, rather than silently
+            // rewriting settings the user did not select.
             let members: Vec<String> = state
                 .tools
                 .iter()
