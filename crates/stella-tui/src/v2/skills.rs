@@ -487,7 +487,7 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::deck_ui::{SkillPreview, SkillPrompt};
+    use crate::deck_ui::{ScopeAction, SkillPreview, SkillPrompt};
     use crate::envelope::{SkillRow, SkillScope, SkillSearchHit, SkillsView};
     use crate::theme;
 
@@ -760,6 +760,60 @@ mod tests {
         assert!(
             text.contains("did not return a valid SKILL.md"),
             "the driver's error is on screen:\n{text}"
+        );
+    }
+
+    /// Both pickers select the way the tab body does: the `▸` glyph **and**
+    /// the [`token::HL`] tint. The goldens strip style, so the tint half has
+    /// no golden that can see it and is asserted here instead.
+    #[test]
+    fn the_pickers_select_with_a_glyph_and_a_background_tint() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        let area = Rect::new(0, 0, 100, 20);
+
+        ui.skills.prompt = Some(SkillPrompt::Scope {
+            action: ScopeAction::Create {
+                description: "extract tables from pdfs".into(),
+            },
+            user: false,
+        });
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("▸ [p] Project"), "scope marker:\n{text}");
+        assert_eq!(
+            style_at(&buf, "[p] Project").bg,
+            Some(token::HL),
+            "the chosen scope carries the tint, not the glyph alone:\n{text}"
+        );
+        assert_ne!(
+            style_at(&buf, "[u] User").bg,
+            Some(token::HL),
+            "the unchosen scope carries neither half:\n{text}"
+        );
+
+        ui.skills.prompt = Some(SkillPrompt::Pin {
+            scope: SkillScope::Project,
+            name: "rust-review".into(),
+            latest: 3,
+            sel: 2,
+        });
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("▸ v2"), "pin marker:\n{text}");
+        assert_eq!(
+            style_at(&buf, "v2").bg,
+            Some(token::HL),
+            "the pinned version carries the tint too:\n{text}"
+        );
+        assert_ne!(
+            style_at(&buf, "v1").bg,
+            Some(token::HL),
+            "the other versions carry neither half:\n{text}"
         );
     }
 

@@ -10,6 +10,13 @@
 //! border of its own would read as rows the tab had appended. The keys ride the
 //! bottom rule the way [`crate::v2::sessions`] and [`crate::v2::subagents`] put
 //! theirs, so the body carries only what the dialog is about.
+//!
+//! The two pickers here select the way the tab body does and the way
+//! [`crate::views::cards`] states it: a `▸` marker glyph **and** a
+//! [`token::HL`] background together. Both halves, because the golden suite
+//! strips style — a tint with no glyph is invisible to it, and a glyph with no
+//! tint is a dialog row that reads differently from the identical row two boxes
+//! above it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -45,11 +52,15 @@ pub fn render_prompt(ui: &DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
                 } else {
                     text
                 };
-                Line::from(vec![
+                let mut line = Line::from(vec![
                     Span::styled(marker, Style::new().fg(token::GOLD)),
                     Span::styled(label.to_string(), style),
                     Span::styled(format!("  {hint}"), muted),
-                ])
+                ]);
+                if selected {
+                    line.style = Style::new().bg(token::HL);
+                }
+                line
             };
             let lines = vec![
                 Line::from(Span::styled(verb, text)),
@@ -165,10 +176,14 @@ pub fn render_prompt(ui: &DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
                 } else {
                     text
                 };
-                lines.push(Line::from(vec![
+                let mut line = Line::from(vec![
                     Span::styled(marker, Style::new().fg(token::GOLD)),
                     Span::styled(format!("v{v}{tag}"), style),
-                ]));
+                ]);
+                if selected {
+                    line.style = Style::new().bg(token::HL);
+                }
+                lines.push(line);
             }
             lines.push(Line::default());
             dialog(
