@@ -21,11 +21,16 @@
  *   rest of the payload;
  * - a `command` string rendered as one 4000-character line because its `\n`
  *   escapes were left alone;
- * - a drawer that reports a request or a response it does not have.
+ * - a drawer that reports a request or a response it does not have;
+ * - a folded prose block showing something other than its first sentence, or
+ *   an expanded one that lost bytes (#4578, transcript-spec addendum §1);
+ * - a collapsed turn whose digest disagrees with the trial it stands for.
  */
 
 import {
+  elide,
   erroredSeqs,
+  firstSentence,
   foldableLines,
   formatJson,
   hiddenLines,
@@ -34,7 +39,9 @@ import {
   lineText,
   mergeToolRows,
   orderEntries,
+  proseFold,
   rawExchange,
+  turnDigest,
 } from "../lib/transcript-view.ts";
 
 let failures = 0;
@@ -284,6 +291,116 @@ console.log("json formatting");
   eq("an empty payload is one empty line", formatJson("").map(lineText), [""]);
   eq("malformed JSON degrades to text, never throws", formatJson("{not json").map(lineText), ["{not json"]);
   eq("a bare scalar is not JSON here", formatJson("42").map(lineText), ["42"]);
+}
+
+// -- prose folds to its first sentence (§1, #4578) --------------------------
+
+// The rule is `stella_transcript::digest::first_sentence`'s: a boundary is a
+// `.`, `!` or `?` followed by whitespace or the end, so a version number or a
+// file name cannot end a sentence mid-token, and a wall of text with no
+// boundary at all middle-elides rather than showing nothing.
+console.log("prose fold");
+{
+  eq(
+    "a folded block shows exactly its first sentence",
+    firstSentence("Fix the bug. Then run the tests."),
+    "Fix the bug.",
+  );
+  eq("a question is a sentence", firstSentence("Does it build? Yes."), "Does it build?");
+  eq("so is an exclamation", firstSentence("Ship it! Now."), "Ship it!");
+  eq(
+    "a boundary at the very end of the text counts",
+    firstSentence("One sentence only."),
+    "One sentence only.",
+  );
+  eq(
+    "a dot mid-token is not a boundary",
+    firstSentence("v1.2 fixed fold.rs at last. More below."),
+    "v1.2 fixed fold.rs at last.",
+  );
+  eq(
+    "leading whitespace does not reach the summary",
+    firstSentence("  Trimmed. Rest."),
+    "Trimmed.",
+  );
+
+  // No sentence boundary anywhere: the fallback is a middle-elision, never an
+  // empty summary — the prose cousin of the prompt's no-fold-to-nothing rule.
+  const wall = "word ".repeat(60).trim();
+  const head = firstSentence(wall);
+  check("a boundary-less wall still shows something", head.length > 0);
+  check("and is elided to the shared width", head.length <= 96, `got ${head.length}`);
+  check("with the cut marked", head.includes(" … "));
+
+  // `proseFold` is what the components render from: head + rest must never
+  // lose bytes between them.
+  {
+    const { head, rest } = proseFold("Fix the bug. Then run the tests.");
+    eq("the summary is the first sentence", head, "Fix the bug.");
+    eq("and the rest is what expanding adds", rest, "Then run the tests.");
+  }
+  {
+    const { rest } = proseFold(wall);
+    eq("an elided summary is not a prefix, so the rest is the whole text", rest, wall);
+  }
+  {
+    const { head, rest } = proseFold("Just one thought.");
+    eq("a single-sentence block folds to itself", head, "Just one thought.");
+    eq("with nothing left to disclose", rest, "");
+  }
+
+  eq("elide keeps short text whole", elide("short", 96), "short");
+  eq("elide keeps the head and the tail", elide("abcdefghijklmnop", 10), "abcd … nop");
+}
+
+// -- the collapsed turn's digest (§1, #4578) --------------------------------
+
+// A collapsed turn shows "prompt digest · answer digest · step count · rollup
+// chips" — `stella_transcript::digest::turn_digest` over the wire's flat
+// stream. An arena trial is one turn, so the digest summarises the whole
+// entry list, and it is computed over the FULL list so a kind filter can
+// never change what the collapsed turn claims.
+console.log("turn digest");
+{
+  const entries = [
+    entry(0, "prompt", { body: "Fix the flaky test.\nIt lives in fold.rs." }),
+    entry(1, "stage", { title: "execute" }),
+    entry(2, "reasoning", { body: "Thinking." }),
+    entry(3, "tool", { title: "bash", meta: { call_id: "c1" } }),
+    entry(4, "tool_result", { title: "bash", meta: { call_id: "c1" } }),
+    entry(5, "usage", { meta: { tokens_in: 100, tokens_out: 20, cost_usd: 0.5 } }),
+    entry(6, "text", { body: "Half way there." }),
+    entry(7, "usage", { meta: { tokens_in: 50, tokens_out: 10, cost_usd: 0.25 } }),
+    entry(8, "text", { body: "All fixed.\nDetails follow." }),
+    entry(9, "complete", { title: "complete" }),
+  ];
+  const digest = turnDigest(entries, true);
+  eq("the prompt digest is the prompt's first line", digest.promptLine, "Fix the flaky test.");
+  eq("the answer digest is the LAST response's first line", digest.answerLine, "All fixed.");
+  eq("steps are model calls, counted from usage", digest.steps, 2);
+  eq("tokens in roll up", digest.tokensIn, 150);
+  eq("tokens out roll up", digest.tokensOut, 30);
+  eq("cost rolls up", digest.costUsd, 0.75);
+  eq("the wall clock is the latest elapsed stamp", digest.durationSeconds, 9);
+
+  // While the trial is still running its latest prose is not its answer —
+  // the digest says nothing rather than promoting it.
+  eq("an unfinished turn has no answer digest", turnDigest(entries, false).answerLine, "");
+
+  const long = [
+    entry(0, "prompt", { body: `${"p".repeat(100)}\nmore` }),
+    entry(1, "text", { body: "a".repeat(100) }),
+  ];
+  const elided = turnDigest(long, true);
+  check("a long prompt line is elided", elided.promptLine.length <= 64 && elided.promptLine.includes(" … "));
+  check("so is a long answer line", elided.answerLine.length <= 64 && elided.answerLine.includes(" … "));
+
+  const empty = turnDigest([], true);
+  eq(
+    "an empty trial digests to nothing, not to fabricated numbers",
+    [empty.promptLine, empty.answerLine, empty.steps, empty.tokensIn, empty.tokensOut, empty.costUsd, empty.durationSeconds],
+    ["", "", 0, 0, 0, 0, 0],
+  );
 }
 
 // -------------------------------------------------------------------------

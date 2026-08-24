@@ -2608,7 +2608,11 @@ async function openTranscript(id, full = false) {
       fileRows || `<div class="empty">This run touched no files.</div>`)
     + (rf ? sect("tx-reflection", "Self-reflection",
       "What the agent said about its own turn once it was over.",
+      /* `partial_run` leads: a cancelled run's reflection covers only what
+         ran, and a cancelled run with NO self-review still gets this section
+         so the reader sees why there is nothing to grade (#4538). */
       `<p style="font:var(--fs-base)/1.7 var(--mono);color:var(--text-2)">
+        ${rf.partial_run ? `<span class="badge warn">partial run</span> the turn was cancelled before it finished<br>` : ""}
         ${rf.self_rating != null ? `rated ${esc(String(rf.self_rating))}/10 · ` : ""}
         ${rf.delivered != null ? (rf.delivered ? "delivered" : "not delivered") : ""}
         ${rf.what_went_well ? `<br>went well: ${esc(rf.what_went_well)}` : ""}
@@ -2661,7 +2665,12 @@ function openCtxDialog(step, role) {
    `after_seq` probe still decides whether anything happened; when it did,
    the rendered fragment is re-fetched whole and repainted, because the
    shared renderer draws a tree, not an appendable list. The renderer pins
-   running work open, so the repaint lands the reader back on the live step. */
+   running work open, so the repaint lands the reader back on the live step —
+   and every fold the reader toggled by hand is put back the way they left it
+   (#4566): fold ids are stable NodeId keys (`t0s3`…), so the open/closed
+   state of each identified fold is read out of the shadow DOM before the
+   repaint and reapplied after. Folds new to this paint (the args fold has no
+   id) keep the renderer's own pin-open rules. */
 async function refreshTranscriptJournal() {
   if (!tx || tx.finished) return;
   if (state.tab !== "transcript") { tx = null; return; }
@@ -2682,7 +2691,15 @@ async function refreshTranscriptJournal() {
   } catch {
     return;
   }
-  if (frag && tx && tx.id === id) await paintRenderedTranscript(frag);
+  if (!frag || !tx || tx.id !== id) return;
+  const folds = { open: new Set(), shut: new Set() };
+  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? [])
+    (d.open ? folds.open : folds.shut).add(d.id);
+  await paintRenderedTranscript(frag);
+  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? []) {
+    if (folds.open.has(d.id)) d.open = true;
+    else if (folds.shut.has(d.id)) d.open = false;
+  }
 }
 /* The main poll already re-fetches `/api/executions` (with `finished_at`)
    on every cursor move — reuse that instead of a dedicated per-tick

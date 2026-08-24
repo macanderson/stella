@@ -190,5 +190,16 @@ EOF
 baseline "$r"
 expect_pass "P8 fenced block passes" "$r"
 
+# ── P9: banned vocabulary fails ──────────────────────────────────────────────
+# The witness for the vocabulary patterns: honesty declarations, interface
+# jargon, and Rust terms in prose. Fails before those patterns exist, passes
+# after.
+r="$(new_root p9)"
+doc "$r" docs/a.md <<'EOF'
+The honest number is the one the TUI shows for each enum variant.
+EOF
+baseline "$r"
+expect_fail "P9 banned vocabulary fails" "$r"
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

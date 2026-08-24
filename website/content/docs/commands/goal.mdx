@@ -8,7 +8,7 @@ Give stella a goal and let it work in **judged rounds** until a verifier model c
 ## Synopsis
 
 ```bash
-stella goal <goal> [--pipeline <VARIANT>] [--test-command <CMD>] [global flags]
+stella goal <goal> [--pipeline <VARIANT>] [--test-command <CMD>] [--require-verdict] [global flags]
 ```
 
 ## What it does
@@ -49,6 +49,13 @@ For the full explanation of judged rounds, the cross-family verifier, and the de
   </OptionCard>
   <OptionCard name="--spend-limit <usd>">
     Cap total spend across all rounds; work aborts cleanly once the cap is exceeded.
+  </OptionCard>
+  <OptionCard name="--require-verdict">
+    Exit non-zero unless the `--pipeline` wrapper declared its requirements **met**.
+    The **last** round's verdict decides — the round whose work ships — because every
+    earlier round's refusal was superseded by another round being driven; a goal the
+    verifier left unmet already fails on its own, ahead of this gate. Refused without
+    `--pipeline`, where nothing declares a verdict.
   </OptionCard>
 </CardGrid>
 

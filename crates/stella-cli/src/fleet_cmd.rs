@@ -96,6 +96,11 @@ pub async fn run_fleet(
     task_timeout: Option<std::time::Duration>,
     output_format: crate::OutputFormat,
     pipeline: crate::wrapper_plugin::PipelineChoice<'_>,
+    // `--require-verdict` (#3554, this door #4543): per attempt — an unmet or
+    // undecided wrapper verdict fails that attempt by name, and a failed
+    // attempt fails the run, the rule every failed task already follows.
+    // Refused before this function on the raw arm.
+    require_verdict: bool,
 ) -> Result<(), String> {
     // The whole door is refused under the enterprise process-free authority,
     // whatever `--pipeline` says (`authorize_execution_surface_with` admits
@@ -202,6 +207,7 @@ pub async fn run_fleet(
         run_id: run_id.clone(),
         dash: worker_dash,
         wrapper_variant: wrapper_variant.map(str::to_string),
+        require_verdict,
         held_reports: held_reports.clone(),
     };
     let fleet = Fleet::new(
@@ -541,6 +547,10 @@ struct EngineWorker {
     /// own from this name, in its own tree, and `run_fleet`'s pre-flight has
     /// already proven the name resolves.
     wrapper_variant: Option<String>,
+    /// `--require-verdict` (#4543): each attempt's wrapper verdict gates that
+    /// attempt. Meaningless without `wrapper_variant`, and refused before the
+    /// fan-out in that case.
+    require_verdict: bool,
     /// Where an attempt's wrapper report goes while the live grid owns the
     /// terminal: held here and printed by [`run_fleet`] after teardown,
     /// because an `eprintln!` onto the alternate screen is destroyed by the
@@ -567,6 +577,7 @@ impl FleetWorker for EngineWorker {
         let cfg = self.cfg.clone();
         let per_child_budget = self.per_child_budget;
         let wrapper_variant = self.wrapper_variant.clone();
+        let require_verdict = self.require_verdict;
         let held_reports = self.held_reports.clone();
         let task = task.clone();
         let root = workspace_root.to_path_buf();
@@ -614,6 +625,7 @@ impl FleetWorker for EngineWorker {
                         worker_dash,
                         worker_spend,
                         wrapper_variant.as_deref(),
+                        require_verdict,
                         held_reports.as_deref(),
                     ))
                 });
@@ -937,6 +949,7 @@ async fn run_task(
     dash: Option<mpsc::UnboundedSender<FleetMsg>>,
     spend: crate::fleet_spend::SpendRecovery,
     wrapper_variant: Option<&str>,
+    require_verdict: bool,
     held_reports: Option<&wrapped::HeldReports>,
 ) -> Result<WorkerOutcome, String> {
     // Where this workspace starts. In an ISOLATED worktree this is the whole
@@ -1118,6 +1131,19 @@ async fn run_task(
             None,
         ),
     };
+    // What this workspace's trust gate withheld, first on the channel — the
+    // ordering `agent::output::open_raw_turn` argues for, and the door parity
+    // #4500 asks for: `stella fleet` reached neither opener that carries this
+    // notice, so an untrusted checkout's refusal was on stderr and in no
+    // attempt's journal. Once per ATTEMPT, deliberately not through the
+    // process-wide latch (`agent::claim_withheld_announcement`) the goal door
+    // spends: each fleet worker is its own session in its own workspace — its
+    // own store, its own SessionStart hooks, its own system prompt — so "once
+    // per session" means once per lane here, and the latch would let the first
+    // lane's journal vouch for every sibling's.
+    if let Some(withheld) = cfg.authority.withheld.as_ref() {
+        let _ = tx.send(withheld.event());
+    }
 
     // The task's control lines (stella-fleet's `WorkerControls`), composed
     // with the dispatch-drop line from `EngineWorker::run` — see
@@ -1193,9 +1219,12 @@ async fn run_task(
                         _ = stop_wait => None,
                     };
                     let raced = match dispatched {
-                        Some(report) => {
-                            Raced::Outcome(wrapper.settle(report, driver, held_reports))
-                        }
+                        Some(report) => Raced::Outcome(wrapper.settle(
+                            report,
+                            driver,
+                            require_verdict,
+                            held_reports,
+                        )),
                         None => Raced::Stopped,
                     };
                     // What the plugin's last point spent has no engine turn

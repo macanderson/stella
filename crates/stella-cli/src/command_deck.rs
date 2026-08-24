@@ -109,7 +109,7 @@ mod theme_cmd;
 mod worker_control;
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
 
-use crate::memory::{SessionMemory, TurnFriction, inject_recall_block};
+use crate::memory::{SessionMemory, TurnFriction};
 use crate::runtime::TokioSleeper;
 use crate::subsession::{self, SubSessions, SupervisorMsg};
 use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
@@ -1515,7 +1515,7 @@ pub async fn run_deck_session(
         // the turn itself appends.
         // Phase 2 (#713): the deck recalled and reported nothing. The event
         // is carried to `run_lead_turn`, which owns the turn's channel.
-        let mut recall_event = None;
+        let mut recall = crate::memory::OpeningRecall::default();
         if let Some(m) = &mut memory {
             // The A/B control, armed before recall (#1221).
             m.arm_recall_control();
@@ -1530,8 +1530,7 @@ pub async fn run_deck_session(
             let touched =
                 stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
             let recalled = m.recall_block_reported(&prompt, &touched).await;
-            recall_event = recalled.telemetry_event();
-            inject_recall_block(&mut messages, recalled.text);
+            recall = crate::memory::inject_opening_recall(&mut messages, recalled);
         }
         let turn_base = messages.len();
         // Attach any media files the prompt names (including `⌃V`
@@ -1626,7 +1625,7 @@ pub async fn run_deck_session(
                 &lead_holder,
                 &steering,
                 &lead_pause,
-                recall_event,
+                recall,
                 memory.as_ref(),
                 &mut friction,
             );
@@ -3625,15 +3624,20 @@ async fn run_lead_turn(
     steering: &Arc<subsession::SteeringTap>,
     // Owned by the driver loop, so its input arms can flip it mid-turn (#1219).
     pause: &lead_control::LeadPause,
-    // Phase 2 (#713): this turn's `ContextRecall`, carried from the caller
-    // because recall runs before this channel exists.
-    recall_event: Option<AgentEvent>,
+    // Phase 2 (#713): this turn's `ContextRecall` and the opening block's
+    // re-query seed (#4498), carried in because recall precedes this channel.
+    recall: crate::memory::OpeningRecall,
     session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
     friction: &mut TurnFriction,            // #3962: filled from the lane's own stream
 ) -> Result<(), crate::failure::CliFailure> {
     budget.begin_turn();
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
-    let requery = crate::memory::requery_for_turn(session_memory, messages, tx.clone().into());
+    let requery = crate::memory::requery_for_turn(
+        session_memory,
+        messages,
+        tx.clone().into(),
+        recall.produced,
+    );
     let forwarder = spawn_forwarder(
         rx,
         execution.clone(),
@@ -3643,7 +3647,7 @@ async fn run_lead_turn(
         Some(registry.task_board()),
     );
     // First event of the turn: what recall put in front of the model.
-    if let Some(event) = recall_event {
+    if let Some(event) = recall.event {
         let _ = tx.send(event);
     }
 
