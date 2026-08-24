@@ -978,6 +978,13 @@ export interface ProviderShare {
 }
 
 /**
+ * Reasoning effort forwarded to models with a thinking/extended-reasoning
+ * mode. One enum, mapped per-adapter to the provider's own parameter name
+ * ("reasoning_param").
+ */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
  * What a `ScopeReview` gate presents for approval before a large plan
  * executes (L-E5).
  *
@@ -1698,6 +1705,10 @@ export type AgentEvent = {
   cost_usd: number;
   duration_ms: number;
   /**
+   * The reasoning effort the dispatched request actually carried -- the resolved value after auto-mode and per-model downgrade, never the configured one. Absent when the request pinned no effort or the stream predates this field; absence is not a pin.
+   */
+  effort?: ReasoningEffort | null;
+  /**
    * The engine's RAW (uncalibrated) pre-call estimate of the input it
    * sent — paired with `input_tokens` (plus cache-write tokens, which
    * are real prompt tokens split out only for pricing) this is one
@@ -1717,6 +1728,10 @@ export type AgentEvent = {
    */
   finish_reason?: FinishReason | null;
   input_tokens: number;
+  /**
+   * The output-token ceiling the dispatched request asked for -- the effective per-call value after the turn's standing clamp, so it can move between steps of one turn. Paired with finish_reason == length it names the ceiling the cut-off happened at. Absent when the request asked for no ceiling or the stream predates this field.
+   */
+  max_output_tokens?: number | null;
   model: string;
   /**
    * Authoritative model output for calls that do not emit a separate

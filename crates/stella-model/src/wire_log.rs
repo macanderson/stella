@@ -1,11 +1,13 @@
 //! Opt-in capture of the request body Stella actually puts on the wire.
 //!
 //! A benchmark can measure what a run *cost* from `step_usage` — tokens,
-//! price, upstream, latency — but not what was *asked for*. The reasoning
-//! budget, the output ceiling and the tool schemas live only on the request,
-//! and nothing recorded them. That gap is why a 20-task head-to-head could
-//! establish that Stella emits 1.94x Claude Code's output tokens and still not
-//! say whether the two `low` efforts resolved to the same thinking budget.
+//! price, upstream, latency — and, since #4565, the resolved effort and
+//! output ceiling the request asked for. The rest of what was asked — the
+//! tool schemas and the generation params (temperature, top_p, seed) — still
+//! lives only on the request, and nothing records it. That gap is why a
+//! 20-task head-to-head could establish that Stella emits 1.94x Claude Code's
+//! output tokens and still not say whether the two `low` efforts resolved to
+//! the same thinking budget.
 //!
 //! A proxy is the obvious way to see this and the wrong one here: an
 //! OpenRouter benchmark run must reach the canonical endpoint, and the harbor

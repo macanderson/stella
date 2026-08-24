@@ -68,6 +68,8 @@ fn settled_without_a_usage_frame() -> AgentEvent {
         tool_calls: 0,
         complete: false,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
         sub_agent_id: None,
     }
 }

@@ -391,6 +391,8 @@ fn the_receipt_reports_what_the_turn_measured() {
         tool_calls: 0,
         complete: true,
         finish_reason: None,
+        effort: None,
+        max_output_tokens: None,
         sub_agent_id: None,
     });
     // files ← FileChange, distinct paths

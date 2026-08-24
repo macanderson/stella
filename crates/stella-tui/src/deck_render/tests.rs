@@ -121,6 +121,8 @@ fn full_deck_frame_grows_a_second_status_band_row_for_a_diagnosed_agent() {
                 tool_calls: 0,
                 complete: true,
                 finish_reason: None,
+                effort: None,
+                max_output_tokens: None,
                 sub_agent_id: None,
             },
         });
