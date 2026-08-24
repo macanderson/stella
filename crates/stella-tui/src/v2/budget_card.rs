@@ -7,7 +7,7 @@
 //! is only ever the folded one, so an ignored or clamped request can never
 //! render as a cap in force.
 //!
-//! A floating card draws its own frame ([`cards::card_frame`]) because it is
+//! A floating card draws its own frame (`views::cards::card_frame`) because it is
 //! an overlay rather than a tab body — the frame [`crate::v2::frame`] carves
 //! out is what it floats *above*, and a card with no border of its own would
 //! read as content the deck had appended to whatever is underneath it.
