@@ -186,6 +186,14 @@ pub(crate) fn all_subagent_statuses() -> Vec<SubAgentStatus> {
     vec![Completed, Incomplete, Refused]
 }
 
+/// Every [`stella_protocol::ReasoningEffort`] arm, sampled through the
+/// `Started` bracket that carries it — the one place the vocabulary reaches
+/// the wire.
+pub(crate) fn all_reasoning_efforts() -> Vec<stella_protocol::ReasoningEffort> {
+    use stella_protocol::ReasoningEffort::*;
+    vec![Low, Medium, High, Xhigh, Max]
+}
+
 pub(crate) fn all_proof_steps() -> Vec<ProofStep> {
     vec![
         ProofStep::Assurance {
@@ -1097,6 +1105,20 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             effort: None,
         },
     });
+    events.extend(
+        all_reasoning_efforts()
+            .into_iter()
+            .map(|effort| AgentEvent::SubAgent {
+                phase: SubAgentPhase::Started {
+                    agent_id: "search-1".into(),
+                    instruction_preview: "find the retry policy".into(),
+                    budget_usd: None,
+                    write_access: false,
+                    depth: 1,
+                    effort: Some(effort),
+                },
+            }),
+    );
     // Every ladder rung (#1043). Each has to reach the wire on its own,
     // because the rung is the *only* thing separating verdicts that the
     // surrounding `passed`/`deterministic` flags spell identically — a
