@@ -11,6 +11,7 @@ use crate::envelope::AgentMeta;
 use stella_protocol::AgentEvent;
 
 mod agents;
+mod agents_page;
 mod composer;
 mod esc;
 mod files;
