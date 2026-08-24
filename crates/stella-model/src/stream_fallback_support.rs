@@ -120,6 +120,19 @@ pub(crate) fn empty_streams_stall_the_unary_body(is_streaming: fn(&str) -> bool)
     format!("http://{addr}")
 }
 
+/// Every request gets a complete HTTP head — including a `content-length`
+/// promising far more than is sent — then a few body bytes and silence, the
+/// socket held open.
+///
+/// The unary half of [`empty_streams_stall_the_unary_body`] with no streaming
+/// arm at all, for an adapter that has no stream to fall back from: `bedrock`
+/// calls Converse rather than ConverseStream, so it never sends a streaming
+/// request for a predicate to recognise, and its unary read bound is the only
+/// clock over the response.
+pub(crate) fn stall_the_unary_body() -> String {
+    empty_streams_stall_the_unary_body(|_| false)
+}
+
 /// The OpenAI-shaped dialects' streaming discriminator, which rides in the
 /// request body (`zai`'s chat-completions, Anthropic's Messages, OpenAI's
 /// Responses all spell it the same way).

@@ -99,7 +99,7 @@ dependency, a queries pair in [`src/queries.rs`](src/queries.rs), a
 `Language` variant, a `LangPack` — per the six-step recipe under "Extending
 it". Likewise a new storage source is a module under
 [`src/storage/`](src/storage) and a new symbol kind is a variant in
-[`src/symbol.rs`](src/symbol.rs). Eleven languages and four storage families
+[`src/symbol.rs`](src/symbol.rs). Thirteen languages and four storage families
 already live here without a split; the exhaustive matches in
 [`src/lang.rs`](src/lang.rs) are what keep that scalable.
 
@@ -134,7 +134,8 @@ written here would be stale by the next PR.
 | [`src/lang.rs`](src/lang.rs) | `Language` and the extension → grammar + query mapping. First stop when adding a language. |
 | [`src/queries.rs`](src/queries.rs) | The tree-sitter S-expression queries as `const &str` compile-time data, one symbols/imports pair per language. |
 | [`src/parse.rs`](src/parse.rs) | `Grammars` (compiled once, shared by reference) and `parse_file`: tree → `Symbol`s + raw `ImportSpec`s. Pure and synchronous. |
-| [`src/markdown.rs`](src/markdown.rs) | The grammarless eleventh language: a line scan for markdown's heading hierarchy (the sections the semantic index ranks) and its links (the import edges the graph stores). |
+| [`src/markdown.rs`](src/markdown.rs) | One of the two grammarless languages: a line scan for markdown's heading hierarchy (the sections the semantic index ranks) and its links (the import edges the graph stores). |
+| [`src/record_toml.rs`](src/record_toml.rs) | The other: a line scan for a published context record's table headers (`.stella/rules/*.toml`, #4492). Named for the record rather than for TOML, so a crate-root `use toml::…` still reaches the dependency (#4573). |
 | [`src/symbol.rs`](src/symbol.rs) / [`src/import.rs`](src/import.rs) | `SymbolKind` (the cross-language superset, including SQL schema objects) and `ImportKind` plus the relative-specifier resolution ladder. |
 | [`src/rust_resolve.rs`](src/rust_resolve.rs) | `use`→file resolution over the workspace's Rust module tree (#443). File-level edges only; external crates stay unresolved. |
 | [`src/store.rs`](src/store.rs) | SQLite: the `MIGRATION` DDL, `index_tree`, `apply_changes`, and every read query. The file with the durability contract. Its tests live in [`src/store/`](src/store). |
@@ -153,17 +154,22 @@ written here would be stale by the next PR.
 
 ## Key concepts
 
-**Languages are wired in at compile time, natively.** Twelve `Language`
+**Languages are wired in at compile time, natively.** Thirteen `Language`
 variants — Rust, Python, JavaScript, TypeScript, Tsx, Sql, Go, Java, C, Cpp,
-Php, Markdown — over ten grammar crates (`tree-sitter-typescript` supplies both
-`LANGUAGE_TYPESCRIPT` and `LANGUAGE_TSX`, which is why `Tsx` is a separate
-variant even though it shares TypeScript's query strings). Eleven of the twelve
-are grammars; Markdown is the exception — it has no tree-sitter grammar here
-and is line-scanned in [`src/markdown.rs`](src/markdown.rs), which still
-yields section symbols and link import edges. Extensions map in
+Php, Markdown, Toml — over ten grammar crates (`tree-sitter-typescript` supplies
+both `LANGUAGE_TYPESCRIPT` and `LANGUAGE_TSX`, which is why `Tsx` is a separate
+variant even though it shares TypeScript's query strings). Eleven of the
+thirteen are grammars; Markdown and Toml are the exceptions — neither has a
+tree-sitter grammar here, and each is line-scanned by a module of this crate's
+own ([`src/markdown.rs`](src/markdown.rs) for headings and link edges,
+[`src/record_toml.rs`](src/record_toml.rs) for a context record's table
+headers), which is why both are indexable in a feature-trimmed build.
+Extensions map in
 [`Language::from_path`](src/lang.rs): `rs`; `py`/`pyi`; `js`/`jsx`/`mjs`/`cjs`;
 `ts`/`mts`/`cts`; `tsx`; `go`; `java`; `c`/`h`; the C++ spellings
-`cpp`/`cc`/`cxx`/`c++`/`hpp`/`hh`/`hxx`; `php`; `sql`; `md`/`markdown`. Grammars are
+`cpp`/`cc`/`cxx`/`c++`/`hpp`/`hh`/`hxx`; `php`; `sql`; `md`/`markdown`; and
+`toml` under `.stella/rules/` alone — the extension qualifies no other file,
+because `Cargo.toml` is a build manifest and not a document. Grammars are
 linked in from their own crates, not loaded as WASM, and the queries are
 module `const`s rather than `.scm` assets — L-L2: built-in assets that resolve
 relative to the binary's install path broke the moment the artifact was

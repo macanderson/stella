@@ -120,7 +120,7 @@ fn every_seeded_provider_declares_a_stream_fallback_posture() {
             stella_model::provider_parity::stream_fallback_posture(provider.id).is_some(),
             "provider `{}` has no StreamFallbackPosture row in \
              stella-model/src/provider_parity.rs — add it (with a witness test for a \
-             UnaryFallback, or a note for a StreamingOnly/AlwaysUnary row) in this PR",
+             UnaryFallback or an AlwaysUnary, or a note for a StreamingOnly row) in this PR",
             provider.id
         );
     }

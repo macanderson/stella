@@ -968,6 +968,59 @@ export interface CompletionRequest {
 }
 
 /**
+ * The result of a completion.
+ */
+export interface CompletionResult {
+  /**
+   * Estimated provider cost in USD (0 for on-device/local).
+   */
+  cost_usd: number;
+  /**
+   * Why generation stopped, when the adapter can determine it. `None` when
+   * the provider doesn't report it. `serde(default)` so envelopes
+   * serialized before this field existed still parse.
+   */
+  finish_reason?: FinishReason | null;
+  /**
+   * Concrete model id/slug that produced the result, resolved from the
+   * catalog — never a literal at the call site.
+   */
+  model: string;
+  /**
+   * The answer text, assembled from the stream. Empty when the model
+   * only made tool calls.
+   */
+  text?: string;
+  /**
+   * Tool calls the model requested, in the order it made them.
+   */
+  tool_calls?: ToolCall[];
+  /**
+   * The upstream that actually served this call, when the endpoint is a
+   * *gateway* that routes to somebody else's silicon and names it in the
+   * response (OpenRouter's top-level `provider`).
+   *
+   * `None` on every direct endpoint, where the provider id already answers
+   * "who served this?" — Anthropic-direct is served by Anthropic. Only a
+   * gateway can make that question unanswerable, and one did: a probe
+   * carrying Stella's own attribution asked OpenRouter for
+   * `anthropic/claude-sonnet-5` and was served by Amazon Bedrock, which no
+   * trace could show because the adapter recorded the gateway and threw the
+   * upstream away. A head-to-head is only controlled if the model
+   * *provider* is held fixed, so an unrecorded upstream is an uncontrolled
+   * variable hiding inside a field that reads as though it were pinned.
+   *
+   * It rides here rather than in [`CompletionUsage`] because usage is a
+   * `Copy` envelope of counters; this is call metadata, like `model`.
+   */
+  upstream_provider?: string | null;
+  /**
+   * Token accounting for this call ([`CompletionUsage`]).
+   */
+  usage: CompletionUsage;
+}
+
+/**
  * Token accounting for a single completion, normalized across providers
  * into one envelope: normalization lives in the adapter, not the caller.
  */
@@ -1806,6 +1859,77 @@ export interface ProposedHunk {
 }
 
 /**
+ * One streamed fragment of an in-flight model completion.
+ *
+ * Text and thinking are distinct variants rather than one string because the
+ * two must never be confused downstream: thinking renders as collapsible,
+ * visibly-secondary content while answer text is the reply — the same
+ * separation `ToolCallObserver` keeps between `text_delta` and
+ * `reasoning_delta`, carried across the wire.
+ */
+export type ProviderDelta = {
+  kind: "text";
+  text: string;
+} | {
+  kind: "reasoning";
+  text: string;
+};
+
+/**
+ * Serializable mirror of [`ProviderError`]'s taxonomy. The host classifies the
+ * failure at its adapter (never re-derived here) and sends the class; the
+ * engine reconstructs a real [`ProviderError`] so its retry logic behaves
+ * exactly as it would with a local provider.
+ */
+export type ProviderErrorWire = {
+  kind: "transport";
+  message: string;
+  /**
+   * Accounting a host's dying stream had already observed. Carried
+   * across the wire so a remote provider loses no more usage than a
+   * local one does; `serde(default)` keeps hosts that predate the
+   * field (and the many failures with nothing to report) valid.
+   */
+  partial?: PartialUsage | null;
+} | {
+  kind: "rate_limited";
+  message: string;
+  retry_after_ms?: number | null;
+} | {
+  kind: "overloaded";
+  message: string;
+  /**
+   * Accounting a host's stream had already observed when the overload
+   * frame arrived in band. `None` for the status-line 529, which never
+   * opened a stream; `serde(default)` keeps hosts that predate the
+   * field valid (#3859).
+   */
+  partial?: PartialUsage | null;
+  retry_after_ms?: number | null;
+} | {
+  kind: "auth";
+  message: string;
+} | {
+  kind: "unknown_model";
+  slug: string;
+} | {
+  kind: "malformed";
+  message: string;
+} | {
+  kind: "cancelled";
+} | {
+  kind: "context_overflow";
+  message: string;
+} | {
+  affordable_output_tokens?: number | null;
+  kind: "output_budget_exceeded";
+  message: string;
+} | {
+  kind: "terminal";
+  message: string;
+};
+
+/**
  * One provider's share of a recall's frame mix.
  */
 export interface ProviderShare {
@@ -2376,55 +2500,6 @@ export type StellaSseFrame = StellaWireFrame | ReplayTruncated;
 // in frames the ring has already evicted cannot be re-learned this way.
 
 /**
- * Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is deliberately no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original.
- */
-export type ErrorClass = "invalid_input" | "not_found" | "permission_denied" | "refused_by_policy" | "timeout" | "environment" | "internal" | "other";
-
-/**
- * The output of running a tool — success or a typed, named failure. Never a
- * bare string: every tool result is inspectable without string-sniffing.
- */
-export type ToolOutput = {
-  ok: {
-    /**
-     * What the tool produced, as the model will read it.
-     */
-    content: string;
-    /**
-     * The structured half of the result, when the tool has one (#3285).
-     * `content` is prose for the model; `data` is the same facts as a
-     * value a contract's `output_schema` can check — "references, not
-     * payloads" (#2694 §4) is unenforceable over prose. `None` means
-     * the tool produces no structured output, which is every tool
-     * written before this field existed. Optional and absent-when-`None`
-     * so every payload written before the field round-trips
-     * byte-identically (invariant #4), and so the content bytes the
-     * model sees are never perturbed by structure.
-     */
-    data?: unknown;
-  };
-} | {
-  error: {
-    /**
-     * Which [`ErrorClass`] this failure falls in (#3145). `None` is a
-     * declared default meaning "unclassified" — the site that built
-     * this error has not been audited into a class yet, which is
-     * distinct from any class it could be assigned. Optional and
-     * absent-when-`None` so every payload written before the field
-     * existed round-trips byte-identically (invariant #4), and so the
-     * message bytes the model sees are never perturbed by
-     * classification.
-     */
-    class?: ErrorClass | null;
-    /**
-     * Why it failed, phrased so the model can act on it — the model
-     * sees this text and retries against it.
-     */
-    message: string;
-  };
-};
-
-/**
  * Host → engine: the result of a [`ServerFrame::ToolRequest`].
  */
 export interface ToolResultIn {
@@ -2432,232 +2507,6 @@ export interface ToolResultIn {
   output: ToolOutput;
   request_id: string;
 }}
-
-/**
- * The result of a completion.
- */
-export interface CompletionResult {
-  /**
-   * Estimated provider cost in USD (0 for on-device/local).
-   */
-  cost_usd: number;
-  /**
-   * Why generation stopped, when the adapter can determine it. `None` when
-   * the provider doesn't report it. `serde(default)` so envelopes
-   * serialized before this field existed still parse.
-   */
-  finish_reason?: FinishReason | null;
-  /**
-   * Concrete model id/slug that produced the result, resolved from the
-   * catalog — never a literal at the call site.
-   */
-  model: string;
-  /**
-   * The answer text, assembled from the stream. Empty when the model
-   * only made tool calls.
-   */
-  text?: string;
-  /**
-   * Tool calls the model requested, in the order it made them.
-   */
-  tool_calls?: ToolCall[];
-  /**
-   * The upstream that actually served this call, when the endpoint is a
-   * *gateway* that routes to somebody else's silicon and names it in the
-   * response (OpenRouter's top-level `provider`).
-   *
-   * `None` on every direct endpoint, where the provider id already answers
-   * "who served this?" — Anthropic-direct is served by Anthropic. Only a
-   * gateway can make that question unanswerable, and one did: a probe
-   * carrying Stella's own attribution asked OpenRouter for
-   * `anthropic/claude-sonnet-5` and was served by Amazon Bedrock, which no
-   * trace could show because the adapter recorded the gateway and threw the
-   * upstream away. A head-to-head is only controlled if the model
-   * *provider* is held fixed, so an unrecorded upstream is an uncontrolled
-   * variable hiding inside a field that reads as though it were pinned.
-   *
-   * It rides here rather than in [`CompletionUsage`] because usage is a
-   * `Copy` envelope of counters; this is call metadata, like `model`.
-   */
-  upstream_provider?: string | null;
-  /**
-   * Token accounting for this call ([`CompletionUsage`]).
-   */
-  usage: CompletionUsage;
-}
-
-/**
- * Token accounting for a single completion, normalized across providers
- * into one envelope: normalization lives in the adapter, not the caller.
- */
-export interface CompletionUsage {
-  /**
-   * Tokens WRITTEN to the provider's prompt cache by this call
-   * (Anthropic `cache_creation_input_tokens`, Bedrock
-   * `cacheWriteInputTokens`). Unlike `cached_input_tokens` this is NOT a
-   * subset of `input_tokens` — providers report writes separately, and
-   * folding them into `input_tokens` would change cost accounting
-   * (`Pricing::cost_usd` bills them on their own line at the catalog's
-   * `cache_write_usd_per_mtok`, so folding would double-charge). 0 for providers
-   * that never report cache writes (the OpenAI-compatible dialects).
-   * `serde(default)` so envelopes serialized before this field existed
-   * still parse.
-   */
-  cache_write_tokens?: number;
-  /**
-   * The subset of `input_tokens` served from the provider's prompt cache
-   * — billed at the cache-read rate, not the input rate. 0 for providers
-   * that never report a cache hit.
-   */
-  cached_input_tokens?: number;
-  /**
-   * Tokens the prompt cost, cache hits included.
-   */
-  input_tokens: number;
-  /**
-   * Tokens the model generated.
-   */
-  output_tokens: number;
-  /**
-   * The subset of `output_tokens` the model spent on reasoning, when the
-   * provider breaks it out (`completion_tokens_details.reasoning_tokens`
-   * on the OpenAI-compatible dialects, `output_tokens_details` on the
-   * Responses API).
-   *
-   * `None` means NOT REPORTED, and is not the same fact as `Some(0)`.
-   * Anthropic's Messages API folds thinking into `output_tokens` with no
-   * breakdown at all, so every anthropic.rs call records `None` — while a
-   * reasoning-capable model that genuinely did no thinking on a call
-   * records `Some(0)`. Collapsing the two would report "this model never
-   * thinks" for the entire Anthropic-direct route, which is the same class
-   * of error as reading an unfilled placeholder column as a measured zero.
-   *
-   * Already inside `output_tokens` for billing on every provider that
-   * reports it, so it is a diagnostic breakdown and never its own cost
-   * line.
-   */
-  reasoning_tokens?: number | null;
-  /**
-   * The adapter observed the provider's authoritative usage-bearing
-   * terminal response. This is explicit because a legitimate call can
-   * report all zero counters, while a missing usage frame can accompany
-   * non-empty streamed text. Legacy envelopes fail closed.
-   */
-  reported?: boolean;
-}
-
-/**
- * Why the model stopped generating, normalized across providers. Lets the
- * engine tell a natural stop from a truncation (`Length`) so an empty or
- * cut-off turn is surfaced to the user instead of being recorded as a clean
- * completion (the "turn ends with no feedback" defect).
- */
-export type FinishReason = "stop" | "length" | "tool_calls" | "content_filter";
-
-/**
- * The accounting an adapter had already observed when an attempt died before its terminal usage frame arrived. A mid-stream disconnect is not a total loss of accounting: dialects that report the prompt's cost up front have already delivered exact input, cache-read and cache-write counts by the time generation is cut. Every field is a LOWER BOUND on real spend and never a substitute for a provider-attested total, which is why such a record can never be mistaken for settled accounting.
- */
-export interface PartialUsage {
-  /**
-   * `usage` priced at the serving model's catalog rates, or `0.0` when the
-   * adapter had no pricing row for the model. Never provider-attested.
-   */
-  cost_usd: number;
-  /**
-   * Whether the input-side counts came from the provider's own frame
-   * rather than a local estimate. `true` is the common case for
-   * Anthropic-shaped streams and `false` for the OpenAI-shaped ones, which
-   * send usage only at the end — the distinction a reader needs before
-   * treating `usage.input_tokens` as fact.
-   */
-  input_reported?: boolean;
-  /**
-   * Counts observed before the failure. Input-side figures are the
-   * provider's own when the dialect front-loads them; `output_tokens` is
-   * whatever the last usage frame stated, or an estimate over the text
-   * that actually arrived when no such frame did.
-   */
-  usage: CompletionUsage;
-}
-
-/**
- * Serializable mirror of [`ProviderError`]'s taxonomy. The host classifies the
- * failure at its adapter (never re-derived here) and sends the class; the
- * engine reconstructs a real [`ProviderError`] so its retry logic behaves
- * exactly as it would with a local provider.
- */
-export type ProviderErrorWire = {
-  kind: "transport";
-  message: string;
-  /**
-   * Accounting a host's dying stream had already observed. Carried
-   * across the wire so a remote provider loses no more usage than a
-   * local one does; `serde(default)` keeps hosts that predate the
-   * field (and the many failures with nothing to report) valid.
-   */
-  partial?: PartialUsage | null;
-} | {
-  kind: "rate_limited";
-  message: string;
-  retry_after_ms?: number | null;
-} | {
-  kind: "overloaded";
-  message: string;
-  /**
-   * Accounting a host's stream had already observed when the overload
-   * frame arrived in band. `None` for the status-line 529, which never
-   * opened a stream; `serde(default)` keeps hosts that predate the
-   * field valid (#3859).
-   */
-  partial?: PartialUsage | null;
-  retry_after_ms?: number | null;
-} | {
-  kind: "auth";
-  message: string;
-} | {
-  kind: "unknown_model";
-  slug: string;
-} | {
-  kind: "malformed";
-  message: string;
-} | {
-  kind: "cancelled";
-} | {
-  kind: "context_overflow";
-  message: string;
-} | {
-  affordable_output_tokens?: number | null;
-  kind: "output_budget_exceeded";
-  message: string;
-} | {
-  kind: "terminal";
-  message: string;
-};
-
-/**
- * One tool invocation the model requested.
- */
-export interface ToolCall {
-  /**
-   * Stable id correlating this call to its eventual `ToolResult`.
-   */
-  call_id: string;
-  /**
-   * The arguments, as the model produced them. Runtime data: never trust
-   * the shape. `stella-tools` validates this against
-   * [`ToolSchema::input_schema`] at dispatch (`registry/validate.rs`,
-   * #3144) — required fields, declared types, enums, item types, and
-   * `additionalProperties: false` where a schema advertises it — and
-   * refuses a contradicting call before the tool runs. Tools still read
-   * fields defensively: a direct caller may bypass the registry.
-   */
-  input: unknown;
-  /**
-   * Which tool to run — matches the [`ToolSchema::name`] it was chosen
-   * from.
-   */
-  name: string;
-}
 
 /**
  * Host → engine: the result of a [`ServerFrame::ProviderRequest`] — either a
@@ -2679,23 +2528,6 @@ export interface ProviderResultIn {
 // CompletionResult on the terminating provider-result POST — a retried call
 // re-streams from the start with no reset marker. A host that cannot stream
 // simply never uses this route.
-
-/**
- * One streamed fragment of an in-flight model completion.
- *
- * Text and thinking are distinct variants rather than one string because the
- * two must never be confused downstream: thinking renders as collapsible,
- * visibly-secondary content while answer text is the reply — the same
- * separation `ToolCallObserver` keeps between `text_delta` and
- * `reasoning_delta`, carried across the wire.
- */
-export type ProviderDelta = {
-  kind: "text";
-  text: string;
-} | {
-  kind: "reasoning";
-  text: string;
-};
 
 /**
  * Host → engine: a batch of streamed fragments for an in-flight
@@ -2735,70 +2567,6 @@ export interface ProviderDeltaIn {
 // {knob, requested, effective} — a request is never silently honored at a
 // value it did not get. retry_policy and loop_detection are operator policy
 // and are deliberately not on this object.
-
-/**
- * Optional sampling/routing parameter overrides riding a
- * [`CompletionRequest`]. Every field is independently optional —
- * "include" semantics: `None` leaves the provider's own default in place,
- * `Some` puts the value on the wire. Each adapter forwards the subset its
- * dialect supports and silently drops the rest (a param the provider
- * can't express must never fail the request).
- */
-export interface GenerationParams {
-  /**
-   * Penalize tokens by their frequency in the text so far.
-   */
-  frequency_penalty?: number | null;
-  /**
-   * Penalize tokens that have appeared at all in the text so far.
-   */
-  presence_penalty?: number | null;
-  /**
-   * Multiplicative repetition penalty (>1 discourages, <1 encourages).
-   */
-  repetition_penalty?: number | null;
-  /**
-   * Random seed for deterministic outputs, where supported.
-   */
-  seed?: number | null;
-  /**
-   * Which capacity tier to route to ([`ServiceTier`]).
-   */
-  service_tier?: ServiceTier | null;
-  /**
-   * Limit sampling to the k highest-probability tokens.
-   */
-  top_k?: number | null;
-  /**
-   * Nucleus sampling: cumulative-probability cutoff.
-   */
-  top_p?: number | null;
-  /**
-   * How much detail to ask for ([`Verbosity`]).
-   */
-  verbosity?: Verbosity | null;
-}
-
-/**
- * Reasoning effort forwarded to models with a thinking/extended-reasoning
- * mode. One enum, mapped per-adapter to the provider's own parameter name
- * ("reasoning_param").
- */
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
-
-/**
- * Provider service tier: `Priority` routes to faster paid-tier capacity,
- * `Flex` to cheaper capacity with slower response times. Only applied by
- * providers that support tiered service; others use their default tier.
- */
-export type ServiceTier = "auto" | "default" | "flex" | "priority";
-
-/**
- * Response-detail level for providers with a verbosity parameter (OpenAI's
- * `text.verbosity`). Adapters whose wire has no equivalent ignore it — the
- * same never-fail contract as [`ReasoningEffort`].
- */
-export type Verbosity = "low" | "medium" | "high";
 
 /**
  * The caller-policy slice of `EngineConfig`, settable per turn (#1167) as

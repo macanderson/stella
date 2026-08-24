@@ -106,6 +106,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
                          #   + doc-warnings (rustdoc -D warnings)
+                         #   + doc-warnings-schema (the same, for the
+                         #     `schema`-gated wire-contract modules the
+                         #     default-feature run never compiles)
                          #   + lint (clippy -D warnings)
                          #   + test (test --workspace)
                          #   + tool-docs (docs/tools/ vs the declarations)
@@ -138,7 +141,11 @@ the `docs/design` scratchpad, invalidate every Rust comment citing it, and land
 green (#3888); and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
 because a PR that hand-edits a generated schema and nothing else starts neither
-of the other two (#1439); and `guard-self-tests.yml` runs the three steps
+of the other two (#1439) — and `doc-warnings-schema` beside it, because
+`ci.yml`'s `cargo doc --workspace` runs with default features and every module
+that describes the wire format sits behind an off-by-default `schema` one, so
+rustdoc compiled none of them anywhere (#4584); this workflow already builds
+those three crates with the feature on; and `guard-self-tests.yml` runs the three steps
 ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
 `prose` exists to judge — alongside the hermetic suites that prove a guard can
 still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
@@ -446,7 +453,11 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
      200 with an empty stream). Every streaming dialect arms a bounded
      per-session latch and re-issues the retried attempt as a unary request
      — the shared chat-completions adapter first (#2686), then Messages,
-     Responses and `generateContent` (#2746); Bedrock is already unary.
+     Responses and `generateContent` (#2746). Bedrock is already unary, and
+     that row names a witness like every other (#4557): "no stream to fall
+     back from" holds only while the single unary path classifies its own
+     read-bound expiry as terminal rather than as a retryable transport
+     fault, which is #547's retry storm.
    - **`OverflowPosture`** — whether this provider's context-overflow
      rejection is recognised as one, so the engine's reactive recovery
      fires instead of aborting the turn (#2680). `Detected` names the wire
