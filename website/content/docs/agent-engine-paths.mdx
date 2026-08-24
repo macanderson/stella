@@ -241,7 +241,7 @@ agents, and the SETTINGS tab's
 pickers. Running lanes are not a tab: `ctrl-a` (or `↓` from an empty prompt)
 opens the SUB-AGENTS overlay over whatever tab you are on.
 
-Two things are unique to deck turns:
+Only deck turns have:
 
 - **Taps.** The lead's tool stack is wrapped in a file-change tap (live
   FILES/DIFF tabs) and a task tap (the task board and sub-agent spawning).
@@ -293,7 +293,7 @@ whenever possible, and holding a **read-only view** of the same tool stack —
 assesses the goal *from evidence* (running tests, reading CI, inspecting
 files), never from the worker's claims. Rounds continue until the verifier
 confirms the goal, or a backstop (round cap, `--spend-limit`, worker abort) ends
-the run honestly as *not met*.
+the run as *not met*.
 
 Each working round is a raw step-loop turn by default; `--pipeline <variant>`
 binds an installed wrapper plugin once and dispatches each round's worker turn

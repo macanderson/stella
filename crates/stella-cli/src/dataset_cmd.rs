@@ -899,7 +899,7 @@ fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
             AgentEvent::StepManifest { turn_instance, .. } => {
                 fold.turn_instance = *turn_instance;
             }
-            AgentEvent::ToolStart { call } => {
+            AgentEvent::ToolStart { call, .. } => {
                 open.insert(call.call_id.clone(), fold.tool_calls.len());
                 fold.tool_calls.push(DatasetToolCall {
                     seq: record.seq,

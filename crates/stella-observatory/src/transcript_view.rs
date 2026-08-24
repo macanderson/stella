@@ -125,6 +125,18 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
                 pending_acc = Some(usage_accounting(row));
                 turn.notes.push(meter_note(row, turn.steps.len()));
             }
+            // A `Handoff` note per bracket edge (#4627) — the kind
+            // `stella_transcript` defines as "work handed elsewhere:
+            // sub-agents, commits, pull requests". Placed by `before_step` so
+            // the two edges bracket the steps that ran between them, which is
+            // what makes a delegated turn read as a delegated turn instead of
+            // a gap.
+            //
+            // Not a `Step`: a step is a call with a result, and the child's
+            // own calls already arrive on this stream in their own right
+            // (forwarded across the child/parent boundary). Folding the
+            // bracket as a step too would count the fan-out twice.
+            "sub_agent" => turn.notes.push(subagent_note(row, turn.steps.len())),
             _ => {}
         }
     }
@@ -252,6 +264,72 @@ fn meter_note(row: &Value, before_step: usize) -> Note {
         detail,
         before_step,
         inspect: Some(CallAnchor { step, role }),
+    }
+}
+
+/// One edge of a sub-agent bracket: the child starting, or the child ending.
+///
+/// The summary is the findable line — which child, and either what it was
+/// asked or how it ended. The detail carries the numbers that answer "was
+/// delegating this worth it": what the child cost, how many model calls it
+/// made, and how many messages of its own transcript the parent never had to
+/// carry, which is the primitive's whole value proposition.
+///
+/// No [`CallAnchor`]: a bracket is not a model call, so there is no
+/// `(step, role)` for a host's prompt inspector to open on.
+fn subagent_note(row: &Value, before_step: usize) -> Note {
+    let agent = row["agent_id"].as_str().unwrap_or("?");
+    let mut detail = Vec::new();
+    let summary = match row["phase"].as_str() {
+        Some("started") => {
+            if let Some(budget) = row["budget_usd"].as_f64() {
+                detail.push(format!("budget carved: ${budget:.4}"));
+            }
+            detail.push(format!(
+                "write access: {} · depth {}",
+                row["write_access"].as_bool().unwrap_or(false),
+                row["depth"].as_u64().unwrap_or(1)
+            ));
+            if let Some(effort) = row["effort"].as_str() {
+                detail.push(format!("reasoning effort: {effort}"));
+            }
+            let task = row["instruction_preview"].as_str().unwrap_or("").trim();
+            if task.is_empty() {
+                format!("sub-agent {agent} started")
+            } else {
+                format!("sub-agent {agent} started · {task}")
+            }
+        }
+        Some("finished") => {
+            detail.push(format!(
+                "cost ${:.4} · {} model calls · {} messages absorbed",
+                row["cost_usd"].as_f64().unwrap_or(0.0),
+                row["steps"].as_u64().unwrap_or(0),
+                row["absorbed_messages"].as_u64().unwrap_or(0)
+            ));
+            if let Some(reason) = row["reason"].as_str() {
+                detail.push(format!("reason: {reason}"));
+            }
+            if row["report_truncated"].as_bool().unwrap_or(false) {
+                detail.push("the child's report was clipped to its cap".to_string());
+            }
+            if let Some(report) = row["body"].as_str().filter(|b| !b.trim().is_empty()) {
+                detail.push("report:".to_string());
+                detail.extend(report.lines().map(str::to_string));
+            }
+            let status = row["status"].as_str().unwrap_or("ended");
+            format!("sub-agent {agent} {status}")
+        }
+        // A phase this build has never heard of still says a child was
+        // bracketed here, rather than drawing nothing where one ran.
+        _ => format!("sub-agent {agent}"),
+    };
+    Note {
+        kind: NoteKind::Handoff,
+        summary,
+        detail,
+        before_step,
+        inspect: None,
     }
 }
 
@@ -647,6 +725,81 @@ mod tests {
         ];
         let run = build_run(&execution(), &journal);
         assert_eq!(run.turns[0].steps[0].status(), Status::Error);
+    }
+
+    /// **The witness for #4627.** Both bracket edges fold into `Handoff`
+    /// notes, positioned so they enclose the steps the child ran.
+    ///
+    /// Fails before this change: `build_run` had no `sub_agent` arm at all —
+    /// the row fell through `_ => {}` — so a delegated turn rendered as a
+    /// parent that had somehow paused, and the reader had no way to tell a
+    /// fan-out from a stall.
+    #[test]
+    fn both_edges_of_a_sub_agent_bracket_become_handoff_notes() {
+        let journal = vec![
+            json!({
+                "type": "sub_agent", "ts": 0, "phase": "started",
+                "agent_id": "search-1", "instruction_preview": "find the retry policy",
+                "budget_usd": 0.25, "write_access": false, "depth": 1, "effort": "high",
+            }),
+            json!({
+                "type": "tool_start", "ts": 10, "call_id": "c1", "name": "search",
+                "body": "{\"query\": \"retry\"}",
+            }),
+            json!({
+                "type": "tool_result", "ts": 40, "call_id": "c1", "ok": true, "body": "retry.rs",
+            }),
+            json!({
+                "type": "sub_agent", "ts": 50, "phase": "finished",
+                "agent_id": "search-1", "status": "completed", "cost_usd": 0.004,
+                "steps": 3, "absorbed_messages": 9, "report_truncated": false,
+                "body": "retry policy lives in retry.rs",
+            }),
+        ];
+        let run = build_run(&execution(), &journal);
+        let turn = &run.turns[0];
+        assert_eq!(turn.notes.len(), 2, "one note per bracket edge");
+        assert!(
+            turn.notes
+                .iter()
+                .all(|n| n.kind == NoteKind::Handoff && n.inspect.is_none()),
+            "a bracket is work handed elsewhere, and is not a model call"
+        );
+        // The edges bracket the step between them — which is the whole point
+        // of putting them on the timeline rather than only in a side panel.
+        assert_eq!(
+            (turn.notes[0].before_step, turn.notes[1].before_step),
+            (0, 1)
+        );
+
+        assert_eq!(
+            turn.notes[0].summary,
+            "sub-agent search-1 started · find the retry policy"
+        );
+        assert!(
+            turn.notes[0].detail.iter().any(|d| d.contains("$0.2500")),
+            "{:?}",
+            turn.notes[0].detail
+        );
+        assert_eq!(turn.notes[1].summary, "sub-agent search-1 completed");
+        assert!(
+            turn.notes[1]
+                .detail
+                .iter()
+                .any(|d| d.contains("9 messages absorbed")),
+            "the value proposition is reported, not asserted: {:?}",
+            turn.notes[1].detail
+        );
+        assert!(
+            turn.notes[1]
+                .detail
+                .contains(&"retry policy lives in retry.rs".to_string()),
+            "{:?}",
+            turn.notes[1].detail
+        );
+        // The child's own forwarded call is still one step, not two: folding
+        // the bracket as a step as well would count the fan-out twice.
+        assert_eq!(turn.steps.len(), 1);
     }
 
     #[test]

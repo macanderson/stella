@@ -69,7 +69,7 @@ that is a real advantage. It loses anyway, on three counts.
 no way to know that `~/src/api` on your laptop and `/work/api` on the build box
 are the same project — only something with a concept of *project* knows that.
 Every scheme that guesses eventually binds two unrelated codebases together,
-which is worse than an honest miss.
+which is worse than a miss.
 
 **It contradicts what this project promises.** Local-first state, BYOK
 credentials, and [zero telemetry egress by
@@ -153,7 +153,7 @@ design; it is the boundary doing its job.
 Two machines replay the same artifact. Which one wins is a policy question, and
 stella does not answer it.
 
-What it guarantees is that the divergence is *honest*: every replay starts its
+What it guarantees is that the divergence is *visible*: every replay starts its
 own session, with its own ref in the durable store, and the artifact's origin is
 kept as provenance. You get two histories with a common ancestor that can be
 named — not one history with two sessions interleaved into it, which is the

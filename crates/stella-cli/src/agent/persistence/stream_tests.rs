@@ -428,12 +428,16 @@ fn end_to_end_receipt_reconstructs_the_step_byte_exact_from_the_persisted_store(
     let _ = events.send(AgentEvent::Text {
         text: "let me read the file".into(),
     });
-    let _ = events.send(AgentEvent::ToolStart { call: call.clone() });
+    let _ = events.send(AgentEvent::ToolStart {
+        call: call.clone(),
+        sub_agent_id: None,
+    });
     let _ = events.send(AgentEvent::ToolResult {
         call_id: "c1".into(),
         output: output.clone(),
         duration_ms: 5,
         speculated: false,
+        sub_agent_id: None,
     });
     let mut ledger = ReceiptLedger::new(0);
     ledger.set_effective_budget(136_363, 1.1);

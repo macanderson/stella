@@ -144,7 +144,7 @@ than the worker whenever possible) confirms the objective is met *from
 evidence*. Each round is a raw step-loop turn by default; pass
 `--pipeline <variant>` to run every round's worker turn under an installed
 [wrapper plugin](/docs/plugins) instead. Backstops — a
-round cap, `--spend-limit`, worker aborts — end the run honestly as "not met"
+round cap, `--spend-limit`, worker aborts — end the run as "not met"
 rather than optimistically.
 
 ```bash
@@ -157,7 +157,7 @@ Where `stella run` executes a single one-shot prompt, `stella goal` runs
 reviews the evidence and decides whether the objective has been satisfied. The
 loop ends when the verifier confirms — or when a backstop trips: a hard round cap
 (default **8** rounds), the `--spend-limit` cap, or a worker-turn abort. Reaching
-a backstop ends the run honestly, reporting the goal as **not met** with a
+a backstop ends the run, reporting the goal as **not met** with a
 named reason.
 
 ### How judged rounds work
