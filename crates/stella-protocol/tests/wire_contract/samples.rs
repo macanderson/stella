@@ -281,6 +281,7 @@ pub(crate) fn all_subagent_phases() -> Vec<SubAgentPhase> {
             budget_usd: Some(0.25),
             write_access: false,
             depth: 1,
+            effort: Some(stella_protocol::ReasoningEffort::High),
         },
         SubAgentPhase::Finished {
             agent_id: "search-1".into(),
@@ -465,7 +466,10 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             step: 0,
             call_seq: 0,
             role: ModelCallRole::Worker,
-            provider: "anthropic".into(),
+            provider: "openrouter".into(),
+            // The all-optional-fields-present shape carries the gateway's
+            // upstream (#3054), or the sample proves nothing about it.
+            upstream_provider: Some("Amazon Bedrock".into()),
             model: "opus".into(),
             blocks: vec![ManifestEntry {
                 block_id: "blk_g".into(),
@@ -490,6 +494,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             call_seq: 1,
             role: ModelCallRole::Summarization,
             provider: "anthropic".into(),
+            upstream_provider: None,
             model: "opus".into(),
             blocks: vec![],
             effective_budget_tokens: 0,
@@ -527,6 +532,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 write_globs: vec!["src/router/**".into()],
                 read_globs: vec!["src/**".into()],
                 shell_policy: Some("allowlisted".into()),
+                revision: Some(2),
             },
         },
         AgentEvent::ScopeReview {
@@ -1039,6 +1045,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 call_seq: 0,
                 role: ModelCallRole::Worker,
                 provider: "anthropic".into(),
+                upstream_provider: None,
                 model: "opus".into(),
                 blocks: vec![ManifestEntry {
                     block_id: "blk_j".into(),
@@ -1135,8 +1142,26 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             budget_usd: None,
             write_access: true,
             depth: 2,
+            effort: None,
         },
     });
+    // Every effort a child's bracket can pin — the same vocabulary
+    // `StepUsage` samples above, exercised on the `Started` field too so a
+    // divergence between the two carriers cannot hide.
+    events.extend(
+        all_reasoning_efforts()
+            .into_iter()
+            .map(|effort| AgentEvent::SubAgent {
+                phase: SubAgentPhase::Started {
+                    agent_id: "search-1".into(),
+                    instruction_preview: "find the retry policy".into(),
+                    budget_usd: None,
+                    write_access: false,
+                    depth: 1,
+                    effort: Some(effort),
+                },
+            }),
+    );
     // Every ladder rung (#1043). Each has to reach the wire on its own,
     // because the rung is the *only* thing separating verdicts that the
     // surrounding `passed`/`deterministic` flags spell identically — a

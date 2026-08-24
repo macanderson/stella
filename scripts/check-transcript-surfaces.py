@@ -167,14 +167,10 @@ SURFACES: list[Surface] = [
 # answer to "how many ways does this repository draw a transcript". Not
 # mechanically checked against an entry point — they have no Rust to reference
 # one — but the file must exist, so retiring the port makes this row fail.
-FOREIGN: list[tuple[str, str, int, str]] = [
-    (
-        "arenabench",
-        "arenabench/ui/components/arena/transcript-page.tsx",
-        3814,
-        "A hand-maintained TypeScript port of the Rust renderer.",
-    ),
-]
+# Empty since the ejection (#2380): ArenaBench's hand-maintained TypeScript
+# port left with its repository (https://github.com/macanderson/arenabench),
+# which now guards its own parity against vendored golden matrices.
+FOREIGN: list[tuple[str, str, int, str]] = []
 
 
 def production_sources(repo: Path = REPO) -> list[Path]:

@@ -23,7 +23,7 @@
 //! ## Two stores, and which is canonical for what
 //!
 //! A session's durable state does not all live here. The files above are the
-//! sidecar; the agent's file changes, the no-clobber staleness map, and the
+//! sidecar; the agent's file changes and the
 //! **in-flight turn's resume point** live in the workspace's git-backed record
 //! ([`crate::work_journal`]). That is two stores holding conversation, so the
 //! split has to be stated rather than left to be inferred:
@@ -34,7 +34,7 @@
 //! | the conversation **between** turns | `history.json` |
 //! | the pending prompt backlog | `queue.json` |
 //! | the conversation **inside** an interrupted turn | the work journal's `CHECKPOINT_BLOB` |
-//! | what the agent wrote, and what it last saw | the work journal's commits and `OBSERVED_BLOB` |
+//! | what the agent wrote | the work journal's commits |
 //!
 //! The two conversation stores never describe the same instant, which is what
 //! keeps this from being the ambiguity it looks like. A checkpoint exists only

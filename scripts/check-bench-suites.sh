@@ -128,8 +128,8 @@ else
   # halves matter and fail differently: a filter that matches nothing makes the
   # hook silently stop running the suites (the #2847 defect returning by
   # another door), and one that matches everything makes every Rust-only push
-  # pay for a ~62s arenabench run.
-  for probe in bench/harbor_adapter/x.py arenabench/tests/x.py; do
+  # pay for minutes of Python suites it cannot have changed.
+  for probe in bench/harbor_adapter/x.py crates/stella-model/src/catalog.rs; do
     if ! printf '%s\n' "$probe" | grep -Eq "$filter"; then
       note "FAIL — the scope filter does not match $probe, which IS bench tooling:"
       note "     $filter"

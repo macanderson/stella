@@ -180,29 +180,9 @@ fn surfaces() -> Vec<Surface> {
                 ("identity", "--identity"),
             ],
         },
-        Surface {
-            file: "arenabench/ui/app/globals.css",
-            dark: (".dark {", "\n}"),
-            // Light is `:root` here: next-themes stamps `.dark` on <html>, so
-            // the un-suffixed scheme is the paper one.
-            light: (":root {", "\n}"),
-            names: &[
-                ("ground", "--background"),
-                ("surface", "--panel-2"),
-                ("text", "--foreground"),
-                ("text-2", "--muted"),
-                ("text-3", "--dim"),
-                ("ok", "--ok"),
-                ("bad", "--bad"),
-                ("warn", "--warn"),
-                // No `identity`. Not an omission — a posture. The arena scores
-                // stella as one seat among several, so its mark does not
-                // belong in the chrome every seat is judged under; #2577
-                // removed the wordmark from the topbar and the four brand cuts
-                // with it. Both arenabench files say so where the token would
-                // otherwise sit.
-            ],
-        },
+        // ArenaBench's two surfaces sat here until the ejection (#2380);
+        // https://github.com/macanderson/arenabench carries them now, along
+        // with the #2577 no-stella-identity posture and its assertion.
         // The shared transcript page. The Observatory's `render_transcript`
         // route serves it, so a reader clicking a run in the dashboard lands
         // on it — which is what makes it an instrument surface rather than a
@@ -238,19 +218,6 @@ fn surfaces() -> Vec<Surface> {
                 ("ok", "--green"),
                 ("bad", "--red"),
                 ("warn", "--amber"),
-            ],
-        },
-        Surface {
-            file: "arenabench/web/app/globals.css",
-            dark: (":root {", "\n}"),
-            light: ("@media (prefers-color-scheme: light)", "\n  }"),
-            names: &[
-                ("ground", "--bg"),
-                ("text", "--text"),
-                ("text-3", "--dim"),
-                ("ok", "--ok"),
-                ("bad", "--bad"),
-                // No `identity`, for the same reason as the client above.
             ],
         },
         // The two published benchmark pages. They are the reference the
@@ -301,31 +268,6 @@ fn surfaces() -> Vec<Surface> {
             ],
         },
     ]
-}
-
-/// The arena carries no stella identity, and that stays true on purpose.
-///
-/// A posture recorded only as an absence in `surfaces()` is a posture nobody
-/// can see being broken: adding `--identity` back to either arenabench file
-/// would make every existing assertion pass, because the parity test only
-/// checks roles a surface claims. This asserts the absence itself, so the
-/// decision in #2577 — stella's mark does not belong in the chrome every seat
-/// is judged under — cannot be undone by accident while restyling.
-#[test]
-fn the_arena_carries_no_stella_identity() {
-    for file in [
-        "arenabench/ui/app/globals.css",
-        "arenabench/web/app/globals.css",
-    ] {
-        let css = read(file);
-        assert!(
-            !declarations(&css).contains_key("--identity"),
-            "{file} declares --identity. The arena judges stella as one seat \
-             among several, so it carries no stella identity (#2577). If that \
-             decision is being reversed, reverse it here too — do not let a \
-             restyle do it silently."
-        );
-    }
 }
 
 /// Every surface agrees with the Observatory on every role it carries, in both
@@ -477,7 +419,7 @@ fn the_auth_landing_pages_use_the_instrument_palette() {
 #[test]
 fn every_web_surface_carries_the_instrument_scale() {
     // `(file, how this file names the face, how it pins the corner)`.
-    let surfaces: [(&str, &str, &str); 4] = [
+    let surfaces: [(&str, &str, &str); 2] = [
         (
             "crates/stella-observatory/src/assets/index.html",
             "\"JetBrains Mono\"",
@@ -487,16 +429,6 @@ fn every_web_surface_carries_the_instrument_scale() {
             "crates/stella-cli/src/export.rs",
             "\"JetBrains Mono\"",
             "--radius: 0",
-        ),
-        (
-            "arenabench/ui/app/globals.css",
-            "\"JetBrains Mono\"",
-            "--radius-sm: 0",
-        ),
-        (
-            "arenabench/web/app/globals.css",
-            "\"JetBrains Mono\"",
-            "border-radius: 0",
         ),
     ];
 
@@ -599,8 +531,6 @@ fn no_web_surface_ships_a_rounded_corner() {
     for file in [
         "crates/stella-observatory/src/assets/index.html",
         "crates/stella-cli/src/export.rs",
-        "arenabench/ui/app/globals.css",
-        "arenabench/web/app/globals.css",
     ] {
         let text = without_comments(&read(file));
         for (index, _) in text.match_indices("border-radius") {
@@ -1065,8 +995,6 @@ fn every_wash_is_a_channel_copy_of_a_declared_colour() {
         "crates/stella-cli/src/export.rs",
         "crates/stella-transcript/src/html/transcript.css",
         "crates/stella-mcp/src/oauth/callback_page.css",
-        "arenabench/ui/app/globals.css",
-        "arenabench/web/app/globals.css",
         "docs/benchmarks/index.html",
         "docs/benchmarks/terminal-bench-2-1-glm-5-2.html",
     ];

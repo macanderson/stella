@@ -416,8 +416,25 @@ fn list_calls(store: &Store, execution_id: i64, format: QueryFormat) -> Result<(
     // same id saw byte-identical context; that comparison is the column's job,
     // so the id is shown rather than the full hash it prefixes.
     let any_frame = calls.iter().any(|c| c.compiled_frame_id.is_some());
+    // A gateway call names the vendor it was routed to (#3054); the column
+    // widens to fit only when some call actually has one — capped so a
+    // pathological vendor string cannot unbound the table — and a
+    // direct-endpoint listing keeps its shape.
+    let providers: Vec<String> = calls
+        .iter()
+        .map(|call| match &call.upstream_provider {
+            Some(upstream) => format!("{}\u{2192}{upstream}", call.provider),
+            None => call.provider.clone(),
+        })
+        .collect();
+    let provider_width = providers
+        .iter()
+        .map(|p| p.chars().count())
+        .max()
+        .unwrap_or(0)
+        .clamp(10, 32);
     println!(
-        "{:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {:>9}{}",
+        "{:>4}  {:>4}  {:>3}  {:<14}  {:<provider_width$}  {:>9}{}",
         "TURN",
         "STEP",
         "SEQ",
@@ -426,14 +443,14 @@ fn list_calls(store: &Store, execution_id: i64, format: QueryFormat) -> Result<(
         "EST TOK",
         if any_frame { "  FRAME" } else { "" }
     );
-    for call in &calls {
+    for (call, provider) in calls.iter().zip(&providers) {
         println!(
-            "{:>4}  {:>4}  {:>3}  {:<14}  {:<10}  {:>9}{}",
+            "{:>4}  {:>4}  {:>3}  {:<14}  {:<provider_width$}  {:>9}{}",
             call.turn_instance,
             call.step,
             call.call_seq,
             truncate(&call.call_role, 14),
-            truncate(&call.provider, 10),
+            truncate(provider, provider_width),
             call.estimated_input_tokens,
             match (&call.compiled_frame_id, any_frame) {
                 (Some(id), _) => format!("  {id}"),
@@ -1071,6 +1088,11 @@ struct CallJson {
     call_seq: u64,
     call_role: String,
     provider: String,
+    /// The vendor a gateway routed this call to (#3054). Omitted rather than
+    /// null when no upstream was named — a direct endpoint, or a receipt
+    /// recorded before the column existed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    upstream_provider: Option<String>,
     model: String,
     estimated_input_tokens: u64,
     /// Phase 2 (#713): the compiled frame's identity, when the lifecycle was
@@ -1180,6 +1202,7 @@ fn call_json(call: &RecordedCall) -> CallJson {
         call_seq: call.call_seq,
         call_role: call.call_role.clone(),
         provider: call.provider.clone(),
+        upstream_provider: call.upstream_provider.clone(),
         model: call.model.clone(),
         estimated_input_tokens: call.estimated_input_tokens,
         compiled_frame_id: call.compiled_frame_id.clone(),

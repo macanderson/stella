@@ -31,7 +31,7 @@
 #
 # WHICH SIGNAL — the whole correctness story of this script
 #
-# `serve()` (arenabench/arenabench/server.py) wraps `serve_forever()` in
+# `serve()` (server.py in the arenabench repo) wraps `serve_forever()` in
 # `except KeyboardInterrupt`, and that handler calls `runner.cancel()` on every
 # RUNNING match, which `killpg`s each seat's process group. So the signal is
 # not a detail, it is the behaviour:

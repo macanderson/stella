@@ -25,7 +25,31 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use stella_serve::schema_export;
+use stella_serve::schema_export::{self, ServeSchemaError};
+
+/// What to do about a refusal, printed under the error itself.
+///
+/// Every arm is a defect in this workspace's own types or in the printer over
+/// them, so each remedy names the file to open. A refusal with no next step
+/// reads as a broken tool rather than as the loud failure it is.
+fn remedy(err: &ServeSchemaError) -> &'static str {
+    match err {
+        ServeSchemaError::Unsupported(_) => {
+            "  The generated schema uses a construct the TypeScript printer does not\n  \
+             model. Extend `stella-protocol/src/schema_export.rs` — a silently wrong\n  \
+             .d.ts is worse than no .d.ts."
+        }
+        ServeSchemaError::Conflict(_) => {
+            "  Two roots publish that name with different shapes, so flattening them\n  \
+             would put one Rust type's shape under another's name. Rename one of the\n  \
+             two types in `stella-serve/src/frame.rs` or the crate it comes from."
+        }
+        ServeSchemaError::NotAnObject(_) => {
+            "  `schemars` produced a non-object root, which no type in this crate can\n  \
+             do today. Check the derive on that type in `stella-serve/src/frame.rs`."
+        }
+    }
+}
 
 fn main() -> ExitCode {
     let mut args = std::env::args_os().skip(1);
@@ -47,11 +71,7 @@ fn main() -> ExitCode {
         Ok(artifacts) => artifacts,
         Err(err) => {
             eprintln!("export-serve-schema: {err}");
-            eprintln!(
-                "  The generated schema uses a construct the TypeScript printer does not\n  \
-                 model. Extend `stella-protocol/src/schema_export.rs` — a silently wrong\n  \
-                 .d.ts is worse than no .d.ts."
-            );
+            eprintln!("{}", remedy(&err));
             return ExitCode::FAILURE;
         }
     };

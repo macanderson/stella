@@ -639,6 +639,10 @@ impl Engine<'_> {
                 budget_usd: carve.session_limit_usd(),
                 write_access: spec.write_access,
                 depth: spec.depth,
+                // The same resolution `run_child_turn` hands the child's
+                // engine, so the bracket records what the calls actually
+                // ran at.
+                effort: spec.effort.or(self.config.effort),
             },
         });
         // The committed tally, owned HERE rather than inside the child turn

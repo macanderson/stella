@@ -575,6 +575,7 @@ mod tests {
             call_seq: 0,
             role: ModelCallRole::default(),
             provider: "test".into(),
+            upstream_provider: None,
             model: "test-model".into(),
             blocks: vec![ManifestEntry {
                 block_id: "blk_aaaaaaaaaaaaaaaaaaaaaaaa".into(),

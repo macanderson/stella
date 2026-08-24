@@ -803,3 +803,58 @@ async fn several_tool_use_blocks_fan_in_as_several_calls_on_converse() {
         result.finish_reason
     );
 }
+
+/// **#547's shape on the one adapter that is unary by construction.** The
+/// Converse response body arrives inside the same read bound as its head, and
+/// on this adapter that bound covers the whole generation — so its expiry
+/// means the request was too long to serve, not that the network hiccuped.
+/// Classified retryably, the driver would re-issue the identical too-long
+/// request until the retry budget died: four full read timeouts for one wedged
+/// call.
+///
+/// Driven end to end rather than asserted on the classifier. `http::tests`
+/// already proves what `classify_unary_dispatch_error` returns; what nothing
+/// proved is that the Converse path still routes a body-read failure *through*
+/// it. Until this test the path read its body with `.json()`, which collapses
+/// a read timeout and a genuinely unparseable body into one `Malformed`.
+///
+/// This is the witness `StreamFallbackPosture::AlwaysUnary` names, and the
+/// reason that arm carries one: the row's claim is that there is no stream to
+/// fall back from, which is only safe while the single unary path classifies
+/// its own expiry correctly.
+#[tokio::test]
+async fn a_bedrock_unary_body_read_timeout_is_terminal_never_a_retry_storm() {
+    let base_url = crate::stream_fallback_support::stall_the_unary_body();
+    let provider = BedrockProvider::new(
+        ApiKey::new("AKIDEXAMPLE"),
+        ApiKey::new("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY"),
+        None,
+        "us-east-1",
+        "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    )
+    .with_base_url(base_url)
+    .with_unary_read_timeout(std::time::Duration::from_millis(120));
+
+    let error = provider
+        .complete(CompletionRequest {
+            messages: vec![CompletionMessage::user("hi")],
+            max_output_tokens: Some(1024),
+            temperature: Some(0.0),
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        })
+        .await
+        .expect_err("a body that stops mid-read must fault, not hang");
+
+    assert!(
+        matches!(error, ProviderError::Terminal(_)),
+        "a unary BODY read timeout must be Terminal, got {error:?}"
+    );
+    assert!(
+        !error.is_retryable(),
+        "a retryable body-read timeout re-issues the identical too-long \
+         request until the budget dies (#547): {error:?}"
+    );
+}
