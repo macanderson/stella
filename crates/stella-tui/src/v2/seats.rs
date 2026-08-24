@@ -41,8 +41,9 @@
 //! editor arrives with the AGENTS pane's persona tabs leaving
 //! (`doc:roleless-core` slice 5b), because until then the two panes would
 //! offer two different ways to say the same thing. Rendering a seat the user
-//! cannot yet edit is honest; editing one whose settings block is about to be
-//! restructured is not. The header says `read-only` so a reader who pressed
+//! cannot yet edit reflects what the driver already knows; editing one whose
+//! settings block is about to be restructured would not. The header says
+//! `read-only` so a reader who pressed
 //! `e` and saw nothing happen learns why from the screen rather than from the
 //! source.
 
