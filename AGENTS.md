@@ -260,6 +260,17 @@ Four rungs, each a superset of the one above:
 | `make check` | ...plus clippy | clippy |
 | `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
 
+**Every rung needs `shellcheck` on `PATH`, and it is not vendored.** It is the
+gate's one external binary, so a machine or container image without it stops at
+that step on the lowest rung — `make guards-fast` included, despite compiling
+nothing. The step refuses out loud rather than passing (`shellcheck:
+UNAVAILABLE — THIS STEP DID NOT RUN`, #3615), because a lint that did not run
+must not read as a lint that found nothing. `./scripts/setup-dev-env.sh --check`
+reports it with the rest of the tooling, and the target itself names the install
+command for each platform. #3830 is where "the image agents run in should carry
+it" is tracked — that image is not defined in this repository, so nothing here
+can install it.
+
 `guards-fast` is not a rung you choose by hand; the pre-push hook picks it for
 a push that reaches no crate *and* cannot have touched the wire contract — a
 website-only or workflow-only push, which used to pay for a cargo build it had
