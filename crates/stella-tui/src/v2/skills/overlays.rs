@@ -12,7 +12,7 @@
 //! theirs, so the body carries only what the dialog is about.
 //!
 //! The two pickers here select the way the tab body does and the way
-//! [`crate::views::cards`] states it: a `▸` marker glyph **and** a
+//! `crate::views::cards` states it: a `▸` marker glyph **and** a
 //! [`token::HL`] background together. Both halves, because the golden suite
 //! strips style — a tint with no glyph is invisible to it, and a glyph with no
 //! tint is a dialog row that reads differently from the identical row two boxes
