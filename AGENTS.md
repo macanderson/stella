@@ -218,11 +218,17 @@ paths that reach those two crates — the shipping code, deliberately not
 `--all-targets`, because several `#[cfg(test)]` bodies import
 `std::os::unix::fs::PermissionsExt` unconditionally and would fail the job on
 a fixture rather than on the platform split. Those fixtures are #3497's
-subject. It also does not run the tests: Stella ships no Windows binary and
-the suite has never run there, so a green compile is the honest claim it can
-make. Not a required check, and its own file rather than a job in `ci.yml`
-for the reason `wire-schema.yml` has one — a Windows runner is minutes a diff
-touching neither crate has no use for.
+subject. It then **runs** two of them: `stella-runtime`'s `wrapper_socket` and
+`wrapper_transport_limits`, which stopped being `/bin/sh` scripts when #3497
+gave the crate a portable in-tree plugin binary
+(`crates/stella-runtime/tests/fixtures/wrapper-plugin-fixture.rs`). That is the
+Windows path being run rather than argued — the socket's stdio exchange, its
+`env_clear()`, and the Job Object group kill #3550 added, which shipped with
+"it compiles" as its whole evidence. A target list rather than the whole
+suite, because the rest of it is still `#![cfg(unix)]` and a green over
+nothing is worse than no green. Not a required check, and its own file rather
+than a job in `ci.yml` for the reason `wire-schema.yml` has one — a Windows
+runner is minutes a diff touching neither crate has no use for.
 
 Its first run paid for itself: `git checkout` failed before the build, on
 `crates/stella-cli/src/config/aux.rs` — `AUX` is a Windows device name, so
@@ -253,6 +259,17 @@ Four rungs, each a superset of the one above:
 | `make guards` | ...plus `wire-schema`, whose two schema exporters do compile | — |
 | `make check` | ...plus clippy | clippy |
 | `make gate` | ...plus rustdoc and the test suite | clippy, rustdoc, test |
+
+**Every rung needs `shellcheck` on `PATH`, and it is not vendored.** It is the
+gate's one external binary, so a machine or container image without it stops at
+that step on the lowest rung — `make guards-fast` included, despite compiling
+nothing. The step refuses out loud rather than passing (`shellcheck:
+UNAVAILABLE — THIS STEP DID NOT RUN`, #3615), because a lint that did not run
+must not read as a lint that found nothing. `./scripts/setup-dev-env.sh --check`
+reports it with the rest of the tooling, and the target itself names the install
+command for each platform. #3830 is where "the image agents run in should carry
+it" is tracked — that image is not defined in this repository, so nothing here
+can install it.
 
 `guards-fast` is not a rung you choose by hand; the pre-push hook picks it for
 a push that reaches no crate *and* cannot have touched the wire contract — a
@@ -289,7 +306,10 @@ It is advisory and per-clone (bypassable with `SKIP_GATE=1 git push` or
 `git push --no-verify`), so it complements the required server-side checks
 rather than replacing them — with `enforce_admins` off, an admin or auto-merge
 can still land gate-failing code, and the hook is what catches that on the
-author's push. It is also the only place some guards run for long stretches:
+author's push. `main-red-hold.yml` catches the *next* merge rather than that
+one, and only once a maintainer adds it to main's required checks; nothing in
+this tree can stop the first (#3887). It is also the only place some guards run
+for long stretches:
 `wire-schema` lived only in `make gate` until #1185 merged with stale generated
 artifacts. When Actions is unavailable entirely (an org billing hold has
 happened before — see RELEASING.md's local-release path), it is the only gate

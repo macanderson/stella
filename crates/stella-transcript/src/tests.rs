@@ -24,6 +24,9 @@ mod width;
 // `render_turn_tail`'s cutoffs (#4566's fix shape (a)).
 mod tail;
 
+// What each file mutation renders as, and where its line numbers come from.
+mod file_kinds;
+
 use crate::digest::{self, format_cost, format_duration, format_tokens};
 use crate::file_diff::{FileDiff, RowKind};
 use crate::fold::{Command, Cursor, FoldState, Zoom, apply};
@@ -75,6 +78,7 @@ fn edit(path: &str, before: &str, after: &str) -> Call {
             before: before.to_string(),
             after: after.to_string(),
             status: FileStatus::Modified,
+            patch: None,
         }],
         status: Status::Ok,
         duration_ms: 12,
@@ -607,6 +611,7 @@ fn acceptance_word_diff_highlights_only_the_changed_token() {
         before: before.to_string(),
         after: after.to_string(),
         status: FileStatus::Modified,
+        patch: None,
     });
 
     let rows: Vec<_> = diff.hunks.iter().flat_map(|h| h.rows.iter()).collect();
@@ -832,87 +837,13 @@ fn context_lines_are_never_marked_changed() {
         before: "a\nb\nc\nd\ne\n".to_string(),
         after: "a\nb\nCHANGED\nd\ne\n".to_string(),
         status: FileStatus::Modified,
+        patch: None,
     });
     for row in diff.hunks.iter().flat_map(|h| h.rows.iter()) {
         if row.kind == RowKind::Context {
             assert!(row.spans.iter().all(|s| !s.changed));
         }
     }
-}
-
-// -------------------------------------------------------------- file kinds
-
-#[test]
-fn a_new_file_renders_as_an_all_green_diff() {
-    let diff = FileDiff::build(&FileChange {
-        path: ".latexmkrc".to_string(),
-        before: String::new(),
-        after: "$pdf_mode = 1;\n$clean_ext = 'aux log';\n".to_string(),
-        status: FileStatus::New,
-    });
-    assert_eq!(diff.added, 2);
-    assert_eq!(diff.removed, 0);
-    assert!(
-        diff.hunks
-            .iter()
-            .flat_map(|h| h.rows.iter())
-            .all(|r| r.kind == RowKind::Added)
-    );
-}
-
-#[test]
-fn a_deleted_file_renders_as_an_all_red_diff() {
-    let diff = FileDiff::build(&FileChange {
-        path: "main.aux".to_string(),
-        before: "\\relax\n\\gdef\n".to_string(),
-        after: String::new(),
-        status: FileStatus::Deleted,
-    });
-    assert_eq!(diff.removed, 2);
-    assert_eq!(diff.added, 0);
-    assert_eq!(diff.status.token(), "gone");
-}
-
-#[test]
-fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithmetic() {
-    let delete = Call {
-        tool: ToolKind::DeleteFile,
-        header_object: "main.aux".to_string(),
-        args: Vec::new(),
-        output: Output::default(),
-        files: vec![FileChange {
-            path: "main.aux".to_string(),
-            before: "a\nb\n".to_string(),
-            after: String::new(),
-            status: FileStatus::Deleted,
-        }],
-        status: Status::Ok,
-        duration_ms: 4,
-        speculated: false,
-    };
-    let dig = digest::step_digest(&step(delete, 0), 40);
-    assert_eq!(dig.delta.unwrap().label(), "deleted · −2");
-
-    let create = Call {
-        tool: ToolKind::WriteFile,
-        header_object: ".latexmkrc".to_string(),
-        args: Vec::new(),
-        output: Output::default(),
-        files: vec![FileChange {
-            path: ".latexmkrc".to_string(),
-            before: String::new(),
-            after: "a\nb\nc\n".to_string(),
-            status: FileStatus::New,
-        }],
-        status: Status::Ok,
-        duration_ms: 4,
-        speculated: false,
-    };
-    let dig = digest::step_digest(&step(create, 0), 40);
-    assert_eq!(dig.delta.unwrap().label(), "new file · +3");
-
-    let dig = digest::step_digest(&step(edit("main.tex", "a\n", "b\n"), 0), 40);
-    assert_eq!(dig.delta.unwrap().label(), "+1 −1");
 }
 
 // ------------------------------------------------------------------ chips

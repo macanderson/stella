@@ -55,7 +55,7 @@ use crate::views::cards;
 /// which kind of card came up.
 const APPROVAL_CARD_W: u16 = 76;
 
-/// Width of the dimmed label column, as `views::plan_card` uses.
+/// Width of the dimmed label column, as `v2::plan_card` uses.
 const LABEL_W: usize = 8;
 
 /// What owns the keyboard inside the card.
@@ -337,7 +337,7 @@ fn hints(mode: ApprovalMode) -> &'static str {
 ///
 /// In accessible mode the column alignment goes away and the row reads as a
 /// labelled record — column alignment carries meaning only to an eye, which
-/// is `crate::views::plan_card`'s rule and the deck's convention.
+/// is `crate::v2::plan_card`'s rule and the deck's convention.
 fn labelled(label: &str, value: &str, inner_w: usize, accessible: bool) -> Line<'static> {
     let dim = Style::new().fg(theme::TEXT_TERTIARY);
     let room = inner_w.saturating_sub(LABEL_W + 2).max(8);
