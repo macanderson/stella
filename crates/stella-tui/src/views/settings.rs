@@ -7,7 +7,7 @@
 //!   toggles.
 //! - **TOOLS** ([`crate::views::tools`]): which of this session's tools are
 //!   switched off.
-//! - **SEATS** ([`crate::views::seats`]): which model each **plugin-declared**
+//! - **SEATS** ([`crate::v2::seats`]): which model each **plugin-declared**
 //!   role runs on. Read-only for now; the editor arrives with the AGENTS
 //!   pane's persona tabs leaving (`doc:roleless-core` slice 5b).
 //!
@@ -121,7 +121,11 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     match ui.settings_pane {
         SettingsPane::Agents => crate::views::engine::render_panel(ui, body, buf),
         SettingsPane::Tools => crate::views::tools::render_panel(ui, body, buf),
-        SettingsPane::Seats => crate::views::seats::render_panel(ui, body, buf),
+        SettingsPane::Seats => crate::v2::seats::render(
+            ui.engine.state.as_ref().map(|state| &state.seats[..]),
+            body,
+            buf,
+        ),
     }
 }
 
@@ -157,7 +161,7 @@ pub fn handle_key(
         }),
         // `e` edits what you are looking at — the one key every pane shares,
         // rather than a per-pane letter to remember. SEATS has no editor yet
-        // (`crate::views::seats`, slice 5b), so it claims the key and does
+        // (`crate::v2::seats`, slice 5b), so it claims the key and does
         // nothing rather than silently focusing a different pane's editor.
         KeyCode::Char('e') => Some(match ui.settings_pane {
             SettingsPane::Agents => crate::views::engine::focus_panel(ui),
