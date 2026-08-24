@@ -259,7 +259,7 @@ pub enum Inbound {
     /// [`Inbound::ConfiguredRoles`]'s never-overwrite fold is the wrong
     /// contract — the old served pin describes calls of a model that no
     /// longer serves, and keeping it would have the statline name the wrong
-    /// model until the next `StepUsage`. Two variants rather than a flag:
+    /// model until the next `StepUsage`. Two verbs rather than a flag:
     /// startup intent must never clobber evidence, a switch must.
     RolePinsReset(Vec<(crate::deck::PipelineRole, crate::deck::RolePin)>),
     /// Derived prompt-cache economics for one agent's latest model call —

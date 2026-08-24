@@ -792,7 +792,7 @@ impl WorkspaceModel {
                         .or_insert_with(|| pin.clone());
                 }
             }
-            // The switch variant DOES overwrite — served evidence included.
+            // The switch's re-pin DOES overwrite — served evidence included.
             // See the envelope doc for why these are two verbs.
             Inbound::RolePinsReset(pins) => {
                 for (role, pin) in pins {

@@ -241,7 +241,7 @@ fn announce_switch(
 ) {
     lead_meta.model = Some(format!("{}/{}", cfg.provider.id, cfg.model_id));
     let _ = in_tx.send(Inbound::Register(lead_meta.clone()));
-    // The reset variant, not `ConfiguredRoles`: the worker pin must replace
+    // The reset envelope, not `ConfiguredRoles`: the worker pin must replace
     // the served evidence of the model that no longer serves.
     let _ = in_tx.send(Inbound::RolePinsReset(override_role_pins(cfg)));
     let _ = in_tx.send(super::engine_config_inbound(cfg, None));
