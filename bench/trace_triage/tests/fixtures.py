@@ -39,8 +39,17 @@ def ok(content: str) -> dict[str, Any]:
     return {"ok": {"content": content}}
 
 
-def err(message: str) -> dict[str, Any]:
-    return {"error": {"message": message}}
+def err(message: str, *, cls: str | None = None) -> dict[str, Any]:
+    """An error envelope; `cls` adds the wire's optional `class` token.
+
+    The default omits the key entirely, matching what an old trace or an
+    unclassified error puts on the wire (`skip_serializing_if` in
+    `crates/stella-protocol/src/tool.rs`).
+    """
+    envelope: dict[str, Any] = {"message": message}
+    if cls is not None:
+        envelope["class"] = cls
+    return {"error": envelope}
 
 
 def write_run(

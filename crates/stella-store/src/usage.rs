@@ -109,8 +109,13 @@ pub struct ExecutionRollupRow {
     pub day: String,
     /// Per-tool buckets for this turn, folded into `tool_usage_rollup`.
     pub tool_histogram: Vec<ToolBucket>,
+    /// Per-class error buckets for this turn, folded into
+    /// `tool_error_class_rollup` (#4550). See [`ErrorClassBucket`].
+    pub error_class_histogram: Vec<ErrorClassBucket>,
 }
 
+mod class_rollup;
+pub use class_rollup::{ErrorClassBucket, ToolErrorClassRow};
 mod schema;
 mod tool_fold;
 
@@ -221,6 +226,7 @@ impl UsageStore {
                     params![r.project_id, b.tool, b.surface, r.day, b.calls, b.errors],
                 )?;
             }
+            class_rollup::fold(&tx, &r.project_id, &r.day, &r.error_class_histogram)?;
         }
         tx.commit()?;
         Ok(())
@@ -635,6 +641,7 @@ impl UsageStore {
                     "DELETE FROM tool_usage_rollup WHERE project_id = ?1",
                     params![pid],
                 )?;
+                class_rollup::gc_project(&tx, pid)?;
                 tool_fold::forget_project(&tx, pid)?;
                 tx.execute(
                     "DELETE FROM telemetry_sync_cursors WHERE project_id = ?1",
@@ -677,6 +684,7 @@ impl UsageStore {
                     "DELETE FROM tool_usage_rollup WHERE day < date('now', ?1)",
                     params![modifier],
                 )? as u64;
+                report.rollups_aged_out += class_rollup::age_out(&tx, modifier)?;
                 // Not counted as a rollup: it is the ledger over them, and it
                 // ages out on exactly their predicate so the two never part.
                 tool_fold::age_out(&tx, modifier)?;
@@ -1012,6 +1020,7 @@ mod tests {
             started_at: "2026-07-17T13:00:00Z".into(),
             day: "2026-07-17".into(),
             tool_histogram: tools,
+            error_class_histogram: Vec::new(),
         }
     }
 
