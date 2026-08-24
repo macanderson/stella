@@ -34,6 +34,7 @@ pub mod mcp_tab;
 pub mod models_card;
 pub mod plan_card;
 pub mod pulse;
+pub mod question;
 pub mod queue;
 pub(crate) mod record;
 pub mod seats;
