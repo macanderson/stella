@@ -46,6 +46,7 @@ fn result(name: &str, ok: bool, path: Option<&str>, body: &str) -> TranscriptEnt
         duration_ms: 42,
         speculated: false,
         diff: Vec::new(),
+        read_size: None,
     }
 }
 
@@ -232,6 +233,7 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
             path: "src/x.rs".into(),
             seq: 1,
         }],
+        read_size: None,
     };
     let mut out = Vec::new();
     entry_lines(
@@ -387,6 +389,7 @@ fn a_measured_change_with_no_patch_states_its_size_and_invents_no_diff() {
             path: "src/x.rs".into(),
             seq: 1,
         }],
+        read_size: None,
     };
     let mut out = Vec::new();
     entry_lines(
