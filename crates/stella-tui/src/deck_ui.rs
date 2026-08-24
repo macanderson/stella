@@ -1593,6 +1593,7 @@ mod gates;
 /// `↑`/`↓`/`j`/`k`/`⇞`/`⇟`/`Home`/`End` — one vocabulary for every list and body.
 pub mod list_nav;
 mod local;
+mod overlays;
 mod parked;
 pub mod sessions;
 /// Esc-with-something-to-say — see [`steer`].
@@ -1604,6 +1605,10 @@ pub use dispatch::{DispatchRoute, MidTurnPrompt, PendingDispatch};
 pub use nav::TranscriptSearch;
 pub(crate) use nav::is_folded;
 use nav::{handle_search_key, reveal_current_match, seek_failure, toggle_fold};
+use overlays::handle_help_key;
+pub(crate) use overlays::{
+    open_context_overlay, open_inbox_overlay, open_inspect_overlay, open_sessions_overlay,
+};
 use queue_editor::handle_queue_key;
 
 pub fn handle_deck_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
@@ -2074,23 +2079,6 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     handle_composer_key(key, ui, model)
 }
 
-/// The help-overlay key map. The overlay is modal: scrolling keys drive it,
-/// `q`/`Esc`/`?` close it. The content is long enough to scroll on a typical
-/// terminal, so a plain "any key closes" dismiss would make it unreadable.
-fn handle_help_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    let (total, height) = (ui.metrics.help_total, ui.metrics.help_height);
-    if list_nav::closes(key) || matches!(key.code, KeyCode::Char('?')) {
-        ui.help_open = false;
-    } else {
-        list_nav::scroll(key, &mut ui.help_scroll, total, height, true);
-    }
-    // Ctrl-C is handled by the caller (quit precedes every modal context).
-    // Any other key — modified or not — is swallowed so the overlay stays
-    // open and stable; typing into the composer behind it would be
-    // invisible and confusing.
-    DeckAction::Handled
-}
-
 /// Route one submitted prompt. The first submission after a double-Esc hold
 /// goes to the FRONT of the queue (and is what releases the hold) so it runs
 /// before the returned prompt; everything else appends. This is an explicit
@@ -2163,45 +2151,6 @@ fn handle_slash_key(
 
 // The queue editor's modal keys live in `queue_editor` (split out beside
 // `nav`/`gates` under the god-file rule).
-
-/// Open the SESSIONS overlay (`ctrl-e`, `/sessions`) and ask the driver for
-/// a fresh registry snapshot.
-pub(crate) fn open_sessions_overlay(ui: &mut DeckUi) -> DeckAction {
-    ui.sessions_open = true;
-    ui.sessions_sel = 0;
-    DeckAction::Send(WorkspaceInput::SessionsRefresh)
-}
-
-/// Open the CONTEXT overlay (`ctrl-k`, `/context`) and freshen both
-/// snapshots it renders — the second refresh rides `pending_inputs` since a
-/// key returns only one action.
-pub(crate) fn open_context_overlay(ui: &mut DeckUi) -> DeckAction {
-    ui.context_open = true;
-    ui.context_scroll = 0;
-    ui.pending_inputs.push(WorkspaceInput::McpRefresh);
-    DeckAction::Send(WorkspaceInput::Skill(SkillOp::List))
-}
-
-/// Open the INSPECT overlay (`⌃g`, `/inspect`) on its call list and ask the
-/// driver for a fresh index. Opens on the list, never straight into a detail:
-/// which call produced a given transcript line is not knowable from UI state
-/// yet (transcript entries carry no step coordinate), so a human picks.
-pub(crate) fn open_inspect_overlay(ui: &mut DeckUi) -> DeckAction {
-    ui.inspect_open = true;
-    ui.inspect_sel = 0;
-    ui.inspect_view = None;
-    ui.inspect_scroll = 0;
-    ui.inspect_pending = false;
-    DeckAction::Send(WorkspaceInput::InspectRefresh)
-}
-
-/// Open the INBOX overlay (`/inbox`). The driver's poller keeps the
-/// notification snapshot fresh; nothing to request.
-pub(crate) fn open_inbox_overlay(ui: &mut DeckUi) -> DeckAction {
-    ui.inbox_open = true;
-    ui.inbox_sel = 0;
-    DeckAction::Handled
-}
 
 /// The INBOX overlay key map: ↑/↓ select, `⏎` on a session-linked
 /// notification marks it read AND opens that session (closing the overlay);
