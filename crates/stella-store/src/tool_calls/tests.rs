@@ -18,6 +18,7 @@ fn start(call_id: &str, name: &str) -> AgentEvent {
             name: name.into(),
             input: serde_json::json!({ "path": "a.rs" }),
         },
+        sub_agent_id: None,
     }
 }
 
@@ -30,6 +31,7 @@ fn ok_result(call_id: &str, content: &str, duration_ms: u64) -> AgentEvent {
         },
         duration_ms,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 
@@ -39,6 +41,7 @@ fn err_result(call_id: &str, message: &str) -> AgentEvent {
         output: ToolOutput::error(message),
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 
@@ -246,6 +249,7 @@ fn two_steps_announcing_one_call_id_project_two_rows() {
             name: "read_file".into(),
             input: serde_json::json!({ "path": "deck_ui.rs", "offset": offset }),
         },
+        sub_agent_id: None,
     };
     // Step 1 reads a window and gets its result; step 2 reads the next one.
     store.record_event(id, 0, &read(1)).unwrap();
@@ -483,6 +487,7 @@ fn a_classified_error_lands_its_class_in_the_projection() {
                 ),
                 duration_ms: 1,
                 speculated: false,
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -585,6 +590,7 @@ fn rollup_splits_errors_by_class_and_still_ignores_abandonment() {
                 output: ToolOutput::classified_error(ErrorClass::Environment, "exit 1"),
                 duration_ms: 1,
                 speculated: false,
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -647,6 +653,7 @@ fn materialize_keeps_two_announcements_sharing_a_call_id_apart() {
                     name: "grep".into(),
                     input: serde_json::json!({"pattern": "first"}),
                 },
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -660,6 +667,7 @@ fn materialize_keeps_two_announcements_sharing_a_call_id_apart() {
                     name: "grep".into(),
                     input: serde_json::json!({"pattern": "final"}),
                 },
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -675,6 +683,7 @@ fn materialize_keeps_two_announcements_sharing_a_call_id_apart() {
                 },
                 duration_ms: 12,
                 speculated: false,
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -707,4 +716,73 @@ fn materialize_keeps_two_announcements_sharing_a_call_id_apart() {
         calls[1].2, "abandoned",
         "an unanswered announcement is not silently merged away"
     );
+}
+
+/// **The witness for #4624.** The projection records which delegate ran each
+/// call, `NULL` for the lead's own, and the repair fold agrees with the live
+/// path about it.
+///
+/// Fails before this change: there was no column, so a child's calls sat
+/// under the parent execution id indistinguishable from the lead's — the
+/// table that answers "what did this turn do" could not answer "which of
+/// these did child X do".
+#[test]
+fn a_delegates_calls_are_attributed_to_it_and_the_leads_read_null() {
+    let (store, id) = fixture();
+
+    let child = |call_id: &str| AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: call_id.into(),
+            name: "search".into(),
+            input: serde_json::json!({ "query": "retry" }),
+        },
+        sub_agent_id: Some("search-1".into()),
+    };
+    let child_result = |call_id: &str| AgentEvent::ToolResult {
+        call_id: call_id.into(),
+        output: ToolOutput::Ok {
+            content: "retry.rs".into(),
+            data: None,
+        },
+        duration_ms: 30,
+        speculated: false,
+        sub_agent_id: Some("search-1".into()),
+    };
+
+    for (seq, event) in [
+        start("c1", "read_file"),
+        ok_result("c1", "fn a() {}", 12),
+        child("c2"),
+        child_result("c2"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        store.record_event(id, seq as u64, &event).unwrap();
+    }
+
+    let owners = |store: &Store| -> Vec<(String, Option<String>)> {
+        let conn = store.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name, sub_agent_id FROM tool_calls \
+                 WHERE execution_id = ?1 ORDER BY seq ASC",
+            )
+            .unwrap();
+        let mapped = stmt
+            .query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        mapped.map(|r| r.unwrap()).collect()
+    };
+    let expected = vec![
+        ("read_file".to_string(), None),
+        ("search".to_string(), Some("search-1".to_string())),
+    ];
+    assert_eq!(owners(&store), expected, "the live path attributes both");
+
+    // The repair fold re-derives the same answer from the same events. The
+    // two writers disagreeing is how a repair rewrites history the live path
+    // had already recorded correctly.
+    store.materialize_tool_calls(id).unwrap();
+    assert_eq!(owners(&store), expected, "and so does the re-fold");
 }

@@ -254,7 +254,7 @@ impl TurnFriction {
     /// nothing.
     pub fn observe(&mut self, event: &AgentEvent) {
         match event {
-            AgentEvent::ToolStart { call } => {
+            AgentEvent::ToolStart { call, .. } => {
                 if self.tools.len() >= FRICTION_ENTRY_CAP {
                     self.dropped += 1;
                     return;

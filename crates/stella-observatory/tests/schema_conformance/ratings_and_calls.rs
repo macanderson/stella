@@ -76,7 +76,14 @@ fn an_unfinished_execution_reports_its_tool_calls() {
         input: serde_json::json!({ "path": "a.rs" }),
     };
     store
-        .record_event(id, 0, &AgentEvent::ToolStart { call: call.clone() })
+        .record_event(
+            id,
+            0,
+            &AgentEvent::ToolStart {
+                call: call.clone(),
+                sub_agent_id: None,
+            },
+        )
         .expect("start");
     store
         .record_event(
@@ -90,6 +97,7 @@ fn an_unfinished_execution_reports_its_tool_calls() {
                 },
                 duration_ms: 5,
                 speculated: false,
+                sub_agent_id: None,
             },
         )
         .expect("result");
@@ -103,6 +111,7 @@ fn an_unfinished_execution_reports_its_tool_calls() {
                     name: "bash".into(),
                     input: serde_json::json!({ "command": "cargo test" }),
                 },
+                sub_agent_id: None,
             },
         )
         .expect("second start");
@@ -157,6 +166,7 @@ fn a_crashed_execution_recovers_its_calls_through_the_api() {
                         name: "bash".into(),
                         input: serde_json::json!({ "command": "true" }),
                     },
+                    sub_agent_id: None,
                 },
             )
             .expect("start");
@@ -209,6 +219,7 @@ fn an_abandoned_call_is_not_a_tool_error_on_the_leaderboard() {
                     name: "bash".into(),
                     input: serde_json::json!({ "command": "false" }),
                 },
+                sub_agent_id: None,
             },
         )
         .expect("start c1");
@@ -221,6 +232,7 @@ fn an_abandoned_call_is_not_a_tool_error_on_the_leaderboard() {
                 output: ToolOutput::error("exit status 1"),
                 duration_ms: 3,
                 speculated: false,
+                sub_agent_id: None,
             },
         )
         .expect("c1 fails for real");
@@ -234,6 +246,7 @@ fn an_abandoned_call_is_not_a_tool_error_on_the_leaderboard() {
                     name: "bash".into(),
                     input: serde_json::json!({ "command": "sleep 60" }),
                 },
+                sub_agent_id: None,
             },
         )
         .expect("start c2");
@@ -298,6 +311,7 @@ fn tool_errors_split_by_error_class_on_the_leaderboard() {
                         name: "bash".into(),
                         input: serde_json::json!({ "command": "false" }),
                     },
+                    sub_agent_id: None,
                 },
             )
             .expect("start");
@@ -310,6 +324,7 @@ fn tool_errors_split_by_error_class_on_the_leaderboard() {
                     output,
                     duration_ms: 1,
                     speculated: false,
+                    sub_agent_id: None,
                 },
             )
             .expect("result");

@@ -754,6 +754,16 @@ fn telemetry_has_cache_write(conn: &Connection) -> bool {
         .is_ok()
 }
 
+/// Whether this store has `executions.parent_execution_id` (schema v36,
+/// #4628). Probed rather than assumed for the same reason as the sibling
+/// above: a store one turn older than this binary must still render its
+/// sessions, and one missing attribution is a far smaller loss than an empty
+/// turn table.
+fn executions_have_parent(conn: &Connection) -> bool {
+    conn.prepare("SELECT parent_execution_id FROM executions LIMIT 0")
+        .is_ok()
+}
+
 /// The session's turns from the three long-lived tables, newest first (the
 /// caller reverses after capping). Younger per-turn attachments — skills,
 /// MCP servers, receipt counts, the reflection verdict — ride in afterwards
@@ -764,6 +774,11 @@ fn session_turns(conn: &Connection, id: &str) -> Result<Vec<Value>, DbError> {
     } else {
         "0"
     };
+    let parent = if executions_have_parent(conn) {
+        "e.parent_execution_id"
+    } else {
+        "NULL"
+    };
     let sql = format!(
         "SELECT e.id, e.kind, e.prompt, e.provider, e.model, e.outcome,
                 e.cost_usd, e.started_at, e.finished_at,
@@ -772,7 +787,8 @@ fn session_turns(conn: &Connection, id: &str) -> Result<Vec<Value>, DbError> {
                 coalesce(t.cache_miss_tokens, 0), coalesce(t.retries, 0),
                 coalesce(t.duration_ms, 0), coalesce(t.cache_write_tokens, 0),
                 coalesce(tc.calls, 0), coalesce(tc.errors, 0),
-                coalesce(ft.files, 0), coalesce(ft.added, 0), coalesce(ft.removed, 0)
+                coalesce(ft.files, 0), coalesce(ft.added, 0), coalesce(ft.removed, 0),
+                {parent}
          FROM executions e
          LEFT JOIN (SELECT execution_id, count(*) AS steps,
                            sum(input_tokens)      AS input_tokens,
@@ -826,6 +842,9 @@ fn session_turns(conn: &Connection, id: &str) -> Result<Vec<Value>, DbError> {
             "files_touched": r.get::<_, i64>(19)?,
             "lines_added": r.get::<_, i64>(20)?,
             "lines_removed": r.get::<_, i64>(21)?,
+            // Which turn dispatched this one — NULL for a lead turn, and for a
+            // lane a person started from the composer (#4628).
+            "parent_execution_id": r.get::<_, Option<i64>>(22)?,
         }))
     })?;
     let mut out = Vec::new();

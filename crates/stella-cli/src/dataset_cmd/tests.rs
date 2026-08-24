@@ -49,6 +49,7 @@ fn edit_events() -> Vec<AgentEvent> {
                 name: "edit".into(),
                 input: serde_json::json!({"path": "src/lib.rs"}),
             },
+            sub_agent_id: None,
         },
         AgentEvent::ToolResult {
             call_id: "c1".into(),
@@ -58,6 +59,7 @@ fn edit_events() -> Vec<AgentEvent> {
             },
             duration_ms: 7,
             speculated: false,
+            sub_agent_id: None,
         },
         AgentEvent::FileChange {
             path: "src/lib.rs".into(),
@@ -131,6 +133,7 @@ fn an_unclosed_tool_call_reports_its_output_as_unknown() {
             name: "bash".into(),
             input: serde_json::json!({"command": "sleep 999"}),
         },
+        sub_agent_id: None,
     }]));
     assert_eq!(fold.tool_calls.len(), 1);
     assert_eq!(fold.tool_calls[0].output, None);

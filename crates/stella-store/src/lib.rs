@@ -98,15 +98,14 @@ use stella_protocol::{AgentEvent, TaskStatus};
 // Module map — this file holds the row types, the `Store` handle and its
 // query surface, and the tests; everything else is split by concern:
 //   ddl         (crate-private) every table/index DDL at the CURRENT schema
+//   dispatch    which turn dispatched which execution (#4628)
 //   migrations  (crate-private) versioned upgrades + the fresh-file bootstrap
-//   cache_gaps  per-call cache-gap facts behind the `cache_expired_rewrite`
-//               counter (split out to keep this file small)
+//   cache_gaps  per-call facts behind the `cache_expired_rewrite` counter
 //   cache_trend per-session cache trend — telemetry already persists these
 //               facts; this groups them by session for `stella stats`
 //   catalog     `catalog.db` — user-tier model catalog (slugs, pricing)
 //   content_free the content-free egress guard (#466): the reviewed hub-column
-//               allowlist plus the sentinel harness every egress encoder
-//               registers with
+//               allowlist plus the sentinel harness every encoder registers with
 //   drain       the versioned cloud-drain wire contract + the bisecting,
 //               poison-row-isolating drain loop (#467)
 //   enterprise_telemetry
@@ -132,6 +131,7 @@ use stella_protocol::{AgentEvent, TaskStatus};
 //               execution-level paid-call accounting gate
 //   usage       `usage.db` — user-tier cross-project telemetry aggregate
 mod ddl;
+mod dispatch;
 mod error;
 mod migrations;
 mod private;

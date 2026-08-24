@@ -250,9 +250,33 @@ impl std::fmt::Display for RecordFinding {
 /// looks identical to a record whose task simply never came up. A closed list with
 /// a [`RecordFinding::UnknownTask`] warning keeps the typo visible while leaving
 /// the record loadable.
+///
+/// `benchmark` and `investigate` joined in #4263. Both name task kinds this
+/// repository runs constantly and neither had a ratified name, so seven records
+/// mined from `CLAUDE.md` — the bench-evidence rules and the cheap-control-first
+/// debugging rule — had to drop their selector entirely. `run` is not a
+/// substitute for `benchmark`: it fires on every `stella run`, so a bench-only
+/// rule scoped that way would inject on ordinary agent work. Every name here is
+/// a bare verb, because [`select`] compares it against whole words of the turn's
+/// prompt text.
+///
+/// Growing this list is an edit here **and** a line in ADR 0012 Decision 5, so a
+/// vocabulary cannot grow without a decision.
 pub const KNOWN_TASKS: &[&str] = &[
-    "build", "ci", "deploy", "docs", "install", "lint", "migrate", "refactor", "release", "review",
-    "run", "test",
+    "benchmark",
+    "build",
+    "ci",
+    "deploy",
+    "docs",
+    "install",
+    "investigate",
+    "lint",
+    "migrate",
+    "refactor",
+    "release",
+    "review",
+    "run",
+    "test",
 ];
 
 /// Parse a `.toml` context file and resolve every record in it.

@@ -12,19 +12,27 @@
 //! [`stella_transcript::Call`], there is no longer an API that can render the
 //! call without its result.
 //!
-//! # What the journal cannot tell us
+//! # Where a file diff comes from
 //!
-//! An `edit_file` result body is the tool's prose confirmation, not a diff, and
-//! the store holds no pre-image of the file. What it does hold is the call's own
-//! arguments — `path`, `old_string`, `new_string` — so the diff rendered here is
-//! of **the replaced fragment**, not of the whole file, and its line numbers are
-//! fragment-relative. That is a real limitation rather than something papered
-//! over; #3577 tracks persisting the pre-image so the diff can be exact.
+//! Not from the call's arguments. An `edit_file` carries `old_string` and
+//! `new_string`, so a diff computed from them is of the replaced *fragment* and
+//! numbers its rows from 1 — and `@@ -1,1 +1,1 @@` under a 400-line file's name
+//! reads as that file's lines to every reader (#3577). A `delete_file` carries
+//! neither side at all.
+//!
+//! The exact diff exists: the tool held the file when it wrote it and the turn
+//! measures the work tree per call, so a `file_change` row carrying git's own
+//! patch — file-absolute, already in the journal — lands between the
+//! `tool_start` that caused it and that call's `tool_result`. This module folds
+//! those rows onto the call by path, and the arguments are the fallback for a
+//! call that measured nothing.
+
+use std::collections::HashMap;
 
 use serde_json::Value;
 use stella_transcript::model::{
-    Accounting, ArgRow, Call, CallAnchor, FileChange, FileStatus, Note, NoteKind, Output, Prose,
-    Run, Status, Step, ToolKind, Turn,
+    Accounting, ArgRow, Call, CallAnchor, FileChange, FileStatus, Note, NoteKind, Output, Patch,
+    Prose, Run, Status, Step, ToolKind, Turn,
 };
 
 /// Fold an execution's head row and journal rows into a renderable run.
@@ -55,6 +63,11 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
     // where the reader's eye lands, and the turn rollup sums the same figures
     // either way.
     let mut pending_acc: Option<Accounting> = None;
+    // The `file_change` rows seen since the open `tool_start`, keyed by path.
+    // They are what the work tree actually did, so they settle onto the call
+    // when its result arrives; rows outside a call belong to the turn boundary
+    // and have no call to settle onto.
+    let mut measured: HashMap<String, Patch> = HashMap::new();
     let mut metered = false;
     let base_ts = journal.first().and_then(|r| r["ts"].as_i64()).unwrap_or(0);
 
@@ -70,18 +83,29 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
             }),
             "text" => turn.answer = Some(body_of(row)),
             "tool_start" => {
+                measured.clear();
                 if let Some(call_id) = row["call_id"].as_str() {
                     pending = Some((call_id.to_string(), call_from_start(row)));
                 }
             }
+            "file_change" => {
+                if pending.is_some()
+                    && let Some((path, patch)) = measured_patch(row)
+                {
+                    measured.insert(path, patch);
+                }
+            }
             "tool_result" => {
                 let Some((call_id, mut call)) = pending.take() else {
+                    measured.clear();
                     continue;
                 };
                 if row["call_id"].as_str() != Some(call_id.as_str()) {
+                    measured.clear();
                     continue;
                 }
                 finish_call(&mut call, row);
+                settle_measured(&mut call, &mut measured);
                 turn.steps.push(Step {
                     call: Some(call),
                     accounting: pending_acc.take().unwrap_or_default(),
@@ -101,6 +125,18 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
                 pending_acc = Some(usage_accounting(row));
                 turn.notes.push(meter_note(row, turn.steps.len()));
             }
+            // A `Handoff` note per bracket edge (#4627) — the kind
+            // `stella_transcript` defines as "work handed elsewhere:
+            // sub-agents, commits, pull requests". Placed by `before_step` so
+            // the two edges bracket the steps that ran between them, which is
+            // what makes a delegated turn read as a delegated turn instead of
+            // a gap.
+            //
+            // Not a `Step`: a step is a call with a result, and the child's
+            // own calls already arrive on this stream in their own right
+            // (forwarded across the child/parent boundary). Folding the
+            // bracket as a step too would count the fan-out twice.
+            "sub_agent" => turn.notes.push(subagent_note(row, turn.steps.len())),
             _ => {}
         }
     }
@@ -110,6 +146,9 @@ pub(crate) fn build_run(execution: &Value, journal: &[Value]) -> Run {
     // watch.
     if let Some((_, mut call)) = pending.take() {
         call.status = Status::Running;
+        // The measurement rides ahead of the result, so a call still waiting
+        // for one can already have its diff.
+        settle_measured(&mut call, &mut measured);
         turn.steps.push(Step {
             call: Some(call),
             accounting: Accounting::default(),
@@ -228,6 +267,72 @@ fn meter_note(row: &Value, before_step: usize) -> Note {
     }
 }
 
+/// One edge of a sub-agent bracket: the child starting, or the child ending.
+///
+/// The summary is the findable line — which child, and either what it was
+/// asked or how it ended. The detail carries the numbers that answer "was
+/// delegating this worth it": what the child cost, how many model calls it
+/// made, and how many messages of its own transcript the parent never had to
+/// carry, which is the primitive's whole value proposition.
+///
+/// No [`CallAnchor`]: a bracket is not a model call, so there is no
+/// `(step, role)` for a host's prompt inspector to open on.
+fn subagent_note(row: &Value, before_step: usize) -> Note {
+    let agent = row["agent_id"].as_str().unwrap_or("?");
+    let mut detail = Vec::new();
+    let summary = match row["phase"].as_str() {
+        Some("started") => {
+            if let Some(budget) = row["budget_usd"].as_f64() {
+                detail.push(format!("budget carved: ${budget:.4}"));
+            }
+            detail.push(format!(
+                "write access: {} · depth {}",
+                row["write_access"].as_bool().unwrap_or(false),
+                row["depth"].as_u64().unwrap_or(1)
+            ));
+            if let Some(effort) = row["effort"].as_str() {
+                detail.push(format!("reasoning effort: {effort}"));
+            }
+            let task = row["instruction_preview"].as_str().unwrap_or("").trim();
+            if task.is_empty() {
+                format!("sub-agent {agent} started")
+            } else {
+                format!("sub-agent {agent} started · {task}")
+            }
+        }
+        Some("finished") => {
+            detail.push(format!(
+                "cost ${:.4} · {} model calls · {} messages absorbed",
+                row["cost_usd"].as_f64().unwrap_or(0.0),
+                row["steps"].as_u64().unwrap_or(0),
+                row["absorbed_messages"].as_u64().unwrap_or(0)
+            ));
+            if let Some(reason) = row["reason"].as_str() {
+                detail.push(format!("reason: {reason}"));
+            }
+            if row["report_truncated"].as_bool().unwrap_or(false) {
+                detail.push("the child's report was clipped to its cap".to_string());
+            }
+            if let Some(report) = row["body"].as_str().filter(|b| !b.trim().is_empty()) {
+                detail.push("report:".to_string());
+                detail.extend(report.lines().map(str::to_string));
+            }
+            let status = row["status"].as_str().unwrap_or("ended");
+            format!("sub-agent {agent} {status}")
+        }
+        // A phase this build has never heard of still says a child was
+        // bracketed here, rather than drawing nothing where one ran.
+        _ => format!("sub-agent {agent}"),
+    };
+    Note {
+        kind: NoteKind::Handoff,
+        summary,
+        detail,
+        before_step,
+        inspect: None,
+    }
+}
+
 /// Humanize a token count: `981`, `32.4k`.
 fn fmt_tok(n: u64) -> String {
     if n < 1_000 {
@@ -339,12 +444,75 @@ fn arg_rows(input: &Value) -> Vec<ArgRow> {
         .collect()
 }
 
-/// The file change a mutation call's own arguments describe.
+/// One `file_change` row as a patch, or `None` when it carries no diff.
+///
+/// `added`/`removed` are taken from the row rather than recounted from the
+/// patch text: the event's contract is that those are git's numstat and the
+/// patch is a bounded rendering of the changed region, so counting sigils
+/// reports the rendering's size as the change's.
+fn measured_patch(row: &Value) -> Option<(String, Patch)> {
+    let path = row["path"].as_str()?.to_string();
+    let text = row["diff"].as_str().filter(|d| !d.trim().is_empty())?;
+    Some((
+        path,
+        Patch {
+            text: text.to_string(),
+            added: usize::try_from(row["added"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX),
+            removed: usize::try_from(row["removed"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX),
+        },
+    ))
+}
+
+/// Attach the measured patches to the files this call's arguments named.
+///
+/// Matched by path, with a suffix fallback in either direction: the call's
+/// argument is whatever the model typed and the measurement is
+/// workspace-relative, so `crates/x/src/a.rs` and `src/a.rs` are the same file
+/// and a plain equality test would silently keep the fragment diff.
+///
+/// A measurement no argument names is dropped rather than appended. The call's
+/// files are the ones it asked for; a `bash` call that rewrote ten files does
+/// not become a ten-file diff block here, because that is a different change to
+/// the fold's shape and not this one (#3577).
+fn settle_measured(call: &mut Call, measured: &mut HashMap<String, Patch>) {
+    for file in &mut call.files {
+        if let Some(patch) = measured
+            .remove(&file.path)
+            .or_else(|| take_same_file(measured, &file.path))
+        {
+            file.patch = Some(patch);
+        }
+    }
+    measured.clear();
+}
+
+/// The measured patch for a path one side of which is a suffix of the other.
+fn take_same_file(measured: &mut HashMap<String, Patch>, path: &str) -> Option<Patch> {
+    let key = measured
+        .keys()
+        .find(|measured_path| same_file(measured_path, path))?
+        .clone();
+    measured.remove(&key)
+}
+
+/// Whether two paths name one file: equal, or one is the other's tail at a
+/// segment boundary. `a/b.rs` and `x/a/b.rs` match; `b.rs` and `ab.rs` do not.
+fn same_file(left: &str, right: &str) -> bool {
+    let tail_of = |long: &str, short: &str| {
+        long.len() > short.len()
+            && long.ends_with(short)
+            && long.as_bytes()[long.len() - short.len() - 1] == b'/'
+    };
+    left == right || tail_of(left, right) || tail_of(right, left)
+}
+
+/// The file change a mutation call's own arguments describe — the fallback
+/// [`settle_measured`] overwrites whenever the work tree was measured.
 ///
 /// `write_file` carries the whole new file, so its diff is exact and all-green.
-/// `edit_file` carries only the replaced fragment (see the module header).
-/// `delete_file` carries neither side, so it renders a header with no contents
-/// rather than inventing any.
+/// `edit_file` carries only the replaced fragment, so its line numbers are
+/// fragment-relative. `delete_file` carries neither side, so it renders a
+/// header with no contents rather than inventing any.
 fn files_from_input(tool: &ToolKind, input: &Value) -> Vec<FileChange> {
     let path = input
         .get("path")
@@ -367,18 +535,21 @@ fn files_from_input(tool: &ToolKind, input: &Value) -> Vec<FileChange> {
             before: String::new(),
             after: text("content"),
             status: FileStatus::New,
+            patch: None,
         }],
         ToolKind::EditFile => vec![FileChange {
             path,
             before: text("old_string"),
             after: text("new_string"),
             status: FileStatus::Modified,
+            patch: None,
         }],
         ToolKind::DeleteFile => vec![FileChange {
             path,
             before: String::new(),
             after: String::new(),
             status: FileStatus::Deleted,
+            patch: None,
         }],
         _ => Vec::new(),
     }
@@ -442,24 +613,72 @@ mod tests {
         assert!(call.extra_args().is_empty());
     }
 
+    /// **The witness for #3577.** The edit replaces a fragment on line 212 of a
+    /// long file. Built from the call's arguments alone the diff is of the
+    /// fragment and starts at line 1, which is the defect — a reader takes
+    /// those numbers for the file's. The `file_change` row between the call and
+    /// its result carries the patch the tool computed against the real file, so
+    /// the rendered gutter reads 212.
     #[test]
-    fn an_edit_call_carries_a_diffable_fragment() {
-        let journal = vec![
-            json!({
-                "type": "tool_start", "ts": 0, "call_id": "c1", "name": "edit_file",
-                "body": "{\"path\":\"main.tex\",\"old_string\":\"{15pt}\",\"new_string\":\"{12pt}\"}",
-            }),
-            json!({
-                "type": "tool_result", "ts": 30, "call_id": "c1",
-                "ok": true, "duration_ms": 30, "body": "edited main.tex",
-            }),
-        ];
-        let run = build_run(&execution(), &journal);
+    fn an_edit_call_renders_the_measured_file_absolute_diff() {
+        let run = build_run(&execution(), &edit_journal(Some("main.tex")));
         let call = run.turns[0].steps[0].call.as_ref().unwrap();
         assert_eq!(call.files.len(), 1);
+        let diff = stella_transcript::file_diff::FileDiff::build(&call.files[0]);
+        assert_eq!(diff.hunks.len(), 1);
+        assert_eq!(diff.hunks[0].header, "@@ -212,1 +212,1 @@");
+        let changed: Vec<_> = diff.hunks[0]
+            .rows
+            .iter()
+            .map(|r| (r.old_no, r.new_no))
+            .collect();
+        assert_eq!(changed, vec![(Some(212), None), (None, Some(212))]);
+        assert_eq!((diff.added, diff.removed), (1, 1));
+        assert_eq!(call.files[0].status, FileStatus::Modified);
+    }
+
+    /// A call the work tree never measured still renders. The fragment diff is
+    /// the fallback, not the design — an execution recorded before the patch
+    /// rode the journal has nothing else, and a transcript that blanks is worse
+    /// than one whose oldest rows are approximate.
+    #[test]
+    fn an_unmeasured_edit_call_falls_back_to_the_fragment() {
+        let run = build_run(&execution(), &edit_journal(None));
+        let call = run.turns[0].steps[0].call.as_ref().unwrap();
         assert_eq!(call.files[0].before, "{15pt}");
         assert_eq!(call.files[0].after, "{12pt}");
-        assert_eq!(call.files[0].status, FileStatus::Modified);
+        assert!(call.files[0].patch.is_none());
+    }
+
+    /// The measurement is workspace-relative and the argument is whatever the
+    /// model typed. Both name one file, and requiring string equality would
+    /// silently keep the fragment diff on every absolute path.
+    #[test]
+    fn a_measurement_settles_onto_a_differently_spelled_path() {
+        let run = build_run(&execution(), &edit_journal(Some("paper/main.tex")));
+        let call = run.turns[0].steps[0].call.as_ref().unwrap();
+        assert!(call.files[0].patch.is_some());
+    }
+
+    /// One `edit_file` call, optionally measured. `measured` is the path the
+    /// `file_change` row reports, which need not be spelled as the argument is.
+    fn edit_journal(measured: Option<&str>) -> Vec<Value> {
+        let mut journal = vec![json!({
+            "type": "tool_start", "ts": 0, "call_id": "c1", "name": "edit_file",
+            "body": "{\"path\":\"main.tex\",\"old_string\":\"{15pt}\",\"new_string\":\"{12pt}\"}",
+        })];
+        if let Some(path) = measured {
+            journal.push(json!({
+                "type": "file_change", "ts": 20, "path": path, "kind": "modified",
+                "added": 1, "removed": 1,
+                "diff": "--- a/main.tex\n+++ b/main.tex\n@@ -212,1 +212,1 @@\n-{15pt}\n+{12pt}\n",
+            }));
+        }
+        journal.push(json!({
+            "type": "tool_result", "ts": 30, "call_id": "c1",
+            "ok": true, "duration_ms": 30, "body": "edited main.tex",
+        }));
+        journal
     }
 
     #[test]
@@ -506,6 +725,81 @@ mod tests {
         ];
         let run = build_run(&execution(), &journal);
         assert_eq!(run.turns[0].steps[0].status(), Status::Error);
+    }
+
+    /// **The witness for #4627.** Both bracket edges fold into `Handoff`
+    /// notes, positioned so they enclose the steps the child ran.
+    ///
+    /// Fails before this change: `build_run` had no `sub_agent` arm at all —
+    /// the row fell through `_ => {}` — so a delegated turn rendered as a
+    /// parent that had somehow paused, and the reader had no way to tell a
+    /// fan-out from a stall.
+    #[test]
+    fn both_edges_of_a_sub_agent_bracket_become_handoff_notes() {
+        let journal = vec![
+            json!({
+                "type": "sub_agent", "ts": 0, "phase": "started",
+                "agent_id": "search-1", "instruction_preview": "find the retry policy",
+                "budget_usd": 0.25, "write_access": false, "depth": 1, "effort": "high",
+            }),
+            json!({
+                "type": "tool_start", "ts": 10, "call_id": "c1", "name": "search",
+                "body": "{\"query\": \"retry\"}",
+            }),
+            json!({
+                "type": "tool_result", "ts": 40, "call_id": "c1", "ok": true, "body": "retry.rs",
+            }),
+            json!({
+                "type": "sub_agent", "ts": 50, "phase": "finished",
+                "agent_id": "search-1", "status": "completed", "cost_usd": 0.004,
+                "steps": 3, "absorbed_messages": 9, "report_truncated": false,
+                "body": "retry policy lives in retry.rs",
+            }),
+        ];
+        let run = build_run(&execution(), &journal);
+        let turn = &run.turns[0];
+        assert_eq!(turn.notes.len(), 2, "one note per bracket edge");
+        assert!(
+            turn.notes
+                .iter()
+                .all(|n| n.kind == NoteKind::Handoff && n.inspect.is_none()),
+            "a bracket is work handed elsewhere, and is not a model call"
+        );
+        // The edges bracket the step between them — which is the whole point
+        // of putting them on the timeline rather than only in a side panel.
+        assert_eq!(
+            (turn.notes[0].before_step, turn.notes[1].before_step),
+            (0, 1)
+        );
+
+        assert_eq!(
+            turn.notes[0].summary,
+            "sub-agent search-1 started · find the retry policy"
+        );
+        assert!(
+            turn.notes[0].detail.iter().any(|d| d.contains("$0.2500")),
+            "{:?}",
+            turn.notes[0].detail
+        );
+        assert_eq!(turn.notes[1].summary, "sub-agent search-1 completed");
+        assert!(
+            turn.notes[1]
+                .detail
+                .iter()
+                .any(|d| d.contains("9 messages absorbed")),
+            "the value proposition is reported, not asserted: {:?}",
+            turn.notes[1].detail
+        );
+        assert!(
+            turn.notes[1]
+                .detail
+                .contains(&"retry policy lives in retry.rs".to_string()),
+            "{:?}",
+            turn.notes[1].detail
+        );
+        // The child's own forwarded call is still one step, not two: folding
+        // the bracket as a step as well would count the fan-out twice.
+        assert_eq!(turn.steps.len(), 1);
     }
 
     #[test]

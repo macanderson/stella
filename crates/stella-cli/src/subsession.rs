@@ -60,7 +60,7 @@ pub(crate) enum WorkerEnd {
 /// endings travel worker → driver (bookkeeping + backlog drain).
 pub(crate) enum SupervisorMsg {
     /// A `task_assign` request drained from the lead's tool tap.
-    SpawnTask(SpawnRequest),
+    SpawnTask(QueuedSpawn),
     /// A worker finished (its thread is exiting).
     Ended {
         lane: String,
@@ -241,6 +241,7 @@ impl SubSessions {
                 purpose: String::new(),
                 prompt: String::new(),
                 notify_title: String::new(),
+                dispatched_by: None,
             },
         )
         .0
@@ -528,6 +529,20 @@ impl stella_core::ports::TurnGate for WatchGate {
     }
 }
 
+/// A `task_assign` the lead's board queued, and the turn that queued it.
+///
+/// The dispatcher rides with the request rather than being read when a slot
+/// frees, because a request can wait in the deck's `pending_spawns` past the
+/// end of the turn that made it — by then there is nothing left to read it
+/// from (#4628).
+pub(crate) struct QueuedSpawn {
+    pub request: SpawnRequest,
+    /// The execution id of the turn whose `task_assign` queued this. `None`
+    /// only when the session opened no store, which is a workspace with no
+    /// telemetry rather than a lane nobody asked for.
+    pub dispatched_by: Option<i64>,
+}
+
 /// Everything a worker needs to run, owned (the thread outlives the caller's
 /// borrows).
 #[derive(Clone)]
@@ -545,6 +560,14 @@ pub(crate) struct SubSessionSpec {
     pub prompt: String,
     /// Notification title on completion (the body is the outcome).
     pub notify_title: String,
+    /// The execution id of the lead turn that dispatched this lane, stamped
+    /// onto its own execution row (`executions.parent_execution_id`, schema
+    /// v36) so a turn page can list the lanes it fanned out (#4628).
+    ///
+    /// `None` for a lane a person dispatched from the composer between turns,
+    /// which is most of them — no turn asked for those, and claiming one would
+    /// invent a parent.
+    pub dispatched_by: Option<i64>,
 }
 
 /// Build the worker prompt for a `task_assign` spawn: the task's identity,
@@ -850,6 +873,12 @@ async fn run_worker(
         None,
     );
     let execution_id = execution.as_ref().map(|(_, id)| *id);
+    // Which turn asked for this lane (#4628). Best-effort like the session
+    // link beside it: an unrecorded dispatcher costs a row on a turn page,
+    // never the lane's work.
+    if let (Some((store, id)), Some(parent)) = (execution.as_ref(), spec.dispatched_by) {
+        let _ = store.set_execution_parent(*id, parent);
+    }
 
     let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
     let forwarder = spawn_forwarder(
@@ -1069,6 +1098,12 @@ pub(crate) fn spawn_prompt_lane(
         purpose: first_sentence(&text),
         notify_title: format!("reply ready — {}", prompt_line(&text, 40)),
         prompt: text,
+        // A person typed this into the composer, so no turn dispatched it.
+        // The schema must not invent a parent out of whichever lead turn
+        // happened to be open (#4628). That holds for both of this
+        // function's callers: the drain's backlog and the agents page's
+        // `SpawnLane` are each a person's own words, never a delegation.
+        dispatched_by: None,
     };
     let (generation, tap) = subs.started(&lane, stop_tx, pause_tx, spec.clone());
     spawn(
@@ -1192,7 +1227,7 @@ pub(crate) fn task_lane(task_id: &str) -> String {
 /// the caller owns the pending queue).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_task_worker(
-    req: &SpawnRequest,
+    queued: &QueuedSpawn,
     subs: &mut SubSessions,
     cfg: &Config,
     budget_limit: Option<f64>,
@@ -1201,6 +1236,7 @@ pub(crate) fn spawn_task_worker(
     in_tx: &UnboundedSender<Inbound>,
     sup_tx: &UnboundedSender<SupervisorMsg>,
 ) {
+    let req = &queued.request;
     let lane = task_lane(&req.task_id);
     let (stop_tx, stop_rx) = oneshot::channel();
     let (pause_tx, pause_rx) = watch::channel(false);
@@ -1214,6 +1250,7 @@ pub(crate) fn spawn_task_worker(
             req.task_id,
             prompt_line(&req.subject, 40)
         ),
+        dispatched_by: queued.dispatched_by,
     };
     let (generation, tap) = subs.started(&lane, stop_tx, pause_tx, spec.clone());
     spawn(
