@@ -331,7 +331,7 @@ pub(crate) fn journal_preimages(
             continue;
         };
         match event {
-            AgentEvent::ToolStart { call } => {
+            AgentEvent::ToolStart { call, .. } => {
                 out.tool_calls.insert(call.call_id.clone(), call);
             }
             AgentEvent::ToolResult {
@@ -609,7 +609,14 @@ mod tests {
 
         // The journal: the events whose preimages the tool blocks resolve from.
         store
-            .record_event(id, 0, &AgentEvent::ToolStart { call: call.clone() })
+            .record_event(
+                id,
+                0,
+                &AgentEvent::ToolStart {
+                    call: call.clone(),
+                    sub_agent_id: None,
+                },
+            )
             .unwrap();
         store
             .record_event(
@@ -620,6 +627,7 @@ mod tests {
                     output: output.clone(),
                     duration_ms: 5,
                     speculated: false,
+                    sub_agent_id: None,
                 },
             )
             .unwrap();
@@ -713,6 +721,7 @@ mod tests {
                     output: original,
                     duration_ms: 5,
                     speculated: false,
+                    sub_agent_id: None,
                 },
             )
             .unwrap();
@@ -810,6 +819,7 @@ mod tests {
                     output: journaled,
                     duration_ms: 5,
                     speculated: false,
+                    sub_agent_id: None,
                 },
             )
             .unwrap();

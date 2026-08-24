@@ -82,7 +82,7 @@ pub(crate) fn entries(
                               'tool_result', 'speculation_discarded',
                               'turn_parked', 'turn_woken', 'file_change',
                               'candidate_delivery', 'turn_complete',
-                              'steering_withheld', 'step_usage')
+                              'steering_withheld', 'step_usage', 'sub_agent')
          ORDER BY seq ASC";
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
@@ -405,6 +405,53 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
             }
             if let Some(text) = payload["output_text"].as_str() {
                 set_journal_body(&mut out, text, full);
+            }
+        }
+        // The sub-agent bracket (#4627). A child's own narration is dropped at
+        // the child/parent boundary by design — `Stage`, `Text`, `Reasoning`
+        // and `BudgetTick` never cross (`stella_protocol::subagent_event`) —
+        // so this pair is the ONLY record on the stream that a delegate ran at
+        // all. Without it a turn that fanned out five children read as the
+        // parent doing everything itself, with an unexplained wall-clock gap
+        // between two tool rows.
+        //
+        // The bracket rides one level down, under its own discriminant:
+        // `{"type":"sub_agent","phase":{"phase":"started",…}}`, which is the
+        // shape [`crate::turn_agents`] already reads.
+        "sub_agent" => {
+            let bracket = &payload["phase"];
+            for key in [
+                "phase",
+                "agent_id",
+                "instruction_preview",
+                "budget_usd",
+                "write_access",
+                "depth",
+                "effort",
+                "status",
+                "reason",
+                "cost_usd",
+                "steps",
+                "absorbed_messages",
+            ] {
+                if !bracket[key].is_null() {
+                    out[key] = bracket[key].clone();
+                }
+            }
+            // Two different clips, so two different keys. `report_truncated`
+            // is the child's own: whether its report was clamped to the spec's
+            // character cap before it was ever journaled. `truncated` is this
+            // transport's, set by `set_journal_body` below — collapsing them
+            // would let a reader who asked for `?full=1` still read
+            // "truncated" and have no way to tell which cut they were seeing.
+            if !bracket["truncated"].is_null() {
+                out["report_truncated"] = bracket["truncated"].clone();
+            }
+            // The child's report is the one piece of its transcript that ever
+            // reaches the parent, so it takes the same body policy as every
+            // other row.
+            if let Some(summary) = bracket["summary"].as_str() {
+                set_journal_body(&mut out, summary, full);
             }
         }
         _ => {}
