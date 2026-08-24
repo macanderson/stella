@@ -170,8 +170,7 @@ pub fn handle_key(
 }
 
 /// The secondary nav line: the two pane labels (UPPERCASE, like the deck's tab
-/// labels), active in the accent cyan, plus the switch hint — the same line
-/// [`crate::views::agents`] draws, so one nav is learned, not two.
+/// labels), active in the accent cyan, plus the switch hint.
 fn render_pane_nav(pane: SettingsPane, area: Rect, buf: &mut Buffer) {
     if area.height == 0 {
         return;

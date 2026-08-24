@@ -19,12 +19,14 @@
 //! in `tests/v2_status_bar.rs` is what says so.
 
 pub mod approval;
+pub mod agents_page;
 pub mod budget_card;
 pub mod dispatch_card;
 pub mod fields;
 pub mod frame;
 pub mod graph;
 pub mod graph_tab;
+pub mod installed;
 pub mod models_card;
 pub mod plan_card;
 pub mod pulse;
