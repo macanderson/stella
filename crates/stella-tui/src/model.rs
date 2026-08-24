@@ -640,10 +640,10 @@ impl SessionModel {
                 // than emitting a decision (#3861). While a gate is open, the
                 // engine is awaiting the very call the gate is parked inside,
                 // so a failing `task_start` here IS that refusal: retire the
-                // latch instead of leaving the lane reading `waiting input`
-                // while the model re-plans, and cancel the plan the rail is
-                // still calling `pending approval`. A new proposal reopens
-                // both (`Plan::propose`).
+                // latch instead of leaving `fleet_dashboard` holding the lane
+                // `Blocked` while the model re-plans, and cancel the plan the
+                // rail is still calling `pending approval`. A new proposal
+                // reopens both (`Plan::propose`).
                 if plan_gate_refused && self.pending_scope_review.take().is_some() {
                     self.plan.cancel();
                 }
