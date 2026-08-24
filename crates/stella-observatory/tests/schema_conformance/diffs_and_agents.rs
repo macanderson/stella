@@ -190,3 +190,55 @@ fn the_turn_page_folds_a_delegates_bracket_and_metering_against_the_real_schema(
     assert!(a["started_ts"].is_string(), "{out}");
     assert!(a["finished_ts"].is_string(), "{out}");
 }
+
+/// **The witness for #4627.** The transcript itself places the bracket where
+/// it happened, against the real migrated schema.
+///
+/// Fails before this change: `sub_agent` was absent from the journal route's
+/// event-type allowlist, so `/api/execution-journal` returned neither edge and
+/// a turn that fanned out delegates read as the parent doing everything
+/// itself, with an unexplained wall-clock gap between two tool rows. The
+/// sub-agents panel above lists the same children, but a list beside the
+/// timeline cannot say *when* in the turn each one ran.
+#[test]
+fn the_transcript_journal_places_the_sub_agent_bracket_where_it_happened() {
+    let workspace = real_store_workspace();
+    let journal: serde_json::Value =
+        serde_json::from_slice(&respond(workspace.path(), "/api/execution-journal?id=1").body)
+            .expect("json");
+    let brackets: Vec<&serde_json::Value> = journal
+        .as_array()
+        .expect("journal")
+        .iter()
+        .filter(|e| e["type"] == "sub_agent")
+        .collect();
+    assert_eq!(brackets.len(), 2, "both edges, in order: {journal}");
+
+    let started = brackets[0];
+    assert_eq!(started["phase"], "started", "{started}");
+    assert_eq!(started["agent_id"], "search-1", "{started}");
+    assert_eq!(
+        started["instruction_preview"], "find the retry policy",
+        "{started}"
+    );
+    assert_eq!(started["effort"], "high", "{started}");
+    assert_eq!(started["budget_usd"], 0.25, "{started}");
+    assert_eq!(started["depth"], 1, "{started}");
+
+    let finished = brackets[1];
+    assert_eq!(finished["phase"], "finished", "{finished}");
+    assert_eq!(finished["status"], "completed", "{finished}");
+    assert_eq!(finished["cost_usd"], 0.004, "{finished}");
+    assert_eq!(finished["steps"], 1, "{finished}");
+    assert_eq!(finished["absorbed_messages"], 5, "{finished}");
+    // The child's report is the one piece of its transcript that crosses the
+    // boundary, and it arrives as this row's body.
+    assert_eq!(
+        finished["body"], "retry policy lives in retry.rs",
+        "{finished}"
+    );
+    // Two clips, two keys: `report_truncated` is the child's own clamp to the
+    // spec's character cap, `truncated` is this transport's body clip.
+    assert_eq!(finished["report_truncated"], false, "{finished}");
+    assert_eq!(finished["truncated"], false, "{finished}");
+}
