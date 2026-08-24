@@ -12,7 +12,12 @@ pub(super) fn deck_slash_commands(
     let mut commands: Vec<SlashCommand> = DECK_BUILTINS
         .iter()
         .map(|(name, description, domain)| {
-            SlashCommand::new(*name, *description).in_domain(*domain)
+            let command = SlashCommand::new(*name, *description).in_domain(*domain);
+            if is_sideband(name) {
+                command.sideband()
+            } else {
+                command
+            }
         })
         .collect();
     let customs = custom.slash_entries(&commands);
@@ -155,6 +160,36 @@ pub(super) fn deck_reserved() -> Vec<&'static str> {
     let mut reserved: Vec<&'static str> = DECK_BUILTINS.iter().map(|(name, ..)| *name).collect();
     reserved.push("/models");
     reserved
+}
+
+/// The **queue-free** commands: submitted, they leave the deck as
+/// [`stella_tui::WorkspaceInput::Command`] and run at once beside the prompt
+/// queue — mid-turn included — with their replies on the transcript-only
+/// `ShellEvent` channel (`command_side`). Membership is the driver's call
+/// (the deck reads it off the vocabulary's `sideband` flag), and the test is
+/// whether the command touches the turn, the backlog, or the conversation:
+/// `/export` reads the store, `/info` lists the catalog, `/help` opens an
+/// overlay — none of them belongs behind a running turn.
+///
+/// The exceptions stay queued on purpose: `/clear` cancels the turn,
+/// `/init`/`/reload`/`/profile`/`/add-dir` mutate the live session, and a
+/// custom (⚡) command *is* a prompt once expanded. **`/model` and `/agent`
+/// are exceptions for the same reason** — since #4617 they switch the
+/// running session (`session_override` rebuilds the provider and rewrites
+/// the system message), so they are as turn-coupled as `/clear` is, and
+/// routing them queue-free would take the switch away from the loop that
+/// owns that state.
+pub(super) const SIDEBAND: &[&str] = &[
+    "/help", "/info",
+    // `/info`'s pre-rename name, still routed (#4617) — a queue-free
+    // command must not become queued just because the reader typed the
+    // name they learned.
+    "/models", "/theme", "/export", "/donate",
+];
+
+/// Whether `head` (the first `/`-token of a submission) is queue-free.
+pub(crate) fn is_sideband(head: &str) -> bool {
+    SIDEBAND.contains(&head)
 }
 
 // SKILLS tab: driver-side ops (the deck routes `WorkspaceInput::Skill`)
@@ -600,6 +635,52 @@ pub(super) fn handle_skills_input(
                         .await;
                 let _ = in_tx.send(skills_snapshot_created(&root, Some(status), created));
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod sideband_tests {
+    use super::*;
+
+    /// Every queue-free name is a **reserved** deck name, and the
+    /// turn-coupled exceptions are not on the list.
+    ///
+    /// Reserved rather than "a builtin": `/models` is `/info`'s pre-rename
+    /// name (#4617), still routed and still reserved, and it must keep the
+    /// queue-free answer the name it was renamed to has — otherwise the same
+    /// command costs a queue slot depending on which name the reader learned.
+    #[test]
+    fn the_sideband_list_is_a_subset_of_the_reserved_names() {
+        let reserved = deck_reserved();
+        for name in SIDEBAND {
+            assert!(
+                reserved.contains(name),
+                "{name} is queue-free but not a reserved deck name"
+            );
+        }
+        // `/model` and `/agent` are on this list, not the queue-free one:
+        // since #4617 each switches the running session's model, which is
+        // state only the driver loop owns.
+        for name in [
+            "/clear", "/init", "/reload", "/profile", "/add-dir", "/model", "/agent",
+        ] {
+            assert!(!is_sideband(name), "{name} is turn-coupled by design");
+        }
+    }
+
+    /// The deck's vocabulary carries the flag, so the routing decision is
+    /// declared once here and read everywhere.
+    #[test]
+    fn the_vocabulary_carries_the_sideband_flag() {
+        let commands = deck_slash_commands(&crate::extensions::CustomExtensions::default());
+        for c in &commands {
+            assert_eq!(
+                c.sideband,
+                is_sideband(&c.name),
+                "{} disagrees with the SIDEBAND list",
+                c.name
+            );
         }
     }
 }
