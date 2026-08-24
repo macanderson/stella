@@ -196,24 +196,13 @@ impl JournalPruneReport {
 /// they disagree — and they will, because nothing can update both atomically.
 pub const CHECKPOINT_BLOB: &str = "checkpoint.json";
 
-/// The reserved blob holding the session's staleness map — `path → digest this
-/// session last saw`, the state behind the no-clobber guarantee.
-///
-/// Written in the same commit as [`CHECKPOINT_BLOB`] and **not** retracted with
-/// it. The two have different lifetimes, and confusing them would quietly
-/// disarm the guard: a checkpoint describes one turn and must not outlive it,
-/// while the staleness map describes what this *session* has seen and has to
-/// outlive every turn in it. A session's second turn is exactly as entitled to
-/// the guarantee as its first.
-pub const OBSERVED_BLOB: &str = "observed.json";
-
 /// The reserved blob naming the staged pipeline the in-flight turn is running
 /// *inside*.
 ///
 /// A deliberately separate blob rather than a widened [`CHECKPOINT_BLOB`]:
 /// the checkpoint is the engine's own shape and the engine must not learn
 /// pipeline shapes (architecture invariant 1). It shares the checkpoint's
-/// lifetime instead of the staleness map's — a frame describes one turn's
+/// lifetime — a frame describes one turn's
 /// staging and is retracted by [`WorkJournal::clear_checkpoint`] along with
 /// the resume point, because a frame that outlived its turn would tell the
 /// next resume it is re-entering a pipeline that already finished.
@@ -304,7 +293,7 @@ impl WorkJournal {
     }
 
     /// Record `paths` as they stand on disk, plus any `blobs` (in-memory
-    /// content that has no file — the turn checkpoint, the staleness map),
+    /// content that has no file — the turn checkpoint, the pipeline frame),
     /// as one commit on this session's ref.
     ///
     /// A blob whose content is `None` is *removed* from the record. That is
@@ -454,8 +443,7 @@ impl WorkJournal {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
     }
 
-    /// Write the in-flight turn's resume point, replacing any earlier one, and
-    /// the staleness map that belongs with it.
+    /// Write the in-flight turn's resume point, replacing any earlier one.
     ///
     /// One commit per step boundary. Measurably dearer than an atomic file
     /// write — about 27ms against 8ms for a transcript-sized snapshot — and
@@ -464,41 +452,25 @@ impl WorkJournal {
     /// changes it describes share one commit graph instead of needing to be
     /// reconciled across two stores.
     ///
-    /// `observed` rides along rather than getting a commit of its own, which is
-    /// what makes persisting it free. A step boundary is also the *right*
-    /// moment for it: the map is updated by reads as well as writes, and a
-    /// scheme that saved it only when a file changed would drop every read
-    /// since the last mutation — the exact loss that leaves a resumed session
-    /// acting on content it believes it knows with the guard no longer watching
-    /// (see `ToolRegistry::restore_observed`). `None` leaves whatever was last
-    /// written in place.
+    /// `pipeline` rides along with the checkpoint's lifetime: it names the
+    /// staged pipeline this turn is running inside ([`PIPELINE_BLOB`]), and a
+    /// resume that read a frame from one commit and a transcript from another
+    /// could restore a pipeline the transcript was never part of. `None`
+    /// writes no frame, which is exactly what a plain engine turn is.
     ///
-    /// `pipeline` rides along for the same reason and with the *checkpoint's*
-    /// lifetime rather than the map's: it names the staged pipeline this turn
-    /// is running inside ([`PIPELINE_BLOB`]), and a resume that read a frame
-    /// from one commit and a transcript from another could restore a pipeline
-    /// the transcript was never part of. `None` writes no frame, which is
-    /// exactly what a plain engine turn is.
-    pub fn record_checkpoint(
-        &self,
-        json: &str,
-        observed: Option<&str>,
-        pipeline: Option<&str>,
-    ) -> Result<String> {
+    /// A durable read-state map used to be reserved beside these two
+    /// (`observed.json`) so a resumed session could keep the file coverage it
+    /// earned before the interruption. Nothing ever wrote or restored it, and
+    /// the guard it was meant to feed keys on in-process line coverage, not a
+    /// digest (`stella-tools`' `write_file`, #3738) — so the parameter was
+    /// removed rather than left claiming a guarantee that did not exist
+    /// (#3780). Restoring coverage across a resume is a design of its own.
+    pub fn record_checkpoint(&self, json: &str, pipeline: Option<&str>) -> Result<String> {
         let mut blobs: Vec<(&str, Option<&str>)> = vec![(CHECKPOINT_BLOB, Some(json))];
-        if let Some(observed) = observed {
-            blobs.push((OBSERVED_BLOB, Some(observed)));
-        }
         if let Some(pipeline) = pipeline {
             blobs.push((PIPELINE_BLOB, Some(pipeline)));
         }
         self.record(&[], &blobs, "stella: turn checkpoint")
-    }
-
-    /// The session's staleness map as of this session's tip, or `None` when
-    /// this session never observed a file.
-    pub fn observed(&self) -> Option<String> {
-        self.blob_at_tip(OBSERVED_BLOB)
     }
 
     /// The staged-pipeline frame the interrupted turn was running inside, or
@@ -1074,7 +1046,7 @@ mod tests {
             .expect("clearing an absent checkpoint is not an error");
 
         let json = r#"{"version":1,"step":3,"messages":[],"nested":{"quote":"\"x\""}}"#;
-        journal.record_checkpoint(json, None, None).unwrap();
+        journal.record_checkpoint(json, None).unwrap();
         assert_eq!(
             journal.checkpoint().as_deref(),
             Some(json),
@@ -1083,7 +1055,7 @@ mod tests {
 
         // Rewriting replaces rather than appends: one live turn, one point.
         let second = r#"{"version":1,"step":4}"#;
-        journal.record_checkpoint(second, None, None).unwrap();
+        journal.record_checkpoint(second, None).unwrap();
         assert_eq!(journal.checkpoint().as_deref(), Some(second));
 
         journal.clear_checkpoint().unwrap();
@@ -1109,9 +1081,7 @@ mod tests {
         journal
             .record(&["kept.txt".into()], &[], "the agent's write")
             .unwrap();
-        journal
-            .record_checkpoint(r#"{"step":2}"#, None, None)
-            .unwrap();
+        journal.record_checkpoint(r#"{"step":2}"#, None).unwrap();
 
         journal.clear_checkpoint().unwrap();
 

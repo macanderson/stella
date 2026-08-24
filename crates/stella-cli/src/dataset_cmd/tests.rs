@@ -34,6 +34,7 @@ fn edit_events() -> Vec<AgentEvent> {
             call_seq: 0,
             role: ModelCallRole::Worker,
             provider: "zai".into(),
+            upstream_provider: None,
             model: "glm-5.2".into(),
             blocks: Vec::new(),
             effective_budget_tokens: 1000,

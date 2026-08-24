@@ -655,6 +655,10 @@ pub(crate) const STEP_MANIFEST_DDL: &str = "CREATE TABLE IF NOT EXISTS step_mani
 /// `stall_seconds_requested` is the stall rung's own number (v30, #3621): the
 /// pure-`sleep` seconds the turn had asked for as of this step. NULL is "this
 /// emitter did not classify", never zero seconds.
+/// `upstream_provider` is the vendor a gateway routed the call to (v34,
+/// #3054): for a gateway call `provider` is always the gateway's own id
+/// (`openrouter`), so without this column no stored receipt could say who
+/// served the call. NULL on direct endpoints and on every pre-v34 row.
 /// PRIMARY KEY (execution_id, turn_instance, step, call_seq): one receipt per
 /// model call, not per step — a step can carry the worker call plus the
 /// auxiliary calls that ride it (v13).
@@ -664,6 +668,7 @@ pub(crate) const STEP_RECEIPT_DDL: &str = "CREATE TABLE IF NOT EXISTS step_recei
        step INTEGER NOT NULL,
        call_seq INTEGER NOT NULL DEFAULT 0,
        provider TEXT NOT NULL,
+       upstream_provider TEXT,
        model TEXT NOT NULL,
        call_role TEXT NOT NULL,
        effective_budget_tokens INTEGER NOT NULL,
