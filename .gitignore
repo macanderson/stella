@@ -132,8 +132,17 @@ dist/
 build/
 out/
 
-# Package manager
-node_modules/
+# Package manager.
+#
+# No trailing slash, and that is the whole point (#4608). `node_modules/`
+# matches a directory only; a *symlink* named node_modules is a file to git, so
+# the trailing-slash form let one be committed — #4595 tracked
+# `arenabench/ui/node_modules` as mode 120000 pointing at an absolute path on
+# the author's machine, dangling in every other clone and in CI. `no-scratch`
+# could not see it either: that guard asserts no tracked file matches a
+# .gitignore rule, and this rule did not match. The bare form matches both
+# shapes, so the guard now fails on a recurrence.
+node_modules
 
 # Python (for bench/harbor_adapter)
 __pycache__/
