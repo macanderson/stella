@@ -278,7 +278,7 @@ fn render_status(state: &McpTabState, area: Rect, buf: &mut Buffer) {
 ///
 /// Blank while the inspector is up. The popup is centered and shorter than the
 /// pane, so this row stays uncovered — and the inspector is modal
-/// ([`crate::deck_ui::mcp_keys`] returns before every mode), so `a auth` and
+/// (`crate::deck_ui::mcp_keys` returns before every mode), so `a auth` and
 /// `x remove` would be advertised at the moment they do nothing. Its own verbs
 /// are in its border title, which is where an overlay's legend belongs.
 fn render_keys(state: &McpTabState, area: Rect, buf: &mut Buffer) {
