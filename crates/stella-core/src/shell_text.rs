@@ -307,9 +307,27 @@ const WRITING_GIT_SUBCOMMANDS: &[&str] = &[
     "switch",
 ];
 
-/// The words of every segment of `command` that matches a shape known to
-/// write to the filesystem — the candidate names of what it wrote — or an
-/// empty vector when no segment does.
+/// What one shell command's text says about the filesystem.
+///
+/// Two answers rather than one, because a path-matched caller can act on the
+/// first and is structurally blind to the second (#4444).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ShellWrites {
+    /// The words of every segment that matches a writing shape — the candidate
+    /// names of what it wrote — or empty when no segment writes. See
+    /// [`shell_writes`] for what a match does and does not claim.
+    pub named: Vec<String>,
+    /// Some writing segment named no target at all, so [`Self::named`] cannot
+    /// contain what it rewrote: `cargo fmt` over the workspace, `git stash`,
+    /// `git reset --hard`, `git checkout .`.
+    ///
+    /// A caller matching [`Self::named`] against the paths it holds concludes
+    /// "nothing of mine moved" for every one of those, which is the unsafe
+    /// direction — the write is real and its target is the whole tree.
+    pub sweeping: bool,
+}
+
+/// Read `command` as text and report what it says about the filesystem.
 ///
 /// **This is a text shape, not a resolution.** Nothing here decides which
 /// file was written; it decides that *a* file was, and hands back the words a
@@ -318,7 +336,7 @@ const WRITING_GIT_SUBCOMMANDS: &[&str] = &[
 /// this to invalidate cached knowledge must treat a match as "this may have
 /// changed" and take the over-invalidating side of every doubt (#3827).
 ///
-/// Three shapes qualify, each one a whole segment:
+/// Three shapes make a segment a write, each one a whole segment:
 ///
 /// - an output redirection — a word beginning with `>`, which covers `>`,
 ///   `>>` and both glued to their target. A leading file descriptor (`2>`)
@@ -330,21 +348,94 @@ const WRITING_GIT_SUBCOMMANDS: &[&str] = &[
 ///   `sed`/`perl` carrying an in-place flag (`-i`, `-i.bak`);
 /// - `git` with a subcommand in `WRITING_GIT_SUBCOMMANDS`, or `cargo fmt`.
 ///
-/// What it deliberately misses, because no reading of the command text can
-/// see it: a build or generator step that rewrites a file as a side effect
-/// (`make`, `cargo build` on a `build.rs` that writes into the tree), and a
-/// mutation whose target is named by a directory or by nothing at all
-/// (`git checkout .`, `cargo fmt` over the whole workspace) — those return
-/// their own words, which name no digested path, so a caller matching on
-/// paths will not invalidate anything (#4444).
+/// A writing segment that names no candidate target sets
+/// [`ShellWrites::sweeping`] instead of merely contributing its own words,
+/// because those words are the command and its flags and a path-matched caller
+/// gets nothing from them.
+///
+/// What it still misses, because no reading of the command text can see it: a
+/// step that rewrites files as a side effect of doing something else — `make`,
+/// `cargo build` over a `build.rs` that writes into the tree, `./scripts/regen.sh`.
+/// Those match no writing shape at all, so they set neither answer.
 #[must_use]
-pub fn mutating_segment_words(command: &str) -> Vec<String> {
+pub fn shell_writes(command: &str) -> ShellWrites {
     let words = shell_words(command);
-    segments(&words)
+    let writing: Vec<&[String]> = segments(&words)
         .into_iter()
         .filter(|segment| segment_writes(segment))
-        .flat_map(<[String]>::to_vec)
-        .collect()
+        .collect();
+    ShellWrites {
+        sweeping: writing
+            .iter()
+            .any(|segment| !segment_names_a_target(segment)),
+        named: writing.into_iter().flat_map(<[String]>::to_vec).collect(),
+    }
+}
+
+/// `git` subcommands that rewrite whatever a ref or a patch happens to
+/// contain, so no word of the command can be naming what moved. The rest of
+/// [`WRITING_GIT_SUBCOMMANDS`] — `checkout`, `mv`, `restore`, `rm`, `switch` —
+/// accept a pathspec and are read through [`segment_names_a_target`]'s general
+/// rule, which is why `git merge main` is here and `git mv a.rs b.rs` is not:
+/// `main` is a word that looks like a target and is not one.
+const REF_WISE_GIT_SUBCOMMANDS: &[&str] = &[
+    "am",
+    "apply",
+    "cherry-pick",
+    "clean",
+    "merge",
+    "pull",
+    "rebase",
+    "reset",
+    "revert",
+    "stash",
+];
+
+/// Whether a writing segment spells a target a path-matched caller could
+/// recognise.
+///
+/// The `git`/`cargo` verb is skipped before the scan, or `git stash` would
+/// name `stash` as the file it wrote.
+fn segment_names_a_target(segment: &[String]) -> bool {
+    let mut rest = segment
+        .iter()
+        .skip_while(|word| is_assignment_word(word))
+        .map(String::as_str);
+    let Some(command) = rest.next().map(basename) else {
+        return false;
+    };
+    let mut args = rest;
+    let subcommand = if matches!(command, "git" | "cargo") {
+        args.next()
+    } else {
+        None
+    };
+    if command == "git" && subcommand.is_some_and(|sub| REF_WISE_GIT_SUBCOMMANDS.contains(&sub)) {
+        return false;
+    }
+    args.any(word_could_name_a_file)
+}
+
+/// Whether one argument could be the file a writing segment rewrote.
+///
+/// Deliberately narrow, and narrow in the direction that costs a false
+/// *sweep* rather than a false confinement: a word carrying neither `/` nor
+/// `.` is a ref, a flag or a subcommand far more often than a path, and
+/// reading `main` in `git checkout main` as a target is what would let a
+/// branch switch pass for a write confined to one file. A bare directory
+/// (`.`, `..`, a trailing `/`) is excluded for the same reason — it names
+/// everything under it, which is precisely what a path match cannot see.
+///
+/// A leading redirection is stripped, so `> out.rs` and `>out.rs` read alike.
+fn word_could_name_a_file(word: &str) -> bool {
+    let word = word.trim_start_matches('>');
+    !word.is_empty()
+        && !word.starts_with('-')
+        && !is_assignment_word(word)
+        && word != "."
+        && word != ".."
+        && !word.ends_with('/')
+        && (word.contains('/') || word.contains('.'))
 }
 
 /// Whether one command-with-arguments matches a writing shape. The command
@@ -395,9 +486,7 @@ pub fn basename(word: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        bare_sleep_seconds, basename, is_operator_word, mutating_segment_words, shell_words,
-    };
+    use super::{bare_sleep_seconds, basename, is_operator_word, shell_words, shell_writes};
 
     #[test]
     fn shell_words_splits_operators_attached_to_a_word_in_core() {
@@ -530,15 +619,90 @@ mod tests {
             "RUST_LOG=debug rustfmt src/alpha.rs",
         ] {
             assert!(
-                !mutating_segment_words(command).is_empty(),
+                !shell_writes(command).named.is_empty(),
                 "{command} writes to the filesystem"
             );
         }
         assert_eq!(
-            mutating_segment_words("cargo test && mv src/alpha.rs src/beta.rs"),
+            shell_writes("cargo test && mv src/alpha.rs src/beta.rs").named,
             ["mv", "src/alpha.rs", "src/beta.rs"],
             "only the writing segment's words come back"
         );
+    }
+
+    /// **Witness (#4444).** A write that names no target is reported as one,
+    /// so a path-matched caller stops reading "no word of mine appears" as
+    /// "nothing of mine moved".
+    #[test]
+    fn a_write_that_names_no_target_is_reported_as_sweeping() {
+        for command in [
+            "cargo fmt",
+            "cargo fmt --all",
+            "rustfmt",
+            "git checkout .",
+            "git stash",
+            "git reset --hard",
+            "git reset --hard HEAD~1",
+            "git clean -fd",
+            "git pull",
+            "git merge main",
+            "git rebase origin/main",
+            "git apply /tmp/fix.patch",
+            "git checkout main",
+            "cargo test && git checkout .",
+        ] {
+            assert!(
+                shell_writes(command).sweeping,
+                "{command} rewrites files it never spelled"
+            );
+        }
+    }
+
+    /// The counter-test: a write confined to the paths it spells must stay
+    /// confined, or the sweep swallows the whole rule it was added beside.
+    #[test]
+    fn a_write_that_spells_its_target_is_not_sweeping() {
+        for command in [
+            "sed -i 's/a/b/' src/alpha.rs",
+            "cargo fmt -- src/alpha.rs",
+            "rustfmt src/alpha.rs",
+            "mv src/alpha.rs src/beta.rs",
+            "cp src/beta.rs src/alpha.rs",
+            "rm src/alpha.rs",
+            "git checkout src/alpha.rs",
+            "git checkout -- src/alpha.rs",
+            "git restore src/alpha.rs",
+            "cat > src/alpha.rs",
+            "echo x >>src/alpha.rs",
+            "cargo test",
+            "git status",
+        ] {
+            assert!(
+                !shell_writes(command).sweeping,
+                "{command} names the file it wrote"
+            );
+        }
+    }
+
+    /// What the narrow reading of a target word deliberately over-reads, so
+    /// the scope of the decision is recorded rather than implied: a written
+    /// path carrying neither `/` nor `.` is not recognised as a target, and
+    /// the segment reads as sweeping. Over-invalidating is the safe
+    /// direction — `git checkout main` is a branch switch, and a rule loose
+    /// enough to call `main` a file would call that write confined.
+    #[test]
+    fn a_dotless_target_word_reads_as_a_sweep() {
+        for command in ["touch Makefile", "rm Makefile", "sed -i 's/a/b/' Makefile"] {
+            let writes = shell_writes(command);
+            assert!(
+                writes.sweeping,
+                "{command}: a dotless target is not recognised as one"
+            );
+            assert!(
+                writes.named.iter().any(|word| word == "Makefile"),
+                "{command}: it is still handed to the path match"
+            );
+        }
     }
 
     /// The direction that costs something: a read-only command classified as
@@ -560,7 +724,7 @@ mod tests {
             "cat src/alpha.rs",
         ] {
             assert!(
-                mutating_segment_words(command).is_empty(),
+                shell_writes(command).named.is_empty(),
                 "{command} must not read as a write"
             );
         }

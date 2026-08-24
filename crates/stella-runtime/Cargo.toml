@@ -46,9 +46,19 @@ futures-util = { workspace = true }
 # `doc:pipeline-as-plugins` §5 commitment 2 forbids. It replaced the `/bin/sh`
 # scripts that made those tests `#[cfg(unix)]`, so `tests/` locate it with
 # `env!("CARGO_BIN_EXE_wrapper-plugin-fixture")` and cargo builds it for them.
+#
+# Under `tests/` rather than the idiomatic `src/bin/`, and
+# `tests/no_ambient_reads.rs` is what decides that: it reads everything under
+# `src/` and refuses a `std::env::var`, because a process global is the same
+# for all N sessions a host assembles in one process. This plugin is a separate
+# process whose `env-probe` mode exists to report the environment it received,
+# so it has to read one. Keeping it out of the library says that; teaching the
+# rule an exemption would not. `src/` stays exactly what that guard means by
+# "the crate's own sources". Cargo auto-discovers only `tests/*.rs` and
+# `tests/*/main.rs`, so this file is a bin and nothing else.
 [[bin]]
 name = "wrapper-plugin-fixture"
-path = "src/bin/wrapper-plugin-fixture.rs"
+path = "tests/fixtures/wrapper-plugin-fixture.rs"
 
 # A test fixture, never a shipped surface — keep it out of dist.
 [package.metadata.dist]

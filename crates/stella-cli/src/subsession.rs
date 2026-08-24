@@ -807,6 +807,76 @@ pub(crate) fn spawn(
     });
 }
 
+/// The work-journal key a lane's durability binds under.
+///
+/// NOT the `{session}/{lane}` shape [`agent::tool_stack::policy_stack`]'s
+/// claim principal uses below — `WorkJournal::open`'s own contract is that
+/// `session` "must be filesystem- and ref-safe", and a `/` is exactly the one
+/// character that is ref-safe (nested ref paths are ordinary git) but NOT
+/// filesystem-safe: `index_file_path` builds the index path as
+/// `store_root.join(format!("{workspace_id}.{session}.index"))`, and a `/`
+/// embedded in `session` there is parsed as a path separator into a
+/// subdirectory nothing creates — so `record_checkpoint` fails, and
+/// `JournalCheckpointSink::persist`'s best-effort contract swallows that
+/// error silently. `__` is neither a filesystem nor a git-ref special
+/// character, so it is safe on both axes at once.
+///
+/// `:` is replaced too, for the ref-name half of the same contract: every
+/// lane id this file mints carries one (`req:<n>`, `sub:<task-id>`), so
+/// this is not a defensive edge case — every lane hits both bytes, and an
+/// unsanitized key would make `bind_session` fail silently on every single
+/// one, defeating the whole feature with no visible symptom short of a kill
+/// actually losing a transcript.
+fn lane_journal_key(session_id: &str, lane: &str) -> String {
+    format!("{session_id}__{}", lane.replace(':', "-"))
+}
+
+/// A worker's initial messages: restored from a prior interrupted attempt on
+/// this exact lane key, or built fresh from `prompt`. The second element is a
+/// note for the lane's transcript when a restore happened, `None` for a fresh
+/// start.
+///
+/// Turn-boundary fidelity, like the deck's own resume of the lead
+/// (`session_persist::restore_conversation`): the system prompt is
+/// regenerated fresh (rules/config may have changed since the checkpoint was
+/// written), the transcript is not. This is deliberately NOT the deeper
+/// step-boundary fidelity `stella daemon resume` gives the lead — no
+/// completed step is re-run, but the mid-completion step the crash caught is
+/// re-asked for as a fresh turn rather than continued exactly where the
+/// engine left off, which is the same trade every other interactive surface
+/// already makes.
+///
+/// `checkpoint_json` that this build cannot parse degrades to fresh, the same
+/// "not preferred" rule `restore_conversation` documents — never a transcript
+/// with a system prompt and no user turn, which is what naively feeding an
+/// unparsed checkpoint's absence into "restore" would produce.
+fn initial_messages(
+    checkpoint_json: Option<&str>,
+    system_prompt: String,
+    prompt: &str,
+    workspace_root: &std::path::Path,
+) -> (Vec<CompletionMessage>, Option<String>) {
+    match checkpoint_json.map(stella_core::step::Checkpoint::from_json) {
+        Some(Ok(checkpoint)) => {
+            let step = checkpoint.step;
+            (
+                crate::session_persist::restore_messages(checkpoint.messages, &system_prompt),
+                Some(format!(
+                    "resuming an earlier attempt at this lane, interrupted at step {step} — \
+                     its completed steps are in the transcript and will not be re-run"
+                )),
+            )
+        }
+        Some(Err(_)) | None => (
+            vec![
+                CompletionMessage::system(system_prompt),
+                crate::attachments::user_message_in(prompt, workspace_root),
+            ],
+            None,
+        ),
+    }
+}
+
 /// One worker session, on the calling thread's runtime: fresh provider +
 /// registry + budget, its own execution row linked to the deck session, the
 /// shared persist-and-forward event path, one raw engine turn raced against
@@ -854,10 +924,42 @@ async fn run_worker(
         cfg,
     )
     .await;
-    let mut messages = vec![
-        CompletionMessage::system(system_prompt),
-        crate::attachments::user_message_in(&spec.prompt, &cfg.workspace_root),
-    ];
+
+    // This lane's own durable record — never the lead's `cfg.durability`
+    // (#3233). `lane_journal_key` derives an id unique to this lane, so a
+    // killed worker's transcript survives independently of the lead's, and a
+    // later spawn on the SAME lane id (a task re-assigned after a crash, or
+    // the Restart verb) can find it.
+    let lane_durability = crate::durability::SessionDurability::default();
+    let lane_key = lane_journal_key(session_id, &spec.lane);
+    if let Some(warning) =
+        crate::durability::bind_session(&lane_durability, &cfg.workspace_root, &lane_key)
+    {
+        let _ = in_tx.send(Inbound::Event {
+            agent: spec.lane.clone(),
+            event: AgentEvent::Text {
+                text: format!("note: {warning}"),
+            },
+        });
+    }
+
+    // A checkpoint on THIS lane's own key means a prior spawn of it was
+    // killed mid-turn — re-enter it rather than starting over from
+    // `spec.prompt` and losing what ran.
+    let (mut messages, resume_note) = initial_messages(
+        lane_durability.checkpoint().as_deref(),
+        system_prompt,
+        &spec.prompt,
+        &cfg.workspace_root,
+    );
+    if let Some(note) = resume_note {
+        let _ = in_tx.send(Inbound::Event {
+            agent: spec.lane.clone(),
+            event: AgentEvent::Text {
+                text: format!("↻ {note}"),
+            },
+        });
+    }
     let mut budget = agent::build_budget_guard(budget_limit);
     budget.begin_turn();
     let dispatch_spend_usd = budget.session_spent_usd();
@@ -939,9 +1041,9 @@ async fn run_worker(
             &permitted,
             // Never `engine_config_for`: that attaches the LEAD session's
             // checkpoint sink, and this worker runs concurrently with the lead
-            // turn against the same `CHECKPOINT_BLOB` — see
+            // turn. `lane_durability` is this lane's own record instead — see
             // `subsession_engine_config_for`.
-            agent::subsession_engine_config_for(cfg),
+            agent::subsession_engine_config_for(cfg, &lane_durability),
             &TokioSleeper,
         )
         .with_calibration(&calibration)
