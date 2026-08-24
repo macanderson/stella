@@ -537,7 +537,7 @@ fn a_lane_stops_reading_blocked_once_its_card_is_answered() {
                 duration_ms: 400,
                 speculated: false,
                 sub_agent_id: None,
-            },
+            }),
         },
         now,
     );
