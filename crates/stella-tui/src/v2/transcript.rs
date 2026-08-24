@@ -753,9 +753,9 @@ fn touched_detail(touched: Option<Touched>) -> Vec<Span<'static>> {
     if touched.files > 1 {
         spans.push(Span::styled(format!(" · {} files", touched.files), dim));
     }
-    // Both halves or neither, exactly as an edit states them: the two numbers
-    // are one reading, and a measurement the emitter never took is no column
-    // rather than a zero (#4150, #4156).
+    // The two numbers are one reading, so an edit's rule applies here too:
+    // both or neither, and a measurement the emitter never took renders as no
+    // column rather than a zero (#4150, #4156).
     if let (Some(added), Some(removed)) = (touched.extent.added, touched.extent.removed) {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(

@@ -764,11 +764,10 @@ mod tests {
 
     /// What a file that builds an engine owes the turn-file ledger.
     ///
-    /// Three answers, and every engine-building file in this crate declares
-    /// one. The point is that "nothing" is not among them: a driver that pays
-    /// no boundary has to say *why*, and a driver blocked on something else has
-    /// to name the issue, which is invariant #10's discipline pointed at a
-    /// producer instead of a consumer.
+    /// Every engine-building file in this crate declares one, and "nothing" is
+    /// not among them: a driver that pays no boundary has to say *why*, and a
+    /// driver blocked on something else has to name the issue — AGENTS.md's
+    /// rule 10 pointed at a producer instead of a consumer.
     #[derive(Debug)]
     enum DriverPosture {
         /// Owns a turn's stream and pays both halves of the boundary. Which
@@ -797,9 +796,9 @@ mod tests {
     /// gap #3421 named: the next driver cannot be added silently, whatever it
     /// is called and wherever it lands.
     const ENGINE_DRIVERS: &[(&str, DriverPosture)] = &[
-        // `stella run` and the plain REPL. Reaches the opening seam through
-        // `persistence::attach_run_streams`, which is why `STREAM_OWNERS`
-        // names that file and this one names the driver's own.
+        // `stella run` and the plain chat loop. Reaches the opening seam
+        // through `persistence::attach_run_streams`, which is why
+        // `STREAM_OWNERS` names that file and this one names the driver's own.
         ("agent.rs", DriverPosture::Owns),
         ("command_deck.rs", DriverPosture::Owns),
         ("agent/goal.rs", DriverPosture::Owns),

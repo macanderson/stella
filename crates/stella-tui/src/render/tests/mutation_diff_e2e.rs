@@ -145,6 +145,7 @@ fn fold_shell(model: &mut SessionModel, command: &str, paths: &[(&str, &str)]) {
             name: "bash".into(),
             input: serde_json::json!({ "command": command }),
         },
+        sub_agent_id: None,
     });
     for (path, marker) in paths {
         model.apply(&AgentEvent::FileChange {
@@ -163,8 +164,13 @@ fn fold_shell(model: &mut SessionModel, command: &str, paths: &[(&str, &str)]) {
         },
         duration_ms: 120,
         speculated: false,
+        sub_agent_id: None,
     });
 }
+
+/// One of the fold drivers above, so a witness can run the same assertions
+/// against `bash` and `apply_edits` without spelling the type twice.
+type FoldCall = fn(&mut SessionModel, &[(&str, &str)]);
 
 /// Render the transcript's last entry against the model's own file state —
 /// the same two arguments the deck passes, sourced the same way.
@@ -433,10 +439,8 @@ fn a_head_whose_subject_names_no_path_states_its_own_scope() {
         ("crates/b/src/lib.rs", "charlie"),
         ("crates/c/src/lib.rs", "delta"),
     ];
-    let shell: &dyn Fn(&mut SessionModel, &[(&str, &str)]) =
-        &|model, paths| fold_shell(model, "codemod --all", paths);
-    let batch: &dyn Fn(&mut SessionModel, &[(&str, &str)]) = &fold_batch;
-    for (label, fold) in [("bash", shell), ("apply_edits", batch)] {
+    let shell: FoldCall = |model, paths| fold_shell(model, "codemod --all", paths);
+    for (label, fold) in [("bash", shell), ("apply_edits", fold_batch as FoldCall)] {
         let mut model = SessionModel::default();
         fold(&mut model, &files);
         let head = render_head(&model);
@@ -476,6 +480,7 @@ fn an_unmeasured_head_states_no_size() {
             name: "bash".into(),
             input: serde_json::json!({ "command": "cargo test -p stella-core" }),
         },
+        sub_agent_id: None,
     });
     let head = render_head(&model);
 
