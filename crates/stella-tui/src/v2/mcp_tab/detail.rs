@@ -1,5 +1,17 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! The MCP tab's ctrl+o inspector: everything known about one configured
 //! server, on one scrollable surface.
+//!
+//! ```text
+//! ╭ Stripe ─────────────────────────────── ↑↓ scroll · r look up · esc close ╮
+//! │ mcp  ·  http  ·  live                                                    │
+//! │   Payments, refunds, and balance reads.                                  │
+//! │   where ─────────────────────────────────────────────────────────────────│
+//! │     endpoint     https://mcp.stripe.com/v1                               │
+//! ╰──────────────────────────────────────────────────────────────────────────╯
+//! ```
 //!
 //! Four bands, in the order an operator asks the questions:
 //!
@@ -10,20 +22,23 @@
 //! 3. **How does it authenticate** — configured credential *field names* and
 //!    OAuth state. Never a value.
 //! 4. **What can it do** — every advertised tool with its description and call
-//!    count, which is the most honest answer to "what is this server for" when
-//!    no prose exists anywhere.
+//!    count, which is what answers "what is this server for" when no prose
+//!    exists anywhere.
 //!
-//! Split from `views/mcp.rs` (#629's 1500-line ratchet).
+//! A floating surface, so it draws its own frame — the one border a tab is
+//! allowed, and the same rounded [`stella_tui_theme::token::BORDER`] block
+//! every other overlay carries ([`crate::v2::sessions`]).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget, Wrap};
+use stella_tui_theme::token;
 
+use super::truncate;
 use crate::deck_ui::DeckUi;
 use crate::envelope::{McpLookupState, McpServerDetail};
-use crate::theme;
 
 /// Label column width, so every `key   value` pair lines up.
 const LABEL: usize = 13;
@@ -49,19 +64,25 @@ pub fn render(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         .map(McpServerDetail::display_name)
         .unwrap_or(inspector.server.as_str());
     let hint = match inspector.detail.as_ref() {
-        // `R` is offered only when it could answer something — see
+        // `r` is offered only when it could answer something — see
         // `McpServerDetail::lookup_would_help`.
-        Some(d) if d.lookup_would_help() => "↑/↓ scroll · r look up · esc close",
-        _ => "↑/↓ scroll · esc close",
+        Some(d) if d.lookup_would_help() => " ↑↓ scroll · r look up · esc close ",
+        _ => " ↑↓ scroll · esc close ",
     };
-    let title = format!(
-        " {} — {hint} ",
-        truncate(heading, (w as usize).saturating_sub(hint.len() + 8).max(8))
-    );
+    let title = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(
+            truncate(heading, (w as usize).saturating_sub(hint.len() + 6).max(8)),
+            Style::new().fg(token::TEXT),
+        ),
+        Span::raw(" "),
+    ]);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::accent())
-        .title(title);
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(token::BORDER))
+        .title(title)
+        .title(Line::from(Span::styled(hint, Style::new().fg(token::DIM))).right_aligned());
     let inner = block.inner(rect);
     block.render(rect, buf);
     if inner.height == 0 || inner.width == 0 {
@@ -70,7 +91,7 @@ pub fn render(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
 
     let Some(detail) = inspector.detail.clone() else {
         Paragraph::new("gathering server detail…")
-            .style(theme::muted())
+            .style(Style::new().fg(token::MUTED))
             .alignment(Alignment::Center)
             .render(centered_row(inner), buf);
         return;
@@ -92,25 +113,33 @@ pub fn render(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
 }
 
 /// The pinned identity line: alias, transport, and live status.
+///
+/// The status takes the same three colours the list row gives it — dim when
+/// disabled, green when live, red when it is configured and not answering —
+/// so an operator who opened the inspector from a red row does not find the
+/// same fact in a different metal.
 fn subtitle(detail: &McpServerDetail) -> Line<'static> {
+    let muted = Style::new().fg(token::MUTED);
     let status = if !detail.enabled {
-        Span::styled("disabled", theme::muted())
+        Span::styled("disabled", Style::new().fg(token::DIM))
     } else if detail.connected {
         Span::styled(
             detail.health.clone().unwrap_or_else(|| "live".to_string()),
-            Style::default().fg(theme::SUCCESS),
+            Style::new().fg(token::GREEN),
         )
     } else {
-        Span::styled("not connected", Style::default().fg(theme::WARNING_BRIGHT))
+        Span::styled("not connected", Style::new().fg(token::RED))
     };
     Line::from(vec![
-        Span::styled(detail.name.clone(), Style::default().fg(theme::INK)),
-        Span::styled(format!("  ·  {}  ·  ", detail.kind), theme::muted()),
+        Span::raw(" "),
+        Span::styled(detail.name.clone(), Style::new().fg(token::TEXT)),
+        Span::styled(format!("  ·  {}  ·  ", detail.kind), muted),
         status,
     ])
 }
 
 fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
+    let muted = Style::new().fg(token::MUTED);
     let mut lines = Vec::new();
 
     // ── What is it ──────────────────────────────────────────────────────────
@@ -123,7 +152,7 @@ fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
         for line in wrap(desc.trim(), width.saturating_sub(2)) {
             lines.push(Line::from(Span::styled(
                 format!("  {line}"),
-                Style::default().fg(theme::INK),
+                Style::new().fg(token::TEXT),
             )));
         }
     }
@@ -194,7 +223,7 @@ fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
                 "    ! at least {} more advertised past the cap — never offered to the model",
                 detail.dropped_tools
             ),
-            Style::default().fg(theme::WARNING_BRIGHT),
+            Style::new().fg(token::RED),
         )));
     }
     // The other wall (#4441). Worded apart from the count cap above and
@@ -206,7 +235,7 @@ fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
                 "    ! {} trimmed over the per-server schema byte budget — never offered to the model",
                 detail.trimmed_tools
             ),
-            Style::default().fg(theme::WARNING_BRIGHT),
+            Style::new().fg(token::RED),
         )));
     }
     if detail.tools.is_empty() {
@@ -216,7 +245,7 @@ fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
             } else {
                 "    not connected this session — its tool list is unknown"
             },
-            theme::muted(),
+            muted,
         )));
     }
     for tool in &detail.tools {
@@ -224,17 +253,17 @@ fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
             Span::raw("    "),
             Span::styled(
                 tool.name.clone(),
-                Style::default().fg(theme::INK).add_modifier(Modifier::BOLD),
+                Style::new().fg(token::TEXT).add_modifier(Modifier::BOLD),
             ),
         ];
         if tool.calls > 0 {
             spans.push(Span::styled(
                 format!("  {}×", tool.calls),
-                Style::default().fg(theme::ACCENT),
+                Style::new().fg(token::GOLD),
             ));
         }
         if tool.safe_to_retry {
-            spans.push(Span::styled("  read-only", theme::muted()));
+            spans.push(Span::styled("  read-only", muted));
         }
         lines.push(Line::from(spans));
         // One line of the tool's own description — enough to tell tools apart,
@@ -248,7 +277,7 @@ fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
         if !summary.is_empty() {
             lines.push(Line::from(Span::styled(
                 format!("      {}", truncate(summary, width.saturating_sub(8))),
-                theme::muted(),
+                Style::new().fg(token::DIM),
             )));
         }
     }
@@ -264,10 +293,7 @@ fn body_lines(detail: &McpServerDetail, width: usize) -> Vec<Line<'static>> {
         lines.push(Line::default());
         lines.push(section("instructions (the server's own words)", width));
         for line in wrap(instructions.trim(), width.saturating_sub(2)) {
-            lines.push(Line::from(Span::styled(
-                format!("  {line}"),
-                theme::muted(),
-            )));
+            lines.push(Line::from(Span::styled(format!("  {line}"), muted)));
         }
     }
 
@@ -280,19 +306,19 @@ fn lookup_note(state: &McpLookupState) -> Vec<Line<'static>> {
         McpLookupState::Idle => return Vec::new(),
         McpLookupState::Fetching => (
             "  looking this server up in the registry…".to_string(),
-            theme::accent(),
+            Style::new().fg(token::MUTED),
         ),
         McpLookupState::Found => (
             "  description found and saved to .stella/mcp.toml".to_string(),
-            Style::default().fg(theme::SUCCESS),
+            Style::new().fg(token::GREEN),
         ),
         McpLookupState::Missing => (
             "  the registry has no entry under this name — nothing to describe it with".to_string(),
-            theme::muted(),
+            Style::new().fg(token::MUTED),
         ),
         McpLookupState::Failed(error) => (
             format!("  registry lookup failed: {error}"),
-            Style::default().fg(theme::DANGER_BRIGHT),
+            Style::new().fg(token::RED),
         ),
     };
     vec![Line::from(Span::styled(text, style)), Line::default()]
@@ -311,9 +337,12 @@ fn section(label: &str, width: usize) -> Line<'static> {
         Span::raw("  "),
         Span::styled(
             label.to_string(),
-            theme::muted().add_modifier(Modifier::BOLD),
+            Style::new().fg(token::MUTED).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!(" {}", "─".repeat(rule)), theme::rule()),
+        Span::styled(
+            format!(" {}", "─".repeat(rule)),
+            Style::new().fg(token::RULE),
+        ),
     ])
 }
 
@@ -322,9 +351,9 @@ fn field(label: &str, value: &str) -> Line<'static> {
     let pad = LABEL.saturating_sub(label.chars().count());
     Line::from(vec![
         Span::raw("    "),
-        Span::styled(label.to_string(), theme::muted()),
+        Span::styled(label.to_string(), Style::new().fg(token::MUTED)),
         Span::raw(" ".repeat(pad)),
-        Span::styled(value.to_string(), Style::default().fg(theme::INK)),
+        Span::styled(value.to_string(), Style::new().fg(token::TEXT)),
     ])
 }
 
@@ -356,18 +385,6 @@ fn wrap(text: &str, width: usize) -> Vec<String> {
         out.push(line);
     }
     out
-}
-
-/// Char-safe truncation with an ellipsis.
-fn truncate(text: &str, max: usize) -> String {
-    if text.chars().count() <= max {
-        return text.to_string();
-    }
-    if max < 2 {
-        return String::new();
-    }
-    let head: String = text.chars().take(max - 1).collect();
-    format!("{head}…")
 }
 
 /// The single middle row of `area`, for a centered one-line message.
@@ -528,5 +545,59 @@ mod tests {
             vec!["supercalifragilistic"]
         );
         assert!(wrap("anything", 0).is_empty());
+    }
+
+    /// **The witness for the port.** The popup carries the rounded
+    /// [`token::BORDER`] frame every other overlay draws, and the status word
+    /// in its subtitle is the same colour the list row gave it.
+    #[test]
+    fn the_popup_takes_the_shared_overlay_frame() {
+        let mut ui = DeckUi::default();
+        ui.mcp.inspector = Some(crate::v2::mcp_tab::McpInspector {
+            server: "mcp".into(),
+            detail: Some(stripe()),
+            scroll: 0,
+        });
+        let area = Rect::new(0, 0, 100, 24);
+        let mut buf = Buffer::empty(area);
+        render(&mut ui, area, &mut buf);
+
+        let frame: String = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(frame.contains('╭') && frame.contains('╮'), "{frame}");
+        assert!(frame.contains("esc close"), "{frame}");
+
+        // Cell coordinates, not byte offsets: this frame is full of `╭`, `·`
+        // and `─`, so a `str::find` index is nowhere near its column.
+        let at = |needle: &str| -> (u16, u16) {
+            frame
+                .lines()
+                .enumerate()
+                .find_map(|(y, line)| {
+                    let cells: Vec<char> = line.chars().collect();
+                    cells
+                        .windows(needle.chars().count())
+                        .position(|w| w.iter().collect::<String>() == needle)
+                        .map(|x| (x as u16, y as u16))
+                })
+                .unwrap_or_else(|| panic!("no {needle:?} in\n{frame}"))
+        };
+
+        assert_eq!(
+            buf.cell(at("╭")).map(|c| c.fg),
+            Some(token::BORDER),
+            "the overlay border is the shared token, not an accent"
+        );
+        assert_eq!(
+            buf.cell(at("live")).map(|c| c.fg),
+            Some(token::GREEN),
+            "the subtitle's status word is the colour the list row gave it"
+        );
     }
 }

@@ -189,6 +189,10 @@ impl Plan {
 /// Running the scan on this repository produced 148 lines of suggestions, which
 /// is not a prompt anybody reads — it is a wall people dismiss. The rest stay
 /// reachable by naming a path.
+///
+/// Deliberately carries no `MEASURED:` marker (#4572). The 148 lines are what
+/// made a cap necessary; they say nothing about where it belongs, and ten is a
+/// display choice.
 pub const MAX_SUGGESTIONS: usize = 10;
 
 /// Directory depth, used to rank suggestions.

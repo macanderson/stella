@@ -835,3 +835,56 @@ fn a_file_that_grows_past_the_cap_has_its_stale_row_pruned() {
     );
     assert_eq!(file_count(&conn).unwrap(), 0);
 }
+
+/// Witness for #4643: one pass writes one `indexed_at`.
+///
+/// The stamp used to be read inside `upsert_file`, once per file, so a pass
+/// slow enough to cross a second boundary wrote two different timestamps and
+/// [`crate::vectors::pending`]'s `(indexed_at DESC, path ASC)` ordering
+/// reordered the pass by where the walk happened to be when the clock ticked.
+/// Two `vectors` tests failed on exactly that under the parallel runner, then
+/// passed serially.
+///
+/// The progress callback is what makes the boundary reachable without
+/// injecting a clock: it fires after each file, so sleeping in it once puts a
+/// real second between the first file's write and the second's.
+#[test]
+fn one_pass_stamps_every_file_with_one_indexed_at() {
+    let ws = tempdir().unwrap();
+    let dbdir = tempdir().unwrap();
+    let root = canon(&ws);
+    fs::write(root.join("a.rs"), "fn alpha() {}\n").unwrap();
+    fs::write(root.join("b.rs"), "fn beta() {}\n").unwrap();
+
+    let grammars = Grammars::load().unwrap();
+    let mut conn = open(&dbdir.path().join("codegraph.db")).unwrap();
+
+    let mut slept = false;
+    index_tree_with_progress(&mut conn, &root, &grammars, &mut |_| {
+        if !slept {
+            slept = true;
+            std::thread::sleep(std::time::Duration::from_millis(1_100));
+        }
+    })
+    .unwrap();
+    assert!(slept, "the pass must have visited at least one file");
+
+    let stamps: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT indexed_at FROM code_graph_files")
+            .unwrap();
+        let rows = stmt.query_map([], |row| row.get(0)).unwrap();
+        rows.collect::<Result<_, _>>().unwrap()
+    };
+    assert_eq!(
+        file_count(&conn).unwrap(),
+        2,
+        "both files must be indexed for the stamp to be worth asserting on"
+    );
+    assert_eq!(
+        stamps.len(),
+        1,
+        "a pass that crossed a second boundary still wrote one stamp; \
+         {stamps:?} means the clock is being read per file again"
+    );
+}
