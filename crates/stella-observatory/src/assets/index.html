@@ -1835,7 +1835,9 @@ function renderTools(rows) {
   $("tools").querySelectorAll(".hbar").forEach((el, i) => {
     const r = top[i];
     el.addEventListener("mousemove", ev => showTip(ev,
-      `<b>${esc(r.name)}</b>${fmtInt(r.calls)} calls · ${fmtInt(r.errors)} errors<br>` +
+      `<b>${esc(r.name)}</b>${fmtInt(r.calls)} calls · ${fmtInt(r.errors)} errors` +
+      Object.entries(r.errors_by_class || {})
+        .map(([cls, n]) => ` · ${esc(cls)} ${fmtInt(n)}`).join("") + `<br>` +
       `p50 ${fmtMs(r.p50_ms)} · p90 ${fmtMs(r.p90_ms)} · p99 ${fmtMs(r.p99_ms)} · ` +
       `max ${fmtMs(r.max_ms)} · ${fmtTok(r.bytes_out)}B returned`));
     el.addEventListener("mouseleave", hideTip);

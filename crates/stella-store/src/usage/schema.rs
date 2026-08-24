@@ -99,6 +99,21 @@ CREATE TABLE IF NOT EXISTS tool_usage_rollup (
     errors     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (project_id, tool, surface, day)
 );
+-- The per-class error split beside `tool_usage_rollup` (#4550): the same
+-- additive fold keyed also by the `ErrorClass` wire token ('' means the error
+-- site was not yet audited into a class). A sibling rather than a column
+-- because the class is part of the key, and a new table converges onto
+-- existing hubs with no migration rung. Folded under the same
+-- `tool_fold_ledger` claim as the buckets above — see `super::class_rollup`.
+CREATE TABLE IF NOT EXISTS tool_error_class_rollup (
+    project_id TEXT NOT NULL,
+    tool       TEXT NOT NULL,
+    surface    TEXT NOT NULL,
+    day        TEXT NOT NULL,
+    class      TEXT NOT NULL,
+    errors     INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (project_id, tool, surface, day, class)
+);
 -- Which executions have already been folded into `tool_usage_rollup` (#3411).
 -- That fold is additive, so it must happen once per execution; asking
 -- `execution_rollup` instead was wrong because `prune` deletes from it on
