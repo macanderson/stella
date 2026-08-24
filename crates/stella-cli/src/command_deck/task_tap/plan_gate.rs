@@ -20,7 +20,7 @@
 //!
 //! Emitting the event without a decision pending would be a lie in four
 //! places at once, all of them live: `stella_tui::deck::classify` reads
-//! `ScopeReview` as [`AgentStatus::WaitingInput`][s],
+//! `ScopeReview` as `AgentStatus::WaitingInput`,
 //! `stella_tui::fleet_dashboard` sets the lane `Blocked`,
 //! `stella_tui::plan::Plan::propose` moves the rail to `pending approval`,
 //! and `deck_ui::dispatch` releases a sticky dispatch card on the strength
@@ -53,14 +53,13 @@
 //! not wedge a turn that nobody objected to. A refusal here comes from a
 //! person choosing one, never from silence.
 //!
-//! [s]: stella_tui::deck::AgentStatus
 //! [q]: stella_tools::registry::question::QuestionResponder
 
 use std::sync::Mutex;
 
 use stella_protocol::{
     AgentEvent, CompletionMessage, MessageRole, Question, QuestionOption, QuestionOutcome,
-    QuestionRequest, ScopeProposal, StageKind, StageScope, TaskItem, TaskStatus, ToolOutput,
+    QuestionRequest, ScopeProposal, StageKind, StageScope, TaskItem, ToolOutput,
 };
 use stella_tools::registry::question::QuestionBroker;
 use tokio::sync::mpsc::UnboundedSender;
@@ -315,7 +314,7 @@ pub(crate) fn plan_goal(messages: &[CompletionMessage]) -> String {
             // One line, and short enough that the card spends its height on
             // the plan rather than on the prompt that produced it.
             match line.char_indices().nth(120) {
-                Some((cut, _)) => format!("{}…", &line[..cut].trim_end()),
+                Some((cut, _)) => format!("{}…", line[..cut].trim_end()),
                 None => line.to_string(),
             }
         })
@@ -324,7 +323,7 @@ pub(crate) fn plan_goal(messages: &[CompletionMessage]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use stella_protocol::Answer;
+    use stella_protocol::{Answer, TaskStatus};
 
     use super::*;
 
@@ -413,12 +412,12 @@ mod tests {
     /// re-propose the same plan.
     #[test]
     fn a_refusal_carries_what_the_driver_said() {
-        let refusal = refusal(&answered(&["Change it first"], Some("skip the migration")))
+        let picked = refusal(&answered(&["Change it first"], Some("skip the migration")))
             .expect("a change was requested");
-        assert!(refusal.contains("skip the migration"), "{refusal}");
+        assert!(picked.contains("skip the migration"), "{picked}");
         assert!(
-            refusal.contains("Do not run the plan you just proposed"),
-            "the model must be told the proposed plan is off: {refusal}"
+            picked.contains("Do not run the plan you just proposed"),
+            "the model must be told the proposed plan is off: {picked}"
         );
 
         // A typed answer is the driver writing the change instead of picking
