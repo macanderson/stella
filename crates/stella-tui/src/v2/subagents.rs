@@ -615,6 +615,7 @@ mod tests {
                 phase: SubAgentPhase::Started {
                     agent_id: id.to_string(),
                     instruction_preview: preview.to_string(),
+                    effort: None,
                     write_access: false,
                     budget_usd: Some(0.5),
                     depth: 1,

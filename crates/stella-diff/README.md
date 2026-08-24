@@ -86,15 +86,15 @@ Either way there is **at most one elision**, so a caller has exactly one place
 to draw the marker and one number to put in it.
 
 **The policy has a second implementation, and it is checked.** The arena
-transcript is a Next.js client with no way to call into the workspace, so it
-reimplements `plan` in TypeScript (`arenabench/ui/lib/diff-view.ts`). The two
-share a file rather than a test runner:
+transcript — in the [arenabench repo](https://github.com/macanderson/arenabench)
+since the ejection (#2380) — is a Next.js client with no way to call into this
+workspace, so it reimplements `plan` in TypeScript (`ui/lib/diff-view.ts`
+there). The two share a file rather than a test runner:
 `tests/fixtures/view-plan-matrix.txt` is generated from the Rust and pinned by
 `cargo test -p stella-diff --test view_plan_matrix` (re-bless with `BLESS=1`,
-then read the diff); `arenabench/ui/scripts/check-diff-view-parity.mjs` asserts
-the TypeScript reproduces the same file, and runs in CI on both path sets. A
-policy change must therefore re-bless the golden, and a re-blessed golden fails
-the port until it catches up.
+then read the diff); that repo vendors the matrix under `ui/golden/` and its
+CI asserts the TypeScript reproduces it. A re-blessed golden here must be
+synced there by copying the regenerated file.
 
 That check found a bug the first time it ran, in the Rust: `Plan::fold_before`
 drew the elision marker *after* the only surviving hunk whenever the budget

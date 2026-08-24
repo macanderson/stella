@@ -121,6 +121,8 @@ fn full_deck_frame_grows_a_second_status_band_row_for_a_diagnosed_agent() {
                 tool_calls: 0,
                 complete: true,
                 finish_reason: None,
+                effort: None,
+                max_output_tokens: None,
                 sub_agent_id: None,
             },
         });
@@ -492,6 +494,7 @@ fn inspect_overlay_scroll_saturates_past_u16_instead_of_wrapping() {
         messages: vec![crate::envelope::InspectMessage {
             role: "user".into(),
             content,
+            sections: Vec::new(),
         }],
         verified: false,
         unresolved: 0,
@@ -511,6 +514,104 @@ fn inspect_overlay_scroll_saturates_past_u16_instead_of_wrapping() {
     assert!(
         !text.contains("ctx-004"),
         "66_000 as u16 would have wrapped to ~464:\n{text}"
+    );
+}
+
+/// The deck half of #4602: a system message the driver could break down by
+/// provenance renders as labelled sections, each naming the setting that put
+/// it in the prompt — the same view `stella inspect --system-prompt` prints.
+///
+/// The overlay derives no headings of its own; it renders the labels it is
+/// handed, which is why this test hands it labels rather than a prompt.
+#[test]
+fn inspect_overlay_renders_the_system_prompt_by_provenance() {
+    let mut ui = DeckUi::default();
+    ui.inspect_open = true;
+    ui.inspect_view = Some(Box::new(crate::envelope::InspectView {
+        call: crate::envelope::RecordedCallInfo {
+            turn_instance: 0,
+            step: 0,
+            call_seq: 0,
+            call_role: "worker".into(),
+            provider: "openrouter".into(),
+            model: "m".into(),
+            estimated_input_tokens: 0,
+        },
+        messages: vec![crate::envelope::InspectMessage {
+            role: "system".into(),
+            content: "You are Stella.\nWorkspace root: /w".into(),
+            sections: vec![
+                crate::envelope::InspectSection {
+                    label: "Base instructions".into(),
+                    source: "the built-in persona".into(),
+                    body: "You are Stella.".into(),
+                },
+                crate::envelope::InspectSection {
+                    label: "Workspace rules".into(),
+                    source: ".stella/rules/*.toml context records".into(),
+                    body: "RULE_BODY_MARKER".into(),
+                },
+            ],
+        }],
+        verified: true,
+        unresolved: 0,
+        digest_mismatches: 0,
+        journal_era: crate::envelope::JournalEra::CompactionJournaled,
+    }));
+
+    let area = Rect::new(0, 0, 100, 40);
+    let mut buf = Buffer::empty(area);
+    render_inspect_overlay(&mut ui, area, &mut buf);
+    let text = buffer_text(&buf);
+    assert!(text.contains("Base instructions"), "{text}");
+    assert!(text.contains("Workspace rules"), "{text}");
+    assert!(
+        text.contains(".stella/rules/*.toml"),
+        "each section names the setting behind it, not just what it is:\n{text}"
+    );
+    assert!(
+        text.contains("RULE_BODY_MARKER"),
+        "the bodies still render — sectioning labels the bytes, it does not \
+         replace them:\n{text}"
+    );
+}
+
+/// A message with no provenance breakdown renders exactly as it always did:
+/// one flat body, no section furniture. Every role but the system prefix takes
+/// this path.
+#[test]
+fn inspect_overlay_falls_back_to_the_flat_body_without_sections() {
+    let mut ui = DeckUi::default();
+    ui.inspect_open = true;
+    ui.inspect_view = Some(Box::new(crate::envelope::InspectView {
+        call: crate::envelope::RecordedCallInfo {
+            turn_instance: 0,
+            step: 0,
+            call_seq: 0,
+            call_role: "worker".into(),
+            provider: "openrouter".into(),
+            model: "m".into(),
+            estimated_input_tokens: 0,
+        },
+        messages: vec![crate::envelope::InspectMessage {
+            role: "user".into(),
+            content: "FLAT_BODY_MARKER".into(),
+            sections: Vec::new(),
+        }],
+        verified: true,
+        unresolved: 0,
+        digest_mismatches: 0,
+        journal_era: crate::envelope::JournalEra::CompactionJournaled,
+    }));
+
+    let area = Rect::new(0, 0, 100, 40);
+    let mut buf = Buffer::empty(area);
+    render_inspect_overlay(&mut ui, area, &mut buf);
+    let text = buffer_text(&buf);
+    assert!(text.contains("FLAT_BODY_MARKER"), "{text}");
+    assert!(
+        !text.contains("from:"),
+        "no breakdown means no attribution furniture:\n{text}"
     );
 }
 

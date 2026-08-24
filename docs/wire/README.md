@@ -7,7 +7,7 @@ Generated files. Do not edit them by hand.
 | `agentevent.schema.json` | JSON Schema 2020-12 for `AgentEvent` and its whole payload graph |
 | `agentevent.d.ts` | The same contract as TypeScript declarations |
 | `serveframe.schema.json` | JSON Schema for `ServerFrame`, the `stella-serve` transport envelope |
-| `serveinbound.schema.json` | The two bodies a host POSTs back to answer a reverse request |
+| `serveinbound.schema.json` | The bodies a host POSTs to the transport — three that answer a reverse request, plus the optional `engine` object on a turn — and every payload type they reference |
 | `serveframe.d.ts` | Both of the above as TypeScript, plus the `seq` envelope |
 | `wrapper.wire.json` | Every message the wrapper socket carries, in both its fullest and its emptiest legal form |
 | `wrapper.schema.json` | JSON Schema for the socket's two point messages, `WrapperRequest` and `WrapperResponse` |

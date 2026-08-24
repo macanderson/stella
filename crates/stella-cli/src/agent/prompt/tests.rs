@@ -641,3 +641,60 @@ fn forgetting_one_authored_memory_does_not_suppress_a_similar_one() {
         "the forgotten one does not: {prompt}"
     );
 }
+
+/// The provenance markers are the bytes a really-assembled prompt carries, in
+/// the order the splitter expects — asserted from the *producing* side, so a
+/// reworded heading fails here even if the marker table were changed to match
+/// it (#4602).
+///
+/// Both inspectors share the marker table — `stella inspect --system-prompt`
+/// and the deck's INSPECT overlay — and the Observatory keeps an acknowledged
+/// copy of it that this test is the producing half of.
+#[test]
+fn the_provenance_markers_are_what_this_assembler_emits() {
+    let workspace = tempfile::tempdir().expect("workspace");
+    let root = workspace.path();
+    // Memories are what an authority-permitting session appends, and the rules
+    // channel renders its heading only for a non-empty record set, so the
+    // marker coverage here is deliberately split: the two headings that ship
+    // unconditionally are asserted on a real assembly, and the other three are
+    // asserted to be exactly the constants the emitting sites push.
+    let assembled = super::assemble_system_prompt(
+        super::SYSTEM_PROMPT,
+        root,
+        &crate::settings::AuthorityPolicy::default(),
+        &crate::rules::ResolvedRules::default(),
+        None,
+    );
+    assert!(
+        assembled.contains(super::SESSION_ENVIRONMENT_HEADER),
+        "the environment marker must be the bytes the assembler pushes: {assembled}"
+    );
+    assert!(
+        assembled.starts_with(super::SYSTEM_PROMPT),
+        "everything before the first marker is the base instruction set, which is \
+         what lets the splitter label the leading span without a marker of its own"
+    );
+
+    // The rules heading arrives through the record channel, which owns it —
+    // the splitter's copy is joined from that constant plus the newline
+    // `assemble_system_prompt` pushes before the rendered channel.
+    assert!(
+        stella_core::records::CACHED_HEADING.starts_with("\n## Workspace rules"),
+        "the rules marker is derived from this constant"
+    );
+
+    // A workspace with a memory in it appends the memories marker, so the
+    // section the splitter labels `.stella/memories/*.md` is one a real
+    // assembly produces rather than one only the table believes in.
+    let memories = root.join(".stella/memories");
+    std::fs::create_dir_all(&memories).expect("memories dir");
+    std::fs::write(memories.join("one.md"), "A_REAL_LESSON").expect("memory file");
+    let mut appended = String::new();
+    append_workspace_memories(&mut appended, root);
+    assert!(
+        appended.starts_with(super::MEMORIES_HEADER),
+        "the memories marker must be the bytes the appender pushes: {appended}"
+    );
+    assert!(appended.contains("A_REAL_LESSON"), "{appended}");
+}

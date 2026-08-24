@@ -594,6 +594,8 @@ mod durable_stream_tests {
             tool_calls: 0,
             complete: true,
             finish_reason: None,
+            effort: None,
+            max_output_tokens: None,
             sub_agent_id: None,
         };
 

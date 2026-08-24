@@ -50,18 +50,9 @@ jobs:
           # touches is distributed, so the AGPL/dual-license reasoning in the
           # header does not apply to it.
           #
-          # The @img/sharp-* tuples arrive through arenabench/web: `next` lists
-          # `sharp` in optionalDependencies, so npm records every platform tuple
-          # in that lockfile whatever the host is, and the ones shipping a
-          # prebuilt libvips are LGPL-3.0-or-later. Three independent reasons
-          # the header's LINKED-code reasoning cannot reach them: arenabench/web
-          # is `"private": true` and Apache-2.0, so it is in neither the AGPL
-          # workspace nor the commercial binary; it is not distributed at all,
-          # being the arenabench.org control plane behind Vercel Authentication;
-          # and it imports no `next/image`, so sharp is never even loaded. Only
-          # the tuples that actually carry the LGPL are listed — their
-          # Apache-2.0 siblings pass the allow-list on their own merits and stay
-          # under the gate.
+          # The @img/sharp-* tuples that used to sit here arrived through
+          # arenabench/web's lockfile; that folder left with the ejection to
+          # its own repository (#2380), so the exemption left with it.
           #
           # Must stay ABOVE `allow-licenses`: check-license-allowlist-parity.sh
           # reads that key's folded scalar by consuming every following indented
@@ -75,21 +66,7 @@ jobs:
           # nothing — so a NEW libvips tuple reds this gate again and has to be
           # added by hand. #2532 tracks removing the recurrence instead.
           allow-dependencies-licenses: >-
-            pkg:githubactions/Swatinem/rust-cache,
-            pkg:npm/%40img/sharp-libvips-darwin-arm64,
-            pkg:npm/%40img/sharp-libvips-darwin-x64,
-            pkg:npm/%40img/sharp-libvips-linux-arm,
-            pkg:npm/%40img/sharp-libvips-linux-arm64,
-            pkg:npm/%40img/sharp-libvips-linux-ppc64,
-            pkg:npm/%40img/sharp-libvips-linux-riscv64,
-            pkg:npm/%40img/sharp-libvips-linux-s390x,
-            pkg:npm/%40img/sharp-libvips-linux-x64,
-            pkg:npm/%40img/sharp-libvips-linuxmusl-arm64,
-            pkg:npm/%40img/sharp-libvips-linuxmusl-x64,
-            pkg:npm/%40img/sharp-wasm32,
-            pkg:npm/%40img/sharp-win32-arm64,
-            pkg:npm/%40img/sharp-win32-ia32,
-            pkg:npm/%40img/sharp-win32-x64
+            pkg:githubactions/Swatinem/rust-cache
           allow-licenses: >-
             AGPL-3.0-only, Apache-2.0, Apache-2.0 WITH LLVM-exception, MIT,
             BSD-2-Clause, BSD-3-Clause, ISC, Zlib, BSL-1.0, MPL-2.0, Unlicense,

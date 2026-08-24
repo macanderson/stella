@@ -7,6 +7,8 @@ Answer "what did the model actually see?" for any past call. `stella inspect` re
 
 Add [`--diff`](#--diff--what-changed-not-what-was-sent) to ask the other question: what did *this* call see that the last one didn't — rendered as a unified diff, including against the prompt you actually typed.
 
+Add [`--system-prompt`](#--system-prompt--which-setting-put-each-span-there) to ask a third: of the hundreds of stable lines in that prompt, which setting put each one there.
+
 ## Synopsis
 
 ```bash
@@ -14,6 +16,7 @@ stella inspect                                   # executions that have receipts
 stella inspect <EXEC>                            # that execution's model calls
 stella inspect <EXEC> --step <N> [--turn <T>] [--call-seq <S>]
 stella inspect <EXEC> --step <N> --diff [prev|first|prompt] [--only system]
+stella inspect <EXEC> --step <N> --system-prompt   # the prompt, by provenance
 ```
 
 ## What it does
@@ -51,6 +54,10 @@ It reads `<workspace>/.stella/private/store.db` only. Like `stella stats`, it re
   </OptionCard>
   <OptionCard name="--context <N>" defaultValue="3">
     Unchanged lines printed around each change.
+  </OptionCard>
+  <OptionCard name="--system-prompt">
+    Show only this call's system prompt, split into provenance-labelled
+    sections — see below.
   </OptionCard>
 </CardGrid>
 
@@ -143,6 +150,69 @@ call, not just the first.
 byte-identical to the previous turn is a direct check that the prompt-cache
 stability invariant is holding.
 </Callout>
+
+## `--system-prompt` — which setting put each span there
+
+A system prompt is assembled, not written. The base persona comes from one
+place, the session-environment block from another, workspace memories from
+`.stella/memories/`, workspace rules from `.stella/rules/`, and a SessionStart
+hook can append to the end of it. By the time a call is made, all of that is one
+undifferentiated wall of text — and "which of my settings produced this
+paragraph?" is not a question you can answer by reading it.
+
+`--system-prompt` splits the exact bytes the call was sent on the assembler's
+own section headings and labels each span with the surface behind it:
+
+```bash
+stella inspect 42 --step 0 --system-prompt --full
+```
+
+```text
+execution 42 · turn 0 · step 0 · call-seq 0
+system prompt · 4 section(s) · 9,214 bytes, full bodies
+
+─── Base instructions ───
+from: the built-in persona, replaced whole by agents.default.prompt (model settings)
+You are Stella, a terminal coding agent.
+…
+
+─── Session environment ───
+from: computed from the live process and workspace at session open — not configurable
+
+## Session environment
+Workspace root: /repo — a git repository
+…
+
+─── Workspace memories ───
+from: .stella/memories/*.md (loaded when authority permits project prompts)
+…
+
+─── Workspace rules ───
+from: .stella/rules/*.toml context records (edit via `stella context`)
+…
+```
+
+The boundaries are found by scanning for the assembler's headings, so a memory
+that quotes one can move a boundary. The whole is exact either way: **the
+sections concatenate, in order, to the bytes the call was sent**, which is what
+lets you trust the view without having to trust the heuristic. `--format json`
+gives the same split with unelided bodies, plus a `found` flag so a script can
+tell an absent prompt from an empty one.
+
+A call whose receipt holds no system prefix says `no system_prefix block
+resolved` rather than printing an empty prompt — "nothing was recorded" and
+"the model was sent nothing" are different claims, and only the first is true.
+
+<Callout type="info">
+The same view is in interactive mode: `⌃g` (or `/inspect`) opens the recorded
+calls, and the system message of the one you select renders as these sections
+rather than one wall. The two surfaces split with the same table, so they
+cannot disagree.
+</Callout>
+
+`--system-prompt` and `--diff` are two whole-output views of one call, so asking
+for both is refused rather than letting one win. For the prompt's *delta* alone,
+`--diff --only system` is the flag pair you want.
 
 ## Why `--call-seq` exists
 

@@ -411,11 +411,20 @@ agent_event_tags! {
     Verdict => "verdict",
         ConsumerPosture::RecordedOnly { issue: "#3790" },
         &[];
-    // `Behavioral`: the deck's forwarder seeds the task board from the
-    // proposal's steps as the gate is reached, so the ids already resolve when
-    // the first `task_start` arrives. Seeded on the proposal rather than on
-    // approval, and `seed_from_plan` is a no-op on a board that already has
-    // rows, so a declined or revised plan cannot clobber live work.
+    // `Behavioral`, and the producer is the deck's own plan gate since #4594:
+    // `command_deck/task_tap/plan_gate.rs` raises the board as a proposal on
+    // the first `task_start` and parks the call on the driver's answer. So the
+    // event means *a decision is pending on this plan*, which is what lets the
+    // three surfaces that read it that way stay true — the deck's
+    // `WaitingInput` status, the fleet dashboard's `Blocked` row, and the
+    // rail's `pending approval`.
+    //
+    // The site below is the older consumer and still branches: the forwarder
+    // seeds an empty board from the proposal's steps, which is how a proposal
+    // arriving AHEAD of a board (a wrapper plugin's `scope` stage) gets ids
+    // that resolve when the first `task_start` lands. `seed_from_plan` no-ops
+    // on a board that already has rows, so the host path — where the board IS
+    // the proposal — passes through it untouched.
     ScopeReview => "scope_review",
         ConsumerPosture::Behavioral {
             site: "stella-cli/src/command_deck/forwarder.rs::spawn_forwarder",

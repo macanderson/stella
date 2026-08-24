@@ -303,6 +303,7 @@ mod tests {
             duration_ms: 7,
             speculated: false,
             diff: Vec::new(),
+            read_size: None,
         }
     }
 

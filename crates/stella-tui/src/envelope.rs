@@ -16,7 +16,7 @@ use stella_protocol::AgentEvent;
 
 mod inspect;
 
-pub use inspect::{InspectMessage, InspectView, JournalEra, RecordedCallInfo};
+pub use inspect::{InspectMessage, InspectSection, InspectView, JournalEra, RecordedCallInfo};
 
 use stella_tools::search::readiness::IndexReadiness;
 
