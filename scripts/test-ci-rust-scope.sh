@@ -159,12 +159,25 @@ r="$(new_repo open_empty)"
 change "$r" "docs/spec/thing.md"
 want "O3 an empty base runs the gate" true "$r" ""
 
+# Two histories with no common ancestor. `git diff A...B` exits 128 with "no
+# merge base" rather than printing an empty diff, and an empty diff is exactly
+# what `false` means — so without this branch the guard would read a
+# force-pushed rewrite as "nothing changed".
+r="$(new_repo open_no_merge_base)"
+change "$r" "docs/spec/thing.md"
+orphan_base="$(git -C "$r" rev-parse HEAD)"
+git -C "$r" checkout -q --orphan unrelated
+git -C "$r" rm -rq --cached .
+rm -f "$r/seed.txt" "$r/docs/spec/thing.md"
+change "$r" "docs/spec/other.md"
+want "O4 two histories with no common ancestor run the gate" true "$r" "$orphan_base"
+
 # An inventory that has gone missing cannot build a carve-out, so the filter
 # would silently narrow back to what it was before #4605 — the exact hole.
 r="$(new_repo open_no_inventory)"
 change "$r" "website/src/components/provider-catalog.ts"
 rm -f "$r/scripts/website-rust-inputs.txt"
-want "O4 a missing inventory runs the gate rather than narrowing the filter" true "$r"
+want "O5 a missing inventory runs the gate rather than narrowing the filter" true "$r"
 
 # ── The negative direction ───────────────────────────────────────────────────
 # Without this the suite is satisfiable by a script that always answers true.
