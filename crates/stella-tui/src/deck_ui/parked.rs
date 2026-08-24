@@ -18,7 +18,7 @@
 use crossterm::event::KeyEvent;
 
 use crate::envelope::WorkspaceInput;
-use crate::views::approval::ApprovalAction;
+use crate::v2::approval::ApprovalAction;
 use crate::views::question::QuestionAction;
 
 use super::{DeckAction, DeckUi};
