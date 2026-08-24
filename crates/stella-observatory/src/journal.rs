@@ -318,6 +318,17 @@ fn journal_entry(row: Value, full: bool, names: &HashMap<String, String>) -> Val
                         .expect("object literal")
                         .extend(view_fields);
                 }
+                // The patch itself, only for a reader who asked for everything.
+                // `crate::transcript_view` folds these rows onto the call that
+                // made them and hands the text to the shared renderer, which
+                // wants a patch rather than a view — it draws its own fold, so
+                // an already-elided one would fold twice (#3577). Uncapped
+                // rows are the whole diff either way, so this adds a second
+                // encoding of it and nothing new; the capped row, which is the
+                // one a long poll fetches repeatedly, is left alone.
+                if full {
+                    out["diff"] = payload["diff"].clone();
+                }
             }
         }
         "speculation_discarded" => {
