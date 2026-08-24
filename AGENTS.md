@@ -218,11 +218,17 @@ paths that reach those two crates — the shipping code, deliberately not
 `--all-targets`, because several `#[cfg(test)]` bodies import
 `std::os::unix::fs::PermissionsExt` unconditionally and would fail the job on
 a fixture rather than on the platform split. Those fixtures are #3497's
-subject. It also does not run the tests: Stella ships no Windows binary and
-the suite has never run there, so a green compile is the honest claim it can
-make. Not a required check, and its own file rather than a job in `ci.yml`
-for the reason `wire-schema.yml` has one — a Windows runner is minutes a diff
-touching neither crate has no use for.
+subject. It then **runs** two of them: `stella-runtime`'s `wrapper_socket` and
+`wrapper_transport_limits`, which stopped being `/bin/sh` scripts when #3497
+gave the crate a portable in-tree plugin binary
+(`crates/stella-runtime/src/bin/wrapper-plugin-fixture.rs`). That is the
+Windows path being run rather than argued — the socket's stdio exchange, its
+`env_clear()`, and the Job Object group kill #3550 added, which shipped with
+"it compiles" as its whole evidence. A target list rather than the whole
+suite, because the rest of it is still `#![cfg(unix)]` and a green over
+nothing is worse than no green. Not a required check, and its own file rather
+than a job in `ci.yml` for the reason `wire-schema.yml` has one — a Windows
+runner is minutes a diff touching neither crate has no use for.
 
 Its first run paid for itself: `git checkout` failed before the build, on
 `crates/stella-cli/src/config/aux.rs` — `AUX` is a Windows device name, so

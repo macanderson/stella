@@ -19,30 +19,28 @@
 //! and that the writer is gone; the second observes that a specific
 //! grandchild pid is no longer running.
 //!
-//! `cfg(unix)` for `tests/wrapper_socket.rs`'s reason and tracked in the same
-//! issue: the plugins here are `/bin/sh` scripts, and a portable in-tree
-//! plugin binary is #3497. The process-group half of what is asserted is
-//! unix-shaped anyway — the non-unix build has `kill_on_drop` and nothing
-//! else, which is a declared gap rather than a covered one.
+//! Both tests were `#![cfg(unix)]` until #3497, because both plugins were
+//! `/bin/sh` scripts and the liveness check was `ps`. They now drive the
+//! portable `wrapper-plugin-fixture`, which matters most for the second one:
+//! the tree-reaching kill is a process group on unix and a Job Object on
+//! Windows (#3550), and the Windows half had no test that could run at all.
 
-#![cfg(unix)]
-
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use stella_plugin::{BeforeTurnRequest, HostStage, PROTOCOL_VERSION, StageName};
 use stella_runtime::wrapper::{SubprocessWrapper, TurnWrapper, WrapperError};
 use stella_tools::exec::MAX_CAPTURE_BYTES;
 
-/// A `sh` plugin with the given budget. No environment at all: these tests are
-/// about the transport's own limits, not what it passes through.
-fn plugin(script: &str, timeout: Duration) -> SubprocessWrapper {
-    SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), script.into()],
-        Vec::new(),
-        timeout,
-    )
-    .expect("the transport is declared with a program and a budget")
-    .wrapper
+/// The portable plugin (#3497), located the way `stella-mcp`'s fixture server
+/// is. No environment at all: these tests are about the transport's own limits,
+/// not what it passes through.
+fn plugin(mode: &[&str], timeout: Duration) -> SubprocessWrapper {
+    let mut argv = vec![env!("CARGO_BIN_EXE_wrapper-plugin-fixture").to_string()];
+    argv.extend(mode.iter().map(|part| (*part).to_string()));
+    SubprocessWrapper::declare(argv, Vec::new(), timeout)
+        .expect("the transport is declared with a program and a budget")
+        .wrapper
 }
 
 fn before() -> BeforeTurnRequest {
@@ -57,49 +55,60 @@ fn before() -> BeforeTurnRequest {
     }
 }
 
-/// Whether `pid` names a process that is still running.
-///
-/// `kill -0` cannot answer this on its own: a SIGKILLed orphan stays in the
-/// process table until someone reaps it, and under a pid 1 that does not reap
-/// (every minimal container) it stays there for good. `ps` reports the state,
-/// so a `Z` is read as gone — which is the honest reading, since a zombie
-/// holds no memory, no file descriptors, and cannot run.
-fn still_running(pid: i32) -> bool {
-    let Ok(output) = std::process::Command::new("ps")
-        .args(["-o", "state=", "-p", &pid.to_string()])
-        .output()
-    else {
-        return false;
-    };
-    let state = String::from_utf8_lossy(&output.stdout);
-    let state = state.trim();
-    !state.is_empty() && !state.starts_with('Z')
+/// How long one observation of a heartbeat file lasts. The fixture appends
+/// every 25ms, so a running writer grows the file by roughly eight bytes here
+/// and a dead one by none.
+const OBSERVATION: Duration = Duration::from_millis(200);
+
+/// Bytes written to a heartbeat file so far; `0` for one that does not exist
+/// yet.
+fn beats(path: &Path) -> u64 {
+    std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
 }
 
-/// Poll [`still_running`] until it answers `false`, up to `budget`.
+/// Whether whatever is writing `path` is still writing it.
 ///
-/// A SIGKILL is delivered asynchronously and the reap that follows is someone
-/// else's scheduling decision, so an immediate single check would be a race
-/// against the kernel rather than a check on the transport. Answering `true`
-/// after the whole budget is a real leak: nothing is coming to clean it up.
-fn outlived(pid: i32, budget: Duration) -> bool {
+/// This replaces a `ps -o state=` on a recorded pid, which could not be ported
+/// (#3497): a SIGKILLed orphan lingers as a zombie until someone reaps it, so
+/// the unix answer needed a state column Windows has no equivalent of. The file
+/// is the stronger observation as well as the portable one — it reports what
+/// the process is still *doing*, not merely that a table row outlived it, and a
+/// writer wedged on a pipe nobody drains is the case a pid check gets wrong in
+/// the flattering direction. The fixture heartbeats from a thread that touches
+/// no pipe for exactly that reason.
+fn still_beating(path: &Path) -> bool {
+    let before = beats(path);
+    std::thread::sleep(OBSERVATION);
+    beats(path) != before
+}
+
+/// Poll [`still_beating`] until it answers `false`, up to `budget`.
+///
+/// The kill is delivered asynchronously and the writer's last append may
+/// already be in flight, so a single immediate check would be a race against
+/// the kernel rather than a check on the transport. Answering `true` after the
+/// whole budget is a real leak: nothing is coming to stop it.
+fn outlived(path: &Path, budget: Duration) -> bool {
     let deadline = Instant::now() + budget;
     while Instant::now() < deadline {
-        if !still_running(pid) {
+        if !still_beating(path) {
             return false;
+        }
+    }
+    still_beating(path)
+}
+
+/// Wait until `path` has been written at all, so a test cannot pass because the
+/// process it is watching never started.
+fn started_beating(path: &Path, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        if beats(path) > 0 {
+            return true;
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    still_running(pid)
-}
-
-/// Read a pid the plugin recorded for itself.
-fn recorded_pid(path: &std::path::Path) -> i32 {
-    let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("the plugin recorded a pid at {}: {e}", path.display()));
-    text.trim()
-        .parse()
-        .unwrap_or_else(|e| panic!("`{}` is a pid: {e}", text.trim()))
+    false
 }
 
 /// **Witness 1.** A plugin that writes past the ceiling is refused, and the
@@ -125,22 +134,22 @@ fn recorded_pid(path: &std::path::Path) -> i32 {
 #[tokio::test]
 async fn a_plugin_that_writes_past_the_ceiling_is_refused_and_the_read_stops() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let pid_file = dir.path().join("writer.pid");
+    let pulse = dir.path().join("writer.pulse");
     let budget = Duration::from_secs(10);
     let over_the_line = MAX_CAPTURE_BYTES + 1024 * 1024;
-    let script = format!(
-        "echo $$ > {pid}\n\
-         printf '%s' '{{\"point\":\"before_turn\",\"body\":{{\"context\":[{{\"label\":\"x\",\"text\":\"'\n\
-         yes stella | tr -d '\\n' | head -c {over_the_line}\n\
-         while : ; do printf tick ; sleep 0.05 ; done\n",
-        pid = pid_file.display(),
-    );
 
     let started = Instant::now();
-    let err = plugin(&script, budget)
-        .before_turn(before())
-        .await
-        .expect_err("a plugin past the ceiling is refused, not buffered");
+    let err = plugin(
+        &[
+            "flood",
+            &over_the_line.to_string(),
+            &pulse.display().to_string(),
+        ],
+        budget,
+    )
+    .before_turn(before())
+    .await
+    .expect_err("a plugin past the ceiling is refused, not buffered");
 
     let WrapperError::OutputCap { stream, cap, .. } = &err else {
         panic!("the refusal is named, not collapsed into another failure: {err}");
@@ -158,48 +167,60 @@ async fn a_plugin_that_writes_past_the_ceiling_is_refused_and_the_read_stops() {
         "refused after {:?} of a {budget:?} budget — the read ran on to the timeout",
         started.elapsed(),
     );
+    // The premise, asserted rather than assumed: the plugin really did run and
+    // really was heartbeating, so a still file below means it was stopped and
+    // not that it never started.
+    assert!(
+        beats(&pulse) > 0,
+        "the flooding plugin never wrote its heartbeat, so the check below proves nothing"
+    );
     // And it cannot resume: the writer is gone, so no further byte can arrive
     // and nothing is blocked on a pipe the host stopped draining.
-    let writer = recorded_pid(&pid_file);
     assert!(
-        !outlived(writer, Duration::from_secs(5)),
-        "the refused plugin (pid {writer}) is still writing after the call returned",
+        !outlived(&pulse, Duration::from_secs(5)),
+        "the refused plugin is still running after the call returned",
     );
 }
 
 /// **Witness 2.** A plugin that backgrounds a child and then runs out of
 /// budget leaves nothing behind.
 ///
-/// `kill_on_drop` reaches the `sh` and stops there; the `sleep` it backgrounded
-/// is a grandchild, and before the transport `setsid`'d its children into their
-/// own process group there was nothing that could reach it. It outlived the
-/// turn by its full five minutes — on a machine whose user had been told the
-/// turn was over.
+/// `kill_on_drop` reaches the plugin process and stops there; what it started
+/// is a grandchild, and before the transport put its children in a group of
+/// their own there was nothing that could reach it. It outlived the turn by its
+/// full five minutes — on a machine whose user had been told the turn was over.
+///
+/// **This is also #3550's witness.** That group is a `setsid` process group on
+/// unix and a Job Object on Windows, and until this file stopped being a `sh`
+/// script the Windows half had no test that could run at all: the mechanism
+/// shipped with "it compiles" as its whole evidence.
 #[tokio::test]
 async fn a_timed_out_plugin_leaves_no_surviving_grandchild() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let pid_file = dir.path().join("grandchild.pid");
-    let script = format!(
-        "sleep 300 &\n\
-         echo $! > {pid}\n\
-         sleep 300\n",
-        pid = pid_file.display(),
-    );
+    let pulse = dir.path().join("grandchild.pulse");
 
-    let err = plugin(&script, Duration::from_millis(500))
-        .before_turn(before())
-        .await
-        .expect_err("the plugin never answers inside its budget");
+    let err = plugin(
+        &["background", &pulse.display().to_string()],
+        Duration::from_millis(500),
+    )
+    .before_turn(before())
+    .await
+    .expect_err("the plugin never answers inside its budget");
     assert!(
         matches!(err, WrapperError::Timeout { .. }),
         "the budget is what ended it: {err}"
     );
 
-    let grandchild = recorded_pid(&pid_file);
+    // The premise: there really was a grandchild to leak. Without this the
+    // test would pass just as happily against a fixture that failed to start
+    // one.
     assert!(
-        !outlived(grandchild, Duration::from_secs(5)),
-        "the backgrounded grandchild (pid {grandchild}) outlived the turn it was gathering \
-         evidence for",
+        started_beating(&pulse, Duration::from_secs(5)),
+        "no grandchild ever ran, so this test would prove nothing about killing one"
+    );
+    assert!(
+        !outlived(&pulse, Duration::from_secs(5)),
+        "the backgrounded grandchild outlived the turn it was gathering evidence for",
     );
 }
 
@@ -221,13 +242,15 @@ async fn a_timed_out_plugin_leaves_no_surviving_grandchild() {
 async fn a_plugin_that_talks_after_answering_does_not_wedge_the_exchange() {
     let budget = Duration::from_secs(8);
     let trailing_past_one_pipe_buffer = 3 * 64 * 1024;
-    let script = format!(
-        "printf '%s\\n' '{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\"context\":[]}}}}'\n\
-         yes stella | tr -d '\\n' | head -c {trailing_past_one_pipe_buffer}\n",
-    );
 
     let started = Instant::now();
-    let response = plugin(&script, budget).before_turn(before()).await.expect(
+    let response = plugin(
+        &["trailing", &trailing_past_one_pipe_buffer.to_string()],
+        budget,
+    )
+    .before_turn(before())
+    .await
+    .expect(
         "a plugin that answered correctly and then kept talking is not lost to a pipe \
              deadlock",
     );
