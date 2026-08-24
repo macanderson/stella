@@ -61,7 +61,7 @@ RENDERER_CRATE = "crates/stella-transcript/"
 
 # The shared entry points a surface is expected to draw through.
 GRID = "stella_transcript::grid::render{,_turn_lines}"
-HTML = "stella_transcript::html::render_{page,run}"
+HTML = "stella_transcript::html::render_{page,run,turn_tail}"
 
 # What a reference to each entry point looks like in source, once comments are
 # stripped. The `use stella_transcript::grid;` form means a call site reads
@@ -78,9 +78,15 @@ HTML = "stella_transcript::html::render_{page,run}"
 # standalone `/transcript` route was consolidated into the turn page, and
 # refusing to count the fragment would have read that consolidation as a
 # regression away from sharing.
+#
+# `render_turn_tail` counts for the reason `render_turn_lines` does, and is
+# its counterpart on this surface: it draws one turn's unsettled tail for a
+# page repainting a live run incrementally (#4566). A surface that moves
+# fully onto it — asking only for what changed, never for a whole fragment —
+# is using the shared renderer harder, not less.
 PATTERNS = {
     GRID: re.compile(r"\bgrid::render(_turn_lines)?\s*\("),
-    HTML: re.compile(r"\bhtml::render_(page|run)\s*\("),
+    HTML: re.compile(r"\bhtml::render_(page|run|turn_tail)\s*\("),
 }
 
 
