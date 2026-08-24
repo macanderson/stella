@@ -306,7 +306,10 @@ It is advisory and per-clone (bypassable with `SKIP_GATE=1 git push` or
 `git push --no-verify`), so it complements the required server-side checks
 rather than replacing them — with `enforce_admins` off, an admin or auto-merge
 can still land gate-failing code, and the hook is what catches that on the
-author's push. It is also the only place some guards run for long stretches:
+author's push. `main-red-hold.yml` catches the *next* merge rather than that
+one, and only once a maintainer adds it to main's required checks; nothing in
+this tree can stop the first (#3887). It is also the only place some guards run
+for long stretches:
 `wire-schema` lived only in `make gate` until #1185 merged with stale generated
 artifacts. When Actions is unavailable entirely (an org billing hold has
 happened before — see RELEASING.md's local-release path), it is the only gate
