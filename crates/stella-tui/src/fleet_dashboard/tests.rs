@@ -65,20 +65,20 @@ fn grid_shows_tasks_statuses_last_action_and_header_clocks() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: tool_start("edit_file", "path", "src/auth/session.rs"),
+            event: Box::new(tool_start("edit_file", "path", "src/auth/session.rs")),
         },
         Instant::now(),
     );
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: AgentEvent::FileChange {
+            event: Box::new(AgentEvent::FileChange {
                 path: "src/auth/session.rs".into(),
                 kind: FileChangeKind::Modified,
                 added: 2,
                 removed: 1,
                 diff: Some("@@\n+a\n+b\n-c\n".into()),
-            },
+            }),
         },
         Instant::now(),
     );
@@ -126,9 +126,9 @@ fn last_action_holds_tool_while_reasoning_but_thinks_before_any_action() {
     board.apply(
         FleetMsg::Event {
             id: "t2".into(),
-            event: AgentEvent::Reasoning {
+            event: Box::new(AgentEvent::Reasoning {
                 delta: "hmm".into(),
-            },
+            }),
         },
         Instant::now(),
     );
@@ -139,16 +139,16 @@ fn last_action_holds_tool_while_reasoning_but_thinks_before_any_action() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: tool_start("bash", "command", "cargo test retry_loop"),
+            event: Box::new(tool_start("bash", "command", "cargo test retry_loop")),
         },
         Instant::now(),
     );
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: AgentEvent::Reasoning {
+            event: Box::new(AgentEvent::Reasoning {
                 delta: "now what".into(),
-            },
+            }),
         },
         Instant::now(),
     );
@@ -191,11 +191,11 @@ fn default_sort_is_blocked_then_running_then_queued_then_finished() {
     board.apply(
         FleetMsg::Event {
             id: "block".into(),
-            event: AgentEvent::AskUser {
+            event: Box::new(AgentEvent::AskUser {
                 id: "q1".into(),
                 question: "approve write?".into(),
                 options: vec![],
-            },
+            }),
         },
         Instant::now(),
     );
@@ -276,7 +276,7 @@ fn terminal_status_freezes_elapsed_and_wins_over_late_events() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: tool_start("bash", "command", "echo late"),
+            event: Box::new(tool_start("bash", "command", "echo late")),
         },
         start + Duration::from_secs(9),
     );
@@ -516,13 +516,13 @@ fn a_lane_stops_reading_blocked_once_its_card_is_answered() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: AgentEvent::ScopeReview {
+            event: Box::new(AgentEvent::ScopeReview {
                 proposal: stella_protocol::ScopeProposal {
                     summary: "ship the migration".into(),
                     steps: vec!["migrate".into(), "backfill".into(), "cut over".into()],
                     ..Default::default()
                 },
-            },
+            }),
         },
         now,
     );
@@ -531,7 +531,7 @@ fn a_lane_stops_reading_blocked_once_its_card_is_answered() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: AgentEvent::ToolResult {
+            event: Box::new(AgentEvent::ToolResult {
                 call_id: "c1".into(),
                 output: stella_protocol::ToolOutput::error("the plan was not approved"),
                 duration_ms: 400,

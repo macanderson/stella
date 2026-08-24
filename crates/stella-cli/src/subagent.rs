@@ -481,9 +481,18 @@ pub fn install_for_session(
         crate::agent::seats::SeatProviders::new()
     } else {
         let configured = crate::config::discover_configured_providers();
+        // The session's own merged engine config, which is where the ceiling
+        // the seat map answers to lives — the same object `seat_models` came
+        // from, so the two cannot be read from different scopes.
+        let allowed = cfg
+            .engine_settings
+            .as_ref()
+            .map(|engine| engine.allowed_models().to_vec())
+            .unwrap_or_default();
         let (seats, notices) = crate::agent::seats::resolve_seat_models(
             &assignments,
             &configured,
+            &allowed,
             crate::agent::seats::EnginePosture::of(cfg),
         )?;
         for notice in notices {

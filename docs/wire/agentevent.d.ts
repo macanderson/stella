@@ -457,6 +457,49 @@ export type FinishReason = "stop" | "length" | "tool_calls" | "content_filter";
 export type FlipOutcome = "unobserved" | "not_achieved" | "achieved";
 
 /**
+ * Optional sampling/routing parameter overrides riding a
+ * [`CompletionRequest`]. Every field is independently optional —
+ * "include" semantics: `None` leaves the provider's own default in place,
+ * `Some` puts the value on the wire. Each adapter forwards the subset its
+ * dialect supports and silently drops the rest (a param the provider
+ * can't express must never fail the request).
+ */
+export interface GenerationParams {
+  /**
+   * Penalize tokens by their frequency in the text so far.
+   */
+  frequency_penalty?: number | null;
+  /**
+   * Penalize tokens that have appeared at all in the text so far.
+   */
+  presence_penalty?: number | null;
+  /**
+   * Multiplicative repetition penalty (>1 discourages, <1 encourages).
+   */
+  repetition_penalty?: number | null;
+  /**
+   * Random seed for deterministic outputs, where supported.
+   */
+  seed?: number | null;
+  /**
+   * Which capacity tier to route to ([`ServiceTier`]).
+   */
+  service_tier?: ServiceTier | null;
+  /**
+   * Limit sampling to the k highest-probability tokens.
+   */
+  top_k?: number | null;
+  /**
+   * Nucleus sampling: cumulative-probability cutoff.
+   */
+  top_p?: number | null;
+  /**
+   * How much detail to ask for ([`Verbosity`]).
+   */
+  verbosity?: Verbosity | null;
+}
+
+/**
  * What a `HunkReview` gate presents for per-hunk approval before a mutating
  * tool call writes anything (#1265).
  *
@@ -1056,6 +1099,13 @@ export interface ScopeProposal {
 }
 
 /**
+ * Provider service tier: `Priority` routes to faster paid-tier capacity,
+ * `Flex` to cheaper capacity with slower response times. Only applied by
+ * providers that support tiered service; others use their default tier.
+ */
+export type ServiceTier = "auto" | "default" | "flex" | "priority";
+
+/**
  * The name of a stage boundary — an OPEN vocabulary. The host's own boundaries are listed in `examples`; an installed plugin may contribute a stage under any other name, so a consumer must branch on the names it knows and keep a default arm rather than treating an unlisted value as invalid.
  */
 export type StageName = string;
@@ -1312,6 +1362,13 @@ export type ToolOutput = {
  * envelope. Error bodies and prompts are deliberately unrepresentable.
  */
 export type UsageIncompleteReason = "provider_error" | "timeout" | "cancelled";
+
+/**
+ * Response-detail level for providers with a verbosity parameter (OpenAI's
+ * `text.verbosity`). Adapters whose wire has no equivalent ignore it — the
+ * same never-fail contract as [`ReasoningEffort`].
+ */
+export type Verbosity = "low" | "medium" | "high";
 
 /**
  * Evidence backing a `Verdict`. `deterministic` distinguishes the
@@ -1777,6 +1834,10 @@ export type AgentEvent = {
   output_text?: string | null;
   output_tokens: number;
   /**
+   * The sampling and routing overrides the dispatched request carried -- top_p, top_k, the penalties, seed, verbosity, service_tier. Content-free: every field is a number or a closed enum. Absent when the request carried no overrides, or when the stream predates this field.
+   */
+  params?: GenerationParams | null;
+  /**
    * Provider which actually served this call, never the session's
    * configured default. Empty only on legacy events.
    *
@@ -1808,6 +1869,10 @@ export type AgentEvent = {
    * Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text.
    */
   sub_agent_id?: string | null;
+  /**
+   * The sampling temperature the dispatched request carried. Absent when the request pinned none, or when the stream predates this field; absence is not zero -- an unpinned temperature is the provider's own default.
+   */
+  temperature?: number | null;
   tool_calls: number;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.

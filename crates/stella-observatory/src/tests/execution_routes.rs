@@ -95,6 +95,13 @@ fn execution_journal_replays_transcript_without_deltas() {
     // the profile card renders "not recorded for this run" without these.
     assert_eq!(v[7]["effort"], "high");
     assert_eq!(v[7]["max_output_tokens"], 32000);
+    // ...and the generation shape beside them (#4621). The lift is an explicit
+    // allowlist, so a field the event gained is absent from this route until
+    // its key is named there — which is what this asserts.
+    assert_eq!(v[7]["temperature"], 0.2);
+    assert_eq!(v[7]["params"]["top_p"], 0.95);
+    assert_eq!(v[7]["params"]["seed"], 4621);
+    assert_eq!(v[7]["params"]["service_tier"], "flex");
     // No execution 2 events were seeded — an empty transcript, not an error.
     let none = respond(ws.path(), "/api/execution-journal?id=2");
     let v: serde_json::Value = serde_json::from_slice(&none.body).unwrap();

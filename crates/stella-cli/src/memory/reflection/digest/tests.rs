@@ -464,6 +464,8 @@ fn step_usage(step: usize, role: ModelCallRole, cost_usd: f64, duration_ms: u64)
         finish_reason: None,
         effort: None,
         max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     }
 }

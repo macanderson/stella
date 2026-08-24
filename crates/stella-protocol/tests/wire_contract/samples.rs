@@ -9,7 +9,9 @@
 //! because the proofs are the only consumers.
 
 use serde_json::json;
-use stella_protocol::completion::{FinishReason, ReasoningEffort};
+use stella_protocol::completion::{
+    FinishReason, GenerationParams, ReasoningEffort, ServiceTier, Verbosity,
+};
 use stella_protocol::delivery_event::{DeliveryDecline, DeliveryOutcome};
 use stella_protocol::event::{
     BudgetMode, BudgetScope, CiStatus, FileChangeKind, MediaJobState, MediaKind, ModelCallRole,
@@ -117,6 +119,19 @@ pub(crate) fn all_finish_reasons() -> Vec<FinishReason> {
 pub(crate) fn all_reasoning_efforts() -> Vec<ReasoningEffort> {
     use ReasoningEffort::*;
     vec![Low, Medium, High, Xhigh, Max]
+}
+
+/// Every routing/detail vocabulary a request's [`GenerationParams`] can pin.
+/// They reached the payload graph with #4621, which put the dispatched
+/// request's generation shape on the metering record.
+pub(crate) fn all_service_tiers() -> Vec<ServiceTier> {
+    use ServiceTier::*;
+    vec![Auto, Default, Flex, Priority]
+}
+
+pub(crate) fn all_verbosities() -> Vec<Verbosity> {
+    use Verbosity::*;
+    vec![Low, Medium, High]
 }
 
 pub(crate) fn all_file_change_kinds() -> Vec<FileChangeKind> {
@@ -857,6 +872,22 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 finish_reason: Some(FinishReason::Stop),
                 effort: Some(ReasoningEffort::High),
                 max_output_tokens: Some(64_000),
+                temperature: Some(0.2),
+                // Every field of the generation shape at once: the sample is
+                // the only place the all-present wire form of a nested
+                // optional struct is written down, so a `None` here would let
+                // a field be added to `GenerationParams` and never appear on
+                // this event's contract at all.
+                params: Some(GenerationParams {
+                    top_p: Some(0.95),
+                    top_k: Some(40),
+                    frequency_penalty: Some(0.1),
+                    presence_penalty: Some(0.2),
+                    repetition_penalty: Some(1.05),
+                    seed: Some(1_234_567),
+                    verbosity: Some(Verbosity::High),
+                    service_tier: Some(ServiceTier::Priority),
+                }),
                 sub_agent_id: None,
             },
             AgentEvent::StepUsage {
@@ -882,6 +913,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 finish_reason: None,
                 effort: None,
                 max_output_tokens: None,
+                temperature: None,
+                params: None,
                 sub_agent_id: None,
             },
         ]
@@ -916,6 +949,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 // the pairing the field exists for.
                 effort: None,
                 max_output_tokens: Some(64_000),
+                temperature: None,
+                params: None,
                 sub_agent_id: None,
             }),
     );
@@ -945,6 +980,46 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 finish_reason: Some(FinishReason::Stop),
                 effort: Some(effort),
                 max_output_tokens: None,
+                temperature: None,
+                params: None,
+                sub_agent_id: None,
+            }),
+    );
+    // Every service tier and every verbosity a request's generation shape can
+    // pin (#4621). Zipped against the longer list so one sweep covers both:
+    // the two are independent fields of one struct, and a sample per pair
+    // would be a cross product proving nothing the pairs do not.
+    events.extend(
+        all_service_tiers()
+            .into_iter()
+            .zip(all_verbosities().into_iter().cycle())
+            .map(|(service_tier, verbosity)| AgentEvent::StepUsage {
+                upstream_provider: None,
+                step: 4,
+                role: ModelCallRole::Worker,
+                provider: "openai".into(),
+                output_text: None,
+                model: "o5".into(),
+                input_tokens: 2_000,
+                output_tokens: 900,
+                cached_input_tokens: 0,
+                cache_write_tokens: 0,
+                reasoning_tokens: None,
+                estimated_input_tokens: 1_900,
+                cost_usd: 0.02,
+                duration_ms: 30_000,
+                retries: 0,
+                tool_calls: 0,
+                complete: true,
+                finish_reason: Some(FinishReason::Stop),
+                effort: None,
+                max_output_tokens: None,
+                temperature: Some(1.0),
+                params: Some(GenerationParams {
+                    verbosity: Some(verbosity),
+                    service_tier: Some(service_tier),
+                    ..GenerationParams::default()
+                }),
                 sub_agent_id: None,
             }),
     );

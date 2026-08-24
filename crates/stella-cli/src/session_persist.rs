@@ -76,7 +76,7 @@ pub fn journal_record(inbound: &Inbound) -> Option<JournalRecord> {
         }),
         Inbound::Event { agent, event } => Some(JournalRecord::Event {
             agent: agent.clone(),
-            event: event.clone(),
+            event: Box::new(event.clone()),
         }),
         Inbound::Status { agent, status } => Some(JournalRecord::Status {
             agent: agent.clone(),
@@ -159,7 +159,10 @@ pub fn replay_inbound(record: JournalRecord, started_ms: u64) -> Option<Inbound>
             }
             Some(Inbound::Register(meta))
         }
-        JournalRecord::Event { agent, event } => Some(Inbound::Event { agent, event }),
+        JournalRecord::Event { agent, event } => Some(Inbound::Event {
+            agent,
+            event: *event,
+        }),
         JournalRecord::Status { agent, status } => Some(Inbound::Status {
             agent,
             status: status_from_key(&status)?,
@@ -902,7 +905,7 @@ mod tests {
             },
             JournalRecord::Event {
                 agent: "req:1".into(),
-                event: AgentEvent::Text { text: "x".into() },
+                event: Box::new(AgentEvent::Text { text: "x".into() }),
             },
             JournalRecord::Pipeline { on: true },
             JournalRecord::PromptStarted {
@@ -1298,6 +1301,8 @@ mod tests {
                     finish_reason: None,
                     effort: None,
                     max_output_tokens: None,
+                    temperature: None,
+                    params: None,
                     sub_agent_id: None,
                 },
             },

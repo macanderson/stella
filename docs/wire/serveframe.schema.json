@@ -668,6 +668,17 @@
               "minimum": 0,
               "type": "integer"
             },
+            "params": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/GenerationParams"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The sampling and routing overrides the dispatched request carried -- top_p, top_k, the penalties, seed, verbosity, service_tier. Content-free: every field is a number or a closed enum. Absent when the request carried no overrides, or when the stream predates this field."
+            },
             "provider": {
               "default": "",
               "description": "Provider which actually served this call, never the session's\nconfigured default. Empty only on legacy events.\n\nFor a *gateway* this names the gateway (`openrouter`), which is as\nfar as this field can honestly go — the silicon behind it rides in\n`upstream_provider`.",
@@ -701,6 +712,14 @@
               "description": "Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text.",
               "type": [
                 "string",
+                "null"
+              ]
+            },
+            "temperature": {
+              "description": "The sampling temperature the dispatched request carried. Absent when the request pinned none, or when the stream predates this field; absence is not zero -- an unpinned temperature is the provider's own default.",
+              "format": "float",
+              "type": [
+                "number",
                 "null"
               ]
             },

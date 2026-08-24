@@ -455,15 +455,15 @@ _ENGINE_POSTURE_FIELDS = frozenset(
         "auto_mode",
         "effort_auto",
         "reasoning_auto",
+        "minimal_prompt",
         "headless_scope_bypass",
         "agents",
     }
 )
 _ENGINE_POSTURE_AGENT_ROLES = frozenset({"default", "worker", "verifier", "triage"})
-# The outcome-bearing roles also carry `params` (`{"max_tokens": …}`); triage
-# keeps the engine default and has no `params` key. Kept in step with
-# `posture.py`, the normative home these sets describe.
-_ENGINE_POSTURE_AGENT_FIELDS = frozenset({"effort", "reasoning", "params"})
+# Every role is the same shape: #2411 took the output cap out of the posture, so
+# nothing is left for a `params` key to hold. `posture.py` is the normative home.
+_ENGINE_POSTURE_AGENT_FIELDS = frozenset({"effort", "reasoning"})
 RUNTIME_IDENTITY_FIELDS = frozenset(
     {
         "binary_sha256",

@@ -340,6 +340,8 @@ fn step_usage_accumulates_tokens_and_file_change_fills_ledger() {
             finish_reason: None,
             effort: None,
             max_output_tokens: None,
+            temperature: None,
+            params: None,
             sub_agent_id: None,
         },
     ));
@@ -386,6 +388,8 @@ fn an_auxiliary_call_spends_on_the_row_without_relabelling_its_model() {
         finish_reason: None,
         effort: None,
         max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     };
     let mut w = WorkspaceModel::new();
@@ -522,6 +526,8 @@ fn context_tokens_track_the_latest_window_not_the_cumulative_input() {
         finish_reason: None,
         effort: None,
         max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     };
     // Three calls of 150k each: cumulative 450k dwarfs the 200k window, but
@@ -560,6 +566,8 @@ fn budget_tick_sets_live_spend_without_double_counting_step_usage() {
         finish_reason: None,
         effort: None,
         max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     };
     let mut w = WorkspaceModel::new();

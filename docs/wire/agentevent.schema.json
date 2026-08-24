@@ -729,6 +729,84 @@
         }
       ]
     },
+    "GenerationParams": {
+      "description": "Optional sampling/routing parameter overrides riding a\n[`CompletionRequest`]. Every field is independently optional —\n\"include\" semantics: `None` leaves the provider's own default in place,\n`Some` puts the value on the wire. Each adapter forwards the subset its\ndialect supports and silently drops the rest (a param the provider\ncan't express must never fail the request).",
+      "properties": {
+        "frequency_penalty": {
+          "description": "Penalize tokens by their frequency in the text so far.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "presence_penalty": {
+          "description": "Penalize tokens that have appeared at all in the text so far.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "repetition_penalty": {
+          "description": "Multiplicative repetition penalty (>1 discourages, <1 encourages).",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "seed": {
+          "description": "Random seed for deterministic outputs, where supported.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "service_tier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceTier"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which capacity tier to route to ([`ServiceTier`])."
+        },
+        "top_k": {
+          "description": "Limit sampling to the k highest-probability tokens.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "top_p": {
+          "description": "Nucleus sampling: cumulative-probability cutoff.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "verbosity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Verbosity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How much detail to ask for ([`Verbosity`])."
+        }
+      },
+      "type": "object"
+    },
     "HunkProposal": {
       "description": "What a `HunkReview` gate presents for per-hunk approval before a mutating\ntool call writes anything (#1265).\n\nThe hunks are a **flat, ordered list across every file the call touches**,\nnot a per-file tree: the reviewer's answer is a set of indices into this\nlist, and one flat coordinate space is what keeps that answer unambiguous\nwhen two files change in the same call.",
       "properties": {
@@ -1690,6 +1768,31 @@
       ],
       "type": "object"
     },
+    "ServiceTier": {
+      "description": "Provider service tier: `Priority` routes to faster paid-tier capacity,\n`Flex` to cheaper capacity with slower response times. Only applied by\nproviders that support tiered service; others use their default tier.",
+      "oneOf": [
+        {
+          "const": "auto",
+          "description": "Let the provider pick the tier.",
+          "type": "string"
+        },
+        {
+          "const": "default",
+          "description": "The account's standard tier.",
+          "type": "string"
+        },
+        {
+          "const": "flex",
+          "description": "Cheaper capacity, slower responses.",
+          "type": "string"
+        },
+        {
+          "const": "priority",
+          "description": "Faster paid-tier capacity.",
+          "type": "string"
+        }
+      ]
+    },
     "StageName": {
       "description": "The name of a stage boundary — an OPEN vocabulary. The host's own boundaries are listed in `examples`; an installed plugin may contribute a stage under any other name, so a consumer must branch on the names it knows and keep a default arm rather than treating an unlisted value as invalid.",
       "examples": [
@@ -2096,6 +2199,26 @@
         {
           "const": "cancelled",
           "description": "The caller dropped the turn (hard cancel) while a paid provider\nattempt was still in flight — the call may have real server-side\ncost whose usage is unknowable. Emitted by the engine's drop guard,\nwhich is armed only for exactly that window (a call that settles\nnormally reports through its ordinary `StepUsage` envelope instead).",
+          "type": "string"
+        }
+      ]
+    },
+    "Verbosity": {
+      "description": "Response-detail level for providers with a verbosity parameter (OpenAI's\n`text.verbosity`). Adapters whose wire has no equivalent ignore it — the\nsame never-fail contract as [`ReasoningEffort`].",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Terse answers.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "The provider's usual level of detail.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "Expansive answers.",
           "type": "string"
         }
       ]
@@ -2922,6 +3045,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GenerationParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The sampling and routing overrides the dispatched request carried -- top_p, top_k, the penalties, seed, verbosity, service_tier. Content-free: every field is a number or a closed enum. Absent when the request carried no overrides, or when the stream predates this field."
+        },
         "provider": {
           "default": "",
           "description": "Provider which actually served this call, never the session's\nconfigured default. Empty only on legacy events.\n\nFor a *gateway* this names the gateway (`openrouter`), which is as\nfar as this field can honestly go — the silicon behind it rides in\n`upstream_provider`.",
@@ -2955,6 +3089,14 @@
           "description": "Which sub-agent spent this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. The `sub_agent` started/finished bracket cannot answer this: independent delegates are dispatched concurrently, so several children's events interleave on one stream and no bracket pair encloses any particular call. An opaque handle, never instruction text.",
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "temperature": {
+          "description": "The sampling temperature the dispatched request carried. Absent when the request pinned none, or when the stream predates this field; absence is not zero -- an unpinned temperature is the provider's own default.",
+          "format": "float",
+          "type": [
+            "number",
             "null"
           ]
         },
