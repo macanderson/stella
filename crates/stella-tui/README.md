@@ -131,10 +131,10 @@ flat ceiling like any other file. It is still one of the largest files in the
 crate and the advice above applies to it in spirit — but the guard no longer
 grandfathers it, and it must not go back over.
 
-`src/views/session.rs` left this list in #4127: its incremental transcript fold
-moved to [`src/views/session/fold.rs`](src/views/session/fold.rs), which took it
-under the limit. That is the shape a split is meant to have — a self-contained
-concern leaving, not lines redistributed.
+The session tab left this list in #4127: its incremental transcript fold moved
+to [`src/v2/session/fold.rs`](src/v2/session/fold.rs), which took it under the
+limit. That is the shape a split is meant to have — a self-contained concern
+leaving, not lines redistributed.
 
 A ceiling can move only via `make file-size-update`, which lands as a
 reviewable baseline diff justified like any other change — treat it as an
@@ -156,9 +156,10 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/deck_shell.rs`](src/deck_shell.rs) | `run_deck(...)`: the deck's `select!` loop, plus a third arm — a 33 ms tick that advances the clock and samples resources. |
 | [`src/envelope.rs`](src/envelope.rs) | The multi-agent wire types: `Inbound` in, `WorkspaceInput` out, and every out-of-band snapshot the driver pushes. |
 | [`src/composer.rs`](src/composer.rs) | The input model: textarea semantics, `classify_enter`, paste chips, and the slash popup shared by both surfaces. |
-| [`src/views/*.rs`](src/views) | One module per deck tab (session · agents · installed · graph · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `tools` is the exception: a config editor SETTINGS hosts, with its own `render_panel` and key handler. |
+| [`src/views/*.rs`](src/views) | One module per deck tab (agents · installed · graph · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `tools` is the exception: a config editor SETTINGS hosts, with its own `render_panel` and key handler. |
 | [`src/v2/engine_panel.rs`](src/v2/engine_panel.rs) | The SETTINGS tab's AGENTS pane — the `agent_engine_config` editor, modal while focused. `tabs.rs` is the strip's vocabulary, `keys.rs` the key map and the writes it makes into the working copy, `paint.rs` the five bands it draws. |
-| [`src/views/*.rs`](src/views) | One module per deck tab (session · graph · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `engine` is the exception: the config editor SETTINGS hosts, with its own `render_panel` and key handler. |
+| [`src/views/*.rs`](src/views) | One module per deck tab (graph · mcp · issues · settings), each exposing `render(model, ui, area, buf)`. `engine` is the exception: the config editor SETTINGS hosts, with its own `render_panel` and key handler. |
+| [`src/v2/session.rs`](src/v2/session.rs) | The SESSION tab, on the SPEC 5 frame: the gate bands, the incremental fold ([`src/v2/session/fold.rs`](src/v2/session/fold.rs)) and the scroll window over it. Draws no chrome — the transcript takes the whole content area. |
 | [`src/diff.rs`](src/diff.rs), [`src/syntax.rs`](src/syntax.rs), [`src/markdown.rs`](src/markdown.rs), [`src/textline.rs`](src/textline.rs) | Shared text presentation — one implementation each of "how a diff looks", source coloring, markdown, and the event→wording table (also consumed by `stella-cli`'s plain renderer). |
 | [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` mirrors the brand kit at `docs/brand/`; `theme.rs` is the only module allowed to reference it. |
 | [`src/v2/status_bar.rs`](src/v2/status_bar.rs) | SPEC 5's one-row status bar — `worker · stage · ctx [meter] % · $spend · saved $x · ✉ n`, with `? help` pinned right. `cells` is the one decision function (pure over `Status`, so the golden frames are fixture data); `render_band` draws it plus the cache-diagnosis row beneath. Replaced the two-row v1 statline in #4123/#4129; `src/statline.rs` is deleted (#4128) and this module's doc keeps the record of why the two-row shape lost. |

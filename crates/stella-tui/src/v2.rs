@@ -39,6 +39,7 @@ pub mod question;
 pub mod queue;
 pub(crate) mod record;
 pub mod seats;
+pub mod session;
 pub mod sessions;
 pub mod skills;
 pub mod status_bar;

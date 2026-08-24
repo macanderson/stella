@@ -1034,7 +1034,7 @@ fn shell_result(call_id: &str, out: &str) -> AgentEvent {
 #[test]
 fn bang_shell_output_lands_in_the_focused_session_transcript() {
     // The whole point of `ShellEvent`: `! pwd` answers where it was asked.
-    // `views::session::render` draws only `agents[ui.focused]`, so output
+    // `v2::session::render` draws only `agents[ui.focused]`, so output
     // routed to any other lane is output the user never sees.
     let mut w = WorkspaceModel::new();
     w.apply_inbound(&reg("lead"));
