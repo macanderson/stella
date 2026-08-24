@@ -249,17 +249,37 @@ pub struct ChildToolPosture {
     pub gate: Arc<dyn stella_core::ports::AuthzGate>,
 }
 
+/// The session's own model wiring: the adapter every seat-less child runs on,
+/// and the engine config that names it to the child's engine.
+///
+/// One struct behind one lock rather than two fields, because a `/model`
+/// switch has to move both or neither. Split across two locks, a child
+/// dispatched between the two writes would run an engine config naming a model
+/// its adapter no longer serves — which is the mismatch, not a narrower window
+/// of it.
+struct SessionModel {
+    /// `Arc`, not `Box`: the provider is moved onto each child's thread.
+    provider: Arc<dyn Provider>,
+    config: EngineConfig,
+}
+
 /// Runs sub-agents for the `delegate` tool. One per session.
 pub struct SessionSubAgents {
-    /// `Arc`, not `Box`: the provider is moved onto each child's thread.
-    ///
     /// The session's own model, and the answer for every seat `seats` does not
     /// carry — which is every seat at all until a second BYOK provider is
     /// configured.
-    provider: Arc<dyn Provider>,
+    ///
+    /// Behind a lock because it is the one piece of this dispatcher a running
+    /// session re-points: `/model` swaps the lead's adapter between turns, and
+    /// a child delegated afterwards must inherit the model the user picked
+    /// rather than the one the session booted on (#4625). Everything else here
+    /// — the pool's accumulated spend above all — survives a switch untouched,
+    /// which is why the switch re-points this field instead of re-installing
+    /// the dispatcher.
+    model: std::sync::RwLock<SessionModel>,
     /// The models this session serves named seats from.
     ///
-    /// Empty is the ordinary case and means "every child runs on `provider`" —
+    /// Empty is the ordinary case and means "every child runs on `model`" —
     /// exactly what this dispatcher did before seats existed. A hit means the
     /// user assigned a model to the role name the child's requester declared,
     /// which is what lets one plugin's process run several participants on
@@ -268,7 +288,6 @@ pub struct SessionSubAgents {
     seats: crate::agent::seats::SeatProviders,
     /// Weak on purpose — the registry owns this dispatcher. See module docs.
     tools: Weak<ToolRegistry>,
-    config: EngineConfig,
     /// The operator's `tools.<name>` switches, applied to every child this
     /// dispatcher runs (#3930).
     ///
@@ -306,10 +325,9 @@ impl SessionSubAgents {
         mode: stella_protocol::BudgetMode,
     ) -> Self {
         Self {
-            provider,
+            model: std::sync::RwLock::new(SessionModel { provider, config }),
             seats: crate::agent::seats::SeatProviders::new(),
             tools: Arc::downgrade(registry),
-            config,
             policy: stella_tools::policy::ToolPolicy::allow_all(),
             gate: Arc::new(stella_core::ports::NoAuthz),
             pool: Arc::new(Mutex::new(BudgetGuard::new(
@@ -359,9 +377,10 @@ impl SessionSubAgents {
         self
     }
 
-    /// The provider serving `seat`, or the session's own.
+    /// The wiring a child runs on: the provider serving `seat` (or the
+    /// session's own), and the session's engine config.
     ///
-    /// A miss is not an error and must never become one. It covers all three
+    /// A seat miss is not an error and must never become one. It covers all three
     /// ordinary cases and they resolve identically on purpose: the child named
     /// no seat, the seat is one the user assigned no model to, or the assigned
     /// model could not be built and was reported at install. In every one of
@@ -370,10 +389,40 @@ impl SessionSubAgents {
     ///
     /// `seat` is compared and never parsed. See [`crate::agent::seats`] for why
     /// core must stay ignorant of what the string means.
+    ///
+    /// The adapter and the engine config come out of one read, so a child
+    /// dispatched while [`Self::retarget`] runs gets the wiring from before the
+    /// switch or the wiring from after it, never one field of each.
+    fn wiring_for(&self, seat: Option<&str>) -> (Arc<dyn Provider>, EngineConfig) {
+        let model = self.model.read().unwrap_or_else(|p| p.into_inner());
+        let provider = seat
+            .and_then(|seat| self.seats.get(seat))
+            .cloned()
+            .unwrap_or_else(|| model.provider.clone());
+        (provider, model.config.clone())
+    }
+
+    /// The provider half of [`Self::wiring_for`], for the seat-routing tests —
+    /// which assert on which adapter a seat name resolves to and have no use
+    /// for the engine config that rides along. `dispatch` takes the pair.
+    #[cfg(test)]
     fn provider_for(&self, seat: Option<&str>) -> Arc<dyn Provider> {
-        seat.and_then(|seat| self.seats.get(seat))
-            .unwrap_or(&self.provider)
-            .clone()
+        self.wiring_for(seat).0
+    }
+
+    /// Re-point the session's own model at `provider`/`config`.
+    ///
+    /// Called between turns when `/model` (or an assumed agent's declared
+    /// `model:`) switches the running session, so children delegated afterwards
+    /// run what the user picked (#4625). Seat assignments are deliberately
+    /// untouched: a seat is an explicit per-role choice, and a session-default
+    /// switch is not a licence to overrule it. So are `pool`, `policy` and
+    /// `gate` — re-installing the dispatcher would have reset the pool's
+    /// accumulated spend, quietly handing the session a fresh ceiling on every
+    /// switch.
+    pub fn retarget(&self, provider: Arc<dyn Provider>, config: EngineConfig) {
+        let mut model = self.model.write().unwrap_or_else(|p| p.into_inner());
+        *model = SessionModel { provider, config };
     }
 
     /// Override the session pool ceiling.
@@ -675,8 +724,7 @@ impl SessionSubAgents {
         // the one line that turns a requester's named role into the model that
         // serves it, and it must be taken before the spec moves onto the
         // child's thread.
-        let provider = self.provider_for(spec.seat.as_deref());
-        let config = self.config.clone();
+        let (provider, config) = self.wiring_for(spec.seat.as_deref());
         let pool = self.pool.clone();
         let ledger = tools.sub_agent_spend_ledger();
         let (done, wait) = tokio::sync::oneshot::channel();

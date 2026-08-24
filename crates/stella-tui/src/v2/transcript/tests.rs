@@ -42,7 +42,10 @@ fn scripted_turn() -> (TurnHead, Vec<Event>, Receipt) {
     edit.task = Some(3);
     edit.body = vec![Line::raw("  122 - digest: Vec<String>,")];
 
-    let mut run = Event::new(EventKind::Run, "cargo test -p stella-core");
+    let mut run = Event::new(
+        EventKind::Run { touched: None },
+        "cargo test -p stella-core",
+    );
     run.duration_ms = 1840;
 
     let receipt = Receipt {
@@ -142,7 +145,7 @@ fn every_event_row_shows_its_rail_in_the_correct_metal() {
             },
             token::RED,
         ),
-        (EventKind::Run, token::GOLD),
+        (EventKind::Run { touched: None }, token::GOLD),
         (
             EventKind::Skill {
                 trigger: "auto".into(),
@@ -332,7 +335,10 @@ fn a_path_subject_dims_its_directory_and_brightens_its_basename() {
 /// above and fails this one.
 #[test]
 fn a_command_subject_stays_one_unemphasised_span() {
-    let mut event = Event::new(EventKind::Run, Subject::from("grep -r foo/ ."));
+    let mut event = Event::new(
+        EventKind::Run { touched: None },
+        Subject::from("grep -r foo/ ."),
+    );
     event.collapsed = Some(false);
     let spans = head_row(&event, token::GOLD, W).spans;
 
@@ -373,7 +379,7 @@ fn every_head_glyph_is_in_the_vocabulary() {
         EventKind::Delete {
             extent: Extent::delta(0, 9),
         },
-        EventKind::Run,
+        EventKind::Run { touched: None },
         EventKind::Skill {
             trigger: "auto".into(),
             tokens: 1,
@@ -392,15 +398,19 @@ fn every_head_glyph_is_in_the_vocabulary() {
         },
         EventKind::Other {
             class: ToolClass::Inspect,
+            touched: None,
         },
         EventKind::Other {
             class: ToolClass::Mutate,
+            touched: None,
         },
         EventKind::Other {
             class: ToolClass::Execute,
+            touched: None,
         },
         EventKind::Other {
             class: ToolClass::Delegate,
+            touched: None,
         },
     ];
     for kind in kinds {

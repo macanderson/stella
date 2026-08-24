@@ -71,10 +71,14 @@ use stella_store::work_journal::WorkJournal;
 /// - **An isolated candidate** — `Pipeline::engine_config_for` clears it for a
 ///   candidate running in a throwaway snapshot, whose transcript names paths
 ///   that will not exist.
-/// - **A deck sub-session** — `agent::subsession_engine_config_for`. This one is
-///   invisible to `stella-core`: a sub-session is a full engine session built
-///   through `Engine::with_sleeper`, not a child reached through
-///   `run_sub_agent`, so the engine crate never sees a parent to strip it from.
+/// - **A deck sub-session** — `agent::subsession_engine_config_for` re-keys it
+///   to the lane's OWN handle rather than stripping it (#3233): each lane is
+///   bound to its own journal key (`{session}/{lane}`), so it is independently
+///   resumable instead of a second writer of the lead's one resume point. The
+///   re-key still has to happen at this seam, invisible to `stella-core`: a
+///   sub-session is a full engine session built through `Engine::with_sleeper`,
+///   not a child reached through `run_sub_agent`, so the engine crate never
+///   sees a parent (or a sibling lane) to arbitrate between.
 ///
 /// An unbind would not help with any of them, and would cost something real: it
 /// would open a window where a turn still in flight finds `sink()` empty and

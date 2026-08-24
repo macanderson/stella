@@ -41,17 +41,31 @@
 //!   naming the same path at or after the read drops that path
 //!   ([`MUTATING_TOOLS`]). So does a shell command at or after the read whose
 //!   *text* matches a writing shape and whose words name the path
-//!   ([`crate::shell_text::mutating_segment_words`], #3827). So does a later
-//!   read of the same path whose result is still in context — nothing was lost
-//!   there, so nothing needs saying.
+//!   ([`crate::shell_text::shell_writes`], #3827). So does a later read of the
+//!   same path whose result is still in context — nothing was lost there, so
+//!   nothing needs saying.
+//! - **A sweeping write weakens the line rather than deleting it.** A command
+//!   that writes and spells no target — `cargo fmt` over the workspace,
+//!   `git checkout .`, `git stash`, `git reset --hard` — can have rewritten
+//!   any digested path, and the path match is structurally blind to it
+//!   ([`crate::shell_text::ShellWrites::sweeping`], #4444). Every entry read
+//!   at or before such a step is marked [`DigestedRead::swept`] and says so on
+//!   its own line.
+//!
+//!   Dropping those entries instead was the other option and is the wrong
+//!   trade here: `cargo fmt` is the most-run writing command in this
+//!   repository, so a rule that dropped on it would empty the digest most
+//!   passes and give back nearly all of #3806's win to fix a wording problem.
+//!   The digest never claimed the current bytes, so the proportionate answer
+//!   is to say the sentence more weakly, not to stop saying it.
 //! - **The message claims a pointer, not a cache.** It says the read happened
 //!   and its output has left context; it never says the current bytes are
 //!   known. That claim stays true under an edit this module cannot see, and
-//!   two kinds remain: a mutation whose target the command never spells (a
-//!   build step regenerating a file, `git checkout .`, a whole-tree
-//!   formatter — #4444), and an editor or process outside the session
-//!   entirely. That is why the wording stays deliberately weaker than the
-//!   invalidation rule.
+//!   two kinds remain: a step that rewrites files as a side effect of doing
+//!   something else and matches no writing shape at all (`make`, `cargo build`
+//!   over a `build.rs` that writes into the tree, `./scripts/regen.sh`), and
+//!   an editor or process outside the session entirely. That is why the
+//!   wording stays deliberately weaker than the invalidation rule.
 //!
 //! Reading a shell command's text is a heuristic and is treated as one: it
 //! **over-invalidates by construction**. Any word of a writing segment that
@@ -124,6 +138,13 @@ pub struct DigestedRead {
     /// current one. Counting assistant messages that carry `tool_calls` is the
     /// same notion of "step" the retention pass counts against its horizon.
     pub step: usize,
+    /// A command that writes and names no target ran at or after this read, so
+    /// this path may have been rewritten by a route the path match cannot see
+    /// (#4444).
+    ///
+    /// Not an invalidation — the entry survives and is stated more weakly. See
+    /// the module docs' staleness section for why the trade goes that way.
+    pub swept: bool,
 }
 
 /// Every read whose result has left context and is still safe to name,
@@ -147,16 +168,22 @@ pub fn collect_digest(messages: &[CompletionMessage]) -> Vec<DigestedRead> {
     // Every writing shell segment's words, with the step it ran at. Kept as a
     // flat list rather than resolved per path here, because which digested
     // paths exist is not known until the walk below finishes.
-    let mut shell_writes: Vec<(usize, Vec<String>)> = Vec::new();
+    let mut named_writes: Vec<(usize, Vec<String>)> = Vec::new();
+    // The steps at which a write named no target at all. One step, not a word
+    // list: a sweeping write is a fact about every digested path at once.
+    let mut sweeping_writes: Vec<usize> = Vec::new();
 
     for message in messages {
         if message.role == MessageRole::Assistant && !message.tool_calls.is_empty() {
             step += 1;
             for call in &message.tool_calls {
                 if let Some(command) = call.input.get(COMMAND_PARAM).and_then(|v| v.as_str()) {
-                    let words = crate::shell_text::mutating_segment_words(command);
-                    if !words.is_empty() {
-                        shell_writes.push((step, words));
+                    let writes = crate::shell_text::shell_writes(command);
+                    if !writes.named.is_empty() {
+                        named_writes.push((step, writes.named));
+                    }
+                    if writes.sweeping {
+                        sweeping_writes.push(step);
                     }
                 }
                 let Some(path) = call_path(&call.input) else {
@@ -198,11 +225,17 @@ pub fn collect_digest(messages: &[CompletionMessage]) -> Vec<DigestedRead> {
                     .is_none_or(|mutated_at| mutated_at < read_step)
                 // ...nor any shell command whose text writes and whose words
                 // could be naming it.
-                && !shell_writes.iter().any(|(at, words)| {
+                && !named_writes.iter().any(|(at, words)| {
                     at >= read_step && words.iter().any(|word| word_names_path(word, path))
                 })
         })
-        .map(|(path, (step, _))| DigestedRead { path, step })
+        .map(|(path, (step, _))| DigestedRead {
+            path,
+            step,
+            // A sweeping write names nothing, so it cannot be matched against
+            // this path — it is a statement about every entry read before it.
+            swept: sweeping_writes.iter().any(|at| *at >= step),
+        })
         .collect();
     // Deterministic and oldest-first: byte-stability is a property of this
     // ordering, since a `HashMap` drain is not reproducible across runs.
@@ -233,6 +266,13 @@ fn call_path(input: &serde_json::Value) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// What a line says about an entry a sweeping write ran over.
+///
+/// Long enough to be actionable and short enough that a swept digest — which
+/// on a `cargo fmt` is every entry at once — does not become the largest thing
+/// in the volatile tail.
+const SWEPT_NOTE: &str = " — a later command may have rewritten it";
+
 /// Render the digest message, or `None` when there is nothing to say.
 ///
 /// The wording must satisfy two conflicting requirements: it must be strong enough
@@ -256,7 +296,11 @@ pub fn render_digest(reads: &[DigestedRead]) -> Option<String> {
                   exact current bytes, or if something may have changed it since.\n",
     );
     for read in kept {
-        out.push_str(&format!("- {} (read at step {})\n", read.path, read.step));
+        let note = if read.swept { SWEPT_NOTE } else { "" };
+        out.push_str(&format!(
+            "- {} (read at step {}{note})\n",
+            read.path, read.step
+        ));
     }
     if reads.len() > shown {
         out.push_str(&format!(
