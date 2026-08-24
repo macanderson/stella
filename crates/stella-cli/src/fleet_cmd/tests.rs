@@ -955,3 +955,33 @@ async fn two_attempts_at_one_task_are_one_task_to_governance() {
          retry wave at one task: {distinct:?}"
     );
 }
+
+/// **Witness (#3883, live-dashboard half).** Wrapper report lines are held
+/// while the grid owns the terminal — appended per attempt under one lock so
+/// two concurrent workers' reports interleave per report, never per line —
+/// and drained once, in arrival order, when the grid tears down.
+#[test]
+fn held_wrapper_reports_stay_whole_per_attempt_and_drain_once() {
+    let held = wrapped::HeldReports::default();
+    // Two attempts' reports, arriving whole — the shape `AttemptWrapper::
+    // settle` hands over, each line already naming its task.
+    held.hold(vec![
+        "  ! [t1] wrapper: fault".to_string(),
+        "  ◇ [t1] met".to_string(),
+    ]);
+    held.hold(vec!["  ◇ [t2] met".to_string()]);
+    // An empty report holds nothing — a clean attempt must not cost a lock
+    // entry or an empty line at teardown.
+    held.hold(Vec::new());
+
+    let drained = held.drain();
+    assert_eq!(
+        drained,
+        ["  ! [t1] wrapper: fault", "  ◇ [t1] met", "  ◇ [t2] met",],
+        "arrival order, attempts contiguous"
+    );
+    assert!(
+        held.drain().is_empty(),
+        "a second drain finds nothing — teardown prints each line once"
+    );
+}

@@ -15,7 +15,9 @@ import {
   erroredSeqs,
   indexByCallId,
   mergeToolRows,
+  orderEntries,
   rawExchange,
+  turnDigest,
   type RawExchange,
 } from "@/lib/transcript-view";
 import { Button } from "@/components/ui/button";
@@ -75,6 +77,10 @@ function pacedDelay(gapSeconds: number, speed: number): number {
 
 /** Filterable groups, in reading order. Unknown kinds always render. */
 const GROUPS: Array<{ key: string; label: string; kinds: string[] }> = [
+  // Its own group, never bundled with "responses": the prompt is the question
+  // the whole page is read against (#4039), and turning the agent's prose off
+  // must not also hide what was asked.
+  { key: "prompt", label: "prompt", kinds: ["prompt"] },
   { key: "text", label: "responses", kinds: ["text"] },
   { key: "reasoning", label: "thinking", kinds: ["reasoning"] },
   { key: "tool", label: "tools", kinds: ["tool"] },
@@ -119,7 +125,7 @@ function useTranscript(matchId: string, contestantId: string, task: string) {
       for (const entry of payload.entries) bySeq.set(entry.seq, entry);
       if (bySeq.size) {
         setWaiting(false);
-        setEntries([...bySeq.values()].sort((a, b) => a.seq - b.seq));
+        setEntries(orderEntries([...bySeq.values()]));
       }
     });
     source.addEventListener("end", () => {
@@ -327,10 +333,17 @@ function TranscriptView({
   // One record for both would make opening a call's arguments also open its
   // output, and neither control could then say what it does.
   const [openArgs, setOpenArgs] = React.useState<Record<number, boolean>>({});
+  // Turn-level collapse (transcript-spec addendum §1, #4578). An arena trial
+  // is one turn — one prompt at seq 0, one answer at the end — so this is one
+  // boolean, not a per-turn map. Collapsed, the feed shows the turn's digest
+  // row (`turnDigest`) in place of its rows: prompt digest · answer digest ·
+  // step count · rollup chips.
+  const [turnOpen, setTurnOpen] = React.useState(true);
   React.useEffect(() => {
     setThinkingOverrides({});
     setOpenResults({});
     setOpenArgs({});
+    setTurnOpen(true);
   }, [seatId, task]);
 
   // Open by default, because it is the answer to the question that brought
@@ -415,6 +428,17 @@ function TranscriptView({
 
   const shown = paced ? rows.slice(0, revealed) : rows;
   const done = paced && revealed >= rows.length && rows.length > 0;
+
+  // The collapsed turn's digest, over the FULL entry list rather than the
+  // filtered view — a collapsed turn summarises the trial, not the filters.
+  // Offered only for a finished trial: the reference model pins a running
+  // turn open (`stella_transcript::fold::pinned_open`), because collapsing a
+  // stream that is still growing hides rows the reader never saw arrive.
+  const digest = React.useMemo(
+    () => turnDigest(entries, historical),
+    [entries, historical],
+  );
+  const collapsible = historical && entries.length > 0;
 
   const feedRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -743,7 +767,53 @@ function TranscriptView({
         </div>
 
         <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto py-2">
-          {waiting && shown.length === 0 ? (
+          {/* The turn's own fold. Open, the control is the only thing this row
+              carries; collapsed, the row IS the turn — prompt digest · answer
+              digest · step count · rollup chips (§1), in place of every row
+              below. Token and cost chips render only once a step has reported
+              usage, because a fabricated $0.0000 in a digest is the failure
+              `fmtMoney` exists to avoid. */}
+          {collapsible && (
+            <div className="flex items-baseline gap-2 px-3 py-0.5 font-mono text-[11px]">
+              <button
+                type="button"
+                onClick={() => setTurnOpen((value) => !value)}
+                aria-expanded={turnOpen}
+                className="shrink-0 cursor-pointer text-dim hover:text-muted"
+              >
+                {turnOpen ? "⏶" : "⏵"} turn
+              </button>
+              {!turnOpen && (
+                <>
+                  <span className="min-w-0 truncate text-dim">
+                    {digest.promptLine}
+                  </span>
+                  {digest.answerLine && (
+                    <>
+                      <span className="select-none text-dim/60">·</span>
+                      <span className="min-w-0 truncate text-foreground">
+                        {digest.answerLine}
+                      </span>
+                    </>
+                  )}
+                  <span className="tx-chips">
+                    <span className="tx-chip">
+                      {digest.steps} {digest.steps === 1 ? "step" : "steps"}
+                    </span>
+                    <span className="tx-chip">{fmtClock(digest.durationSeconds)}</span>
+                    {digest.steps > 0 && (
+                      <>
+                        <span className="tx-chip">in {fmtTokens(digest.tokensIn)}</span>
+                        <span className="tx-chip">out {fmtTokens(digest.tokensOut)}</span>
+                        <span className="tx-chip">{fmtMoney(digest.costUsd)}</span>
+                      </>
+                    )}
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+          {!turnOpen ? null : waiting && shown.length === 0 ? (
             <div className="px-3 py-1 text-accent">waiting for the trial to start…</div>
           ) : shown.length === 0 ? (
             <div className="px-3 py-1 text-dim">

@@ -3,7 +3,8 @@
 
 //! A machine-checked description of the **serve transport** wire format.
 //!
-//! `stella-protocol`'s `schema_export` describes [`AgentEvent`] — the payload.
+//! `stella-protocol`'s `schema_export` describes
+//! [`AgentEvent`](stella_protocol::AgentEvent) — the payload.
 //! This module describes the envelope around it: the [`ServerFrame`] union a
 //! host reads off the SSE stream, and the two result bodies it POSTs back.
 //! Together they are everything a client of `stella-serve` parses or produces.
@@ -35,7 +36,9 @@
 //!   supply rather than something that happened in the turn.
 
 use serde_json::Value;
-use stella_protocol::schema_export::{UnsupportedSchema, typescript_declarations_with_header};
+use stella_protocol::schema_export::{
+    Discriminant, UnsupportedSchema, typescript_declarations_with_header,
+};
 
 use crate::engine_overrides::EngineOverrides;
 use crate::frame::{ProviderDeltaIn, ProviderResultIn, ServerFrame, ToolResultIn};
@@ -116,7 +119,8 @@ pub fn inbound_schema() -> Value {
 pub fn artifacts() -> Result<Vec<(&'static str, String)>, UnsupportedSchema> {
     let outbound = server_frame_schema();
 
-    let mut ts = typescript_declarations_with_header(&outbound, OUTBOUND_HEADER)?;
+    let mut ts =
+        typescript_declarations_with_header(&outbound, OUTBOUND_HEADER, Discriminant::EVENT_TYPE)?;
     ts.push_str(ENVELOPE_SUFFIX);
     // Printed one root at a time, for the reason `inbound_schema` documents:
     // they are two endpoint bodies, so each prints as its own interface rather
@@ -124,18 +128,22 @@ pub fn artifacts() -> Result<Vec<(&'static str, String)>, UnsupportedSchema> {
     ts.push_str(&typescript_declarations_with_header(
         &tool_result_schema(),
         INBOUND_HEADER,
+        Discriminant::EVENT_TYPE,
     )?);
     ts.push_str(&typescript_declarations_with_header(
         &provider_result_schema(),
         "",
+        Discriminant::EVENT_TYPE,
     )?);
     ts.push_str(&typescript_declarations_with_header(
         &provider_delta_schema(),
         DELTA_HEADER,
+        Discriminant::EVENT_TYPE,
     )?);
     ts.push_str(&typescript_declarations_with_header(
         &engine_overrides_schema(),
         ENGINE_HEADER,
+        Discriminant::EVENT_TYPE,
     )?);
 
     let mut json =

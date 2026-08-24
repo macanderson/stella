@@ -18,7 +18,28 @@ organisational scale is paid.** That split was `doc:plugin-completion-plan`
 
 ## What it does
 
-One point, `after_turn`. No host calls at all.
+Two points, and each says one thing. No host calls at all.
+
+**`before_turn` — name the artifacts the flip will be judged against.** Paths,
+never findings: this plugin does not vouch for its own witness, and the host is
+the one that snapshots each path before the turn and compares after it (#3499).
+It contributes no context, no role and no scope — a verifier that steered the
+turn it is about to judge would be grading its own work.
+
+The files a *runner's convention* implies are why the point exists at all. The
+host already derives the ones the invocation itself names (`pytest
+tests/test_x.py`); it does not derive these. `cargo test --test flip` names
+`flip`, and the artifact is `tests/flip.rs` by cargo's convention and by
+nothing in the invocation. The host is deliberately forbidden from guessing that
+(`crates/stella-cli/src/wrapper_candidate.rs`) — a host deriving a witness is a
+host guessing at one — so the plugin whose flip it is says it instead. A path
+that is not really in the granted tree is not declared; a wrong guess would put
+a claim on the wire this plugin cannot stand behind.
+
+Declaring nothing is a real answer and stays one: the watch stays empty, the
+finding stays `TamperFinding::NotChecked`, and the round is not credited a flip.
+
+**`after_turn` — report the flip.**
 
 1. Reads the candidate grant: the workspace root, and the `TestPlan` naming the
    invocation and **the baseline the host already observed before the turn**
@@ -34,6 +55,9 @@ declares as data. This plugin reports what it saw; Stella decides what that
 means.
 
 ```
+{"point":"before_turn","body":{…BeforeTurnRequest}}                        → stdin
+{"point":"before_turn","body":{"witness":["tests/flip.rs"]}}               ← stdout
+
 {"point":"after_turn","body":{…AfterTurnRequest}}                          → stdin
 {"point":"after_turn","body":{"evidence":{"flip":…,"measurements":{…}}}}   ← stdout
 ```
@@ -95,9 +119,9 @@ expected. Each is tracked.
 
 | Absent | Why, and what it would take |
 | --- | --- |
-| **Witness *authoring*** | This plugin observes a flip; it does not write the failing test that makes one possible. Authoring needs a `before_turn` point *and* a writing capability — `child_turn` is contractually read-only (`SubAgentSpec::read_only`), so the only writing turn on the socket is `candidate_fanout`. That is a real design slice, not a missing line. |
+| **Witness *authoring*** | This plugin observes a flip and names the artifacts it will judge one against; it does not *write* the failing test that makes one possible. Authoring needs a writing capability, and `child_turn` is contractually read-only (`SubAgentSpec::read_only`), so the only writing turn on the socket is `candidate_fanout`. That is a real design slice, not a missing line. |
 | **#867's same-failure rule** | The nucleus refuses a flip credit when the passing run names its tests and none of the baseline's failures are among them — the failing test was deleted or renamed and the suite exits 0 around its absence. It needs `fingerprint::parse_test_results`, a per-runner-dialect parser. Until it is ported, the requirement is **not declared**: a check this plugin could only ever report as satisfied would be a vacuous guarantee. |
-| **Tamper hardening** | `tamper` is deliberately not declared. The policy is host-side, has one value, and its finding is not a word a plugin can say — `ObservedEvidence` has no field for it (#3499). `crates/stella-runtime/tests/host_owned_tamper.rs` is the host half. |
+| **Tamper hardening past artifact identity** | `tamper` is deliberately not declared. The policy is host-side, has one value, and its finding is not a word a plugin can say — `ObservedEvidence` has no field for it (#3499). This plugin's whole part is naming the artifacts at `before_turn`; the snapshot, the comparison and the finding are the host's. `crates/stella-runtime/tests/host_owned_tamper.rs` is that half. |
 | **Verifier independence across a roster** | Vera's, and it needs a roster this plugin does not see. |
 | **Output parsing of any kind** | `passed` is `exit_code == 0` and nothing cleverer. Every runner in the closed vocabulary honours its exit status; second-guessing it is the fingerprint work above. |
 

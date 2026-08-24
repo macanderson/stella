@@ -8,7 +8,7 @@ Run many tasks in parallel in **one shared working tree**, coordinated by cooper
 ## Synopsis
 
 ```bash
-stella fleet <task>... [--plan <FILE>] [--max-concurrency <N>] [--base-ref <ref>] [--watch] [--pipeline <VARIANT>] [--task-timeout <SECS>]
+stella fleet <task>... [--plan <FILE>] [--max-concurrency <N>] [--base-ref <ref>] [--watch] [--pipeline <VARIANT>] [--task-timeout <SECS>] [--require-verdict]
 stella fleet clean [--dry-run] [--force] [--age <DAYS>] [--base-ref <ref>]
 stella fleet claims [--all] [--format <text|json>]
 ```
@@ -63,6 +63,13 @@ For anything beyond a handful of independent prompts, use a plan file (`--plan`)
     Wall-clock ceiling per worker attempt. On expiry the task's stop line fires — the same
     clean cancel the dashboard's `[x]` sends — and the attempt reports as **failed**
     instead of holding its concurrency slot forever.
+  </OptionCard>
+  <OptionCard name="--require-verdict">
+    Fail any attempt whose `--pipeline` wrapper did not declare its requirements
+    **met** — per attempt: an unmet or undecided verdict fails that attempt by name,
+    and a failed attempt fails the run, the rule every failed task already follows.
+    The attempt's own abort wins when both fire. Refused without `--pipeline`, where
+    nothing declares a verdict.
   </OptionCard>
   <OptionCard name="--output-format <text|json|stream-json>" defaultValue="text">
     `json` / `stream-json` keep the run headless — the live grid stays off and stdout

@@ -385,7 +385,30 @@ pub const MAX_CONTRIBUTED_STAGE_LEN: usize = 32;
 /// `stella_protocol::StageName`: a value that does not survive its own round
 /// trip is what invariant 4 forbids.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+// A plain string on the wire, both arms alike — see the `Serialize` impl
+// below. `schemars` derives from the *shape*, so a plain derive here published
+// `{"Host": …} | {"Contributed": …}`, which is a document the socket has never
+// carried a byte of: `wrapper.wire.json`'s own corpus shows `"stage":
+// "execute"`. The two committed artifacts contradicted each other from the day
+// the schema landed, and the schema was the one that was wrong.
+//
+// `with = "String"` is the honest shape and not a widening: every string is a
+// legal `StageName` by construction — `StageName::new` resolves a host word to
+// `Host` and takes anything else as `Contributed` — so nothing is being
+// admitted here that the reader would refuse. The vocabulary a *manifest* may
+// declare is narrower, and that narrowing is a load-time check with typed
+// errors of its own, not a property of this wire field.
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(
+        with = "String",
+        description = "The name of a stage, as one plain string. One of the host's own \
+                       boundary names, or a word the plugin's manifest contributed; a \
+                       reader tells them apart by whether the host answers to it, and \
+                       every string is a legal value here."
+    )
+)]
 pub enum StageName {
     /// A boundary this host emits.
     Host(HostStage),

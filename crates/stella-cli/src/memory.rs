@@ -96,6 +96,7 @@ use private_state::resolve_context_db_path;
 #[cfg(test)]
 use projection::{is_suppressed_local_frame, project_recalled_frame};
 pub use recall::inject_recall_block;
+pub(crate) use recall::{OpeningRecall, inject_opening_recall};
 /// Test-side imports of the recall renderer's internals — one renderer, so
 /// every consumer of a recalled frame reads exactly the same rendering,
 /// `[nod_…]` citation handles included.
