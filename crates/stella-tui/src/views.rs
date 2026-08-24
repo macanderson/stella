@@ -25,15 +25,10 @@ pub(crate) fn spinner_glyph(now_ms: u64, no_anim: bool) -> &'static str {
     SPINNER_FRAMES[((now_ms / SPINNER_PERIOD_MS) as usize) % SPINNER_FRAMES.len()]
 }
 
-pub mod approval;
 pub(crate) mod cards;
-pub mod dispatch_card;
 pub mod files;
 pub mod graph;
-pub mod issues;
-pub(crate) mod linear;
 pub mod picker;
 pub mod question;
 pub mod settings;
-pub mod skills;
 pub mod traces;
