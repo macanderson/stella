@@ -37,6 +37,7 @@ pub mod queue;
 pub(crate) mod record;
 pub mod seats;
 pub mod sessions;
+pub mod skills;
 pub mod status_bar;
 pub mod status_source;
 pub mod subagents;

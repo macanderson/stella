@@ -32,5 +32,4 @@ pub mod picker;
 pub mod question;
 pub mod session;
 pub mod settings;
-pub mod skills;
 pub mod traces;
