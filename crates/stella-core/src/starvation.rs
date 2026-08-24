@@ -51,6 +51,10 @@ pub const REASONING_HEADROOM_TOKENS: u32 = 4_096;
 /// length`, which is the provider stating that the budget ran out before the
 /// first visible token. Sized so one retry is enough for any reasoning budget
 /// observed in the wild, rather than sized to a model.
+///
+/// Deliberately carries no `MEASURED:` marker (#4572). Like
+/// [`REASONING_HEADROOM_TOKENS`] above it is a heuristic bound, chosen to sit
+/// over every reasoning budget anyone has seen; no measurement produced 32,768.
 pub const STARVED_RETRY_CAP: u32 = 32_768;
 
 /// A written-output contract plus room to think.
