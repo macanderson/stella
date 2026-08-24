@@ -260,12 +260,11 @@ pub(crate) async fn run_raw_one_shot(
     // Phase 2 (#713): carried forward rather than emitted here — the turn's
     // event channel is created inside `run_turn`, after the messages recall
     // contributes to have been assembled.
-    let mut recall_event = None;
+    let mut recall = crate::memory::OpeningRecall::default();
     if let Some(m) = &memory {
         let touched = stella_core::driver::loop_evidence::turn_evidence(&messages).touched_paths;
         let recalled = m.recall_block_reported(prompt, &touched).await;
-        recall_event = recalled.telemetry_event();
-        inject_recall_block(&mut messages, recalled.text);
+        recall = crate::memory::inject_opening_recall(&mut messages, recalled);
     }
 
     let started_unix = crate::memory::unix_now_secs();
@@ -323,7 +322,7 @@ pub(crate) async fn run_raw_one_shot(
                     prompt,
                     session: presence.id(),
                     variant: variant.as_str(),
-                    recall_event,
+                    recall,
                     memory: memory.as_mut(),
                     watch: &candidate.watch,
                     // Real ones the day a controlled surface drives a wrapped
@@ -356,7 +355,7 @@ pub(crate) async fn run_raw_one_shot(
                 persistence::TurnDoor::new("run"),
                 prompt,
                 Some(presence.id()),
-                recall_event,
+                recall,
                 memory.as_mut(),
                 Some(&mut turn),
             )
@@ -491,6 +490,10 @@ pub async fn run_goal_cmd(
     // flip with (#3835). Refused before this function on the raw arm, where
     // there is no oracle to arm.
     test_command: Option<&str>,
+    // `--require-verdict` (#3554, this door #4543): the last round's wrapper
+    // verdict gates the exit status. Refused before this function on the raw
+    // arm, where nothing declares a verdict.
+    require_verdict: bool,
 ) -> Result<(), crate::failure::CliFailure> {
     // `Plugin` reads as `Raw` for every branch below except the final
     // dispatch: the wrapped arm builds the same system prompt, the same
@@ -676,6 +679,7 @@ pub async fn run_goal_cmd(
             memory.as_mut(),
             bound,
             candidate,
+            require_verdict,
             Some(&mut rounds),
         )
         .await

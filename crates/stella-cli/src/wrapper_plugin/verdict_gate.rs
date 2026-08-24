@@ -31,7 +31,7 @@ use stella_plugin::{Outcome, UndecidedReason};
 /// two it was, because the remedies differ: `Unmet` is work to redo,
 /// `Undecided` is usually a manifest that declares requirements no oracle
 /// establishes.
-pub(super) fn verdict_refusal(require_verdict: bool, outcome: &Outcome) -> Option<String> {
+pub(crate) fn verdict_refusal(require_verdict: bool, outcome: &Outcome) -> Option<String> {
     if !require_verdict {
         return None;
     }
