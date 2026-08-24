@@ -4,41 +4,41 @@
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION AGENTS   TRACES   GRAPH FILES SKILLS MCP ISSUES SETTINGS                                                                                       stella*
-┌ traces · all · 32 events · following · f: filter ────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│00:00  lead  [stage] triage                                                                                                                                   │
-│00:00  lead  [ctx] 2 frames, 210 tok                                                                                                                          │
-│00:00  lead  [stage] plan                                                                                                                                     │
-│00:00  lead  [text] Planning the automations cluster: list, editor, triggers, workflows.                                                                      │
-│00:00  lead  [·] tasks 4/7                                                                                                                                    │
-│00:00  lead  [spend] glm-5.2 $0.0210                                                                                                                          │
-│00:00  lead  [spend] $0.0210                                                                                                                                  │
-│00:00  lead  [stage] execute                                                                                                                                  │
-│00:00  lead  [tool] mcp__fs__read_file()                                                                                                                      │
-│00:00  lead  [tool] ok in 42ms                                                                                                                                │
-│00:00  lead  [tool] edit_file()                                                                                                                               │
-│00:00  lead  [file] modified apps/app/automations/page.tsx +4/-1                                                                                              │
-│00:00  lead  [tool] ok in 18ms                                                                                                                                │
-│00:00  lead  [spend] glm-5.2 $0.0180                                                                                                                          │
-│00:00  lead  [spend] $0.0390                                                                                                                                  │
-│00:00  lead  [·] tasks 5/7                                                                                                                                    │
-│00:00  sub:auth  [stage] wire the automations triggers API                                                                                                    │
-│00:00  sub:auth  [stage] execute                                                                                                                              │
-│00:00  sub:auth  [tool] search_code()                                                                                                                         │
-│00:00  sub:auth  [tool] ok in 61ms                                                                                                                            │
-│00:00  sub:auth  [tool] write_file()                                                                                                                          │
-│00:00  sub:auth  [file] created apps/api/routes/v1/automations.ts +3/-0                                                                                       │
-│00:00  sub:auth  [tool] ok in 9ms                                                                                                                             │
-│00:00  sub:auth  [spend] glm-5.2 $0.0110                                                                                                                      │
-│00:00  sub:auth  [spend] $0.0110                                                                                                                              │
-│00:00  sub:auth  [·] Which auth guard should the triggers route use?                                                                                          │
-│00:00  sub:ci  [stage] verify                                                                                                                                 │
-│00:00  sub:ci  [verdict] passed                                                                                                                               │
-│00:00  sub:ci  [vcs] feat(automations): triggers + workflows UI                                                                                               │
-│00:00  sub:ci  [vcs] pr open                                                                                                                                  │
-│00:00  sub:ci  [spend] glm-5.2-air $0.0040                                                                                                                    │
-│00:00  lead  [stage] Refactor the automations store into a shared workspace package                                                                           │
-│                                                                                                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ all agents · 32 events · following                                                                                                                   f filter
+ 00:00  lead  [stage] triage
+ 00:00  lead  [ctx] 2 frames, 210 tok
+ 00:00  lead  [stage] plan
+ 00:00  lead  [text] Planning the automations cluster: list, editor, triggers, workflows.
+ 00:00  lead  [·] tasks 4/7
+ 00:00  lead  [spend] glm-5.2 $0.0210
+ 00:00  lead  [spend] $0.0210
+ 00:00  lead  [stage] execute
+ 00:00  lead  [tool] mcp__fs__read_file()
+ 00:00  lead  [tool] ok in 42ms
+ 00:00  lead  [tool] edit_file()
+ 00:00  lead  [file] modified apps/app/automations/page.tsx +4/-1
+ 00:00  lead  [tool] ok in 18ms
+ 00:00  lead  [spend] glm-5.2 $0.0180
+ 00:00  lead  [spend] $0.0390
+ 00:00  lead  [·] tasks 5/7
+ 00:00  sub:auth  [stage] wire the automations triggers API
+ 00:00  sub:auth  [stage] execute
+ 00:00  sub:auth  [tool] search_code()
+ 00:00  sub:auth  [tool] ok in 61ms
+ 00:00  sub:auth  [tool] write_file()
+ 00:00  sub:auth  [file] created apps/api/routes/v1/automations.ts +3/-0
+ 00:00  sub:auth  [tool] ok in 9ms
+ 00:00  sub:auth  [spend] glm-5.2 $0.0110
+ 00:00  sub:auth  [spend] $0.0110
+ 00:00  sub:auth  [·] Which auth guard should the triggers route use?
+ 00:00  sub:ci  [stage] verify
+ 00:00  sub:ci  [verdict] passed
+ 00:00  sub:ci  [vcs] feat(automations): triggers + workflows UI
+ 00:00  sub:ci  [vcs] pr open
+ 00:00  sub:ci  [spend] glm-5.2-air $0.0040
+ 00:00  lead  [stage] Refactor the automations store into a shared workspace package
+
+
  ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>
  ⏎ queue · ↓ 2 sub-agents · ! shell · / commands

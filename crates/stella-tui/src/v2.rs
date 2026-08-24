@@ -30,5 +30,6 @@ pub mod sessions;
 pub mod status_bar;
 pub mod status_source;
 pub mod subagents;
+pub mod traces;
 pub mod transcript;
 pub mod transcript_source;
