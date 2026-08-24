@@ -39,6 +39,10 @@ export type AgentEvent = {
   type: "reasoning";
 } | {
   call: ToolCall;
+  /**
+   * Which sub-agent made this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. An opaque handle, never instruction text.
+   */
+  sub_agent_id?: string | null;
   type: "tool_start";
 } | {
   call_id: string;
@@ -52,6 +56,10 @@ export type AgentEvent = {
    * it. `serde(default)` so streams recorded before this field parse.
    */
   speculated?: boolean;
+  /**
+   * Which sub-agent's call this answers. Absent means the lead's own call. Carried on the result as well as the announcement so a consumer that never saw the start can still attribute it.
+   */
+  sub_agent_id?: string | null;
   type: "tool_result";
 } | {
   call_id: string;

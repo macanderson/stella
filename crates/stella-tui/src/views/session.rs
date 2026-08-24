@@ -687,6 +687,7 @@ mod tests {
                 name: "edit_file".into(),
                 input: serde_json::json!({"path": "src/x.rs"}),
             },
+            sub_agent_id: None,
         });
         model.apply(&AgentEvent::ToolResult {
             call_id: "c1".into(),
@@ -696,6 +697,7 @@ mod tests {
             },
             duration_ms: 3,
             speculated: false,
+            sub_agent_id: None,
         });
         model.apply(&AgentEvent::FileChange {
             path: "src/x.rs".into(),
@@ -888,6 +890,7 @@ mod tests {
                     name: "run_command".into(),
                     input: serde_json::json!({ "path": "src/main.rs" }),
                 },
+                sub_agent_id: None,
             });
             m.apply(&AgentEvent::ToolResult {
                 call_id: id,
@@ -901,6 +904,7 @@ mod tests {
                 },
                 duration_ms: 20,
                 speculated: false,
+                sub_agent_id: None,
             });
         }
         m.apply(&AgentEvent::TurnComplete {

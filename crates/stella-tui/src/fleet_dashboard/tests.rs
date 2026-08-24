@@ -37,6 +37,7 @@ fn tool_start(name: &str, arg_key: &str, arg: &str) -> AgentEvent {
             name: name.into(),
             input: serde_json::json!({ arg_key: arg }),
         },
+        sub_agent_id: None,
     }
 }
 
@@ -535,6 +536,7 @@ fn a_lane_stops_reading_blocked_once_its_card_is_answered() {
                 output: stella_protocol::ToolOutput::error("the plan was not approved"),
                 duration_ms: 400,
                 speculated: false,
+                sub_agent_id: None,
             }),
         },
         now,

@@ -32,6 +32,8 @@ fn tool_result() -> AgentEvent {
         },
         duration_ms: 4_200,
         speculated: false,
+
+        sub_agent_id: None,
     }
 }
 

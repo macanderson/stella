@@ -604,6 +604,7 @@ mod tests {
                     name: name.to_string(),
                     input: serde_json::json!({ "path": path }),
                 },
+                sub_agent_id: None,
             },
         });
     }

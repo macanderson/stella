@@ -411,7 +411,7 @@ impl FleetBoard {
         // `elapsed`/`tool_ago` read from the frozen `ended` anchor, so a
         // straggler can never walk a finished row back to running.
         match event {
-            AgentEvent::ToolStart { call } => {
+            AgentEvent::ToolStart { call, .. } => {
                 row.tool_calls += 1;
                 row.last_tool_at = Some(now);
                 let display = tool_display_name(&call.name);

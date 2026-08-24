@@ -598,6 +598,30 @@ impl ToolRegistry {
             Some(defect) => defect,
             None => output,
         };
+        // The board mirror (#4613): after any of the six board tools the FULL
+        // board snapshot rides this turn's channel, so the checklist is
+        // replayable from the event log rather than only from the final
+        // `tasks` rows. It sits here — in the registry, under the sender every
+        // door attaches through `open_turn_streams` — because it used to sit
+        // in the deck's own decorator, which is the only surface that composed
+        // it: a one-shot `stella run`, `stella goal`, a delegated child and a
+        // subsession lane all moved the same board and published nothing about
+        // it. An unattended run is exactly the case nobody watched, and it was
+        // the case with no record.
+        //
+        // Before the result, for the same reason the per-call measurement
+        // below goes before it: the engine sends `ToolResult` once `execute`
+        // returns, so a consumer folding the stream sees the board move before
+        // the row that moved it.
+        if crate::tasks::is_board_tool(name)
+            && let Some(events) = self.events()
+        {
+            // A closed channel means the renderer is gone, which is not this
+            // call's failure to report.
+            let _ = events.send(stella_protocol::AgentEvent::TaskUpdate {
+                tasks: self.board_snapshot(),
+            });
+        }
         // Per-call work-tree measurement (#4175), before this call's
         // `ToolResult` reaches the stream — the engine sends that only once
         // `execute` has returned, and both ride the same channel, so a
@@ -663,10 +687,23 @@ impl ToolRegistry {
     }
 
     /// A clone of the session task-board handle, shared with the registered
-    /// `task_*` tool instances — the CLI snapshots it into
-    /// `AgentEvent::TaskUpdate` after each execution.
+    /// `task_*` tool instances.
     pub fn task_board(&self) -> crate::tasks::TaskBoardHandle {
         self.task_board.clone()
+    }
+
+    /// The board as one owned snapshot — what [`Self::execute`] publishes as
+    /// [`stella_protocol::AgentEvent::TaskUpdate`] after every board tool.
+    ///
+    /// A poisoned board is read through rather than panicked on: a checklist
+    /// is the least of a session's problems once a lock has been poisoned, and
+    /// a panic here would take down the tool call that was about to report it.
+    fn board_snapshot(&self) -> Vec<stella_protocol::TaskItem> {
+        self.task_board
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .items()
+            .to_vec()
     }
 
     /// A clone of the `task_assign` spawn-queue handle — for hosts that want
