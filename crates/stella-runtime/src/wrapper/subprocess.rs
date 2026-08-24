@@ -6,6 +6,9 @@
 //! bolted on (`doc:pipeline-as-plugins` §5), so it is the path the tests
 //! exercise: `tests/wrapper_socket.rs` runs a wrapper written in `sh` — no
 //! Rust, no SDK, a JSON parser it does not even need — through a whole turn.
+//! Its other plugins are `wrapper-plugin-fixture`, which holds to the same
+//! no-SDK contract in `std` alone so the transport's own mechanics run on
+//! Windows too rather than compiling to nothing there (#3497).
 //!
 //! # One exchange, or a bounded conversation
 //!
