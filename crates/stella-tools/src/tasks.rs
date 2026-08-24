@@ -30,6 +30,26 @@ use crate::registry::Tool;
 /// not that host would silently retire the gate.
 pub const START: &str = "task_start";
 
+/// The six tools that read or move the session board.
+///
+/// A membership rather than the `task_` prefix a host would otherwise test:
+/// the prefix is a spelling, and a later `task_`-named tool that is not a
+/// board tool would silently inherit whatever the prefix keys — here, a full
+/// board snapshot published on the turn's event stream after every call.
+pub const BOARD_TOOLS: [&str; 6] = [
+    "task_create",
+    "task_list",
+    START,
+    "task_complete",
+    "task_cancel",
+    "task_assign",
+];
+
+/// Whether `name` is one of [`BOARD_TOOLS`].
+pub fn is_board_tool(name: &str) -> bool {
+    BOARD_TOOLS.contains(&name)
+}
+
 /// The session's task board, shared between the six `task_*` tool instances
 /// and the `ToolRegistry` (which snapshots it into `AgentEvent::TaskUpdate`
 /// via [`crate::ToolRegistry::task_board`]).
@@ -772,6 +792,14 @@ mod tests {
                 "task_assign",
             ]
         );
+        // The membership hosts key the board mirror on is these six and no
+        // others: a seventh tool added here without a line in `BOARD_TOOLS`
+        // moves the board without publishing it.
+        let mut declared = BOARD_TOOLS;
+        declared.sort_unstable();
+        let mut registered = names.clone();
+        registered.sort_unstable();
+        assert_eq!(declared.to_vec(), registered);
         for schema in &schemas {
             // Only the pure board read may be parallelized by the engine.
             assert_eq!(

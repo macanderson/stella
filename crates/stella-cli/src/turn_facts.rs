@@ -103,7 +103,7 @@ impl TurnFacts {
     fn observe(&self, event: &AgentEvent) {
         let mut gathered = self.lock();
         match event {
-            AgentEvent::ToolStart { call } => gathered.tools.push(call.name.clone()),
+            AgentEvent::ToolStart { call, .. } => gathered.tools.push(call.name.clone()),
             // The turn-boundary snapshot emits one event per path, so a repeat
             // would mean two producers measured the same turn. Keep first-seen
             // order and drop the duplicate rather than reporting a path twice:
@@ -156,6 +156,7 @@ mod tests {
                 name: name.to_string(),
                 input: serde_json::json!({}),
             },
+            sub_agent_id: None,
         }
     }
 

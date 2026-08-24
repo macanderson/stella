@@ -631,6 +631,7 @@ fn the_archive_carries_the_session_transcript_and_only_that_session() {
                         name: "bash".into(),
                         input: serde_json::json!({"command": marker}),
                     },
+                    sub_agent_id: None,
                 },
             )
             .unwrap();
@@ -646,6 +647,7 @@ fn the_archive_carries_the_session_transcript_and_only_that_session() {
                     },
                     duration_ms: 12,
                     speculated: false,
+                    sub_agent_id: None,
                 },
             )
             .unwrap();

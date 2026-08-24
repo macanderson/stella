@@ -308,12 +308,20 @@ impl Observatory {
         if head == json!({}) {
             return Ok(Value::Null);
         }
-        let steps = collect_rows_for(
+        // Both projections carry `sub_agent_id` — which delegate spent the
+        // call (`telemetry`, v33) and which ran it (`tool_calls`, v35) — so a
+        // page can separate a turn's lead from its fan-out on either axis
+        // without a second round trip. NULL is the lead's own, in both tables.
+        let steps = collect_rows_degrading(
             &conn,
             id,
             "SELECT step, provider, model, input_tokens, output_tokens,
                     cache_read_tokens, cache_miss_tokens, cache_write_tokens,
-                    cost_usd, duration_ms, retries, tool_calls
+                    cost_usd, duration_ms, retries, tool_calls, sub_agent_id
+             FROM telemetry WHERE execution_id = ?1 ORDER BY step ASC",
+            "SELECT step, provider, model, input_tokens, output_tokens,
+                    cache_read_tokens, cache_miss_tokens, cache_write_tokens,
+                    cost_usd, duration_ms, retries, tool_calls, NULL
              FROM telemetry WHERE execution_id = ?1 ORDER BY step ASC",
             |r| {
                 Ok(json!({
@@ -329,14 +337,18 @@ impl Observatory {
                     "duration_ms": r.get::<_, i64>(9)?,
                     "retries": r.get::<_, i64>(10)?,
                     "tool_calls": r.get::<_, i64>(11)?,
+                    "sub_agent_id": r.get::<_, Option<String>>(12)?,
                 }))
             },
         )?;
-        let tools = collect_rows_for(
+        let tools = collect_rows_degrading(
             &conn,
             id,
             "SELECT seq, name, surface, reason, ok, error, bytes_out,
-                    duration_ms, ts
+                    duration_ms, ts, sub_agent_id
+             FROM tool_calls WHERE execution_id = ?1 ORDER BY seq ASC",
+            "SELECT seq, name, surface, reason, ok, error, bytes_out,
+                    duration_ms, ts, NULL
              FROM tool_calls WHERE execution_id = ?1 ORDER BY seq ASC",
             |r| {
                 Ok(json!({
@@ -349,6 +361,7 @@ impl Observatory {
                     "bytes_out": r.get::<_, i64>(6)?,
                     "duration_ms": r.get::<_, i64>(7)?,
                     "ts": r.get::<_, String>(8)?,
+                    "sub_agent_id": r.get::<_, Option<String>>(9)?,
                 }))
             },
         )?;
@@ -1352,6 +1365,36 @@ where
         out.push(row?);
     }
     Ok(out)
+}
+
+/// [`collect_rows_for`] over a query that names a column an older store does
+/// not have, with the same query minus that column as the fallback.
+///
+/// The plain helper degrades a missing column to **no rows**, which is right
+/// for a missing table and wrong for a missing column: it blanks a whole
+/// section of the page to hide one field. A store that predates the column is
+/// the ordinary case for the first turn after an upgrade, and a Steps table
+/// that vanishes rather than one attribution field that reads `null` is the
+/// worse of the two answers by a wide margin.
+///
+/// `map` runs against both, so the fallback must select the same columns in
+/// the same order with a literal standing in for the missing one — a `NULL`
+/// that types as the column's own absence.
+fn collect_rows_degrading<F>(
+    conn: &Connection,
+    id: i64,
+    sql: &str,
+    without: &str,
+    map: F,
+) -> Result<Vec<Value>, DbError>
+where
+    F: Fn(&rusqlite::Row<'_>) -> rusqlite::Result<Value> + Copy,
+{
+    match conn.prepare(sql) {
+        Ok(_) => collect_rows_for(conn, id, sql, map),
+        Err(e) if is_missing_schema(&e) => collect_rows_for(conn, id, without, map),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Same degradation for single-row lookups: missing table or no row → `{}`.

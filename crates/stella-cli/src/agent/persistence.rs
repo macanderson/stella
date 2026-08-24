@@ -353,7 +353,7 @@ pub(crate) fn spawn_renderer(
                 // frame restates every row, so a surface doing both prints the
                 // turn twice.
                 OutputFormat::Text if transcript.is_some() => {
-                    if let AgentEvent::ToolStart { call } = &event {
+                    if let AgentEvent::ToolStart { call, .. } = &event {
                         tool_names.insert(call.call_id.clone(), call.name.clone());
                     }
                     if let Some(printer) = transcript.as_mut() {
@@ -361,7 +361,7 @@ pub(crate) fn spawn_renderer(
                     }
                 }
                 OutputFormat::Text => match &event {
-                    AgentEvent::ToolStart { call } => {
+                    AgentEvent::ToolStart { call, .. } => {
                         tool_names.insert(call.call_id.clone(), call.name.clone());
                         plain::tool_call_card(&call.name, &call.input, "running");
                     }

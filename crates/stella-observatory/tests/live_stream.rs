@@ -44,6 +44,7 @@ fn start(call_id: &str, name: &str) -> AgentEvent {
             name: name.into(),
             input: serde_json::json!({ "path": "a.rs" }),
         },
+        sub_agent_id: None,
     }
 }
 
@@ -148,6 +149,7 @@ fn a_tool_call_made_now_reaches_a_connected_client_now() {
                 },
                 duration_ms: 4,
                 speculated: false,
+                sub_agent_id: None,
             },
         )
         .expect("result");
@@ -233,6 +235,7 @@ fn completing_a_call_moves_the_cursor() {
                 },
                 duration_ms: 2,
                 speculated: false,
+                sub_agent_id: None,
             },
         )
         .expect("result");

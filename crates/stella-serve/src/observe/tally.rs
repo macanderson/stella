@@ -150,15 +150,18 @@ mod tests {
         });
         fold.observe(&AgentEvent::ToolStart {
             call: tool_call("a"),
+            sub_agent_id: None,
         });
         fold.observe(&AgentEvent::ToolResult {
             call_id: "a".to_string(),
             output: ToolOutput::error("nope".to_string()),
             duration_ms: 3,
             speculated: false,
+            sub_agent_id: None,
         });
         fold.observe(&AgentEvent::ToolStart {
             call: tool_call("b"),
+            sub_agent_id: None,
         });
         fold.observe(&AgentEvent::ToolResult {
             call_id: "b".to_string(),
@@ -168,6 +171,7 @@ mod tests {
             },
             duration_ms: 4,
             speculated: false,
+            sub_agent_id: None,
         });
         fold.observe(&AgentEvent::SpeculationDiscarded {
             call_id: "c".to_string(),

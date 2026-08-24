@@ -81,6 +81,7 @@ fn tool_start(agent: &str, call_id: &str, name: &str, path: &str) -> Inbound {
                 name: name.into(),
                 input: serde_json::json!({ "path": path }),
             },
+            sub_agent_id: None,
         },
     }
 }
@@ -109,6 +110,7 @@ fn tool_result(agent: &str, call_id: &str) -> Inbound {
             },
             duration_ms: 8,
             speculated: false,
+            sub_agent_id: None,
         },
     }
 }

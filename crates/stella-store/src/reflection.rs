@@ -347,6 +347,7 @@ mod tests {
                 name: name.into(),
                 input: serde_json::json!({"path": "src/engine.rs"}),
             },
+            sub_agent_id: None,
         }
     }
 
@@ -356,6 +357,7 @@ mod tests {
             output,
             duration_ms: 4,
             speculated: false,
+            sub_agent_id: None,
         }
     }
 
