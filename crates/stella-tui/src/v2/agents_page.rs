@@ -216,7 +216,7 @@ fn model_arg_matches(model: &WorkspaceModel, ui: &DeckUi) -> Vec<String> {
     args::arg_matches(
         &ui.agents_page.composer,
         "/model",
-        &crate::views::picker::typeahead_candidates(model, ui),
+        &crate::v2::picker::typeahead_candidates(model, ui),
     )
 }
 

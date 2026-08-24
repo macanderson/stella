@@ -126,7 +126,7 @@ pub(super) fn model_arg_key(
     model: &WorkspaceModel,
     ui: &mut DeckUi,
 ) -> Option<DeckAction> {
-    let candidates = crate::views::picker::typeahead_candidates(model, ui);
+    let candidates = crate::v2::picker::typeahead_candidates(model, ui);
     let matches = crate::composer::args::arg_matches(&ui.composer, "/model", &candidates);
     if matches.is_empty() {
         return None;

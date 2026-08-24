@@ -31,6 +31,7 @@ pub mod installed;
 pub mod issues_tab;
 pub mod mcp_tab;
 pub mod models_card;
+pub mod picker;
 pub mod plan_card;
 pub mod pulse;
 pub mod question;
