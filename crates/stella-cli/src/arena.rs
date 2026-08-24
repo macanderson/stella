@@ -361,7 +361,7 @@ impl ArenaRecorder {
                     },
                 );
             }
-            AgentEvent::ToolStart { call } => {
+            AgentEvent::ToolStart { call, .. } => {
                 inner.ensure_turn_open();
                 inner.pending_calls.insert(call.call_id.clone());
                 let turn = inner.open_turn;
@@ -619,6 +619,7 @@ mod tests {
                 name: "write_file".into(),
                 input: serde_json::json!({}),
             },
+            sub_agent_id: None,
         });
         recorder.observe(&AgentEvent::FileChange {
             path: "src/main.rs".into(),
@@ -635,6 +636,7 @@ mod tests {
             },
             duration_ms: 3,
             speculated: false,
+            sub_agent_id: None,
         });
         recorder.observe(&AgentEvent::TurnComplete {
             model: "test-model".into(),
@@ -673,6 +675,7 @@ mod tests {
                     name: "write_file".into(),
                     input: serde_json::json!({}),
                 },
+                sub_agent_id: None,
             });
             recorder.observe(&AgentEvent::FileChange {
                 path: "src/main.rs".into(),
@@ -697,6 +700,7 @@ mod tests {
                     name: "write_file".into(),
                     input: serde_json::json!({}),
                 },
+                sub_agent_id: None,
             });
             recorder.observe(&AgentEvent::FileChange {
                 path: "src/main.rs".into(),
@@ -713,6 +717,7 @@ mod tests {
                 },
                 duration_ms: 3,
                 speculated: false,
+                sub_agent_id: None,
             });
             recorder.observe(&AgentEvent::TurnComplete {
                 model: "test-model".into(),
@@ -762,6 +767,7 @@ mod tests {
                 name: "grep".into(),
                 input: serde_json::json!({}),
             },
+            sub_agent_id: None,
         });
         recorder.observe(&AgentEvent::SpeculationDiscarded {
             call_id: "call_spec".into(),

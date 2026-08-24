@@ -152,12 +152,16 @@ const ROUTES: &[(&str, Option<&str>)] = &[
 /// into a tautology.
 fn tool_round_trip(call: &ToolCall, output: &ToolOutput) -> [AgentEvent; 2] {
     [
-        AgentEvent::ToolStart { call: call.clone() },
+        AgentEvent::ToolStart {
+            call: call.clone(),
+            sub_agent_id: None,
+        },
         AgentEvent::ToolResult {
             call_id: call.call_id.clone(),
             output: output.clone(),
             duration_ms: 12,
             speculated: false,
+            sub_agent_id: None,
         },
     ]
 }
@@ -272,6 +276,40 @@ fn real_store_workspace() -> tempfile::TempDir {
             },
         )
         .expect("sub-agent finish");
+    // The delegate's own tool traffic, stamped with its agent id (#4624).
+    // Deliberately journaled AFTER the `Finished` bracket: the engine
+    // dispatches independent delegates concurrently, so bracket order is not
+    // what attributes a call — the stamp is, and a fixture that only ever put
+    // a child's calls inside its own bracket would prove the weaker claim.
+    let child_call = ToolCall {
+        call_id: "c2".into(),
+        name: "search".into(),
+        input: serde_json::json!({ "query": "retry policy" }),
+    };
+    let child_output = ToolOutput::Ok {
+        content: "crates/stella-core/src/retry.rs".into(),
+        data: None,
+    };
+    for (offset, event) in [
+        AgentEvent::ToolStart {
+            call: child_call.clone(),
+            sub_agent_id: Some("search-1".into()),
+        },
+        AgentEvent::ToolResult {
+            call_id: child_call.call_id.clone(),
+            output: child_output,
+            duration_ms: 30,
+            speculated: false,
+            sub_agent_id: Some("search-1".into()),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        store
+            .record_event(completed, 6 + offset as u64, &event)
+            .expect("delegate tool event");
+    }
     seed_receipt(&store, completed, &call, &output);
     store
         .record_task_board(

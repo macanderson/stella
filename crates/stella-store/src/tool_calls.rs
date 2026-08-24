@@ -254,6 +254,7 @@ fn project_tool_start(
     call_id: &str,
     name: &str,
     args_json: &str,
+    sub_agent_id: Option<&str>,
 ) -> rusqlite::Result<()> {
     let existing: Option<i64> = tx
         .query_row(
@@ -268,9 +269,18 @@ fn project_tool_start(
         // The same announcement, folded again: refresh the payload, keep the
         // position and whatever terminal state a result may already have set.
         tx.execute(
-            "UPDATE tool_calls SET name = ?3, surface = ?4, args_json = ?5, args_digest = ?6 \
+            "UPDATE tool_calls SET name = ?3, surface = ?4, args_json = ?5, args_digest = ?6, \
+                 sub_agent_id = ?7 \
              WHERE execution_id = ?1 AND seq = ?2",
-            params![execution_id, seq, name, surface_of(name), args_json, digest],
+            params![
+                execution_id,
+                seq,
+                name,
+                surface_of(name),
+                args_json,
+                digest,
+                sub_agent_id
+            ],
         )?;
         return Ok(());
     }
@@ -282,8 +292,8 @@ fn project_tool_start(
     tx.execute(
         "INSERT INTO tool_calls \
          (execution_id, seq, event_seq, call_id, name, surface, args_json, args_digest, reason, \
-          ok, state, error, bytes_out, duration_ms) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '', 0, 'running', '', 0, 0)",
+          ok, state, error, bytes_out, duration_ms, sub_agent_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, '', 0, 'running', '', 0, 0, ?9)",
         params![
             execution_id,
             seq,
@@ -292,7 +302,8 @@ fn project_tool_start(
             name,
             surface_of(name),
             args_json,
-            digest
+            digest,
+            sub_agent_id
         ],
     )?;
     Ok(())
@@ -359,10 +370,16 @@ fn project_tool_result(
     execution_id: i64,
     call_id: &str,
     settled: &SettledOutcome,
+    sub_agent_id: Option<&str>,
 ) -> rusqlite::Result<()> {
+    // `coalesce` rather than assignment on `sub_agent_id`: the announcement is
+    // where the row learns whose call it was, and a result that reached this
+    // store from a producer that does not stamp the field must not blank an
+    // attribution the start already recorded. Filling a NULL is safe in the
+    // other direction — a row whose start was written by an older build.
     const SETTLE: &str = "UPDATE tool_calls \
          SET ok = ?3, state = ?4, error = ?5, error_class = ?6, bytes_out = ?7, \
-             duration_ms = ?8 \
+             duration_ms = ?8, sub_agent_id = coalesce(sub_agent_id, ?9) \
          WHERE execution_id = ?1 AND seq = ?2";
     let oldest_open: Option<i64> = tx.query_row(
         "SELECT min(seq) FROM tool_calls \
@@ -391,7 +408,8 @@ fn project_tool_result(
                 settled.error,
                 class_token(settled.error_class),
                 settled.bytes_out,
-                settled.duration_ms
+                settled.duration_ms,
+                sub_agent_id
             ],
         )?;
         return Ok(());
@@ -404,8 +422,9 @@ fn project_tool_result(
     tx.execute(
         "INSERT INTO tool_calls \
          (execution_id, seq, event_seq, call_id, name, surface, args_json, args_digest, reason, \
-          ok, state, error, error_class, bytes_out, duration_ms) \
-         VALUES (?1, ?2, ?3, ?4, '(unknown)', 'native', '{}', '', '', ?5, ?6, ?7, ?8, ?9, ?10)",
+          ok, state, error, error_class, bytes_out, duration_ms, sub_agent_id) \
+         VALUES (?1, ?2, ?3, ?4, '(unknown)', 'native', '{}', '', '', ?5, ?6, ?7, ?8, ?9, ?10, \
+                 ?11)",
         params![
             execution_id,
             seq,
@@ -416,7 +435,8 @@ fn project_tool_result(
             settled.error,
             class_token(settled.error_class),
             settled.bytes_out,
-            settled.duration_ms
+            settled.duration_ms,
+            sub_agent_id
         ],
     )?;
     Ok(())
@@ -436,7 +456,7 @@ pub(crate) fn project_event(
     event: &AgentEvent,
 ) -> rusqlite::Result<()> {
     match event {
-        AgentEvent::ToolStart { call } => {
+        AgentEvent::ToolStart { call, sub_agent_id } => {
             let args_json = serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".into());
             project_tool_start(
                 tx,
@@ -445,16 +465,18 @@ pub(crate) fn project_event(
                 &call.call_id,
                 &call.name,
                 &args_json,
+                sub_agent_id.as_deref(),
             )
         }
         AgentEvent::ToolResult {
             call_id,
             output,
             duration_ms,
+            sub_agent_id,
             ..
         } => {
             let settled = SettledOutcome::from_output(output, *duration_ms as i64);
-            project_tool_result(tx, execution_id, call_id, &settled)
+            project_tool_result(tx, execution_id, call_id, &settled, sub_agent_id.as_deref())
         }
         _ => Ok(()),
     }
@@ -475,6 +497,10 @@ struct FoldedCall {
     call_id: String,
     name: String,
     args_json: String,
+    /// Which delegate ran the call, `None` for the lead's own (#4624). Read
+    /// from whichever half of the pair carried it — the announcement stamps
+    /// it, and a result whose start never reached the log carries it too.
+    sub_agent_id: Option<String>,
     /// `None` until a `tool_result` settles it — and still `None` at the end
     /// for a call whose turn ended first, which is what makes it abandoned.
     settled: Option<SettledOutcome>,
@@ -499,7 +525,7 @@ fn fold_tool_stream(events: &[(i64, String, String)]) -> Vec<FoldedCall> {
             continue;
         };
         match event {
-            AgentEvent::ToolStart { call } => {
+            AgentEvent::ToolStart { call, sub_agent_id } => {
                 let args_json = serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".into());
                 // The same announcement seen twice is one call: its `seq` is
                 // the identity, so refresh in place rather than minting a
@@ -507,6 +533,7 @@ fn fold_tool_stream(events: &[(i64, String, String)]) -> Vec<FoldedCall> {
                 if let Some(existing) = calls.iter_mut().find(|c| c.event_seq == *seq) {
                     existing.name = call.name;
                     existing.args_json = args_json;
+                    existing.sub_agent_id = sub_agent_id;
                     continue;
                 }
                 open.entry(call.call_id.clone())
@@ -518,6 +545,7 @@ fn fold_tool_stream(events: &[(i64, String, String)]) -> Vec<FoldedCall> {
                     call_id: call.call_id,
                     name: call.name,
                     args_json,
+                    sub_agent_id,
                     settled: None,
                 });
             }
@@ -525,24 +553,34 @@ fn fold_tool_stream(events: &[(i64, String, String)]) -> Vec<FoldedCall> {
                 call_id,
                 output,
                 duration_ms,
+                sub_agent_id,
                 ..
             } => {
                 let settled = SettledOutcome::from_output(&output, duration_ms as i64);
                 if let Some(index) = open.get_mut(&call_id).and_then(VecDeque::pop_front) {
                     calls[index].settled = Some(settled);
+                    // The same `coalesce` the live settle applies, and for the
+                    // same reason: the announcement is where a row learns
+                    // whose call it was, and a result that carries nothing
+                    // must not blank it.
+                    calls[index].sub_agent_id = calls[index].sub_agent_id.take().or(sub_agent_id);
                     continue;
                 }
                 // No open call with this id: either a re-delivered result for
                 // one already settled, or a result whose start never reached
                 // the log. Mirror the live fallbacks exactly.
                 match calls.iter_mut().rev().find(|c| c.call_id == call_id) {
-                    Some(existing) => existing.settled = Some(settled),
+                    Some(existing) => {
+                        existing.settled = Some(settled);
+                        existing.sub_agent_id = existing.sub_agent_id.take().or(sub_agent_id);
+                    }
                     None => calls.push(FoldedCall {
                         event_seq: UNKNOWN_EVENT_SEQ,
                         ts: ts.clone(),
                         call_id,
                         name: "(unknown)".to_string(),
                         args_json: "{}".to_string(),
+                        sub_agent_id,
                         settled: Some(settled),
                     }),
                 }
@@ -588,6 +626,14 @@ pub(crate) fn refold_tool_calls(tx: &Connection, execution_id: i64) -> rusqlite:
         return Ok(0);
     }
     let calls = fold_tool_stream(&announced);
+    // Whether this file has the v35 attribution column, asked rather than
+    // assumed. This helper is shared with the v27 → v28 migration, which
+    // replays it against the shape the ladder has reached *at that rung* —
+    // seven versions before the column exists. Naming it in the INSERT
+    // unconditionally fails that migration, and a failed migration takes the
+    // workspace's whole store with it.
+    let attributed =
+        crate::migrations::column_exists(tx, "tool_calls", "sub_agent_id").unwrap_or(false);
     for (seq, call) in calls.iter().enumerate() {
         let settled = call.settled.as_ref();
         tx.execute(
@@ -615,6 +661,18 @@ pub(crate) fn refold_tool_calls(tx: &Connection, execution_id: i64) -> rusqlite:
                 call.ts,
             ],
         )?;
+        // Written second rather than as a sixteenth bind, so the statement
+        // above stays one statement across every schema this helper can meet.
+        // `INSERT OR REPLACE` has already cleared the column, and the fold is
+        // authoritative over it — it re-derived the attribution from the same
+        // events the row came from.
+        if attributed && let Some(agent) = &call.sub_agent_id {
+            tx.execute(
+                "UPDATE tool_calls SET sub_agent_id = ?3 \
+                 WHERE execution_id = ?1 AND seq = ?2",
+                params![execution_id, seq as i64, agent],
+            )?;
+        }
     }
     // Any row past the fold's end is left over from a shorter earlier fold —
     // which is exactly what every history the `call_id` key collapsed looks

@@ -450,6 +450,13 @@ pub(crate) const MCP_USAGE_DDL: &str = "CREATE TABLE IF NOT EXISTS mcp_usage (
 /// carries no announcing seq, so it still finds its row by `call_id` — but is
 /// **not unique**: it now locates the oldest still-`running` row bearing the
 /// id, which is the call it answers.
+///
+/// `sub_agent_id` (v35, #4624) is which delegate ran the call, `NULL` for the
+/// lead's own — the same contract `telemetry.sub_agent_id` carries, so the
+/// two tables read the same way. A delegate opens no execution row of its
+/// own and its tool events ride the parent's stream, so without this a
+/// child's rows are indistinguishable from the lead's and "which tools did
+/// child X run" has no answer.
 pub(crate) fn tool_calls_ddl(table: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {table} (
@@ -470,6 +477,7 @@ pub(crate) fn tool_calls_ddl(table: &str) -> String {
        bytes_out INTEGER NOT NULL DEFAULT 0,
        duration_ms INTEGER NOT NULL DEFAULT 0,
        ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       sub_agent_id TEXT,
        UNIQUE (execution_id, seq)
      );"
     )

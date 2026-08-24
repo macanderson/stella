@@ -666,6 +666,7 @@ fn trace_captures_every_agent_and_filters_by_agent() {
                 name: "read_file".into(),
                 input: serde_json::json!({}),
             },
+            sub_agent_id: None,
         },
     ));
     assert_eq!(w.trace.rows.len(), 2);
@@ -696,6 +697,7 @@ fn ask_user_marks_waiting_then_a_later_event_resumes_running() {
             },
             duration_ms: 1,
             speculated: false,
+            sub_agent_id: None,
         },
     ));
     assert_eq!(w.agents[0].status, AgentStatus::Running);
@@ -1004,6 +1006,7 @@ fn shell_start(call_id: &str, cmd: &str) -> AgentEvent {
             name: "shell".into(),
             input: serde_json::json!({ "cmd": cmd }),
         },
+        sub_agent_id: None,
     }
 }
 
@@ -1016,6 +1019,7 @@ fn shell_result(call_id: &str, out: &str) -> AgentEvent {
         },
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 

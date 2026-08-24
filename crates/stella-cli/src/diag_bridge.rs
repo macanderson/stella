@@ -428,7 +428,7 @@ impl DomainBridge {
             }
 
             // ---- Tools. -------------------------------------------------
-            AgentEvent::ToolStart { call } => {
+            AgentEvent::ToolStart { call, .. } => {
                 let tool = ToolName::classify(&call.name);
                 // Retained so the matching result can name its tool without a
                 // join (#3149); the result, a discard, or the turn terminator
@@ -450,6 +450,7 @@ impl DomainBridge {
                 output,
                 duration_ms,
                 speculated,
+                ..
             } => {
                 // The failing result is the one line a warn-filtered reader
                 // sees, so it names the tool itself rather than pointing at a
@@ -990,6 +991,7 @@ mod tests {
                 name: name.into(),
                 input,
             },
+            sub_agent_id: None,
         }
     }
 
@@ -1069,6 +1071,7 @@ mod tests {
             output: ToolOutput::error("/home/ada/secret.rs:12: permission denied"),
             duration_ms: 1234,
             speculated: false,
+            sub_agent_id: None,
         });
 
         let record = records.find("agent.tool.result").expect("a record");
@@ -1096,6 +1099,7 @@ mod tests {
             output: ToolOutput::error("no such file"),
             duration_ms: 7,
             speculated: false,
+            sub_agent_id: None,
         });
 
         let record = records.find("agent.tool.result").expect("a record");
@@ -1121,6 +1125,7 @@ mod tests {
             },
             duration_ms: 1,
             speculated: false,
+            sub_agent_id: None,
         });
         let json = serde_json::to_string(&records.records()[0]).expect("serialize");
         assert!(json.contains(r#""tool":"other""#), "{json}");
@@ -1195,6 +1200,7 @@ mod tests {
             },
             duration_ms: 1,
             speculated: false,
+            sub_agent_id: None,
         });
         assert!(bridge.in_flight.is_empty(), "the result removes its entry");
 

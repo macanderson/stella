@@ -96,7 +96,26 @@ pub enum AgentEvent {
     Reasoning { delta: String },
     /// The model requested a tool call and the engine is about to run it. The
     /// matching [`AgentEvent::ToolResult`] correlates by `call.call_id`.
-    ToolStart { call: ToolCall },
+    ToolStart {
+        call: ToolCall,
+        /// Which sub-agent made this call. `None` is the lead's own.
+        ///
+        /// Same contract, same stamping point and same reason as
+        /// [`AgentEvent::StepUsage`]'s field of this name (#4383): the
+        /// `sub_agent` bracket cannot answer it, because the engine dispatches
+        /// independent delegates concurrently and no `Started`/`Finished` pair
+        /// encloses any particular call. Without it a delegate's tool traffic
+        /// lands in `tool_calls` under the parent's execution id, indis-
+        /// tinguishable from the lead's own (#4624).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which sub-agent made this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. An opaque handle, never instruction text."
+            )
+        )]
+        sub_agent_id: Option<String>,
+    },
     /// A tool call finished, successfully or not — `output` is the typed
     /// [`ToolOutput`], never a bare string, so a failure is inspectable
     /// without sniffing prose. Correlates to its [`AgentEvent::ToolStart`] by
@@ -112,6 +131,22 @@ pub enum AgentEvent {
         /// it. `serde(default)` so streams recorded before this field parse.
         #[serde(default)]
         speculated: bool,
+        /// Which sub-agent's call this answers — the same handle its
+        /// [`AgentEvent::ToolStart`] carries, stamped at the same boundary.
+        ///
+        /// Carried on both halves rather than only on the announcement,
+        /// because a consumer folding a live stream sees the result of a call
+        /// whose start it may never have received: a `?after_seq` page, a
+        /// journal truncated at the front, a store whose `tool_start` rows
+        /// were pruned. Correlating back is what such a consumer cannot do.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "Which sub-agent's call this answers. Absent means the lead's own call. Carried on the result as well as the announcement so a consumer that never saw the start can still attribute it."
+            )
+        )]
+        sub_agent_id: Option<String>,
     },
     /// A speculatively-executed read-only call (`stella-core::speculation`)
     /// whose result never reached the transcript: its stream attempt failed

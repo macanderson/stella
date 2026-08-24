@@ -14,12 +14,14 @@ fn agent_event_roundtrips_with_type_tag() {
             name: "read_file".into(),
             input: serde_json::json!({ "path": "src/main.rs" }),
         },
+
+        sub_agent_id: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"type\":\"tool_start\""), "{json}");
     let back: AgentEvent = serde_json::from_str(&json).unwrap();
     match back {
-        AgentEvent::ToolStart { call } => assert_eq!(call.name, "read_file"),
+        AgentEvent::ToolStart { call, .. } => assert_eq!(call.name, "read_file"),
         other => panic!("unexpected variant: {other:?}"),
     }
 }
@@ -38,6 +40,8 @@ fn tool_result_roundtrips_and_streams_without_speculated_still_parse() {
         },
         duration_ms: 42,
         speculated: true,
+
+        sub_agent_id: None,
     };
     let json = serde_json::to_string(&event).unwrap();
     let back: AgentEvent = serde_json::from_str(&json).unwrap();

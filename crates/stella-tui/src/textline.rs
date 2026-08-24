@@ -1356,6 +1356,7 @@ mod tests {
                     name: "n".into(),
                     input: serde_json::Value::Null,
                 },
+                sub_agent_id: None,
             },
             AgentEvent::ToolResult {
                 call_id: "c".into(),
@@ -1365,6 +1366,7 @@ mod tests {
                 },
                 duration_ms: 1,
                 speculated: false,
+                sub_agent_id: None,
             },
         ];
         for event in &structural {

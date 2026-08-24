@@ -288,6 +288,82 @@ async fn step_usage_and_tool_activity_reach_the_parent_so_cost_rolls_up() {
     );
 }
 
+/// **The witness for #4624.** A child's tool traffic names the child, on both
+/// halves of the pair.
+///
+/// Fails before this change: `ToolStart`/`ToolResult` carried no
+/// `sub_agent_id` at all, so every delegate's call landed in `tool_calls`
+/// under the parent execution id with nothing naming the child — the bracket
+/// cannot stand in for it, because independent delegates are dispatched
+/// concurrently and no `Started`/`Finished` pair encloses a particular call.
+#[tokio::test]
+async fn a_childs_tool_calls_name_the_child_that_ran_them() {
+    let parent_provider = ScriptedProvider::new(vec![]);
+    let child_provider = ScriptedProvider::new(vec![
+        Ok(tool_call_result("read_file", "c1", 0.01)),
+        Ok(text_result("done", 0.02)),
+    ]);
+    let tools = MixedTools::default();
+    let parent = Engine::with_sleeper(&parent_provider, &tools, EngineConfig::default(), &NoSleep);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    parent
+        .run_sub_agent(
+            SubAgentHost::new(&child_provider),
+            &SubAgentSpec::read_only("researcher-7", "work"),
+            &mut budget,
+            &tx,
+        )
+        .await;
+    let events = drain(&mut rx);
+
+    let runners: Vec<Option<String>> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolStart { sub_agent_id, .. }
+            | AgentEvent::ToolResult { sub_agent_id, .. } => Some(sub_agent_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        runners,
+        vec![
+            Some("researcher-7".to_string()),
+            Some("researcher-7".to_string())
+        ],
+        "the announcement and the result both name the child: {runners:?}"
+    );
+}
+
+/// The other half of the same fact: a call the lead made itself is the lead's,
+/// and `None` is that answer rather than the absence of one.
+#[tokio::test]
+async fn the_leads_own_tool_calls_name_no_sub_agent() {
+    let provider = ScriptedProvider::new(vec![
+        Ok(tool_call_result("read_file", "c1", 0.01)),
+        Ok(text_result("answered", 0.02)),
+    ]);
+    let tools = MixedTools::default();
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &NoSleep);
+    let mut budget = BudgetGuard::new(BudgetMode::Observed, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut messages = vec![CompletionMessage::user("do it")];
+
+    let _ = engine.run_turn(&mut messages, &mut budget, &tx).await;
+    let events = drain(&mut rx);
+
+    let runners: Vec<Option<String>> = events
+        .iter()
+        .filter_map(|event| match event {
+            AgentEvent::ToolStart { sub_agent_id, .. }
+            | AgentEvent::ToolResult { sub_agent_id, .. } => Some(sub_agent_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(runners, vec![None, None], "{runners:?}");
+}
+
 #[test]
 fn the_forward_filter_fails_toward_visible() {
     // A new AgentEvent variant must default to *forwarded*: a redundant HUD

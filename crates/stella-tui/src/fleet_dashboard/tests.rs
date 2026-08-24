@@ -37,6 +37,7 @@ fn tool_start(name: &str, arg_key: &str, arg: &str) -> AgentEvent {
             name: name.into(),
             input: serde_json::json!({ arg_key: arg }),
         },
+        sub_agent_id: None,
     }
 }
 

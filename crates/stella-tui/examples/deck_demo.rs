@@ -154,6 +154,7 @@ async fn main() -> std::io::Result<()> {
                                 },
                                 duration_ms: 0,
                                 speculated: false,
+                                sub_agent_id: None,
                             },
                         });
                     }
@@ -170,6 +171,7 @@ async fn main() -> std::io::Result<()> {
                                 },
                                 duration_ms: 0,
                                 speculated: false,
+                                sub_agent_id: None,
                             },
                         });
                     }
@@ -420,6 +422,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
                 name: "mcp__fs__edit_file".into(),
                 input: json!({ "path": "src/lib.rs" }),
             },
+            sub_agent_id: None,
         }),
         ev(AgentEvent::ToolResult {
             call_id: format!("{id}-c1"),
@@ -429,6 +432,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             },
             duration_ms: 30,
             speculated: false,
+            sub_agent_id: None,
         }),
         ev(AgentEvent::FileChange {
             path: "src/lib.rs".into(),

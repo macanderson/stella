@@ -1259,6 +1259,7 @@ mod tests {
                         name: "read_file".into(),
                         input: serde_json::json!({ "path": "src/lib.rs" }),
                     },
+                    sub_agent_id: None,
                 },
             },
             Inbound::Event {
@@ -1271,6 +1272,7 @@ mod tests {
                     },
                     duration_ms: 12,
                     speculated: false,
+                    sub_agent_id: None,
                 },
             },
             Inbound::Event {

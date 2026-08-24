@@ -82,6 +82,13 @@
             "call": {
               "$ref": "#/$defs/ToolCall"
             },
+            "sub_agent_id": {
+              "description": "Which sub-agent made this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. An opaque handle, never instruction text.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "const": "tool_start",
               "type": "string"
@@ -111,6 +118,13 @@
               "default": false,
               "description": "True when this result was produced by speculative execution: the\ncall was read-only and began executing while the model was still\nstreaming the rest of its response, so `duration_ms` (the real\nexecution time) overlapped the model call instead of following\nit. `serde(default)` so streams recorded before this field parse.",
               "type": "boolean"
+            },
+            "sub_agent_id": {
+              "description": "Which sub-agent's call this answers. Absent means the lead's own call. Carried on the result as well as the announcement so a consumer that never saw the start can still attribute it.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "type": {
               "const": "tool_result",

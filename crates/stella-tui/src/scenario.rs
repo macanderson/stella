@@ -102,6 +102,7 @@ fn tool_start(id: &str, name: &str, input: serde_json::Value) -> AgentEvent {
             name: name.into(),
             input,
         },
+        sub_agent_id: None,
     }
 }
 
@@ -319,6 +320,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 },
                 duration_ms: 42,
                 speculated: false,
+                sub_agent_id: None,
             },
         ),
         // The edit, measured the way a live turn measures it: the `FileChange`
@@ -361,6 +363,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 },
                 duration_ms: 18,
                 speculated: false,
+                sub_agent_id: None,
             },
         ),
         ev(
@@ -450,6 +453,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 },
                 duration_ms: 61,
                 speculated: false,
+                sub_agent_id: None,
             },
         ),
         // The new file lands inside its own `write_file` window, for the same
@@ -483,6 +487,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 },
                 duration_ms: 9,
                 speculated: false,
+                sub_agent_id: None,
             },
         ),
         ev(

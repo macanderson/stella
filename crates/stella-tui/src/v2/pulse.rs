@@ -265,6 +265,7 @@ mod tests {
                     name: "bash".into(),
                     input: serde_json::json!({ "command": "cargo test -p stella-tui" }),
                 },
+                sub_agent_id: None,
             },
         });
         m.now_ms = 4_000;

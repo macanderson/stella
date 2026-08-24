@@ -1402,6 +1402,10 @@ export type AgentEvent = {
 } | {
   call: ToolCall;
   /**
+   * Which sub-agent made this call. Absent means the lead's own call, which is the ordinary case. Stamped at the sub-agent boundary, so a nested child names itself rather than its parent. An opaque handle, never instruction text.
+   */
+  sub_agent_id?: string | null;
+  /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */
   ts?: number;
@@ -1418,6 +1422,10 @@ export type AgentEvent = {
    * it. `serde(default)` so streams recorded before this field parse.
    */
   speculated?: boolean;
+  /**
+   * Which sub-agent's call this answers. Absent means the lead's own call. Carried on the result as well as the announcement so a consumer that never saw the start can still attribute it.
+   */
+  sub_agent_id?: string | null;
   /**
    * Wall-clock instant at which the sink wrote this line, in milliseconds since the Unix epoch (UTC). Stamped by the sink rather than carried by the event, so it is optional forever — a line recorded before the field existed has none — and it is not monotonic, so a consumer computing an elapsed offset must clamp a negative delta rather than trust it.
    */

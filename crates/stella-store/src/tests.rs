@@ -414,6 +414,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
                     name: "grep".into(),
                     input: serde_json::json!({"pattern": "foo"}),
                 },
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -429,6 +430,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
                 },
                 duration_ms: 12,
                 speculated: false,
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -442,6 +444,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
                     name: "read_file".into(),
                     input: serde_json::json!({"path": "x"}),
                 },
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -454,6 +457,7 @@ fn producer_materializes_tool_calls_reflection_and_rolls_up_to_usage() {
                 output: ToolOutput::error("not found"),
                 duration_ms: 3,
                 speculated: false,
+                sub_agent_id: None,
             },
         )
         .unwrap();
@@ -1034,33 +1038,21 @@ fn skill_usage_records_per_execution_version_rows() {
     //       calls visible, crashed ones recoverable. v19 recounts stored
     //       block costs under one token rule (#925). v20 `foundry_tools`
     //       (#830). v21 `session_turn_diffs` (#1870). v22
-    //       `executions.journal_era` (#1981). v23 `parse_error` (#2175). v24 splits
-    //       `'abandoned'` from `'error'` in `tool_calls.state` (#3146). v25
-    //       `tool_calls.error_class` (#3145): which KIND of failure, so an
-    //       error rate can exclude misuse. v26/v27 split wrapper (#3388) and
-    //       role (#3395) out of `kind`. v28 identifies a `tool_calls` row by
-    //       the event that announced it, not by a `call_id` that is only
-    //       unique within one response (#4033), and re-folds the histories
-    //       the old key collapsed. v29 `tasks.contract` (#4238): what a task
-    //       promised, not only what became of it — nullable with no backfill,
-    //       because NULL (no contract recorded) and a stored `read_only` are
-    //       different facts and a default would invent the second. v30
-    //       `step_receipt.stall_seconds_requested` (#3621): the number the
-    //       stall rung decides on, which nothing persisted — nullable for the
-    //       same reason, since NULL is "not classified" and 0 is "looked and
-    //       found none". v31 `agent_uses.kind` (#3822): which of the log's two
-    //       writers minted the row's `agent` name, so an installed
-    //       definition's repeated invocations stop reading like a pile of
-    //       one-off delegations. v32 `execution_reflection.partial_run`
-    //       (#3808): whether the turn a reflection row assesses was stopped
-    //       rather than finished — `NOT NULL DEFAULT 0` and backfilled, because
-    //       unlike v29 the historical fact is recorded one join away in
-    //       `executions.outcome` and there is nothing to invent.
-    //       v33 `telemetry.sub_agent_id` (#4383): which delegate spent a
-    //       call, or NULL for the lead. v34 `step_receipt.upstream_provider`
-    //       (#3054): the vendor a gateway routed to. Both nullable with no
-    //       backfill — nothing in the journal can attribute a historical row.
-    assert_eq!(SCHEMA_VERSION, 34);
+    //       `executions.journal_era` (#1981). v23 `parse_error` (#2175).
+    //   v24 splits `'abandoned'` from `'error'` in `tool_calls.state`
+    //       (#3146). v25 `tool_calls.error_class` (#3145). v26/v27 split
+    //       wrapper (#3388) and role (#3395) out of `kind`. v28 rekeys a
+    //       `tool_calls` row on the event that announced it (#4033).
+    //   v29 `tasks.contract` (#4238). v30
+    //       `step_receipt.stall_seconds_requested` (#3621). v31
+    //       `agent_uses.kind` (#3822). v32
+    //       `execution_reflection.partial_run` (#3808).
+    //   v33 `telemetry.sub_agent_id` (#4383) — which delegate SPENT a call.
+    //       v34 `step_receipt.upstream_provider` (#3054). v35
+    //       `tool_calls.sub_agent_id` (#4624) — which delegate RAN one; the
+    //       pair is what lets a turn page say both what a child cost and what
+    //       it did.
+    assert_eq!(SCHEMA_VERSION, 35);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

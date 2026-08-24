@@ -191,6 +191,58 @@ fn the_turn_page_folds_a_delegates_bracket_and_metering_against_the_real_schema(
     assert!(a["finished_ts"].is_string(), "{out}");
 }
 
+/// **The witness for #4624.** A delegate's tool calls are attributed against
+/// the real migrated schema: `tool_calls` carries the child's id, and
+/// `/api/execution` serves it on both projections so a per-child page can
+/// filter without a second round trip.
+///
+/// Fails before this change: `ToolStart`/`ToolResult` carried no
+/// `sub_agent_id`, `tool_calls` had no column for one, and the steps and tools
+/// SELECTs served neither — so a child's rows sat under the parent execution
+/// id indistinguishable from the lead's own, and "which tools did child X run"
+/// had no answer at all.
+///
+/// The fixture journals the child's pair AFTER its `Finished` bracket on
+/// purpose: independent delegates are dispatched concurrently, so bracket
+/// order attributes nothing and the stamp is the whole mechanism.
+#[test]
+fn a_delegates_tool_calls_are_attributed_to_it_against_the_real_schema() {
+    let workspace = real_store_workspace();
+    let out: serde_json::Value =
+        serde_json::from_slice(&respond(workspace.path(), "/api/execution?id=1").body)
+            .expect("json");
+
+    let tools = out["tools"].as_array().expect("tools");
+    let owners: Vec<(&str, Option<&str>)> = tools
+        .iter()
+        .map(|t| {
+            (
+                t["name"].as_str().unwrap_or("?"),
+                t["sub_agent_id"].as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        owners,
+        vec![("read_file", None), ("search", Some("search-1"))],
+        "NULL is the lead's own call, and the delegate's names itself: {out}"
+    );
+
+    // The metering side of the same question is served on the same payload,
+    // so one page can join spend to activity per child (#4383 + #4624).
+    let steps = out["steps"].as_array().expect("steps");
+    assert!(
+        steps
+            .iter()
+            .any(|s| s["sub_agent_id"].as_str() == Some("search-1")),
+        "the delegate's metered call is attributed too: {out}"
+    );
+    assert!(
+        steps.iter().any(|s| s["sub_agent_id"].is_null()),
+        "and the lead's own reads null rather than being omitted: {out}"
+    );
+}
+
 /// **The witness for #4627.** The transcript itself places the bracket where
 /// it happened, against the real migrated schema.
 ///

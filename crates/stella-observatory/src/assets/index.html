@@ -2504,6 +2504,31 @@ function downloadTranscriptJson(execution, journal, calls, steps, tools, files, 
   a.remove();
   URL.revokeObjectURL(url);
 }
+/* One metering row. `sub_agent_id` (telemetry, v33) badges the rows a
+   delegate spent rather than the lead — without it a turn's fan-out is
+   indistinguishable from the lead making every call itself. */
+function stepRowHtml(s, maxTok) {
+  const t = num(s.input_tokens) + num(s.output_tokens);
+  const inW = t ? 100 * num(s.input_tokens) / t : 0;
+  return `<div class="step-row"><span>${fmtInt(s.step)}</span>
+    <span class="tokbar" style="width:${(100 * t / maxTok).toFixed(1)}%">
+      <i style="background:var(--c1);width:${inW.toFixed(1)}%"></i>
+      <i style="background:var(--c2);flex:1"></i></span>
+    <span>${s.sub_agent_id ? `<span class="badge dim">${esc(s.sub_agent_id)}</span> ` : ""}${
+      fmtTok(s.input_tokens)} in · ${fmtTok(s.output_tokens)} out · ${fmtMs(s.duration_ms)}${
+      num(s.retries) ? ` · <span style="color:var(--warn)">◌ ${fmtInt(s.retries)} retries</span>` : ""}</span>
+  </div>`;
+}
+/* One tool call. Same `sub_agent_id` badge, from `tool_calls` (v35). */
+function toolRowHtml(t) {
+  return `<div class="step-row">
+      <span>${fmtInt(t.seq)}</span>
+      <span class="name" style="color:${t.ok ? "var(--text)" : "var(--bad)"}">
+        ${esc(t.name)}${t.surface !== "native" ? ` <span class="badge dim">${esc(t.surface)}</span>` : ""}
+        ${t.sub_agent_id ? ` <span class="badge dim">${esc(t.sub_agent_id)}</span>` : ""}
+        ${t.ok ? "" : " ✕ " + esc(clip(t.error, 60))}</span>
+      <span>${fmtMs(t.duration_ms)} · ${fmtTok(t.bytes_out)}B</span></div>`;
+}
 /* One sub-agent's page: the turn panel, assumed by the child. A delegate
    opens no execution row of its own and its narration stays private to the
    parent engine, so this page states what IS recorded — the started/finished
@@ -2561,6 +2586,16 @@ function renderSubagentFocus(d, agents, i) {
   const sect = (id_, label, kick, inner) =>
     `<section class="tx-sect" id="${id_}"><h2>${label}</h2>
       <div class="kick">${kick}</div>${inner}</section>`;
+  /* The parent's own projections, filtered to this child. Both tables record
+     the whole turn under the parent execution id — a delegate opens no row of
+     its own — so the agent id stamped on each row is the only thing that can
+     separate a child's work from the lead's. A store older than the column
+     stamps nothing, which reads as an empty section rather than as the lead
+     having made every call. */
+  const subSteps = (d.steps ?? []).filter(s => s.sub_agent_id === a.agent_id);
+  const subTools = (d.tools ?? []).filter(t => t.sub_agent_id === a.agent_id);
+  const subMaxTok = Math.max(
+    ...subSteps.map(x => num(x.input_tokens) + num(x.output_tokens)), 1);
   main.innerHTML =
     sect("tx-sub-result", "Result",
       "The report handed back to the parent — the only thing that entered its transcript.",
@@ -2579,10 +2614,25 @@ function renderSubagentFocus(d, agents, i) {
             <span>${fmtTok(a.tokens_in)} in · ${fmtTok(a.tokens_out)} out</span>
             <span>${fmtUsd(a.cost_usd)}${
               num(a.steps) ? ` · ${fmtInt(a.steps)} steps` : ""}</span></div>`
-        : `<div class="empty">No metered calls carry this agent id.</div>`);
+        : `<div class="empty">No metered calls carry this agent id.</div>`)
+    + sect("tx-sub-steps", "Steps",
+      "The parent turn's metering rows stamped with this agent id.",
+      subSteps.length
+        ? subSteps.map(s => stepRowHtml(s, subMaxTok)).join("")
+        : `<div class="empty">No metered steps carry this agent id. A store written
+            before schema v33 records none.</div>`)
+    + sect("tx-sub-tools", "Tool calls",
+      "This child's own calls, in call order. NULL is the lead's own, so a row "
+      + "only appears here once the projection knows whose it was.",
+      subTools.length
+        ? subTools.map(toolRowHtml).join("")
+        : `<div class="empty">No tool calls carry this agent id. A store written
+            before schema v35 records none.</div>`);
   buildRail([
     { id: "tx-sub-result", label: "Result" },
     { id: "tx-sub-usage", label: "Spend" },
+    { id: "tx-sub-steps", label: "Steps", n: subSteps.length },
+    { id: "tx-sub-tools", label: "Tool calls", n: subTools.length },
   ]);
 }
 async function openTranscript(id, full = false, sub = "") {
@@ -2685,24 +2735,9 @@ async function openTranscript(id, full = false, sub = "") {
     downloadTranscriptJson(d, entries, calls, steps, tools, files, td));
 
   /* ── sections ── */
-  const stepRows = steps.map(s => {
-    const t = num(s.input_tokens) + num(s.output_tokens);
-    const maxTok = Math.max(...steps.map(x => num(x.input_tokens) + num(x.output_tokens)), 1);
-    const inW = t ? 100 * num(s.input_tokens) / t : 0;
-    return `<div class="step-row"><span>${fmtInt(s.step)}</span>
-      <span class="tokbar" style="width:${(100 * t / maxTok).toFixed(1)}%">
-        <i style="background:var(--c1);width:${inW.toFixed(1)}%"></i>
-        <i style="background:var(--c2);flex:1"></i></span>
-      <span>${fmtTok(s.input_tokens)} in · ${fmtTok(s.output_tokens)} out · ${fmtMs(s.duration_ms)}${
-        num(s.retries) ? ` · <span style="color:var(--warn)">◌ ${fmtInt(s.retries)} retries</span>` : ""}</span>
-    </div>`;
-  }).join("");
-  const toolRows = tools.map(t => `<div class="step-row">
-      <span>${fmtInt(t.seq)}</span>
-      <span class="name" style="color:${t.ok ? "var(--text)" : "var(--bad)"}">
-        ${esc(t.name)}${t.surface !== "native" ? ` <span class="badge dim">${esc(t.surface)}</span>` : ""}
-        ${t.ok ? "" : " ✕ " + esc(clip(t.error, 60))}</span>
-      <span>${fmtMs(t.duration_ms)} · ${fmtTok(t.bytes_out)}B</span></div>`).join("");
+  const maxTok = Math.max(...steps.map(x => num(x.input_tokens) + num(x.output_tokens)), 1);
+  const stepRows = steps.map(s => stepRowHtml(s, maxTok)).join("");
+  const toolRows = tools.map(toolRowHtml).join("");
   const fileRows = files.map(f => `<div class="step-row">
       <span>${esc(f.ops)}</span><span class="name" title="${esc(f.path)}">${esc(f.path)}</span>
       <span><span style="color:var(--ok)">+${fmtInt(f.lines_added)}</span>

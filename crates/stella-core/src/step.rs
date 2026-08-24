@@ -779,6 +779,7 @@ pub(crate) fn close_open_tool_calls(
             output: tool_result.output.clone(),
             duration_ms: 0,
             speculated: false,
+            sub_agent_id: None,
         });
     }
     messages.push(CompletionMessage {
