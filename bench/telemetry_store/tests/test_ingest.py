@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 
 import pytest
 from ingest import (
@@ -191,8 +192,6 @@ def test_migration_is_idempotent_and_marks_pre_existing_rows(tmp_path):
 def test_migration_adds_mirror_provenance_to_an_old_runs_table(tmp_path):
     """A store written before the mirror columns existed gains them, with
     every pre-existing run reading as never mirrored."""
-    import sqlite3
-
     db = str(tmp_path / "old.db")
     old = sqlite3.connect(db)
     # The runs table exactly as schema.sql declared it before the pair.
