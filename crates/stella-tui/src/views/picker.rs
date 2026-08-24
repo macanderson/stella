@@ -31,9 +31,9 @@ use crate::deck_ui::DeckUi;
 use crate::theme;
 use crate::views::cards;
 
-/// Both pickers' card width. Wider than [`cards::CARD_MAX_W`] for the same
-/// reason the `/info` dialog runs wide: a `provider/vendor/slug` spec may
-/// not elide.
+/// Both pickers' card width. Wider than `cards::CARD_MAX_W` (not a link:
+/// it is `pub(crate)`) for the same reason the `/info` dialog runs wide: a
+/// `provider/vendor/slug` spec may not elide.
 const PICKER_CARD_W: u16 = 64;
 
 /// Rows shown at once; longer lists scroll under the selection.

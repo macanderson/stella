@@ -3,7 +3,8 @@
 
 //! Key routing for the session-override pickers (`/model`, `/agent`) —
 //! modal like the SESSIONS/INBOX overlays beside it in the routing chain,
-//! and in its own module for the same god-file reason as [`super::parked`].
+//! and in its own module for the same god-file reason as `super::parked`
+//! (not a link: that module is private).
 //!
 //! The pickers' rows are read live off the deck state here at the moment of
 //! choice (see [`crate::views::picker`] on why they are never snapshotted),
