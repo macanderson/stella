@@ -938,8 +938,8 @@ fn step_usage_from_a_pre_request_shape_stream_still_parses() {
     // Backward compatibility: a `step_usage` line serialized before `effort`
     // and `max_output_tokens` existed must deserialize with both absent
     // ("the journal cannot say what the request asked for") — the
-    // additive-only wire contract, and the honest decode: absence is not a
-    // pin and not "no ceiling was hit" (#4565).
+    // additive-only wire contract. Absence is not a pin and not "no ceiling
+    // was hit" (#4565).
     let legacy = r#"{"type":"step_usage","step":3,"model":"glm-5.2","input_tokens":12000,
         "output_tokens":450,"cached_input_tokens":9000,"estimated_input_tokens":11200,
         "cache_write_tokens":2500,"cost_usd":0.0042,"duration_ms":1830,"retries":1,
@@ -954,7 +954,7 @@ fn step_usage_from_a_pre_request_shape_stream_still_parses() {
             assert_eq!(effort, None);
             assert_eq!(max_output_tokens, None);
         }
-        other => panic!("unexpected variant: {other:?}"),
+        other => panic!("not a step_usage row: {other:?}"),
     }
 }
 
