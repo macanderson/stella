@@ -52,6 +52,10 @@ use std::time::Duration;
 /// than a fix, which is the failure class this bound exists to avoid trading
 /// into. It is a ceiling and not a target: the measured axes below routinely
 /// stop well short of it.
+///
+/// Deliberately carries no `MEASURED:` marker (#4572), for the reason the
+/// paragraph above already gives: the distribution bounds this from below and
+/// the value sits above it with room to spare.
 pub const REPAIR_ATTEMPT_CAP: u32 = 4;
 
 /// What one repair attempt is expected to cost, taken from the attempts

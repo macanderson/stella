@@ -312,6 +312,36 @@ mod tests {
         }
     }
 
+    /// The allowance is a measurement, and this is what stops a merge
+    /// reverting it in silence (#2495, #4572).
+    ///
+    /// Every other test here spends the allowance *through the constant*, so a
+    /// revert to two would leave all of them passing while discarding the
+    /// bench set that moved it off two. The counts below are hand-rolled for
+    /// exactly that reason: three continuations must still be available,
+    /// because the worst case the set produced needed the third, and the
+    /// fourth must be the last, because past four the allowance buys timeouts
+    /// instead of recoveries.
+    #[test]
+    fn the_continuation_allowance_stays_at_the_count_the_bench_set_produced() {
+        assert!(
+            matches!(
+                plan_continuation("cut off", 16_384, 3, None),
+                ContinuationPlan::Continue(_)
+            ),
+            "a turn that has spent three continuations must get a fourth — \
+             `circuit-fibsqrt` aborted on its third under an allowance of two"
+        );
+        assert!(
+            matches!(
+                plan_continuation("cut off", 16_384, 4, None),
+                ContinuationPlan::AllowanceSpent
+            ),
+            "and the fourth is the last: cap size, this count and the agent \
+             timeout are one budget, so a fifth buys a timeout"
+        );
+    }
+
     #[test]
     fn a_spent_allowance_declines_to_continue() {
         assert!(matches!(

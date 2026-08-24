@@ -5,40 +5,40 @@
 
  SESSION AGENTS TRACES GRAPH FILES SKILLS MCP ISSUES   SETTINGS                                                                                         stella*
   AGENTS  │  TOOLS  │  SEATS   ←/→
-┌ tools · 1 off · 1 org-locked ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│▸ CUSTOM                    on   1 tools                                                                                                                      │
-│    deploy_to_staging       on                                                                                                                                │
-│  ENVIRONMENT               on   1 tools                                                                                                                      │
-│    get_environment         on                                                                                                                                │
-│  MCP                       on   1 tools                                                                                                                      │
-│    mcp__github__create_is… on                                                                                                                                │
-│  SCRATCH                   on   2 tools                                                                                                                      │
-│    get_state               on                                                                                                                                │
-│    save_state              on                                                                                                                                │
-│  TASK                      on   2 tools                                                                                                                      │
-│    delegate                on                                                                                                                                │
-│    task_assign             off  locked · "task_assign" off in org-managed settings                                                                           │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│ e edit tool switches                                                                                                                                         │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ tools · 1 off · 1 org-locked                                                                                                                           7 tools
+ ▸ CUSTOM                    on   1 tool
+     deploy_to_staging       on
+   ENVIRONMENT               on   1 tool
+     get_environment         on
+   MCP                       on   1 tool
+     mcp__github__create_is… on
+   SCRATCH                   on   2 tools
+     get_state               on
+     save_state              on
+   TASK                      on   2 tools
+     delegate                on
+     task_assign             off  locked · "task_assign" off in org-managed settings
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ e edit tool switches
  ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>
  ⏎ queue · ↓ 2 sub-agents · ! shell · / commands
