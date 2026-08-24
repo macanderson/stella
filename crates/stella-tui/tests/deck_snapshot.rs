@@ -374,10 +374,12 @@ fn inspect_overlay_renders_the_call_list_then_the_context_sent() {
             InspectMessage {
                 role: "system".into(),
                 content: "Condense this span faithfully.".into(),
+                sections: Vec::new(),
             },
             InspectMessage {
                 role: "user".into(),
                 content: "t0 t1 t2".into(),
+                sections: Vec::new(),
             },
         ],
         verified: true,

@@ -94,6 +94,7 @@ mod authoring;
 mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;
+mod inspect_service;
 mod lead_control;
 mod model_cmd;
 mod pr_observe;
@@ -1371,7 +1372,12 @@ pub async fn run_deck_session(
                                 },
                                 &in_tx,
                             )
-                            && !service_inspect_action(&other, &store, last_execution_id, &in_tx)
+                            && !inspect_service::service_inspect_action(
+                                &other,
+                                &store,
+                                last_execution_id,
+                                &in_tx,
+                            )
                             && !handle_agents_input(&other, cfg, &in_tx)
                             && !issues::handle_issues_input(&other, cfg, &in_tx)
                             && !handle_engine_config_input(&other, cfg, &mut settings_stale, &in_tx)
@@ -1975,7 +1981,7 @@ pub async fn run_deck_session(
                             input @ (WorkspaceInput::InspectRefresh
                             | WorkspaceInput::InspectCall { .. }),
                         ) => {
-                            service_inspect_action(&input, &store, last_execution_id, &in_tx);
+                            inspect_service::service_inspect_action(&input, &store, last_execution_id, &in_tx);
                         }
                         // Navigation waits for the road to clear: switching
                         // sessions mid-turn would tear down live work, so the
@@ -2521,112 +2527,6 @@ fn service_registry_action(
         _ => return false,
     }
     true
-}
-
-/// The INSPECT overlay's driver half: answer the recorded-call index and the
-/// reconstruction of one call. Returns `false` for anything else so the caller
-/// can keep trying the other service handlers.
-///
-/// Both arms are blocking SQLite reads — `reconstruct_call` replays the block
-/// registry and the event journal — so they run on `spawn_blocking` and answer
-/// out of band, the same shape as [`WorkspaceInput::FocusGraphFile`]. Stalling
-/// the event pump to rebuild a prompt would stutter a live turn.
-fn service_inspect_action(
-    input: &WorkspaceInput,
-    store: &Option<Arc<Store>>,
-    execution_id: Option<i64>,
-    in_tx: &mpsc::UnboundedSender<Inbound>,
-) -> bool {
-    if !matches!(
-        input,
-        WorkspaceInput::InspectRefresh | WorkspaceInput::InspectCall { .. }
-    ) {
-        return false;
-    }
-    // No store (claim mode, or it failed to open) or no turn yet: answer with
-    // an empty index rather than silence, so the overlay renders its "nothing
-    // recorded yet" line instead of looking hung.
-    let (Some(store), Some(execution_id)) = (store.clone(), execution_id) else {
-        let _ = in_tx.send(Inbound::RecordedCalls(Vec::new()));
-        return true;
-    };
-    let in_tx = in_tx.clone();
-    match input {
-        WorkspaceInput::InspectRefresh => {
-            tokio::task::spawn_blocking(move || {
-                let calls = store.recorded_calls(execution_id).unwrap_or_default();
-                let _ = in_tx.send(Inbound::RecordedCalls(
-                    calls.iter().map(recorded_call_info).collect(),
-                ));
-            });
-        }
-        WorkspaceInput::InspectCall {
-            turn_instance,
-            step,
-            call_seq,
-        } => {
-            let (turn_instance, step, call_seq) = (*turn_instance, *step, *call_seq);
-            tokio::task::spawn_blocking(move || {
-                let Ok(recon) = store.reconstruct_call(execution_id, turn_instance, step, call_seq)
-                else {
-                    let _ = in_tx.send(Inbound::RecordedCalls(Vec::new()));
-                    return;
-                };
-                // Re-read the header so the detail can name the model/role that
-                // served this call; the reconstruction itself carries only the
-                // messages.
-                let call = store
-                    .recorded_calls(execution_id)
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|c| {
-                        (c.turn_instance, c.step, c.call_seq) == (turn_instance, step, call_seq)
-                    })
-                    .map(recorded_call_info)
-                    .unwrap_or_else(|| stella_tui::RecordedCallInfo {
-                        turn_instance,
-                        step,
-                        call_seq,
-                        call_role: "unknown".into(),
-                        provider: "unknown".into(),
-                        model: "unknown".into(),
-                        estimated_input_tokens: 0,
-                    });
-                let _ = in_tx.send(Inbound::InspectedCall(Box::new(stella_tui::InspectView {
-                    call,
-                    messages: recon
-                        .messages
-                        .iter()
-                        // The CLI's `stella inspect` renderer, reused verbatim:
-                        // the overlay shows wire shape, and the two surfaces
-                        // must not disagree about what a message looked like.
-                        .map(|m| stella_tui::InspectMessage {
-                            role: crate::inspect::role_tag(m.role).to_string(),
-                            content: crate::inspect::message_body(m),
-                        })
-                        .collect(),
-                    verified: recon.is_verified(),
-                    unresolved: recon.unresolved.len(),
-                    digest_mismatches: recon.digest_mismatches.len(),
-                    journal_era: crate::inspect::deck_journal_era(recon.journal_era),
-                })));
-            });
-        }
-        _ => unreachable!("guarded by the matches! above"),
-    }
-    true
-}
-
-fn recorded_call_info(call: &stella_store::RecordedCall) -> stella_tui::RecordedCallInfo {
-    stella_tui::RecordedCallInfo {
-        turn_instance: call.turn_instance,
-        step: call.step,
-        call_seq: call.call_seq,
-        call_role: call.call_role.clone(),
-        provider: call.provider.clone(),
-        model: call.model.clone(),
-        estimated_input_tokens: call.estimated_input_tokens,
-    }
 }
 
 /// The inbox snapshot for the deck (badge + overlay), newest first.

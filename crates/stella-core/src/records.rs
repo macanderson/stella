@@ -61,7 +61,8 @@ pub use decision::{Decision, DecisionEvent, should_repropose};
 pub use handle::assign_handles;
 pub use registry::{Entry, Facts, Registry};
 pub use render::{
-    CACHED_RECORD_BUDGET_CHARS, Channel, RenderInput, RenderedChannel, render_channel,
+    CACHED_HEADING, CACHED_RECORD_BUDGET_CHARS, Channel, RenderInput, RenderedChannel,
+    render_channel,
 };
 pub use select::{TurnFacts, applies_this_turn};
 pub use sweep::{Disposition, ExpiryAction, SweepInput, disposition, honored_probe, probe_is_due};
