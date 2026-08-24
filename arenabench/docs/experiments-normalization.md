@@ -1,7 +1,9 @@
 # Experiments store: the normalization decision
 
 Status: decided 2026-08-14 (#3215). The answer is **not yet**, with named
-triggers for when it changes.
+triggers for when it changes. Amended 2026-08-23: identity and provenance
+columns landed (see the addendum at the end); the content fields stay
+unnormalized exactly as decided here.
 
 ## The question
 
@@ -57,3 +59,28 @@ lying.
   and rebuildable.
 - The store stays generic: agents, models, datasets are data inside
   documents, never schema concepts.
+
+## Addendum (2026-08-23): identity and provenance columns
+
+The table gained `id INTEGER PRIMARY KEY`, `experiment_id`, `created_at`,
+`migrated`, and `migration_source`, applied by a one-time table rebuild in
+`experiments.py::_migrate` that copies every row unchanged. Neither cause
+is the normalization this document declined:
+
+- **The implicit rowid was a defect, not a design.** "Latest row wins" and
+  "insertion order" both leaned on rowids the schema never declared, and
+  SQLite may renumber implicit rowids on `VACUUM`. An explicit `id` makes
+  the ordering the store already promised durable. `experiment_id` rides
+  along as trigger 1's index (the lookup no longer parses every document),
+  derived and rebuildable as required above.
+- **The durable mirror needs provenance.** `arenabench/mirror.py` copies
+  the working set into the benchmarks database on the data instance;
+  `migrated`/`migration_source` record, on both sides, which rows moved
+  and from which machine. These are row metadata, not document fields —
+  the document column stays authoritative for everything it states.
+
+The content fields (title, status, comparability keys) remain inside
+`results`, and the triggers above still govern promoting them. The rebuild
+is a one-time exception to "never rewritten in place", taken because a
+primary key cannot be added by `ALTER TABLE ADD COLUMN`; the copied rows
+are byte-identical.

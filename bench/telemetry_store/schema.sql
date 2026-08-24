@@ -43,7 +43,16 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at        TEXT,
     finished_at       TEXT,
     ingested_at       TEXT NOT NULL,
-    notes             TEXT
+    notes             TEXT,
+    -- Mirror provenance. When a run is copied from a working-set database
+    -- into the durable one, `migrated` flips to 1 and `migration_source`
+    -- records the machine@tier label the copy came from (`Mac@local`), so
+    -- the durable copy can always answer which machine produced a row.
+    -- 0/NULL on rows written in place. Declared last so a database that
+    -- gains them through ingest.py's ALTER TABLE migration ends up with
+    -- the same column order as one created fresh.
+    migrated          INTEGER NOT NULL DEFAULT 0,
+    migration_source  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS trials (
