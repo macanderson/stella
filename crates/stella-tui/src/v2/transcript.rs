@@ -111,7 +111,7 @@ pub enum EventKind {
     /// The size is **not** an [`Extent`]: a read measures coverage, not a
     /// delta, and the number never resolves through the inline-diff reference
     /// only a *mutation* stamps — a read emits no `FileChange`, correctly,
-    /// since it changes nothing. #4180 removed the `Extent` this variant once
+    /// since it changes nothing. #4180 removed the `Extent` this kind once
     /// carried for exactly that reason: the column was expressible,
     /// unreachable on every live path, and reached by nothing but a fixture.
     /// #4297 earned it back by giving the number a real producer — `read_file`

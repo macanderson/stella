@@ -134,8 +134,8 @@ pub fn measured_delta(
 /// which is why the two resolvers are two functions rather than one with a
 /// mode.
 ///
-/// `None` covers the honest cases the same way: the call has not returned, it
-/// failed, or its tool predates the payload — and each renders as no column.
+/// `None` here means the call has not returned, it failed, or its tool
+/// predates the payload — and each renders as no column.
 #[must_use]
 pub fn read_size(call_id: &str, following: &[TranscriptEntry]) -> Option<ReadSize> {
     following
@@ -617,9 +617,9 @@ mod tests {
         );
     }
 
-    /// And the read head stays sizeless until its call returns — the same
-    /// in-flight honesty the edit head keeps below: nothing has reported a
-    /// coverage yet, so there is no column, not a zero.
+    /// And the read head stays sizeless until its call returns, exactly as
+    /// the in-flight edit head below does: nothing has reported a coverage
+    /// yet, so there is no column, not a zero.
     #[test]
     fn a_read_head_whose_call_has_not_returned_states_no_count() {
         let mut model = SessionModel::new();
