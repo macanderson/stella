@@ -83,3 +83,22 @@ jobs:
       - name: docs/wire/ still matches the types
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: ./scripts/check-wire-schema.sh
+
+      # The rustdoc hole this workflow is the natural home for. ci.yml's
+      # `cargo doc --workspace` runs with DEFAULT features, and describing the
+      # wire format is off by default in all three crates that do it, so
+      # `stella-protocol::schema_export`, `stella-plugin::{wire_corpus,
+      # wire_schema}` and `stella-serve::schema_export` were compiled by no
+      # rustdoc anywhere -- #4582 found a broken `[AgentEvent]` intra-doc link
+      # in the last of those by reading it, and the class of defect was
+      # unguarded (#4584).
+      #
+      # Here rather than in ci.yml because this workflow already installs the
+      # toolchain and already builds those exact crates under `--features
+      # schema` for the step above, so the compile is warm; and because its
+      # trigger paths are exactly the crates that own the modules. The crate
+      # list and the feature spellings are the Makefile recipe's, read through
+      # the target rather than restated -- the drift #3375 paid for.
+      - name: rustdoc over the schema-gated wire-contract modules
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: make doc-warnings-schema

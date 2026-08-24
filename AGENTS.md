@@ -106,6 +106,9 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + lockfile-sync (cargo metadata --locked)
                          #   + format-check (fmt --check)
                          #   + doc-warnings (rustdoc -D warnings)
+                         #   + doc-warnings-schema (the same, for the
+                         #     `schema`-gated wire-contract modules the
+                         #     default-feature run never compiles)
                          #   + lint (clippy -D warnings)
                          #   + test (test --workspace)
                          #   + tool-docs (docs/tools/ vs the declarations)
@@ -138,7 +141,11 @@ the `docs/design` scratchpad, invalidate every Rust comment citing it, and land
 green (#3888); and
 `wire-schema.yml` runs `wire-schema` on `docs/wire/**` and the protocol crates,
 because a PR that hand-edits a generated schema and nothing else starts neither
-of the other two (#1439); and `guard-self-tests.yml` runs the three steps
+of the other two (#1439) — and `doc-warnings-schema` beside it, because
+`ci.yml`'s `cargo doc --workspace` runs with default features and every module
+that describes the wire format sits behind an off-by-default `schema` one, so
+rustdoc compiled none of them anywhere (#4584); this workflow already builds
+those three crates with the feature on; and `guard-self-tests.yml` runs the three steps
 ci.yml's job cannot — it is skipped for a prose-only diff, which is the diff
 `prose` exists to judge — alongside the hermetic suites that prove a guard can
 still fail (#3820, #4427). Which workflow runs a step is a judgement; *that*
