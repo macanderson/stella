@@ -18,6 +18,8 @@
 //! in the suffix captured at startup, so a hook's side effects happen once
 //! per session no matter how often the model changes.
 
+use std::sync::Arc;
+
 use tokio::sync::mpsc::UnboundedSender;
 
 use stella_model::provider::Provider;
@@ -31,7 +33,10 @@ use crate::config::Config;
 /// A validated, built model switch: the adapter to install and the line to
 /// show. Produced by [`switch_session_model`] after `cfg` was updated.
 pub(super) struct SessionModelSwitch {
-    pub(super) provider: Box<dyn Provider>,
+    /// `Arc` so the one adapter built here serves both the lead's next turn and
+    /// every child the sub-agent dispatcher runs afterwards — see
+    /// [`install_switch`].
+    pub(super) provider: Arc<dyn Provider>,
     pub(super) notice: String,
 }
 
@@ -137,7 +142,7 @@ pub(super) fn switch_session_model(
     // The override is the session's explicit pin from here on — engine
     // wiring must not re-route the worker back to the settings default.
     candidate.model_pinned_by_flag = true;
-    let provider = crate::agent::build_provider(&candidate)?;
+    let provider = Arc::from(crate::agent::build_provider(&candidate)?);
     *cfg = candidate;
     Ok(SessionModelSwitch {
         provider,
@@ -146,6 +151,32 @@ pub(super) fn switch_session_model(
              settings default"
         ),
     })
+}
+
+/// Install a committed switch onto the session's two model-bearing planes: the
+/// lead's adapter, and the sub-agent dispatcher every `delegate` child is run
+/// by.
+///
+/// Both or neither. Moving only the lead is what #4625 left behind after the
+/// adapter swap landed: `/model` re-pointed the next turn, while a child
+/// delegated from that same turn still ran the model the session booted on —
+/// and said nothing, because a child reports the work it did, never the model
+/// that did it.
+///
+/// The dispatcher is re-pointed rather than re-installed so the session pool's
+/// accumulated spend, the seat assignments and the child tool posture all
+/// survive the switch; see [`crate::subagent::SessionSubAgents::retarget`].
+fn install_switch(
+    cfg: &Config,
+    switch_provider: Arc<dyn Provider>,
+    provider: &mut Arc<dyn Provider>,
+    sub_agents: &crate::subagent::SessionSubAgents,
+) {
+    sub_agents.retarget(
+        switch_provider.clone(),
+        crate::agent::engine_config_for(cfg),
+    );
+    *provider = switch_provider;
 }
 
 /// The statline's worker pin after an override: the session's own wiring,
@@ -201,7 +232,8 @@ pub(super) fn refresh_prompts(
 pub(super) fn apply_model_override(
     id: &str,
     cfg: &mut Config,
-    provider: &mut Box<dyn Provider>,
+    provider: &mut Arc<dyn Provider>,
+    sub_agents: &crate::subagent::SessionSubAgents,
     mut prompts: PromptPlane<'_>,
     hook_suffix: &str,
     persona: Option<&str>,
@@ -212,7 +244,7 @@ pub(super) fn apply_model_override(
 ) {
     match switch_session_model(cfg, id) {
         Ok(switch) => {
-            *provider = switch.provider;
+            install_switch(cfg, switch.provider, provider, sub_agents);
             refresh_prompts(
                 cfg,
                 &mut prompts,
@@ -278,7 +310,8 @@ pub(super) fn assume_agent(
     name: &str,
     scope: AgentScope,
     cfg: &mut Config,
-    provider: &mut Box<dyn Provider>,
+    provider: &mut Arc<dyn Provider>,
+    sub_agents: &crate::subagent::SessionSubAgents,
     mut prompts: PromptPlane<'_>,
     hook_suffix: &str,
     assumed_persona: &mut Option<String>,
@@ -304,7 +337,7 @@ pub(super) fn assume_agent(
     if let Some(model) = &agent.model {
         match switch_session_model(cfg, model) {
             Ok(switch) => {
-                *provider = switch.provider;
+                install_switch(cfg, switch.provider, provider, sub_agents);
                 announce_switch(cfg, lead_meta, in_tx, String::new());
                 notes.push(format!("model → {}/{}", cfg.provider.id, cfg.model_id));
             }
@@ -379,6 +412,77 @@ mod tests {
             aux_credentials: Default::default(),
             cache_ttl: None,
         }
+    }
+
+    /// **The wire-level witness for #4625.** Every other test here asserts on
+    /// `cfg` — that the session's *state* moved. State moving is not the claim
+    /// the user makes when they pick a model; the claim is that the next
+    /// request is served by it. So this one puts a mock server at the adapter
+    /// seam and reads the model slug off the request body the switched adapter
+    /// actually sends.
+    ///
+    /// The control is the same adapter's first call: it must name the model the
+    /// session booted on. Without it, a test that only asserted the second slug
+    /// would pass just as happily against an adapter that had always been
+    /// pointed at `claude-sonnet-5` — evidence consistent with both answers.
+    #[tokio::test]
+    async fn the_next_request_is_served_by_the_switched_model() {
+        use stella_protocol::CompletionRequest;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                r#"{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#,
+                "application/json",
+            ))
+            .mount(&server)
+            .await;
+
+        let (td, _guard) = scratch();
+        let mut cfg = test_config(td.path().join("repo"));
+        // Same-provider, so the `--base-url` refusal (which guards only a
+        // CROSS-provider switch, where the override would silently move to a
+        // different vendor's endpoint) does not apply.
+        cfg.base_url_override = Some(server.uri());
+        cfg.model_id = "claude-opus-5".to_string();
+
+        let request = || CompletionRequest {
+            messages: vec![stella_protocol::CompletionMessage::user("say hello")],
+            max_output_tokens: None,
+            temperature: None,
+            effort: None,
+            tools: vec![],
+            reasoning: None,
+            params: None,
+        };
+
+        // The control: before the switch, the booted model is on the wire.
+        let before = crate::agent::build_provider(&cfg).expect("the session adapter builds");
+        let _ = before.complete(request()).await;
+
+        let switch = switch_session_model(&mut cfg, "anthropic/claude-sonnet-5")
+            .expect("a catalog model on the session's own provider must apply");
+        let _ = switch.provider.complete(request()).await;
+
+        let sent = server.received_requests().await.expect("recorded requests");
+        assert_eq!(sent.len(), 2, "one call before the switch and one after");
+        let slug = |req: &wiremock::Request| {
+            serde_json::from_slice::<serde_json::Value>(&req.body)
+                .expect("a JSON request body")["model"]
+                .as_str()
+                .expect("every request names its model")
+                .to_string()
+        };
+        assert_eq!(slug(&sent[0]), "claude-opus-5", "the control call");
+        assert_eq!(
+            slug(&sent[1]),
+            "claude-sonnet-5",
+            "the request after the switch must be served by the picked model, \
+             not merely recorded as it in cfg"
+        );
     }
 
     /// **The witness for the session override.** Switching within the

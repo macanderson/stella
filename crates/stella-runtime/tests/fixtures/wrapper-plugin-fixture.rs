@@ -19,6 +19,14 @@
 //! `tests/` locate it with `env!("CARGO_BIN_EXE_wrapper-plugin-fixture")`;
 //! cargo builds it automatically for the test targets that name it.
 //!
+//! It sits under `tests/` rather than `src/bin/` because `no_ambient_reads.rs`
+//! scans everything under `src/` and refuses a `std::env::var` — a process
+//! global is the same for all N sessions a host assembles in one process. This
+//! is a separate process whose `env-probe` mode exists to report the
+//! environment it received, so it has to read one. Keeping it out of the
+//! library is the honest way to say that; teaching the invariant an exemption
+//! would not be.
+//!
 //! # Modes
 //!
 //! `argv[1]` selects one canned behaviour. Some modes read stdin and some do

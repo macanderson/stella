@@ -339,9 +339,9 @@ pub async fn run_deck_session(
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Deck,
     )?;
-    // `mut`: `/model` (and an assumed agent's declared `model:`) swaps the
-    // adapter between turns — see `session_override`.
-    let mut provider = agent::build_provider(cfg)?;
+    // `mut`: `/model` swaps the adapter between turns; `Arc` so the swapped-in
+    // one is the allocation the sub-agent dispatcher is re-pointed at, too.
+    let mut provider: Arc<dyn Provider> = Arc::from(agent::build_provider(cfg)?);
     let registry: Arc<ToolRegistry> = Arc::new(crate::write_dirs::registry_for(cfg));
 
     // ── Channels: engine → deck (Inbound) and deck → driver (WorkspaceInput)
@@ -363,7 +363,7 @@ pub async fn run_deck_session(
     let (question_tx, question_rx) = mpsc::unbounded_channel::<QuestionOutcome>();
     let (approval_tx, approval_rx) = mpsc::unbounded_channel::<ApprovalResponse>();
 
-    crate::subagent::install_for_session(cfg, &registry)?;
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
     // The deck can park a turn on a human, so it declares a surface rather
     // than the headless posture it was stuck with before it had an overlay
     // to park on. Both responders ride the deck's own channels: the
@@ -1063,17 +1063,18 @@ pub async fn run_deck_session(
                     }
                     // LLM-assisted agent creation needs the provider, which is
                     // free here (no turn in flight) — draft, install, refresh.
-                    // The lead assumes an installed agent's identity: the
-                    // system prompt grows the agent's persona block and the
-                    // seeded system message follows it, so the next turn
-                    // runs as that agent. Between turns only — the prompt
-                    // is byte-stable across a turn (invariant #7).
+                    // The lead assumes an installed agent's identity: the system
+                    // prompt grows the agent's persona block and the seeded
+                    // system message follows it, so the next turn runs as that
+                    // agent. Between turns only — the prompt is byte-stable
+                    // across a turn (invariant #7).
                     Some(WorkspaceInput::AgentAssume { name, scope }) => {
                         session_override::assume_agent(
                             &name,
                             scope,
                             cfg,
                             &mut provider,
+                            &sub_agents,
                             session_override::PromptPlane {
                                 base_system_prompt: &mut base_system_prompt,
                                 system_prompt: &mut system_prompt,
@@ -1090,13 +1091,13 @@ pub async fn run_deck_session(
                         continue 'session;
                     }
                     // `/model` (picked or typed): swap this session's model —
-                    // between turns only, like AgentAssume above, because the
-                    // prompt prefix and the provider handle both move.
+                    // between turns only, like AgentAssume above.
                     Some(WorkspaceInput::ModelOverride { spec }) => {
                         session_override::apply_model_override(
                             &spec,
                             cfg,
                             &mut provider,
+                            &sub_agents,
                             session_override::PromptPlane {
                                 base_system_prompt: &mut base_system_prompt,
                                 system_prompt: &mut system_prompt,
@@ -1505,6 +1506,7 @@ pub async fn run_deck_session(
                     &id,
                     cfg,
                     &mut provider,
+                    &sub_agents,
                     session_override::PromptPlane {
                         base_system_prompt: &mut base_system_prompt,
                         system_prompt: &mut system_prompt,
