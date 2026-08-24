@@ -728,6 +728,11 @@ mod tests {
         ("agent/goal/goal_wrapped.rs", "GoalRoundDriver::run_turn"),
         // `stella resume`, driving one restored turn.
         ("agent/resume.rs", "run_resume"),
+        // `stella run --pipeline <variant>`'s between-rounds stream, which a
+        // plugin's own model calls meter into (#3802). Not a turn, and on the
+        // list for the reason a turn is: it publishes a channel on the registry
+        // and owes it the same two debts.
+        ("wrapper_plugin/child_stream.rs", "PluginChildStream::open"),
     ];
 
     #[test]
