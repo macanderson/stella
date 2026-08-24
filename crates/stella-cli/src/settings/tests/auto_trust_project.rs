@@ -12,7 +12,7 @@ use crate::settings::{ProjectTrust, Settings, resolve_project_trust};
 /// so a config default has nowhere to feed in and this file fails to compile.
 ///
 /// Five arms, because the merge of "env present or absent" against "config
-/// true or false" has that many distinct cells worth naming: an env var
+/// true or false" has that many distinct cells: an env var
 /// wins whichever way it points, even down against a `true` config default,
 /// and `STELLA_PROJECT_HOOKS` keeps opening hooks alone when nothing else
 /// grants full trust.
