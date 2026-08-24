@@ -446,7 +446,11 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
      200 with an empty stream). Every streaming dialect arms a bounded
      per-session latch and re-issues the retried attempt as a unary request
      — the shared chat-completions adapter first (#2686), then Messages,
-     Responses and `generateContent` (#2746); Bedrock is already unary.
+     Responses and `generateContent` (#2746). Bedrock is already unary, and
+     that row names a witness like every other (#4557): "no stream to fall
+     back from" holds only while the single unary path classifies its own
+     read-bound expiry as terminal rather than as a retryable transport
+     fault, which is #547's retry storm.
    - **`OverflowPosture`** — whether this provider's context-overflow
      rejection is recognised as one, so the engine's reactive recovery
      fires instead of aborting the turn (#2680). `Detected` names the wire

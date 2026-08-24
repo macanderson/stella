@@ -119,6 +119,22 @@ impl BedrockProvider {
         self
     }
 
+    /// Shorten the unary read bound so a test can observe its expiry in
+    /// milliseconds instead of ten minutes.
+    ///
+    /// The bound covers head and body alike, which is what lets a test stall
+    /// the response *body* — the half [`crate::http::UNARY_READ_TIMEOUT`]
+    /// exists for on this adapter, since Converse produces the whole
+    /// generation before its first response byte.
+    #[cfg(test)]
+    pub(crate) fn with_unary_read_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.client = reqwest::Client::builder()
+            .read_timeout(timeout)
+            .build()
+            .expect("the test client builds");
+        self
+    }
+
     /// The wire path for this model's Converse call. Bedrock model ids
     /// routinely contain `:` (version suffixes) and ARNs contain `/` — both
     /// must be percent-encoded in the request path, exactly as the AWS SDKs
@@ -809,9 +825,20 @@ impl Provider for BedrockProvider {
             ));
         }
 
-        let parsed: ConverseResponse = response
-            .json()
+        // The body arrives inside the same 600s read bound as the head, and on
+        // this adapter that bound covers the entire generation — Converse
+        // answers only once the whole completion exists. So a timeout here is
+        // #547's shape and must classify exactly as the dispatch send path
+        // does: `Terminal`, never retryable `Transport`, because re-issuing
+        // the identical too-long request just waits the bound out again once
+        // per retry. Read the bytes and parse them as two steps rather than
+        // through `.json()`, which collapses a read timeout and a genuinely
+        // unparseable body into one `Malformed`.
+        let payload = response
+            .bytes()
             .await
+            .map_err(|e| http::classify_unary_dispatch_error("Bedrock", &e))?;
+        let parsed: ConverseResponse = serde_json::from_slice(&payload)
             .map_err(|e| ProviderError::Malformed(e.to_string()))?;
 
         let mut text = String::new();
