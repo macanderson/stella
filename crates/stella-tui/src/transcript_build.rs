@@ -25,8 +25,8 @@
 
 use stella_protocol::{AgentEvent, ToolOutput};
 use stella_transcript::model::{
-    Accounting, Call, FileChange, FileStatus, Note, NoteKind, Output, Prose, Run, Status, Step,
-    ToolKind, Turn,
+    Accounting, Call, FileChange, FileStatus, Note, NoteKind, Output, Patch, Prose, Run, Status,
+    Step, ToolKind, Turn,
 };
 
 use crate::textline;
@@ -356,12 +356,22 @@ impl RunBuilder {
         } else {
             FileStatus::Modified
         };
-        let (before, after) = diff.map_or_else(Default::default, reconstruct);
         let change = FileChange {
             path: path.to_string(),
-            before,
-            after,
+            before: String::new(),
+            after: String::new(),
             status,
+            // The event's own patch, file-absolute, handed over as-is. It used
+            // to be unpicked into a synthetic before/after here, blank-padded
+            // up to each hunk's start so that re-differing the two halves
+            // landed on the file's line numbers again — a fabrication that
+            // reproduced whatever the padding got right and nothing else
+            // (#3577). The renderer reads a patch now.
+            patch: diff.map(|text| Patch {
+                text: text.to_string(),
+                added: added as usize,
+                removed: removed as usize,
+            }),
         };
         if let Some(turn) = self.turn.as_mut()
             && let Some(call) = turn.steps.last_mut().and_then(|s| s.call.as_mut())
@@ -466,75 +476,6 @@ fn header_object(tool: &ToolKind, input: &serde_json::Value) -> String {
     }
     let _ = tool;
     crate::v2::fields::headline(input)
-}
-
-/// Recover `(before, after)` text from a unified diff.
-///
-/// [`FileChange`] stores content rather than a diff because the transcript
-/// re-derives the diff itself — that is where its word-level highlighting comes
-/// from — but the wire carries a rendered unified diff. Each hunk is replayed
-/// into the two sides, padded with blank lines up to its `@@` start line so the
-/// re-derived hunk headers land on the original line numbers. The padding
-/// regions are identical on both sides, so they can never themselves become a
-/// hunk.
-fn reconstruct(diff: &str) -> (String, String) {
-    let mut before: Vec<String> = Vec::new();
-    let mut after: Vec<String> = Vec::new();
-    for line in diff.lines() {
-        if let Some(rest) = line.strip_prefix("@@") {
-            let (old_start, new_start) = hunk_starts(rest);
-            pad_to(&mut before, old_start);
-            pad_to(&mut after, new_start);
-            continue;
-        }
-        match line.as_bytes().first() {
-            Some(b'-') => before.push(line[1..].to_string()),
-            Some(b'+') => after.push(line[1..].to_string()),
-            Some(b' ') => {
-                before.push(line[1..].to_string());
-                after.push(line[1..].to_string());
-            }
-            // `\ No newline at end of file`, `diff --git`, `---`/`+++` headers
-            // and blank separators carry no content for either side.
-            _ => {}
-        }
-    }
-    (join(before), join(after))
-}
-
-/// The `-a,b +c,d` starting line numbers of a hunk header, 1-based.
-fn hunk_starts(rest: &str) -> (usize, usize) {
-    let mut old = 1;
-    let mut new = 1;
-    for token in rest.split_whitespace() {
-        let number = |t: &str| -> usize {
-            t[1..]
-                .split(',')
-                .next()
-                .and_then(|n| n.parse().ok())
-                .unwrap_or(1)
-        };
-        match token.as_bytes().first() {
-            Some(b'-') => old = number(token),
-            Some(b'+') => new = number(token),
-            _ => {}
-        }
-    }
-    (old, new)
-}
-
-fn pad_to(side: &mut Vec<String>, start_line: usize) {
-    while side.len() + 1 < start_line {
-        side.push(String::new());
-    }
-}
-
-fn join(mut lines: Vec<String>) -> String {
-    if lines.is_empty() {
-        return String::new();
-    }
-    lines.push(String::new());
-    lines.join("\n")
 }
 
 #[cfg(test)]

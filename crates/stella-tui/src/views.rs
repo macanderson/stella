@@ -32,7 +32,6 @@ pub(crate) fn spinner_glyph(now_ms: u64, no_anim: bool) -> &'static str {
 
 pub mod agents;
 pub mod approval;
-pub mod budget_card;
 pub(crate) mod cards;
 pub mod dispatch_card;
 pub mod engine;
@@ -42,11 +41,7 @@ pub mod installed;
 pub mod issues;
 pub(crate) mod linear;
 pub mod mcp;
-pub mod models_card;
 pub mod picker;
-pub mod plan_card;
-pub mod plan_rail;
-pub(crate) mod plan_style;
 pub mod question;
 pub(crate) mod queue_popup;
 pub mod seats;
