@@ -60,7 +60,7 @@ pub(super) fn deck_local_command(text: &str, ui: &mut DeckUi) -> Option<DeckActi
         }
         // The three transcript-page overlays are deck-local view state,
         // exactly like the tab switches above (their keyboard shortcuts:
-        // empty-prompt `←` / `→`, and the footer's ✉ badge for the inbox).
+        // `ctrl-e` / `ctrl-k`, and the footer's ✉ badge for the inbox).
         "/sessions" => open_sessions_overlay(ui),
         "/subagents" => crate::v2::subagents::open(ui),
         "/context" => open_context_overlay(ui),
@@ -114,6 +114,34 @@ pub(super) fn deck_local_command(text: &str, ui: &mut DeckUi) -> Option<DeckActi
         // transcript (a transient overlay would leave no record).
         _ => return None,
     })
+}
+
+/// The `/model` argument menu's keys for the deck composer (see
+/// [`crate::composer::args`]): active only while the buffer is `/model` plus
+/// an in-progress argument and something matches. Shares the slash popup's
+/// selection index — the two menus are never up at once (the slash menu
+/// closes at the whitespace that opens this one).
+pub(super) fn model_arg_key(
+    key: KeyEvent,
+    model: &WorkspaceModel,
+    ui: &mut DeckUi,
+) -> Option<DeckAction> {
+    let candidates = crate::v2::picker::typeahead_candidates(model, ui);
+    let matches = crate::composer::args::arg_matches(&ui.composer, "/model", &candidates);
+    if matches.is_empty() {
+        return None;
+    }
+    let outcome = crate::composer::args::handle_arg_popup_key(
+        key,
+        "/model",
+        &matches,
+        &mut ui.composer,
+        &mut ui.slash_selected,
+    )?;
+    match outcome {
+        SlashPopupOutcome::Handled => Some(DeckAction::Handled),
+        SlashPopupOutcome::Submit(text) => Some(super::submit_prompt(ui, model, text)),
+    }
 }
 
 #[cfg(test)]

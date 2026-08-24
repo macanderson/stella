@@ -22,7 +22,7 @@ use crate::composer::{ComposerLayout, PaletteState, layout as composer_layout, s
 use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
-use crate::render::{render_slash_popup, scroll_window_start, slash_popup_area};
+use crate::render::{render_arg_popup, render_slash_popup, scroll_window_start, slash_popup_area};
 use crate::{notice, splash, theme, views};
 
 /// The accent prompt prefix on every composer row. Chrome, not content — it
@@ -56,6 +56,24 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         guarded_band(buf, area, "splash", |b| {
             splash::render(&ui.splash, splash_model, area, b)
         });
+        return;
+    }
+
+    // The AGENTS page (`←` twice) owns the whole frame while open — a page,
+    // not a popup, so it replaces the bands rather than floating over them.
+    // The parked asks, the startup notice, and help still stack above it,
+    // exactly as they stack over the normal bands below.
+    if ui.agents_page.open {
+        guarded_band(buf, area, "agents page", |b| {
+            crate::v2::agents_page::render(model, ui, area, b)
+        });
+        parked::render(ui, area, buf);
+        if ui.notice.is_visible() {
+            guarded_overlay(buf, area, "notice", |b| notice::render(&ui.notice, area, b));
+        }
+        if ui.help_open {
+            guarded_overlay(buf, area, "help", |b| render_help(model, ui, area, b));
+        }
         return;
     }
 
@@ -95,7 +113,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let content = bands[1];
     guarded_band(buf, content, tab.title(), |b| match tab {
         DeckTab::Session => views::session::render(model, ui, content, b),
-        DeckTab::Agents => views::agents::render(model, ui, content, b),
+        DeckTab::Agents => crate::v2::installed::render(ui, model.now_ms, content, b),
         DeckTab::Traces => views::traces::render(model, ui, content, b),
         DeckTab::Graph => views::graph::render(model, ui, content, b),
         DeckTab::Files => views::files::render(model, ui, content, b),
@@ -136,6 +154,27 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         let live = slash_live_hints(model, ui);
         guarded_band(buf, popup, "slash menu", |b| {
             render_slash_popup(&menu, selected, &live, popup, b)
+        });
+    }
+    // The `/model` argument menu opens where the slash menu closed — the
+    // buffer is `/model` plus an in-progress argument (`composer::args`).
+    let arg_matches = crate::composer::args::arg_matches(
+        &ui.composer,
+        "/model",
+        &crate::v2::picker::typeahead_candidates(model, ui),
+    );
+    let arg_open = !arg_matches.is_empty();
+    if arg_open {
+        let fragment = ui
+            .composer
+            .buffer()
+            .strip_prefix("/model ")
+            .unwrap_or_default()
+            .to_string();
+        let selected = ui.slash_selected.min(arg_matches.len() - 1);
+        let popup = slash_popup_area(area, bands[3], arg_matches.len());
+        guarded_band(buf, popup, "model menu", |b| {
+            render_arg_popup("/model", &arg_matches, &fragment, selected, popup, b)
         });
     }
     if ui.queue_open {
@@ -257,6 +296,8 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         // The routing card holds the user's words and owns every key until
         // they say where they go — it is checked first in `handle_deck_key`.
         || ui.pending_dispatch.is_some()
+        // The `/model` argument menu is a popup like the slash menu above.
+        || arg_open
         // The INSTALLED AGENTS sub-modes (editor / create flow / version
         // picker) are modal text inputs while open.
         || ui.installed.mode != InstalledMode::Browse

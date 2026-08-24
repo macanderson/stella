@@ -221,7 +221,7 @@ a fixture rather than on the platform split. Those fixtures are #3497's
 subject. It then **runs** two of them: `stella-runtime`'s `wrapper_socket` and
 `wrapper_transport_limits`, which stopped being `/bin/sh` scripts when #3497
 gave the crate a portable in-tree plugin binary
-(`crates/stella-runtime/src/bin/wrapper-plugin-fixture.rs`). That is the
+(`crates/stella-runtime/tests/fixtures/wrapper-plugin-fixture.rs`). That is the
 Windows path being run rather than argued — the socket's stdio exchange, its
 `env_clear()`, and the Job Object group kill #3550 added, which shipped with
 "it compiles" as its whole evidence. A target list rather than the whole
@@ -825,7 +825,7 @@ a plan needs and the part that rarely changes:
 | `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
 | `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
-| `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs` |
+| `stella-tui` | `src/deck_ui.rs` |
 
 The other twenty crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the
