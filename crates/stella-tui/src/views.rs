@@ -29,7 +29,6 @@ pub(crate) mod cards;
 pub mod files;
 pub mod graph;
 pub mod picker;
-pub mod question;
 pub mod session;
 pub mod settings;
 pub mod traces;

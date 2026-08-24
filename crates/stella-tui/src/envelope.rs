@@ -367,7 +367,7 @@ pub enum Inbound {
     ShowHelp,
     /// An agent asked the driver a question and its turn is **parked** on the
     /// answer (#4220). Raises the question overlay
-    /// ([`crate::views::question`]); the driver is holding a `QuestionResponder`
+    /// ([`crate::v2::question`]); the driver is holding a `QuestionResponder`
     /// open on the other side and unblocks only on
     /// [`WorkspaceInput::QuestionAnswered`] or its own TTL.
     ///
