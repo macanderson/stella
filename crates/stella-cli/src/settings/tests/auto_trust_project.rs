@@ -73,8 +73,7 @@ fn merge_captured_scopes_never_honors_the_projects_own_auto_trust_project() {
     );
 
     assert_eq!(
-        merged.auto_trust_project,
-        None,
+        merged.auto_trust_project, None,
         "the merged view must report what the TRUSTED scopes said (nothing, here), \
          never the project's own claim"
     );
