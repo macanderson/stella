@@ -24,6 +24,7 @@ pub mod budget_card;
 pub mod dispatch_card;
 pub mod engine_panel;
 pub mod fields;
+pub mod files_tab;
 pub mod frame;
 pub mod graph;
 pub mod graph_tab;
