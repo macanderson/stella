@@ -189,9 +189,15 @@ pub fn render_file_text(rel_path: &str, symbol_names: &[String], content: &str) 
 /// is no queue to drain, invalidate, or leak.
 ///
 /// The `path ASC` tiebreak is required, not decoration: a fresh
-/// `stella init` stamps a whole tree within the same second, so without it the
+/// `stella init` stamps a whole tree with one value, so without it the
 /// order inside a timestamp would be SQLite's choice and a capped pass could
 /// revisit files it already did instead of resuming past them.
+///
+/// That one value is what makes the tiebreak decide anything. `indexed_at` is
+/// read once per pass, not once per file (`store::Pass`), so a pass that
+/// straddles a second boundary still writes one timestamp; reading the clock
+/// per file split a pass into two groups whose relative order depended on
+/// where the walk was when the second ticked (#4643).
 ///
 /// A file the index knows about but that has since vanished from disk is
 /// skipped, not an error: the next `index_all` prunes its row. The window
