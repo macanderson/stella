@@ -803,7 +803,7 @@ pub struct DeckUi {
     /// `tools` — which of this session's tools are switched off — over a
     /// driver-owned snapshot ([`Inbound::ToolPolicy`]). Modal while open, and
     /// mutually exclusive with `engine`: one editor owns the tab's keyboard.
-    pub tools: crate::views::tools::ToolsOverlay,
+    pub tools: crate::v2::tools::ToolsOverlay,
     /// The `ask_question` overlay (#4220): the wizard a **parked turn** waits
     /// on. Modal ahead of everything but Ctrl-C while a question is up —
     /// nothing else in this struct holds a live tool call open, which is why
@@ -903,7 +903,7 @@ impl Default for DeckUi {
             cards: cards::CardState::default(),
             pending_inputs: Vec::new(),
             engine: crate::views::engine::EngineOverlay::default(),
-            tools: crate::views::tools::ToolsOverlay::default(),
+            tools: crate::v2::tools::ToolsOverlay::default(),
             question: crate::views::question::QuestionOverlay::default(),
             approval: crate::views::approval::ApprovalOverlay::default(),
             model_picker: crate::views::picker::ListPicker::default(),
@@ -1321,7 +1321,7 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // in exactly the same way. Its ingest retires the unsaved edits the write
     // actually landed; the model fold never sees it.
     if let Inbound::ToolPolicy { state, status } = inbound {
-        crate::views::tools::ingest_policy(ui, state, status);
+        crate::v2::tools::ingest_policy(ui, state, status);
         return;
     }
     // The ISSUES tab's out-of-band replies, each lane seq-guarded: only the
@@ -1836,7 +1836,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // leaking one into the composer would be as bad here as there. Focusing
     // either panel unfocuses the other, so these two arms can never both fire.
     if ui.tab == DeckTab::Settings && ui.tools.focused {
-        return crate::views::tools::handle_tools_key(key, ui);
+        return crate::v2::tools::handle_tools_key(key, ui);
     }
 
     // The SESSIONS / INBOX / CONTEXT overlays are modal exactly like the

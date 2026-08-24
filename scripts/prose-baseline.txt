@@ -907,7 +907,6 @@ crates/stella-tui/src/views/question.rs 5
 crates/stella-tui/src/views/seats.rs 1
 crates/stella-tui/src/views/session.rs 1
 crates/stella-tui/src/views/session/fold_backfill.rs 1
-crates/stella-tui/src/views/tools.rs 3
 crates/stella-tui/tests/accessible_layout.rs 2
 crates/stella-tui/tests/deck_pty_smoke.rs 2
 crates/stella-tui/tests/deck_render_snapshots.rs 1
