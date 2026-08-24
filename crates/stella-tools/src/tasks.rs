@@ -22,6 +22,14 @@ use stella_protocol::{
 
 use crate::registry::Tool;
 
+/// The tool name that means *this plan starts now*.
+///
+/// Named rather than spelled twice because a host keys behaviour on it: the
+/// deck's plan gate (`command_deck::task_tap::plan_gate`) raises its scope
+/// review on this call and no other, and a rename that reached the schema but
+/// not that host would silently retire the gate.
+pub const START: &str = "task_start";
+
 /// The session's task board, shared between the six `task_*` tool instances
 /// and the `ToolRegistry` (which snapshots it into `AgentEvent::TaskUpdate`
 /// via [`crate::ToolRegistry::task_board`]).
@@ -303,7 +311,7 @@ pub struct TaskStart(pub TaskBoardHandle);
 impl Tool for TaskStart {
     fn schema(&self) -> ToolSchema {
         ToolSchema {
-            name: "task_start".into(),
+            name: START.into(),
             description: "Mark a board task in_progress — the task you are personally working \
                           on right now. Keep exactly ONE task in_progress at a time: complete \
                           the current task before starting the next. (task_assign marks \

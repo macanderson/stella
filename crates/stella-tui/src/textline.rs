@@ -502,11 +502,18 @@ pub fn scope_review(
     let cost = estimated_cost_usd
         .map(|c| format!(", ~${c:.2}"))
         .unwrap_or_default();
+    // `estimated_files: 0` is *not stated* (see `ScopeProposal`), never a
+    // plan that touches nothing.
+    let files = if estimated_files > 0 {
+        format!(", ~{estimated_files} files")
+    } else {
+        String::new()
+    };
     EventLine {
         glyph: "⌾",
         tone: Tone::Warn,
         strong: true,
-        body: format!("scope review: {summary} ({steps} steps, ~{estimated_files} files{cost})"),
+        body: format!("scope review: {summary} ({steps} steps{files}{cost})"),
         detail: None,
     }
 }

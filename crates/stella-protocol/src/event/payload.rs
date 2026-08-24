@@ -111,11 +111,11 @@ pub struct VerdictEvidence {
 /// What a `ScopeReview` gate presents for approval before a large plan
 /// executes (L-E5).
 ///
-/// The fields after `estimated_cost_usd` are the scope-card grid's facts
-/// (repo/branch, read/write globs, shell policy) — all additive
-/// (`serde(default)`), so streams recorded before they existed parse with
-/// every one absent, and a proposal that names none serializes exactly as it
-/// always has.
+/// Everything after `estimated_cost_usd` is additive (`serde(default)`), so
+/// streams recorded before those fields existed parse with every one absent,
+/// and a proposal that names none serializes exactly as it always has:
+/// `repo`/`branch`, the read and write globs and the shell policy are the
+/// scope-card grid's facts, and `revision` is the plan breadcrumb's.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ScopeProposal {
@@ -125,6 +125,12 @@ pub struct ScopeProposal {
     pub steps: Vec<String>,
     /// How many files the plan expects to touch — the magnitude the gate's
     /// thresholds are compared against.
+    ///
+    /// `0` is *not stated*, the same as an empty glob list below, and a
+    /// surface must render it as nothing rather than as "~0 files": a
+    /// producer that knows the steps but not the blast radius is the common
+    /// case, and a plan claiming it touches no files is a different and
+    /// false statement.
     pub estimated_files: u32,
     /// Projected spend, when the planner could estimate one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,6 +152,15 @@ pub struct ScopeProposal {
     /// `read-only`, `none`), when stated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_policy: Option<String>,
+    /// Which revision of the plan this is: `1` for the first proposal of a
+    /// session, incremented each time a changed plan is re-proposed.
+    ///
+    /// `None` means the producer does not track revisions — every recording
+    /// written before this field existed decodes that way, and a surface
+    /// rendering a breadcrumb must say nothing rather than claim `r1` for a
+    /// plan whose history it cannot see (#4333).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u32>,
 }
 
 /// What a `HunkReview` gate presents for per-hunk approval before a mutating
