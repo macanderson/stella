@@ -254,8 +254,9 @@ fn no_plan_review_block_is_exactly_the_shipped_gate() {
     assert_eq!(policy.min_steps, PlanReviewPolicy::DEFAULT_MIN_STEPS);
 }
 
-/// Both facts reach the resolved policy from the file, which is the whole of
-/// #4611: the threshold was a `const` and the gate had no off switch.
+/// The switch and the threshold both reach the resolved policy from the file,
+/// which is the whole of #4611: the threshold was a `const` and the gate had no
+/// off switch.
 #[test]
 fn plan_review_carries_both_facts_out_of_the_document() {
     let dir = tempfile::tempdir().unwrap();

@@ -263,7 +263,8 @@ const EVERY_RELOADABLE_KEY: &str = r#"{
   "tools": { "bash": "off" },
   "ignore_gitignore": "off",
   "create_worktrees": "never",
-  "reward": { "deterministic_weight": 2.0 }
+  "reward": { "deterministic_weight": 2.0 },
+  "plan_review": { "enabled": "off", "min_steps": 7 }
 }"#;
 
 /// The org-managed half of the same document.

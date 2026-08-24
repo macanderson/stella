@@ -724,9 +724,9 @@ pub struct PlanReviewSettings {
     /// `on` (the default) installs the gate wherever a driver is attached to
     /// answer it; `off` withholds it, and no card is ever raised.
     ///
-    /// Off is not the same as unattended. A headless run already installs no
-    /// gate because nobody can answer one — this is the interactive driver
-    /// saying they do not want to be asked.
+    /// Off is not the same as unattended. A run with nobody at the keyboard
+    /// already installs no gate, because nobody can answer one — this is the
+    /// person driving saying they do not want to be asked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<Toggle>,
     /// How many OPEN steps a plan needs before the card goes up. Default

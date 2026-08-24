@@ -150,9 +150,9 @@ impl PlanGate {
     /// The gate, or `None` when nobody is attached to answer it — or when the
     /// `plan_review` policy withholds it.
     ///
-    /// Two reasons, one return: `install` already answered "no" for the
-    /// unattended case, so the switch needed no new plumbing to reach the
-    /// engine (#4611).
+    /// The switch needed no new plumbing to reach the engine (#4611):
+    /// `install` already answered "no" for the unattended case, so `off` is one
+    /// more reason to return `None`.
     pub(crate) fn install(
         questions: QuestionBroker,
         events: UnboundedSender<AgentEvent>,

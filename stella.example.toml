@@ -490,9 +490,9 @@ per_revision = 0.1            # subtracted per verification round beyond the fir
 # PLAN REVIEW — the deck asks before it starts a plan
 #
 # Before the first step of a plan runs, the task board goes to whoever is
-# driving as a card they can approve or send back. Both facts live here rather
-# than compiled in: whether there is a gate at all, and how big a plan has to be
-# before it fires.
+# driving as a card they can approve or send back. Whether there is a gate at
+# all, and how big a plan has to be before it fires, live here rather than
+# compiled in.
 #
 # `enabled = "off"` is the interactive driver saying they do not want to be
 # asked. It is a different thing from an unattended run, which installs no gate
