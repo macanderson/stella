@@ -281,6 +281,7 @@ pub(crate) fn all_subagent_phases() -> Vec<SubAgentPhase> {
             budget_usd: Some(0.25),
             write_access: false,
             depth: 1,
+            effort: Some(stella_protocol::ReasoningEffort::High),
         },
         SubAgentPhase::Finished {
             agent_id: "search-1".into(),
@@ -1135,8 +1136,26 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             budget_usd: None,
             write_access: true,
             depth: 2,
+            effort: None,
         },
     });
+    // Every effort a child's bracket can pin — the same vocabulary
+    // `StepUsage` samples above, exercised on the `Started` field too so a
+    // divergence between the two carriers cannot hide.
+    events.extend(
+        all_reasoning_efforts()
+            .into_iter()
+            .map(|effort| AgentEvent::SubAgent {
+                phase: SubAgentPhase::Started {
+                    agent_id: "search-1".into(),
+                    instruction_preview: "find the retry policy".into(),
+                    budget_usd: None,
+                    write_access: false,
+                    depth: 1,
+                    effort: Some(effort),
+                },
+            }),
+    );
     // Every ladder rung (#1043). Each has to reach the wire on its own,
     // because the rung is the *only* thing separating verdicts that the
     // surrounding `passed`/`deterministic` flags spell identically — a

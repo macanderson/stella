@@ -56,8 +56,8 @@ use stella_core::context_record::{
 };
 use stella_observatory::respond;
 use stella_protocol::{
-    AgentEvent, ContextFrameRef, ErrorClass, ProviderShare, TaskItem, TaskStatus, ToolCall,
-    ToolOutput,
+    AgentEvent, ContextFrameRef, ErrorClass, ProviderShare, ReasoningEffort, SubAgentPhase,
+    SubAgentStatus, TaskItem, TaskStatus, ToolCall, ToolOutput,
 };
 use stella_store::{
     AgentUseRow, ContextBlockRow, ExecutionReflectionRow, FileTouchRow, ManifestBlockRow,
@@ -106,6 +106,7 @@ const ROUTES: &[(&str, Option<&str>)] = &[
         Some("/turns/0/id"),
     ),
     ("/api/execution-tendencies?id=1", Some("/retries")),
+    ("/api/execution-subagents?id=1", Some("/agents/0/agent_id")),
     (
         "/api/execution-context-diff?id=2&turn=0&step=1&call_seq=0",
         Some("/hunks/0/lines/0/op"),
@@ -234,6 +235,43 @@ fn real_store_workspace() -> tempfile::TempDir {
             },
         )
         .expect("loop event");
+    // One delegate child's whole recorded life: the `sub_agent` bracket in
+    // the journal plus a metering row stamped with its agent id — what the
+    // turn page's sub-agents panel folds together.
+    store
+        .record_event(
+            completed,
+            4,
+            &AgentEvent::SubAgent {
+                phase: SubAgentPhase::Started {
+                    agent_id: "search-1".into(),
+                    instruction_preview: "find the retry policy".into(),
+                    budget_usd: Some(0.25),
+                    write_access: false,
+                    depth: 1,
+                    effort: Some(ReasoningEffort::High),
+                },
+            },
+        )
+        .expect("sub-agent start");
+    store
+        .record_event(
+            completed,
+            5,
+            &AgentEvent::SubAgent {
+                phase: SubAgentPhase::Finished {
+                    agent_id: "search-1".into(),
+                    status: SubAgentStatus::Completed,
+                    summary: "retry policy lives in retry.rs".into(),
+                    truncated: false,
+                    cost_usd: 0.004,
+                    steps: 1,
+                    absorbed_messages: 5,
+                    reason: None,
+                },
+            },
+        )
+        .expect("sub-agent finish");
     seed_receipt(&store, completed, &call, &output);
     store
         .record_task_board(
@@ -283,6 +321,29 @@ fn real_store_workspace() -> tempfile::TempDir {
             },
         )
         .expect("telemetry");
+    store
+        .record_telemetry(
+            completed,
+            &TelemetryRow {
+                step: 2,
+                provider: "zai".into(),
+                call_role: "worker".into(),
+                model: "glm-5.2".into(),
+                input_tokens: 300,
+                estimated_input_tokens: 280,
+                output_tokens: 60,
+                cache_read_tokens: 0,
+                cache_miss_tokens: 300,
+                cache_write_tokens: 0,
+                cost_usd: 0.004,
+                duration_ms: 900,
+                retries: 0,
+                tool_calls: 1,
+                usage_complete: true,
+                sub_agent_id: Some("search-1".into()),
+            },
+        )
+        .expect("delegate telemetry");
     store
         .record_files_touched(
             completed,

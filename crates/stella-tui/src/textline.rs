@@ -1309,6 +1309,7 @@ mod tests {
                 phase: stella_protocol::SubAgentPhase::Started {
                     agent_id: "search-1".into(),
                     instruction_preview: "find it".into(),
+                    effort: None,
                     budget_usd: Some(0.1),
                     write_access: false,
                     depth: 1,
