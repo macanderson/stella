@@ -1340,11 +1340,7 @@ impl<'a> Engine<'a> {
             // The same estimate `StepUsage` reports below, not a second walk.
             estimated_input_tokens,
             step,
-            crate::receipts::ServedBy {
-                role: self.call_role,
-                provider: self.active_provider().id(),
-                model: &result.model,
-            },
+            settlement::served_by(self.call_role, self.active_provider().id(), &result),
             events,
         );
 

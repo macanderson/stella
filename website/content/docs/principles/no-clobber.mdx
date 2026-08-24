@@ -1,6 +1,6 @@
 ---
 title: No agent silently overwrites another's work
-description: stella refuses a write that would land on top of a change it never saw — without a lock, a daemon, or any knowledge that the other party exists. How the guarantee works, what it deliberately does not claim, and why it survives a crash.
+description: stella refuses a write that would land on top of a change it never saw — without a lock, a daemon, or any knowledge that the other party exists. How the guarantee works, what it deliberately does not claim, and which way it fails after a crash.
 ---
 
 Point two agents at one repository and the failure is not a corrupted file.
@@ -81,32 +81,22 @@ at. So:
 A guard that cried wolf would be turned off, and then it would protect
 nothing.
 
-## It survives a crash
+## What a crash costs, and which way the guard fails
 
-The map used to live only in memory, which left a gap worth naming plainly: a
-session that died took the whole guarantee with it.
+The map lives in memory, so a session that dies takes it along — and the guard
+is built to fail **closed** when that happens. A
+[resumed](/docs/commands/resume) session starts with an empty map while its
+restored transcript still says the agent read the file, so the model keeps
+acting on content it believes it knows. The guard does not take the
+transcript's word for it: with no recorded read, every overwrite of an
+existing file is refused until the resumed session has read the file whole
+again. The cost of a crash is re-reading, never a silent clobber.
 
-That is worse than it sounds. The resumed session was not merely back to
-square one — it was *less safe than an honest fresh start*. Its restored
-transcript still said the agent had read the file, so the model kept acting
-on content it believed it knew, while the guard — having forgotten the read —
-waved the overwrite through. Precisely the combination the
-guard exists to prevent.
-
-So the map is now written down. It lives in stella's durable work record — a
-git store kept in stella's own directory, never in your repository — and is
-restored when the session [resumes](/docs/commands/resume), before anything can
-touch a file. A resumed session is exactly as guarded as the one that died.
-
-Two details of that matter:
-
-- **It is written at each step boundary, not at each file change.** The map is
-  updated by reads as well as writes, so saving it only when a file changed
-  would drop every read since the last write — which is exactly the loss
-  described above.
-- **It outlives the turn.** A turn's resume point is retracted when that turn
-  ends; the staleness map is not. It describes what the *session* has seen, and
-  a session's second turn is as entitled to the guarantee as its first.
+A durable copy of the map — written at step boundaries and restored on resume,
+so a resumed session could keep the coverage it had earned — was reserved in
+the work journal but never wired up, and the unwired half was removed rather
+than left claiming otherwise (#3780). Carrying coverage across a resume is a
+design still open.
 
 ## Where this sits
 

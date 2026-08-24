@@ -281,6 +281,25 @@ pub(super) struct SettledCall<'a> {
     pub(super) max_output_tokens: Option<u32>,
 }
 
+/// Who served one committed call, read off the settled result.
+///
+/// Here rather than at the call site for the same reason [`emit_step_usage`]
+/// is: `driver.rs` is a grandfathered god file closed to growth (AGENTS.md
+/// § "God files"), and every field of this struct is settled-boundary
+/// knowledge the result already carries.
+pub(super) fn served_by<'a>(
+    role: stella_protocol::event::ModelCallRole,
+    provider: &'a str,
+    result: &'a stella_protocol::CompletionResult,
+) -> crate::receipts::ServedBy<'a> {
+    crate::receipts::ServedBy {
+        role,
+        provider,
+        upstream_provider: result.upstream_provider.as_deref(),
+        model: &result.model,
+    }
+}
+
 /// Emit the metering record for one committed call.
 ///
 /// Lives here rather than at the call site because `driver.rs` is a

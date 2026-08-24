@@ -160,7 +160,7 @@ $ stella daemon resume ses-1785956826121
 ▸ resuming ses-1785956826121-25167 — continuing its interrupted turn at step 14
 ```
 
-The relaunch continues the **same session** — same id, same sidecar, the crashed attempt's console preserved — as a fresh supervised child. Completed steps are already in the checkpointed transcript, tool results included, so nothing re-runs and no tool effect is applied twice; the no-clobber staleness map rides the same checkpoint, so a file something else edited while the run was dead is refused rather than overwritten. A run that ended cleanly has nothing to resume, and `resume` says so instead of restarting it.
+The relaunch continues the **same session** — same id, same sidecar, the crashed attempt's console preserved — as a fresh supervised child. Completed steps are already in the checkpointed transcript, tool results included, so nothing re-runs and no tool effect is applied twice. The no-clobber guard does not ride the checkpoint — it is in-process state, and the relaunch starts it empty — so the resumed run must re-read any existing file in full before it can overwrite it, which also covers a file something else edited while the run was dead. A run that ended cleanly has nothing to resume, and `resume` says so instead of restarting it.
 
 A turn that was running under a wrapper plugin **re-enters that wrapper** when its frame permits: the wrapper records its progress — task class, goal, plan cursor, test baseline — beside every checkpoint, and `resume` finishes the interrupted turn, runs the plan steps the crash never reached, then runs the witness and verify steps on the completed work. A resume that ends with a verdict files its audit row as `resumed_complete_verified` and keeps the green tick.
 
