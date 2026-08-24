@@ -20,6 +20,7 @@
 
 pub mod agents_page;
 pub mod budget_card;
+pub mod engine_panel;
 pub mod fields;
 pub mod frame;
 pub mod graph;
