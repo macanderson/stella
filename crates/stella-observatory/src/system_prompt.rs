@@ -12,8 +12,8 @@
 //! module docs), so the markers below are a copy of the strings
 //! `crates/stella-cli/src/agent/prompt.rs`'s `assemble_system_prompt` (and
 //! `agent/engine.rs`'s SessionStart hook append) actually emit — the same
-//! bargain `sent_context` takes for the receipt fold. Two tests keep the copy
-//! honest: `sections_split_a_real_shaped_prompt` here pins the exact bytes,
+//! bargain `sent_context` takes for the receipt fold. Two tests pin the
+//! copy: `sections_split_a_real_shaped_prompt` here pins the exact bytes,
 //! and `the_observatory_provenance_markers_are_what_this_assembler_emits` in
 //! `stella-cli`'s `agent/prompt/tests.rs` asserts a really-assembled prompt
 //! contains them, in this order, so a reworded heading fails on whichever
@@ -217,7 +217,7 @@ mod tests {
     }
 
     /// A markerless prompt — a custom base with nothing appended — is one
-    /// honest base section, never an error and never zero sections.
+    /// base section, never an error and never zero sections.
     #[test]
     fn a_markerless_prompt_is_one_base_section() {
         let out = sectioned("just a custom persona", true);

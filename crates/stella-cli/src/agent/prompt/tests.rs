@@ -804,7 +804,10 @@ fn minimal_mode_swaps_the_base_and_keeps_the_operators_prompt_channels() {
 #[test]
 fn the_observatory_marker_copy_matches_the_emitting_constants() {
     for (observatory_copy, emitted) in [
-        ("\n\n## Session environment\n", super::SESSION_ENVIRONMENT_HEADER),
+        (
+            "\n\n## Session environment\n",
+            super::SESSION_ENVIRONMENT_HEADER,
+        ),
         (
             "\n\nWorkspace memories (lessons from previous sessions — apply them):\n",
             super::MEMORIES_HEADER,

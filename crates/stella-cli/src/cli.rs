@@ -309,7 +309,7 @@ pub(crate) struct GlobalArgs {
     /// the minimal base instead of replacing it), workspace memories, rules,
     /// SessionStart hook context — carry the prose the model is steered by.
     /// Works on every session surface: `stella run`, `stella chat`, and the
-    /// Command Deck (`stella --minimal`). The durable spelling is
+    /// interactive session (`stella --minimal`). The durable spelling is
     /// `[agents] minimal_prompt = "on"` in stella.toml (or
     /// `agent_engine_config.minimal_prompt` in settings.json); the flag forces
     /// the mode on for one invocation and can never turn a configured mode
