@@ -342,9 +342,19 @@ wire-paths-test: ## Test the wire-path guard's failure directions (hermetic; not
 file-size: ## Assert no new source file exceeds the 1500-line ratchet (#629, #825, #1563, #3811)
 	@./scripts/check-file-size.sh
 
+# Raise-only: it moves the ceilings that must move for this tree to pass and
+# leaves every other entry at the number it had. A repair PR then edits exactly
+# the lines it needs, instead of lowering twenty ceilings measured on a branch
+# that main is about to overtake (#4657).
 .PHONY: file-size-update
-file-size-update: ## Retighten the 1500-line ratchet baseline (run after splitting a file)
+file-size-update: ## Raise the 1500-line ratchet ceilings this tree needs, lowering none (#4657)
 	@./scripts/check-file-size.sh --update
+
+# The other direction, and a PR of its own: reclaiming the slack a split earned
+# is safe exactly when nothing is blocked on it.
+.PHONY: file-size-retighten
+file-size-retighten: ## Lower every ceiling to its file's current size (a deliberate, separate pass)
+	@./scripts/check-file-size.sh --update --retighten
 
 .PHONY: tokens
 tokens: ## Validate the colour system: hue clamp, generated-file sync, no retired hex

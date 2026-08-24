@@ -754,6 +754,19 @@ inputs, not review afterthoughts:
   crossing is genuinely irreducible, say so out loud with
   `./scripts/check-file-size.sh --update --grandfather <path>` and justify it
   in review.
+- **`make file-size-update` raises; `make file-size-retighten` lowers** (#4657).
+  The update moves the ceilings that must move for your tree to pass and leaves
+  every other entry at the number it had, so a PR repairing a red `main` edits
+  exactly the lines it needs. It used to lower them all to their size on the
+  branch it ran on, which made the repair PR the carrier of the next break: it
+  is the one PR guaranteed to be racing every other merge, because main is red
+  and everyone is waiting on it. #4652 repaired `driver.rs` and `usage.rs` and
+  in the same run lowered `command_deck.rs` from 3752 to 3656 against a main
+  whose copy was 3737; that is #4654, and it held every open PR for half an
+  hour. Reclaiming the slack a split earned is `file-size-retighten`, and it is
+  a PR of its own — safe precisely when nothing is blocked on it. Both modes
+  still retire an entry whose file dropped under the limit or is gone, because
+  the check hard-fails on those and names the update as the only remedy.
 
 **The ratchet judges your change, not the tree** (#2004). A file over the line
 fails only when `current > max(its own limit, size in the base tree)` — where
@@ -771,8 +784,8 @@ every growing PR must write, and three times running two PRs that each wrote it
 correctly composed into a red `main` that then failed everyone downstream. Two
 consequences for planning: **do not "fix" a red ratchet you did not cause** by
 folding a baseline regeneration into an unrelated PR — land it on its own from
-a fresh `main`; and note that splitting a god file buys structure, not slack,
-since `--update` retightens every ceiling to its file's current size.
+a fresh `main`; and note that splitting a god file buys structure, not slack
+until someone runs `make file-size-retighten`, which is a separate PR.
 
 The workspace's Rust god files, by crate (the bench harness's Python offenders
 sit in the same baseline). Each file's ceiling lives in
