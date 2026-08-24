@@ -35,11 +35,16 @@ pub(super) const DECK_BUILTINS: &[(&str, &str, SlashDomain)] = &[
     ("/clear", "reset the conversation", SlashDomain::Session),
     (
         "/model",
-        "set the default model (persists; no arg shows current + list)",
+        "switch this session's model — picker over your providers (session-only)",
         SlashDomain::Config,
     ),
     (
-        "/models",
+        "/agent",
+        "run as an installed agent this session — prompt, toolbelt, model",
+        SlashDomain::Config,
+    ),
+    (
+        "/info",
         "model routing — the think · work · verify slots (`refresh` re-syncs)",
         SlashDomain::Config,
     ),
@@ -117,10 +122,10 @@ pub(super) const DECK_BUILTINS: &[(&str, &str, SlashDomain)] = &[
         "search the MCP registry & install servers",
         SlashDomain::Extend,
     ),
-    // `/model` sets the DEFAULT model from the prompt (persisted, parity
-    // with the tab). The full engine-config editor — per-agent models,
-    // provider pins, effort, prompts — lives on the SETTINGS tab; there are
-    // no per-agent slash commands.
+    // `/model` switches THIS session's model (`/model default <id>` is the
+    // persisted form, parity with the tab). The full engine-config editor —
+    // per-agent models, provider pins, effort, prompts — lives on the
+    // SETTINGS tab; there are no per-agent slash commands.
     (
         "/settings",
         "open the SETTINGS tab — the home of all config (models included)",
@@ -143,9 +148,13 @@ pub(super) const DECK_BUILTINS: &[(&str, &str, SlashDomain)] = &[
     ),
 ];
 
-/// The deck's reserved command names — see [`DECK_BUILTINS`].
+/// The deck's reserved command names — [`DECK_BUILTINS`] plus the legacy
+/// heads that still route (`/models` → `/info`): a custom definition must
+/// not capture a name users' hands still type.
 pub(super) fn deck_reserved() -> Vec<&'static str> {
-    DECK_BUILTINS.iter().map(|(name, ..)| *name).collect()
+    let mut reserved: Vec<&'static str> = DECK_BUILTINS.iter().map(|(name, ..)| *name).collect();
+    reserved.push("/models");
+    reserved
 }
 
 // SKILLS tab: driver-side ops (the deck routes `WorkspaceInput::Skill`)

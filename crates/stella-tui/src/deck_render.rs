@@ -198,6 +198,19 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // (The former ENGINE overlay is gone: the engine panel is the full-width
     // body of the SETTINGS tab — see `views::settings::render`.)
 
+    // The session-override pickers (`/model`, `/agent`): modal cards like
+    // the floating ones above; the parked asks still win the top.
+    if ui.model_picker.open {
+        guarded_overlay(buf, area, "model picker", |b| {
+            views::picker::render_model(model, ui, area, b)
+        });
+    }
+    if ui.agent_picker.open {
+        guarded_overlay(buf, area, "agent picker", |b| {
+            views::picker::render_agent(ui, area, b)
+        });
+    }
+
     // The parked asks (#4220, #4240) — see `parked` for the stacking rule.
     parked::render(ui, area, buf);
 
@@ -233,9 +246,11 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         || ui.inbox_open
         || ui.context_open
         || ui.inspect_open
-        // The floating cards are modal while up (their handler owns every
-        // key ahead of the composer — see `deck_ui::cards`).
+        // The floating cards and the session-override pickers are modal
+        // while up (their handlers own every key ahead of the composer —
+        // see `deck_ui::cards` / `deck_ui::pickers`).
         || ui.cards.is_open()
+        || crate::deck_ui::pickers::owns_keyboard(ui)
         || slash_open
         // The routing card holds the user's words and owns every key until
         // they say where they go — it is checked first in `handle_deck_key`.

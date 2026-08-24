@@ -223,18 +223,18 @@ fn deck_slash_popup_selects_completes_and_dispatches() {
 }
 
 #[test]
-fn slash_models_opens_the_routing_card_instead_of_enqueueing() {
-    // `/models` left the driver vocabulary's enqueue path: routing is a
-    // deck-local card now (D3), so the selection must open it — not spend a
-    // model turn listing what a card can show.
+fn slash_info_opens_the_routing_card_instead_of_enqueueing() {
+    // `/info` (né `/models`) left the driver vocabulary's enqueue path:
+    // routing is a deck-local card now (D3), so the selection must open it —
+    // not spend a model turn listing what a card can show.
     let model = model_with(&["lead"]);
     let mut ui = ready_ui();
-    ui.slash_commands = vec![SlashCommand::new("/models", "model routing")];
-    for c in "/models".chars() {
+    ui.slash_commands = vec![SlashCommand::new("/info", "model routing")];
+    for c in "/info".chars() {
         handle_deck_key(ch(c), &model, &mut ui);
     }
     let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
-    assert_eq!(action, DeckAction::Handled, "/models is consumed locally");
+    assert_eq!(action, DeckAction::Handled, "/info is consumed locally");
     assert_eq!(
         ui.cards.open,
         Some(crate::deck_ui::cards::Card::Models),
@@ -243,6 +243,93 @@ fn slash_models_opens_the_routing_card_instead_of_enqueueing() {
     // Esc closes the topmost card before any other Esc meaning fires.
     handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
     assert!(!ui.cards.is_open());
+    // The old name still routes — a hand that types `/models` lands on the
+    // same card, never on "unknown command".
+    let mut legacy = ready_ui();
+    super::super::local::deck_local_command("/models", &mut legacy);
+    assert_eq!(legacy.cards.open, Some(crate::deck_ui::cards::Card::Models));
+}
+
+/// **The witness for the `/model` picker.** Typing `/model` opens the modal
+/// session-model picker and asks the driver for a fresh engine-config
+/// snapshot — before this, `/model` fell through to the driver as prose.
+/// Choosing a row leaves as `WorkspaceInput::ModelOverride`; Esc chooses
+/// nothing.
+#[test]
+fn slash_model_opens_the_session_picker_and_enter_overrides() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.engine.state = Some(crate::envelope::EngineConfigState {
+        catalog_models: vec![
+            "anthropic/claude-fable-5".to_string(),
+            "zai/glm-5.2".to_string(),
+        ],
+        ..Default::default()
+    });
+    ui.slash_commands = vec![SlashCommand::new("/model", "switch this session's model")];
+    for c in "/model".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert!(ui.model_picker.open, "the picker is up");
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::EngineConfigRefresh),
+        "opening freshens the vocabulary"
+    );
+    // ↓ then ⏎ chooses the second candidate, session-only.
+    handle_deck_key(key(KeyCode::Down), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::ModelOverride {
+            spec: "zai/glm-5.2".to_string()
+        })
+    );
+    assert!(!ui.model_picker.open, "choosing closes the picker");
+
+    // Esc cancels without sending anything.
+    super::super::local::deck_local_command("/model", &mut ui);
+    assert!(ui.model_picker.open);
+    let action = handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert!(!ui.model_picker.open);
+}
+
+/// **The witness for the `/agent` picker.** `/agent` opens the modal
+/// installed-agents picker (asking the driver for a fresh list), and `⏎`
+/// leaves as the same `WorkspaceInput::AgentAssume` the AGENTS pane's `a`
+/// sends — one driver path, two doors.
+#[test]
+fn slash_agent_opens_the_picker_and_enter_assumes() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.installed.entries = vec![crate::envelope::InstalledAgentEntry {
+        name: "reviewer".to_string(),
+        description: "reviews diffs".to_string(),
+        tools: None,
+        scope: crate::envelope::AgentScope::User,
+        source_path: "~/.stella/agents/reviewer.md".to_string(),
+        version: 1,
+        versions: vec![],
+        content: String::new(),
+    }];
+    ui.slash_commands = vec![SlashCommand::new("/agent", "run as an installed agent")];
+    for c in "/agent".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert!(ui.agent_picker.open, "the picker is up");
+    assert_eq!(action, DeckAction::Send(WorkspaceInput::AgentsRefresh));
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::AgentAssume {
+            name: "reviewer".to_string(),
+            scope: crate::envelope::AgentScope::User,
+        })
+    );
+    assert!(!ui.agent_picker.open, "choosing closes the picker");
 }
 
 #[test]

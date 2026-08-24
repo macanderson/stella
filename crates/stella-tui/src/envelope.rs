@@ -864,12 +864,22 @@ pub enum WorkspaceInput {
     /// and its archived versions. Answered with a fresh
     /// [`Inbound::AgentsList`].
     AgentDelete { name: String, scope: AgentScope },
-    /// INSTALLED AGENTS `a`: the lead assumes this agent's identity for the
-    /// rest of the session — its definition becomes the persona the system
-    /// prompt carries, from the next turn on. Between turns only; mid-turn
-    /// the driver answers with a transcript notice. Answered with
+    /// INSTALLED AGENTS `a`, or the `/agent` picker: the lead assumes this
+    /// agent's identity for the rest of the session — its definition becomes
+    /// the persona the system prompt carries, its `tools:` grant narrows the
+    /// session tool policy, and its declared `model:` (if any) switches the
+    /// session model, all from the next turn on. Between turns only;
+    /// mid-turn the driver answers with a transcript notice. Answered with
     /// [`Inbound::AgentAssumed`].
     AgentAssume { name: String, scope: AgentScope },
+    /// The `/model` picker's selection (or `/model <spec>` typed): switch
+    /// THIS session's model to `spec` (`provider/slug`). Session-only — the
+    /// driver never writes settings for it, so future sessions keep the
+    /// configured default. Between turns only, like
+    /// [`WorkspaceInput::AgentAssume`]; the driver answers with a fresh
+    /// [`Inbound::Register`] + [`Inbound::ConfiguredRoles`] and a chrome
+    /// note (on refusal, the note alone).
+    ModelOverride { spec: String },
     /// Create a new agent from a short description with LLM assistance: the
     /// driver drafts the definition through the session's provider, installs
     /// it at `scope`, and answers with a fresh [`Inbound::AgentsList`].

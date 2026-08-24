@@ -43,6 +43,7 @@ pub mod issues;
 pub(crate) mod linear;
 pub mod mcp;
 pub mod models_card;
+pub mod picker;
 pub mod plan_card;
 pub mod plan_rail;
 pub(crate) mod plan_style;

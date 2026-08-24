@@ -166,6 +166,13 @@ pub struct AgentDef {
     /// an empty list parses to `None` as well, matching the ecosystem
     /// convention where omission grants everything.
     pub tools: Option<Vec<String>>,
+    /// The model this agent runs on — frontmatter `model:`, a
+    /// `provider/slug` spec (or a bare catalog slug), same key
+    /// [`CommandDef`] carries. `None` means the definition does not pin a
+    /// model: the agent rides whatever the session runs. Whether and how a
+    /// host applies it is the host's call — the deck applies it as a
+    /// session-only override when the agent is assumed.
+    pub model: Option<String>,
     /// The markdown body — the agent's instructions/system prompt.
     pub body: String,
     /// The file this was loaded from.
@@ -427,10 +434,12 @@ pub fn parse_toolbelt(value: Option<&str>) -> Option<Vec<String>> {
 pub fn agent_from_file(path: &str, raw: &str) -> Result<AgentDef, ExtensionDiagnostic> {
     let (fm, name, description, body) = definition_from_file(path, raw, "AGENT.md")?;
     let tools = parse_toolbelt(fm.data.get("tools").map(String::as_str));
+    let model = trimmed(fm.data.get("model").map(String::as_str));
     Ok(AgentDef {
         name,
         description,
         tools,
+        model,
         body,
         source_path: path.to_string(),
     })
@@ -937,6 +946,22 @@ mod tests {
         let raw = "---\nname: helper\ndescription: d\n---\nBody.";
         let agent = agent_from_file("/x/helper.md", raw).unwrap();
         assert_eq!(agent.tools, None, "no `tools:` key = unrestricted");
+    }
+
+    /// **The witness for the agent `model:` key.** A definition may pin the
+    /// model it runs on, in the spec grammar `CommandDef` already accepts;
+    /// omitting the key (or leaving it blank) pins nothing.
+    #[test]
+    fn agent_model_frontmatter_is_parsed_and_optional() {
+        let raw = "---\nname: reviewer\ndescription: d\nmodel: anthropic/claude-opus-5\n---\nBody.";
+        let agent = agent_from_file("/x/reviewer.md", raw).unwrap();
+        assert_eq!(agent.model.as_deref(), Some("anthropic/claude-opus-5"));
+
+        let bare = agent_from_file("/x/helper.md", "---\nname: helper\n---\nBody.").unwrap();
+        assert_eq!(bare.model, None, "no `model:` key = the session's model");
+        let blank =
+            agent_from_file("/x/helper.md", "---\nname: helper\nmodel:   \n---\nBody.").unwrap();
+        assert_eq!(blank.model, None, "a blank value pins nothing");
     }
 
     #[test]
