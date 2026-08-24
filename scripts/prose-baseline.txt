@@ -901,8 +901,6 @@ crates/stella-tui/src/views/approval.rs 1
 crates/stella-tui/src/views/engine.rs 2
 crates/stella-tui/src/views/files.rs 2
 crates/stella-tui/src/views/installed.rs 2
-crates/stella-tui/src/views/mcp.rs 1
-crates/stella-tui/src/views/mcp/detail.rs 1
 crates/stella-tui/src/views/question.rs 5
 crates/stella-tui/src/views/seats.rs 1
 crates/stella-tui/src/views/session.rs 1

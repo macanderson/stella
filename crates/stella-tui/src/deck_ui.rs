@@ -44,7 +44,7 @@ use stella_tools::search::readiness::IndexReadiness;
 use crate::notice::NoticeState;
 use crate::scroll::ScrollState;
 use crate::splash::SplashState;
-use crate::views::mcp::{AuthStep, McpMode};
+use crate::v2::mcp_tab::{AuthStep, McpMode};
 
 /// How long a turn-stopping Esc stays armed for the double-Esc escalation: a
 /// second Esc inside this window (with no other key in between) is "full
@@ -621,7 +621,7 @@ pub struct DeckUi {
     /// search/auth sub-modes and their input buffers (the auth value is
     /// redacted in `Debug`). Out-of-band, driven by [`Inbound::McpServers`] /
     /// [`Inbound::McpSearchResults`].
-    pub mcp: crate::views::mcp::McpTabState,
+    pub mcp: crate::v2::mcp_tab::McpTabState,
     pub files_sel: usize,
     pub files_diff_open: bool,
     pub files_diff_scroll: ScrollState,
@@ -851,7 +851,7 @@ impl Default for DeckUi {
             graph_picker_open: false,
             graph_picker_query: String::new(),
             graph_picker_sel: 0,
-            mcp: crate::views::mcp::McpTabState::default(),
+            mcp: crate::v2::mcp_tab::McpTabState::default(),
             files_sel: 0,
             files_diff_open: false,
             files_diff_scroll: ScrollState::default(),

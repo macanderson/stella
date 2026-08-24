@@ -23,6 +23,7 @@ pub mod fields;
 pub mod frame;
 pub mod graph;
 pub mod graph_tab;
+pub mod mcp_tab;
 pub mod models_card;
 pub mod plan_card;
 pub mod pulse;

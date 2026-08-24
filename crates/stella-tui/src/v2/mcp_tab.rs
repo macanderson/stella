@@ -1,37 +1,59 @@
-//! MCP tab — the management surface for external Model Context Protocol
-//! servers: a live dashboard of configured servers (enabled/connected/health,
-//! configured auth, per-tool call counts) plus in-tab registry search,
-//! install, per-session enable/disable, auth, remove, and a ctrl+o inspector.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! The MCP tab — the management surface for external Model Context Protocol
+//! servers:
+//!
+//! ```text
+//!  servers · 3 · 2 connected
+//! ▸ ● Stripe                 http   21 tools   live  oauth ✓  · 14×
+//!       stripe  ·  Payments, refunds, and balance reads.
+//!   ○ Linear                 http   0 tools    disabled  o login
+//!       linear  ·  Issues, projects, cycles, and documents.
+//!
+//!  registry · web · s search · new servers land disabled
+//!  ↵ tools · ctrl+o inspect · a auth · o login · e enable · x remove
+//! ```
 //!
 //! Each server occupies **two** rows: identity and state on the first, what it
 //! is on the second. The second row is the reason this file is shaped the way
 //! it is. A configured server's config key is a sanitized alias — installing
 //! `com.stripe/mcp` writes `[servers.mcp]` — so a one-row list keyed on that
 //! alias renders `mcp [http] not connected` and tells the operator nothing
-//! about which vendor they installed or what it can do. The description now
-//! rides in the config (see `stella_mcp::ServerCard`), the endpoint is the
-//! fallback when no description exists, and ctrl+o opens the full detail.
+//! about which vendor they installed or what it can do. The description rides
+//! in the config (see `stella_mcp::ServerCard`), the endpoint is the fallback
+//! when no description exists, and ctrl+o opens the full detail.
 //!
-//! State lives entirely in [`McpTabState`] (a field on `DeckUi`); the driver
-//! feeds it out-of-band snapshots ([`crate::Inbound::McpServers`] /
-//! [`crate::Inbound::McpSearchResults`] / [`crate::Inbound::McpDetail`]) and
-//! services the actions the key handler emits. The auth-value buffer is
-//! redacted in `Debug` so it never reaches the deck's debug log.
+//! Content only: the tab row, pulse row, hint row and status bar are the
+//! deck's own bands ([`super::frame`], [`super::pulse`], [`super::status_bar`])
+//! and are already drawn around this area. The footer here is not a second
+//! hint row — the MCP verbs are unhinted in [`crate::keymap`], so this list is
+//! the only place they are written down.
+//!
+//! State lives entirely in [`McpTabState`], which the driver feeds out of
+//! band and [`crate::deck_ui`]'s key handler mutates; the drawing below only
+//! reads it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget, Wrap};
+use stella_tui_theme::{glyph, token};
 
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
 use crate::envelope::{McpSearchOutcome, McpServerDetail, McpServerInfo};
-use crate::theme;
-use stella_tui_theme::token;
 
 /// The ctrl+o inspector overlay.
-mod detail;
+pub mod detail;
+
+// ───────────────────────────── the tab's state ─────────────────────────────
+//
+// Read here, written by the driver's out-of-band snapshots and by
+// [`crate::deck_ui::mcp_keys`]. It sits with the paint because the deck's
+// own `DeckUi` is a god file closed to growth (#4676 item 5 is what reopens
+// the question of where per-tab state belongs).
 
 /// Which sub-mode the MCP tab is in — browsing the configured list, typing a
 /// registry search, or entering an auth credential.
@@ -58,9 +80,10 @@ pub enum AuthStep {
 /// `AuthPrompt::default()`) does not leave the typed credential legible in
 /// freed heap.
 ///
-/// One honest limit: `value` is built a keystroke at a time with `String::push`,
-/// so each reallocation abandons a buffer this `Drop` can never see. Zeroizing
-/// here shortens the plaintext's life; it does not claim to erase every copy.
+/// It has one limit: `value` is built a keystroke at a time with
+/// `String::push`, so each reallocation abandons a buffer this `Drop` can
+/// never see. Zeroizing here shortens the plaintext's life; it does not erase
+/// every copy of it.
 #[derive(Clone, Default)]
 pub struct AuthPrompt {
     pub server: String,
@@ -168,10 +191,10 @@ impl McpTabState {
     }
 }
 
+/// Draw the tab into the content area the deck carved out.
 pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let state = &ui.mcp;
     let connected = state.servers.iter().filter(|s| s.connected).count();
-    let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
     let text = Style::new().fg(token::TEXT);
 
@@ -213,7 +236,6 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
         )));
     }
     lines.push(footer(state.mode));
-    let _ = dim;
 
     Paragraph::new(lines)
         .wrap(Wrap { trim: false })
@@ -309,9 +331,9 @@ fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {
     let text = Style::new().fg(token::TEXT);
     let marker = if selected { "▸ " } else { "  " };
     let (dot, dot_style) = if server.enabled && server.connected {
-        ("●", Style::new().fg(token::GOLD))
+        (glyph::EVENT, Style::new().fg(token::GOLD))
     } else {
-        ("○", dim)
+        (glyph::QUEUED, dim)
     };
     let name_style = if selected {
         text.bg(token::HL).add_modifier(Modifier::BOLD)
@@ -344,7 +366,7 @@ fn headline(server: &McpServerInfo, selected: bool) -> Line<'static> {
 
     let mut spans = vec![
         Span::styled(marker.to_string(), Style::new().fg(token::GOLD)),
-        Span::styled(dot, dot_style),
+        Span::styled(dot.to_string(), dot_style),
         Span::raw(" "),
         Span::styled(heading, name_style),
         Span::raw(" ".repeat(pad + 1)),
@@ -435,7 +457,7 @@ fn subline(server: &McpServerInfo, selected: bool, width: usize) -> Line<'static
 
 /// Char-safe truncation with an ellipsis. A `max` under 2 yields an empty
 /// string rather than a lone `…`, which would say less than nothing.
-fn truncate(text: &str, max: usize) -> String {
+pub(super) fn truncate(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_string();
     }
@@ -447,81 +469,80 @@ fn truncate(text: &str, max: usize) -> String {
 }
 
 fn render_search(state: &McpTabState, lines: &mut Vec<Line<'static>>) {
-    let query_line = Line::from(vec![
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+
+    lines.push(Line::from(vec![
         Span::styled(" ⌕ ", Style::new().fg(token::GOLD)),
-        Span::styled(state.query.clone(), Style::new().fg(token::TEXT)),
-        Span::styled("▌", Style::new().fg(token::TEXT)),
-    ]);
-    lines.push(query_line);
+        Span::styled(state.query.clone(), text),
+        Span::styled("▌", text),
+    ]));
     lines.push(Line::default());
 
     if state.searching {
-        lines.push(Line::from(Span::styled("  searching…", theme::accent())));
+        lines.push(Line::from(Span::styled("  searching…", muted)));
         return;
     }
     let Some(outcome) = &state.search else {
         lines.push(Line::from(Span::styled(
-            "  Type a query and press Enter to search the registry.",
-            theme::muted(),
+            "  type a query and press ↵ to search the registry",
+            muted,
         )));
         return;
     };
     if let Some(err) = &outcome.error {
         lines.push(Line::from(Span::styled(
             format!("  search failed: {err}"),
-            Style::default().fg(theme::DANGER_BRIGHT),
+            Style::new().fg(token::RED),
         )));
         return;
     }
     if outcome.items.is_empty() {
         lines.push(Line::from(Span::styled(
             format!("  no servers matching “{}”", outcome.query),
-            theme::muted(),
+            muted,
         )));
         return;
     }
     for (i, item) in outcome.items.iter().enumerate() {
         let selected = i == state.search_selected;
-        let marker = if selected { "▸ " } else { "  " };
         let name_style = if selected {
-            Style::default()
-                .fg(theme::INK)
-                .bg(theme::SELECT_BG)
-                .add_modifier(Modifier::BOLD)
+            text.bg(token::HL).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme::INK)
+            text
         };
         let mut spans = vec![
-            Span::raw(marker),
+            Span::styled(
+                if selected { "▸ " } else { "  " }.to_string(),
+                Style::new().fg(token::GOLD),
+            ),
             Span::styled(item.name.clone(), name_style),
-            Span::styled(format!("  [{}]", item.kinds), theme::muted()),
+            Span::styled(format!("  [{}]", item.kinds), muted),
         ];
         if item.installed {
-            spans.push(Span::styled(
-                "  installed",
-                Style::default().fg(theme::SUCCESS),
-            ));
+            spans.push(Span::styled("  installed", Style::new().fg(token::GREEN)));
         }
         lines.push(Line::from(spans));
         if !item.description.is_empty() {
             lines.push(Line::from(Span::styled(
                 format!("      {}", item.description),
-                theme::muted(),
+                dim,
             )));
         }
     }
     if outcome.has_more {
         lines.push(Line::from(Span::styled(
-            "  … more results (refine the query)",
-            theme::muted(),
+            "  ⋯ more results (refine the query)",
+            dim,
         )));
     }
 }
 
 fn render_auth(state: &McpTabState, lines: &mut Vec<Line<'static>>) {
     lines.push(Line::from(vec![
-        Span::styled("  auth ", theme::accent()),
-        Span::styled(state.auth.server.clone(), Style::default().fg(theme::INK)),
+        Span::styled("  auth ", Style::new().fg(token::GOLD)),
+        Span::styled(state.auth.server.clone(), Style::new().fg(token::TEXT)),
     ]));
     lines.push(Line::default());
     let field_active = state.auth.step == AuthStep::Field;
@@ -539,8 +560,8 @@ fn render_auth(state: &McpTabState, lines: &mut Vec<Line<'static>>) {
     ));
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
-        "  The value is stored in .stella/mcp.toml and never logged.",
-        theme::muted(),
+        "  the value is stored in .stella/mcp.toml and never logged",
+        Style::new().fg(token::DIM),
     )));
 }
 
@@ -551,13 +572,12 @@ fn prompt_line(label: &str, value: &str, active: bool, mask: bool) -> Line<'stat
     } else {
         value.to_string()
     };
-    let value_style = Style::default().fg(theme::INK);
     let mut spans = vec![
-        Span::styled(label.to_string(), theme::accent()),
-        Span::styled(shown, value_style),
+        Span::styled(label.to_string(), Style::new().fg(token::MUTED)),
+        Span::styled(shown, Style::new().fg(token::TEXT)),
     ];
     if active {
-        spans.push(Span::styled("▏", Style::default().fg(theme::ACCENT)));
+        spans.push(Span::styled("▏", Style::new().fg(token::GOLD)));
     }
     Line::from(spans)
 }
@@ -598,6 +618,7 @@ fn footer(mode: McpMode) -> Line<'static> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::envelope::McpSearchItem;
 
     fn flat(line: &Line<'_>) -> String {
         line.spans.iter().map(|s| s.content.as_ref()).collect()
@@ -720,6 +741,62 @@ mod tests {
     #[test]
     fn the_footer_advertises_the_inspector() {
         assert!(flat(&footer(McpMode::Browse)).contains("ctrl+o"));
+    }
+
+    /// **The witness for the port.** Every span the tab paints resolves to a
+    /// [`stella_tui_theme::token`] colour. The search and auth panes were the
+    /// last two surfaces here still painting from the pre-SPEC-5 ramp, and a
+    /// row that keeps its words while changing its metal is exactly the
+    /// regression a `contains` assertion cannot see.
+    #[test]
+    fn every_pane_paints_from_the_token_palette() {
+        const PALETTE: [ratatui::style::Color; 9] = [
+            token::TEXT,
+            token::MUTED,
+            token::DIM,
+            token::GOLD,
+            token::GREEN,
+            token::RED,
+            token::HL,
+            token::SILVER,
+            token::BORDER,
+        ];
+        let mut state = McpTabState {
+            servers: vec![stripe()],
+            query: "stripe".into(),
+            search: Some(McpSearchOutcome {
+                query: "stripe".into(),
+                items: vec![McpSearchItem {
+                    name: "com.stripe/mcp".into(),
+                    description: "Payments.".into(),
+                    kinds: "http".into(),
+                    installed: true,
+                }],
+                has_more: true,
+                error: None,
+            }),
+            ..McpTabState::default()
+        };
+        for mode in [McpMode::Browse, McpMode::Search, McpMode::Auth] {
+            state.mode = mode;
+            let mut lines = Vec::new();
+            match mode {
+                McpMode::Browse => render_browse(&state, &mut lines, 80),
+                McpMode::Search => render_search(&state, &mut lines),
+                McpMode::Auth => render_auth(&state, &mut lines),
+            }
+            for line in &lines {
+                for span in &line.spans {
+                    for colour in [span.style.fg, span.style.bg].into_iter().flatten() {
+                        assert!(
+                            PALETTE.contains(&colour),
+                            "{mode:?}: {:?} is painted {colour:?}, which is not a token",
+                            span.content
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
