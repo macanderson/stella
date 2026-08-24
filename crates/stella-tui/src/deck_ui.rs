@@ -812,7 +812,7 @@ pub struct DeckUi {
     /// on. Modal ahead of everything but Ctrl-C while a question is up —
     /// nothing else in this struct holds a live tool call open, which is why
     /// it wins the keyboard over every other modal here.
-    pub question: crate::views::question::QuestionOverlay,
+    pub question: crate::v2::question::QuestionOverlay,
     /// The approval card (#4240): the yes/no a parked **dispatch** waits on.
     /// Outranks `question` for the keyboard — a call about to execute is a
     /// tighter gate than a decision being deliberated, and it carries the
@@ -909,7 +909,7 @@ impl Default for DeckUi {
             pending_inputs: Vec::new(),
             engine: crate::v2::engine_panel::EngineOverlay::default(),
             tools: crate::v2::tools::ToolsOverlay::default(),
-            question: crate::views::question::QuestionOverlay::default(),
+            question: crate::v2::question::QuestionOverlay::default(),
             approval: crate::v2::approval::ApprovalOverlay::default(),
             model_picker: crate::v2::picker::ListPicker::default(),
             agent_picker: crate::v2::picker::ListPicker::default(),

@@ -117,7 +117,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         DeckTab::Traces => views::traces::render(model, ui, content, b),
         DeckTab::Graph => views::graph::render(model, ui, content, b),
         DeckTab::Files => views::files::render(model, ui, content, b),
-        DeckTab::Skills => views::skills::render(model, ui, content, b),
+        DeckTab::Skills => crate::v2::skills::render(model, ui, content, b),
         DeckTab::Mcp => crate::v2::mcp_tab::render(model, ui, content, b),
         DeckTab::Issues => {
             crate::v2::issues_tab::render(model.pr.as_ref(), &ui.issues, ui.accessible, content, b)

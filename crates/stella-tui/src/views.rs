@@ -28,8 +28,6 @@ pub(crate) fn spinner_glyph(now_ms: u64, no_anim: bool) -> &'static str {
 pub(crate) mod cards;
 pub mod files;
 pub mod graph;
-pub mod question;
 pub mod session;
 pub mod settings;
-pub mod skills;
 pub mod traces;
