@@ -315,7 +315,7 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             else {
                 return Response::error("400 Bad Request", "missing ?provider=&slug=");
             };
-            model_card::model_card(&provider, &slug)
+            model_card::model_card(&model_card::default_catalog_db(), &provider, &slug)
         }
         // The transcript replay (#1461). `full=1` lifts the per-body clip —
         // fetched whole on drawer-open. `after_seq=<n>` (#1476) narrows to
