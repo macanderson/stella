@@ -233,7 +233,7 @@ it; `SlashKind` only distinguishes built-in from user-authored rows by glyph.
 `/files`, `/diff`, `/graph`, `/agents`, `/skills`, `/mcp`, `/mcp-search`,
 `/settings`, `/sessions`, `/context`, `/inspect`, `/inbox`, the floating
 cards `/plan`, `/info`, `/budget`, and the session-override pickers
-`/model`, `/agent` ([`src/views/picker.rs`](src/views/picker.rs)) — because
+`/model`, `/agent` ([`src/v2/picker.rs`](src/v2/picker.rs)) — because
 they change view state the driver has no say over. (`/budget` renders locally
 but its *edit* leaves as `WorkspaceInput::SetBudget`; the deck shows only the
 cap the budget stream folds back.) Everything else, `/help` included, is

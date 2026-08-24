@@ -815,11 +815,11 @@ pub struct DeckUi {
     /// shorter of the two deadlines.
     pub approval: crate::views::approval::ApprovalOverlay,
     /// The `/model` picker: switch this session's model. Modal while open;
-    /// rows come live from `engine.state` (see [`crate::views::picker`]).
-    pub model_picker: crate::views::picker::ListPicker,
+    /// rows come live from `engine.state` (see [`crate::v2::picker`]).
+    pub model_picker: crate::v2::picker::ListPicker,
     /// The `/agent` picker: assume an installed agent this session. Modal
     /// while open; rows come live from `installed.entries`.
-    pub agent_picker: crate::views::picker::ListPicker,
+    pub agent_picker: crate::v2::picker::ListPicker,
 }
 
 impl Default for DeckUi {
@@ -906,8 +906,8 @@ impl Default for DeckUi {
             tools: crate::views::tools::ToolsOverlay::default(),
             question: crate::views::question::QuestionOverlay::default(),
             approval: crate::views::approval::ApprovalOverlay::default(),
-            model_picker: crate::views::picker::ListPicker::default(),
-            agent_picker: crate::views::picker::ListPicker::default(),
+            model_picker: crate::v2::picker::ListPicker::default(),
+            agent_picker: crate::v2::picker::ListPicker::default(),
         }
     }
 }

@@ -24,6 +24,7 @@ pub mod frame;
 pub mod graph;
 pub mod graph_tab;
 pub mod models_card;
+pub mod picker;
 pub mod plan_card;
 pub mod pulse;
 pub mod sessions;

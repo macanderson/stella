@@ -199,15 +199,17 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // body of the SETTINGS tab — see `views::settings::render`.)
 
     // The session-override pickers (`/model`, `/agent`): modal cards like
-    // the floating ones above; the parked asks still win the top.
+    // the floating ones above; the parked asks still win the top. They take
+    // the content band rather than the frame, so the card sits on its last
+    // row whatever the composer and the status bar are spending below.
     if ui.model_picker.open {
         guarded_overlay(buf, area, "model picker", |b| {
-            views::picker::render_model(model, ui, area, b)
+            crate::v2::picker::render_model(model, ui, content, b)
         });
     }
     if ui.agent_picker.open {
         guarded_overlay(buf, area, "agent picker", |b| {
-            views::picker::render_agent(ui, area, b)
+            crate::v2::picker::render_agent(ui, content, b)
         });
     }
 
