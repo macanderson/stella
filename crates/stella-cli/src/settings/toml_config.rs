@@ -46,8 +46,8 @@ use super::authority::ManagedAuthoritySettings;
 use super::context::ContextSettings;
 use super::context_providers::ContextProviderSettings;
 use super::{
-    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, McpSettings, ProviderSettings,
-    RewardSettings, Settings, Toggle, ToolsSettings, UiSettings,
+    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, McpSettings, PlanReviewSettings,
+    ProviderSettings, RewardSettings, Settings, Toggle, ToolsSettings, UiSettings,
 };
 
 /// The schema version this build writes and understands.
@@ -317,6 +317,15 @@ pub struct TomlConfig {
     /// Same shape in JSON and TOML, so no lowering beyond the move.
     #[serde(default)]
     pub reward: Option<RewardSettings>,
+    /// `[plan_review]` — whether the deck's plan gate is installed and how big
+    /// a plan has to be before it fires (#4611). Same shape in JSON and TOML,
+    /// so no lowering beyond the move.
+    ///
+    /// A top-level section rather than a key under `[run]` because it is a
+    /// block of two, and `[run]`'s contract is scalars that used to be bare
+    /// root keys.
+    #[serde(default)]
+    pub plan_review: Option<PlanReviewSettings>,
     /// Honored only from the managed tier; see [`Settings::managed_authority`].
     #[serde(default)]
     pub authority: Option<ManagedAuthoritySettings>,
@@ -590,6 +599,7 @@ impl TomlConfig {
             ui,
             plugins,
             reward,
+            plan_review,
             authority,
             enterprise_telemetry,
             // Deliberately not lowered into `Settings`. Both are read straight
@@ -632,6 +642,7 @@ impl TomlConfig {
             allowed_dirs: workspace.allowed_dirs,
             ui,
             reward,
+            plan_review,
             context,
             context_providers,
             plugins,

@@ -495,6 +495,33 @@ per_revision = 0.1            # subtracted per verification round beyond the fir
 
 
 # -----------------------------------------------------------------------------
+# PLAN REVIEW — the deck asks before it starts a plan
+#
+# Before the first step of a plan runs, the task board goes to whoever is
+# driving as a card they can approve or send back. Whether there is a gate at
+# all, and how big a plan has to be before it fires, live here rather than
+# compiled in.
+#
+# `enabled = "off"` is the interactive driver saying they do not want to be
+# asked. It is a different thing from an unattended run, which installs no gate
+# anyway because nobody is there to answer one.
+#
+# `min_steps` counts OPEN board rows, so a board most of the way through its work
+# does not raise a card over its last remaining step. 1 asks about every plan; 0
+# is refused at launch, because an empty board has no open rows and `enabled` is
+# how you say off.
+#
+# `stella run --plan-mode` overrides both for one invocation.
+#
+# Whole-block last-wins across scopes, like [ui] and [reward]: the switch and the
+# threshold are one policy, so a scope that declares either states both.
+# -----------------------------------------------------------------------------
+[plan_review]
+enabled = "on"      # "off" withholds the card entirely
+min_steps = 3       # open steps that raise a card
+
+
+# -----------------------------------------------------------------------------
 # SELF-DRIVING — the autonomous loop's own configuration
 #
 # Here rather than in a file of its own because everything configurable about

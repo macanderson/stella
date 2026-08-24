@@ -80,6 +80,7 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
         tool_policy,
         ignore_gitignore,
         reward_policy,
+        plan_review,
         create_worktrees,
         allowed_write_dirs,
         authority,
@@ -204,6 +205,11 @@ fn ledger(before: &Config, after: &Config) -> Vec<Field> {
             moved: reward_policy != &before.reward_policy,
         },
         Field {
+            name: "plan_review",
+            posture: Posture::Reloaded,
+            moved: plan_review != &before.plan_review,
+        },
+        Field {
             name: "create_worktrees",
             posture: Posture::Reloaded,
             moved: create_worktrees != &before.create_worktrees,
@@ -266,7 +272,8 @@ const EVERY_RELOADABLE_KEY: &str = r#"{
   "tools": { "bash": "off" },
   "ignore_gitignore": "off",
   "create_worktrees": "never",
-  "reward": { "deterministic_weight": 2.0 }
+  "reward": { "deterministic_weight": 2.0 },
+  "plan_review": { "enabled": "off", "min_steps": 7 }
 }"#;
 
 /// The org-managed half of the same document.

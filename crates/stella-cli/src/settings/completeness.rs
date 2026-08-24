@@ -97,6 +97,7 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         allowed_dirs,
         ui,
         reward,
+        plan_review,
         context,
         context_providers,
         plugins,
@@ -137,6 +138,11 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         ),
         keyed("ui", Posture::Merged, ui != &d.ui),
         keyed("reward", Posture::Merged, reward != &d.reward),
+        keyed(
+            "plan_review",
+            Posture::Merged,
+            plan_review != &d.plan_review,
+        ),
         keyed("context", Posture::Merged, context != &d.context),
         keyed(
             "context_providers",
@@ -301,6 +307,7 @@ const EVERY_KEY: &str = r#"{
   "allowed_dirs": ["/srv/shared"],
   "ui": { "theme": "stella-light" },
   "reward": { "deterministic_weight": 2.0 },
+  "plan_review": { "enabled": "off", "min_steps": 7 },
   "context": { "lifecycle": { "enabled": false } },
   "context_providers": {
     "docs": { "transport": "stdio", "command": "docs-provider", "enabled": true }
@@ -552,6 +559,7 @@ fn the_toml_root_vocabulary_matches_the_document() {
         ui: _,
         plugins: _,
         reward: _,
+        plan_review: _,
         authority: _,
         enterprise_telemetry: _,
         self_driving: _,
@@ -577,6 +585,7 @@ fn the_toml_root_vocabulary_matches_the_document() {
         "ui",
         "plugins",
         "reward",
+        "plan_review",
         "authority",
         "enterprise_telemetry",
         "self_driving",

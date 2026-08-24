@@ -285,14 +285,17 @@ pub(crate) struct GlobalArgs {
 
     /// Show the plan and wait for approval before anything runs.
     ///
-    /// Scope review already interrupts for a *large* plan (more than 5 steps,
-    /// 8 files, or $1.00 estimated). This asks for the plan whatever its size
-    /// — the size thresholds answer "is this big?", and only you can answer
-    /// "do I want to see it first?". The gate sits ahead of the stage that
-    /// touches your working tree, so declining leaves it untouched.
+    /// The deck's plan gate already interrupts for a plan of `plan_review.min_steps`
+    /// open steps or more (three by default). This asks for the plan whatever
+    /// its size — the threshold answers "is this big?", and only you can answer
+    /// "do I want to see it first?". It also installs the gate where the
+    /// settings switched it off, because a flag is the most specific statement
+    /// anyone can make. The card goes up before the first step runs, so
+    /// sending the plan back leaves your tree untouched.
     ///
-    /// Needs an interactive terminal: there is nobody to ask in a headless
-    /// run, and silently proceeding would deliver the opposite of the ask.
+    /// Needs an interactive terminal: with nobody at the keyboard there is
+    /// nobody to ask, and silently proceeding would deliver the opposite of
+    /// the ask.
     //
     // `--plan-mode`, not `--plan`: `stella fleet --plan <file>` already owns
     // that name, and a global sharing it does not shadow cleanly — clap

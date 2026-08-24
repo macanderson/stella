@@ -374,6 +374,7 @@ mod tests {
             tool_policy: Default::default(),
             ignore_gitignore: true,
             reward_policy: crate::reward::RewardPolicy::default(),
+            plan_review: crate::settings::PlanReviewPolicy::default(),
             authority: crate::settings::AuthorityPolicy::default(),
             credential_source: None,
             credential_advisories: Vec::new(),

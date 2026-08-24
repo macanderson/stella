@@ -71,6 +71,7 @@ pub(super) const ROOT_FIELDS: &[&str] = &[
     "allowed_dirs",
     "ui",
     "reward",
+    "plan_review",
     "context",
     "context_providers",
     "plugins",
@@ -97,6 +98,11 @@ const MCP_FIELDS: &[&str] = &["registry_url"];
 
 /// `ui` — [`super::UiSettings`].
 const UI_FIELDS: &[&str] = &["theme", "mid_turn_prompt"];
+
+/// `plan_review` — [`super::PlanReviewSettings`]. Closed: the block has two
+/// keys and a mistyped one silently leaves the shipped gate in place, which is
+/// exactly the "my setting does nothing" report this walker exists to prevent.
+const PLAN_REVIEW_FIELDS: &[&str] = &["enabled", "min_steps"];
 
 /// `reward` — [`super::RewardSettings`]. Closed: a mistyped weight key is the
 /// exact failure this walker exists for, because the typo and the correct key
@@ -468,6 +474,7 @@ pub(super) const TOML_ROOT_FIELDS: &[&str] = &[
     "context_providers",
     "ui",
     "reward",
+    "plan_review",
     "authority",
     "enterprise_telemetry",
     // `[self_driving]` and `[issues]` — the autonomous loop's own
@@ -577,6 +584,7 @@ fn scan_toml_root(root: &Value, found: &mut Vec<String>) {
             "mcp" => closed("mcp", value, TOML_MCP_FIELDS, found),
             "ui" => closed("ui", value, UI_FIELDS, found),
             "reward" => closed("reward", value, REWARD_FIELDS, found),
+            "plan_review" => closed("plan_review", value, PLAN_REVIEW_FIELDS, found),
             "hooks" => closed("hooks", value, HOOK_EVENTS, found),
             "providers" => {
                 if let Some(entries) = value.as_object() {
@@ -658,6 +666,7 @@ fn scan_root(root: &Value, found: &mut Vec<String>) {
             "mcp" => closed("mcp", value, MCP_FIELDS, found),
             "ui" => closed("ui", value, UI_FIELDS, found),
             "reward" => closed("reward", value, REWARD_FIELDS, found),
+            "plan_review" => closed("plan_review", value, PLAN_REVIEW_FIELDS, found),
             "hooks" => closed("hooks", value, HOOK_EVENTS, found),
             "agent_engine_config" => scan_engine(value, found),
             // `tools`, `context_providers`, `context`, `authority`, and
