@@ -58,7 +58,7 @@ pub fn render(ui: &mut DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
     }
 }
 
-/// The toolbelt cell text: the granted tools, or the honest "all tools"
+/// The toolbelt cell text: the granted tools - or 'all tools'
 /// when the definition doesn't restrict them.
 #[must_use]
 pub fn toolbelt_label(tools: &Option<Vec<String>>) -> String {
@@ -504,7 +504,7 @@ fn render_create_done(panel: &mut InstalledPanel, area: Rect, buf: &mut Buffer) 
         .and_then(|name| panel.entries.iter().find(|e| &e.name == name))
         .cloned();
     let Some(entry) = entry else {
-        // The name vanished between snapshots — degrade honestly.
+        // The name vanished between snapshots — degrade.
         render_head(
             vec![
                 Span::styled("new agent", text),
