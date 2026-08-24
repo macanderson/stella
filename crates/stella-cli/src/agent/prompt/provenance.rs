@@ -92,8 +92,9 @@ const BASE_LABEL: &str = "Base instructions";
 
 /// Where that span comes from — named so a reader who wants it different
 /// knows which field to set.
-const BASE_SOURCE: &str =
-    "the built-in persona, replaced whole by agents.default.prompt (model settings)";
+const BASE_SOURCE: &str = "the built-in persona (default, pipeline, or minimal via --minimal / \
+                           [agents] minimal_prompt), replaced — or in minimal mode extended — by \
+                           agents.default.prompt (model settings)";
 
 /// One labelled span of a system prompt: where it came from, and its exact
 /// bytes.

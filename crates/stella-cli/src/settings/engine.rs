@@ -200,6 +200,15 @@ pub struct AgentEngineConfig {
     /// `agents.default.reasoning`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_auto: Option<Toggle>,
+    /// `on` = the session's base persona is the minimal one
+    /// (`crate::agent::prompt`'s `MINIMAL_SYSTEM_PROMPT`): a bare tool
+    /// advertisement, so the prompt-mutating settings — `agents.default.prompt`
+    /// (which appends after the minimal base instead of replacing it),
+    /// workspace memories, rules, SessionStart hook context — carry the prose.
+    /// `[agents] minimal_prompt` in TOML; `--minimal` forces it on for one
+    /// invocation without touching this key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimal_prompt: Option<Toggle>,
     /// `on` = a headless `stella run` proceeds past scope review instead of
     /// stopping at `ScopeReviewRequiredHeadless`. Only `stella run` reads it:
     /// `stella goal` and fleet workers keep the hard-off constant.
@@ -434,6 +443,7 @@ impl AgentEngineConfig {
         take!(auto_mode);
         take!(effort_auto);
         take!(reasoning_auto);
+        take!(minimal_prompt);
         // Was omitted from this list: a higher-precedence scope setting it
         // had its value discarded, so the LOWER scope silently won the one
         // knob deciding whether an unattended run may proceed past scope
@@ -524,6 +534,10 @@ impl AgentEngineConfig {
 
     pub fn reasoning_auto_on(&self) -> bool {
         self.reasoning_auto.is_some_and(Toggle::is_on)
+    }
+
+    pub fn minimal_prompt_on(&self) -> bool {
+        self.minimal_prompt.is_some_and(Toggle::is_on)
     }
 
     /// Whether a headless run skips the (now-removed) staged pipeline's

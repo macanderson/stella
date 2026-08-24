@@ -607,6 +607,7 @@ default_model = "a/b"
 auto_mode = "on"
 effort_auto = "off"
 reasoning_auto = "on"
+minimal_prompt = "on"
 headless_scope_bypass = "on"
 
 [seats]
@@ -630,6 +631,7 @@ headless_scope_bypass = "on"
     assert!(engine.auto_mode_on());
     assert!(!engine.effort_auto_on());
     assert!(engine.reasoning_auto_on());
+    assert!(engine.minimal_prompt_on());
     assert!(engine.headless_scope_bypass_on());
 }
 

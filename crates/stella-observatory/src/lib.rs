@@ -56,6 +56,7 @@ mod self_driving;
 mod self_driving_sessions;
 mod sent_context;
 mod sessions;
+mod system_prompt;
 mod transcript_view;
 mod turn_agents;
 
