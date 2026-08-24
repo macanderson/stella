@@ -35,13 +35,20 @@
 //! plan is usually "yes, but not that third step" rather than yes or no. The
 //! modal scope dialog #3861 deleted is deliberately not rebuilt.
 //!
-//! # Not installed when nobody can answer
+//! # Not installed when nobody can answer, or when nobody wants to be asked
 //!
 //! [`QuestionBroker::is_attached`] decides whether the gate exists at all.
 //! With no driver — a non-interactive run, a worker lane — the gate is not installed
 //! rather than installed and auto-approving, which is the rule
 //! [`AgentEvent::HunkReview`]'s own doc states for the sibling gate. Such a
 //! run therefore emits no `ScopeReview` and parks on nothing.
+//!
+//! The second reason to return `None` is that somebody said so:
+//! [`PlanReviewPolicy`] carries the `plan_review` settings block (#4611), and
+//! `enabled: false` withholds the gate from an attached driver too. Its
+//! `min_steps` is the other half — the threshold below was a `const` chosen by
+//! judgement, and a judgement number a person cannot change is one they answer
+//! once per plan forever.
 //!
 //! # The failure direction, and why it differs from an approval
 //!
@@ -62,17 +69,9 @@ use stella_protocol::{
     QuestionRequest, ScopeProposal, StageKind, StageScope, TaskItem, ToolOutput,
 };
 use stella_tools::registry::question::QuestionBroker;
-use tokio::sync::mpsc::UnboundedSender;
 
-/// How many steps a plan needs before the driver is asked to look at it.
-///
-/// Not a measurement — a judgement about attention, and the one number in
-/// this module a maintainer is likely to want to change. A one- or two-step
-/// plan is already legible from the transcript as it happens, so stopping the
-/// turn to present it spends more of the driver's attention than it saves.
-/// Three is where a plan stops being a description of the next thing and
-/// starts being a commitment worth redirecting before it runs.
-const MIN_STEPS_TO_REVIEW: usize = 3;
+use crate::settings::PlanReviewPolicy;
+use tokio::sync::mpsc::UnboundedSender;
 
 /// The label whose selection means "run this plan". Matched by exact string
 /// against [`stella_protocol::Answer::chosen`], so it is named once here
@@ -97,7 +96,42 @@ pub(crate) struct PlanGate {
     events: UnboundedSender<AgentEvent>,
     /// The plan's one-line headline: what the driver asked for.
     goal: String,
+    /// How many open steps raise a card, from the settings chain and this
+    /// invocation's `--plan-mode` (#4611). Read on every call rather than folded
+    /// into `install`, so the number the gate applies is the one a reader can
+    /// see beside the comparison.
+    min_steps: usize,
     state: Mutex<GateState>,
+}
+
+/// What one turn hands the gate: the plan's headline and the policy that
+/// decides whether there is a gate at all.
+///
+/// One argument rather than two because they are resolved at the same place
+/// for the same reason — the deck's lead turn is the only caller that knows
+/// both the conversation and the config — and because `TaskTap::new` is
+/// already at the width where a fifth positional `usize` stops saying which
+/// number it is.
+pub(crate) struct PlanSetup {
+    /// What the person driving last asked for ([`plan_goal`]).
+    pub(crate) goal: String,
+    /// The `plan_review` policy this invocation applies.
+    pub(crate) policy: PlanReviewPolicy,
+}
+
+impl PlanSetup {
+    /// The setup for one turn: the headline read off `messages`, and the
+    /// settings policy composed with this invocation's `--plan-mode` flag.
+    ///
+    /// Both sources are joined here, once, so no caller downstream can apply
+    /// only one of the two — the same discipline `Config::allowed_write_dirs`
+    /// applies to its flag.
+    pub(crate) fn for_turn(messages: &[CompletionMessage], cfg: &crate::config::Config) -> Self {
+        Self {
+            goal: plan_goal(messages),
+            policy: cfg.plan_review.for_run(cfg.plan_mode),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -113,16 +147,22 @@ struct GateState {
 }
 
 impl PlanGate {
-    /// The gate, or `None` when nobody is attached to answer it.
+    /// The gate, or `None` when nobody is attached to answer it — or when the
+    /// `plan_review` policy withholds it.
+    ///
+    /// The switch needed no new plumbing to reach the engine (#4611):
+    /// `install` already answered "no" for the unattended case, so `off` is one
+    /// more reason to return `None`.
     pub(crate) fn install(
         questions: QuestionBroker,
         events: UnboundedSender<AgentEvent>,
-        goal: String,
+        plan: PlanSetup,
     ) -> Option<Self> {
-        questions.is_attached().then_some(Self {
+        (plan.policy.enabled && questions.is_attached()).then_some(Self {
             questions,
             events,
-            goal,
+            goal: plan.goal,
+            min_steps: plan.policy.min_steps,
             state: Mutex::new(GateState::default()),
         })
     }
@@ -137,7 +177,7 @@ impl PlanGate {
         let steps = plan_steps(board);
         let revision = {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            if state.approved || steps.len() < MIN_STEPS_TO_REVIEW {
+            if state.approved || steps.len() < self.min_steps {
                 return None;
             }
             state.proposals += 1;
@@ -197,8 +237,8 @@ impl PlanGate {
 ///
 /// Terminal rows are left out. A plan that already has work behind it is not
 /// what the driver is being asked to agree to, and counting finished steps
-/// toward [`MIN_STEPS_TO_REVIEW`] would raise a card over a single remaining
-/// task.
+/// toward [`PlanReviewPolicy::min_steps`] would raise a card over a single
+/// remaining task.
 fn plan_steps(board: &[TaskItem]) -> Vec<String> {
     board
         .iter()

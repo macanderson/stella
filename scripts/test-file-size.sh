@@ -375,6 +375,68 @@ commit "$r" "a tree well inside the limit"
 want "C3 --absolute passes a tree within its ceilings" \
   expect-pass "$r" "check-file-size: OK" "--absolute"
 
+# ── --update raises; --retighten lowers, and only when asked (#4657) ──────────
+#
+# The retighten was unconditional, so the PR repairing a red `main` also lowered
+# every ceiling it never looked at, measured on a branch main was about to
+# overtake. #4652 lowered command_deck.rs from 3752 to 3656 while main's copy
+# was 3737, and #4654 — main red again, every open PR held — was the result.
+#
+# U1 is the witness: the same run that raises the ceiling it was called for must
+# leave the untouched entry alone. U2 is what stops that becoming a freeze, and
+# U3/U4 pin the two edits raise-only must still make, because the check hard-
+# fails on both and names `--update` as the only remedy.
+
+# $1 = name, $2 = repo, $3 = path, $4 = expected ceiling or "absent".
+entry_is() {
+  local name="$1" dir="$2" path="$3" want_val="$4" got
+  got="$(awk -v p="$path" '$2 == p { print $1 }' "$dir/scripts/file-size-baseline.txt")"
+  [ -n "$got" ] || got="absent"
+  if [ "$got" = "$want_val" ]; then
+    pass=$((pass + 1)); echo "ok   $name"
+  else
+    fail=$((fail + 1)); echo "FAIL $name — baseline says '$got' for $path, wanted '$want_val'"
+  fi
+}
+
+# The repair shape: one file grew past its ceiling and must be admitted; a
+# sibling god file happens to be smaller on this branch than the number main
+# recorded for it. Only the first may move.
+r="$(new_repo "update_raise_only")"
+plant "$r" "src/grew.rs" 1700
+plant "$r" "src/sibling.rs" 1600
+set_baseline "$r" "1650 src/grew.rs" "1690 src/sibling.rs"
+"$r/scripts/check-file-size.sh" --update >/dev/null 2>&1
+entry_is "U1 --update raises the ceiling that had to move" "$r" src/grew.rs 1700
+entry_is "U2 --update leaves an unrelated ceiling where it was" "$r" src/sibling.rs 1690
+
+# The deliberate pass, which is the whole point of keeping the old behaviour
+# available: asked for by name, it reclaims the slack.
+"$r/scripts/check-file-size.sh" --update --retighten >/dev/null 2>&1
+entry_is "U3 --retighten lowers the unrelated ceiling when asked" "$r" src/sibling.rs 1600
+
+# Raise-only must still RETIRE. Both of these are hard failures of the check
+# with `--update` named as the only remedy, so a mode that kept them would
+# leave the gate red with no way out.
+r="$(new_repo "update_retires")"
+plant "$r" "src/split.rs" 900
+plant "$r" "src/still_big.rs" 1600
+set_baseline "$r" "2400 src/split.rs" "1600 src/still_big.rs" "1800 src/deleted.rs"
+"$r/scripts/check-file-size.sh" --update >/dev/null 2>&1
+entry_is "U4 --update retires an entry whose file dropped under the limit" "$r" src/split.rs absent
+entry_is "U5 --update retires an entry whose file is gone" "$r" src/deleted.rs absent
+entry_is "U6 --update leaves the entry that is still earning its place" "$r" src/still_big.rs 1600
+
+# And the refusal is unchanged by the split: neither mode may grandfather a
+# first-time crossing.
+r="$(new_repo "update_still_refuses")"
+plant "$r" "src/new.rs" 1600
+set_baseline "$r"
+"$r/scripts/check-file-size.sh" --update >/dev/null 2>&1
+entry_is "U7 --update still refuses to add an entry for a first-time crossing" "$r" src/new.rs absent
+"$r/scripts/check-file-size.sh" --update --retighten >/dev/null 2>&1
+entry_is "U8 --retighten refuses it too" "$r" src/new.rs absent
+
 echo
 echo "passed ${pass}, failed ${fail}"
 [ "$fail" -eq 0 ]

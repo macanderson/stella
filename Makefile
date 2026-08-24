@@ -37,7 +37,7 @@ CARGO_SCOPE ?= --workspace
 # saved nothing and let a GATE=fast push land stale generated wire artifacts.
 GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-pins \
                     license-allowlist-parity repro-wiring shellcheck invariants doc-links \
-                    command-docs brand-case file-size god-files gate-parity left-behind \
+                    command-docs website-inputs brand-case file-size god-files gate-parity left-behind \
                     role-names stat-portability module-reachability typed-errors \
                     tool-error-class \
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
@@ -300,6 +300,10 @@ doc-adopt: ## Scaffold frontmatter onto a document so it can be cited: make doc-
 command-docs: ## Assert every stella subcommand has a listed reference page (#993)
 	@./scripts/check-command-docs.sh
 
+.PHONY: website-inputs
+website-inputs: ## Assert every website/ path a Rust source reads is declared and present (#4632)
+	@./scripts/check-website-inputs.sh
+
 .PHONY: brand-case
 brand-case: ## Assert docs prose spells the wordmark lowercase (#1500)
 	@./scripts/check-brand-case.sh
@@ -342,9 +346,19 @@ wire-paths-test: ## Test the wire-path guard's failure directions (hermetic; not
 file-size: ## Assert no new source file exceeds the 1500-line ratchet (#629, #825, #1563, #3811)
 	@./scripts/check-file-size.sh
 
+# Raise-only: it moves the ceilings that must move for this tree to pass and
+# leaves every other entry at the number it had. A repair PR then edits exactly
+# the lines it needs, instead of lowering twenty ceilings measured on a branch
+# that main is about to overtake (#4657).
 .PHONY: file-size-update
-file-size-update: ## Retighten the 1500-line ratchet baseline (run after splitting a file)
+file-size-update: ## Raise the 1500-line ratchet ceilings this tree needs, lowering none (#4657)
 	@./scripts/check-file-size.sh --update
+
+# The other direction, and a PR of its own: reclaiming the slack a split earned
+# is safe exactly when nothing is blocked on it.
+.PHONY: file-size-retighten
+file-size-retighten: ## Lower every ceiling to its file's current size (a deliberate, separate pass)
+	@./scripts/check-file-size.sh --update --retighten
 
 .PHONY: tokens
 tokens: ## Validate the colour system: hue clamp, generated-file sync, no retired hex
@@ -748,6 +762,14 @@ automerge-nudge-test: ## Test which PR the auto-merge nudge picks (hermetic; not
 .PHONY: file-size-test
 file-size-test: ## Test the file-size ratchet's language coverage and its change-relative judgement (hermetic; not part of `gate`)
 	./scripts/test-file-size.sh
+
+.PHONY: website-inputs-test
+website-inputs-test: ## Test the website-inputs guard's three failure directions (hermetic; not part of `gate`)
+	./scripts/test-website-inputs.sh
+
+.PHONY: ci-rust-scope-test
+ci-rust-scope-test: ## Test which diffs run the Rust gate, prose skips and fail-open included (hermetic; not part of `gate`)
+	./scripts/test-ci-rust-scope.sh
 
 .PHONY: no-scratch-test
 no-scratch-test: ## Test the session-scratch boundary: the ignore rules and the guard together (#2888; hermetic; not part of `gate`)

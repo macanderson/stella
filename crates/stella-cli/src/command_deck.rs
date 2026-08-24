@@ -118,7 +118,7 @@ use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
-use task_tap::{TaskTap, plan_goal};
+use task_tap::{PlanSetup, TaskTap};
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
@@ -3660,10 +3660,12 @@ async fn run_lead_turn(
             Principal::User,
             registry.hook_bus(),
         );
-        // The plan gate's headline (#4594) and this turn's id, which every lane
-        // it spawns records (#4628) — both before the engine borrows `messages`.
-        let (goal, turn) = (plan_goal(messages), execution.as_ref().map(|(_, id)| *id));
-        let tap = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx), goal, turn);
+        // Both read before the engine borrows `messages` mutably: the plan
+        // gate's setup (`task_tap::plan_gate`, #4594/#4611) and this turn's
+        // id, which every lane it spawns records (#4628).
+        let plan = PlanSetup::for_turn(messages, cfg);
+        let turn = execution.as_ref().map(|(_, id)| *id);
+        let tap = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx), plan, turn);
         let hook_runner = HostHookRunner;
         let mut engine =
             Engine::with_sleeper(provider, &tap, agent::engine_config_for(cfg), &TokioSleeper)

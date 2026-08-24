@@ -240,6 +240,14 @@ The cards below are in `stella --help`'s own order, for the same reason the subc
     interactive terminal — there is nobody to ask in a headless run. Scope review already
     interrupts for a *large* plan on its own.
   </OptionCard>
+  <OptionCard name="--minimal" defaultValue="off">
+    Run this session on the minimal base system prompt: a bare tool advertisement in
+    place of the built-in persona, so the prose the model is steered by comes from your
+    own prompt settings — `agents.default.prompt` (which appends after the minimal base),
+    workspace memories, rules, and SessionStart hook context. Durable spelling:
+    `[agents] minimal_prompt = "on"` in `stella.toml`. Env `STELLA_MINIMAL`. The flag
+    forces the mode on for one invocation; it can never turn a configured mode off.
+  </OptionCard>
   <OptionCard name="--tools <spec>" defaultValue="settings">
     Turn tools off for this run only: `--tools '*:off,task_list:on,get_state:on'` is a
     read-only run. Same spelling as the settings `tools` table. **Can only narrow** — it

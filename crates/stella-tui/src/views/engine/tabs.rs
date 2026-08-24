@@ -12,7 +12,7 @@
 //! is added, and then it silently renders one tab fewer than the settings file
 //! has pages: the role is configurable, the deck simply never offers it.
 
-use crate::envelope::EngineRole;
+use crate::envelope::{EngineConfigState, EngineRole};
 
 /// Which tab of the overlay has the keyboard: the GLOBAL toggles or one of
 /// the per-agent override pages. GLOBAL comes first — the cross-agent
@@ -71,13 +71,15 @@ pub(super) enum GlobalRow {
     AutoMode,
     EffortAuto,
     ReasoningAuto,
+    MinimalPrompt,
     AllowedModels,
 }
 
-pub(super) const GLOBAL_ROWS: [GlobalRow; 4] = [
+pub(super) const GLOBAL_ROWS: [GlobalRow; 5] = [
     GlobalRow::AutoMode,
     GlobalRow::EffortAuto,
     GlobalRow::ReasoningAuto,
+    GlobalRow::MinimalPrompt,
     GlobalRow::AllowedModels,
 ];
 
@@ -87,7 +89,51 @@ impl GlobalRow {
             GlobalRow::AutoMode => "auto_mode",
             GlobalRow::EffortAuto => "effort_auto",
             GlobalRow::ReasoningAuto => "reasoning_auto",
+            GlobalRow::MinimalPrompt => "minimal_prompt",
             GlobalRow::AllowedModels => "allowed_models",
+        }
+    }
+
+    /// This row's on/off flag in `state` — `None` for `AllowedModels`, which
+    /// is a list, not a switch. The one place the row→field mapping lives for
+    /// the parent's flip/clear/render sites, so a new toggle row is an arm
+    /// here (plus [`Self::flag_mut`]'s) rather than three edits in a god file
+    /// closed to growth (AGENTS.md § "God files").
+    pub(super) fn flag(self, state: &EngineConfigState) -> Option<bool> {
+        match self {
+            GlobalRow::AutoMode => Some(state.auto_mode),
+            GlobalRow::EffortAuto => Some(state.effort_auto),
+            GlobalRow::ReasoningAuto => Some(state.reasoning_auto),
+            GlobalRow::MinimalPrompt => Some(state.minimal_prompt),
+            GlobalRow::AllowedModels => None,
+        }
+    }
+
+    /// [`Self::flag`]'s mutable twin. A second match over the same mapping
+    /// because a shared projection cannot serve both borrow shapes; the two
+    /// sit adjacent so an arm added to one is visibly missing from the other.
+    fn flag_mut(self, state: &mut EngineConfigState) -> Option<&mut bool> {
+        match self {
+            GlobalRow::AutoMode => Some(&mut state.auto_mode),
+            GlobalRow::EffortAuto => Some(&mut state.effort_auto),
+            GlobalRow::ReasoningAuto => Some(&mut state.reasoning_auto),
+            GlobalRow::MinimalPrompt => Some(&mut state.minimal_prompt),
+            GlobalRow::AllowedModels => None,
+        }
+    }
+
+    /// ⏎/space on a toggle row: flip it. A no-op for `AllowedModels`, whose
+    /// activation opens the inline edit and is handled by the caller.
+    pub(super) fn flip(self, state: &mut EngineConfigState) {
+        if let Some(flag) = self.flag_mut(state) {
+            *flag = !*flag;
+        }
+    }
+
+    /// `x` on a toggle row: back to off, the shipped default.
+    pub(super) fn switch_off(self, state: &mut EngineConfigState) {
+        if let Some(flag) = self.flag_mut(state) {
+            *flag = false;
         }
     }
 }

@@ -1,6 +1,6 @@
 name: docs-guards
 
-# Seven guards over prose. None needs a Rust toolchain, which is why they live
+# Eight guards over prose. None needs a Rust toolchain, which is why they live
 # here rather than in ci.yml -- that workflow deliberately skips its Rust jobs
 # for a diff confined to `docs/**`, `website/**` and `*.md` (a job-level prose
 # filter since #1892), and this one triggers on exactly those paths.
@@ -51,6 +51,14 @@ name: docs-guards
 #     workflows: its subject is Rust comments, so a Rust-only PR must run it
 #     too.
 #
+#  8. website-inputs (scripts/check-website-inputs.sh): every `website/` path a
+#     Rust source names is declared in scripts/website-rust-inputs.txt, and
+#     every declared path still exists (#4632). ci.yml builds its prose
+#     carve-out from the `read` entries, so the filter and the tests cannot
+#     drift; this is the half that catches the move. A website-only PR is the
+#     diff ci.yml's Rust job is skipped for, which is why the filter above
+#     widened from `website/content/docs/**` to `website/**`.
+#
 # Rust sources are in the path filter because the first three read them: a
 # citation added to a .rs comment is exactly how one goes stale, and the
 # subcommand list the third guard checks is itself a Rust enum.
@@ -62,12 +70,14 @@ on:
       - "**/*.rs"
       - "scripts/check-doc-links.py"
       - "scripts/check-invariants.sh"
-      - "website/content/docs/**"
+      - "website/**"
       - "scripts/check-command-docs.sh"
       - "scripts/check-brand-case.sh"
       - "scripts/check-gate-parity.sh"
       - "scripts/check-god-files.sh"
       - "scripts/check-design-refs.sh"
+      - "scripts/check-website-inputs.sh"
+      - "scripts/website-rust-inputs.txt"
       - "scripts/file-size-baseline.txt"
       - ".github/workflows/docs-guards.yml"
   push:
@@ -78,12 +88,14 @@ on:
       - "**/*.rs"
       - "scripts/check-doc-links.py"
       - "scripts/check-invariants.sh"
-      - "website/content/docs/**"
+      - "website/**"
       - "scripts/check-command-docs.sh"
       - "scripts/check-brand-case.sh"
       - "scripts/check-gate-parity.sh"
       - "scripts/check-god-files.sh"
       - "scripts/check-design-refs.sh"
+      - "scripts/check-website-inputs.sh"
+      - "scripts/website-rust-inputs.txt"
       - "scripts/file-size-baseline.txt"
       - ".github/workflows/docs-guards.yml"
   workflow_dispatch:
@@ -137,6 +149,17 @@ jobs:
       - name: the documented gate is the real gate
         if: ${{ !cancelled() }}
         run: bash scripts/check-gate-parity.sh
+
+      # This is the copy that matters, and the reason the path filter above
+      # widened from `website/content/docs/**` to `website/**` (#4632). A
+      # website-only PR that renames, moves or deletes a file a Rust test reads
+      # is precisely the diff ci.yml's Rust job is skipped for, so ci.yml
+      # cannot report it — #4588 moved PROVIDER_CATALOG out of the file
+      # `docs_sync` read and merged green, and `main` was red on a test nobody
+      # had run until someone else's PR went red with it.
+      - name: every website path a Rust source reads is declared, and present
+        if: ${{ !cancelled() }}
+        run: bash scripts/check-website-inputs.sh
 
       # Same two directions. The baseline moving is a non-md change ci.yml
       # catches; a README dropping a god file from its list, or a crate quietly

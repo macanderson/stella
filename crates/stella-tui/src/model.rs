@@ -510,6 +510,10 @@ impl SessionModel {
                         _ => None,
                     })
                     .unwrap_or_else(|| ("tool".to_string(), None));
+                // Read before `name` is moved into the transcript row below;
+                // consumed after it, where the rest of the pending-card latches
+                // are retired. See there for why this is the refusal (#4612).
+                let plan_gate_refused = !ok && name == stella_tools::tasks::START;
                 // Only a *successful* mutation gets an inline-diff reference —
                 // a failed call produced no `FileChange`, and rendering the
                 // path's previous diff under its ✗ would attribute a change
@@ -627,6 +631,20 @@ impl SessionModel {
                     .is_some_and(|p| p.id == *call_id)
                 {
                     self.pending_hunk_review = None;
+                }
+                // And a REFUSED plan clears the same way (#4612). Approval has
+                // a signal — the run-scoped stage the arm above reads — and
+                // refusal deliberately has none, because the gate hands the
+                // driver's words back as the parked call's own error rather
+                // than emitting a decision (#3861). While a gate is open, the
+                // engine is awaiting the very call the gate is parked inside,
+                // so a failing `task_start` here IS that refusal: retire the
+                // latch instead of leaving `fleet_dashboard` holding the lane
+                // `Blocked` while the model re-plans, and cancel the plan the
+                // rail is still calling `pending approval`. A new proposal
+                // reopens both (`Plan::propose`).
+                if plan_gate_refused && self.pending_scope_review.take().is_some() {
+                    self.plan.cancel();
                 }
             }
             AgentEvent::Retry { attempt, reason } => {

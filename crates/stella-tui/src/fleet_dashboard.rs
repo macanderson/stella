@@ -451,6 +451,17 @@ impl FleetBoard {
                 if !preview.is_empty() {
                     row.last_output = Some(preview);
                 }
+                // A row is `Blocked` because a card went up, and every card
+                // here is answered by the parked call's own result — `ask_user`
+                // returns the answer as its tool result, and the plan gate
+                // returns the driver's change request as `task_start`'s error
+                // (#4612). So a result means the wait is over, whichever way it
+                // went. Without this the lane read `blocked` for the whole
+                // window the model spent re-planning, with nobody waiting on
+                // anything.
+                if row.status == FleetStatus::Blocked {
+                    row.status = FleetStatus::Running;
+                }
             }
             AgentEvent::Reasoning { .. } => {
                 // Thinking only surfaces before any real action this run —

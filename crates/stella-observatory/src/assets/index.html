@@ -948,6 +948,7 @@ footer b{color:var(--identity);font-weight:600}
           <div class="ctx-toggle" role="tablist" aria-label="View">
             <button type="button" role="tab" data-view="diff" id="ctxViewDiff">Added since previous call</button>
             <button type="button" role="tab" data-view="full" id="ctxViewFull">Full prompt at this point</button>
+            <button type="button" role="tab" data-view="system" id="ctxViewSystem">System prompt</button>
           </div>
         </div>
         <div class="ctx-inspect-body" id="ctxBody" tabindex="-1"></div>
@@ -2276,6 +2277,45 @@ async function loadSentContext(id, turn, step, callSeq, full = false, token) {
   const btn = $("ctx-full");
   if (btn) btn.addEventListener("click", () => loadSentContext(id, turn, step, callSeq, true));
 }
+/* The effective system prompt this call was sent — the same reconstruction as
+   the full view, narrowed to the system_prefix bytes and sectioned by the
+   backend into the settings surface that produced each span: the base persona
+   (built-in, agents.default.prompt, or minimal mode), the computed session
+   environment, workspace memories, rules, and SessionStart hook context.
+   Fetched with full=1: the whole point of this view is the exact bytes, so a
+   clipped system prompt here would defeat it. */
+async function loadSystemPrompt(id, turn, step, callSeq, token) {
+  const body = $("ctxBody");
+  if (!body) return;
+  if (token === undefined) token = ++ctxRenderToken;
+  let cx = null;
+  try {
+    cx = await api(`/api/execution-context?id=${encodeURIComponent(id)}`
+      + `&turn=${encodeURIComponent(turn)}&step=${encodeURIComponent(step)}`
+      + `&call_seq=${encodeURIComponent(callSeq)}&full=1`);
+  } catch { cx = null; }
+  if (token !== ctxRenderToken) return; // a later step/view superseded this fetch
+  const c = cx && cx.context;
+  if (!c || !c.found) {
+    body.innerHTML = `<div class="empty">${
+      esc((c && c.note) || "That call has no recorded receipt.")}</div>`;
+    return;
+  }
+  const sp = c.system_prompt;
+  if (!sp || !sp.found) {
+    body.innerHTML = `<div class="empty">${
+      esc((sp && sp.note) || "No system_prefix block resolved for this call.")}</div>`;
+    return;
+  }
+  const sections = sp.sections ?? [];
+  body.innerHTML = `<div class="kick">Effective system prompt at step ${fmtInt(step)} ·
+      ${fmtInt(sections.length)} section${sections.length === 1 ? "" : "s"} ·
+      exact bytes, labelled by the setting that produced each</div>
+    ${sections.map(s => `<div class="jrnl">
+      <div class="kick">${esc(s.label ?? "")} · <span style="opacity:.8">${esc(s.source ?? "")}</span></div>
+      ${s.body ? `<pre class="jrnl-body">${maybeHighlight(s.body)}</pre>`
+               : `<div class="empty">(empty)</div>`}</div>`).join("")}`;
+}
 /* Git's hunk shape, drawn with both line-number gutters. The line numbers are
    walked from the hunk header rather than served: `@@ -old_start +new_start @@`
    plus the ops is exactly the information git itself uses to print them.
@@ -2372,6 +2412,7 @@ const ctxInspectCall = () => (ctxInspect ? ctxInspect.calls[ctxInspect.idx] : nu
 function ctxSyncToggle() {
   $("ctxViewDiff").classList.toggle("on", ctxInspect.view === "diff");
   $("ctxViewFull").classList.toggle("on", ctxInspect.view === "full");
+  $("ctxViewSystem").classList.toggle("on", ctxInspect.view === "system");
 }
 function ctxRenderHead() {
   const c = ctxInspectCall();
@@ -2390,6 +2431,7 @@ async function ctxRenderBody() {
   const token = ++ctxRenderToken;
   body.innerHTML = `<div class="empty">Loading…</div>`;
   if (ctxInspect.view === "diff") await loadContextDiff(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq), "all", token);
+  else if (ctxInspect.view === "system") await loadSystemPrompt(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq), token);
   else await loadSentContext(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq), false, token);
 }
 /* `calls` is the page's already-fetched `cx.calls` — focusing or stepping
@@ -2433,6 +2475,7 @@ function ctxInspectKeydown(e) {
   $("ctxNext").addEventListener("click", () => ctxStep(1));
   $("ctxViewDiff").addEventListener("click", () => ctxSetView("diff"));
   $("ctxViewFull").addEventListener("click", () => ctxSetView("full"));
+  $("ctxViewSystem").addEventListener("click", () => ctxSetView("system"));
   $("ctxClose").addEventListener("click", () => dlg.close());
   $("ctxInspect").addEventListener("keydown", ctxInspectKeydown);
 })();

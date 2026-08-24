@@ -46,8 +46,8 @@ use super::authority::ManagedAuthoritySettings;
 use super::context::ContextSettings;
 use super::context_providers::ContextProviderSettings;
 use super::{
-    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, McpSettings, ProviderSettings,
-    RewardSettings, Settings, Toggle, ToolsSettings, UiSettings,
+    AgentEngineAgent, AgentEngineAgents, AgentEngineConfig, McpSettings, PlanReviewSettings,
+    ProviderSettings, RewardSettings, Settings, Toggle, ToolsSettings, UiSettings,
 };
 
 /// The schema version this build writes and understands.
@@ -219,6 +219,8 @@ pub struct AgentsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_auto: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimal_prompt: Option<Toggle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headless_scope_bypass: Option<Toggle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_timeout_secs: Option<u64>,
@@ -315,6 +317,15 @@ pub struct TomlConfig {
     /// Same shape in JSON and TOML, so no lowering beyond the move.
     #[serde(default)]
     pub reward: Option<RewardSettings>,
+    /// `[plan_review]` — whether the deck's plan gate is installed and how big
+    /// a plan has to be before it fires (#4611). Same shape in JSON and TOML,
+    /// so no lowering beyond the move.
+    ///
+    /// A top-level section rather than a key under `[run]` because it is a
+    /// block of two, and `[run]`'s contract is scalars that used to be bare
+    /// root keys.
+    #[serde(default)]
+    pub plan_review: Option<PlanReviewSettings>,
     /// Honored only from the managed tier; see [`Settings::managed_authority`].
     #[serde(default)]
     pub authority: Option<ManagedAuthoritySettings>,
@@ -588,6 +599,7 @@ impl TomlConfig {
             ui,
             plugins,
             reward,
+            plan_review,
             authority,
             enterprise_telemetry,
             // Deliberately not lowered into `Settings`. Both are read straight
@@ -630,6 +642,7 @@ impl TomlConfig {
             allowed_dirs: workspace.allowed_dirs,
             ui,
             reward,
+            plan_review,
             context,
             context_providers,
             plugins,
@@ -824,6 +837,7 @@ pub fn raise_agents(cfg: &AgentEngineConfig) -> (AgentsSection, ModelsSection, S
         auto_mode: cfg.auto_mode,
         effort_auto: cfg.effort_auto,
         reasoning_auto: cfg.reasoning_auto,
+        minimal_prompt: cfg.minimal_prompt,
         headless_scope_bypass: cfg.headless_scope_bypass,
         model_timeout_secs: cfg.model_timeout_secs,
         compaction_budget_tokens: cfg.compaction_budget_tokens,
@@ -903,6 +917,7 @@ fn lower_agents(
         auto_mode: agents.auto_mode,
         effort_auto: agents.effort_auto,
         reasoning_auto: agents.reasoning_auto,
+        minimal_prompt: agents.minimal_prompt,
         headless_scope_bypass: agents.headless_scope_bypass,
         model_timeout_secs: agents.model_timeout_secs,
         compaction_budget_tokens: agents.compaction_budget_tokens,
