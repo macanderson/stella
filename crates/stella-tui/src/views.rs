@@ -39,8 +39,6 @@ pub mod engine;
 pub mod files;
 pub mod graph;
 pub mod installed;
-pub mod issues;
-pub(crate) mod linear;
 pub mod mcp;
 pub mod models_card;
 pub mod picker;

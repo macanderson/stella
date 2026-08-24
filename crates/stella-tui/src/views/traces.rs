@@ -129,7 +129,7 @@ fn row_line(row: &TraceRow, now_ms: u64, width: usize) -> Line<'static> {
 /// The chip's brackets go too: `[tool]` is a *visual* chip, and spoken it is
 /// punctuation.
 fn row_record(row: &TraceRow, now_ms: u64, width: usize) -> Line<'static> {
-    let identity = crate::views::linear::identity(
+    let identity = crate::v2::record::identity(
         format_mmss(now_ms.saturating_sub(row.ts)),
         false,
         theme::MUTED,
@@ -139,7 +139,7 @@ fn row_record(row: &TraceRow, now_ms: u64, width: usize) -> Line<'static> {
         ("kind", row.kind.label().to_string()),
         ("summary", row.summary.clone()),
     ];
-    crate::views::linear::record_line(identity, &fields, width)
+    crate::v2::record::record_line(identity, &fields, width)
 }
 
 /// `mm:ss` elapsed since `row.ts`, relative to the deck clock. Grows past two

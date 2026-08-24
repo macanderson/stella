@@ -153,8 +153,8 @@ fn agent_record(entry: &InstalledAgentEntry, is_selected: bool, width: usize) ->
         ("description", entry.description.clone()),
         ("toolbelt", toolbelt_label(&entry.tools)),
     ];
-    crate::views::linear::record_line(
-        crate::views::linear::identity(entry.name.clone(), is_selected, theme::ACCENT),
+    crate::v2::record::record_line(
+        crate::v2::record::identity(entry.name.clone(), is_selected, theme::ACCENT),
         &fields,
         width,
     )
