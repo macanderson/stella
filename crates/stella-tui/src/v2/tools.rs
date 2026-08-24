@@ -28,7 +28,7 @@
 //! assembled session stack, so the rows come from the driver
 //! ([`crate::envelope::Inbound::ToolPolicy`]), never from a compiled-in table.
 //!
-//! Ownership mirrors [`crate::views::engine`]: the driver owns the settings
+//! Ownership mirrors [`crate::v2::engine_panel`]: the driver owns the settings
 //! files and pushes snapshots; the pane accumulates **unsaved switch edits**
 //! and sends them back with [`WorkspaceInput::ToolsSave`]. What it sends is
 //! only the keys it changed — the driver merges them into the chosen scope's
@@ -50,7 +50,7 @@
 //!    merge on the next load, and the operator would believe they had a tool
 //!    they do not have.
 //!
-//! Interaction is [`crate::views::engine`]'s vocabulary verbatim — modal while
+//! Interaction is [`crate::v2::engine_panel`]'s vocabulary verbatim — modal while
 //! focused (`t` on the SETTINGS tab focuses, Esc hands the keyboard back),
 //! `⏎`/`space` toggle, `x` clears a row's unsaved edit, `s`/`S` save to the
 //! user / project scope, `r` reloads.
@@ -258,7 +258,7 @@ pub fn focus_panel(ui: &mut DeckUi) -> DeckAction {
 // ── key handling ────────────────────────────────────────────────────────────
 
 /// The pane's modal key map, dispatched by [`crate::deck_ui::handle_deck_key`]
-/// while `ui.tools.focused`. The vocabulary is [`crate::views::engine`]'s, so
+/// while `ui.tools.focused`. The vocabulary is [`crate::v2::engine_panel`]'s, so
 /// the two editors on one tab never need two things learned.
 pub fn handle_tools_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let plain = !key
@@ -1078,7 +1078,7 @@ mod tests {
         // `e` then reaches the engine panel, which takes the keyboard from the
         // tools pane — one editor owns the SETTINGS keyboard at a time.
         handle_deck_key(ch('t'), &model, &mut ui);
-        crate::views::engine::focus_panel(&mut ui);
+        crate::v2::engine_panel::focus_panel(&mut ui);
         assert!(ui.engine.focused);
         assert!(
             !ui.tools.focused,

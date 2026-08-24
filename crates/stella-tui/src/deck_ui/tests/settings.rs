@@ -3,9 +3,8 @@
 //!
 //! The tab's other rows are witnessed where their vocabulary lives:
 //! `views::settings` for the browse-level `← →`, `e` and `t`, and
-//! `views::engine` for the editor's `tab`, `⏎`, `space`, `x`, `s / S` and
-//! `esc`. Both of those files are closed to growth (`views/engine.rs` is a
-//! god file), so the one row neither covered is witnessed here.
+//! `v2::engine_panel::keys` for the editor's `tab`, `⏎`, `space`, `x`,
+//! `s / S` and `esc`. The one row neither covers is witnessed here.
 
 use super::*;
 
