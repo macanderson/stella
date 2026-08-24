@@ -1361,9 +1361,9 @@ impl<'a> Engine<'a> {
                 estimated_input_tokens,
                 duration_ms: call_duration_ms,
                 retries: retries.len() as u32,
-                // The values the dispatched request carried (`req` above),
-                // not re-derived from config: the metering record claims
-                // what was asked, so it reads from what was asked.
+                // The same two bindings `req` was built from above
+                // (`req_config.effort`, `call.max_output_tokens`), so the
+                // metering record and the wire agree by construction.
                 effort: self.config.effort,
                 max_output_tokens: call.max_output_tokens,
             },
