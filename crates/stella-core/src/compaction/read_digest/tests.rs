@@ -235,6 +235,113 @@ fn a_read_only_shell_command_leaves_the_digest_whole() {
     }
 }
 
+/// **Witness (#4444).** A command that writes and spells no target changes
+/// what the digest states about every path it could have rewritten.
+///
+/// Before this, the rule was path-matched end to end: `cargo fmt` handed back
+/// the words `cargo fmt`, no digested path matched either, and the digest went
+/// on saying `- src/target.rs (read at step 1)` about a file the formatter had
+/// just rewritten. That is an under-invalidation, which is the unsafe
+/// direction — the digest exists to stop a re-read, so a stale entry buys a
+/// wrong answer rather than a wasted call.
+#[test]
+fn a_write_that_names_no_target_weakens_every_digest_entry() {
+    for command in [
+        "cargo fmt",
+        "git checkout .",
+        "git stash",
+        "git reset --hard",
+        "cargo build && git checkout .",
+    ] {
+        let mut messages = transcript(&[("c1", "src/target.rs"), ("c2", "src/witness.rs")]);
+        messages.push(shell_call("c3", command));
+        messages.push(result("c3", "done"));
+
+        compact_and_digest(&mut messages, 1_000, None);
+
+        let digest = messages
+            .iter()
+            .find(|message| is_digest(message))
+            .unwrap_or_else(|| panic!("{command}: the reads must still produce a digest"));
+        for (path, step) in [("src/target.rs", 1), ("src/witness.rs", 2)] {
+            assert!(
+                digest.content.contains(&format!(
+                    "- {path} (read at step {step} — a later command may have rewritten it)"
+                )),
+                "{command} may have rewritten {path} and the digest must say so; got: {}",
+                digest.content
+            );
+        }
+    }
+}
+
+/// The counter-test, which records the scope of the decision rather than
+/// implying it: the entry is **kept** and stated more weakly, never dropped,
+/// and a command that spells its target leaves every other entry alone.
+///
+/// Dropping on a sweep is the other option in #4444 and would empty the digest
+/// on `cargo fmt` — the most-run writing command in this repository — giving
+/// back most of #3806's win to fix a wording problem.
+#[test]
+fn a_sweeping_write_keeps_the_entry_and_a_named_one_leaves_its_neighbour_whole() {
+    let mut swept = transcript(&[("c1", "src/target.rs")]);
+    swept.push(shell_call("c2", "cargo fmt"));
+    swept.push(result("c2", "done"));
+    compact_and_digest(&mut swept, 1_000, None);
+    let digest = swept
+        .iter()
+        .find(|message| is_digest(message))
+        .expect("a sweep weakens the digest, it does not delete it");
+    assert!(
+        digest.content.contains("src/target.rs"),
+        "the path is still named, so the model still knows it was read; got: {}",
+        digest.content
+    );
+
+    let mut named = transcript(&[("c1", "src/target.rs"), ("c2", "src/witness.rs")]);
+    named.push(shell_call("c3", "sed -i 's/a/b/' src/target.rs"));
+    named.push(result("c3", "done"));
+    compact_and_digest(&mut named, 1_000, None);
+    let digest = named
+        .iter()
+        .find(|message| is_digest(message))
+        .expect("the untouched read must still produce a digest");
+    assert!(
+        digest.content.contains("- src/witness.rs (read at step 2)"),
+        "a write confined to the path it spells must not weaken its neighbour; got: {}",
+        digest.content
+    );
+}
+
+/// A sweep before the read says nothing about the bytes that read returned,
+/// the same way a named write before it does.
+#[test]
+fn a_sweeping_write_before_the_read_leaves_the_entry_unqualified() {
+    let mut messages = vec![
+        CompletionMessage::system("stable prefix"),
+        CompletionMessage::user("do the thing"),
+        shell_call("c0", "cargo fmt"),
+        result("c0", "done"),
+    ];
+    messages.extend(
+        transcript(&[("c1", "src/target.rs"), ("c2", "src/witness.rs")])
+            .into_iter()
+            .skip(2),
+    );
+
+    compact_and_digest(&mut messages, 1_000, None);
+
+    let digest = messages
+        .iter()
+        .find(|message| is_digest(message))
+        .expect("the read must produce a digest");
+    assert!(
+        digest.content.contains("- src/target.rs (read at step 2)"),
+        "a sweep the read already saw is not staleness; got: {}",
+        digest.content
+    );
+}
+
 /// Order matters the same way it does for the file tools: a write *before*
 /// the read that lost its output says nothing about the bytes that read
 /// returned.
@@ -439,6 +546,7 @@ fn an_overflowing_digest_names_what_it_dropped() {
         .map(|n| DigestedRead {
             path: format!("src/file{n}.rs"),
             step: n + 1,
+            swept: false,
         })
         .collect();
     let rendered = render_digest(&reads).expect("a non-empty set renders");
