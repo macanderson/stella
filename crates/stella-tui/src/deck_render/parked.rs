@@ -13,7 +13,6 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 
 use crate::deck_ui::DeckUi;
-use crate::views;
 
 /// Draw whichever parked asks are up.
 ///
