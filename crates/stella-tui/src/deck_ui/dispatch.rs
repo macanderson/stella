@@ -66,6 +66,26 @@ impl DispatchRoute {
     }
 }
 
+/// The queue-free command route: a submission whose head is a slash command
+/// the vocabulary declares [`crate::composer::SlashCommand::sideband`] leaves
+/// as [`WorkspaceInput::Command`] — executed at once beside the prompt queue,
+/// mid-turn included, never listed as a pending prompt. `None` for everything
+/// else: prose, custom (⚡) commands (they expand into prompts driver-side),
+/// and the turn-coupled builtins (`/clear`, `/init`, `/reload`, …), which all
+/// keep their queue behavior.
+pub(super) fn sideband(ui: &DeckUi, text: &str) -> Option<WorkspaceInput> {
+    let head = text.split_whitespace().next()?;
+    if !head.starts_with('/') {
+        return None;
+    }
+    ui.slash_commands
+        .iter()
+        .find(|c| c.name == head && c.sideband)
+        .map(|_| WorkspaceInput::Command {
+            text: text.trim().to_string(),
+        })
+}
+
 /// Whether `text` states its own routing and must not be second-guessed.
 fn carries_its_own_intent(text: &str) -> bool {
     let head = text.trim_start();

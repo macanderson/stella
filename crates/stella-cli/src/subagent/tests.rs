@@ -127,6 +127,88 @@ fn a_named_seat_routes_to_its_own_model_and_everything_else_rides_the_session() 
     );
 }
 
+/// **The lane-inheritance witness for #4625.** `/model` swaps the lead's
+/// adapter between turns; before this, the dispatcher kept the one it was
+/// installed with at session start, so a child delegated after the switch ran
+/// the old model and never said so.
+///
+/// The three assertions are the whole contract of [`SessionSubAgents::retarget`]:
+/// the session's own model moves, its engine config moves with it, and an
+/// assigned seat does not — a session-default switch is not a licence to
+/// overrule a per-role assignment the user made explicitly.
+#[test]
+fn retargeting_the_session_model_moves_seatless_children_and_leaves_seats_alone() {
+    let registry = registry();
+    let mut seats = crate::agent::seats::SeatProviders::new();
+    seats.insert("planner", Arc::new(NamedProvider("planner-model")));
+
+    let dispatcher = SessionSubAgents::new(
+        Arc::new(NamedProvider("booted-model")),
+        &registry,
+        EngineConfig {
+            max_output_tokens: Some(1_000),
+            ..EngineConfig::default()
+        },
+        stella_protocol::BudgetMode::Observed,
+    )
+    .with_seats(seats);
+
+    assert_eq!(dispatcher.provider_for(None).id(), "booted-model");
+
+    dispatcher.retarget(
+        Arc::new(NamedProvider("picked-model")),
+        EngineConfig {
+            max_output_tokens: Some(2_000),
+            ..EngineConfig::default()
+        },
+    );
+
+    let (provider, config) = dispatcher.wiring_for(None);
+    assert_eq!(
+        provider.id(),
+        "picked-model",
+        "a child delegated after the switch runs the model the user picked"
+    );
+    assert_eq!(
+        config.max_output_tokens,
+        Some(2_000),
+        "the engine config moves with the adapter, never one without the other"
+    );
+    assert_eq!(
+        dispatcher.provider_for(Some("planner")).id(),
+        "planner-model",
+        "an explicit seat assignment outranks a session-default switch"
+    );
+}
+
+/// The other half of [`SessionSubAgents::retarget`]'s contract, and the reason
+/// it exists instead of a second [`install_for_session`] call: everything the
+/// session has accumulated survives the switch. The pool above all — a
+/// re-installed dispatcher would hand the session a fresh `BudgetGuard`, so
+/// every `/model` would silently reset the spend ceiling a long session had
+/// been climbing.
+#[test]
+fn a_retarget_keeps_the_pool_the_session_has_been_spending_against() {
+    let registry = registry();
+    let dispatcher = SessionSubAgents::new(
+        Arc::new(NamedProvider("booted-model")),
+        &registry,
+        EngineConfig::default(),
+        stella_protocol::BudgetMode::Observed,
+    );
+    let pool_before = dispatcher.pool.clone();
+
+    dispatcher.retarget(
+        Arc::new(NamedProvider("picked-model")),
+        EngineConfig::default(),
+    );
+
+    assert!(
+        Arc::ptr_eq(&pool_before, &dispatcher.pool),
+        "the switch re-points the model; it must not replace the spend pool"
+    );
+}
+
 /// The seat name is opaque, and this is the test that says so out loud: a name
 /// core has never heard of routes exactly as well as one it has, because there
 /// is no list of accepted roles to fail against. A future change that
