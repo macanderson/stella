@@ -4,10 +4,12 @@
 //! The FILES tab — the session's file ledger, and the diff behind any row:
 //!
 //! ```text
-//!  ▤ 2 files · +7 -1 · 0 reads                                       ↵ diff
+//!  ▤ 2 files · +7 -1 · 0 reads
 //!   File                           Agent         Op +       -       reads   ×
 //! ▸ apps/app/automations/page.tsx  lead          U  +4      -1           0  ×1
 //!   apps/api/routes/v1/automation… sub:auth      C  +3      -0           0  ×1
+//!
+//!  ↵ diff · ↑↓ pick
 //! ```
 //!
 //! One row per (agent, path) touched this session, from
@@ -23,6 +25,18 @@
 //! the tab answers "how much did this session touch" in its first row whether
 //! or not the diff pane is open, and the two counts a reader compares — the
 //! selected row's `+a -b` and the session's — no longer sit a pane apart.
+//! Counts at the top, keys at the bottom is the split every other v2 surface
+//! makes: [`crate::v2::graph_tab`]'s `nodes · n` strip over its `↵ open file`
+//! band, and the same in the tools and MCP panes.
+//!
+//! The keys band is the tab's own, not a second copy of
+//! [`crate::v2::frame::render_hint_row`]: the FILES rows in [`crate::keymap`]
+//! are unhinted, so the deck-wide hint row never names them and this is the
+//! only place `esc` and the diff's `↑↓` are written down. It is carved off
+//! the bottom of the whole tab area rather than the list's, so it stays put
+//! when `⏎` opens the diff pane between them — and the empty ledger draws no
+//! band at all, since a hint for a key that would do nothing is one the
+//! reader learns to ignore.
 //!
 //! The op badge takes SPEC 6.2's rail metals rather than a status palette:
 //! read silver, write and edit gold, delete red. A CRUD letter
@@ -50,6 +64,10 @@ use crate::diff;
 
 /// The selection gutter: `▸ ` on the selected row, blank on every other.
 const GUTTER_W: usize = 2;
+/// The rows the tab needs — head strip, column header, one record, keys band —
+/// before the keys band is worth the line it costs. Under this, the band is
+/// dropped and the content keeps the height.
+const KEYS_BAND_FLOOR: u16 = 4;
 /// Column widths, in characters, for the fixed (non-path) columns — each
 /// includes its own trailing separator space.
 const AGENT_W: usize = 13;
@@ -72,21 +90,25 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         return;
     }
 
-    let (list_area, diff_area) = if ui.files_diff_open {
-        let bands =
-            Layout::vertical([Constraint::Percentage(45), Constraint::Percentage(55)]).split(area);
+    // The keys band comes off the bottom of the WHOLE tab, before the diff
+    // pane is split out of what remains — so `⏎` opens the pane between the
+    // list and the band rather than pushing the band off the pane.
+    let (content, keys_area) = if area.height >= KEYS_BAND_FLOOR {
+        let bands = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(area);
         (bands[0], Some(bands[1]))
     } else {
         (area, None)
     };
 
-    render_list(
-        &model.ledger,
-        ui.files_sel,
-        ui.files_diff_open,
-        list_area,
-        buf,
-    );
+    let (list_area, diff_area) = if ui.files_diff_open {
+        let bands = Layout::vertical([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(content);
+        (bands[0], Some(bands[1]))
+    } else {
+        (content, None)
+    };
+
+    render_list(&model.ledger, ui.files_sel, list_area, buf);
 
     match diff_area {
         Some(diff_area) => render_diff_pane(model, ui, records, diff_area, buf),
@@ -95,6 +117,32 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             ui.metrics.files_diff_height = 0;
         }
     }
+
+    if let Some(keys_area) = keys_area {
+        Paragraph::new(keys_line(ui.files_diff_open)).render(keys_area, buf);
+    }
+}
+
+/// The tab's own key band, in the shorthand every v2 surface writes keys in
+/// (chord muted, verb dim, `·` between): what `⏎` does now, and the two verbs
+/// that exist only while the diff pane is open and are named nowhere else.
+fn keys_line(diff_open: bool) -> Line<'static> {
+    let key = Style::new().fg(token::MUTED);
+    let dim = Style::new().fg(token::DIM);
+    let verbs: &[(&str, &str)] = if diff_open {
+        &[("↵/esc", "close diff"), ("↑↓", "scroll")]
+    } else {
+        &[("↵", "diff"), ("↑↓", "pick")]
+    };
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (chord, label)) in verbs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", dim));
+        }
+        spans.push(Span::styled((*chord).to_string(), key));
+        spans.push(Span::styled(format!(" {label}"), dim));
+    }
+    Line::from(spans)
 }
 
 // ── Empty state ──────────────────────────────────────────────────────────
@@ -119,13 +167,7 @@ fn render_empty(area: Rect, buf: &mut Buffer) {
 
 // ── The head strip + the ledger table ────────────────────────────────────
 
-fn render_list(
-    ledger: &FileLedger,
-    selected: usize,
-    diff_open: bool,
-    area: Rect,
-    buf: &mut Buffer,
-) {
+fn render_list(ledger: &FileLedger, selected: usize, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;
     }
@@ -138,7 +180,7 @@ fn render_list(
     ])
     .split(area);
 
-    Paragraph::new(head_line(ledger, diff_open, width)).render(bands[0], buf);
+    Paragraph::new(head_line(ledger)).render(bands[0], buf);
     if bands[1].height == 0 {
         return;
     }
@@ -170,11 +212,12 @@ fn render_list(
     Paragraph::new(Text::from(lines)).render(body_area, buf);
 }
 
-/// `▤ 2 files · +7 -1 · 0 reads` on the left, the diff key on the right.
-fn head_line(ledger: &FileLedger, diff_open: bool, width: usize) -> Line<'static> {
+/// `▤ 2 files · +7 -1 · 0 reads` — what this session did to the tree, in the
+/// tab's first row. The keys that read it live in the band at the bottom.
+fn head_line(ledger: &FileLedger) -> Line<'static> {
     let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
-    let mut left = vec![
+    Line::from(vec![
         Span::styled(
             format!(" {} ", glyph::NODE_FILE),
             Style::new().fg(token::GOLD),
@@ -192,22 +235,7 @@ fn head_line(ledger: &FileLedger, diff_open: bool, width: usize) -> Line<'static
         ),
         Span::styled(" · ", dim),
         Span::styled(format!("{} reads", ledger.total_reads()), muted),
-    ];
-
-    let right = vec![
-        Span::styled("↵", muted),
-        Span::styled(
-            if diff_open { " close diff " } else { " diff " }.to_string(),
-            dim,
-        ),
-    ];
-    let left_w: usize = left.iter().map(Span::width).sum();
-    let right_w: usize = right.iter().map(Span::width).sum();
-    if left_w + right_w < width {
-        left.push(Span::raw(" ".repeat(width - left_w - right_w)));
-        left.extend(right);
-    }
-    Line::from(left)
+    ])
 }
 
 /// The path column width given the row's total available width: the
@@ -565,6 +593,82 @@ mod tests {
             marked[0].contains("existing.rs"),
             "the marked row is the selected one: {:?}",
             marked[0]
+        );
+    }
+
+    /// **Witness.** The keys sit in a band on the bottom row — the split every
+    /// other v2 surface makes (`graph_tab`'s `↵ open file`, the tools and MCP
+    /// panes' footers), not on the head strip's right edge where the port
+    /// first put them. The totals stay where the same surfaces put counts:
+    /// the top.
+    #[test]
+    fn the_keys_ride_a_bottom_band_and_the_totals_the_head_strip() {
+        let model = sample_model();
+        let mut ui = DeckUi::default();
+        let area = Rect::new(0, 0, 80, 20);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let rows = buffer_rows(&buf);
+
+        let added = format!("+{}", model.ledger.total_added());
+        assert!(
+            rows[0].contains("2 files") && rows[0].contains(&added),
+            "the totals stay in the head strip: {:?}",
+            rows[0]
+        );
+        assert!(
+            !rows[0].contains('↵'),
+            "and the head strip no longer carries a key: {:?}",
+            rows[0]
+        );
+        assert!(
+            rows[19].contains("↵ diff") && rows[19].contains("↑↓ pick"),
+            "the keys ride the bottom row: {:?}",
+            rows[19]
+        );
+    }
+
+    /// The band names the two verbs that exist only while the pane is open and
+    /// are written down nowhere else — the FILES rows in `keymap` are unhinted,
+    /// so the deck-wide hint row never reaches them.
+    #[test]
+    fn the_open_diff_pane_names_its_own_close_and_scroll_keys() {
+        let model = sample_model();
+        let mut ui = DeckUi::default();
+        ui.files_sel = 1;
+        ui.files_diff_open = true;
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let rows = buffer_rows(&buf);
+        assert!(
+            rows[23].contains("↵/esc close diff") && rows[23].contains("↑↓ scroll"),
+            "the band follows the pane's state: {:?}",
+            rows[23]
+        );
+        assert!(
+            rows[22].contains('─'),
+            "and the diff pane's own footer rule is still above it, so the \
+             band was carved off the tab rather than out of the pane: {:?}",
+            rows[22]
+        );
+    }
+
+    /// An empty ledger draws no band: `⏎` is guarded on a non-empty ledger in
+    /// `handle_files_key`, and `frame`'s hint row states the rule — a hint for
+    /// a key that would do nothing is one the reader learns to ignore.
+    #[test]
+    fn the_empty_ledger_hints_at_no_keys() {
+        let model = WorkspaceModel::new();
+        let mut ui = DeckUi::default();
+        let area = Rect::new(0, 0, 40, 10);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("no files touched yet"));
+        assert!(
+            !text.contains('↵'),
+            "no key band over an empty tab:\n{text}"
         );
     }
 
