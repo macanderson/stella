@@ -74,7 +74,7 @@ echo "== apply"
 remote "base64 -d /tmp/bench-mirror.b64 | gunzip > /tmp/bench-mirror.sql \
 && docker exec $CONTAINER psql -U $PG_USER -tAc \
 \"SELECT 1 FROM pg_database WHERE datname = '$PG_DB'\" | grep -q 1 \
-|| docker exec $CONTAINER psql -U $PG_USER -c 'CREATE DATABASE $PG_DB'" > /dev/null
+|| docker exec $CONTAINER psql -U $PG_USER -c \"CREATE DATABASE \\\"$PG_DB\\\"\"" > /dev/null
 remote "docker exec -i $CONTAINER psql -U $PG_USER -d $PG_DB \
 --set ON_ERROR_STOP=1 -q -f - < /tmp/bench-mirror.sql \
 && rm -f /tmp/bench-mirror.b64 /tmp/bench-mirror.sql" > /dev/null
