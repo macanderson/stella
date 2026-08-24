@@ -215,13 +215,13 @@ fn v2_rows(
             raw,
             path,
         } => {
-            let measured = v2::measured_delta(call_id, view.following, view.files);
+            let scope = v2::measured_scope(call_id, view.following, view.files);
             let read = v2::read_size(call_id, view.following);
             out.extend(v2::head_rows(
                 name,
                 path.as_deref(),
                 input,
-                measured,
+                scope,
                 read,
                 width,
             ));

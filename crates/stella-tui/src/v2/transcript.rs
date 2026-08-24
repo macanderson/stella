@@ -53,7 +53,7 @@ pub const RAIL_W: usize = 2;
 /// renders as no column at all.
 ///
 /// A measured one is filled in after the fact, not at dispatch:
-/// [`super::transcript_source::measured_delta`] resolves the emitter's counts
+/// [`super::transcript_source::measured_scope`] resolves the emitter's counts
 /// through the call's own result once the turn boundary has measured the tree,
 /// and the deck's settled-prefix fold re-renders the row when that lands
 /// (#4154). So `None` is the state of every head at the moment it is drawn, and
@@ -97,6 +97,27 @@ impl Extent {
     }
 }
 
+/// What a call did to the work tree, for a head whose subject names no path.
+///
+/// [`Extent`] alone is enough for `edit`/`write`/`delete`, because their
+/// subject cell *is* the path and the counts are unambiguously that file's.
+/// `run` and an unrecognised tool have no such cell — the subject is a command
+/// line or a tool name — so a bare `+12 -4` there states a number without
+/// saying what it is a number *of*. The file count is what supplies that, and
+/// it is the same count the result row beneath already states, resolved from
+/// the same references (#4319).
+///
+/// `Some` means the call returned having claimed at least one change; the
+/// extent inside can still be unmeasured, exactly as it can for an edit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Touched {
+    /// Distinct paths the call claimed — of paths, not of claims, so two edits
+    /// to one file are one file.
+    pub files: usize,
+    /// The delta summed across every one of them (#4214), or unmeasured.
+    pub extent: Extent,
+}
+
 /// What kind of thing happened — the sole input to an event's glyph and metal.
 ///
 /// A *visual* taxonomy, not a mirror of the engine's event enum, for the reason
@@ -130,8 +151,14 @@ pub enum EventKind {
     /// `✗ delete <path> · -n lines · git-backed · u undo`, the count on
     /// `Extent::removed`.
     Delete { extent: Extent },
-    /// `● run <cmd>`.
-    Run,
+    /// `● run <cmd> · n files +a -b`.
+    ///
+    /// A `bash` call claims its own measured changes (#4213), so a `sed -i` or
+    /// a codemod folds real `FileChange`s under it and the row claims them.
+    /// The head resolved that measurement and threw it away until #4319: the
+    /// result row beneath stated `n files · +a −b` while its own head was
+    /// sizeless, which reads as a command that changed nothing.
+    Run { touched: Option<Touched> },
     /// `✦ skill <name> · auto|/cmd · n tok`.
     Skill { trigger: String, tokens: u32 },
     /// `◆ memory logged · mem_id`.
@@ -159,7 +186,16 @@ pub enum EventKind {
     /// was filed about. Restoring the distinction as a third colour channel
     /// would erode SPEC 2's two-metal rule; restoring it as shape does not,
     /// which is what SPEC 2's "never colour alone" already asks for.
-    Other { class: ToolClass },
+    ///
+    /// `touched` is the same column [`EventKind::Run`] carries and for the
+    /// same reason: `apply_edits` is not one of the five names either, so the
+    /// canonical multi-path write lands here (#4319). A tool that touches no
+    /// file — `task_create`, `get_state`, `delegate` — claims nothing and
+    /// renders no column.
+    Other {
+        class: ToolClass,
+        touched: Option<Touched>,
+    },
 }
 
 impl EventKind {
@@ -171,7 +207,7 @@ impl EventKind {
             EventKind::Read { .. } => token::MUTED,
             EventKind::Edit { .. }
             | EventKind::Write { .. }
-            | EventKind::Run
+            | EventKind::Run { .. }
             | EventKind::Gate { .. } => token::GOLD,
             EventKind::Delete { .. } => token::RED,
             EventKind::Skill { .. } | EventKind::Memory => token::SILVER,
@@ -205,7 +241,7 @@ impl EventKind {
             EventKind::Gate { .. } => glyph::GATE,
             EventKind::Model { .. } => glyph::RUNNING,
             EventKind::Compaction { .. } => glyph::COMPACTED,
-            EventKind::Other { class } => match class {
+            EventKind::Other { class, .. } => match class {
                 ToolClass::Inspect => glyph::TOOL_INSPECT,
                 ToolClass::Mutate => glyph::TOOL_MUTATE,
                 ToolClass::Execute => glyph::TOOL_EXECUTE,
@@ -213,7 +249,7 @@ impl EventKind {
             },
             // Named rather than a wildcard, so a kind added to the vocabulary
             // is an `E0004` here and has to state its own head (#4320).
-            EventKind::Read { .. } | EventKind::Edit { .. } | EventKind::Run => glyph::EVENT,
+            EventKind::Read { .. } | EventKind::Edit { .. } | EventKind::Run { .. } => glyph::EVENT,
         }
     }
 
@@ -225,7 +261,7 @@ impl EventKind {
             EventKind::Edit { .. } => "edit",
             EventKind::Write { .. } => "write",
             EventKind::Delete { .. } => "delete",
-            EventKind::Run => "run",
+            EventKind::Run { .. } => "run",
             EventKind::Skill { .. } => "skill",
             EventKind::Memory => "memory",
             EventKind::Gate { .. } => "gate",
@@ -695,8 +731,44 @@ fn kind_detail(kind: &EventKind) -> Vec<Span<'static>> {
         EventKind::Model { tokens_per_sec } => {
             vec![Span::styled(format!(" · {tokens_per_sec} tok/s"), dim)]
         }
+        EventKind::Run { touched } | EventKind::Other { touched, .. } => touched_detail(*touched),
         _ => Vec::new(),
     }
+}
+
+/// The size column for a head whose subject names no path (#4319).
+///
+/// Deliberately the result row's own rule, not a second one:
+/// `render::entry::tool` states the file count only above N=1 — a `1 files`
+/// chip over the overwhelmingly common single-path row is a column that never
+/// varies — and states the delta only when it has been measured. A head that
+/// spelled the scope differently from the row two lines under it would be two
+/// answers to one question, which is the failure #4214 already paid for once.
+fn touched_detail(touched: Option<Touched>) -> Vec<Span<'static>> {
+    let dim = Style::new().fg(token::DIM);
+    let Some(touched) = touched else {
+        return Vec::new();
+    };
+    let mut spans = Vec::new();
+    if touched.files > 1 {
+        spans.push(Span::styled(format!(" · {} files", touched.files), dim));
+    }
+    // Both halves or neither, exactly as an edit states them: the two numbers
+    // are one reading, and a measurement the emitter never took is no column
+    // rather than a zero (#4150, #4156).
+    if let (Some(added), Some(removed)) = (touched.extent.added, touched.extent.removed) {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!("+{added}"),
+            Style::new().fg(token::GREEN),
+        ));
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(
+            format!("-{removed}"),
+            Style::new().fg(token::RED),
+        ));
+    }
+    spans
 }
 
 /// The right-aligned metric group: wall time, then the task tag.
