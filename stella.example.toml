@@ -164,6 +164,14 @@ effort_auto = "off"
 # on | off (default off) — let stella decide whether to think per turn.
 reasoning_auto = "off"
 
+# on | off (default off) — run every session on the MINIMAL base system prompt:
+# a bare tool advertisement instead of the built-in persona, so the prose the
+# model is steered by comes from what you configure — `prompt` under
+# [agents.default] (which appends after the minimal base instead of replacing
+# it), workspace memories, rules, and SessionStart hook context. `--minimal`
+# forces it on for one invocation without touching this key.
+minimal_prompt = "off"
+
 # Seconds before a model call is abandoned.
 model_timeout_secs = 600
 

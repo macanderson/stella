@@ -26,12 +26,14 @@
 //! measurement exercises, so a steering paragraph correct in `SYSTEM_PROMPT`
 //! alone is invisible to the numbers this project makes decisions from — the
 //! asymmetry `parity.rs` was written for. Both are iterated from the same
-//! `STATIC_PROMPTS` registry that module derives, so a third prompt joins
+//! `BASE_PROMPTS` registry that module derives, so a third prompt joins
 //! these checks by existing.
 
 use stella_tools::catalog;
 
-use super::parity::STATIC_PROMPTS;
+// The catalog checks run over every base persona — the two contract-bearing
+// prompts AND the minimal one, whose whole job is the tool advertisement.
+use super::parity::BASE_PROMPTS;
 
 /// Whether `text` names `word` as a whole word.
 ///
@@ -62,7 +64,7 @@ fn names_word(text: &str, word: &str) -> bool {
 #[test]
 fn the_registries_under_test_are_not_empty() {
     assert!(
-        !STATIC_PROMPTS.is_empty(),
+        !BASE_PROMPTS.is_empty(),
         "no static prompt to scan — the checks below would pass vacuously"
     );
     assert!(
@@ -84,7 +86,7 @@ fn the_registries_under_test_are_not_empty() {
 #[test]
 fn every_built_in_tool_is_named_by_the_static_prompts() {
     let mut missing = Vec::new();
-    for (label, prompt) in STATIC_PROMPTS {
+    for (label, prompt) in BASE_PROMPTS {
         for name in catalog::ALL_NAMES {
             if !names_word(prompt, name) {
                 missing.push(format!("{label}: never names the `{name}` tool"));
@@ -111,7 +113,7 @@ fn every_built_in_tool_is_named_by_the_static_prompts() {
 #[test]
 fn no_static_prompt_names_a_retired_tool() {
     let mut violations = Vec::new();
-    for (label, prompt) in STATIC_PROMPTS {
+    for (label, prompt) in BASE_PROMPTS {
         for retired in catalog::RETIRED_TOOL_NAMES {
             if names_word(prompt, retired) {
                 violations.push(format!("{label}: names `{retired}`, retired in #3244"));
