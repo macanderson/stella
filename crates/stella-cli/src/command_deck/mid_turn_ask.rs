@@ -30,7 +30,7 @@
 //!
 //! Everything here is transport. No decision about what a driver may do
 //! lives in this file: the folds (`stella_tui::views::question` and
-//! `stella_tui::views::approval`) own those, and are unit-tested without a
+//! `stella_tui::v2::approval`) own those, and are unit-tested without a
 //! terminal.
 //!
 //! The one invariant this file does carry is the **direction of failure**.

@@ -19,7 +19,9 @@
 //! in `tests/v2_status_bar.rs` is what says so.
 
 pub mod agents_page;
+pub mod approval;
 pub mod budget_card;
+pub mod dispatch_card;
 pub mod engine_panel;
 pub mod fields;
 pub mod files_tab;
