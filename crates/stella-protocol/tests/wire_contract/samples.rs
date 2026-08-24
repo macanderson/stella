@@ -466,7 +466,10 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             step: 0,
             call_seq: 0,
             role: ModelCallRole::Worker,
-            provider: "anthropic".into(),
+            provider: "openrouter".into(),
+            // The all-optional-fields-present shape carries the gateway's
+            // upstream (#3054), or the sample proves nothing about it.
+            upstream_provider: Some("Amazon Bedrock".into()),
             model: "opus".into(),
             blocks: vec![ManifestEntry {
                 block_id: "blk_g".into(),
@@ -491,6 +494,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             call_seq: 1,
             role: ModelCallRole::Summarization,
             provider: "anthropic".into(),
+            upstream_provider: None,
             model: "opus".into(),
             blocks: vec![],
             effective_budget_tokens: 0,
@@ -1041,6 +1045,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 call_seq: 0,
                 role: ModelCallRole::Worker,
                 provider: "anthropic".into(),
+                upstream_provider: None,
                 model: "opus".into(),
                 blocks: vec![ManifestEntry {
                     block_id: "blk_j".into(),

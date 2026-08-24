@@ -87,9 +87,23 @@ pub(super) fn deck_local_command(text: &str, ui: &mut DeckUi) -> Option<DeckActi
             ui.cards.raise(cards::Card::Plan);
             DeckAction::Handled
         }
-        "/models" => {
+        // `/info` — the model-routing dialog (`/models` before the rename;
+        // the old name still routes, undiscoverably, like `/tasks` above).
+        "/info" | "/models" => {
             ui.cards.raise(cards::Card::Models);
             DeckAction::Handled
+        }
+        // The session-override pickers. Opening also asks the driver for a
+        // fresh snapshot of what the picker lists — both requests are
+        // serviced mid-turn, so the rows fill in while a turn runs even
+        // though the choice itself applies between turns.
+        "/model" => {
+            ui.model_picker.raise();
+            DeckAction::Send(WorkspaceInput::EngineConfigRefresh)
+        }
+        "/agent" => {
+            ui.agent_picker.raise();
+            DeckAction::Send(WorkspaceInput::AgentsRefresh)
         }
         "/budget" => {
             ui.cards.raise(cards::Card::Budget);

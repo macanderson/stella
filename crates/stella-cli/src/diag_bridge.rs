@@ -1225,6 +1225,7 @@ mod tests {
             call_seq: 0,
             role: ModelCallRole::Worker,
             provider: "anthropic".into(),
+            upstream_provider: None,
             model: "claude-fable-5".into(),
             blocks: Vec::new(),
             effective_budget_tokens: 100_000,

@@ -39,7 +39,7 @@
 //! reasons:
 //!
 //! - **Correctness.** The session head carries the reserved `.stella-journal/`
-//!   blobs (the resume checkpoint, the staleness map) interleaved with the
+//!   blobs (the resume checkpoint, the pipeline frame) interleaved with the
 //!   turn's content. A whole-tree snapshot on that ref would delete every blob
 //!   it did not itself write, and `record_checkpoint` would restore them on the
 //!   next step — the two producers would fight over one tree.

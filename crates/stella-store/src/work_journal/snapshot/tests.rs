@@ -109,9 +109,7 @@ fn the_snapshot_lineage_leaves_the_checkpoint_blobs_alone() {
     let (_guard, ws, store) = scratch();
     std::fs::write(ws.join("a.txt"), "v1\n").unwrap();
     let journal = WorkJournal::open_in(&store, &ws, "ses-both").unwrap();
-    journal
-        .record_checkpoint(r#"{"step":1}"#, None, None)
-        .unwrap();
+    journal.record_checkpoint(r#"{"step":1}"#, None).unwrap();
     journal.snapshot_worktree().unwrap();
     std::fs::write(ws.join("a.txt"), "v2\n").unwrap();
     journal.snapshot_worktree().unwrap();

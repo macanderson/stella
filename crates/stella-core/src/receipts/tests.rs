@@ -11,6 +11,7 @@ fn worker<'a>(provider: &'a str, model: &'a str) -> ServedBy<'a> {
     ServedBy {
         role: ModelCallRole::Worker,
         provider,
+        upstream_provider: None,
         model,
     }
 }

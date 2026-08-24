@@ -85,6 +85,7 @@ fn seeded_workspace() -> (tempfile::TempDir, i64) {
                 step: 0,
                 call_seq: 0,
                 provider: "anthropic".into(),
+                upstream_provider: None,
                 model: "opus".into(),
                 call_role: "worker".into(),
                 effective_budget_tokens: 136_363,
@@ -105,6 +106,7 @@ fn seeded_workspace() -> (tempfile::TempDir, i64) {
                 step: 0,
                 call_seq: 1,
                 provider: "anthropic".into(),
+                upstream_provider: None,
                 model: "haiku".into(),
                 call_role: "summarization".into(),
                 effective_budget_tokens: 136_363,
@@ -124,7 +126,10 @@ fn seeded_workspace() -> (tempfile::TempDir, i64) {
                 turn_instance: 0,
                 step: 1,
                 call_seq: 0,
-                provider: "anthropic".into(),
+                // A gateway-routed call: what #3054 exists to make auditable
+                // without a raw SQL query over the `events` payload.
+                provider: "openrouter".into(),
+                upstream_provider: Some("Amazon Bedrock".into()),
                 model: "opus".into(),
                 call_role: "worker".into(),
                 effective_budget_tokens: 136_363,
@@ -204,6 +209,7 @@ fn worker_manifest(step: u64, blocks: Vec<ManifestBlockRow>) -> StepManifestRow 
         step,
         call_seq: 0,
         provider: "anthropic".into(),
+        upstream_provider: None,
         model: "opus".into(),
         call_role: "worker".into(),
         effective_budget_tokens: 136_363,
@@ -285,6 +291,37 @@ fn inspect_lists_executions_then_calls_then_the_context_itself() {
     assert!(
         !summarizer.contains("You are Stella."),
         "each call shows its own context: {summarizer}"
+    );
+}
+
+/// **Witness (#3054).** `stella inspect` answers "which vendor served this
+/// call" from the durable receipt — on the old code neither the text listing
+/// nor the JSON carried it, and the only route to the answer was a raw SQL
+/// query over the `events` payload.
+#[test]
+fn a_gateway_call_names_its_upstream_vendor_in_the_call_listing() {
+    let (dir, id) = seeded_workspace();
+
+    let calls = inspect(&dir, &[&id.to_string()]);
+    assert!(
+        calls.contains("openrouter\u{2192}Amazon Bedrock"),
+        "the listing pairs the gateway with the vendor it routed to: {calls}"
+    );
+
+    let json = inspect(&dir, &[&id.to_string(), "--format", "json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    let rows = parsed["rows"].as_array().expect("rows array");
+    let routed: Vec<_> = rows
+        .iter()
+        .filter(|r| r["upstream_provider"].is_string())
+        .collect();
+    assert_eq!(routed.len(), 1, "one gateway call in the fixture: {json}");
+    assert_eq!(routed[0]["upstream_provider"], "Amazon Bedrock", "{json}");
+    // Direct-endpoint calls omit the key rather than carrying null.
+    assert!(
+        rows.iter()
+            .any(|r| r.get("upstream_provider").is_none_or(|v| v.is_null())),
+        "{json}"
     );
 }
 
@@ -577,6 +614,7 @@ fn seeded_provenance_workspace() -> (tempfile::TempDir, i64) {
                     step,
                     call_seq: 0,
                     provider: "anthropic".into(),
+                    upstream_provider: None,
                     model: "opus".into(),
                     call_role: "worker".into(),
                     effective_budget_tokens: 136_363,
