@@ -78,20 +78,18 @@ pub(super) fn switch_session_model(
     };
     // The `[models].allowed` list scopes the picker's vocabulary, and the
     // typed form must answer to the same list or the restriction is only as
-    // strong as the user's memory of it. Entries match as the full
-    // `provider/slug` spec or as the raw string the setting carries.
+    // strong as the user's memory of it. The matching rule and the sentence
+    // are `settings::allowed_models`', shared with the seat plane and with
+    // `/model default` so all three refuse the same models for the same reason.
     let allowed = crate::settings::Settings::load(&cfg.workspace_root)
         .ok()
         .and_then(|s| s.agent_engine_config)
         .map(|e| e.allowed_models().to_vec())
         .unwrap_or_default();
     let full_spec = format!("{}/{}", spec.provider, spec.model);
-    if !allowed.is_empty() && !allowed.iter().any(|a| a == &full_spec || a == id) {
-        return Err(format!(
-            "`{full_spec}` is not in this workspace's allowed model list \
-             (`[models].allowed` / `agent_engine_config.allowed_models`) — \
-             allowed: {}",
-            allowed.join(", ")
+    if !crate::settings::allowed_models::admits(&allowed, &full_spec, id) {
+        return Err(crate::settings::allowed_models::denial(
+            &allowed, &full_spec,
         ));
     }
     // Validated at switch time, same posture as `/model default` (#895): the

@@ -36,6 +36,7 @@ use stella_protocol::{ReasoningEffort, ServiceTier, Verbosity};
 
 use crate::config::Dialect;
 
+pub(crate) mod allowed_models;
 mod authority;
 mod context;
 pub(crate) mod context_providers;
