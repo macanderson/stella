@@ -1,38 +1,58 @@
-//! SKILLS tab — the filesystem-first skills manager, SPEC 9.2.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! The SKILLS tab — SPEC 9.2, the filesystem-first skills manager:
+//!
+//! ```text
+//! ╭ ⌕ pdf▌                                     installed + registry · web · 3 hits ╮
+//! installed · 4 · 2 match
+//! ╭────────────────────────────────────────────────────────────────────────────────╮
+//! │▸ [x] rust-review              v2/4 · user   Review Rust diffs for ownership.    │
+//! │  [ ] sql-tuning               v1 · user     Read a query plan and propose …     │
+//! │ learned from traces · 1   stella wrote these after repeated wins                │
+//! │  [x] bench-rig-access         learned       Reach the rig and read a reward.    │
+//! ╰────────────────────────────────────────────────────────────────────────────────╯
+//! registry · web · 3 results
+//! ╭────────────────────────────────────────────────────────────────────────────────╮
+//! │▸ wshobson/agents@pdf-extract                       ▰▰▰▱ 15.8K installs ↵ install│
+//! ╰────────────────────────────────────────────────────────────────────────────────╯
+//!  space on/off · ctrl+o preview · e edit · p pin · n new from prompt · → search
+//!  4 installed · 1 learned · 3 enabled
+//! ```
 //!
 //! One search box over two sources: the **installed** list (activate, disable,
-//! uninstall, edit, pin — with the skills stella learned from its own traces
-//! in their own section) and the **registry** (`npx skills find` → install).
-//! ←/→ move the keyboard between the two. The driver owns the skills on disk
-//! (both scopes), their enabled/version/pin state, and the npx registry; this
-//! view renders the [`crate::envelope::SkillsView`] read-model it pushes and
-//! draws the scope / create / edit / pin overlays. The list draws in the v2
-//! vocabulary ([`stella_tui_theme::token`]); the overlays still draw in
-//! [`crate::theme`] until their own restyle. The content is a deterministic
-//! function of `(ui.skills)` so buffer tests stay byte-stable.
+//! uninstall, edit, pin — with the skills stella learned from its own traces in
+//! their own section) and the **registry** (`npx skills find` → install). ←/→
+//! move the keyboard between the two. The driver owns the skills on disk (both
+//! scopes), their enabled/version/pin state, and the npx registry; this module
+//! renders the [`crate::envelope::SkillsView`] read-model it pushes, and
+//! [`overlays`] draws the scope / create / edit / pin dialogs and the `ctrl+o`
+//! preview over the top. The content is a deterministic function of
+//! `(ui.skills)`, so buffer tests stay byte-stable.
 //!
-//! The renderings' per-skill economics (`18× · 0.9k` tokens per inject) and
-//! the registry's signature status have no producer yet (#4337); both are
-//! elided rather than drawn with a stand-in.
+//! The two source boxes stack on every frame rather than sitting side by side,
+//! so a read-aloud row carries one source and never a slice of each — accessible
+//! mode needs no second layout here (#1258).
+//!
+//! The renderings' per-skill economics (`18× · 0.9k` tokens per inject) and the
+//! registry's signature status have no producer yet (#4337); both are elided
+//! rather than drawn with a stand-in.
+
+pub mod overlays;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
-
-use crate::deck::WorkspaceModel;
-use crate::deck_ui::{DeckUi, SkillPrompt, SkillsFocus};
-use crate::envelope::SkillRow;
-use crate::syntax::{self, HighlightSpans as _};
-use crate::theme;
+use ratatui::style::Style;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use stella_tui_theme::token;
 
+use crate::deck::WorkspaceModel;
+use crate::deck_ui::{DeckUi, SkillsFocus};
+use crate::envelope::SkillRow;
+
+/// Draw the tab into `area`, then float whichever dialog is open above it.
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
-    // SPEC 9.2: one search box over both sources, then the installed rows
-    // (learned ones in their own section), then the registry's answer, then
-    // the keys and the counts. Stacked on every frame, so accessible mode
-    // needs no second layout (#1258).
     let hits = ui.skills.hits.len();
     let registry_h = if ui.skills.focus == SkillsFocus::Search || hits > 0 || ui.skills.searching {
         (hits as u16 + 4).clamp(4, area.height / 2)
@@ -52,22 +72,23 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     render_search(ui, bands[2], buf);
     render_status(ui, bands[3], buf);
 
-    // Overlays (scope picker / create / creating spinner / edit / pin) float
-    // above the panes. The creating overlay animates off the deck clock.
+    // The prompts float above the boxes; the creating dialog animates off the
+    // deck clock. The `ctrl+o` preview is topmost — mutually exclusive with the
+    // prompts at the key layer, drawn last anyway.
     if ui.skills.prompt.is_some() {
-        render_overlay(ui, model.now_ms, area, buf);
+        overlays::render_prompt(ui, model.now_ms, area, buf);
     }
-    // The ctrl+o markdown preview is the topmost overlay (mutually exclusive
-    // with the prompts at the key layer, but drawn last defensively).
     if ui.skills.preview.is_some() {
-        render_preview(ui, area, buf);
+        overlays::render_preview(ui, area, buf);
     }
 }
 
+/// The section boxes each source sits in. A box per source, never one around
+/// the whole tab — [`crate::v2::frame`] already carved the content area out.
 fn rounded() -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(token::BORDER))
 }
 
@@ -119,9 +140,8 @@ fn render_search_box(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
 }
 
 /// The installed section: a heading with the match count, then one row per
-/// skill — enabled box, name, version, scope, description. Skills stella
-/// wrote itself (origin `auto`) list under their own `learned from traces`
-/// heading (SPEC 9.2).
+/// skill — enabled box, name, version, scope, description. Skills stella wrote
+/// itself (origin `auto`) list under their own `learned from traces` heading.
 fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let focused = ui.skills.focus == SkillsFocus::Installed;
     let dim = Style::new().fg(token::DIM);
@@ -253,8 +273,8 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     Paragraph::new(lines).render(inner, buf);
 }
 
-/// The registry section: the last search's hits, each with its install
-/// count, and the install affordance on the selected one.
+/// The registry section: the last search's hits, each with its install count,
+/// and the install affordance on the selected one.
 fn render_search(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let focused = ui.skills.focus == SkillsFocus::Search;
     let dim = Style::new().fg(token::DIM);
@@ -414,296 +434,6 @@ fn render_status(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     Paragraph::new(vec![first, counts]).render(area, buf);
 }
 
-/// Draw the active overlay centered over the panes. `now_ms` is the deck
-/// clock — the creating dialog's spinner is a pure function of it.
-fn render_overlay(ui: &DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
-    match &ui.skills.prompt {
-        Some(SkillPrompt::Scope { action, user }) => {
-            let verb = match action {
-                crate::deck_ui::ScopeAction::Install { id } => format!("Install {id}"),
-                crate::deck_ui::ScopeAction::Create { .. } => "Create the new skill".to_string(),
-            };
-            let choose = |label: &str, hint: &str, selected: bool| {
-                let marker = if selected { "▸ " } else { "  " };
-                let style = if selected {
-                    theme::body().fg(theme::ACCENT).add_modifier(Modifier::BOLD)
-                } else {
-                    theme::body()
-                };
-                Line::from(vec![
-                    Span::styled(marker, Style::default().fg(theme::ACCENT)),
-                    Span::styled(label.to_string(), style),
-                    Span::styled(format!("  {hint}"), theme::muted()),
-                ])
-            };
-            let lines = vec![
-                Line::from(Span::styled(verb, theme::body())),
-                Line::from(Span::styled("Where should it live?", theme::muted())),
-                Line::default(),
-                choose(
-                    "[p] Project",
-                    ".stella/skills — travels with the repo",
-                    !*user,
-                ),
-                choose("[u] User", "~/.stella/skills — global to you", *user),
-                Line::default(),
-                Line::from(Span::styled(
-                    "←/→ or p/u choose · ⏎ confirm · esc cancel",
-                    theme::muted(),
-                )),
-            ];
-            popup(" install scope ", lines, area, buf);
-        }
-        Some(SkillPrompt::CreateDescription { buffer }) => {
-            let lines = vec![
-                Line::from(Span::styled(
-                    "Describe the skill you want (the agent will search the",
-                    theme::muted(),
-                )),
-                Line::from(Span::styled(
-                    "registry, rank matches, and assemble one skill):",
-                    theme::muted(),
-                )),
-                Line::default(),
-                Line::from(vec![
-                    Span::styled("> ", Style::default().fg(theme::ACCENT)),
-                    Span::styled(buffer.clone(), theme::body()),
-                    Span::styled("▌", Style::default().fg(theme::ACCENT)),
-                ]),
-                Line::default(),
-                Line::from(Span::styled("⏎ continue · esc cancel", theme::muted())),
-            ];
-            popup(" new skill (LLM-assisted) ", lines, area, buf);
-        }
-        Some(SkillPrompt::Creating { description, scope }) => {
-            let spinner = crate::views::spinner_glyph(now_ms, ui.no_anim);
-            let lines = vec![
-                Line::from(vec![
-                    Span::styled(
-                        format!("{spinner} "),
-                        Style::default()
-                            .fg(theme::ACCENT)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        format!("Creating the skill ({} scope)…", scope.label()),
-                        theme::body(),
-                    ),
-                ]),
-                Line::default(),
-                Line::from(Span::styled(
-                    format!("“{}”", truncate(description, 70)),
-                    theme::muted(),
-                )),
-                Line::default(),
-                Line::from(Span::styled(
-                    "the agent searches the registry, ranks matches, and",
-                    theme::muted(),
-                )),
-                Line::from(Span::styled(
-                    "assembles one skill — it appears here when done",
-                    theme::muted(),
-                )),
-                Line::default(),
-                Line::from(Span::styled(
-                    "esc hides (creation continues)",
-                    theme::muted(),
-                )),
-            ];
-            popup(" creating skill… ", lines, area, buf);
-        }
-        Some(SkillPrompt::CreateFailed { error }) => {
-            let lines = vec![
-                Line::from(vec![
-                    Span::styled(
-                        "✖ ",
-                        Style::default()
-                            .fg(theme::DANGER)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled("The skill was not created", theme::body()),
-                ]),
-                Line::default(),
-                Line::from(Span::styled(
-                    error.clone(),
-                    Style::default().fg(theme::DANGER),
-                )),
-                Line::default(),
-                Line::from(Span::styled("esc / ⏎ close", theme::muted())),
-            ];
-            popup(" skill creation failed ", lines, area, buf);
-        }
-        Some(SkillPrompt::Pin {
-            name, latest, sel, ..
-        }) => {
-            let mut lines = vec![
-                Line::from(Span::styled(
-                    format!("Pin a version of {name}:"),
-                    theme::body(),
-                )),
-                Line::default(),
-            ];
-            for v in 1..=*latest {
-                let selected = v == *sel;
-                let marker = if selected { "▸ " } else { "  " };
-                let tag = if v == *latest { "  (latest)" } else { "" };
-                let style = if selected {
-                    theme::body().fg(theme::ACCENT).add_modifier(Modifier::BOLD)
-                } else {
-                    theme::body()
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(marker, Style::default().fg(theme::ACCENT)),
-                    Span::styled(format!("v{v}{tag}"), style),
-                ]));
-            }
-            lines.push(Line::default());
-            lines.push(Line::from(Span::styled(
-                "↑/↓ choose · ⏎ pin · esc cancel",
-                theme::muted(),
-            )));
-            popup(" pin version ", lines, area, buf);
-        }
-        Some(SkillPrompt::Edit { name, buffer, .. }) => {
-            render_edit_overlay(name, buffer, area, buf)
-        }
-        None => {}
-    }
-}
-
-/// A taller popup for the edit buffer: the (multi-line) body with a caret and a
-/// save/cancel legend. The buffer scrolls to keep the last line visible.
-fn render_edit_overlay(name: &str, buffer: &str, area: Rect, buf: &mut Buffer) {
-    let w = area.width.saturating_sub(6).clamp(20, 88);
-    let h = area.height.saturating_sub(2).clamp(6, 20);
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
-    Clear.render(rect, buf);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::accent())
-        .title(format!(
-            " edit {name} — ctrl+s save (new version) · esc cancel "
-        ));
-    let inner = block.inner(rect);
-    block.render(rect, buf);
-    if inner.height == 0 {
-        return;
-    }
-    // Body lines with a block caret appended, tail-scrolled to the last rows.
-    // The buffer is SKILL.md source, so it highlights as markdown — the
-    // frontmatter keys, headings, and fenced examples that make the file
-    // navigable while it's edited. Every line feeds the highlighter (fence /
-    // frontmatter state spans the whole buffer); only the tail renders.
-    let text_lines: Vec<&str> = buffer.split('\n').collect();
-    let mut hl = syntax::Highlighter::new(Some(syntax::Lang::Markdown));
-    let styled: Vec<Vec<Span<'static>>> = text_lines
-        .iter()
-        .map(|l| hl.spans(l, theme::body()))
-        .collect();
-    let visible = inner.height as usize;
-    let start = styled.len().saturating_sub(visible);
-    let last = styled.len() - 1;
-    let mut lines: Vec<Line<'static>> = Vec::new();
-    for (i, mut spans) in styled.into_iter().enumerate().skip(start) {
-        if i == last {
-            spans.push(Span::styled("▌", Style::default().fg(theme::ACCENT)));
-        }
-        lines.push(Line::from(spans));
-    }
-    Paragraph::new(lines).render(inner, buf);
-}
-
-/// The ctrl+o markdown preview: a large centered popup with the skill's
-/// `SKILL.md` rendered through Stella's own theme-obeying markdown renderer
-/// (the same one the transcript uses) and scrolled vertically. A `None` body
-/// renders a loading state; the scroll offset is clamped to content here (the
-/// key handler only increments it).
-fn render_preview(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
-    let Some(preview) = ui.skills.preview.as_mut() else {
-        return;
-    };
-    let w = area.width.saturating_sub(4).clamp(24, 100);
-    let h = area.height.saturating_sub(2).clamp(6, 32);
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
-    Clear.render(rect, buf);
-    let title = truncate(&preview.title, (w as usize).saturating_sub(20).max(8));
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::accent())
-        .title(format!(" {title} — ↑/↓ scroll · esc close "));
-    let inner = block.inner(rect);
-    block.render(rect, buf);
-    if inner.height == 0 || inner.width == 0 {
-        return;
-    }
-    // A dim subtitle line (url / scope), then the scrollable body below it.
-    let bands = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(inner);
-    if !preview.subtitle.is_empty() {
-        Paragraph::new(Line::from(Span::styled(
-            truncate(&preview.subtitle, inner.width as usize),
-            theme::muted(),
-        )))
-        .render(bands[0], buf);
-    }
-    let body_area = bands[1];
-
-    match preview.body.clone() {
-        None => {
-            Paragraph::new("fetching SKILL.md…")
-                .style(theme::muted())
-                .alignment(Alignment::Center)
-                .render(centered_row(body_area), buf);
-        }
-        Some(body) => {
-            // Render the markdown through Stella's own renderer so the preview
-            // stays inside the ember palette — no external crate's baby-blue
-            // headings, H1 background, or code-block fill. Then scroll it; the
-            // offset is clamped to line count so the last page stays reachable.
-            let text = Text::from(crate::markdown::render(&body));
-            let content_h = text.height();
-            let max_scroll = content_h.saturating_sub(body_area.height as usize) as u16;
-            let scroll = preview.scroll.min(max_scroll);
-            preview.scroll = scroll;
-            Paragraph::new(text)
-                .wrap(Wrap { trim: false })
-                .scroll((scroll, 0))
-                .render(body_area, buf);
-        }
-    }
-}
-
-/// A centered bordered popup with `title` and `lines`.
-fn popup(title: &str, lines: Vec<Line<'static>>, area: Rect, buf: &mut Buffer) {
-    let w = area.width.min(60);
-    let h = ((lines.len() + 2) as u16).min(area.height);
-    let rect = Rect {
-        x: area.x + (area.width.saturating_sub(w)) / 2,
-        y: area.y + (area.height.saturating_sub(h)) / 2,
-        width: w,
-        height: h,
-    };
-    Clear.render(rect, buf);
-    Paragraph::new(lines)
-        .wrap(Wrap { trim: true })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(theme::accent())
-                .title(title.to_string()),
-        )
-        .render(rect, buf);
-}
-
 /// Keep `sel` visible in a window of `visible` rows over `len` items.
 fn window_start(len: usize, sel: usize, visible: usize) -> usize {
     if len <= visible {
@@ -757,8 +487,9 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::deck_ui::SkillPreview;
+    use crate::deck_ui::{SkillPreview, SkillPrompt};
     use crate::envelope::{SkillRow, SkillScope, SkillSearchHit, SkillsView};
+    use crate::theme;
 
     fn buffer_text(buf: &Buffer) -> String {
         let area = *buf.area();
@@ -841,25 +572,26 @@ mod tests {
         assert!(buffer_text(&buf).contains("no skills installed"));
     }
 
+    /// Every box this tab draws is a section box, and none of them is a frame
+    /// around the whole tab: the deck's own frame already carved the content
+    /// area out, and a second border around it would read as a nested pane.
     #[test]
-    fn scope_overlay_lists_both_destinations() {
+    fn the_tab_draws_no_border_around_its_whole_area() {
         let mut ui = DeckUi {
             tab: crate::deck::DeckTab::Skills,
             ..Default::default()
         };
-        ui.skills.prompt = Some(SkillPrompt::Scope {
-            action: crate::deck_ui::ScopeAction::Install {
-                id: "acme/auth".into(),
-            },
-            user: false,
-        });
-        let area = Rect::new(0, 0, 90, 16);
+        let area = Rect::new(0, 0, 100, 20);
         let mut buf = Buffer::empty(area);
         render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
-        let text = buffer_text(&buf);
-        assert!(text.contains("Project"), "{text}");
-        assert!(text.contains("User"), "{text}");
-        assert!(text.contains("acme/auth"), "{text}");
+        let last = area.height - 1;
+        let bottom: String = (0..area.width)
+            .map(|x| buf.cell((x, last)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+        assert!(
+            !bottom.contains('─') && !bottom.contains('╰'),
+            "the last row is content, not a frame: {bottom:?}"
+        );
     }
 
     fn hit(id: &str, installs: &str, rank: u64) -> SkillSearchHit {
@@ -910,6 +642,31 @@ mod tests {
     }
 
     #[test]
+    fn scope_overlay_lists_both_destinations() {
+        let mut ui = DeckUi {
+            tab: crate::deck::DeckTab::Skills,
+            ..Default::default()
+        };
+        ui.skills.prompt = Some(SkillPrompt::Scope {
+            action: crate::deck_ui::ScopeAction::Install {
+                id: "acme/auth".into(),
+            },
+            user: false,
+        });
+        let area = Rect::new(0, 0, 90, 16);
+        let mut buf = Buffer::empty(area);
+        render(&WorkspaceModel::new(), &mut ui, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains("Project"), "{text}");
+        assert!(text.contains("User"), "{text}");
+        assert!(text.contains("acme/auth"), "{text}");
+        assert!(
+            text.contains("⏎ confirm · esc cancel"),
+            "the keys ride the dialog's bottom rule:\n{text}"
+        );
+    }
+
+    #[test]
     fn edit_overlay_highlights_markdown_source() {
         let mut ui = DeckUi {
             tab: crate::deck::DeckTab::Skills,
@@ -937,8 +694,8 @@ mod tests {
         );
         assert_eq!(
             style_at(&buf, "plain prose").fg,
-            theme::body().fg,
-            "prose keeps the body style"
+            Some(token::TEXT),
+            "prose keeps the body tone"
         );
     }
 

@@ -27,6 +27,7 @@ pub mod models_card;
 pub mod plan_card;
 pub mod pulse;
 pub mod sessions;
+pub mod skills;
 pub mod status_bar;
 pub mod status_source;
 pub mod subagents;

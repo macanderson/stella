@@ -47,6 +47,5 @@ pub(crate) mod queue_popup;
 pub mod seats;
 pub mod session;
 pub mod settings;
-pub mod skills;
 pub mod tools;
 pub mod traces;
