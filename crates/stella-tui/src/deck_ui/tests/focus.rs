@@ -61,11 +61,25 @@ fn left_and_right_walk_the_tab_strip_from_every_tab() {
         handle_deck_key(key(KeyCode::Right), &model, &mut ui);
     }
     assert_eq!(ui.tab, DeckTab::Session, "…and wraps at the end");
-    handle_deck_key(key(KeyCode::Left), &model, &mut ui);
+    // On SESSION, `←` is the AGENTS-page chord (`tests::agents_page`), so
+    // the backward wrap starts one tab in: `⇧Tab` still reaches the far end
+    // in one press, and `←` walks backward from anywhere but SESSION.
+    handle_deck_key(key(KeyCode::BackTab), &model, &mut ui);
     assert_eq!(
         ui.tab,
         *DeckTab::ALL.last().expect("tabs exist"),
-        "← wraps the other way"
+        "⇧Tab wraps the other way"
+    );
+    let mut presses = 0;
+    while ui.tab == *DeckTab::ALL.last().expect("tabs exist") {
+        handle_deck_key(key(KeyCode::Left), &model, &mut ui);
+        presses += 1;
+        assert!(presses <= 4, "← never left the last tab");
+    }
+    assert_eq!(
+        ui.tab,
+        DeckTab::ALL[DeckTab::ALL.len() - 2],
+        "← walks backward from anywhere but SESSION (panes first)"
     );
     assert!(!ui.sessions_open && !ui.context_open, "no overlay opened");
 }
