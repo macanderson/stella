@@ -41,7 +41,11 @@ fn the_turn_timeout_flag_reaches_every_role_that_can_continue() {
         Some(std::time::Duration::from_secs(840)),
     );
     assert_eq!(
-        crate::agent::subsession_engine_config_for(&cfg).turn_budget,
+        crate::agent::subsession_engine_config_for(
+            &cfg,
+            &crate::durability::SessionDurability::default()
+        )
+        .turn_budget,
         Some(std::time::Duration::from_secs(840)),
     );
 
@@ -123,7 +127,10 @@ fn every_role_shares_one_session_view_of_affordable_output_ceilings() {
         ),
         (
             "sub-session",
-            crate::agent::subsession_engine_config_for(&cfg),
+            crate::agent::subsession_engine_config_for(
+                &cfg,
+                &crate::durability::SessionDurability::default(),
+            ),
         ),
     ];
 
@@ -717,7 +724,11 @@ fn the_max_output_tokens_flag_outranks_every_configured_cap() {
     // is the process's spend. Capping the worker while the verifier kept the
     // model's whole ceiling would move the cost rather than reduce it.
     assert_eq!(
-        crate::agent::subsession_engine_config_for(&cfg).max_output_tokens,
+        crate::agent::subsession_engine_config_for(
+            &cfg,
+            &crate::durability::SessionDurability::default()
+        )
+        .max_output_tokens,
         Some(24_000),
     );
 }
