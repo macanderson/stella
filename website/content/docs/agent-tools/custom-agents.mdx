@@ -40,7 +40,17 @@ Every field, in the shape the loader accepts:
   </OptionCard>
   <OptionCard name="tools" defaultValue="all tools">
     The agent's toolbelt — the tool names granted to this persona. Omitted
-    means **all** tools.
+    means **all** tools. When the agent is assumed for a session (`/agent`,
+    or `a` on the AGENTS tab), the grant is enforced: the session's tool
+    surface narrows to the intersection of this list with whatever the
+    operator already allows.
+  </OptionCard>
+  <OptionCard name="model" defaultValue="the session's model">
+    The model this agent runs on, as `provider/slug` (`zai/glm-5.2`) or a
+    bare catalog slug. Applied as a **session-only** model switch when the
+    agent is assumed — the settings default is untouched, and a model whose
+    provider has no credential is reported and skipped rather than failing
+    the assume.
   </OptionCard>
   <OptionCard name="body" required>
     The persona's instructions — everything after the frontmatter. A file with
@@ -154,9 +164,12 @@ own, and init itself prints a per-scope `✓ adopted …` summary of what it
 linked and skipped.
 
 <Callout type="info">
-  An agent's `tools:` restriction is a prompt-level toolbelt grant. For
-  hard boundaries enforced outside the model — gated mutations, blocked
-  paths — reach for [permissions](/docs/agent-tools/permissions) and
+  An agent's `tools:` restriction is enforced when the agent is **assumed**
+  for a session (the deck's `/agent` picker or the AGENTS tab's `a`): the
+  session tool surface narrows to the grant. On a plain `/agent-name task`
+  invocation it remains a prompt-level toolbelt note. For hard boundaries
+  independent of any agent — gated mutations, blocked paths — reach for
+  [permissions](/docs/agent-tools/permissions) and
   [hooks](/docs/agent-tools/hooks); to add genuinely new actions, define a
   [custom tool](/docs/agent-tools/custom-tools).
 </Callout>

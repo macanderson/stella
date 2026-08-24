@@ -316,6 +316,7 @@ pub async fn run_accounted_call(
                 crate::receipts::ServedBy {
                     role: call.role,
                     provider,
+                    upstream_provider: result.upstream_provider.as_deref(),
                     model: &result.model,
                 },
                 events,

@@ -40,11 +40,16 @@ pub(super) const DECK_BUILTINS: &[(&str, &str, SlashDomain)] = &[
     ("/clear", "reset the conversation", SlashDomain::Session),
     (
         "/model",
-        "set the default model (persists; no arg shows current + list)",
+        "switch this session's model — picker over your providers (session-only)",
         SlashDomain::Config,
     ),
     (
-        "/models",
+        "/agent",
+        "run as an installed agent this session — prompt, toolbelt, model",
+        SlashDomain::Config,
+    ),
+    (
+        "/info",
         "model routing — the think · work · verify slots (`refresh` re-syncs)",
         SlashDomain::Config,
     ),
@@ -122,10 +127,10 @@ pub(super) const DECK_BUILTINS: &[(&str, &str, SlashDomain)] = &[
         "search the MCP registry & install servers",
         SlashDomain::Extend,
     ),
-    // `/model` sets the DEFAULT model from the prompt (persisted, parity
-    // with the tab). The full engine-config editor — per-agent models,
-    // provider pins, effort, prompts — lives on the SETTINGS tab; there are
-    // no per-agent slash commands.
+    // `/model` switches THIS session's model (`/model default <id>` is the
+    // persisted form, parity with the tab). The full engine-config editor —
+    // per-agent models, provider pins, effort, prompts — lives on the
+    // SETTINGS tab; there are no per-agent slash commands.
     (
         "/settings",
         "open the SETTINGS tab — the home of all config (models included)",
@@ -148,9 +153,13 @@ pub(super) const DECK_BUILTINS: &[(&str, &str, SlashDomain)] = &[
     ),
 ];
 
-/// The deck's reserved command names — see [`DECK_BUILTINS`].
+/// The deck's reserved command names — [`DECK_BUILTINS`] plus the legacy
+/// heads that still route (`/models` → `/info`): a custom definition must
+/// not capture a name users' hands still type.
 pub(super) fn deck_reserved() -> Vec<&'static str> {
-    DECK_BUILTINS.iter().map(|(name, ..)| *name).collect()
+    let mut reserved: Vec<&'static str> = DECK_BUILTINS.iter().map(|(name, ..)| *name).collect();
+    reserved.push("/models");
+    reserved
 }
 
 /// The **queue-free** commands: submitted, they leave the deck as
@@ -159,13 +168,24 @@ pub(super) fn deck_reserved() -> Vec<&'static str> {
 /// `ShellEvent` channel (`command_side`). Membership is the driver's call
 /// (the deck reads it off the vocabulary's `sideband` flag), and the test is
 /// whether the command touches the turn, the backlog, or the conversation:
-/// `/export` reads the store, `/model` writes settings, `/help` opens an
-/// overlay — none of them belongs behind a running turn. The exceptions
-/// stay queued on purpose: `/clear` cancels the turn, `/init`/`/reload`/
-/// `/profile`/`/add-dir` mutate the live session, and a custom (⚡) command
-/// *is* a prompt once expanded.
-pub(super) const SIDEBAND: &[&str] =
-    &["/help", "/model", "/models", "/theme", "/export", "/donate"];
+/// `/export` reads the store, `/info` lists the catalog, `/help` opens an
+/// overlay — none of them belongs behind a running turn.
+///
+/// The exceptions stay queued on purpose: `/clear` cancels the turn,
+/// `/init`/`/reload`/`/profile`/`/add-dir` mutate the live session, and a
+/// custom (⚡) command *is* a prompt once expanded. **`/model` and `/agent`
+/// are exceptions for the same reason** — since #4617 they switch the
+/// running session (`session_override` rebuilds the provider and rewrites
+/// the system message), so they are as turn-coupled as `/clear` is, and
+/// routing them queue-free would take the switch away from the loop that
+/// owns that state.
+pub(super) const SIDEBAND: &[&str] = &[
+    "/help", "/info",
+    // `/info`'s pre-rename name, still routed (#4617) — a queue-free
+    // command must not become queued just because the reader typed the
+    // name they learned.
+    "/models", "/theme", "/export", "/donate",
+];
 
 /// Whether `head` (the first `/`-token of a submission) is queue-free.
 pub(crate) fn is_sideband(head: &str) -> bool {
@@ -623,17 +643,28 @@ pub(super) fn handle_skills_input(
 mod sideband_tests {
     use super::*;
 
-    /// Every queue-free name is a real builtin, and the turn-coupled
-    /// exceptions are not on the list.
+    /// Every queue-free name is a **reserved** deck name, and the
+    /// turn-coupled exceptions are not on the list.
+    ///
+    /// Reserved rather than "a builtin": `/models` is `/info`'s pre-rename
+    /// name (#4617), still routed and still reserved, and it must keep the
+    /// queue-free answer the name it was renamed to has — otherwise the same
+    /// command costs a queue slot depending on which name the reader learned.
     #[test]
-    fn the_sideband_list_is_a_subset_of_the_builtins() {
+    fn the_sideband_list_is_a_subset_of_the_reserved_names() {
+        let reserved = deck_reserved();
         for name in SIDEBAND {
             assert!(
-                DECK_BUILTINS.iter().any(|(n, ..)| n == name),
-                "{name} is queue-free but not a builtin"
+                reserved.contains(name),
+                "{name} is queue-free but not a reserved deck name"
             );
         }
-        for name in ["/clear", "/init", "/reload", "/profile", "/add-dir"] {
+        // `/model` and `/agent` are on this list, not the queue-free one:
+        // since #4617 each switches the running session's model, which is
+        // state only the driver loop owns.
+        for name in [
+            "/clear", "/init", "/reload", "/profile", "/add-dir", "/model", "/agent",
+        ] {
             assert!(!is_sideband(name), "{name} is turn-coupled by design");
         }
     }

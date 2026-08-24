@@ -69,9 +69,6 @@ pub(super) fn handle_engine_config_input(
             // scope overrides what was just saved at the user scope, the
             // overlay shows the effective value, not the wish.
             let _ = in_tx.send(engine_config_inbound(cfg, Some(status)));
-            // A save may have moved `allowed_models`, which is the `/model`
-            // argument menu's vocabulary — re-derive it.
-            let _ = in_tx.send(super::model_cmd::candidates_inbound(cfg));
             true
         }
         _ => false,

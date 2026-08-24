@@ -239,15 +239,6 @@ pub enum Inbound {
     /// ignored by the model fold. The driver sends one after `/init` adopts
     /// custom commands/skills so the menu reflects them without a restart.
     SlashCommands(Vec<crate::composer::SlashCommand>),
-    /// The `/model` argument vocabulary for the composer's argument menu
-    /// ([`crate::composer::args`]): the active provider's models as
-    /// `provider/slug` specs, filtered through the configured
-    /// `allowed_models` list when one is set. Out-of-band view state exactly
-    /// like [`Inbound::SlashCommands`] — applied straight to
-    /// `DeckUi::model_candidates`, ignored by the model fold. Sent at
-    /// startup and again whenever the driver changes what the list would
-    /// say (a `/model` set, a catalog refresh, an engine-config save).
-    ModelCandidates(Vec<String>),
     /// The session's resolved triage / worker / verifier pins, sent once at
     /// startup by the driver — which is the only side that can call
     /// `resolve_provider` — so the statline's MODEL cell and the `/models`
@@ -262,6 +253,15 @@ pub enum Inbound {
     /// later `StepUsage` replaces it with what actually served. Sending it is
     /// optional — a driver that never does behaves exactly as before.
     ConfiguredRoles(Vec<(crate::deck::PipelineRole, crate::deck::RolePin)>),
+    /// A deliberate mid-session re-pin: replace the named roles' pins,
+    /// served evidence included. The driver sends this after a session model
+    /// switch (`/model`, an assumed agent's `model:`), where
+    /// [`Inbound::ConfiguredRoles`]'s never-overwrite fold is the wrong
+    /// contract — the old served pin describes calls of a model that no
+    /// longer serves, and keeping it would have the statline name the wrong
+    /// model until the next `StepUsage`. Two verbs rather than a flag:
+    /// startup intent must never clobber evidence, a switch must.
+    RolePinsReset(Vec<(crate::deck::PipelineRole, crate::deck::RolePin)>),
     /// Derived prompt-cache economics for one agent's latest model call —
     /// dollars saved and the provider's cache TTL — computed by the
     /// pricing-aware producer (the CLI has the model catalog; the deck does
@@ -893,12 +893,22 @@ pub enum WorkspaceInput {
     /// and its archived versions. Answered with a fresh
     /// [`Inbound::AgentsList`].
     AgentDelete { name: String, scope: AgentScope },
-    /// INSTALLED AGENTS `a`: the lead assumes this agent's identity for the
-    /// rest of the session — its definition becomes the persona the system
-    /// prompt carries, from the next turn on. Between turns only; mid-turn
-    /// the driver answers with a transcript notice. Answered with
+    /// INSTALLED AGENTS `a`, or the `/agent` picker: the lead assumes this
+    /// agent's identity for the rest of the session — its definition becomes
+    /// the persona the system prompt carries, its `tools:` grant narrows the
+    /// session tool policy, and its declared `model:` (if any) switches the
+    /// session model, all from the next turn on. Between turns only;
+    /// mid-turn the driver answers with a transcript notice. Answered with
     /// [`Inbound::AgentAssumed`].
     AgentAssume { name: String, scope: AgentScope },
+    /// The `/model` picker's selection (or `/model <spec>` typed): switch
+    /// THIS session's model to `spec` (`provider/slug`). Session-only — the
+    /// driver never writes settings for it, so future sessions keep the
+    /// configured default. Between turns only, like
+    /// [`WorkspaceInput::AgentAssume`]; the driver answers with a fresh
+    /// [`Inbound::Register`] + [`Inbound::ConfiguredRoles`] and a chrome
+    /// note (on refusal, the note alone).
+    ModelOverride { spec: String },
     /// Create a new agent from a short description with LLM assistance: the
     /// driver drafts the definition through the session's provider, installs
     /// it at `scope`, and answers with a fresh [`Inbound::AgentsList`].

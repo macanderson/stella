@@ -11,9 +11,10 @@
 //! as you type, Tab completes, ⏎ submits the completed command.
 //!
 //! Same shape as the slash menu: the caller owns the candidate vocabulary
-//! (the CLI computes it — provider-scoped, `allowed_models`-filtered — and
-//! ships it over [`crate::envelope::Inbound::ModelCandidates`]); this module
-//! only filters and navigates. One argument, no quoting: a second
+//! ([`crate::views::picker::typeahead_candidates`] narrows the `/model`
+//! picker's list — `allowed_models` when configured, else the credentialed
+//! catalog — to the session's active provider); this module only filters and
+//! navigates. One argument, no quoting: a second
 //! whitespace-separated word closes the menu and the text submits as typed.
 
 use crossterm::event::{KeyCode, KeyEvent};

@@ -313,9 +313,10 @@ fn open_picker(e: &mut EngineOverlay, role: EngineRole) {
     });
 }
 
-/// The picker's vocabulary: `allowed_models` when a restriction is
-/// configured, otherwise the whole seed catalog.
-fn picker_candidates(state: &EngineConfigState) -> &[String] {
+/// The picker's vocabulary: `allowed_models` when restricted, else the
+/// catalog — one derivation, shared with the `/model` session picker
+/// ([`crate::views::picker`]), so the two can never offer different lists.
+pub(crate) fn picker_candidates(state: &EngineConfigState) -> &[String] {
     if state.allowed_models.is_empty() {
         &state.catalog_models
     } else {

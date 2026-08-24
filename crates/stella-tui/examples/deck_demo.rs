@@ -295,6 +295,9 @@ async fn main() -> std::io::Result<()> {
                 WorkspaceInput::IssueCreate { .. }
                 | WorkspaceInput::IssueAct { .. }
                 | WorkspaceInput::EntitySearch { .. } => {}
+                // The session model switch needs the real driver (provider
+                // resolution + prompt rebuild); inert here.
+                WorkspaceInput::ModelOverride { .. } => {}
                 // The MCP tab's actions are serviced by the real CLI driver;
                 // this demo has no MCP state, so they are inert here.
                 WorkspaceInput::McpToggle { .. }
@@ -382,7 +385,7 @@ async fn main() -> std::io::Result<()> {
         initial_graph: Some(demo_graph()),
         slash_commands: vec![
             SlashCommand::new("/help", "show the key legend"),
-            SlashCommand::new("/models", "list available models"),
+            SlashCommand::new("/info", "list available models"),
             SlashCommand::new("/diff", "open the diff for the selected file"),
             SlashCommand::new("/files", "jump to the Files tab"),
             SlashCommand::new("/clear", "clear the focused transcript"),

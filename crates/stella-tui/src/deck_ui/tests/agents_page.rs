@@ -10,8 +10,9 @@ fn vocabulary() -> Vec<SlashCommand> {
     vec![
         SlashCommand::new("/help", "show commands").sideband(),
         SlashCommand::new("/clear", "reset the conversation"),
-        SlashCommand::new("/model", "set the default model").sideband(),
-        SlashCommand::new("/models", "model routing").sideband(),
+        SlashCommand::new("/info", "model routing").sideband(),
+        // Turn-coupled since #4617: it switches the running session's model.
+        SlashCommand::new("/model", "switch this session's model"),
         SlashCommand::new("/theme", "switch colour theme").sideband(),
         SlashCommand::new("/export", "export session telemetry").sideband(),
         SlashCommand::new("/init", "index the workspace"),
@@ -73,9 +74,9 @@ fn describing_a_task_on_the_page_spawns_a_lane() {
     assert!(ui.agents_page.notice.is_some(), "and says what it did");
 }
 
-/// **The scoped menu.** `/model` works from the page (queue-free); `/export`
-/// — queue-free on the deck — is refused here with a notice, exactly as
-/// asked: not every command belongs on the fleet view.
+/// **The scoped menu.** `/model` works from the page; `/export` — queue-free
+/// on the deck — is refused here with a notice, exactly as asked: not every
+/// command belongs on the fleet view.
 #[test]
 fn the_page_menu_is_scoped_and_refuses_export() {
     let model = model_with(&["lead"]);
@@ -205,15 +206,39 @@ fn a_sideband_command_bypasses_the_prompt_queue() {
     );
 }
 
-/// **The `/model` argument menu on the deck composer.** Candidates narrow as
-/// the argument is typed, Tab completes into the buffer, and ⏎ submits the
-/// completed command down the queue-free route.
-#[test]
-fn the_model_argument_menu_completes_and_submits() {
-    let model = model_with(&["lead"]);
+/// A deck whose model vocabulary is seeded the way the driver seeds it —
+/// through the ENGINE snapshot the `/model` picker also reads — with the
+/// session pinned to one provider.
+fn ui_with_models(allowed: &[&str]) -> (WorkspaceModel, DeckUi) {
+    use crate::deck::{PipelineRole, RolePin};
+    let mut model = model_with(&["lead"]);
+    model.apply_inbound(&Inbound::ConfiguredRoles(vec![(
+        PipelineRole::Worker,
+        RolePin {
+            provider: "zai".into(),
+            model: "glm-5.2".into(),
+            served: false,
+        },
+    )]));
     let mut ui = ready_ui();
     ui.slash_commands = vocabulary();
-    ui.model_candidates = vec!["zai/glm-5.2".into(), "zai/glm-5.1".into()];
+    ui.engine.state = Some(crate::envelope::EngineConfigState {
+        allowed_models: allowed.iter().map(|s| (*s).to_string()).collect(),
+        ..Default::default()
+    });
+    (model, ui)
+}
+
+/// **The `/model` argument menu on the deck composer.** Candidates narrow as
+/// the argument is typed, Tab completes into the buffer, and ⏎ submits the
+/// completed spec.
+///
+/// The submission is a plain `Enqueue`, deliberately **not** the queue-free
+/// `Command` route: since #4617 `/model <spec>` switches the running
+/// session's model, which is state only the driver loop owns.
+#[test]
+fn the_model_argument_menu_completes_and_submits() {
+    let (model, mut ui) = ui_with_models(&["zai/glm-5.2", "zai/glm-5.1"]);
     ui.composer.load("/model glm-5.1".to_string());
     assert_eq!(
         handle_deck_key(key(KeyCode::Tab), &model, &mut ui),
@@ -226,9 +251,38 @@ fn the_model_argument_menu_completes_and_submits() {
     );
     assert_eq!(
         handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
-        DeckAction::Send(WorkspaceInput::Command {
+        DeckAction::Send(WorkspaceInput::Enqueue {
             text: "/model zai/glm-5.1".into()
-        })
+        }),
+        "turn-coupled: the driver applies the live switch"
     );
     assert!(ui.composer.is_blank(), "submit clears the composer");
+}
+
+/// **The vocabulary is the picker's, narrowed to the active provider.** One
+/// list feeds both surfaces — a configured `allowed_models` restricts it,
+/// and a spec belonging to another provider is not offered at this session.
+#[test]
+fn the_model_menu_offers_this_providers_allowed_models_only() {
+    let (model, mut ui) =
+        ui_with_models(&["zai/glm-5.2", "zai/glm-5.1", "anthropic/claude-opus-5"]);
+    ui.composer.load("/model ".to_string());
+    let offered = crate::views::picker::typeahead_candidates(&model, &ui);
+    assert_eq!(
+        offered,
+        vec!["zai/glm-5.2".to_string(), "zai/glm-5.1".to_string()],
+        "another provider's model is not offered at this session"
+    );
+
+    // With no restriction configured the catalog stands in, still scoped.
+    let (model, mut ui) = ui_with_models(&[]);
+    ui.engine.state = Some(crate::envelope::EngineConfigState {
+        catalog_models: vec!["zai/glm-5.2".into(), "openai/gpt-5.5".into()],
+        ..Default::default()
+    });
+    ui.composer.load("/model ".to_string());
+    assert_eq!(
+        crate::views::picker::typeahead_candidates(&model, &ui),
+        vec!["zai/glm-5.2".to_string()]
+    );
 }

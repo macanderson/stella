@@ -1114,6 +1114,50 @@ fn deck_render_snapshots_pin_the_approval_card() {
     );
 }
 
+/// The session-override pickers (`/model`, `/agent`) — the modal lists a
+/// selection leaves as `ModelOverride` / `AgentAssume`.
+///
+/// The `· current` word on the model rows is the point of the first golden:
+/// the session's live pin renders as a WORD (style-stripped goldens can pin
+/// it), and the fixture's worker pin (`zai/glm-5.2-air`, folded from its
+/// latest `StepUsage`) is among the candidates so the marker actually
+/// appears.
+#[test]
+fn deck_render_snapshots_pin_the_session_pickers() {
+    let model = fixture_model();
+
+    let mut ui = ui_for(DeckTab::Session);
+    ui.engine.state = Some(stella_tui::EngineConfigState {
+        catalog_models: vec![
+            "zai/glm-5.2-air".to_string(),
+            "anthropic/claude-fable-5".to_string(),
+            "openrouter/openai/gpt-5.5".to_string(),
+        ],
+        ..Default::default()
+    });
+    ui.model_picker.raise();
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_model_picker",
+        "the /model session picker — candidates with the live pin marked current",
+        W,
+        H,
+        &frame,
+    );
+
+    let mut ui = ui_for(DeckTab::Session);
+    ui.installed.entries = fixture_agents();
+    ui.agent_picker.raise();
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert_golden(
+        "overlay_agent_picker",
+        "the /agent session picker — installed definitions with scope and description",
+        W,
+        H,
+        &frame,
+    );
+}
+
 // ─────────────────────────── the harness itself ───────────────────────────
 
 /// The suite's own guard: rendering the same fixture twice must produce the

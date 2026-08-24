@@ -741,10 +741,6 @@ pub struct DeckUi {
     /// the full-frame fleet surface — lanes, sessions, and its own composer
     /// that starts a new agent lane. Modal while open.
     pub agents_page: crate::v2::agents_page::AgentsPage,
-    /// The `/model` argument vocabulary ([`Inbound::ModelCandidates`]):
-    /// the active provider's models as `provider/slug` specs, already
-    /// filtered through the configured `allowed_models` list driver-side.
-    pub model_candidates: Vec<String>,
     /// Whether the SESSIONS overlay is open (`ctrl-e`, `/sessions`). Modal
     /// while open: ↑/↓ move, `⏎` open (replay), `a` archive, `x` delete,
     /// `r` refresh, Esc/`←` close.
@@ -822,6 +818,12 @@ pub struct DeckUi {
     /// tighter gate than a decision being deliberated, and it carries the
     /// shorter of the two deadlines.
     pub approval: crate::views::approval::ApprovalOverlay,
+    /// The `/model` picker: switch this session's model. Modal while open;
+    /// rows come live from `engine.state` (see [`crate::views::picker`]).
+    pub model_picker: crate::views::picker::ListPicker,
+    /// The `/agent` picker: assume an installed agent this session. Modal
+    /// while open; rows come live from `installed.entries`.
+    pub agent_picker: crate::views::picker::ListPicker,
 }
 
 impl Default for DeckUi {
@@ -888,7 +890,6 @@ impl Default for DeckUi {
             scrollback: crate::accessible::Scrollback::default(),
             subagents: crate::v2::subagents::SubagentsOverlay::default(),
             agents_page: crate::v2::agents_page::AgentsPage::default(),
-            model_candidates: Vec::new(),
             sessions_open: false,
             sessions_show_all: false,
             sessions: Vec::new(),
@@ -910,6 +911,8 @@ impl Default for DeckUi {
             tools: crate::views::tools::ToolsOverlay::default(),
             question: crate::views::question::QuestionOverlay::default(),
             approval: crate::views::approval::ApprovalOverlay::default(),
+            model_picker: crate::views::picker::ListPicker::default(),
+            agent_picker: crate::views::picker::ListPicker::default(),
         }
     }
 }
@@ -1130,10 +1133,6 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     if let Inbound::SlashCommands(commands) = inbound {
         ui.slash_commands = commands.clone();
         ui.slash_selected = 0;
-        return;
-    }
-    if let Inbound::ModelCandidates(candidates) = inbound {
-        ui.model_candidates = candidates.clone();
         return;
     }
     // The installed-agents list is out-of-band view state too — the driver
@@ -1595,6 +1594,8 @@ pub mod list_nav;
 mod local;
 mod overlays;
 mod parked;
+/// The session-override pickers' key routing (`/model`, `/agent`).
+pub(crate) mod pickers;
 pub mod sessions;
 /// Esc-with-something-to-say — see [`steer`].
 mod steer;
@@ -1876,7 +1877,12 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     if ui.inspect_open {
         return handle_inspect_key(key, ui);
     }
-    // The floating cards (`/plan` · `/models` ·
+    // The session-override pickers (`/model`, `/agent`) are modal on the
+    // same terms as the overlays above.
+    if let Some(action) = pickers::handle_key(key, ui) {
+        return action;
+    }
+    // The floating cards (`/plan` · `/info` ·
     // `/budget`) are modal exactly like the overlays above: the topmost card
     // claims every key — Esc closes it before any other Esc meaning fires.
     if let Some(action) = cards::handle_card_key(key, model, ui) {

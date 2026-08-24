@@ -30,11 +30,18 @@
 //! the machine's session registry ([`crate::deck_ui::sessions`]'s row rules).
 //!
 //! **The command menu here is scoped.** The page offers only the commands
-//! that make sense over a fleet view — [`PAGE_COMMANDS`]: `/model` (with its
-//! argument menu), `/models`, `/theme`, `/help` — and every one of them is
-//! queue-free, leaving as [`WorkspaceInput::Command`]. Anything else typed
-//! (`/export` is the named case) is refused with a footer notice rather than
-//! silently acting on the session behind the page.
+//! that make sense over a fleet view ([`PAGE_COMMANDS`]) — `/model` with its
+//! argument menu, `/info`, `/theme`, `/help` — and each leaves as
+//! [`WorkspaceInput::Command`]. Anything else typed (`/export` is the named
+//! case) is refused with a footer notice rather than silently acting on the
+//! session behind the page.
+//!
+//! Most of that set is queue-free and answers at once. `/model <spec>` is
+//! the exception and is sent all the same: the driver declines it on the
+//! queue-free path (since #4617 it switches the running session's model,
+//! which only the driver loop can do) and then applies it between turns, or
+//! backlogs it when a turn is in flight. So the page offers one route and
+//! the driver decides what each command costs.
 
 use std::time::{Duration, Instant};
 
@@ -64,7 +71,7 @@ pub const LEFT_DOUBLE_WINDOW: Duration = Duration::from_millis(1500);
 /// most deck commands act on the session view *behind* this page (`/files`,
 /// `/inspect`), and `/export` is the named example of one that must not run
 /// from here at all.
-pub const PAGE_COMMANDS: &[&str] = &["/model", "/models", "/theme", "/help"];
+pub const PAGE_COMMANDS: &[&str] = &["/model", "/info", "/models", "/theme", "/help"];
 
 /// The page's state: whether it is up, the selected row, its own composer
 /// (never the deck's — opening the page must not disturb a half-typed
@@ -205,8 +212,12 @@ fn slash_matches(ui: &DeckUi) -> Vec<String> {
 }
 
 /// The page's `/model` argument-menu matches, or empty.
-fn model_arg_matches(ui: &DeckUi) -> Vec<String> {
-    args::arg_matches(&ui.agents_page.composer, "/model", &ui.model_candidates)
+fn model_arg_matches(model: &WorkspaceModel, ui: &DeckUi) -> Vec<String> {
+    args::arg_matches(
+        &ui.agents_page.composer,
+        "/model",
+        &crate::views::picker::typeahead_candidates(model, ui),
+    )
 }
 
 /// The page's keys. Modal and full-frame: every key belongs to the page
@@ -222,7 +233,7 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
 
     // The argument menu first (`/model <fragment>`), then the scoped slash
     // menu — the same precedence the deck composer applies.
-    let arg = model_arg_matches(ui);
+    let arg = model_arg_matches(model, ui);
     if !arg.is_empty()
         && let Some(outcome) = args::handle_arg_popup_key(
             key,
@@ -514,7 +525,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
 
     // The page's popups, anchored above the composer: the scoped slash menu,
     // or `/model`'s argument menu.
-    let arg = model_arg_matches(ui);
+    let arg = model_arg_matches(model, ui);
     let menu: Vec<String> = if arg.is_empty() {
         slash_matches(ui)
     } else {

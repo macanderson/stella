@@ -244,6 +244,7 @@ async fn a_rewritten_block_is_never_served_from_the_digest_memo() {
     let served = ServedBy {
         role: stella_protocol::ModelCallRole::Worker,
         provider: "p",
+        upstream_provider: None,
         model: "m",
     };
     let mut messages = vec![

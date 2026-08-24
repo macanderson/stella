@@ -41,8 +41,7 @@ pub(super) fn run(
         "/help" => {
             let _ = in_tx.send(Inbound::ShowHelp);
         }
-        "/model" => say(model_cmd::current_summary(cfg)),
-        "/models" => say(Config::available_models_plain(None)),
+        "/info" | "/models" => say(Config::available_models_plain(None)),
         "/theme" => say(theme_cmd::current_summary(cfg)),
         // Export THIS session's telemetry to a timestamped ZIP of raw JSON
         // dumps + a self-contained HTML dashboard, in the background: the
@@ -62,29 +61,6 @@ pub(super) fn run(
         }
         "/donate" => say(DONATE.to_string()),
         _ => {
-            // `/model <provider/slug>` — validate + persist the default,
-            // then refresh both views that show it: the SETTINGS tab and
-            // the composer's argument menu.
-            if let Some(command) = model_cmd::parse_model_command(trimmed) {
-                match command {
-                    model_cmd::ModelCommand::Usage => say(
-                        "usage: `/model <provider/slug>` — e.g. `/model zai/glm-5.2`. \
-                         Run `/model` alone to see the current default and the list."
-                            .to_string(),
-                    ),
-                    model_cmd::ModelCommand::Set(id) => {
-                        match model_cmd::set_default_model(cfg, &id) {
-                            Ok(msg) => {
-                                say(msg);
-                                let _ = in_tx.send(engine_config_inbound(cfg, None));
-                                let _ = in_tx.send(model_cmd::candidates_inbound(cfg));
-                            }
-                            Err(msg) => say(msg),
-                        }
-                    }
-                }
-                return true;
-            }
             // `/theme <slug>` — switch + persist. The live switch is a
             // buffer remap in `stella_tui`, so it lands on the next frame.
             if let Some(command) = theme_cmd::parse_theme_command(trimmed) {
@@ -96,8 +72,9 @@ pub(super) fn run(
                 }
                 return true;
             }
-            // The `/models` argument forms, model-free by design — a catalog
-            // refresh is part of digging out of a broken model setting.
+            // The `/info` argument forms, model-free by design — a catalog
+            // refresh is part of digging out of a broken model setting, so it
+            // can never be allowed to depend on a working model.
             if let Some(command) = parse_models_command(trimmed) {
                 match command {
                     ModelsCommand::Refresh { force } => {
@@ -117,15 +94,16 @@ pub(super) fn run(
                             {
                                 emit_line(format!("refresh failed: {e}"));
                             }
-                            // The refreshed catalog is the argument menu's
-                            // source — re-derive it.
-                            let _ = in_tx.send(model_cmd::candidates_inbound(&cfg));
+                            // A refreshed catalog is what the SETTINGS tab's
+                            // model vocabulary — and the `/model` argument
+                            // menu that reads it — are derived from.
+                            let _ = in_tx.send(engine_config_inbound(&cfg, None));
                         });
                     }
                     ModelsCommand::List => say(Config::available_models_plain(None)),
                     ModelsCommand::Usage(word) => say(format!(
-                        "`/models {word}` — unknown subcommand; try `/models` or `/models list` \
-                         (the listing) or `/models refresh [--force]` (re-sync the catalog)"
+                        "`/info {word}` — unknown subcommand; try `/info` or `/info list` \
+                         (the listing) or `/info refresh [--force]` (re-sync the catalog)"
                     )),
                 }
                 return true;

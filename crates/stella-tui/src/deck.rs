@@ -792,6 +792,13 @@ impl WorkspaceModel {
                         .or_insert_with(|| pin.clone());
                 }
             }
+            // The switch's re-pin DOES overwrite — served evidence included.
+            // See the envelope doc for why these are two verbs.
+            Inbound::RolePinsReset(pins) => {
+                for (role, pin) in pins {
+                    self.role_pins.insert(*role, pin.clone());
+                }
+            }
             // Derived cache economics for the agent's latest call: accumulate
             // the signed savings and adopt the provider's TTL. Follows the
             // paired `StepUsage` (which auto-registers the lane), so an unknown
@@ -816,7 +823,6 @@ impl WorkspaceModel {
             Inbound::GraphSnapshot(_)
             | Inbound::IndexReadiness(_)
             | Inbound::SlashCommands(_)
-            | Inbound::ModelCandidates(_)
             | Inbound::AgentsList { .. }
             | Inbound::AgentAssumed { .. }
             | Inbound::Skills(_)

@@ -78,6 +78,10 @@ pub struct StepManifestRow {
     /// `AgentEvent::StepManifest::call_seq`.
     pub call_seq: u64,
     pub provider: String,
+    /// The upstream a gateway routed this call to, when the manifest named
+    /// one (#3054). `None` on direct endpoints — `provider` is already the
+    /// answer there — and on every manifest recorded before v34.
+    pub upstream_provider: Option<String>,
     pub model: String,
     pub call_role: String,
     pub effective_budget_tokens: u64,
@@ -149,16 +153,18 @@ impl Store {
         let call_seq = sqlite_i64("manifest call seq", row.call_seq)?;
         tx.execute(
             "INSERT OR REPLACE INTO step_receipt
-               (execution_id, turn_instance, step, call_seq, provider, model, call_role,
+               (execution_id, turn_instance, step, call_seq, provider, upstream_provider,
+                model, call_role,
                 effective_budget_tokens, calibration_factor, estimated_input_tokens,
                 compiled_frame_id, frame_hash, stall_seconds_requested)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 execution_id,
                 turn,
                 step,
                 call_seq,
                 row.provider,
+                row.upstream_provider,
                 row.model,
                 row.call_role,
                 budget,
@@ -423,8 +429,8 @@ impl Store {
     pub fn recorded_calls(&self, execution_id: i64) -> Result<Vec<RecordedCall>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
-            "SELECT turn_instance, step, call_seq, call_role, provider, model,
-                    estimated_input_tokens, compiled_frame_id, frame_hash,
+            "SELECT turn_instance, step, call_seq, call_role, provider, upstream_provider,
+                    model, estimated_input_tokens, compiled_frame_id, frame_hash,
                     stall_seconds_requested
              FROM step_receipt WHERE execution_id = ?
              ORDER BY turn_instance, step, call_seq",
@@ -437,11 +443,12 @@ impl Store {
                     call_seq: r.get::<_, i64>(2)? as u64,
                     call_role: r.get(3)?,
                     provider: r.get(4)?,
-                    model: r.get(5)?,
-                    estimated_input_tokens: r.get::<_, i64>(6)? as u64,
-                    compiled_frame_id: r.get(7)?,
-                    frame_hash: r.get(8)?,
-                    stall_seconds_requested: r.get::<_, Option<i64>>(9)?.map(|s| s as u64),
+                    upstream_provider: r.get(5)?,
+                    model: r.get(6)?,
+                    estimated_input_tokens: r.get::<_, i64>(7)? as u64,
+                    compiled_frame_id: r.get(8)?,
+                    frame_hash: r.get(9)?,
+                    stall_seconds_requested: r.get::<_, Option<i64>>(10)?.map(|s| s as u64),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -485,6 +492,11 @@ pub struct RecordedCall {
     pub call_seq: u64,
     pub call_role: String,
     pub provider: String,
+    /// The vendor a gateway routed this call to, read off the durable
+    /// receipt (#3054) — the answer to "who actually served this call" that
+    /// used to require a raw SQL query over the `events` payload. `None` is
+    /// "no upstream was named": a direct endpoint, or a pre-v34 row.
+    pub upstream_provider: Option<String>,
     pub model: String,
     pub estimated_input_tokens: u64,
     /// This call's compiled-frame id, when one was built (Phase 2, #713).
@@ -644,6 +656,7 @@ mod tests {
             step: 3,
             call_seq: 0,
             provider: "anthropic".into(),
+            upstream_provider: None,
             model: "opus".into(),
             call_role: "worker".into(),
             effective_budget_tokens: 136_363,
@@ -684,6 +697,54 @@ mod tests {
         assert_eq!(back[1].token_cost, Some(103));
     }
 
+    /// **Witness (#3054).** Who served a gateway-routed call survives to the
+    /// durable receipt and is readable from it — before this change neither
+    /// `step_receipt` nor any store reader carried `upstream_provider`, so
+    /// the only way to answer "which vendor served call N" was a raw SQL
+    /// query over the `events` payload.
+    ///
+    /// The second receipt is the distinction the column exists for: a direct
+    /// endpoint reads back as `None`, never as an empty-string vendor.
+    #[test]
+    fn a_receipts_upstream_provider_is_readable_without_the_event_stream() {
+        let store = Store::in_memory().unwrap();
+        let id = store
+            .begin_execution("run", "p", "openrouter", "glm-5.2")
+            .unwrap();
+        let mut routed = StepManifestRow {
+            turn_instance: 0,
+            step: 0,
+            call_seq: 0,
+            provider: "openrouter".into(),
+            upstream_provider: Some("Amazon Bedrock".into()),
+            model: "glm-5.2".into(),
+            call_role: "worker".into(),
+            effective_budget_tokens: 100,
+            calibration_factor: 1.0,
+            estimated_input_tokens: 10,
+            stall_seconds_requested: None,
+            compiled_frame_id: None,
+            frame_hash: None,
+            blocks: Vec::new(),
+        };
+        store.record_step_manifest(id, &routed).unwrap();
+        routed.step = 1;
+        routed.upstream_provider = None;
+        store.record_step_manifest(id, &routed).unwrap();
+
+        let calls = store.recorded_calls(id).unwrap();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(
+            calls[0].upstream_provider.as_deref(),
+            Some("Amazon Bedrock"),
+            "the vendor a gateway routed to is on the receipt"
+        );
+        assert_eq!(
+            calls[1].upstream_provider, None,
+            "a call that named no upstream stays None, never an invented vendor"
+        );
+    }
+
     /// **Witness (#3621).** The stall rung's number survives to the durable
     /// artifact and is readable from it — the whole point: a trial that slept
     /// away its allowance is countable from `store.db` without re-parsing
@@ -705,6 +766,7 @@ mod tests {
             step: 0,
             call_seq: 0,
             provider: "anthropic".into(),
+            upstream_provider: None,
             model: "opus".into(),
             call_role: "worker".into(),
             effective_budget_tokens: 100,
@@ -744,6 +806,7 @@ mod tests {
             step: 2,
             call_seq: 0,
             provider: "anthropic".into(),
+            upstream_provider: None,
             model: "opus".into(),
             call_role: "worker".into(),
             effective_budget_tokens: 100,

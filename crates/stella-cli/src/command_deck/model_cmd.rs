@@ -1,17 +1,23 @@
-//! The `/model` slash command — set the persistent default model from the
-//! prompt, at parity with the SETTINGS tab. Kept out of the already-large
-//! `command_deck` dispatcher: the parser, the catalog validation, and the
-//! settings write live here; `command_deck` only wires them to `say`.
+//! The `/model` slash command's argument forms. `/model <id>` switches THIS
+//! session's model (the typed twin of the picker the bare form opens —
+//! `command_deck::session_override` applies it); `/model default <id>`
+//! persists the default for future sessions, at parity with the SETTINGS
+//! tab. Kept out of the already-large `command_deck` dispatcher: the
+//! parser, the catalog validation, and the settings write live here;
+//! `command_deck` only wires them.
 
 use crate::config::Config;
 
-/// `/model …` — the persistent default-model setter (singular; `/models`
-/// is the plural catalog command). A valid model id is one whitespace-free
-/// token (`zai/glm-5.2`, `openrouter/openai/gpt-5.5`), so anything else is
-/// answered with usage rather than a wasted model call.
+/// `/model …` (singular; `/info` is the catalog command). A valid model id
+/// is one whitespace-free token (`zai/glm-5.2`,
+/// `openrouter/openai/gpt-5.5`), so anything else is answered with usage
+/// rather than a wasted model call.
 pub enum ModelCommand {
-    /// `/model <id>` — one token to validate and persist as the default.
-    Set(String),
+    /// `/model <id>` — switch this session's model, session-only.
+    Override(String),
+    /// `/model default <id>` — validate and persist as the default for
+    /// sessions started from now on.
+    Default(String),
     /// `/model <two or more tokens>` — not a model id.
     Usage,
 }
@@ -25,9 +31,11 @@ pub fn parse_model_command(trimmed: &str) -> Option<ModelCommand> {
         return None;
     }
     let mut words = rest.split_whitespace();
-    match (words.next(), words.next()) {
-        (Some(id), None) => Some(ModelCommand::Set(id.to_string())),
-        // No token (all whitespace) or more than one — not a model id.
+    match (words.next(), words.next(), words.next()) {
+        (Some("default"), Some(id), None) => Some(ModelCommand::Default(id.to_string())),
+        (Some(id), None, _) if id != "default" => Some(ModelCommand::Override(id.to_string())),
+        // No token (all whitespace), a bare `default`, or a sentence — not
+        // a model id.
         _ => Some(ModelCommand::Usage),
     }
 }
@@ -44,7 +52,8 @@ pub fn current_summary(cfg: &Config) -> String {
     format!(
         "default model (new sessions): {persisted}\n\
          this session is running:      {}/{}\n\n\
-         set the default with `/model <provider/slug>` (e.g. `/model zai/glm-5.2`):\n\n{}",
+         switch this session with `/model <provider/slug>` (e.g. `/model zai/glm-5.2`); \
+         persist the default with `/model default <provider/slug>`:\n\n{}",
         cfg.provider.id,
         cfg.model_id,
         Config::available_models_plain(None),
@@ -52,7 +61,7 @@ pub fn current_summary(cfg: &Config) -> String {
 }
 
 /// The pins this session is configured to run for triage / worker / verifier,
-/// for the statline's MODEL cell and the `/models` dialog's standing column.
+/// for the statline's MODEL cell and the `/info` dialog's standing column.
 ///
 /// The deck otherwise learns a role's pin only from that role's first
 /// `AgentEvent::StepUsage`, so before any turn it can say nothing, and a role
@@ -109,43 +118,6 @@ pub fn configured_role_pins(
         .collect()
 }
 
-/// The `/model` argument-menu vocabulary
-/// ([`stella_tui::Inbound::ModelCandidates`]): the **active provider's**
-/// models as `provider/slug` specs. A configured non-empty `allowed_models`
-/// list IS the vocabulary — scoped to the active provider, exactly the
-/// narrowing the SETTINGS tab's picker applies (`views::engine`'s
-/// `picker_candidates`); without one, the runtime catalog's rows for that
-/// provider. Sent at startup and re-sent whenever the answer may have moved
-/// (a `/model` set, a catalog refresh, an engine-config save).
-pub fn model_candidates(cfg: &Config) -> Vec<String> {
-    let provider = cfg.provider.id;
-    let allowed: Vec<String> = crate::settings::Settings::load(&cfg.workspace_root)
-        .ok()
-        .and_then(|s| s.agent_engine_config)
-        .and_then(|e| e.allowed_models)
-        .unwrap_or_default();
-    if !allowed.is_empty() {
-        return allowed
-            .into_iter()
-            .filter(|spec| {
-                spec.strip_prefix(provider)
-                    .is_some_and(|rest| rest.starts_with('/'))
-            })
-            .collect();
-    }
-    stella_model::Catalog::current()
-        .entries()
-        .iter()
-        .filter(|e| e.provider == provider)
-        .map(|e| format!("{}/{}", e.provider, e.id))
-        .collect()
-}
-
-/// [`model_candidates`] as the inbound the deck folds.
-pub fn candidates_inbound(cfg: &Config) -> stella_tui::Inbound {
-    stella_tui::Inbound::ModelCandidates(model_candidates(cfg))
-}
-
 /// Validate `id` against the catalog (exactly as the settings tab's default
 /// resolves, via [`crate::engine_config::parse_model_spec`]) and persist it
 /// as `default_model` in user-scope settings through the same `save_to` the
@@ -167,8 +139,8 @@ pub fn set_default_model(cfg: &Config, id: &str) -> Result<String, String> {
     };
     let Some(spec) = crate::engine_config::parse_model_spec(id, &is_provider) else {
         return Err(format!(
-            "model `{id}` not recognized — use `provider/slug` (e.g. `/model zai/glm-5.2`), \
-             or run `/models` to list what your configured providers offer"
+            "model `{id}` not recognized — use `provider/slug` (e.g. `/model default \
+             zai/glm-5.2`), or run `/info` to list what your configured providers offer"
         ));
     };
     // Validated at SET time, not at first use (#895). Parsing only proves the
@@ -281,39 +253,6 @@ mod tests {
             aux_credentials: Default::default(),
             cache_ttl: None,
         }
-    }
-
-    /// **The witness for the `/model` argument menu's vocabulary.** Without
-    /// an `allowed_models` list the candidates are the catalog's rows for
-    /// the ACTIVE provider alone; with one configured, the list itself is
-    /// the vocabulary, still scoped to the active provider — the same
-    /// narrowing the SETTINGS tab's picker applies.
-    #[test]
-    fn model_candidates_scope_to_the_provider_and_honor_the_allowlist() {
-        let (td, _guard) = scratch();
-        let workspace = td.path().join("repo");
-        std::fs::create_dir_all(&workspace).unwrap();
-        let cfg = test_config(workspace.clone());
-
-        let open = model_candidates(&cfg);
-        assert!(!open.is_empty(), "the seed catalog has anthropic rows");
-        assert!(
-            open.iter().all(|spec| spec.starts_with("anthropic/")),
-            "only the active provider's models are offered: {open:?}"
-        );
-
-        std::fs::create_dir_all(workspace.join(".stella")).unwrap();
-        std::fs::write(
-            workspace.join(".stella/settings.json"),
-            r#"{"agent_engine_config": {"allowed_models":
-                ["anthropic/claude-opus-5", "zai/glm-5.2"]}}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            model_candidates(&cfg),
-            vec!["anthropic/claude-opus-5".to_string()],
-            "a configured allowlist IS the vocabulary, scoped to the provider"
-        );
     }
 
     #[test]
@@ -460,21 +399,38 @@ mod tests {
         );
     }
 
+    /// **The witness for the override form.** `/model <id>` is a
+    /// session-only Override; the persist meaning moved behind the explicit
+    /// `default` word — an id alone must never write settings again.
     #[test]
-    fn parse_model_command_takes_one_id_and_separates_from_models() {
+    fn parse_model_command_separates_override_from_default() {
         // A single whitespace-free id (including nested OpenRouter slugs and
-        // bare catalog slugs) is a Set; the value is validated downstream.
+        // bare catalog slugs) is an Override; the value is validated downstream.
         assert!(matches!(
             parse_model_command("/model zai/glm-5.2"),
-            Some(ModelCommand::Set(id)) if id == "zai/glm-5.2"
+            Some(ModelCommand::Override(id)) if id == "zai/glm-5.2"
         ));
         assert!(matches!(
             parse_model_command("/model openrouter/openai/gpt-5.5"),
-            Some(ModelCommand::Set(id)) if id == "openrouter/openai/gpt-5.5"
+            Some(ModelCommand::Override(id)) if id == "openrouter/openai/gpt-5.5"
         ));
         assert!(matches!(
             parse_model_command("/model glm-5.2"),
-            Some(ModelCommand::Set(id)) if id == "glm-5.2"
+            Some(ModelCommand::Override(id)) if id == "glm-5.2"
+        ));
+        // The persist form takes the explicit `default` word.
+        assert!(matches!(
+            parse_model_command("/model default zai/glm-5.2"),
+            Some(ModelCommand::Default(id)) if id == "zai/glm-5.2"
+        ));
+        // A bare `default` names no model; a trailing word is a sentence.
+        assert!(matches!(
+            parse_model_command("/model default"),
+            Some(ModelCommand::Usage)
+        ));
+        assert!(matches!(
+            parse_model_command("/model default zai/glm-5.2 please"),
+            Some(ModelCommand::Usage)
         ));
         // More than one token is not a model id → usage, never a model call.
         assert!(matches!(
@@ -483,9 +439,10 @@ mod tests {
         ));
         // Bare `/model` has no whitespace to split — the exact-match arm owns it.
         assert!(parse_model_command("/model").is_none());
-        // `/model` must not swallow the plural `/models`, nor the removed
-        // `/model-<role>` heads.
+        // `/model` must not swallow the plural heads (`/info refresh` and the
+        // legacy `/models refresh`), nor the removed `/model-<role>` heads.
         assert!(parse_model_command("/models refresh").is_none());
+        assert!(parse_model_command("/info refresh").is_none());
         assert!(parse_model_command("/model-default zai/glm-5.2").is_none());
     }
 }
