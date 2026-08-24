@@ -1216,7 +1216,7 @@ pub struct FileLedger {
 /// [`FileLedger::record`] runs on every single `FileChange` event — without
 /// limit for the life of the deck. Oldest-first eviction on overflow, mirroring
 /// the other capped logs; the type stays `Vec` (not `VecDeque`) because
-/// `views::files` range-slices `ledger.records` directly.
+/// `v2::files_tab` range-slices `ledger.records` directly.
 const MAX_LEDGER_RECORDS: usize = 4096;
 
 impl FileLedger {

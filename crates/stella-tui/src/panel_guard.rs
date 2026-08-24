@@ -30,7 +30,7 @@
 //! new view that adds a write outside classes 1–2 has to extend class 3 here.
 //!
 //! 1. **Measurements.** `ui.metrics.{session,trace,files_diff,help}_*`
-//!    (`views::session`, `v2::traces`, `views::files`,
+//!    (`views::session`, `v2::traces`, `v2::files_tab`,
 //!    `deck_render::render_help`). Plain `usize`s, recomputed from scratch
 //!    every frame and read only by the *next* keypress's scroll clamp. A
 //!    missed write leaves the previous frame's measurement, which the next
