@@ -75,6 +75,7 @@ fn a_settled_head_states_its_size_once_the_turn_boundary_measures_it() {
             name: "edit_file".into(),
             input: serde_json::json!({ "path": "src/x.rs" }),
         },
+        sub_agent_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),
@@ -84,6 +85,7 @@ fn a_settled_head_states_its_size_once_the_turn_boundary_measures_it() {
         },
         duration_ms: 3,
         speculated: false,
+        sub_agent_id: None,
     });
 
     let mut fold = SessionFold::default();

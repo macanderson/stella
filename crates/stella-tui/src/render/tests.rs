@@ -625,6 +625,7 @@ fn a_folded_turn_renders_its_whole_lifecycle_in_order() {
                 name: "read_file".into(),
                 input: serde_json::json!({ "path": "src/lifecycle.rs" }),
             },
+            sub_agent_id: None,
         },
         AgentEvent::TurnComplete {
             model: "kimi-k3".into(),

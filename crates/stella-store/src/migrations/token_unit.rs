@@ -287,6 +287,7 @@ mod tests {
             output: output.clone(),
             duration_ms: 7,
             speculated: false,
+            sub_agent_id: None,
         })
         .expect("serialize event");
         conn.execute(
@@ -416,6 +417,7 @@ mod tests {
                 output: full.clone(),
                 duration_ms: 1,
                 speculated: false,
+            sub_agent_id: None,
             })
             .expect("serialize event")],
         )

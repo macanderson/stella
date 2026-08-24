@@ -89,16 +89,20 @@
 //! it is the metering record, and dropping it is exactly how child cost
 //! would vanish from `stella stats` and quietly falsify `$/resolved task`.
 //!
-//! **The two metering records are the exception, and they earn it** (#4383).
-//! `StepUsage` and `UsageIncomplete` carry a `sub_agent_id`, stamped by
-//! `child_sender`. The bracket cannot answer for them, because independent
-//! delegates are dispatched *concurrently*: several children's events
-//! interleave on the parent's one stream, so no `Started`/`Finished` pair
-//! encloses any particular call. Until the field existed, a turn's whole cost
-//! landed under the lead — ninety telemetry rows all reading `worker` in
-//! session `ses-1787465453163-60967`, five of them a parallel delegate fan-out
-//! completing within one second — and the `(role, model)` census AGENTS.md
-//! tells a bench reader to run could not separate a lead from its delegates.
+//! **Four events are the exception, and they earn it** (#4383, #4624).
+//! `StepUsage`, `UsageIncomplete`, `ToolStart` and `ToolResult` carry a
+//! `sub_agent_id`, stamped by `child_sender`. The bracket cannot answer for
+//! them, because independent delegates are dispatched *concurrently*: several
+//! children's events interleave on the parent's one stream, so no
+//! `Started`/`Finished` pair encloses any particular call. Until the metering
+//! field existed, a turn's whole cost landed under the lead — ninety telemetry
+//! rows all reading `worker` in session `ses-1787465453163-60967`, five of
+//! them a parallel delegate fan-out completing within one second — and the
+//! `(role, model)` census AGENTS.md tells a bench reader to run could not
+//! separate a lead from its delegates. The tool records have the same shape of
+//! consequence one table over: `tool_calls` projects from them, so a
+//! delegate's calls sat under the parent's execution id with nothing naming
+//! the child, and "which tools did child X run" had no answer at all.
 //!
 //! The bracket survives cancellation (#1954): a caller that drops the
 //! future mid-flight — a latency ceiling, a hard cancel — still gets a
@@ -1021,15 +1025,23 @@ fn bounded_by_ceiling(
 /// child that died on step 5 of 16 reports 5. See [`CommittedTally`] for why
 /// it is also the only record that survives a cancel.
 ///
-/// # Why the id is stamped here (#4383)
+/// # Why the id is stamped here (#4383, #4624)
 ///
 /// This is the one place that knows *which* child an event belongs to. The
 /// `Started`/`Finished` bracket was designed as the whole attribution
-/// mechanism and is enough for everything else, but the engine dispatches
-/// independent delegates concurrently: several children's events interleave on
-/// the parent's one stream, and no bracket pair encloses any particular call.
-/// So the two metering records carry the id, and every other event keeps the
-/// bracket as its only attribution.
+/// mechanism and is enough for everything a *reader* does with it, but the
+/// engine dispatches independent delegates concurrently: several children's
+/// events interleave on the parent's one stream, and no bracket pair encloses
+/// any particular call. So a projection that has to attribute one row cannot
+/// use the bracket at all.
+///
+/// Four events carry the id for that reason. The two metering records
+/// (#4383), because a `(role, model)` cost census read a five-way fan-out as
+/// ninety of the lead's own calls; and the two tool records (#4624), because
+/// `tool_calls` — the table that answers "what did this turn actually do" —
+/// projects from them, and a delegate's rows were indistinguishable from the
+/// lead's. Every other forwarded event keeps the bracket as its only
+/// attribution.
 ///
 /// **The innermost sender wins.** A grandchild's event passes this closure
 /// once per level on its way up; the first stamp is the grandchild's own, and
@@ -1041,7 +1053,9 @@ fn child_sender(parent: EventSender, agent_id: String, tally: Arc<CommittedTally
             tally.observe(*cost_usd);
         }
         if let AgentEvent::StepUsage { sub_agent_id, .. }
-        | AgentEvent::UsageIncomplete { sub_agent_id, .. } = &mut event
+        | AgentEvent::UsageIncomplete { sub_agent_id, .. }
+        | AgentEvent::ToolStart { sub_agent_id, .. }
+        | AgentEvent::ToolResult { sub_agent_id, .. } = &mut event
             && sub_agent_id.is_none()
         {
             *sub_agent_id = Some(agent_id.clone());

@@ -54,6 +54,7 @@ fn fold_edit(model: &mut SessionModel, call_id: &str, path: &str, diff: &str, ad
             name: "edit_file".into(),
             input: serde_json::json!({ "path": path }),
         },
+        sub_agent_id: None,
     });
     model.apply(&AgentEvent::FileChange {
         path: path.into(),
@@ -70,6 +71,7 @@ fn fold_edit(model: &mut SessionModel, call_id: &str, path: &str, diff: &str, ad
         },
         duration_ms: 3,
         speculated: false,
+        sub_agent_id: None,
     });
 }
 
@@ -150,6 +152,7 @@ fn a_failed_call_after_a_successful_one_claims_no_diff() {
             name: "edit_file".into(),
             input: serde_json::json!({ "path": "src/lib.rs" }),
         },
+        sub_agent_id: None,
     });
     // No FileChange: the registry measures only a successful call.
     model.apply(&AgentEvent::ToolResult {
@@ -157,6 +160,7 @@ fn a_failed_call_after_a_successful_one_claims_no_diff() {
         output: stella_protocol::ToolOutput::error("no such occurrence"),
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     });
 
     assert!(
@@ -198,6 +202,7 @@ fn a_call_that_changed_nothing_must_not_adopt_a_later_boundary_change() {
             name: "write_file".into(),
             input: serde_json::json!({ "path": "src/a.rs" }),
         },
+        sub_agent_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c2".into(),
@@ -207,6 +212,7 @@ fn a_call_that_changed_nothing_must_not_adopt_a_later_boundary_change() {
         },
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     });
 
     // Something else touches the path and the boundary sweeps it up.
@@ -254,6 +260,7 @@ fn a_bash_call_renders_the_change_it_measured() {
             name: "bash".into(),
             input: serde_json::json!({ "command": "sed -i 's/a/b/' src/a.rs" }),
         },
+        sub_agent_id: None,
     });
     model.apply(&AgentEvent::FileChange {
         path: "src/a.rs".into(),
@@ -267,6 +274,7 @@ fn a_bash_call_renders_the_change_it_measured() {
         output: stella_protocol::ToolOutput::ok(""),
         duration_ms: 12,
         speculated: false,
+        sub_agent_id: None,
     });
 
     let dref = inline_ref(&model, "c1").expect("the bash row claims the change it measured");
@@ -311,12 +319,14 @@ fn a_bash_call_that_measured_nothing_claims_no_change() {
             name: "bash".into(),
             input: serde_json::json!({ "command": "cargo test" }),
         },
+        sub_agent_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c2".into(),
         output: stella_protocol::ToolOutput::ok("test result: ok."),
         duration_ms: 900,
         speculated: false,
+        sub_agent_id: None,
     });
 
     assert!(

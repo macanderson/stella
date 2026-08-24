@@ -193,6 +193,7 @@ mod tests {
                     name: name.to_string(),
                     input: serde_json::json!({ "path": path }),
                 },
+                sub_agent_id: None,
             },
         });
     }
@@ -205,6 +206,7 @@ mod tests {
                 output: ToolOutput::ok("ok"),
                 duration_ms: 3,
                 speculated: false,
+                sub_agent_id: None,
             },
         });
     }
