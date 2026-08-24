@@ -803,6 +803,7 @@ fn tool_result_summary_is_middle_out_truncated() {
         },
         duration_ms: 5,
         speculated: false,
+        sub_agent_id: None,
     });
     match model.transcript.last() {
         Some(TranscriptEntry::ToolResult { summary, .. }) => {
@@ -829,6 +830,7 @@ fn colourised_tool_output_folds_to_clean_text() {
         ),
         duration_ms: 5,
         speculated: false,
+        sub_agent_id: None,
     });
     match model.transcript.last() {
         Some(TranscriptEntry::ToolResult { summary, full, .. }) => {
@@ -851,6 +853,7 @@ fn oversized_tool_args_stay_valid_pretty_printable_json() {
             name: "write_file".into(),
             input: serde_json::json!({ "path": "a.rs", "content": big }),
         },
+        sub_agent_id: None,
     });
     match model.transcript.last() {
         Some(TranscriptEntry::ToolStart { raw, .. }) => {
@@ -982,6 +985,7 @@ fn ask_user_sets_pending_and_the_matching_tool_result_clears_it() {
         },
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     });
     assert!(model.pending_ask_user.is_some());
     // The answer arrives as the ask_user tool's own result (matched by id).
@@ -993,6 +997,7 @@ fn ask_user_sets_pending_and_the_matching_tool_result_clears_it() {
         },
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     });
     assert!(
         model.pending_ask_user.is_none(),
@@ -1051,6 +1056,7 @@ fn hunk_review_sets_pending_and_the_matching_tool_result_clears_it() {
         },
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     });
     assert!(model.pending_hunk_review.is_some());
     // The host echoes a result carrying the proposal's id — the event-pure
@@ -1063,6 +1069,7 @@ fn hunk_review_sets_pending_and_the_matching_tool_result_clears_it() {
         },
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     });
     assert!(model.pending_hunk_review.is_none());
 }
@@ -1186,12 +1193,14 @@ fn edit_call(model: &mut SessionModel, call_id: &str, path: &str) {
             name: "edit_file".into(),
             input: serde_json::json!({ "path": path }),
         },
+        sub_agent_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: call_id.into(),
         output: ToolOutput::ok("replaced 1 occurrence(s)"),
         duration_ms: 7,
         speculated: false,
+        sub_agent_id: None,
     });
 }
 
@@ -1347,12 +1356,14 @@ fn a_failed_mutation_keeps_no_inline_diff_ref() {
             name: "edit_file".into(),
             input: serde_json::json!({ "path": "src/a.rs" }),
         },
+        sub_agent_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),
         output: ToolOutput::error("no such file"),
         duration_ms: 3,
         speculated: false,
+        sub_agent_id: None,
     });
     turn_boundary(&mut model, "src/a.rs", Some("@@ someone else @@\n"), 1, 0);
     assert!(inline_ref(&model, "c1").is_none());

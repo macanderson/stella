@@ -249,7 +249,7 @@ fn an_invented_task_name_never_reaches_the_record() {
             "lineage_suffix": "inv8-matrix-same-pr",
             "kind": "rule",
             "statement": "A new provider updates the parity matrix in the same PR.",
-            "tasks": ["add-provider", "benchmark", "REVIEW", " test "],
+            "tasks": ["add-provider", "bisect", "REVIEW", " test "],
             "keywords": ["provider"]
         }),
     );
@@ -271,10 +271,10 @@ fn an_invented_task_name_never_reaches_the_record() {
     let unscoped = build(
         &root,
         serde_json::json!({
-            "lineage_suffix": "bench-from-trace",
+            "lineage_suffix": "add-a-provider",
             "kind": "rule",
-            "statement": "A bench conclusion comes from the trace.",
-            "tasks": ["benchmark", "investigation"]
+            "statement": "A new provider updates the parity matrix.",
+            "tasks": ["add-provider", "add-protocol-type"]
         }),
     );
     assert!(
@@ -287,6 +287,35 @@ fn an_invented_task_name_never_reaches_the_record() {
             .is_none(),
         "an empty selector is not better than no selector"
     );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The second witness for #4263.** `benchmark` and `investigate` joined the
+/// ratified vocabulary because the three bench-evidence rules mined from this
+/// repository's own CLAUDE.md had nothing to select on and dropped the key.
+/// They now survive the filter — this fails on the twelve-name vocabulary,
+/// where both were invented names the extractor was right to be denied.
+#[test]
+fn a_bench_shaped_claim_keeps_its_task_selector() {
+    let root = temp_root("bench-tasks");
+    let proposal = build(
+        &root,
+        serde_json::json!({
+            "lineage_suffix": "bench-from-trace",
+            "kind": "rule",
+            "statement": "A bench conclusion comes from the trace.",
+            "tasks": ["Benchmark", "investigate"]
+        }),
+    );
+    let applies = proposal
+        .record
+        .steering
+        .as_ref()
+        .expect("steering")
+        .applies_to
+        .as_ref()
+        .expect("the tasks are the whole scope");
+    assert_eq!(applies.tasks, ["benchmark", "investigate"]);
     let _ = std::fs::remove_dir_all(&root);
 }
 

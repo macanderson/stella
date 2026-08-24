@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 
 import pytest
 from ingest import (
@@ -186,3 +187,33 @@ def test_migration_is_idempotent_and_marks_pre_existing_rows(tmp_path):
         "SELECT cost_norm_status FROM trials WHERE trial_id = 'old'"
     ).fetchone()[0]
     assert status == COST_NORM_UNMIGRATED
+
+
+def test_migration_adds_mirror_provenance_to_an_old_runs_table(tmp_path):
+    """A store written before the mirror columns existed gains them, with
+    every pre-existing run reading as never mirrored."""
+    db = str(tmp_path / "old.db")
+    old = sqlite3.connect(db)
+    # The runs table exactly as schema.sql declared it before the pair.
+    old.execute(
+        "CREATE TABLE runs (run_id TEXT PRIMARY KEY, tag TEXT NOT NULL,"
+        " kind TEXT NOT NULL, void_reason TEXT, model TEXT NOT NULL,"
+        " api_surface TEXT, dataset_digest TEXT, sut_commit TEXT,"
+        " binary_sha256 TEXT, taskset_sha256 TEXT, task_count INTEGER,"
+        " prereg_json TEXT, preflight_text TEXT, started_at TEXT,"
+        " finished_at TEXT, ingested_at TEXT NOT NULL, notes TEXT)"
+    )
+    old.execute(
+        "INSERT INTO runs (run_id, tag, kind, model, ingested_at) VALUES"
+        " ('r1', 'tag', 'scored', 'm', '2026-08-15T09:00:00Z')"
+    )
+    old.commit()
+    old.close()
+
+    conn = connect(db)  # runs migrate()
+    connect(db).close()  # and again — must not fail
+    migrated, source = conn.execute(
+        "SELECT migrated, migration_source FROM runs"
+    ).fetchone()
+    assert migrated == 0
+    assert source is None

@@ -185,13 +185,13 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         use crate::deck_ui::cards::Card;
         match card {
             Card::Plan => guarded_overlay(buf, area, "plan card", |b| {
-                views::plan_card::render(model, ui, area, b)
+                crate::v2::plan_card::render(model, ui, area, b)
             }),
             Card::Models => guarded_overlay(buf, area, "models card", |b| {
-                views::models_card::render(model, ui, area, b)
+                crate::v2::models_card::render(model, ui, area, b)
             }),
             Card::Budget => guarded_overlay(buf, area, "budget card", |b| {
-                views::budget_card::render(model, ui, area, b)
+                crate::v2::budget_card::render(model, ui, area, b)
             }),
         }
     }

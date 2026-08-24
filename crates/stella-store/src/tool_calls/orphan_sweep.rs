@@ -130,6 +130,7 @@ mod tests {
                 name: "bash".into(),
                 input: serde_json::json!({ "command": "sleep 1000" }),
             },
+            sub_agent_id: None,
         }
     }
 

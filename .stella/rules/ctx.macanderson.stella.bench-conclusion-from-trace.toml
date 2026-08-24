@@ -28,9 +28,7 @@ force = "must"
 precedence = 100
 
 [record.steering.applies_to]
-# The extractor proposed tasks = ["benchmark"]; no such task is in the ratified
-# applies_to.tasks vocabulary, so it matched nothing. Paths and keywords
-# carry the selection instead.
+tasks = ["benchmark"]
 keywords = [
     "bench",
     "trace",

@@ -239,12 +239,16 @@ fn seeded_workspace() -> Seeded {
             stall_seconds_requested: None,
             compiled_frame: None,
         },
-        AgentEvent::ToolStart { call: call.clone() },
+        AgentEvent::ToolStart {
+            call: call.clone(),
+            sub_agent_id: None,
+        },
         AgentEvent::ToolResult {
             call_id: "c1".into(),
             output: output.clone(),
             duration_ms: 5,
             speculated: false,
+            sub_agent_id: None,
         },
         AgentEvent::FileChange {
             path: "src/lib.rs".into(),
@@ -509,6 +513,7 @@ fn seed_mismatching_execution(store: &Store, prompt: &str) -> i64 {
             output: journaled,
             duration_ms: 5,
             speculated: false,
+            sub_agent_id: None,
         },
         AgentEvent::FileChange {
             path: "src/compacted.rs".into(),

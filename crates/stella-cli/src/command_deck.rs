@@ -339,9 +339,9 @@ pub async fn run_deck_session(
     crate::enterprise_telemetry::authorize_execution_surface(
         crate::enterprise_telemetry::ExecutionSurface::Deck,
     )?;
-    // `mut`: `/model` (and an assumed agent's declared `model:`) swaps the
-    // adapter between turns — see `session_override`.
-    let mut provider = agent::build_provider(cfg)?;
+    // `mut`: `/model` swaps the adapter between turns; `Arc` so the swapped-in
+    // one is the allocation the sub-agent dispatcher is re-pointed at, too.
+    let mut provider: Arc<dyn Provider> = Arc::from(agent::build_provider(cfg)?);
     let registry: Arc<ToolRegistry> = Arc::new(crate::write_dirs::registry_for(cfg));
 
     // ── Channels: engine → deck (Inbound) and deck → driver (WorkspaceInput)
@@ -363,7 +363,7 @@ pub async fn run_deck_session(
     let (question_tx, question_rx) = mpsc::unbounded_channel::<QuestionOutcome>();
     let (approval_tx, approval_rx) = mpsc::unbounded_channel::<ApprovalResponse>();
 
-    crate::subagent::install_for_session(cfg, &registry)?;
+    let sub_agents = crate::subagent::install_for_session(cfg, &registry)?;
     // The deck can park a turn on a human, so it declares a surface rather
     // than the headless posture it was stuck with before it had an overlay
     // to park on. Both responders ride the deck's own channels: the
@@ -848,7 +848,7 @@ pub async fn run_deck_session(
     // Sub-session bookkeeping: live-worker slots, and `task_assign` requests
     // waiting for one (drained oldest-first as workers end).
     let mut subs = SubSessions::new();
-    let mut pending_spawns: VecDeque<stella_core::tasks::SpawnRequest> = VecDeque::new();
+    let mut pending_spawns: VecDeque<subsession::QueuedSpawn> = VecDeque::new();
     // Lanes whose Restart arrived while the worker was still live: stop
     // first, respawn on its Ended.
     let mut pending_controls = worker_control::Pending::default();
@@ -1063,17 +1063,18 @@ pub async fn run_deck_session(
                     }
                     // LLM-assisted agent creation needs the provider, which is
                     // free here (no turn in flight) — draft, install, refresh.
-                    // The lead assumes an installed agent's identity: the
-                    // system prompt grows the agent's persona block and the
-                    // seeded system message follows it, so the next turn
-                    // runs as that agent. Between turns only — the prompt
-                    // is byte-stable across a turn (invariant #7).
+                    // The lead assumes an installed agent's identity: the system
+                    // prompt grows the agent's persona block and the seeded
+                    // system message follows it, so the next turn runs as that
+                    // agent. Between turns only — the prompt is byte-stable
+                    // across a turn (invariant #7).
                     Some(WorkspaceInput::AgentAssume { name, scope }) => {
                         session_override::assume_agent(
                             &name,
                             scope,
                             cfg,
                             &mut provider,
+                            &sub_agents,
                             session_override::PromptPlane {
                                 base_system_prompt: &mut base_system_prompt,
                                 system_prompt: &mut system_prompt,
@@ -1090,13 +1091,13 @@ pub async fn run_deck_session(
                         continue 'session;
                     }
                     // `/model` (picked or typed): swap this session's model —
-                    // between turns only, like AgentAssume above, because the
-                    // prompt prefix and the provider handle both move.
+                    // between turns only, like AgentAssume above.
                     Some(WorkspaceInput::ModelOverride { spec }) => {
                         session_override::apply_model_override(
                             &spec,
                             cfg,
                             &mut provider,
+                            &sub_agents,
                             session_override::PromptPlane {
                                 base_system_prompt: &mut base_system_prompt,
                                 system_prompt: &mut system_prompt,
@@ -1505,6 +1506,7 @@ pub async fn run_deck_session(
                     &id,
                     cfg,
                     &mut provider,
+                    &sub_agents,
                     session_override::PromptPlane {
                         base_system_prompt: &mut base_system_prompt,
                         system_prompt: &mut system_prompt,
@@ -2619,7 +2621,7 @@ fn handle_supervisor_msg(
     msg: SupervisorMsg,
     subs: &mut SubSessions,
     pending_controls: &mut worker_control::Pending,
-    pending_spawns: &mut VecDeque<stella_core::tasks::SpawnRequest>,
+    pending_spawns: &mut VecDeque<subsession::QueuedSpawn>,
     queue: &mut crate::session_persist::DurableQueue,
     dispatch_held: bool,
     registry: &ToolRegistry,
@@ -2634,24 +2636,24 @@ fn handle_supervisor_msg(
     sup_tx: &UnboundedSender<SupervisorMsg>,
 ) {
     match msg {
-        SupervisorMsg::SpawnTask(request) => {
+        SupervisorMsg::SpawnTask(queued) => {
             // A task's lane is its identity: a second worker on a live lane
             // would share (and corrupt) its channels, so a re-assign of an
             // in-flight task is reported instead of spawned.
-            if subs.is_live(&subsession::task_lane(&request.task_id)) {
+            if subs.is_live(&subsession::task_lane(&queued.request.task_id)) {
                 let _ = in_tx.send(Inbound::Event {
                     agent: LEAD.to_string(),
                     event: AgentEvent::Text {
                         text: format!(
                             "note: task #{} already has a live worker — the duplicate \
                              task_assign was not dispatched",
-                            request.task_id
+                            queued.request.task_id
                         ),
                     },
                 });
             } else if subs.has_slot() {
                 subsession::spawn_task_worker(
-                    &request,
+                    &queued,
                     subs,
                     cfg,
                     budget_limit,
@@ -2661,7 +2663,7 @@ fn handle_supervisor_msg(
                     sup_tx,
                 );
             } else {
-                pending_spawns.push_back(request);
+                pending_spawns.push_back(queued);
             }
         }
         SupervisorMsg::Ended {
@@ -2716,15 +2718,15 @@ fn handle_supervisor_msg(
                 in_tx,
             );
             while subs.has_slot()
-                && let Some(request) = pending_spawns.pop_front()
+                && let Some(queued) = pending_spawns.pop_front()
             {
                 // A parked duplicate of a task whose worker is (still) live
                 // is dropped for the same reason as at arrival.
-                if subs.is_live(&subsession::task_lane(&request.task_id)) {
+                if subs.is_live(&subsession::task_lane(&queued.request.task_id)) {
                     continue;
                 }
                 subsession::spawn_task_worker(
-                    &request,
+                    &queued,
                     subs,
                     cfg,
                     budget_limit,
@@ -3660,20 +3662,18 @@ async fn run_lead_turn(
             Principal::User,
             registry.hook_bus(),
         );
-        // The plan gate's headline and policy, taken before the engine borrows
-        // `messages` mutably (`task_tap::plan_gate`, #4594/#4611).
+        // Both read before the engine borrows `messages` mutably: the plan
+        // gate's setup (`task_tap::plan_gate`, #4594/#4611) and this turn's
+        // id, which every lane it spawns records (#4628).
         let plan = PlanSetup::for_turn(messages, cfg);
-        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()), plan);
+        let turn = execution.as_ref().map(|(_, id)| *id);
+        let tap = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx), plan, turn);
         let hook_runner = HostHookRunner;
-        let mut engine = Engine::with_sleeper(
-            provider,
-            &tapped,
-            agent::engine_config_for(cfg),
-            &TokioSleeper,
-        )
-        .with_calibration(calibration)
-        .with_steering(steering.as_ref())
-        .with_gate(pause.turn_gate());
+        let mut engine =
+            Engine::with_sleeper(provider, &tap, agent::engine_config_for(cfg), &TokioSleeper)
+                .with_calibration(calibration)
+                .with_steering(steering.as_ref())
+                .with_gate(pause.turn_gate());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }

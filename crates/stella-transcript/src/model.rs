@@ -337,6 +337,9 @@ impl Output {
 /// [`crate::file_diff`]'s job, and keeping the model at this level is what lets
 /// a caller feed a `write_file` (empty `before`) and a `delete_file` (empty
 /// `after`) through the same path as an `edit_file`.
+///
+/// A caller that holds neither side sets [`FileChange::patch`] instead — see
+/// its doc for when that is all a caller has.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileChange {
     /// Display path, workspace-relative.
@@ -347,6 +350,35 @@ pub struct FileChange {
     pub after: String,
     /// What happened to the file as a whole.
     pub status: FileStatus,
+    /// The producer's own diff of this change, when it computed one against
+    /// the real file. Preferred over `before`/`after` by
+    /// [`crate::file_diff::FileDiff::build`].
+    ///
+    /// Some callers never hold both sides. A journal replay has the tool
+    /// call's arguments — for an `edit_file`, the replaced fragment and
+    /// nothing else — so a diff computed from them numbers its rows against
+    /// the fragment, and `@@ -1,1 +1,1 @@` on a 400-line file reads as file
+    /// lines to everyone (#3577). The producer did hold the file, computed
+    /// the exact patch at the moment it wrote it, and put it on the wire; this
+    /// field is where that patch arrives.
+    #[serde(default)]
+    pub patch: Option<Patch>,
+}
+
+/// An exact unified diff of one file change, as its producer computed it.
+///
+/// The counts ride along rather than being recovered by counting sigils in
+/// `text`: `AgentEvent::FileChange`'s contract is that `added`/`removed` are
+/// the measurement and the patch is a bounded rendering of the changed region,
+/// so a consumer that recounts is reading a summary as if it were the total.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Patch {
+    /// `@@` hunks in git's format, with file-absolute line numbers.
+    pub text: String,
+    /// Lines added, as the producer counted them.
+    pub added: usize,
+    /// Lines removed, as the producer counted them.
+    pub removed: usize,
 }
 
 /// The status dot on a file header bar.
