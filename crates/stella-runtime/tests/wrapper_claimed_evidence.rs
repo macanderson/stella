@@ -25,8 +25,9 @@
 //! `Unsupported` (#3580).
 //!
 //! `cfg(unix)` for `wrapper_decided_flip.rs`'s reason: the plugin is a
-//! `/bin/sh` script, so this file proves nothing on Windows until #3497
-//! replaces it with a portable in-tree plugin.
+//! `/bin/sh` script, so this file proves nothing on Windows. The route out is
+//! `wrapper-plugin-fixture`, the portable plugin #3497 added; this file has not
+//! taken it yet.
 
 #![cfg(unix)]
 

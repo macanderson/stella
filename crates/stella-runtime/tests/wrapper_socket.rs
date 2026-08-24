@@ -7,22 +7,28 @@
 //! `stella-plugin`, and a manifest's `[wrapper]` block was, in its own module's
 //! words, "a declared name that load-checks, not a dispatch target".
 //!
-//! The plugin here is **not written in Rust**. It is a `sh` script that reads
-//! one JSON object on stdin and writes one on stdout, with no SDK and no
-//! library — which is the acceptance criterion `doc:pipeline-as-plugins` §5
-//! sets and the one it is easiest to fail by accident: a Rust-only extension
-//! surface is a library with extra steps. Everything a Python or TypeScript
-//! author would need is what this script uses, and nothing more.
+//! The plugin here uses **no SDK and no library** — it reads one JSON object on
+//! stdin and writes one on stdout, and the tooling it needs to do that is
+//! `printf`. That is the acceptance criterion `doc:pipeline-as-plugins` §5 sets
+//! and the one it is easiest to fail by accident: a Rust-only extension surface
+//! is a library with extra steps.
+//!
+//! Every plugin was a `/bin/sh` script until #3497, which is why this whole
+//! file was `#![cfg(unix)]` and the transport was unproven on Windows —
+//! including the parts that are not shell-shaped at all: the stdio exchange,
+//! the concurrent write/wait, `kill_on_drop`, the group kill, `env_clear()`.
+//! They now drive `wrapper-plugin-fixture`, an in-tree plugin binary that links
+//! `std` and nothing else (no `serde`, no `stella-plugin`, no JSON parser), so
+//! the *mechanism* is exercised on every platform the workspace compiles for
+//! and the answer it gives is the same answer a `case`-and-`printf` script gave.
+//!
+//! One test stays `#[cfg(unix)]` on purpose, and it is the one that is
+//! genuinely shell-shaped: [`a_plugin_written_in_sh_answers_the_same_socket`]
+//! runs a real `/bin/sh` script through a whole turn, because "a plugin need
+//! not be written in Rust" is a claim only a plugin not written in Rust can
+//! make. Its comment says so where it sits.
 //!
 //! What each test pins is named on the test.
-//!
-//! `cfg(unix)` is a real gap and it is tracked, not shrugged at: every plugin
-//! below is a `/bin/sh` script, so on Windows this file compiles to nothing and
-//! the transport is unproven there — including the parts that are not
-//! shell-shaped at all (the stdio exchange, `kill_on_drop`, `env_clear`). The
-//! fix is a portable in-tree plugin binary rather than a skipped test; #3497.
-
-#![cfg(unix)]
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -88,37 +94,24 @@ name = "execute"
 name = "verify"
 "#;
 
-/// The plugin itself. Reads one request, writes one response; the only thing
-/// it decides is what it *observed*, and the budget it is measured against
-/// lives in the manifest above where a reviewer can diff it.
-const PLUGIN: &str = r#"
-input=$(cat)
-case "$input" in
-  *'"point":"after_turn"'*)
-    case "$input" in
-      *slower*) p50=118 ;;
-      *) p50=103 ;;
-    esac
-    printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"p50":%s}}}}\n' "$p50"
-    ;;
-  *)
-    printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"budget","text":"the recorded p50 budget is 105"}],"role":"triage","publish":[{"signal":"questions","value":{"count":2}}]}}'
-    ;;
-esac
-"#;
+/// The portable plugin (#3497). Reads one request, writes one response; the
+/// only thing it decides is what it *observed*, and the budget it is measured
+/// against lives in the manifest above where a reviewer can diff it. Its
+/// `reference` mode is the behaviour the `sh` script below still spells out
+/// by hand.
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
 
 fn manifest() -> PluginManifest {
     PluginManifest::from_toml_str(MANIFEST).expect("the reference manifest loads")
 }
 
-fn plugin(script: &str) -> SubprocessWrapper {
-    SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), script.into()],
-        Vec::new(),
-        DEFAULT_WRAPPER_TIMEOUT,
-    )
-    .expect("the transport is declared with a program and a budget")
-    .wrapper
+/// The fixture in one of its canned modes, on the default budget.
+fn plugin(mode: &[&str]) -> SubprocessWrapper {
+    let mut argv = vec![FIXTURE.to_string()];
+    argv.extend(mode.iter().map(|part| (*part).to_string()));
+    SubprocessWrapper::declare(argv, Vec::new(), DEFAULT_WRAPPER_TIMEOUT)
+        .expect("the transport is declared with a program and a budget")
+        .wrapper
 }
 
 fn before(stage: StageName, goal: &str) -> BeforeTurnRequest {
@@ -165,8 +158,21 @@ async fn run_turn(
     Continuation,
     Vec<stella_protocol::CompletionMessage>,
 ) {
+    run_turn_with(plugin(&["reference"]), goal).await
+}
+
+/// [`run_turn`] against a caller-supplied transport, so the same whole turn can
+/// be driven by the portable fixture and by a `/bin/sh` script and the two
+/// answers compared rather than described.
+async fn run_turn_with(
+    wrapper: SubprocessWrapper,
+    goal: &str,
+) -> (
+    Verdict,
+    Continuation,
+    Vec<stella_protocol::CompletionMessage>,
+) {
     let manifest = manifest();
-    let wrapper = plugin(PLUGIN);
     let declared = manifest.wrapper.as_ref().expect("[wrapper] declared");
 
     let program = declared
@@ -313,10 +319,8 @@ async fn contributed_context_never_reaches_the_stable_prefix() {
 /// value, exactly as an undeclared signal is refused at the declaration.
 #[tokio::test]
 async fn a_response_naming_an_undeclared_role_is_refused() {
-    let rogue = r#"
-printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"role":"verifier"}}'
-"#;
-    let response = plugin(rogue)
+    let rogue = r#"{"point":"before_turn","body":{"protocol_version":1,"role":"verifier"}}"#;
+    let response = plugin(&["emit", rogue])
         .before_turn(before(StageName::Host(HostStage::Triage), "anything"))
         .await
         .expect("the plugin answers");
@@ -326,10 +330,8 @@ printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"role":"verif
         "got {error:?}"
     );
 
-    let mistyped = r#"
-printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"publish":[{"signal":"questions","value":{"boolean":true}}]}}'
-"#;
-    let response = plugin(mistyped)
+    let mistyped = r#"{"point":"before_turn","body":{"protocol_version":1,"publish":[{"signal":"questions","value":{"boolean":true}}]}}"#;
+    let response = plugin(&["emit", mistyped])
         .before_turn(before(StageName::Host(HostStage::Triage), "anything"))
         .await
         .expect("the plugin answers");
@@ -354,13 +356,8 @@ async fn the_child_sees_exactly_the_environment_it_was_given() {
         "the test process must carry CARGO_MANIFEST_DIR for this to prove anything"
     );
 
-    let probe = r#"
-cat >/dev/null
-if [ -n "${CARGO_MANIFEST_DIR:-}" ]; then inherited=1; else inherited=0; fi
-printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"inherited":%s,"granted":%s}}}}\n' "$inherited" "${GRANTED:-0}"
-"#;
     let wrapper = SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), probe.into()],
+        vec![FIXTURE.into(), "env-probe".into()],
         vec![("GRANTED".into(), "42".into())],
         DEFAULT_WRAPPER_TIMEOUT,
     )
@@ -493,7 +490,7 @@ async fn the_in_process_transport_answers_what_the_wire_transport_answers() {
     }
 
     let native = InProcessWrapper::new(Native);
-    let wire = plugin(PLUGIN);
+    let wire = plugin(&["reference"]);
     let goal = "make the parser slower on purpose";
 
     assert_eq!(
@@ -542,7 +539,7 @@ async fn each_failure_mode_is_named_rather_than_collapsed() {
         "got {missing:?}"
     );
 
-    let failed = plugin("cat >/dev/null; echo 'no such profile' >&2; exit 3")
+    let failed = plugin(&["exit", "3", "no such profile"])
         .after_turn(after("x"))
         .await
         .expect_err("the plugin exited non-zero");
@@ -552,7 +549,7 @@ async fn each_failure_mode_is_named_rather_than_collapsed() {
         "got {failed:?}"
     );
 
-    let garbled = plugin("cat >/dev/null; echo 'almost json'")
+    let garbled = plugin(&["drain-emit", "almost json"])
         .after_turn(after("x"))
         .await
         .expect_err("the answer is not a response");
@@ -561,9 +558,10 @@ async fn each_failure_mode_is_named_rather_than_collapsed() {
         "got {garbled:?}"
     );
 
-    let misaddressed = plugin(
-        r#"cat >/dev/null; printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1}}'"#,
-    )
+    let misaddressed = plugin(&[
+        "drain-emit",
+        r#"{"point":"before_turn","body":{"protocol_version":1}}"#,
+    ])
     .after_turn(after("x"))
     .await
     .expect_err("the plugin answered the other point");
@@ -579,9 +577,10 @@ async fn each_failure_mode_is_named_rather_than_collapsed() {
         "got {misaddressed:?}"
     );
 
-    let newer = plugin(
-        r#"cat >/dev/null; printf '%s\n' '{"point":"before_turn","body":{"protocol_version":99}}'"#,
-    )
+    let newer = plugin(&[
+        "drain-emit",
+        r#"{"point":"before_turn","body":{"protocol_version":99}}"#,
+    ])
     .before_turn(before(StageName::Host(HostStage::Triage), "x"))
     .await
     .expect_err("a newer contract may carry a field whose absence changes the answer");
@@ -604,7 +603,7 @@ async fn each_failure_mode_is_named_rather_than_collapsed() {
 #[tokio::test]
 async fn a_plugin_that_does_not_answer_is_killed_at_its_budget() {
     let hung = SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), "sleep 30".into()],
+        vec![FIXTURE.into(), "hang".into()],
         Vec::new(),
         Duration::from_millis(150),
     )
@@ -617,7 +616,7 @@ async fn a_plugin_that_does_not_answer_is_killed_at_its_budget() {
 
     assert_eq!(
         SubprocessWrapper::declare(
-            vec!["/bin/sh".into()],
+            vec![FIXTURE.into()],
             Vec::new(),
             Duration::from_secs(60 * 60),
         )
@@ -633,7 +632,7 @@ async fn a_plugin_that_does_not_answer_is_killed_at_its_budget() {
         Err(WrapperError::EmptyArgv)
     ));
     assert!(matches!(
-        SubprocessWrapper::declare(vec!["/bin/sh".into()], Vec::new(), Duration::ZERO),
+        SubprocessWrapper::declare(vec![FIXTURE.into()], Vec::new(), Duration::ZERO),
         Err(WrapperError::ZeroTimeout)
     ));
 }
@@ -725,19 +724,7 @@ async fn a_plugin_acts_on_the_candidate_using_only_what_the_request_carried() {
         ),
     );
 
-    let reader = r#"
-input=$(cat)
-field() { printf '%s' "$input" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }
-root=$(field root)
-program=$(field program)
-baseline=$(field baseline)
-if [ -f "$root/tests/test_flip.py" ]; then reached=1; else reached=0; fi
-if [ "$program" = "pytest" ]; then named=1; else named=0; fi
-if [ "$baseline" = "failed" ]; then red=1; else red=0; fi
-printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"root_reached":%s,"test_named":%s,"baseline_red":%s}}}}\n' "$reached" "$named" "$red"
-"#;
-
-    let evidence = plugin(reader)
+    let evidence = plugin(&["candidate-probe"])
         .after_turn(request.clone())
         .await
         .expect("the plugin answers")
@@ -768,7 +755,7 @@ printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"n
         ),
     );
     assert_eq!(
-        plugin(reader)
+        plugin(&["candidate-probe"])
             .after_turn(elsewhere)
             .await
             .expect("the plugin answers")
@@ -776,5 +763,55 @@ printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"n
             .measurements
             .get("root_reached"),
         Some(&0)
+    );
+}
+
+/// The one genuinely shell-shaped case, kept `#[cfg(unix)]` for that reason
+/// and no other (#3497).
+///
+/// Everything above proves the socket's *mechanism*, which is why it now runs
+/// wherever the workspace compiles. This proves something the mechanism tests
+/// structurally cannot: that a plugin **need not be written in Rust**. A `sh`
+/// script with no JSON parser, no SDK and no library drives the same whole turn
+/// to the same host verdict — the acceptance criterion
+/// `doc:pipeline-as-plugins` §5 commitment 2 sets, and one only a plugin that
+/// is not Rust can make. There is no `/bin/sh` on Windows to make it with.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_plugin_written_in_sh_answers_the_same_socket() {
+    const SCRIPT: &str = r#"
+input=$(cat)
+case "$input" in
+  *'"point":"after_turn"'*)
+    case "$input" in
+      *slower*) p50=118 ;;
+      *) p50=103 ;;
+    esac
+    printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"p50":%s}}}}\n' "$p50"
+    ;;
+  *)
+    printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"budget","text":"the recorded p50 budget is 105"}],"role":"triage","publish":[{"signal":"questions","value":{"count":2}}]}}'
+    ;;
+esac
+"#;
+    let shell = SubprocessWrapper::declare(
+        vec!["/bin/sh".into(), "-c".into(), SCRIPT.into()],
+        Vec::new(),
+        DEFAULT_WRAPPER_TIMEOUT,
+    )
+    .expect("the transport is declared with a program and a budget")
+    .wrapper;
+
+    let (verdict, _, messages) = run_turn_with(shell, "make the parser faster").await;
+    assert_eq!(
+        verdict,
+        Verdict::Met {
+            evidence: EvidenceProvenance::PluginReported
+        },
+        "p50 103 is inside the 105 budget"
+    );
+    assert!(
+        !messages.is_empty(),
+        "the script contributes context, or this test proves nothing"
     );
 }

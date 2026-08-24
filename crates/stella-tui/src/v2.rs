@@ -19,10 +19,13 @@
 //! in `tests/v2_status_bar.rs` is what says so.
 
 pub mod engine_panel;
+pub mod budget_card;
 pub mod fields;
 pub mod frame;
 pub mod graph;
 pub mod graph_tab;
+pub mod models_card;
+pub mod plan_card;
 pub mod pulse;
 pub mod sessions;
 pub mod status_bar;

@@ -29,12 +29,23 @@ name: windows-check
 # test fixtures rather than on anything #3550 changed. Those fixtures are
 # #3497's subject — tests that are `#[cfg(unix)]`, or assume unix, and so
 # prove nothing on Windows — and widening this job to `--all-targets` is the
-# check that lands with that work, not before it.
+# check that lands with the rest of that work, not before it.
 #
 # Clippy rather than `check` so the Windows arm is held to `-D warnings` like
-# the rest of the tree. It does not run the tests: Stella ships no Windows
-# binary and the suite has never run there, so a green compile is the claim,
-# and a test run is #3497's decision to make.
+# the rest of the tree.
+#
+# The second step **runs** two test targets, which is the whole point of #3497:
+# the plugin socket's stdio exchange, its concurrent write/wait, `env_clear()`
+# and the tree-reaching group kill (#3550) were all Windows code no test could
+# reach, because every plugin in them was a `/bin/sh` script. They now drive
+# `wrapper-plugin-fixture`, an in-tree plugin binary, so the Windows path is
+# run rather than argued — and `a_timed_out_plugin_leaves_no_surviving_grandchild`
+# is what holds the Job Object to its claim.
+#
+# Named targets rather than `cargo test -p stella-runtime`: the rest of that
+# crate's suite is still `#![cfg(unix)]` and compiles to nothing here, so
+# running it would report a green that means "nothing ran". A target list makes
+# what is covered on Windows a thing a reader can count.
 #
 # Its own file rather than a job in ci.yml for the reason wire-schema.yml has
 # one: ci.yml's required job is what every PR waits on, and a Windows runner is
@@ -91,3 +102,10 @@ jobs:
       - name: clippy on the crates that carry a platform split
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
         run: cargo clippy -p stella-tools -p stella-runtime -- -D warnings
+
+      - name: the plugin socket's own tests, on Windows (#3497, #3550)
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: >-
+          cargo test -p stella-runtime
+          --test wrapper_socket
+          --test wrapper_transport_limits

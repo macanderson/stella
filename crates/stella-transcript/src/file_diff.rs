@@ -104,17 +104,40 @@ pub struct FileDiff {
     pub removed: usize,
     /// The hunks.
     pub hunks: Vec<RenderHunk>,
-    /// Whether the underlying edit script is the minimal one. `false` means the
-    /// input tripped [`stella_diff::LCS_AREA_CAP`] and fell back to
-    /// replace-everything; surfaces say so rather than presenting a blunt diff
-    /// as a precise answer.
+    /// Whether the underlying edit script is the minimal one. `false` means
+    /// this build compared the two sides, tripped [`stella_diff::LCS_AREA_CAP`]
+    /// and fell back to replace-everything; surfaces say so rather than
+    /// presenting a blunt diff as a precise answer.
+    ///
+    /// A build from [`FileChange::patch`] compares nothing, so it can never
+    /// have fallen back and is always `true`. Whether the *producer's* differ
+    /// fell back is not on the wire — a declared gap, tracked in #3577's
+    /// follow-up rather than guessed at here.
     pub minimal: bool,
 }
 
 impl FileDiff {
     /// Build the rendered diff for one file change.
+    ///
+    /// Prefers [`FileChange::patch`] when the producer supplied one: it was
+    /// computed against the real file, so its line numbers are the file's.
+    /// Falls back to comparing `before`/`after`, which is exact whenever the
+    /// caller holds both whole sides and fragment-relative when it does not.
     #[must_use]
     pub fn build(change: &FileChange) -> Self {
+        if let Some(patch) = &change.patch {
+            return Self {
+                path: change.path.clone(),
+                status: change.status,
+                added: patch.added,
+                removed: patch.removed,
+                hunks: stella_diff::parse::hunks(&patch.text)
+                    .iter()
+                    .map(render_hunk)
+                    .collect(),
+                minimal: true,
+            };
+        }
         let diff = stella_diff::unified_diff(&change.before, &change.after, CONTEXT);
         let hunks = diff.hunks.iter().map(render_hunk).collect();
         Self {
