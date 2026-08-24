@@ -515,13 +515,13 @@ fn a_lane_stops_reading_blocked_once_its_card_is_answered() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: AgentEvent::ScopeReview {
+            event: Box::new(AgentEvent::ScopeReview {
                 proposal: stella_protocol::ScopeProposal {
                     summary: "ship the migration".into(),
                     steps: vec!["migrate".into(), "backfill".into(), "cut over".into()],
                     ..Default::default()
                 },
-            },
+            }),
         },
         now,
     );
@@ -530,12 +530,12 @@ fn a_lane_stops_reading_blocked_once_its_card_is_answered() {
     board.apply(
         FleetMsg::Event {
             id: "t1".into(),
-            event: AgentEvent::ToolResult {
+            event: Box::new(AgentEvent::ToolResult {
                 call_id: "c1".into(),
                 output: stella_protocol::ToolOutput::error("the plan was not approved"),
                 duration_ms: 400,
                 speculated: false,
-            },
+            }),
         },
         now,
     );
