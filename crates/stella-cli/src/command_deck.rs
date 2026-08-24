@@ -853,7 +853,7 @@ pub async fn run_deck_session(
     // Sub-session bookkeeping: live-worker slots, and `task_assign` requests
     // waiting for one (drained oldest-first as workers end).
     let mut subs = SubSessions::new();
-    let mut pending_spawns: VecDeque<stella_core::tasks::SpawnRequest> = VecDeque::new();
+    let mut pending_spawns: VecDeque<subsession::QueuedSpawn> = VecDeque::new();
     // Lanes whose Restart arrived while the worker was still live: stop
     // first, respawn on its Ended.
     let mut pending_controls = worker_control::Pending::default();
@@ -2671,7 +2671,7 @@ fn handle_supervisor_msg(
     msg: SupervisorMsg,
     subs: &mut SubSessions,
     pending_controls: &mut worker_control::Pending,
-    pending_spawns: &mut VecDeque<stella_core::tasks::SpawnRequest>,
+    pending_spawns: &mut VecDeque<subsession::QueuedSpawn>,
     queue: &mut crate::session_persist::DurableQueue,
     dispatch_held: bool,
     registry: &ToolRegistry,
@@ -2686,24 +2686,24 @@ fn handle_supervisor_msg(
     sup_tx: &UnboundedSender<SupervisorMsg>,
 ) {
     match msg {
-        SupervisorMsg::SpawnTask(request) => {
+        SupervisorMsg::SpawnTask(queued) => {
             // A task's lane is its identity: a second worker on a live lane
             // would share (and corrupt) its channels, so a re-assign of an
             // in-flight task is reported instead of spawned.
-            if subs.is_live(&subsession::task_lane(&request.task_id)) {
+            if subs.is_live(&subsession::task_lane(&queued.request.task_id)) {
                 let _ = in_tx.send(Inbound::Event {
                     agent: LEAD.to_string(),
                     event: AgentEvent::Text {
                         text: format!(
                             "note: task #{} already has a live worker — the duplicate \
                              task_assign was not dispatched",
-                            request.task_id
+                            queued.request.task_id
                         ),
                     },
                 });
             } else if subs.has_slot() {
                 subsession::spawn_task_worker(
-                    &request,
+                    &queued,
                     subs,
                     cfg,
                     budget_limit,
@@ -2713,7 +2713,7 @@ fn handle_supervisor_msg(
                     sup_tx,
                 );
             } else {
-                pending_spawns.push_back(request);
+                pending_spawns.push_back(queued);
             }
         }
         SupervisorMsg::Ended {
@@ -2768,15 +2768,15 @@ fn handle_supervisor_msg(
                 in_tx,
             );
             while subs.has_slot()
-                && let Some(request) = pending_spawns.pop_front()
+                && let Some(queued) = pending_spawns.pop_front()
             {
                 // A parked duplicate of a task whose worker is (still) live
                 // is dropped for the same reason as at arrival.
-                if subs.is_live(&subsession::task_lane(&request.task_id)) {
+                if subs.is_live(&subsession::task_lane(&queued.request.task_id)) {
                     continue;
                 }
                 subsession::spawn_task_worker(
-                    &request,
+                    &queued,
                     subs,
                     cfg,
                     budget_limit,
@@ -3651,20 +3651,18 @@ async fn run_lead_turn(
             Principal::User,
             registry.hook_bus(),
         );
-        // The plan gate's headline and policy, taken before the engine borrows
-        // `messages` mutably (`task_tap::plan_gate`, #4594/#4611).
+        // Both read before the engine borrows `messages` mutably: the plan
+        // gate's setup (`task_tap::plan_gate`, #4594/#4611) and this turn's
+        // id, which every lane it spawns records (#4628).
         let plan = PlanSetup::for_turn(messages, cfg);
-        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()), plan);
+        let turn = execution.as_ref().map(|(_, id)| *id);
+        let tap = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx), plan, turn);
         let hook_runner = HostHookRunner;
-        let mut engine = Engine::with_sleeper(
-            provider,
-            &tapped,
-            agent::engine_config_for(cfg),
-            &TokioSleeper,
-        )
-        .with_calibration(calibration)
-        .with_steering(steering.as_ref())
-        .with_gate(pause.turn_gate());
+        let mut engine =
+            Engine::with_sleeper(provider, &tap, agent::engine_config_for(cfg), &TokioSleeper)
+                .with_calibration(calibration)
+                .with_steering(steering.as_ref())
+                .with_gate(pause.turn_gate());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
         }

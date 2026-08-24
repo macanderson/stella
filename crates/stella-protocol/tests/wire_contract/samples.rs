@@ -332,7 +332,10 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
         AgentEvent::Reasoning {
             delta: "considering".into(),
         },
-        AgentEvent::ToolStart { call: tool_call() },
+        AgentEvent::ToolStart {
+            call: tool_call(),
+            sub_agent_id: None,
+        },
         AgentEvent::SpeculationDiscarded {
             call_id: "call_2".into(),
             name: "read_file".into(),
@@ -762,6 +765,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 output,
                 duration_ms: 12,
                 speculated: true,
+
+                sub_agent_id: None,
             }),
     );
     events.extend(
@@ -772,6 +777,8 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 output: ToolOutput::classified_error(class, "boom"),
                 duration_ms: 12,
                 speculated: false,
+
+                sub_agent_id: None,
             }),
     );
     events.extend(

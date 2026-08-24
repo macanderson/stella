@@ -199,6 +199,7 @@ fn spawn_shell_command(
                 name: "shell".to_string(),
                 input: serde_json::json!({ "cmd": cmd }),
             },
+            sub_agent_id: None,
         },
     ));
 
@@ -269,6 +270,7 @@ fn spawn_shell_command(
                 output,
                 duration_ms: started.elapsed().as_millis() as u64,
                 speculated: false,
+                sub_agent_id: None,
             },
         ));
         // Park the lane so it never reads as still-working (a lingering
@@ -1034,7 +1036,7 @@ mod tests {
         let mut call_ids = Vec::new();
         while let Ok(inbound) = rx.try_recv() {
             if let Inbound::Event {
-                event: stella_protocol::AgentEvent::ToolStart { call },
+                event: stella_protocol::AgentEvent::ToolStart { call, .. },
                 ..
             } = inbound
             {
