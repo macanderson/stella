@@ -10,12 +10,13 @@
 //! second menu earns its place: type `/model gl` and the candidates narrow
 //! as you type, Tab completes, ⏎ submits the completed command.
 //!
-//! Same shape as the slash menu: the caller owns the candidate vocabulary
-//! ([`crate::views::picker::typeahead_candidates`] narrows the `/model`
-//! picker's list — `allowed_models` when configured, else the credentialed
-//! catalog — to the session's active provider); this module only filters and
-//! navigates. One argument, no quoting: a second
-//! whitespace-separated word closes the menu and the text submits as typed.
+//! Same shape as the slash menu: the caller owns the candidate vocabulary.
+//! The deck's caller is `views::picker`'s `typeahead_candidates`, which
+//! narrows the `/model` picker's own list — `allowed_models` when one is
+//! configured, else the credentialed catalog — to the session's active
+//! provider; this module only filters and navigates. One argument, no
+//! quoting: a second whitespace-separated word closes the menu and the text
+//! submits as typed.
 
 use crossterm::event::{KeyCode, KeyEvent};
 
