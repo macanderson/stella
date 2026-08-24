@@ -1056,14 +1056,10 @@ fn skill_usage_records_per_execution_version_rows() {
     //       rather than finished — `NOT NULL DEFAULT 0` and backfilled, because
     //       unlike v29 the historical fact is recorded one join away in
     //       `executions.outcome` and there is nothing to invent.
-    //       v33 `telemetry.sub_agent_id` (#4383): which delegate spent a call,
-    //       or NULL for the lead — nullable with no backfill, since a
-    //       sub-agent opens no execution row of its own and nothing in the
-    //       journal can attribute a historical row without guessing.
-    //       v34 `step_receipt.upstream_provider` (#3054): the vendor a
-    //       gateway routed a call to, which until then lived only in the raw
-    //       `events` payload — nullable with no backfill, since NULL is "no
-    //       upstream was named" and history's answer is only in the journal.
+    //       v33 `telemetry.sub_agent_id` (#4383): which delegate spent a
+    //       call, or NULL for the lead. v34 `step_receipt.upstream_provider`
+    //       (#3054): the vendor a gateway routed to. Both nullable with no
+    //       backfill — nothing in the journal can attribute a historical row.
     assert_eq!(SCHEMA_VERSION, 34);
 
     let id = store
