@@ -9,7 +9,8 @@
     "build": "next build && node scripts/sync-web.mjs",
     "typecheck": "tsc --noEmit",
     "check:diff-parity": "node scripts/check-diff-view-parity.mjs",
-    "check:word-parity": "node scripts/check-word-highlight-parity.mjs"
+    "check:word-parity": "node scripts/check-word-highlight-parity.mjs",
+    "check:transcript-view": "node scripts/check-transcript-view.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

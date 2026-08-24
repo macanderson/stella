@@ -14,7 +14,9 @@
 
 use std::sync::Arc;
 
-use stella_runtime::wrapper::{CandidateFanoutSpend, ChildTurnSpend, DispatchReport, HostCallGate};
+use stella_runtime::wrapper::{
+    CandidateFanoutSpend, ChildTurnSpend, DispatchReport, HostCallGate, TestRunRecord,
+};
 
 use crate::OutputFormat;
 
@@ -42,8 +44,9 @@ pub(super) fn report_to(
     gates: &[Arc<HostCallGate>],
     spends: &[ChildTurnSpend],
     fanouts: &[CandidateFanoutSpend],
+    test_runs: &[TestRunRecord],
 ) {
-    for line in report_lines(scope, format, report, gates, spends, fanouts) {
+    for line in report_lines(scope, format, report, gates, spends, fanouts, test_runs) {
         eprintln!("{line}");
     }
 }
@@ -63,6 +66,7 @@ pub(super) fn report_lines(
     gates: &[Arc<HostCallGate>],
     spends: &[ChildTurnSpend],
     fanouts: &[CandidateFanoutSpend],
+    test_runs: &[TestRunRecord],
 ) -> Vec<String> {
     let mut lines = Vec::new();
     for fault in &report.faults {
@@ -80,11 +84,44 @@ pub(super) fn report_lines(
     for line in fanout_spend_lines(fanouts) {
         lines.push(wrapper_line(scope, &line));
     }
+    for line in test_run_lines(test_runs) {
+        lines.push(wrapper_line(scope, &line));
+    }
     if format == OutputFormat::Text || !report.met() {
         let tag = scope.map_or_else(String::new, |scope| format!("[{scope}] "));
         lines.push(format!("  ◇ {tag}{}", report.summary()));
     }
     lines
+}
+
+impl super::BoundWrapper {
+    /// [`super::BoundWrapper::report`]'s lines, composed but not printed.
+    ///
+    /// For the one door where printing is a decision rather than a default: a
+    /// fleet attempt under the live dashboard must not `eprintln!` onto the
+    /// alternate screen the grid is painting, so it takes the lines and holds
+    /// them until the grid tears down (#3883,
+    /// `crate::fleet_cmd::wrapped::HeldReports`). Composed by [`report_lines`]
+    /// like everything `report` prints, so the held lines and the printed ones
+    /// share one wording. Defined here rather than beside `report` because
+    /// `wrapper_plugin.rs` sits under the 1500-line ratchet — the reason this
+    /// module exists.
+    pub(crate) fn report_lines(
+        &self,
+        scope: Option<&str>,
+        format: OutputFormat,
+        report: &DispatchReport,
+    ) -> Vec<String> {
+        report_lines(
+            scope,
+            format,
+            report,
+            &self.gates,
+            &self.child_spends(),
+            &self.fanout_spends(),
+            &self.test_runs(),
+        )
+    }
 }
 
 /// The one rendering of a `! wrapper:` line, marker and scope tag included.
@@ -169,6 +206,40 @@ pub(super) fn fanout_spend_lines(spends: &[CandidateFanoutSpend]) -> Vec<String>
             format!(
                 "fanned out {} candidate turn(s) at \"{}\" (seat {:?}, {} finished, ${:.4}){clamped}",
                 spend.width, spend.role, spend.seat, spend.completed, spend.cost_usd,
+            )
+        })
+        .collect()
+}
+
+/// One line per test run this host performed for the plugin, naming the
+/// workspace it ran in and what the assertions said.
+///
+/// [`spend_lines`]' sibling with the money taken out. Nothing a test run costs
+/// is the user's model budget, so nothing here is an amount — but a plugin that
+/// made this machine build a workspace four times is a fact about the run, and
+/// the plane is the only thing that knows it happened (#4536). Reporting what
+/// the assertions said, rather than only the count, is what makes the line
+/// worth reading: a verifier whose every re-run was `unobserved` is a run whose
+/// deadline is too short, and no other line in this report would say so.
+///
+/// Pure, and empty for the overwhelmingly common plugin that never asks.
+pub(super) fn test_run_lines(runs: &[TestRunRecord]) -> Vec<String> {
+    runs.iter()
+        .map(|run| {
+            format!(
+                "re-ran the tests of \"{}\" ({})",
+                run.candidate,
+                match run.assertions {
+                    stella_plugin::TestBaseline::Passed => "they passed",
+                    stella_plugin::TestBaseline::Failed => "they failed",
+                    stella_plugin::TestBaseline::Unobserved => "nothing was observed",
+                    // Unreachable: `TestObservation::assertions` is never
+                    // `NotRun` by that type's own contract, and this host
+                    // refuses rather than answering with one. Rendered rather
+                    // than asserted, because a binary must not abort a user's
+                    // run over a variant it did not expect.
+                    stella_plugin::TestBaseline::NotRun => "it did not run",
+                }
             )
         })
         .collect()

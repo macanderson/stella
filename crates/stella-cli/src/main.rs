@@ -146,6 +146,7 @@ mod usage_cmd;
 mod wrapper_candidate;
 mod wrapper_plugin;
 mod wrapper_recall;
+mod wrapper_test_run;
 mod write_dirs;
 
 use std::io::IsTerminal;
@@ -1108,6 +1109,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             no_pipeline,
             pipeline,
             test_command,
+            require_verdict,
         } => {
             let pipeline_choice =
                 wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
@@ -1120,6 +1122,13 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                 test_command.as_deref(),
                 false,
                 false,
+            )?;
+            // Honored on `--pipeline <variant>` and meaningless without one,
+            // so it is refused here rather than accepted and ignored (#3554,
+            // this door #4543).
+            wrapper_plugin::reject_require_verdict_without_wrapper(
+                pipeline_choice,
+                require_verdict,
             )?;
             let goal = prompt_source::resolve(
                 goal,
@@ -1148,6 +1157,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     cli.globals.spend_limit,
                     pipeline_choice,
                     test_command.as_deref(),
+                    require_verdict,
                 ),
             )?;
         }
@@ -1169,10 +1179,18 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
             no_pipeline,
             pipeline,
             task_timeout,
+            require_verdict,
             output_format,
         } => {
             let pipeline_choice =
                 wrapper_plugin::PipelineChoice::resolve(no_pipeline, pipeline.as_deref())?;
+            // Honored on `--pipeline <variant>` and meaningless without one,
+            // so it is refused here rather than accepted and ignored (#3554,
+            // this door #4543).
+            wrapper_plugin::reject_require_verdict_without_wrapper(
+                pipeline_choice,
+                require_verdict,
+            )?;
             let posture = supervision(&cli.globals);
             print_no_pipeline_notice_if_owed(posture, no_pipeline);
             if posture.supervises() {
@@ -1204,6 +1222,7 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     task_timeout.map(std::time::Duration::from_secs),
                     output_format,
                     pipeline_choice,
+                    require_verdict,
                 ),
             )?;
         }
@@ -1253,8 +1272,9 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
                     wrapper_plugin::PipelineChoice::Raw,
                     // `monitor`'s completion criterion is the goal verifier's,
                     // and it names no wrapper — so there is no oracle here for
-                    // a test command to arm.
+                    // a test command to arm, and no verdict for a gate to read.
                     None,
+                    false,
                 ),
             )?;
         }

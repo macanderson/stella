@@ -447,6 +447,11 @@ class TranscriptState:
     #: ``step_usage`` routinely closes the run *before* the consolidated
     #: event arrives, and the consolidation must still find its run.
     pending_text: int | None = None
+    #: Whether the trial's ``prompt`` entry has been emitted. Once: the
+    #: engine registers the ``user_goal`` block once per turn and a trial is
+    #: one turn, but the guard costs nothing and a re-registered goal must
+    #: not print the question twice.
+    prompt_emitted: bool = False
 
 
 class TranscriptReader:
@@ -638,6 +643,37 @@ class TranscriptReader:
         # Any non-delta event closes the open text/reasoning runs, so the next
         # fragment starts a fresh entry rather than reopening a finished one.
         state.open_entries.clear()
+
+        if kind == "block_registered":
+            # The task instruction, as its own `prompt` entry — the anchor the
+            # whole transcript is read against (#4039). The wire has carried
+            # it all along: the engine registers the goal as a `user_goal`
+            # context block whose `content` is the exact text the model was
+            # handed, and this reader dropped every `block_registered` on the
+            # floor — which is why every arena transcript showed stages and
+            # tool calls with nothing saying what was asked.
+            #
+            # `seq` 0, which no other entry can hold (`_next_seq` counts from
+            # 1) and `t` 0.0: the question predates everything the trial did,
+            # and the page sorts by `seq`, so the prompt heads the transcript
+            # however late its block event lands in the stream. Every other
+            # block kind stays unrendered — the manifest/receipt plane is a
+            # reconstruction record, not reading material.
+            if (
+                state.prompt_emitted
+                or str(event.get("kind") or "") != "user_goal"
+            ):
+                return []
+            content = str(event.get("content") or "")
+            if not content:
+                # A content-free projection registers the block without its
+                # preimage; a prompt row with an empty body would read as a
+                # rendering bug rather than an honest absence.
+                return []
+            state.prompt_emitted = True
+            prompt = entry(0, "prompt", "prompt", content)
+            prompt["t"] = 0.0
+            return [prompt]
 
         if kind == "tool_start":
             call = event.get("call") if isinstance(event.get("call"), dict) else {}

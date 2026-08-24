@@ -7,6 +7,7 @@ import {
   DocsTitle,
 } from "fumadocs-ui/page";
 import { getMDXComponents } from "@/mdx-components";
+import { PageActions } from "@/components/page-actions";
 import { PageFooter } from "@/components/page-footer";
 import { source } from "@/lib/source";
 import { SITE_URL } from "@/lib/site";
@@ -89,6 +90,9 @@ export default async function Page(props: {
       <span id="content" tabIndex={-1} />
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
+      <div className="mb-6 mt-4 flex flex-row items-center gap-2 border-b border-fd-border pb-4">
+        <PageActions slug={page.slugs} />
+      </div>
       <DocsBody>
         <MDX components={getMDXComponents()} />
         <PageFooter path={page.url} title={page.data.title} />

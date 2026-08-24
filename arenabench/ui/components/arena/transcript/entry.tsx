@@ -58,6 +58,7 @@ import { Braces } from "lucide-react";
 
 import { INLINE_DIFF_CAP, selectDiffLines } from "@/lib/diff-view";
 import { parseDiff, splitLines, type DiffRow } from "@/lib/transcript-diff";
+import { proseFold } from "@/lib/transcript-view";
 import type { TranscriptEntry } from "@/lib/types";
 import { fmtDuration, fmtMoney, fmtTokens } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -273,7 +274,53 @@ export function usageLine(entry: TranscriptEntry): string {
   );
 }
 
-const THINKING_PREVIEW_LINES = 5;
+/** Lines of the task instruction shown before the rest sits behind "more".
+ *
+ * Generous where the prose fold is tight, because the two fold for
+ * different reasons: prose folds to its first sentence (`proseFold`), while
+ * the prompt is the anchor everything below is read against and is *never*
+ * folded away — a Frontier-Bench instruction runs to hundreds of lines, and
+ * the fold exists only so one of those cannot push the trial itself off
+ * screen. The remainder is a disclosure away, not gone. */
+const PROMPT_PREVIEW_LINES = 30;
+
+/**
+ * The trial's task instruction — the `YOU` half of the conversation the
+ * transcript-spec addendum §1 lays out (Prompt → Prose → Steps → Answer).
+ *
+ * Its own component because the long-instruction fold is component-local
+ * state: the page's per-`seq` fold maps (`openResults`/`thinkingOverrides`)
+ * are the machinery a prompt row deliberately does not participate in — those
+ * reset per trial and default closed, and the prompt must default open.
+ */
+function PromptEntry({ entry, query }: { entry: TranscriptEntry; query: string }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const body = entry.body || entry.title || "";
+  const lines = body.split("\n");
+  const folded = !expanded && lines.length > PROMPT_PREVIEW_LINES;
+  const shown = folded ? lines.slice(0, PROMPT_PREVIEW_LINES) : lines;
+  return (
+    <div className="tx-role you">
+      <div className="tx-rolegut">
+        <span className="tx-roletag">YOU</span>
+      </div>
+      <div className="tx-prose">
+        <Highlight text={shown.join("\n")} query={query} />
+        {folded && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="cursor-pointer text-[10.5px] text-dim hover:text-muted"
+            >
+              ⋯ {lines.length - PROMPT_PREVIEW_LINES} more lines
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /** Collapsed-result line budgets, matching the deck and the export surfaces:
  * six lines either way, anchored on the salient point.
@@ -848,6 +895,14 @@ export function Entry({
 }) {
   const body = entry.body || "";
 
+  if (entry.kind === "prompt") {
+    // The question the whole page is read against, first and role-badged
+    // (#4039). The `.tx-role.you` styles sat in `transcript-surface.css`
+    // unreferenced from the day they were written — only the `agent` half of
+    // the conversation was ever emitted.
+    return <PromptEntry entry={entry} query={query} />;
+  }
+
   if (entry.kind === "stage") {
     // A section rule, not a row: the label is the stage.
     return (
@@ -859,9 +914,14 @@ export function Entry({
   }
 
   if (entry.kind === "reasoning") {
+    // Folded, this shows the block's FIRST SENTENCE (transcript-spec addendum
+    // §1's prose rule, `proseFold`), not a fixed line window — the sentence
+    // says what the block is about, where five arbitrary lines said only
+    // where it started (#4578). The line count stays on the control so the
+    // reader knows the weight of what a click buys.
     const lines = body.split("\n");
-    const folded = !thinkingOpen && lines.length > THINKING_PREVIEW_LINES;
-    const shown = thinkingOpen ? lines : lines.slice(0, THINKING_PREVIEW_LINES);
+    const { head, rest } = proseFold(body);
+    const folded = !thinkingOpen && rest.length > 0;
     return (
       <div>
         <button
@@ -873,17 +933,9 @@ export function Entry({
           {lines.length === 1 ? "line" : "lines"}
         </button>
         <div className="whitespace-pre-wrap break-words italic text-dim">
-          <Highlight text={shown.join("\n")} query={query} />
+          <Highlight text={folded ? head : body} query={query} />
+          {folded && <span className="select-none"> …</span>}
         </div>
-        {folded && (
-          <button
-            type="button"
-            onClick={toggleThinking}
-            className="cursor-pointer text-[10.5px] text-dim hover:text-muted"
-          >
-            ⋯ {lines.length - THINKING_PREVIEW_LINES} more lines
-          </button>
-        )}
       </div>
     );
   }
@@ -1119,13 +1171,48 @@ export function Entry({
   // and a monospaced line much past that is measurably slower to track back to
   // the start of — which is why this is the one place on a page of full-width
   // rows that has a measure at all.
+  const prose = body || entry.title || "";
+  if (entry.kind === "text" && !isAnswer) {
+    // Intermediate prose folds to its FIRST SENTENCE by default — the §1 rule
+    // this page rendered nowhere until #4578; only the answer, which is the
+    // turn's terminal and highest-priority prose, always shows in full.
+    // Scoped to `text`: an unknown kind also lands in this arm ("unknown
+    // kinds always render"), and a rendering guess should not also guess at
+    // a fold. The disclosure rides the page's per-seq override map
+    // (`resultOpen`), the same state the recall table uses, so it resets per
+    // trial with the rest of the folds.
+    const { head, rest } = proseFold(prose);
+    const folded = !resultOpen && rest.length > 0;
+    return (
+      <div className="tx-role agent">
+        <div className="tx-rolegut">
+          <span className="tx-roletag">AGENT</span>
+        </div>
+        <div className="tx-prose">
+          {rest.length > 0 && (
+            <button
+              type="button"
+              onClick={toggleResult}
+              aria-expanded={!folded}
+              aria-label={folded ? "expand this response" : "collapse this response"}
+              className="cursor-pointer select-none pr-1 text-[10.5px] text-dim hover:text-muted"
+            >
+              {folded ? "⏵" : "⏶"}
+            </button>
+          )}
+          <Highlight text={folded ? head : prose} query={query} />
+          {folded && <span className="select-none text-dim"> …</span>}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={cn("tx-role agent", isAnswer && "border-b-0")}>
       <div className="tx-rolegut">
         <span className="tx-roletag">{isAnswer ? "ANSWER" : "AGENT"}</span>
       </div>
       <div className={cn("tx-prose", isAnswer && "tx-answer")}>
-        <Highlight text={body || entry.title || ""} query={query} />
+        <Highlight text={prose} query={query} />
       </div>
     </div>
   );

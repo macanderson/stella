@@ -1348,6 +1348,81 @@ fn the_agents_panel_counts_definitions_and_collapses_delegations() {
     assert_eq!(delegations["distinct"], 3, "{delegations}");
 }
 
+/// **The #4567 witness.** A store whose `telemetry` predates
+/// `cache_write_tokens` still lists its session's turns.
+///
+/// `session_turns` sums that column for the turn table's cache tooltip, and a
+/// prepare over a missing column fails the whole query — the established
+/// per-query degrade, but here it blanked the entire turn list to buy one
+/// tooltip figure. The cross-project switcher (`?project=`) is exactly where
+/// stores that old appear. The sum is probed per store and reads 0 when the
+/// column is absent; everything else the query serves must still arrive.
+#[test]
+fn a_store_without_cache_write_tokens_still_lists_its_turns() {
+    let dir = TempDir::new().unwrap();
+    let dot = dir.path().join(".stella");
+    std::fs::create_dir_all(dot.join("private")).unwrap();
+    let conn = Connection::open(dot.join("private/store.db")).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE executions (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           kind TEXT NOT NULL, prompt TEXT NOT NULL,
+           provider TEXT NOT NULL, model TEXT NOT NULL,
+           started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+           finished_at TEXT, outcome TEXT, session_id TEXT,
+           cost_usd REAL NOT NULL DEFAULT 0);
+         -- The pre-cache_write telemetry shape: every column the turn query
+         -- reads except the one under test.
+         CREATE TABLE telemetry (
+           execution_id INTEGER NOT NULL, step INTEGER NOT NULL,
+           provider TEXT NOT NULL, model TEXT NOT NULL,
+           input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL,
+           cache_read_tokens INTEGER NOT NULL,
+           cache_miss_tokens INTEGER NOT NULL,
+           cost_usd REAL NOT NULL, duration_ms INTEGER NOT NULL,
+           retries INTEGER NOT NULL, tool_calls INTEGER NOT NULL);
+         -- Present but empty: the turn query joins both, and a missing table
+         -- fails the whole prepare — that degrade is not what this test is
+         -- about.
+         CREATE TABLE tool_calls (
+           execution_id INTEGER NOT NULL, seq INTEGER NOT NULL,
+           name TEXT NOT NULL, error TEXT NOT NULL DEFAULT '');
+         CREATE TABLE files_touched (
+           execution_id INTEGER NOT NULL, path TEXT NOT NULL,
+           lines_added INTEGER NOT NULL DEFAULT 0,
+           lines_removed INTEGER NOT NULL DEFAULT 0);
+         INSERT INTO executions
+           (kind, prompt, provider, model, outcome, session_id, cost_usd)
+         VALUES ('run', 'add a function', 'zai', 'glm-5.2', 'completed',
+                 'ses-1', 0.03);
+         INSERT INTO telemetry
+           (execution_id, step, provider, model, input_tokens, output_tokens,
+            cache_read_tokens, cache_miss_tokens, cost_usd, duration_ms,
+            retries, tool_calls)
+         VALUES (1, 1, 'zai', 'glm-5.2', 1000, 200, 400, 600, 0.03, 1500, 0, 2);",
+    )
+    .unwrap();
+    drop(conn);
+
+    let v: serde_json::Value =
+        serde_json::from_slice(&respond(dir.path(), "/api/session?id=ses-1").body).unwrap();
+    let turns = v["turns"].as_array().expect("turns");
+    assert_eq!(
+        turns.len(),
+        1,
+        "the turn list must survive the old store: {v}"
+    );
+    assert_eq!(turns[0]["id"], 1);
+    assert_eq!(
+        turns[0]["input_tokens"], 1000,
+        "the surviving sums stay real"
+    );
+    assert_eq!(
+        turns[0]["cache_write_tokens"], 0,
+        "the absent column reads as zero, not as an empty session: {v}"
+    );
+}
+
 /// A store written before v30 cannot answer which writer minted a name, and
 /// says so: the panel still lists what it has, with `kind` null. Degrading to
 /// an empty panel would blank a surface that works today.

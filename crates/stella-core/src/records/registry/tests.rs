@@ -701,3 +701,69 @@ force = "info"
         vec!["license-allowlist", "staging-url"]
     );
 }
+
+/// **Witness (#4498).** A record the turn has already been shown is left out
+/// of a re-render, and it is left out *silently* — in neither `rendered` nor
+/// `dropped` — because `dropped` is the budget's silent-gap ledger and a
+/// record the model has already seen lost nothing.
+///
+/// Fails on base, where the volatile channel has no exclusion door at all: a
+/// mid-turn re-query re-rendered the whole budgeted block, so one new record
+/// re-injected every already-seen one beside it.
+#[test]
+fn a_record_already_shown_this_turn_is_excluded_from_a_re_render() {
+    let scoped = r#"
+schema = "context-record/v0.1"
+set_id = "acme.web"
+
+[defaults]
+origin = "user"
+status = "active"
+
+[[record]]
+lineage_id = "ctx.acme.web.license-allowlist"
+kind = "preference"
+statement = "New dependencies must clear the deny.toml allowlist."
+
+[record.steering]
+force = "may"
+applies_to = { paths = ["deny.toml"], tasks = ["install"] }
+
+[[record]]
+lineage_id = "ctx.acme.web.staging-url"
+kind = "preference"
+statement = "The staging deploy answers on port 8788."
+
+[record.steering]
+force = "info"
+"#;
+    let registry = load(&[], &[md(".stella/rules/acme.web.toml", scoped)], &facts());
+    let facts_now = super::super::select::TurnFacts {
+        text: "add leftpad and update deny.toml",
+        paths: &["deny.toml".to_string()],
+    };
+
+    // The control: without an exclusion, this turn renders both.
+    let opening = registry.render_volatile_for_turn(&facts_now, None);
+    assert_eq!(opening.rendered, vec!["license-allowlist", "staging-url"]);
+
+    let already: std::collections::HashSet<String> =
+        std::iter::once("staging-url".to_string()).collect();
+    let requeried = registry.render_volatile_for_turn_excluding(&facts_now, None, &already);
+    assert_eq!(
+        requeried.rendered,
+        vec!["license-allowlist"],
+        "only what the turn has not seen renders again: {}",
+        requeried.text
+    );
+    assert!(
+        !requeried.text.contains("port 8788"),
+        "the excluded record's bytes are gone, not just its ledger row: {}",
+        requeried.text
+    );
+    assert!(
+        requeried.dropped.is_empty(),
+        "an already-shown record is not a budget drop: {:?}",
+        requeried.dropped
+    );
+}

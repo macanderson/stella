@@ -57,7 +57,9 @@
 //!   supply rather than something that happened in the turn.
 
 use serde_json::{Map, Value};
-use stella_protocol::schema_export::{UnsupportedSchema, typescript_declarations_with_header};
+use stella_protocol::schema_export::{
+    Discriminant, UnsupportedSchema, typescript_declarations_with_header,
+};
 
 use crate::engine_overrides::EngineOverrides;
 use crate::frame::{ProviderDeltaIn, ProviderResultIn, ServerFrame, ToolResultIn};
@@ -278,14 +280,19 @@ pub fn artifacts() -> Result<Vec<(&'static str, String)>, ServeSchemaError> {
     // interface referring to one printed above it resolves exactly as it did
     // when every root carried its own copy.
     frame["$defs"] = Value::Object(defs);
-    let mut ts = typescript_declarations_with_header(&frame, OUTBOUND_HEADER)?;
+    let mut ts =
+        typescript_declarations_with_header(&frame, OUTBOUND_HEADER, Discriminant::EVENT_TYPE)?;
     ts.push_str(ENVELOPE_SUFFIX);
     // Still one root at a time, for the reason `inbound_schema` documents: they
     // are the bodies of different endpoints, so each prints as its own
     // interface under its own banner rather than as an arm of a union nothing
     // discriminates.
     for (root, header) in &sections {
-        ts.push_str(&typescript_declarations_with_header(root, header)?);
+        ts.push_str(&typescript_declarations_with_header(
+            root,
+            header,
+            Discriminant::EVENT_TYPE,
+        )?);
     }
 
     let mut json =
