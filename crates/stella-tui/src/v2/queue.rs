@@ -11,7 +11,7 @@
 //! ```
 //!
 //! One row per waiting prompt, oldest first — the order
-//! [`crate::deck::prompt_queue::PromptQueue::take_next`] dispatches them in, so
+//! [`crate::deck::PromptQueue::take_next`] dispatches them in, so
 //! the row a reader sees at the top is the prompt the next free turn takes.
 //! The ordinal is the row's position in that order rather than an identifier:
 //! deleting row 1 renumbers the rest, because what the number answers is "how
