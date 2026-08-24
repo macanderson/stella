@@ -84,6 +84,7 @@ pub use frames::PROVIDER_ID;
 pub use graph::{CodeGraph, FileNeighborhood, NeighborhoodSymbol, SymbolSpan};
 pub use import::{ImportEdge, ImportKind};
 pub use lang::Language;
+pub use markdown::BREADCRUMB_SEPARATOR;
 pub use reconcile::{FullWalkReason, GitCli, Plan, RepoOracle};
 pub use storage::{StorageExtract, StorageExtractor, StorageSnapshot};
 pub use store::IndexStats;
