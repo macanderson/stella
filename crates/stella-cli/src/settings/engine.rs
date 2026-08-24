@@ -82,7 +82,7 @@ pub struct AgentEngineConfig {
     /// through one matching rule and one refusal sentence
     /// ([`crate::settings::allowed_models`]):
     ///
-    /// - the TUI pickers' vocabulary, and `auto_mode`'s selection from it;
+    /// - the pickers' vocabulary, and `auto_mode`'s selection from it;
     /// - `/model <spec>`, the typed twin of the picker;
     /// - `/model default <spec>`, which persists the session default;
     /// - **seat assignments** — a seat naming a model outside a non-empty list

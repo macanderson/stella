@@ -66,7 +66,13 @@ pub enum FleetMsg {
     /// A task exists — its row appears, `Queued`, before it is dispatched.
     Register { id: String, title: String },
     /// One `AgentEvent` belonging to one task's worker.
-    Event { id: String, event: AgentEvent },
+    ///
+    /// Boxed, because every other message here is a pair of `String`s and an
+    /// `AgentEvent` is several times the size of the largest of them. Inline,
+    /// it would set the size of every fleet message — the register and status
+    /// rows included, which the driver sends far more of than it sends events
+    /// for any one task.
+    Event { id: String, event: Box<AgentEvent> },
     /// A supervisor lifecycle transition (dispatch → `Running`, and the
     /// authoritative terminal verdict from the worker's own `WorkerOutcome`,
     /// which distinguishes done/failed more reliably than inferring from the

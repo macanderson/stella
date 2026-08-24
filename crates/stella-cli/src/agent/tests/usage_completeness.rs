@@ -23,6 +23,8 @@ fn usage(provider: &str, model: &str, cost_usd: f64) -> AgentEvent {
         finish_reason: None,
         effort: None,
         max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     }
 }
