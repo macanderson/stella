@@ -5,7 +5,7 @@
 //! - **AGENTS** ([`crate::v2::engine_panel`]): the `agent_engine_config` editor —
 //!   the per-role model / prompt / sampling overrides plus the global routing
 //!   toggles.
-//! - **TOOLS** ([`crate::views::tools`]): which of this session's tools are
+//! - **TOOLS** ([`crate::v2::tools`]): which of this session's tools are
 //!   switched off.
 //! - **SEATS** ([`crate::v2::seats`]): which model each **plugin-declared**
 //!   role runs on. Read-only for now; the editor arrives with the AGENTS
@@ -120,7 +120,7 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
     let body = bands[1];
     match ui.settings_pane {
         SettingsPane::Agents => crate::v2::engine_panel::render(ui, body, buf),
-        SettingsPane::Tools => crate::views::tools::render_panel(ui, body, buf),
+        SettingsPane::Tools => crate::v2::tools::render_panel(ui, body, buf),
         SettingsPane::Seats => crate::v2::seats::render(
             ui.engine.state.as_ref().map(|state| &state.seats[..]),
             body,
@@ -165,10 +165,10 @@ pub fn handle_key(
         // nothing rather than silently focusing a different pane's editor.
         KeyCode::Char('e') => Some(match ui.settings_pane {
             SettingsPane::Agents => crate::v2::engine_panel::focus_panel(ui),
-            SettingsPane::Tools => crate::views::tools::focus_panel(ui),
+            SettingsPane::Tools => crate::v2::tools::focus_panel(ui),
             SettingsPane::Seats => DeckAction::Handled,
         }),
-        KeyCode::Char('t') => Some(crate::views::tools::focus_panel(ui)),
+        KeyCode::Char('t') => Some(crate::v2::tools::focus_panel(ui)),
         _ => None,
     }
 }

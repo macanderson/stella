@@ -43,6 +43,10 @@ pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// proxy 30s sooner than the idle bound and ~13x sooner than the engine's
 /// 816s model deadline. A trip is fallback-eligible: see
 /// `crate::stream_recovery`.
+///
+/// Deliberately carries no `MEASURED:` marker (#4572). 90 seconds is the
+/// comparator's watchdog, picked to sit above the observed time-to-first-token
+/// rather than derived from it — a bound, which AGENTS.md's marker is not for.
 pub(crate) const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// A `reqwest::Client` with [`CONNECT_TIMEOUT`] applied, plus a per-read
