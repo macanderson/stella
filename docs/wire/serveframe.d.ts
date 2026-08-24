@@ -1934,6 +1934,14 @@ export type SubAgentPhase = {
    */
   depth: number;
   /**
+   * The reasoning effort the child's model calls are pinned to, as
+   * resolved at dispatch — the spec's override or, absent one, the
+   * parent engine's own setting. `None` when neither pins one. This
+   * is the only durable record of a child's effort: the metering
+   * rows carry the child's model and provider but not this.
+   */
+  effort?: ReasoningEffort | null;
+  /**
    * The child's task, truncated for display. Never the full prompt —
    * the prompt can be large and the event stream is journaled.
    */

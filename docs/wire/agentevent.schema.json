@@ -1580,6 +1580,36 @@
       ],
       "type": "object"
     },
+    "ReasoningEffort": {
+      "description": "Reasoning effort forwarded to models with a thinking/extended-reasoning\nmode. One enum, mapped per-adapter to the provider's own parameter name\n(\"reasoning_param\").",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "Least thinking — cheapest and fastest.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "The middle setting most adapters treat as their default.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "More thinking, for harder steps.",
+          "type": "string"
+        },
+        {
+          "const": "xhigh",
+          "description": "Above `High`, where the provider exposes a fourth level.",
+          "type": "string"
+        },
+        {
+          "const": "max",
+          "description": "The provider's ceiling.",
+          "type": "string"
+        }
+      ]
+    },
     "ScopeProposal": {
       "description": "What a `ScopeReview` gate presents for approval before a large plan\nexecutes (L-E5).\n\nThe fields after `estimated_cost_usd` are the scope-card grid's facts\n(repo/branch, read/write globs, shell policy) — all additive\n(`serde(default)`), so streams recorded before they existed parse with\nevery one absent, and a proposal that names none serializes exactly as it\nalways has.",
       "properties": {
@@ -1733,6 +1763,17 @@
               "maximum": 255,
               "minimum": 0,
               "type": "integer"
+            },
+            "effort": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReasoningEffort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The reasoning effort the child's model calls are pinned to, as\nresolved at dispatch — the spec's override or, absent one, the\nparent engine's own setting. `None` when neither pins one. This\nis the only durable record of a child's effort: the metering\nrows carry the child's model and provider but not this."
             },
             "instruction_preview": {
               "description": "The child's task, truncated for display. Never the full prompt —\nthe prompt can be large and the event stream is journaled.",

@@ -574,6 +574,17 @@ impl Observatory {
         crate::sessions::execution_tendencies(&conn, id)
     }
 
+    /// The sub-agents one turn fanned out, one row per `delegate` child —
+    /// the `sub_agent` bracket joined with the child-stamped `telemetry`
+    /// rows. The fold (and the sanctioned-`events`-read argument) lives in
+    /// `turn_agents`.
+    pub fn execution_subagents(&self, id: i64) -> Result<Value, DbError> {
+        let Some(conn) = self.store() else {
+            return Ok(json!({ "execution_id": id, "agents": [] }));
+        };
+        crate::turn_agents::execution_subagents(&conn, id)
+    }
+
     /// Per-(provider, model) usage — the same rows `stella stats` prints,
     /// same semantics (`resolved` = outcome `completed`, `off-grid` = local).
     pub fn models(&self) -> Result<Value, DbError> {

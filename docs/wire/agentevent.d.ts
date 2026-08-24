@@ -978,6 +978,13 @@ export interface ProviderShare {
 }
 
 /**
+ * Reasoning effort forwarded to models with a thinking/extended-reasoning
+ * mode. One enum, mapped per-adapter to the provider's own parameter name
+ * ("reasoning_param").
+ */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+/**
  * What a `ScopeReview` gate presents for approval before a large plan
  * executes (L-E5).
  *
@@ -1084,6 +1091,14 @@ export type SubAgentPhase = {
    * Nesting depth: `1` for a child of the top-level turn.
    */
   depth: number;
+  /**
+   * The reasoning effort the child's model calls are pinned to, as
+   * resolved at dispatch — the spec's override or, absent one, the
+   * parent engine's own setting. `None` when neither pins one. This
+   * is the only durable record of a child's effort: the metering
+   * rows carry the child's model and provider but not this.
+   */
+  effort?: ReasoningEffort | null;
   /**
    * The child's task, truncated for display. Never the full prompt —
    * the prompt can be large and the event stream is journaled.

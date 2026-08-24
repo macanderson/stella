@@ -1953,6 +1953,9 @@ let txFrom = "sessions";             // route the ← button returns to
    and refilled from /api/session when you arrive by URL instead. */
 let txSiblings = { session: null, ids: [] };
 let txRailObserver = null;
+/* The focused sub-agent when the route is `#transcript/<id>/sub/<agent>`:
+   which child of which turn, plus the sibling order ← / → cycle through. */
+let txSub = null;                    // { exec, ids: [agent_id…], idx } | null
 
 /* Navigation is a hash change, not a function call, so the back button, a
    reload and a pasted link all land in the same place. */
@@ -1961,6 +1964,30 @@ const goTranscript = (id) => {
   txFrom = isTab(state.tab) && state.tab !== "transcript" ? state.tab : "sessions";
   location.hash = "transcript/" + id;
 };
+/* Focus one of a turn's sub-agents: the turn page reloads assuming the
+   child. Same hash-navigation contract as goTranscript. */
+const goSubagent = (execId, agentId) => {
+  if (!Number.isFinite(execId) || !agentId) return;
+  location.hash = `transcript/${execId}/sub/${encodeURIComponent(agentId)}`;
+};
+/* Best-effort vendor from the model slug — display only, never load-bearing.
+   A gateway slug ("moonshotai/kimi-k3") names its vendor outright; a bare
+   slug is matched by family, and an unknown family shows nothing rather
+   than a guess. */
+function modelVendor(model) {
+  const m = String(model ?? "").toLowerCase();
+  if (!m) return "";
+  const cut = m.indexOf("/");
+  if (cut > 0) return m.slice(0, cut);
+  const families = [
+    ["claude", "anthropic"], ["gpt", "openai"], ["o1", "openai"], ["o3", "openai"],
+    ["o4", "openai"], ["gemini", "google"], ["glm", "z.ai"], ["deepseek", "deepseek"],
+    ["kimi", "moonshotai"], ["grok", "xai"], ["llama", "meta"], ["qwen", "qwen"],
+    ["mistral", "mistralai"],
+  ];
+  const hit = families.find(([p]) => m.startsWith(p));
+  return hit ? hit[1] : "";
+}
 
 /* One transcript entry's HTML — shared by the initial page render and the
    incremental refresh below, so the two can never draw the same entry type
@@ -2399,7 +2426,88 @@ function downloadTranscriptJson(execution, journal, calls, steps, tools, files, 
   a.remove();
   URL.revokeObjectURL(url);
 }
-async function openTranscript(id, full = false) {
+/* One sub-agent's page: the turn panel, assumed by the child. A delegate
+   opens no execution row of its own and its narration stays private to the
+   parent engine, so this page states what IS recorded — the started/finished
+   bracket (task, effort, budget, status, summary) joined with the metering
+   rows stamped with its agent id (model, API provider, tokens, spend) — and
+   hands everything else back to the parent turn. */
+function renderSubagentFocus(d, agents, i) {
+  const a = agents[i];
+  const head = $("tx-head"), main = $("tx-main");
+  const started = utc(a.started_ts), finished = utc(a.finished_ts);
+  const dur = started && finished ? finished.getTime() - started.getTime() : null;
+  const vendor = modelVendor(a.model);
+  head.innerHTML = `
+    <div class="tx-crumbs">
+      <button type="button" class="tx-back" id="tx-sub-up">← parent turn</button>
+      <span>Sessions</span><span class="sep">/</span>
+      <span>${esc(clip(d.session_id ?? "session unknown", 40))}</span><span class="sep">/</span>
+      <span>Execution ${fmtInt(d.id)}</span><span class="sep">/</span>
+      <span>${esc(a.agent_id)}</span>
+    </div>
+    <h2 class="tx-prompt">${esc(a.instruction_preview ?? a.agent_id)}</h2>
+    <p class="tx-meta">${badge(a.status ?? (d.finished_at == null ? "running" : "unfinished"))}
+      <span>sub-agent ${fmtInt(i + 1)} of ${fmtInt(agents.length)}</span><span class="sep">·</span>
+      <span>${a.model
+        ? `${esc(a.model)}${num(a.models) > 1 ? ` (+${fmtInt(a.models - 1)} more)` : ""}`
+        : "no calls metered"}</span>
+      ${vendor ? `<span class="sep">·</span><span>model by ${esc(vendor)}</span>` : ""}
+      ${a.provider ? `<span class="sep">·</span><span>via ${esc(a.provider)}</span>` : ""}
+      ${a.effort ? `<span class="sep">·</span><span>effort ${esc(a.effort)}</span>` : ""}
+      <span class="sep">·</span>
+      <span>${fmtTok(a.tokens_in)} in · ${fmtTok(a.tokens_out)} out</span><span class="sep">·</span>
+      <span>${fmtUsd(a.cost_usd)}</span></p>
+    <p class="tx-meta" style="margin-top:6px">
+      <span title="${esc(a.started_ts ?? "")} UTC">started ${a.started_ts ? ago(a.started_ts) : "—"}</span>
+      <span class="sep">·</span>
+      <span title="${esc(a.finished_ts ?? "")} UTC">${
+        a.finished_ts ? `stopped ${ago(a.finished_ts)}` : "no finish recorded"}</span>
+      ${dur != null ? `<span class="sep">·</span><span>ran ${fmtMs(dur)}</span>` : ""}
+      ${a.budget_usd != null ? `<span class="sep">·</span><span>budget ${fmtUsd(a.budget_usd)}</span>` : ""}
+      <span class="sep">·</span><span>${a.write_access ? "writes" : "read-only"}</span>
+      <span class="sep">·</span><span>depth ${fmtInt(a.depth)}</span></p>
+    <div class="tx-steps">
+      <button type="button" class="tx-step" id="tx-sub-prev"${i > 0 ? "" : " disabled"}>← previous sub-agent</button>
+      <button type="button" class="tx-step" id="tx-sub-next"${
+        i < agents.length - 1 ? "" : " disabled"}>next sub-agent →</button>
+      <span class="kick">← / → cycle this turn's ${fmtInt(agents.length)} sub-agents ·
+        esc back to the parent turn</span>
+    </div>`;
+  $("tx-sub-up").addEventListener("click", () => goTranscript(d.id));
+  if (i > 0)
+    $("tx-sub-prev").addEventListener("click", () => goSubagent(d.id, agents[i - 1].agent_id));
+  if (i < agents.length - 1)
+    $("tx-sub-next").addEventListener("click", () => goSubagent(d.id, agents[i + 1].agent_id));
+
+  const sect = (id_, label, kick, inner) =>
+    `<section class="tx-sect" id="${id_}"><h2>${label}</h2>
+      <div class="kick">${kick}</div>${inner}</section>`;
+  main.innerHTML =
+    sect("tx-sub-result", "Result",
+      "The report handed back to the parent — the only thing that entered its transcript.",
+      a.summary
+        ? `<p style="font:var(--fs-base)/1.7 var(--mono);color:var(--text-2)">${esc(a.summary)}${
+            a.truncated ? ` <span class="badge dim">clipped to fit</span>` : ""}</p>${
+            a.reason ? `<p class="kick">why it ended: ${esc(a.reason)}</p>` : ""}`
+        : `<div class="empty">No finish recorded${a.reason ? ` — ${esc(a.reason)}` : ""}. ${
+            d.finished_at == null
+              ? "The parent turn is still running."
+              : "The parent turn is over; the bracket never closed."}</div>`)
+    + sect("tx-sub-usage", "Spend",
+      "Summed from the telemetry rows stamped with this agent id.",
+      num(a.calls)
+        ? `<div class="step-row"><span>${fmtInt(a.calls)} calls</span>
+            <span>${fmtTok(a.tokens_in)} in · ${fmtTok(a.tokens_out)} out</span>
+            <span>${fmtUsd(a.cost_usd)}${
+              num(a.steps) ? ` · ${fmtInt(a.steps)} steps` : ""}</span></div>`
+        : `<div class="empty">No metered calls carry this agent id.</div>`);
+  buildRail([
+    { id: "tx-sub-result", label: "Result" },
+    { id: "tx-sub-usage", label: "Spend" },
+  ]);
+}
+async function openTranscript(id, full = false, sub = "") {
   if (!Number.isFinite(id)) return;
   const head = $("tx-head"), main = $("tx-main");
   let d = null;
@@ -2414,6 +2522,7 @@ async function openTranscript(id, full = false) {
       the masthead reports the connection.</div>`;
     $("tx-back").addEventListener("click", leaveTranscript);
     tx = null;
+    txSub = null;
     return;
   }
   /* Three more folds of the same run, each its own endpoint and each fetched
@@ -2422,12 +2531,30 @@ async function openTranscript(id, full = false) {
      tendencies. `full` lifts the per-body clip on the transcript. Every
      string in all three is model or workspace output — the most
      attacker-influenced text on the page — so each one goes through esc(). */
-  const [j, cx, td] = await Promise.all([
+  const [j, cx, td, sa] = await Promise.all([
     api(`/api/execution-journal?id=${encodeURIComponent(id)}${full ? "&full=1" : ""}`).catch(() => null),
     api(`/api/execution-context?id=${encodeURIComponent(id)}`).catch(() => null),
     api(`/api/execution-tendencies?id=${encodeURIComponent(id)}`).catch(() => null),
+    api(`/api/execution-subagents?id=${encodeURIComponent(id)}`).catch(() => null),
   ]);
   await txLoadSiblings(d.session_id);
+
+  /* A `/sub/<agent>` route assumes one of the turn's children: the panel
+     renders that sub-agent instead of the parent's data. An agent id the
+     turn never fanned out falls back to the parent view, address repaired —
+     the URL must not claim a child that is not there. */
+  const agents = (sa && Array.isArray(sa.agents)) ? sa.agents : [];
+  let subId = "";
+  try { subId = decodeURIComponent(sub || ""); } catch { subId = ""; }
+  const subIdx = subId ? agents.findIndex(a => a.agent_id === subId) : -1;
+  if (subId && subIdx < 0) history.replaceState(null, "", `#transcript/${id}`);
+  if (subIdx >= 0) {
+    renderSubagentFocus(d, agents, subIdx);
+    txSub = { exec: id, ids: agents.map(a => a.agent_id), idx: subIdx };
+    tx = { id, full, lastSeq: -1, finished: true };
+    return;
+  }
+  txSub = null;
 
   const entries = Array.isArray(j) ? j : [];
   const stillRunning = d.finished_at == null;
@@ -2533,6 +2660,23 @@ async function openTranscript(id, full = false) {
         entries.length || stillRunning ? "" : `<div class="empty">No journal entries for this run.</div>`}${
         entries.some(e => e.truncated)
           ? `<button type="button" class="jrnl-full" id="jrnl-full">show full bodies</button>` : ""}`)
+    + sect("tx-subagents", "Sub-agents",
+      "The delegate children this turn fanned out. Open one and the page assumes it — "
+      + "← / → then cycle the fan-out, esc returns here.",
+      agents.map(a => {
+        const vendor = modelVendor(a.model);
+        return `<div class="step-row sub-row" data-sub="${esc(a.agent_id)}" role="link"
+          tabindex="0" style="cursor:pointer">
+        <span class="name">${esc(a.agent_id)}</span>
+        <span>${esc(a.status ?? (stillRunning ? "running" : "unfinished"))}${
+          a.model ? ` · ${esc(a.model)}` : ""}${
+          vendor ? ` <span class="badge dim">${esc(vendor)}</span>` : ""}${
+          a.provider ? ` · via ${esc(a.provider)}` : ""}${
+          a.effort ? ` · effort ${esc(a.effort)}` : ""}</span>
+        <span>${a.started_ts ? ago(a.started_ts) : "—"} · ${fmtUsd(a.cost_usd)} ·
+          ${fmtTok(num(a.tokens_in) + num(a.tokens_out))} tok</span>
+      </div>`;
+      }).join("") || `<div class="empty">This turn fanned out no sub-agents.</div>`)
     + sect("tx-steps", "Steps",
       "Per-step tokens and latency. The bar is total tokens; the teal head is input.",
       stepRows || `<div class="empty">No steps recorded for this run.</div>`)
@@ -2550,6 +2694,7 @@ async function openTranscript(id, full = false) {
   buildRail([
     { id: "tx-context", label: "Prompt & changes", n: calls.length },
     { id: "tx-transcript", label: "Transcript", n: entries.length },
+    { id: "tx-subagents", label: "Sub-agents", n: agents.length },
     { id: "tx-steps", label: "Steps", n: steps.length },
     { id: "tx-tools", label: "Tool calls", n: tools.length },
     { id: "tx-files", label: "Files", n: files.length },
@@ -2558,6 +2703,11 @@ async function openTranscript(id, full = false) {
 
   const fullBtn = $("jrnl-full");
   if (fullBtn) fullBtn.addEventListener("click", () => openTranscript(id, true));
+  for (const row of main.querySelectorAll(".sub-row")) {
+    const open = () => goSubagent(id, row.dataset.sub);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (ev) => { if (ev.key === "Enter") open(); });
+  }
   for (const row of main.querySelectorAll(".ctx-row")) {
     const rowIdx = calls.findIndex(c =>
       num(c.turn) === +row.dataset.turn && num(c.step) === +row.dataset.step
@@ -2640,6 +2790,7 @@ function leaveTranscript() {
 }
 function closeTranscript() {
   tx = null;
+  txSub = null;
   ctxInspect = null;
   if (txRailObserver) { txRailObserver.disconnect(); txRailObserver = null; }
   $("tab-transcript").hidden = true;
@@ -2648,7 +2799,24 @@ function closeTranscript() {
   $("tx-main").innerHTML = "";
 }
 addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.tab === "transcript") leaveTranscript();
+  if (state.tab !== "transcript") return;
+  if (e.key === "Escape") {
+    // From a focused sub-agent, esc climbs to the parent turn; from the
+    // parent turn it leaves the transcript, as it always did.
+    if (txSub) goTranscript(txSub.exec); else leaveTranscript();
+    return;
+  }
+  /* ← / → cycle a focused sub-agent through its turn's fan-out. Only with a
+     child focused — the parent view keeps the arrows for the call inspector
+     — and never out of a text field or past a modifier chord. */
+  if (!txSub || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  const at = txSub.idx + (e.key === "ArrowRight" ? 1 : -1);
+  if (at < 0 || at >= txSub.ids.length) return;
+  e.preventDefault();
+  goSubagent(txSub.exec, txSub.ids[at]);
 });
 
 /* ── projects switcher ───────────────────────────────────────────────── */
@@ -4028,7 +4196,8 @@ function switchTab(tab, arg = "") {
     // that row's offset, which is exactly the "it appeared below the fold"
     // failure this page was built to end.
     scrollTo(0, 0);
-    openTranscript(Number(arg));
+    const [txId, , txAgent = ""] = arg.split("/");
+    openTranscript(Number(txId), false, txAgent);
   } else {
     loadTab(tab, false);
   }
@@ -4074,7 +4243,9 @@ function parseRoute(hash) {
 function routeTo(hash) {
   const { tab, arg } = parseRoute(hash);
   if (!isTab(tab)) return false;
-  if (tab === "transcript" && !/^\d+$/.test(arg)) return false;
+  // `<execution>` alone, or `<execution>/sub/<agent>` for one of the turn's
+  // sub-agents assumed into the page.
+  if (tab === "transcript" && !/^\d+(\/sub\/[^/]+)?$/.test(arg)) return false;
   switchTab(tab, arg);
   return true;
 }
@@ -4084,7 +4255,10 @@ function routeTo(hash) {
    `#transcript/notanumber` in the bar while something else is rendered is a
    URL that lies, and this page's whole premise is that the URL is the truth. */
 const currentRoute = () =>
-  state.tab === "transcript" && tx ? `transcript/${tx.id}` : state.tab;
+  state.tab === "transcript" && tx
+    ? `transcript/${tx.id}`
+      + (txSub ? `/sub/${encodeURIComponent(txSub.ids[txSub.idx])}` : "")
+    : state.tab;
 addEventListener("hashchange", () => {
   if (!routeTo(location.hash)) history.replaceState(null, "", "#" + currentRoute());
 });

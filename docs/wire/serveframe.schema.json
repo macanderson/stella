@@ -3543,6 +3543,17 @@
               "minimum": 0,
               "type": "integer"
             },
+            "effort": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReasoningEffort"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The reasoning effort the child's model calls are pinned to, as\nresolved at dispatch — the spec's override or, absent one, the\nparent engine's own setting. `None` when neither pins one. This\nis the only durable record of a child's effort: the metering\nrows carry the child's model and provider but not this."
+            },
             "instruction_preview": {
               "description": "The child's task, truncated for display. Never the full prompt —\nthe prompt can be large and the event stream is journaled.",
               "type": "string"

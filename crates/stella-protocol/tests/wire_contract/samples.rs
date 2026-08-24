@@ -276,6 +276,7 @@ pub(crate) fn all_subagent_phases() -> Vec<SubAgentPhase> {
             budget_usd: Some(0.25),
             write_access: false,
             depth: 1,
+            effort: Some(stella_protocol::ReasoningEffort::High),
         },
         SubAgentPhase::Finished {
             agent_id: "search-1".into(),
@@ -1093,6 +1094,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
             budget_usd: None,
             write_access: true,
             depth: 2,
+            effort: None,
         },
     });
     // Every ladder rung (#1043). Each has to reach the wire on its own,

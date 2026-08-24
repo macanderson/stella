@@ -110,6 +110,13 @@ pub enum SubAgentPhase {
         write_access: bool,
         /// Nesting depth: `1` for a child of the top-level turn.
         depth: u8,
+        /// The reasoning effort the child's model calls are pinned to, as
+        /// resolved at dispatch — the spec's override or, absent one, the
+        /// parent engine's own setting. `None` when neither pins one. This
+        /// is the only durable record of a child's effort: the metering
+        /// rows carry the child's model and provider but not this.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<crate::ReasoningEffort>,
     },
     /// The child turn ended. Emitted on every path, including a refusal.
     Finished {
@@ -163,11 +170,34 @@ mod tests {
             budget_usd: Some(0.25),
             write_access: false,
             depth: 1,
+            effort: Some(crate::ReasoningEffort::High),
         };
         let json = serde_json::to_string(&started).unwrap();
         assert!(json.contains("\"phase\":\"started\""), "{json}");
+        assert!(json.contains("\"effort\":\"high\""), "{json}");
         let back: SubAgentPhase = serde_json::from_str(&json).unwrap();
         assert_eq!(back, started);
+    }
+
+    #[test]
+    fn a_started_with_no_pinned_effort_omits_the_field_and_old_journals_parse() {
+        // `effort` postdates the bracket (it used to live only on the
+        // in-memory spec), so a journaled `started` without the key must
+        // still parse, and an unpinned child must not write a null.
+        let started = SubAgentPhase::Started {
+            agent_id: "search-1".into(),
+            instruction_preview: String::new(),
+            budget_usd: None,
+            write_access: false,
+            depth: 1,
+            effort: None,
+        };
+        let json = serde_json::to_string(&started).unwrap();
+        assert!(!json.contains("effort"), "{json}");
+        assert_eq!(
+            serde_json::from_str::<SubAgentPhase>(&json).unwrap(),
+            started
+        );
     }
 
     #[test]
@@ -201,6 +231,7 @@ mod tests {
             budget_usd: None,
             write_access: false,
             depth: 1,
+            effort: None,
         };
         let finished = SubAgentPhase::Finished {
             agent_id: "a".into(),
