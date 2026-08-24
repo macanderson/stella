@@ -645,9 +645,8 @@ mod tests {
     /// `handle_deck_key`. The rest are the four places a row's vocabulary
     /// genuinely lives elsewhere: `deck_ui/list_nav.rs` (the tree keys are
     /// that helper), `deck_ui/dispatch.rs` (the `>` steer marker),
-    /// `views/settings.rs` + `views/engine.rs` (the SETTINGS panes and their
-    /// modal editor — `views/engine.rs` is a god file, so its witnesses stay
-    /// where they are), `v2/subagents.rs` (the overlay's own verbs), and
+    /// `views/settings.rs` + `v2/engine_panel/keys.rs` (the SETTINGS panes and
+    /// their modal editor), `v2/subagents.rs` (the overlay's own verbs), and
     /// `deck_shell.rs` (`⌃V`, claimed by the run loop above the pure key
     /// layer because the capture is blocking I/O).
     fn witness_sources() -> [&'static str; 29] {
@@ -677,10 +676,10 @@ mod tests {
             include_str!("deck_ui/dispatch.rs"),
             include_str!("deck_ui/list_nav.rs"),
             include_str!("deck_shell.rs"),
+            include_str!("v2/engine_panel/keys.rs"),
             include_str!("v2/agents_page.rs"),
             include_str!("v2/subagents.rs"),
             include_str!("views/settings.rs"),
-            include_str!("views/engine.rs"),
         ]
     }
 

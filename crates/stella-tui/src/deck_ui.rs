@@ -5,7 +5,7 @@
 //! per-tab scroll/selection, the splash, the out-of-band graph snapshot), and
 //! [`handle_deck_key`] is a pure function of `(key, model, &mut ui)` returning a
 //! [`DeckAction`]. All deck interaction logic lives here, unit-tested — with one
-//! delegation: the Engine tab's key map lives in [`crate::views::engine`], which
+//! delegation: the Engine tab's key map lives in [`crate::v2::engine_panel`], which
 //! owns its own overlay state. Either way [`crate::deck_shell`] stays a
 //! near-logic-free event loop.
 //!
@@ -802,7 +802,7 @@ pub struct DeckUi {
     /// The ENGINE panel (SETTINGS tab, `/model-*`): the editor for
     /// `settings.json` → `agent_engine_config`, over a driver-owned snapshot
     /// ([`Inbound::EngineConfig`]). Modal while open.
-    pub engine: crate::views::engine::EngineOverlay,
+    pub engine: crate::v2::engine_panel::EngineOverlay,
     /// The TOOLS panel (SETTINGS tab): the editor for `settings.json` →
     /// `tools` — which of this session's tools are switched off — over a
     /// driver-owned snapshot ([`Inbound::ToolPolicy`]). Modal while open, and
@@ -907,7 +907,7 @@ impl Default for DeckUi {
             inbox_sel: 0,
             cards: cards::CardState::default(),
             pending_inputs: Vec::new(),
-            engine: crate::views::engine::EngineOverlay::default(),
+            engine: crate::v2::engine_panel::EngineOverlay::default(),
             tools: crate::views::tools::ToolsOverlay::default(),
             question: crate::views::question::QuestionOverlay::default(),
             approval: crate::v2::approval::ApprovalOverlay::default(),
@@ -1325,7 +1325,7 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // the ENGINE panel. Applied by the overlay's own ingest,
     // which guards unsaved local edits; the model fold never sees it.
     if let Inbound::EngineConfig { state, status } = inbound {
-        crate::views::engine::ingest_config(ui, state, status);
+        crate::v2::engine_panel::ingest_config(ui, state, status);
         return;
     }
     // The tool-switch snapshot — the other half of the SETTINGS tab, out-of-band
@@ -1853,7 +1853,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // must never leak into the composer. Scoped to its own tab so a stale
     // focus flag can never trap the keyboard elsewhere.
     if ui.tab == DeckTab::Settings && ui.engine.focused {
-        return crate::views::engine::handle_engine_key(key, ui);
+        return crate::v2::engine_panel::handle_engine_key(key, ui);
     }
     // The TOOLS panel is the SETTINGS tab's second editor and is modal on
     // exactly the same terms — its letter verbs are the engine panel's, so

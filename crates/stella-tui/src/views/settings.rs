@@ -2,7 +2,7 @@
 //! secondary nav (AGENTS | TOOLS | SEATS, switched with ←/→) exactly like the
 //! AGENTS tab:
 //!
-//! - **AGENTS** ([`crate::views::engine`]): the `agent_engine_config` editor —
+//! - **AGENTS** ([`crate::v2::engine_panel`]): the `agent_engine_config` editor —
 //!   the per-role model / prompt / sampling overrides plus the global routing
 //!   toggles.
 //! - **TOOLS** ([`crate::views::tools`]): which of this session's tools are
@@ -119,7 +119,7 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
 
     let body = bands[1];
     match ui.settings_pane {
-        SettingsPane::Agents => crate::views::engine::render_panel(ui, body, buf),
+        SettingsPane::Agents => crate::v2::engine_panel::render(ui, body, buf),
         SettingsPane::Tools => crate::views::tools::render_panel(ui, body, buf),
         SettingsPane::Seats => crate::views::seats::render_panel(ui, body, buf),
     }
@@ -160,7 +160,7 @@ pub fn handle_key(
         // (`crate::views::seats`, slice 5b), so it claims the key and does
         // nothing rather than silently focusing a different pane's editor.
         KeyCode::Char('e') => Some(match ui.settings_pane {
-            SettingsPane::Agents => crate::views::engine::focus_panel(ui),
+            SettingsPane::Agents => crate::v2::engine_panel::focus_panel(ui),
             SettingsPane::Tools => crate::views::tools::focus_panel(ui),
             SettingsPane::Seats => DeckAction::Handled,
         }),
