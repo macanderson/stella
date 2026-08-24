@@ -29,18 +29,19 @@ use ratatui::style::Color;
 use ratatui::text::Line;
 
 use super::transcript::{
-    Event, EventKind, Extent, Receipt, Subject, TurnHead, event_rows, receipt, turn_begin, turn_end,
+    Event, EventKind, Extent, Receipt, Subject, Touched, TurnHead, event_rows, receipt, turn_begin,
+    turn_end,
 };
 use crate::model::{FileState, ReadSize, TranscriptEntry};
 
 /// The metal-bearing head of a dispatched call (SPEC 6.2).
 ///
-/// `measured` is the `(added, removed)` the emitter reported for this call, or
-/// `None` while it is still in flight — [`measured_delta`] is what resolves it,
-/// and a head row is never asked to guess. `read` is the line coverage the
-/// tool reported for itself, resolved by [`read_size`] — a separate channel,
-/// because a read's number is a coverage the producer states, never a delta a
-/// mutation stamps.
+/// `scope` is what the emitter measured for this call — the paths it claimed
+/// and the delta summed across them — or `None` while it is still in flight.
+/// [`measured_scope`] is what resolves it, and a head row is never asked to
+/// guess. `read` is the line coverage the tool reported for itself, resolved by
+/// [`read_size`] — a separate channel, because a read's number is a coverage
+/// the producer states, never a delta a mutation stamps.
 ///
 /// Always at least one row: a tool with no recognised verb still names itself,
 /// because a call that rendered nothing would be a call the reader cannot see
@@ -50,11 +51,11 @@ pub fn head_rows(
     name: &str,
     path: Option<&str>,
     input: &str,
-    measured: Option<(u32, u32)>,
+    scope: Option<Touched>,
     read: Option<ReadSize>,
     width: usize,
 ) -> Vec<Line<'static>> {
-    let kind = kind_for(name, measured, read);
+    let kind = kind_for(name, scope, read);
     let mut event = Event::new(kind, subject_for(name, path, input));
     // The head is drawn the moment the call dispatches, so it is never
     // "collapsed" in the fold sense — there is no body under it yet.
@@ -78,13 +79,14 @@ pub fn head_metal(name: &str) -> Color {
     kind_for(name, None, None).metal()
 }
 
-/// The `(added, removed)` the emitter measured for the call `call_id`
-/// dispatched, or `None` while nothing has measured it.
+/// What the emitter measured for the call `call_id` dispatched — the paths it
+/// claimed and the delta summed across them — or `None` while nothing has
+/// measured it.
 ///
 /// `following` is the rest of the lane's transcript *after* the head, and
 /// `files` the draw-side ledger. Two hops, both deliberate:
 ///
-/// 1. **The pair, by `call_id`.** A [`TranscriptEntry::ToolResult`] carries an
+/// 1. **The references, by `call_id`.** A [`TranscriptEntry::ToolResult`] carries an
 ///    [`crate::model::InlineDiffRef`] per change its own call produced, and
 ///    shares its `call_id` with the head. The scan stops at the turn's
 ///    closing entry: a result cannot land after the turn that dispatched it
@@ -104,12 +106,17 @@ pub fn head_metal(name: &str) -> Color {
 /// `None` therefore covers three honest cases — the call has not returned, it
 /// failed (a failed mutation stamps no reference), or the turn boundary has not
 /// measured the tree yet — and each of them renders as no column at all.
+///
+/// The **scope** rides back with the delta rather than being resolved a second
+/// time, because the two are one reading: the file count is over the same
+/// references the delta is summed across, and a head stating three files beside
+/// a delta summed over two is a row that contradicts itself (#4319).
 #[must_use]
-pub fn measured_delta(
+pub fn measured_scope(
     call_id: &str,
     following: &[TranscriptEntry],
     files: &[FileState],
-) -> Option<(u32, u32)> {
+) -> Option<Touched> {
     following
         .iter()
         .take_while(|e| !matches!(e, TranscriptEntry::Complete { .. }))
@@ -119,13 +126,20 @@ pub fn measured_delta(
             } if cid == call_id => Some(diff.as_slice()),
             _ => None,
         })
-        .and_then(|refs| crate::render::resolve_inline_delta_total(refs, files))
+        .filter(|refs| !refs.is_empty())
+        .map(|refs| Touched {
+            files: crate::model::distinct_diff_paths(refs),
+            extent: crate::render::resolve_inline_delta_total(refs, files)
+                .map_or_else(Extent::default, |(added, removed)| {
+                    Extent::delta(added, removed)
+                }),
+        })
 }
 
 /// The line coverage the call `call_id` reported for itself, or `None` while
 /// nothing has.
 ///
-/// The same bounded scan as [`measured_delta`] — the pair by `call_id`, ended
+/// The same bounded scan as [`measured_scope`] — the pair by `call_id`, ended
 /// at the turn's closing entry — but a different channel at the join: the
 /// number comes off the entry's own [`ReadSize`] carrier, which the fold fills
 /// from the tool result's structured `data` (`read_file`'s
@@ -180,39 +194,45 @@ pub fn compaction_rows(
 /// recognises, so the two renderers of the same transcript cannot disagree
 /// about what a `bash` row is.
 ///
-/// `measured` is the emitter's `(added, removed)` for this call once
-/// [`measured_delta`] has resolved one, and `None` for as long as nothing has
-/// measured it — which is every head at the moment it dispatches, because the
-/// tool has not returned and no `FileChange` has been emitted. An unmeasured
-/// kind renders **no size column at all**: filling the fields with zeros
-/// instead put `edit <path> +0 -0` over every real edit in the deck — a row
-/// asserting the change was empty, on the one screen a reader consults to find
-/// out what changed (#4150).
+/// `scope` is what the emitter measured for this call once [`measured_scope`]
+/// has resolved it, and `None` for as long as nothing has — which is every head
+/// at the moment it dispatches, because the tool has not returned and no
+/// `FileChange` has been emitted. An unmeasured kind renders **no size column
+/// at all**: filling the fields with zeros instead put `edit <path> +0 -0` over
+/// every real edit in the deck — a row asserting the change was empty, on the
+/// one screen a reader consults to find out what changed (#4150).
 ///
-/// Which half of the pair a kind states is a property of the verb, and lives
-/// here so one measurement cannot be read two ways: an edit states both sides
-/// (they are one reading), a write states what it wrote, a deletion what it
-/// removed. A read states its **coverage**, and it arrives on the separate
-/// `read` channel, never through `measured`: only a *mutation* stamps the
-/// inline-diff reference [`measured_delta`] resolves through, so `measured`
-/// is `None` for a read on every live path and always was. #4180 removed the
-/// `Extent` the read once misfiled its size under; #4297 gave the number a
-/// real producer ([`read_size`]) and the column its own field.
-fn kind_for(name: &str, measured: Option<(u32, u32)>, read: Option<ReadSize>) -> EventKind {
+/// Which half of the measurement a kind states is a property of the verb, and
+/// lives here so one measurement cannot be read two ways: an edit states both
+/// sides (they are one reading), a write states what it wrote, a deletion what
+/// it removed. `run` and an unrecognised tool state the **scope** as well,
+/// because their subject cell is a command line or a tool name rather than a
+/// path, so the counts alone would not say what they are counts of (#4319).
+///
+/// A read states its **coverage**, and it arrives on the separate `read`
+/// channel, never through `scope`: only a *mutation* stamps the inline-diff
+/// reference [`measured_scope`] resolves through, so `scope` is `None` for a
+/// read on every live path and always was. #4180 removed the `Extent` the read
+/// once misfiled its size under; #4297 gave the number a real producer
+/// ([`read_size`]) and the column its own field.
+fn kind_for(name: &str, scope: Option<Touched>, read: Option<ReadSize>) -> EventKind {
+    let extent = scope.map_or_else(Extent::default, |scope| scope.extent);
     match name {
         "read_file" => EventKind::Read { lines: read },
-        "edit_file" => EventKind::Edit {
-            extent: measured.map_or_else(Extent::default, |(added, removed)| {
-                Extent::delta(added, removed)
-            }),
-        },
+        "edit_file" => EventKind::Edit { extent },
         "write_file" => EventKind::Write {
-            extent: measured.map_or_else(Extent::default, |(added, _)| Extent::added(added)),
+            extent: Extent {
+                added: extent.added,
+                removed: None,
+            },
         },
         "delete_file" => EventKind::Delete {
-            extent: measured.map_or_else(Extent::default, |(_, removed)| Extent::removed(removed)),
+            extent: Extent {
+                added: None,
+                removed: extent.removed,
+            },
         },
-        "bash" => EventKind::Run,
+        "bash" => EventKind::Run { touched: scope },
         // Never mapped onto one of the five above: a server's `read_file` is
         // not necessarily this workspace's `read`, and a familiar verb on a row
         // that did something else is the one error a transcript cannot afford.
@@ -225,6 +245,7 @@ fn kind_for(name: &str, measured: Option<(u32, u32)>, read: Option<ReadSize>) ->
         // one on screen. It renders as a glyph, never as a hue (#4125).
         _ => EventKind::Other {
             class: crate::tool_class::classify(name),
+            touched: scope,
         },
     }
 }
@@ -369,6 +390,15 @@ mod tests {
         rows.iter().map(text_of).collect::<Vec<_>>().join("\n")
     }
 
+    /// One path's measured delta — the shape every single-file mutation
+    /// resolves to.
+    fn one_file(added: u32, removed: u32) -> Touched {
+        Touched {
+            files: 1,
+            extent: Extent::delta(added, removed),
+        }
+    }
+
     /// An unknown tool still renders — the vocabulary is open (MCP, custom
     /// tools), and a missing row is the failure this guards against.
     #[test]
@@ -443,7 +473,7 @@ mod tests {
             "write_file",
             Some("src/new.rs"),
             "{}",
-            Some((42, 0)),
+            Some(one_file(42, 0)),
             None,
             120,
         ));
@@ -453,7 +483,7 @@ mod tests {
             "delete_file",
             Some("src/old.rs"),
             "{}",
-            Some((0, 17)),
+            Some(one_file(0, 17)),
             None,
             120,
         ));
@@ -545,16 +575,9 @@ mod tests {
         else {
             panic!("entry {idx} is not a head: {:?}", model.transcript[idx]);
         };
-        let measured = measured_delta(call_id, &model.transcript[idx + 1..], &model.files);
+        let scope = measured_scope(call_id, &model.transcript[idx + 1..], &model.files);
         let read = read_size(call_id, &model.transcript[idx + 1..]);
-        text_of_rows(&head_rows(
-            name,
-            path.as_deref(),
-            input,
-            measured,
-            read,
-            120,
-        ))
+        text_of_rows(&head_rows(name, path.as_deref(), input, scope, read, 120))
     }
 
     /// The witness for #4154: a head that used to be drawn once at dispatch and
@@ -782,7 +805,7 @@ mod tests {
     /// `read_file` failed the left half for as long as `EventKind::Read` had an
     /// `extent`: [`kind_for`] handed it `Extent::default()` unconditionally
     /// because only a *mutation* stamps the inline-diff reference
-    /// [`measured_delta`] resolves through, so the column was expressible,
+    /// [`measured_scope`] resolves through, so the column was expressible,
     /// unreachable, and reached by nothing but a fixture.
     #[test]
     fn a_size_field_exists_only_where_a_producer_fills_it() {
@@ -794,8 +817,14 @@ mod tests {
         ] {
             let declares_a_size = format!("{:?}", kind_for(tool, None, None)).contains("Extent");
             let unmeasured = text_of_rows(&head_rows(tool, Some(path), "{}", None, None, 120));
-            let measured =
-                text_of_rows(&head_rows(tool, Some(path), "{}", Some((7, 3)), None, 120));
+            let measured = text_of_rows(&head_rows(
+                tool,
+                Some(path),
+                "{}",
+                Some(one_file(7, 3)),
+                None,
+                120,
+            ));
             assert_eq!(
                 declares_a_size,
                 measured != unmeasured,

@@ -37,6 +37,7 @@ fn overlay(ui: &DeckUi) -> Option<&'static str> {
         (ui.question.is_open(), "question card"),
         (ui.pending_dispatch.is_some(), "routing card"),
         (ui.help_open, "help"),
+        (ui.agents_page.open, "agents page"),
         (ui.subagents.open, "sub-agents"),
         (ui.queue_open, "queue editor"),
         (ui.sessions_open, "sessions"),
