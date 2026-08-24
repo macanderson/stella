@@ -230,7 +230,11 @@ fn dispatched_lanes(conn: &Connection, id: i64) -> Result<Vec<Value>, DbError> {
         Ok(json!({
             "execution_id": r.get::<_, i64>(0)?,
             "kind": r.get::<_, String>(1)?,
-            "prompt": r.get::<_, String>(2)?,
+            // Clipped like the sessions listing's, and for the same reason:
+            // a lane's prompt is carried whole in the store and a fan-out list
+            // has no use for a multi-kilobyte one. Its own transcript page
+            // serves the full text.
+            "prompt": crate::db::truncate(&r.get::<_, String>(2)?, 240),
             "outcome": r.get::<_, Option<String>>(3)?,
             "cost_usd": r.get::<_, f64>(4)?,
             "started_at": r.get::<_, String>(5)?,
