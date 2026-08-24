@@ -1051,8 +1051,9 @@ fn skill_usage_records_per_execution_version_rows() {
     //       v34 `step_receipt.upstream_provider` (#3054). v35
     //       `tool_calls.sub_agent_id` (#4624) — which delegate RAN one; the
     //       pair is what lets a turn page say both what a child cost and what
-    //       it did.
-    assert_eq!(SCHEMA_VERSION, 35);
+    //       it did. v36 `executions.parent_execution_id` (#4628) — which turn
+    //       dispatched a deck lane, NULL when nobody's turn did.
+    assert_eq!(SCHEMA_VERSION, 36);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")

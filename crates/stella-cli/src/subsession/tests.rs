@@ -61,6 +61,7 @@ fn dummy_spec(lane: &str) -> SubSessionSpec {
         purpose: String::new(),
         prompt: "p".into(),
         notify_title: "n".into(),
+        dispatched_by: None,
     }
 }
 

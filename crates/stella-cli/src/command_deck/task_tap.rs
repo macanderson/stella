@@ -35,6 +35,10 @@ pub(crate) struct TaskTap<'a> {
     pub(crate) inner: &'a dyn ToolExecutor,
     pub(crate) registry: &'a ToolRegistry,
     pub(crate) supervisor: Option<UnboundedSender<SupervisorMsg>>,
+    /// This turn's execution id, ridden along on every spawn request so the
+    /// lane it becomes can record which turn asked for it (#4628). `None` when
+    /// the session opened no store.
+    pub(crate) dispatched_by: Option<i64>,
     /// `None` when no driver is attached to answer — the gate is then not
     /// installed rather than installed and auto-approving.
     plan_gate: Option<plan_gate::PlanGate>,
@@ -55,17 +59,20 @@ impl<'a> TaskTap<'a> {
         inner: &'a dyn ToolExecutor,
         events: UnboundedSender<AgentEvent>,
         registry: &'a ToolRegistry,
-        supervisor: Option<UnboundedSender<SupervisorMsg>>,
+        supervisor: Option<&UnboundedSender<SupervisorMsg>>,
         goal: String,
+        dispatched_by: Option<i64>,
     ) -> Self {
         if supervisor.is_some() {
             registry.enable_task_delegation();
         }
+        let supervisor = supervisor.cloned();
         let plan_gate = plan_gate::PlanGate::install(registry.question_broker(), events, goal);
         Self {
             inner,
             registry,
             supervisor,
+            dispatched_by,
             plan_gate,
         }
     }
@@ -105,7 +112,10 @@ impl ToolExecutor for TaskTap<'_> {
             && let Some(sup) = &self.supervisor
         {
             for request in self.registry.take_spawn_requests() {
-                let _ = sup.send(SupervisorMsg::SpawnTask(request));
+                let _ = sup.send(SupervisorMsg::SpawnTask(crate::subsession::QueuedSpawn {
+                    request,
+                    dispatched_by: self.dispatched_by,
+                }));
             }
         }
         output
@@ -202,6 +212,7 @@ mod tests {
             inner: &inner,
             registry: &registry,
             supervisor: None,
+            dispatched_by: None,
             plan_gate: None,
         };
         assert!(
@@ -294,7 +305,14 @@ mod tests {
     async fn starting_a_plan_puts_the_board_to_the_driver_as_a_scope_review() {
         let (registry, ran, mut rx, events) = gated(3, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            "fix the router".into(),
+            None,
+        );
 
         let out = tap
             .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -336,7 +354,14 @@ mod tests {
             Some(picked("Change it first", Some("do the tests first"))),
         );
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            "fix the router".into(),
+            None,
+        );
 
         let out = tap
             .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -366,7 +391,14 @@ mod tests {
     async fn no_driver_means_no_gate_rather_than_a_gate_that_answers_itself() {
         let (registry, ran, mut rx, events) = gated(5, None);
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            "fix the router".into(),
+            None,
+        );
 
         let out = tap
             .execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -388,7 +420,7 @@ mod tests {
     async fn a_short_plan_is_not_worth_a_card() {
         let (registry, ran, mut rx, events) = gated(2, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "tidy up".into());
+        let tap = TaskTap::new(&inner, events, &registry, None, "tidy up".into(), None);
 
         tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
             .await;
@@ -407,7 +439,14 @@ mod tests {
     async fn an_approved_plan_is_asked_about_once() {
         let (registry, ran, mut rx, events) = gated(3, Some(picked("Start work", None)));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            "fix the router".into(),
+            None,
+        );
 
         for id in ["1", "2", "3"] {
             tap.execute(stella_tools::tasks::START, &serde_json::json!({ "id": id }))
@@ -430,7 +469,14 @@ mod tests {
         let (registry, ran, mut rx, events) =
             gated(3, Some(picked("Change it first", Some("smaller"))));
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            "fix the router".into(),
+            None,
+        );
 
         for _ in 0..2 {
             tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "1"}))
@@ -464,7 +510,14 @@ mod tests {
                 .expect("the board accepts a completion");
         }
         let inner = Ran(ran.clone());
-        let tap = TaskTap::new(&inner, events, &registry, None, "fix the router".into());
+        let tap = TaskTap::new(
+            &inner,
+            events,
+            &registry,
+            None,
+            "fix the router".into(),
+            None,
+        );
 
         tap.execute(stella_tools::tasks::START, &serde_json::json!({"id": "2"}))
             .await;
@@ -478,6 +531,52 @@ mod tests {
         assert_eq!(proposal.steps, vec!["step 2", "step 3", "step 4"]);
     }
 
+    /// **The witness for #4628.** A `task_assign` spawn request reaches the
+    /// supervisor carrying the execution id of the turn that made it, so the
+    /// lane it becomes can stamp `executions.parent_execution_id`.
+    ///
+    /// Fails before this change: `SupervisorMsg::SpawnTask` carried the
+    /// request alone. The dispatcher had to be looked up when a slot freed,
+    /// and a request can wait in `pending_spawns` past the end of the turn
+    /// that made it — so there was nothing to look it up from, and a lane's
+    /// parentage never left the deck's memory.
+    #[tokio::test]
+    async fn a_spawn_request_carries_the_turn_that_made_it() {
+        let registry = ToolRegistry::new(std::path::PathBuf::from("."));
+        {
+            let board = registry.task_board();
+            let mut guard = board.lock().unwrap_or_else(|p| p.into_inner());
+            guard.create("rewrite the chunker", None, None);
+        }
+        let (events, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (sup_tx, mut sup_rx) = tokio::sync::mpsc::unbounded_channel();
+        // The registry itself is the inner executor: a stub would never run
+        // `task_assign`, so nothing would queue a request and the assertion
+        // below would pass on an empty channel it never filled.
+        let tap = TaskTap::new(
+            &registry,
+            events,
+            &registry,
+            Some(&sup_tx),
+            "fix the router".into(),
+            Some(4242),
+        );
+
+        let out = tap
+            .execute(
+                "task_assign",
+                &serde_json::json!({ "id": "1", "briefing": "do it" }),
+            )
+            .await;
+        assert!(matches!(out, ToolOutput::Ok { .. }), "{out:?}");
+
+        let Ok(SupervisorMsg::SpawnTask(queued)) = sup_rx.try_recv() else {
+            panic!("the request must reach the supervisor");
+        };
+        assert_eq!(queued.request.task_id, "1");
+        assert_eq!(queued.dispatched_by, Some(4242));
+    }
+
     /// Same shape for the invocation plane (#2685): the tap sits above the
     /// discovery mount, so swallowing the live-slug answer would stop active
     /// skill bodies surviving summarization on every deck session.
@@ -489,6 +588,7 @@ mod tests {
             inner: &inner,
             registry: &registry,
             supervisor: None,
+            dispatched_by: None,
             plan_gate: None,
         };
         assert_eq!(

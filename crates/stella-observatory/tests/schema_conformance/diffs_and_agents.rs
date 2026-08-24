@@ -191,6 +191,67 @@ fn the_turn_page_folds_a_delegates_bracket_and_metering_against_the_real_schema(
     assert!(a["finished_ts"].is_string(), "{out}");
 }
 
+/// **The witness for #4628.** A turn names the deck lanes it dispatched, and
+/// only those; a lane a person started from the composer is attributed to no
+/// turn; and the sessions view can tell either from a lead turn.
+///
+/// Fails before this change: nothing recorded which turn dispatched a lane.
+/// Its parentage lived only in the deck's in-memory lane registry, so
+/// `/api/execution-subagents` had no turn-scoped query for lanes at all and
+/// `/api/session` served no `parent_execution_id`, leaving a `deck-sub` row
+/// indistinguishable from a lead turn.
+#[test]
+fn a_turn_names_the_lanes_it_dispatched_against_the_real_schema() {
+    let workspace = real_store_workspace();
+
+    let out: serde_json::Value =
+        serde_json::from_slice(&respond(workspace.path(), "/api/execution-subagents?id=1").body)
+            .expect("json");
+    let lanes = out["lanes"].as_array().expect("lanes");
+    assert_eq!(lanes.len(), 1, "one dispatched lane, not both: {out}");
+    assert_eq!(lanes[0]["prompt"], "task #1: rewrite the chunker", "{out}");
+    assert_eq!(lanes[0]["kind"], "deck-sub", "{out}");
+    assert_eq!(lanes[0]["outcome"], "completed", "{out}");
+    // The lane's own transcript is what the row opens, so it must carry the
+    // execution id rather than only a label.
+    assert!(lanes[0]["execution_id"].is_i64(), "{out}");
+
+    // A turn that dispatched nothing says so, rather than inheriting the
+    // session's other lanes.
+    let none: serde_json::Value =
+        serde_json::from_slice(&respond(workspace.path(), "/api/execution-subagents?id=2").body)
+            .expect("json");
+    assert_eq!(none["lanes"], serde_json::json!([]), "{none}");
+
+    // And the sessions view can badge a lane: `kind` says it is one, and
+    // `parent_execution_id` says whether a turn or a person asked for it.
+    let session: serde_json::Value = serde_json::from_slice(
+        &respond(workspace.path(), "/api/session?id=ses-1700000000000-424242").body,
+    )
+    .expect("json");
+    let lanes: Vec<(&str, Option<i64>)> = session["turns"]
+        .as_array()
+        .expect("turns")
+        .iter()
+        .filter(|t| t["kind"] == "deck-sub")
+        .map(|t| {
+            (
+                t["prompt"].as_str().unwrap_or("?"),
+                t["parent_execution_id"].as_i64(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        lanes,
+        vec![
+            ("task #1: rewrite the chunker", Some(1)),
+            ("have a look at the logs", None),
+        ],
+        "the dispatched lane names its turn and the composer lane names \
+         nobody: {session}"
+    );
+}
+
 /// **The witness for #4624.** A delegate's tool calls are attributed against
 /// the real migrated schema: `tool_calls` carries the child's id, and
 /// `/api/execution` serves it on both projections so a per-child page can

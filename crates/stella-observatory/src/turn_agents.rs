@@ -24,6 +24,16 @@
 //! A child with no `Finished` row reports `status: null` — the fold does not
 //! guess whether it is still running or its parent died mid-flight; the
 //! caller has the parent's own outcome to say which.
+//!
+//! # Lanes are the other fan-out, and they are a separate list
+//!
+//! A deck worker lane (`req:<n>` / `sub:<task-id>`) is not a `delegate` child:
+//! it opens a **real execution row** of its own, with its own transcript at
+//! `#transcript/<id>`, and nothing about it lives under the parent's id. So it
+//! cannot join `agents` — every field that list carries comes from a bracket
+//! and a metering stamp a lane has neither of. It rides as `lanes`, keyed off
+//! `executions.parent_execution_id` (schema v36, #4628), and a store older
+//! than that column answers with an empty list rather than an error.
 
 use std::collections::BTreeMap;
 
@@ -137,7 +147,11 @@ pub(crate) fn execution_subagents(conn: &Connection, id: i64) -> Result<Value, D
         Ok(stmt) => stmt,
         // A pre-v33 store has no `sub_agent_id`: bracket-only rows.
         Err(e) if is_missing_schema(&e) => {
-            return Ok(json!({ "execution_id": id, "agents": agents }));
+            return Ok(json!({
+                "execution_id": id,
+                "agents": agents,
+                "lanes": dispatched_lanes(conn, id)?,
+            }));
         }
         Err(e) => return Err(e.into()),
     };
@@ -189,12 +203,50 @@ pub(crate) fn execution_subagents(conn: &Connection, id: i64) -> Result<Value, D
         }
     }
 
-    Ok(json!({ "execution_id": id, "agents": agents }))
+    Ok(json!({
+        "execution_id": id,
+        "agents": agents,
+        "lanes": dispatched_lanes(conn, id)?,
+    }))
+}
+
+/// The deck worker lanes this turn dispatched, oldest first.
+///
+/// Each is a whole execution — its own prompt, outcome, cost and transcript —
+/// so the row carries enough to be opened rather than only counted. A store
+/// predating `executions.parent_execution_id` answers with an empty list: a
+/// turn whose lanes cannot be named reads as a turn that dispatched none,
+/// which is the same thing every such store could ever have said.
+fn dispatched_lanes(conn: &Connection, id: i64) -> Result<Vec<Value>, DbError> {
+    let mut stmt = match conn.prepare(
+        "SELECT id, kind, prompt, outcome, cost_usd, started_at, finished_at
+         FROM executions WHERE parent_execution_id = ?1 ORDER BY id ASC",
+    ) {
+        Ok(stmt) => stmt,
+        Err(e) if is_missing_schema(&e) => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let mapped = stmt.query_map([id], |r| {
+        Ok(json!({
+            "execution_id": r.get::<_, i64>(0)?,
+            "kind": r.get::<_, String>(1)?,
+            "prompt": r.get::<_, String>(2)?,
+            "outcome": r.get::<_, Option<String>>(3)?,
+            "cost_usd": r.get::<_, f64>(4)?,
+            "started_at": r.get::<_, String>(5)?,
+            "finished_at": r.get::<_, Option<String>>(6)?,
+        }))
+    })?;
+    let mut out = Vec::new();
+    for row in mapped {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 /// The shape a store with no `events` table answers with.
 fn empty(id: i64) -> Value {
-    json!({ "execution_id": id, "agents": [] })
+    json!({ "execution_id": id, "agents": [], "lanes": [] })
 }
 
 #[cfg(test)]
@@ -350,7 +402,7 @@ mod tests {
     fn no_children_is_empty_and_an_old_store_degrades_to_bracket_only() {
         let conn = conn();
         let out = execution_subagents(&conn, 1).expect("empty");
-        assert_eq!(out, json!({ "execution_id": 1, "agents": [] }));
+        assert_eq!(out, json!({ "execution_id": 1, "agents": [], "lanes": [] }));
 
         conn.execute_batch(
             "ALTER TABLE telemetry RENAME TO telemetry_v33;

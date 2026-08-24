@@ -523,6 +523,32 @@ fn real_store_workspace() -> tempfile::TempDir {
         .finish_execution(drifted, "completed", 0.01)
         .expect("finish drifted");
 
+    // A deck worker lane the first turn dispatched (#4628) — a real execution
+    // row of its own, unlike a `delegate` child, stamped with the turn that
+    // asked for it. Beside it, a lane the user started from the composer:
+    // same `kind`, no parent, which is the distinction the column exists for.
+    let dispatched_lane = store
+        .begin_execution("deck-sub", "task #1: rewrite the chunker", "zai", "glm-5.2")
+        .expect("begin dispatched lane");
+    store
+        .set_execution_session(dispatched_lane, SESSION_ID)
+        .expect("session stamp 3");
+    store
+        .set_execution_parent(dispatched_lane, completed)
+        .expect("dispatcher stamp");
+    store
+        .finish_execution(dispatched_lane, "completed", 0.02)
+        .expect("finish dispatched lane");
+    let composer_lane = store
+        .begin_execution("deck-sub", "have a look at the logs", "zai", "glm-5.2")
+        .expect("begin composer lane");
+    store
+        .set_execution_session(composer_lane, SESSION_ID)
+        .expect("session stamp 4");
+    store
+        .finish_execution(composer_lane, "completed", 0.01)
+        .expect("finish composer lane");
+
     // A last, unfinished execution: the observatory must render a run that
     // is still in flight (outcome NULL, finished_at NULL) without failing.
     let unfinished = store

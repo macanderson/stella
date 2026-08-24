@@ -2677,6 +2677,9 @@ async function openTranscript(id, full = false, sub = "") {
      turn never fanned out falls back to the parent view, address repaired —
      the URL must not claim a child that is not there. */
   const agents = (sa && Array.isArray(sa.agents)) ? sa.agents : [];
+  /* Lanes are the turn's other fan-out: real executions with their own
+     transcripts, listed beside the delegates rather than among them (#4628). */
+  const lanes = (sa && Array.isArray(sa.lanes)) ? sa.lanes : [];
   let subId = "";
   try { subId = decodeURIComponent(sub || ""); } catch { subId = ""; }
   const subIdx = subId ? agents.findIndex(a => a.agent_id === subId) : -1;
@@ -2786,7 +2789,19 @@ async function openTranscript(id, full = false, sub = "") {
         <span>${a.started_ts ? ago(a.started_ts) : "—"} · ${fmtUsd(a.cost_usd)} ·
           ${fmtTok(num(a.tokens_in) + num(a.tokens_out))} tok</span>
       </div>`;
-      }).join("") || `<div class="empty">This turn fanned out no sub-agents.</div>`)
+      }).join("")
+      + (agents.length || lanes.length ? "" : `<div class="empty">This turn fanned
+          out no sub-agents and dispatched no lanes.</div>`)
+      /* A lane is not a delegate child: it has its own execution row and its
+         own transcript, so its row opens that page rather than the per-child
+         panel above, which is built from a bracket a lane has none of. */
+      + lanes.map(l => `<div class="step-row lane-row" data-lane="${fmtInt(l.execution_id)}"
+          role="link" tabindex="0" style="cursor:pointer">
+        <span class="name">${esc(clip(l.prompt ?? "", 60))}
+          <span class="badge dim">lane</span></span>
+        <span>${esc(l.outcome ?? "running")}</span>
+        <span>${l.started_at ? ago(l.started_at) : "—"} · ${fmtUsd(l.cost_usd)}</span>
+      </div>`).join(""))
     + sect("tx-steps", "Steps",
       "Per-step tokens and latency. The bar is total tokens; the leading segment is input.",
       stepRows || `<div class="empty">No steps recorded for this run.</div>`)
@@ -2810,7 +2825,7 @@ async function openTranscript(id, full = false, sub = "") {
   buildRail([
     { id: "tx-profile", label: "Agent profile", n: seats.length },
     { id: "tx-transcript", label: "Transcript", n: entries.length },
-    { id: "tx-subagents", label: "Sub-agents", n: agents.length },
+    { id: "tx-subagents", label: "Sub-agents", n: agents.length + lanes.length },
     { id: "tx-steps", label: "Steps", n: steps.length },
     { id: "tx-tools", label: "Tool calls", n: tools.length },
     { id: "tx-files", label: "Files", n: files.length },
@@ -2819,6 +2834,11 @@ async function openTranscript(id, full = false, sub = "") {
 
   for (const row of main.querySelectorAll(".sub-row")) {
     const open = () => goSubagent(id, row.dataset.sub);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (ev) => { if (ev.key === "Enter") open(); });
+  }
+  for (const row of main.querySelectorAll(".lane-row")) {
+    const open = () => goTranscript(Number(row.dataset.lane));
     row.addEventListener("click", open);
     row.addEventListener("keydown", (ev) => { if (ev.key === "Enter") open(); });
   }
@@ -4156,9 +4176,20 @@ function turnRowHtml(t, i) {
      to ride inside the Turn cell, and a turn that applied several skills
      pushed outcome, tokens and cost behind the table's horizontal scroll —
      the data a reader scans this table for, hidden by the decoration. */
+  /* A deck worker lane opens a real execution row, so it lists here beside
+     the lead turns and used to read exactly like one. The badge says which it
+     is, and names the turn that dispatched it when a turn did — most lanes
+     are started by a person from the composer and honestly have no parent
+     (#4628). */
+  const lane = t.kind === "deck-sub"
+    ? ` <span class="badge dim" title="${t.parent_execution_id != null
+        ? `dispatched by execution ${fmtInt(t.parent_execution_id)}`
+        : "dispatched from the composer, not by a turn"}">lane${
+        t.parent_execution_id != null ? ` ← ${fmtInt(t.parent_execution_id)}` : ""}</span>`
+    : "";
   return `<tr class="click" data-exec="${fmtInt(t.id)}">
     <td class="num">${fmtInt(i + 1)}</td>
-    <td><span class="name" title="execution ${fmtInt(t.id)}">${esc(clip(t.prompt ?? "", 80))}</span></td>
+    <td><span class="name" title="execution ${fmtInt(t.id)}">${esc(clip(t.prompt ?? "", 80))}</span>${lane}</td>
     <td>${badge(t.outcome)}</td>
     <td><span title="${esc(t.provider)}/${esc(t.model)}">${esc(t.provider)}/${esc(clip(t.model ?? "", 24))}</span></td>
     <td class="num">${fmtInt(t.steps)}</td>

@@ -51,6 +51,7 @@ mod abandoned_state;
 mod additive_tables;
 mod agent_use_kind;
 mod call_identity;
+mod dispatched_executions;
 mod error_class;
 mod execution_plane;
 mod execution_role;
@@ -102,7 +103,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 35] = [
+pub(crate) const MIGRATIONS: [Migration; 36] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -289,6 +290,13 @@ pub(crate) const MIGRATIONS: [Migration; 35] = [
     // attribution is exactly what makes a backfill a guess. See the module's
     // own doc.
     sub_agent_tool_calls::migrate_v34_to_v35,
+    // v35 → v36: `executions` grows `parent_execution_id` — which turn
+    // dispatched this one (#4628). Additive, column-guarded ADD COLUMN,
+    // nullable with no default and no backfill: NULL is "nobody's turn asked
+    // for this", which covers every lead turn and every lane a person started
+    // from the composer, and nothing recorded the fact for the rest. See the
+    // module's own doc.
+    dispatched_executions::migrate_v35_to_v36,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -338,7 +346,8 @@ pub(crate) const MIGRATIONS: [Migration; 35] = [
     //   v32 → v33: CLAIMED above by `telemetry.sub_agent_id` (#4383).
     //   v33 → v34: CLAIMED above by `step_receipt.upstream_provider` (#3054).
     //   v34 → v35: CLAIMED above by `tool_calls.sub_agent_id` (#4624).
-    // Nothing is reserved now: take v35 → v36 and add your own line here.
+    //   v35 → v36: CLAIMED above by `executions.parent_execution_id` (#4628).
+    // Nothing is reserved now: take v36 → v37 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

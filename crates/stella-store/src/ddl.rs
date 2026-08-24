@@ -113,10 +113,14 @@ pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
          CHECK(usage_status IN ('pending', 'complete', 'incomplete')),
        journal_era INTEGER NOT NULL DEFAULT 0,
        pipeline_variant TEXT,
-       role TEXT
+       role TEXT,
+       parent_execution_id INTEGER
      );
      CREATE INDEX IF NOT EXISTS executions_by_session
        ON executions(session_id, id);
+     CREATE INDEX IF NOT EXISTS executions_by_parent
+       ON executions(parent_execution_id, id)
+       WHERE parent_execution_id IS NOT NULL;
      CREATE INDEX IF NOT EXISTS executions_unfinished
        ON executions(id) WHERE finished_at IS NULL;";
 
