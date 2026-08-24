@@ -805,6 +805,26 @@ pub enum WorkspaceInput {
     /// the deck's only optimistic mirror is dropping its queue view, since a
     /// session reset to seq-0 has no backlog by definition.
     SessionClear,
+    /// A slash command whose declared class is **queue-free**
+    /// ([`crate::composer::SlashCommand::sideband`]): the deck sends this
+    /// instead of [`WorkspaceInput::Enqueue`] so the command executes at
+    /// once — mid-turn included — beside the prompt queue rather than in it.
+    /// The driver runs it without touching the in-flight turn, the backlog,
+    /// or the conversation, and answers into the transcript over
+    /// [`Inbound::ShellEvent`] (no status flip — the turn's own events keep
+    /// telling the truth about the turn). `/export` is the canonical case:
+    /// it used to sit in the queue popup as a "pending prompt" until the
+    /// lead finished. The turn-coupled exceptions (`/clear`, `/init`,
+    /// `/reload`, custom expansions) never ride this route.
+    Command { text: String },
+    /// The agents page's "describe a task for a new session": start a NEW
+    /// sub-agent lane running `text`, whatever the lead is doing. The driver
+    /// answers with the ordinary lane birth — [`Inbound::Register`], a
+    /// [`Inbound::PromptStarted`] on that lane, a lead-transcript notice —
+    /// or, when every worker slot is taken, a [`Inbound::ShellEvent`] notice
+    /// saying so. Distinct from [`WorkspaceInput::Enqueue`], whose idle-arm
+    /// meaning is "the lead's next turn": this one is a lane in both arms.
+    SpawnLane { text: String },
     /// How the driver settled the parked question the overlay was showing
     /// (#4220) — the return leg of [`Inbound::QuestionAsked`].
     ///

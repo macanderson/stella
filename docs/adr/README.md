@@ -1,3 +1,9 @@
+---
+id: adr-readme
+title: "Architecture Decision Records"
+status: living
+---
+
 # Architecture Decision Records
 
 This is Stella's numbered, ratifiable decision record. **ADRs 0001–0012 are one

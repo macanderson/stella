@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The model-routing dialog (`/models`): every role's **resolved** wiring —
+//! The model-routing dialog (`/info`, and `/models` before the rename, which
+//! still routes here): every role's **resolved** wiring —
 //! the model it will send, the effort and thinking riding with it, and the
 //! setting that decided each.
 //!

@@ -115,8 +115,45 @@ pub(crate) fn model_candidates(ui: &DeckUi) -> &[String] {
     ui.engine
         .state
         .as_ref()
-        .map(crate::views::engine::picker_candidates)
+        .map(crate::v2::engine_panel::picker_candidates)
         .unwrap_or(&[])
+}
+
+/// The `/model` **argument menu's** vocabulary ([`crate::composer::args`]):
+/// [`model_candidates`] narrowed to the session's active provider.
+///
+/// The picker and the typeahead read one list on purpose — a second source
+/// would let the two disagree about what is pickable — but they scope it
+/// differently, because they answer different questions. The picker is a
+/// menu of everywhere this workspace can go, so it offers every credentialed
+/// provider. The typeahead completes a spec the reader is already typing at
+/// *this* session, so it offers this session's provider.
+///
+/// Falls back to the full list when the active provider contributes nothing
+/// to it (a gateway spec whose prefix is the gateway, not the vendor), since
+/// an empty menu would read as "no models" rather than "none here".
+pub(crate) fn typeahead_candidates(model: &WorkspaceModel, ui: &DeckUi) -> Vec<String> {
+    let all = model_candidates(ui);
+    let Some(provider) = model
+        .role_pins
+        .get(&crate::deck::PipelineRole::Worker)
+        .map(|pin| pin.provider.clone())
+    else {
+        return all.to_vec();
+    };
+    let scoped: Vec<String> = all
+        .iter()
+        .filter(|spec| {
+            spec.strip_prefix(provider.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .cloned()
+        .collect();
+    if scoped.is_empty() {
+        all.to_vec()
+    } else {
+        scoped
+    }
 }
 
 /// The window of `count` rows that keeps `sel` visible: at most

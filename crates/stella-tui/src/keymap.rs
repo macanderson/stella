@@ -103,6 +103,12 @@ pub const BINDINGS: &[Binding] = &[
         &["left_and_right_walk_the_tab_strip_from_every_tab"],
     ),
     row(
+        "← ←",
+        "the AGENTS page: every lane and session, and a prompt that starts a new one",
+        Tab(T::Session),
+        &["left_left_opens_the_agents_page_from_the_session_tab"],
+    ),
+    row(
         "↑ ↓ · k j",
         "the item above / below",
         Navigation,
@@ -639,12 +645,11 @@ mod tests {
     /// `handle_deck_key`. The rest are the four places a row's vocabulary
     /// genuinely lives elsewhere: `deck_ui/list_nav.rs` (the tree keys are
     /// that helper), `deck_ui/dispatch.rs` (the `>` steer marker),
-    /// `views/settings.rs` + `views/engine.rs` (the SETTINGS panes and their
-    /// modal editor — `views/engine.rs` is a god file, so its witnesses stay
-    /// where they are), `v2/subagents.rs` (the overlay's own verbs), and
+    /// `views/settings.rs` + `v2/engine_panel/keys.rs` (the SETTINGS panes and
+    /// their modal editor), `v2/subagents.rs` (the overlay's own verbs), and
     /// `deck_shell.rs` (`⌃V`, claimed by the run loop above the pure key
     /// layer because the capture is blocking I/O).
-    fn witness_sources() -> [&'static str; 27] {
+    fn witness_sources() -> [&'static str; 29] {
         [
             include_str!("deck_ui/tests/agents.rs"),
             include_str!("deck_ui/tests/composer.rs"),
@@ -653,6 +658,7 @@ mod tests {
             include_str!("deck_ui/tests/focus.rs"),
             include_str!("deck_ui/tests/gates.rs"),
             include_str!("deck_ui/tests/graph.rs"),
+            include_str!("deck_ui/tests/agents_page.rs"),
             include_str!("deck_ui/tests/help.rs"),
             include_str!("deck_ui/tests/issues.rs"),
             include_str!("deck_ui/tests/list_vocabulary.rs"),
@@ -670,9 +676,10 @@ mod tests {
             include_str!("deck_ui/dispatch.rs"),
             include_str!("deck_ui/list_nav.rs"),
             include_str!("deck_shell.rs"),
+            include_str!("v2/engine_panel/keys.rs"),
+            include_str!("v2/agents_page.rs"),
             include_str!("v2/subagents.rs"),
             include_str!("views/settings.rs"),
-            include_str!("views/engine.rs"),
         ]
     }
 
