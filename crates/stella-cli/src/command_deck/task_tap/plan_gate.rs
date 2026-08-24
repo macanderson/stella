@@ -97,7 +97,7 @@ pub(crate) struct PlanGate {
     /// The plan's one-line headline: what the driver asked for.
     goal: String,
     /// How many open steps raise a card, from the settings chain and this
-    /// invocation's `--plan` (#4611). Read on every call rather than folded
+    /// invocation's `--plan-mode` (#4611). Read on every call rather than folded
     /// into `install`, so the number the gate applies is the one a reader can
     /// see beside the comparison.
     min_steps: usize,
@@ -121,7 +121,7 @@ pub(crate) struct PlanSetup {
 
 impl PlanSetup {
     /// The setup for one turn: the headline read off `messages`, and the
-    /// settings policy composed with this invocation's `--plan` flag.
+    /// settings policy composed with this invocation's `--plan-mode` flag.
     ///
     /// Both sources are joined here, once, so no caller downstream can apply
     /// only one of the two — the same discipline `Config::allowed_write_dirs`

@@ -312,7 +312,7 @@ pub struct Config {
     /// reaches for when a configured value is the thing going wrong.
     pub max_output_tokens: Option<u32>,
     /// User-invoked plan mode (#1264): force the scope-review gate for this
-    /// run whatever the plan's size. Stamped from `--plan` in `main`, like
+    /// run whatever the plan's size. Stamped from `--plan-mode` in `main`, like
     /// [`Self::turn_timeout`], because `Config::load` has no view of the
     /// parsed CLI and giving it one for a value it never consults would widen
     /// its signature to carry something straight through.

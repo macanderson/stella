@@ -787,7 +787,7 @@ impl PlanReviewPolicy {
     /// worth redirecting before it runs.
     pub const DEFAULT_MIN_STEPS: usize = 3;
 
-    /// The policy this invocation applies: `--plan` (`Config::plan_mode`, #1264)
+    /// The policy this invocation applies: `--plan-mode` (`Config::plan_mode`, #1264)
     /// forces the gate on and asks about every plan, whatever the files say.
     ///
     /// A flag outranks a settings file for the reason `Config::max_output_tokens`

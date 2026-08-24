@@ -244,7 +244,7 @@ mod tests {
     }
 
     /// The shipped policy, under `goal`. What a deck turn gets with no
-    /// `plan_review` block anywhere in the settings chain and no `--plan`.
+    /// `plan_review` block anywhere in the settings chain and no `--plan-mode`.
     fn setup(goal: &str) -> PlanSetup {
         PlanSetup {
             goal: goal.to_string(),
@@ -564,7 +564,7 @@ mod tests {
         );
     }
 
-    /// `--plan` (#1264) asks about every plan. The flag has been stamped onto
+    /// `--plan-mode` (#1264) asks about every plan. The flag has been stamped onto
     /// `Config::plan_mode` and read by nothing since the staged pipeline left
     /// the workspace; `PlanReviewPolicy::for_run` is what it now does, and this
     /// is that policy reaching the board.
@@ -587,7 +587,7 @@ mod tests {
             drain(&mut rx)
                 .iter()
                 .any(|e| matches!(e, AgentEvent::ScopeReview { .. })),
-            "a one-step plan is put to the driver under --plan"
+            "a one-step plan is put to the driver under --plan-mode"
         );
     }
 

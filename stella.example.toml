@@ -503,7 +503,7 @@ per_revision = 0.1            # subtracted per verification round beyond the fir
 # is refused at launch, because an empty board has no open rows and `enabled` is
 # how you say off.
 #
-# `stella run --plan` overrides both for one invocation.
+# `stella run --plan-mode` overrides both for one invocation.
 #
 # Whole-block last-wins across scopes, like [ui] and [reward]: the switch and the
 # threshold are one policy, so a scope that declares either states both.

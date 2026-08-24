@@ -288,7 +288,7 @@ fn a_zero_plan_review_threshold_fails_the_load_by_name() {
     assert!(error.contains("\"enabled\": \"off\""), "{error}");
 }
 
-/// `--plan` (#1264) outranks the file, both ways: it installs a gate the
+/// `--plan-mode` (#1264) outranks the file, both ways: it installs a gate the
 /// settings switched off, and it asks about every plan whatever threshold they
 /// set. A flag is the most specific statement anyone can make.
 #[test]
