@@ -10,7 +10,7 @@
 //! what it covers rather than a fresh set of assertions: they move here
 //! unchanged, and `r`, which had none, is added.
 //!
-//! The AGENTS tab draws the installed-agents list (`crate::views::installed`),
+//! The AGENTS tab draws the installed-agents list (`crate::v2::installed`),
 //! so the keys are `handle_installed_browse_key`'s and the fixtures below are
 //! that pane's.
 

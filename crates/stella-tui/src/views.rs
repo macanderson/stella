@@ -5,13 +5,10 @@
 //! (`engine` and `tools` are the exceptions: they are the two config editors
 //! the SETTINGS tab ([`settings`]) hosts as the two panes of its ←/→ nav, not
 //! tab renderers of their own — each exposes `render_panel(ui, area, buf)`
-//! plus its own key handler, modal while that panel is focused. `installed`
-//! is a third: it
-//! is the AGENTS tab's INSTALLED AGENTS pane, dispatched from
-//! [`agents::render`] rather than from the deck's tab match, and its
-//! `render(ui, now_ms, area, buf)` takes only the deck clock off the model rather than
-//! carry a dead one — it has no model-derived state and no key handler of
-//! its own, deck_ui.rs routes its keys directly.)
+//! plus its own key handler, modal while that panel is focused.)
+//!
+//! The AGENTS tab is no longer among them: it draws through
+//! [`crate::v2::installed`], straight off the deck's tab match.
 
 /// The braille spinner's frames — the classic 10-frame dot cycle.
 const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -30,7 +27,6 @@ pub(crate) fn spinner_glyph(now_ms: u64, no_anim: bool) -> &'static str {
     SPINNER_FRAMES[((now_ms / SPINNER_PERIOD_MS) as usize) % SPINNER_FRAMES.len()]
 }
 
-pub mod agents;
 pub mod approval;
 pub mod budget_card;
 pub(crate) mod cards;
@@ -38,7 +34,6 @@ pub mod dispatch_card;
 pub mod engine;
 pub mod files;
 pub mod graph;
-pub mod installed;
 pub mod issues;
 pub(crate) mod linear;
 pub mod mcp;

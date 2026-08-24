@@ -1,13 +1,28 @@
-//! The AGENTS tab: the agents configured on disk at the user
-//! (`~/.stella/agents`) and project (`.stella/agents`) levels — name, scope,
-//! version, description and toolbelt per row — plus the tab's modal sub-views
-//! (the definition editor, the create-from-prompt flow, and the version
-//! picker).
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! The AGENTS tab — the agents installed on disk at the user
+//! (`~/.stella/agents`) and project (`.stella/agents`) levels, plus the modal
+//! sub-views that author them (the definition editor, the create-from-prompt
+//! flow, and the version picker).
 //!
-//! The list draws in the v2 vocabulary ([`stella_tui_theme::token`]): the
-//! assumed agent wears the skill glyph in gold, the selected row the
-//! highlight ground. The sub-views still draw in [`crate::theme`] until their
-//! own restyle. The list content comes verbatim from the driver's
+//! ```text
+//!  agents · 2 installed · lead is reviewer
+//!
+//!    agent            scope    ver  description                    toolbelt
+//!  ✦ reviewer         project  v2   reviews a diff                  read_file, search
+//!  ▸ release-captain  user     v1   cuts a release                  all tools
+//!  ↵ edit · a assume · n new · x x delete · v versions · r reload
+//! ```
+//!
+//! Every mode wears the same three bands — a header naming what you are
+//! looking at, the body, and a key row — so switching into the editor or the
+//! version picker moves the content and nothing else. That grammar is why
+//! none of them draws a box: [`super::frame`] already carved the content area
+//! out of the deck, and a border around all of it would re-spend the rows
+//! SPEC 5 reclaimed while saying only "this tab has edges".
+//!
+//! The list content comes verbatim from the driver's
 //! [`crate::envelope::Inbound::AgentsList`] snapshot held on
 //! [`crate::deck_ui::InstalledPanel`] (no shadow state).
 
@@ -15,26 +30,29 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Widget, Wrap};
+use ratatui::widgets::{Cell, Paragraph, Row, Table, Widget, Wrap};
+use stella_tui_theme::{glyph, token};
 
 use crate::composer;
 use crate::deck_ui::{DeckUi, InstalledMode, InstalledPanel};
 use crate::envelope::InstalledAgentEntry;
 use crate::syntax::{self, HighlightSpans as _};
-use crate::theme;
-use stella_tui_theme::{glyph, token};
 
+/// Draw the tab. `now_ms` is the deck clock, which is all this tab takes off
+/// the model — it has no model-derived state and no key handler of its own
+/// (`deck_ui.rs` routes its keys directly).
 pub fn render(ui: &mut DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
     if area.height == 0 || area.width == 0 {
         return;
     }
     let accessible = ui.accessible;
+    let no_anim = ui.no_anim;
     match ui.installed.mode {
         InstalledMode::Browse => render_list(&ui.installed, accessible, area, buf),
         InstalledMode::Edit => render_editor(&ui.installed, area, buf),
         InstalledMode::CreateDescribe => render_create_describe(&ui.installed, area, buf),
         InstalledMode::CreateScope => render_create_scope(&ui.installed, area, buf),
-        InstalledMode::Creating => render_creating(&ui.installed, now_ms, ui.no_anim, area, buf),
+        InstalledMode::Creating => render_creating(&ui.installed, now_ms, no_anim, area, buf),
         InstalledMode::CreateDone => render_create_done(&mut ui.installed, area, buf),
         InstalledMode::PickVersion => render_version_picker(&ui.installed, area, buf),
     }
@@ -42,6 +60,7 @@ pub fn render(ui: &mut DeckUi, now_ms: u64, area: Rect, buf: &mut Buffer) {
 
 /// The toolbelt cell text: the granted tools, or the honest "all tools"
 /// when the definition doesn't restrict them.
+#[must_use]
 pub fn toolbelt_label(tools: &Option<Vec<String>>) -> String {
     match tools {
         None => "all tools".to_string(),
@@ -49,22 +68,73 @@ pub fn toolbelt_label(tools: &Option<Vec<String>>) -> String {
     }
 }
 
-fn render_list(panel: &InstalledPanel, accessible: bool, area: Rect, buf: &mut Buffer) {
-    let bands = Layout::vertical([
+/// The tab's bands: header, a row of air, the body, the key row. Returned in
+/// that order; a frame too short to hold four rows gets zero-height bands,
+/// which every drawer below guards on.
+fn bands(area: Rect) -> (Rect, Rect, Rect) {
+    let split = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
         Constraint::Length(1),
     ])
     .split(area);
-    let (head_area, gap, list_area, foot_area) = (bands[0], bands[1], bands[2], bands[3]);
-    let _ = gap;
+    (split[0], split[2], split[3])
+}
+
+/// The header row: what this mode is, then its context, in the tab row's own
+/// vocabulary rather than a border title.
+fn render_head(spans: Vec<Span<'static>>, area: Rect, buf: &mut Buffer) {
+    if area.height == 0 {
+        return;
+    }
+    let mut row = vec![Span::raw(" ")];
+    row.extend(spans);
+    Paragraph::new(Line::from(row)).render(Rect { height: 1, ..area }, buf);
+}
+
+/// The bottom line: the transient status when there is one, the key legend
+/// otherwise. One implementation for every mode, so a key reads the same
+/// wherever it is offered.
+fn render_keys(status: Option<&str>, keys: &[(&str, &str)], area: Rect, buf: &mut Buffer) {
+    if area.height == 0 {
+        return;
+    }
+    let dim = Style::new().fg(token::DIM);
+    let key = Style::new().fg(token::MUTED);
+    let line = match status {
+        Some(status) => Line::from(Span::styled(format!(" {status}"), key)),
+        None => {
+            let mut spans = vec![Span::raw(" ")];
+            for (i, (k, label)) in keys.iter().enumerate() {
+                if i > 0 {
+                    spans.push(Span::styled(" · ", dim));
+                }
+                spans.push(Span::styled((*k).to_string(), key));
+                spans.push(Span::styled(format!(" {label}"), dim));
+            }
+            Line::from(spans)
+        }
+    };
+    Paragraph::new(line).render(Rect { height: 1, ..area }, buf);
+}
+
+const BROWSE_KEYS: [(&str, &str); 6] = [
+    ("↵", "edit"),
+    ("a", "assume"),
+    ("n", "new"),
+    ("x x", "delete"),
+    ("v", "versions"),
+    ("r", "reload"),
+];
+
+fn render_list(panel: &InstalledPanel, accessible: bool, area: Rect, buf: &mut Buffer) {
+    let (head_area, list_area, foot_area) = bands(area);
     let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
     let text = Style::new().fg(token::TEXT);
 
     let mut head = vec![
-        Span::raw(" "),
         Span::styled("agents", text),
         Span::styled(format!(" · {} installed", panel.entries.len()), muted),
     ];
@@ -72,7 +142,7 @@ fn render_list(panel: &InstalledPanel, accessible: bool, area: Rect, buf: &mut B
         head.push(Span::styled(" · lead is ", muted));
         head.push(Span::styled(assumed.clone(), Style::new().fg(token::GOLD)));
     }
-    Paragraph::new(Line::from(head)).render(head_area, buf);
+    render_head(head, head_area, buf);
 
     if panel.entries.is_empty() {
         let hint = if panel.busy {
@@ -89,7 +159,7 @@ fn render_list(panel: &InstalledPanel, accessible: bool, area: Rect, buf: &mut B
                 .alignment(Alignment::Center)
                 .render(Rect::new(list_area.x, y, list_area.width, 1), buf);
         }
-        render_footer(panel, foot_area, buf);
+        render_keys(panel.status.as_deref(), &BROWSE_KEYS, foot_area, buf);
         return;
     }
 
@@ -108,7 +178,7 @@ fn render_list(panel: &InstalledPanel, accessible: bool, area: Rect, buf: &mut B
                 .collect();
             Paragraph::new(lines).render(list_area, buf);
         }
-        render_footer(panel, foot_area, buf);
+        render_keys(panel.status.as_deref(), &BROWSE_KEYS, foot_area, buf);
         return;
     }
 
@@ -142,7 +212,7 @@ fn render_list(panel: &InstalledPanel, accessible: bool, area: Rect, buf: &mut B
         .column_spacing(1)
         .render(list_area, buf);
 
-    render_footer(panel, foot_area, buf);
+    render_keys(panel.status.as_deref(), &BROWSE_KEYS, foot_area, buf);
 }
 
 /// One installed agent as `> name · scope project · version v2 · …`.
@@ -154,7 +224,7 @@ fn agent_record(entry: &InstalledAgentEntry, is_selected: bool, width: usize) ->
         ("toolbelt", toolbelt_label(&entry.tools)),
     ];
     crate::views::linear::record_line(
-        crate::views::linear::identity(entry.name.clone(), is_selected, theme::ACCENT),
+        crate::views::linear::identity(entry.name.clone(), is_selected, token::GOLD),
         &fields,
         width,
     )
@@ -192,61 +262,37 @@ fn agent_row(entry: &InstalledAgentEntry, is_selected: bool, assumed: bool) -> R
     row
 }
 
-/// The bottom line: the transient status when set, the key legend otherwise.
-fn render_footer(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
-    if area.height == 0 {
-        return;
-    }
-    let dim = Style::new().fg(token::DIM);
-    let key = Style::new().fg(token::MUTED);
-    let line = match &panel.status {
-        Some(status) => Line::from(Span::styled(format!(" {status}"), key)),
-        None => {
-            let mut spans = vec![Span::raw(" ")];
-            for (i, (k, label)) in [
-                ("↵", " edit"),
-                ("a", " assume"),
-                ("n", " new"),
-                ("x x", " delete"),
-                ("v", " versions"),
-                ("r", " reload"),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                if i > 0 {
-                    spans.push(Span::styled(" · ", dim));
-                }
-                spans.push(Span::styled(k, key));
-                spans.push(Span::styled(label, dim));
-            }
-            Line::from(spans)
-        }
-    };
-    Paragraph::new(line).render(area, buf);
-}
-
 /// The definition editor: the pinned version's full content in a textarea.
 /// A save (ctrl+s) is ALWAYS a new version; the window follows the cursor.
 fn render_editor(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
+    let (head_area, body, foot_area) = bands(area);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
     let (name, scope) = match &panel.editing {
         Some((name, scope)) => (name.as_str(), scope.label()),
         None => ("agent", "?"),
     };
-    let title =
-        format!(" Edit {name} ({scope}) — ctrl+s saves a NEW pinned version · esc discards ");
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(theme::ACCENT));
-    let inner = block.inner(area);
-    block.render(area, buf);
-    if inner.height == 0 || inner.width == 0 {
+    render_head(
+        vec![
+            Span::styled("edit ", muted),
+            Span::styled(name.to_string(), text),
+            Span::styled(format!(" · {scope}"), muted),
+        ],
+        head_area,
+        buf,
+    );
+    render_keys(
+        None,
+        &[("^S", "saves a NEW pinned version"), ("esc", "discards")],
+        foot_area,
+        buf,
+    );
+    if body.height == 0 || body.width == 0 {
         return;
     }
 
-    let layout = composer::layout(&panel.editor, inner.width as usize);
-    let height = inner.height as usize;
+    let layout = composer::layout(&panel.editor, body.width as usize);
+    let height = body.height as usize;
     // Scroll the window so the cursor row is always visible (bottom-anchored
     // once the content exceeds the viewport).
     let start = (layout.cursor_row + 1).saturating_sub(height);
@@ -258,17 +304,17 @@ fn render_editor(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
     // degrade-gracefully contract.
     let mut hl = syntax::Highlighter::new(Some(syntax::Lang::Markdown));
     for (i, row) in layout.rows.iter().enumerate() {
-        let spans = hl.spans(row, theme::body());
+        let spans = hl.spans(row, text);
         if i < start || i >= start + height {
             continue;
         }
-        let y = inner.y + (i - start) as u16;
-        Paragraph::new(Line::from(spans)).render(Rect::new(inner.x, y, inner.width, 1), buf);
+        let y = body.y + (i - start) as u16;
+        Paragraph::new(Line::from(spans)).render(Rect::new(body.x, y, body.width, 1), buf);
     }
     // The cursor cell, reversed — same visual as a terminal caret.
-    let cy = inner.y + (layout.cursor_row - start) as u16;
-    let cx = inner.x + (layout.cursor_col as u16).min(inner.width.saturating_sub(1));
-    if cy < inner.y + inner.height {
+    let cy = body.y + (layout.cursor_row - start) as u16;
+    let cx = body.x + (layout.cursor_col as u16).min(body.width.saturating_sub(1));
+    if cy < body.y + body.height {
         buf.set_style(
             Rect::new(cx, cy, 1, 1),
             Style::default().add_modifier(Modifier::REVERSED),
@@ -278,25 +324,29 @@ fn render_editor(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
 
 /// Create-from-prompt, step 1: the description input.
 fn render_create_describe(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" New Agent — describe what it should do · ⏎ next · esc cancel ")
-        .border_style(Style::default().fg(theme::ACCENT));
-    let inner = block.inner(area);
-    block.render(area, buf);
-    if inner.height == 0 {
+    let (head_area, body, foot_area) = bands(area);
+    let muted = Style::new().fg(token::MUTED);
+    render_head(
+        vec![
+            Span::styled("new agent", Style::new().fg(token::TEXT)),
+            Span::styled(" · describe what it should do", muted),
+        ],
+        head_area,
+        buf,
+    );
+    render_keys(None, &[("⏎", "next"), ("esc", "cancel")], foot_area, buf);
+    if body.height == 0 {
         return;
     }
-    let text = format!("> {}▏", panel.create_desc);
-    Paragraph::new(text)
-        .style(theme::body())
+    Paragraph::new(format!("> {}▏", panel.create_desc))
+        .style(Style::new().fg(token::TEXT))
         .wrap(Wrap { trim: false })
-        .render(inner, buf);
-    if inner.height > 2 {
+        .render(body, buf);
+    if body.height > 2 {
         let hint = "the session model drafts the definition (name, description, toolbelt, \
                     system prompt) from this description";
-        Paragraph::new(hint).style(theme::muted()).render(
-            Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1),
+        Paragraph::new(hint).style(muted).render(
+            Rect::new(body.x, body.y + body.height - 1, body.width, 1),
             buf,
         );
     }
@@ -304,43 +354,47 @@ fn render_create_describe(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) 
 
 /// Create-from-prompt, step 2: the install-scope picker.
 fn render_create_scope(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" New Agent — install scope · ↑/↓ choose · ⏎ create · esc back ")
-        .border_style(Style::default().fg(theme::ACCENT));
-    let inner = block.inner(area);
-    block.render(area, buf);
-    if inner.height == 0 {
-        return;
-    }
+    let (head_area, body, foot_area) = bands(area);
+    render_head(
+        vec![
+            Span::styled("new agent", Style::new().fg(token::TEXT)),
+            Span::styled(" · install scope", Style::new().fg(token::MUTED)),
+        ],
+        head_area,
+        buf,
+    );
+    render_keys(
+        None,
+        &[("↑↓", "choose"), ("⏎", "create"), ("esc", "back")],
+        foot_area,
+        buf,
+    );
     let options = [
         "project — .stella/agents (this workspace)",
         "user — ~/.stella/agents (all projects)",
     ];
     for (i, option) in options.iter().enumerate() {
-        if (i as u16) >= inner.height {
+        if (i as u16) >= body.height {
             break;
         }
         let selected = i == panel.scope_sel.min(1);
         let line = format!("{} {option}", if selected { ">" } else { " " });
         let style = if selected {
-            Style::default()
-                .fg(theme::ACCENT)
-                .add_modifier(Modifier::BOLD)
+            Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD)
         } else {
-            theme::body()
+            Style::new().fg(token::TEXT)
         };
         Paragraph::new(line)
             .style(style)
-            .render(Rect::new(inner.x, inner.y + i as u16, inner.width, 1), buf);
+            .render(Rect::new(body.x, body.y + i as u16, body.width, 1), buf);
     }
 }
 
-/// Create-from-prompt, step 3: the in-flight creation dialog. Stays up —
-/// with an animated spinner driven by the deck clock — until the driver's
+/// Create-from-prompt, step 3: the in-flight creation view. Stays up — with
+/// an animated spinner driven by the deck clock — until the driver's
 /// completing [`crate::envelope::Inbound::AgentsList`] folds in. The status
-/// line carries the driver's progress notes (e.g. "queued behind the
-/// running turn").
+/// line carries the driver's progress notes (e.g. "queued behind the running
+/// turn").
 fn render_creating(
     panel: &InstalledPanel,
     now_ms: u64,
@@ -348,13 +402,24 @@ fn render_creating(
     area: Rect,
     buf: &mut Buffer,
 ) {
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" New Agent — creating… · esc hides (creation continues) ")
-        .border_style(Style::default().fg(theme::ACCENT));
-    let inner = block.inner(area);
-    block.render(area, buf);
-    if inner.height == 0 {
+    let (head_area, body, foot_area) = bands(area);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+    render_head(
+        vec![
+            Span::styled("new agent", text),
+            Span::styled(" · creating…", muted),
+        ],
+        head_area,
+        buf,
+    );
+    render_keys(
+        None,
+        &[("esc", "hides (creation continues)")],
+        foot_area,
+        buf,
+    );
+    if body.height == 0 {
         return;
     }
     let spinner = crate::views::spinner_glyph(now_ms, no_anim);
@@ -362,71 +427,72 @@ fn render_creating(
         Line::from(vec![
             Span::styled(
                 format!("{spinner} "),
-                Style::default()
-                    .fg(theme::ACCENT)
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!(
                     "Drafting the agent with the session model ({} scope)…",
                     panel.create_scope().label()
                 ),
-                theme::body(),
+                text,
             ),
         ]),
         Line::default(),
         Line::from(Span::styled(
             format!("“{}”", panel.create_desc.trim()),
-            theme::muted(),
+            muted,
         )),
         Line::default(),
         Line::from(Span::styled(
             "the new agent appears here the moment the draft installs",
-            theme::muted(),
+            muted,
         )),
     ];
     if let Some(status) = &panel.status {
         lines.push(Line::default());
-        lines.push(Line::from(Span::styled(status.clone(), theme::muted())));
+        lines.push(Line::from(Span::styled(status.clone(), muted)));
     }
     Paragraph::new(lines)
         .wrap(Wrap { trim: false })
-        .render(inner, buf);
+        .render(body, buf);
 }
 
-/// Create-from-prompt, step 4: the settled creation dialog. On success the
+/// Create-from-prompt, step 4: the settled creation view. On success the
 /// just-created agent's full definition renders through Stella's own
 /// markdown renderer — the SAME detail treatment as the skills tab's ctrl+o
 /// preview — scrollable and clamped to content here (the key handler only
 /// increments the offset). On failure the driver's error shows instead.
 fn render_create_done(panel: &mut InstalledPanel, area: Rect, buf: &mut Buffer) {
-    // Failure: the error dialog. The outcome must be impossible to miss.
+    let (head_area, body, foot_area) = bands(area);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+
+    // Failure: the outcome must be impossible to miss.
     if let Some(error) = panel.create_error.clone() {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" New Agent — creation failed · esc / ⏎ close ")
-            .border_style(Style::default().fg(theme::DANGER));
-        let inner = block.inner(area);
-        block.render(area, buf);
-        if inner.height == 0 {
+        let red = Style::new().fg(token::RED);
+        render_head(
+            vec![
+                Span::styled("new agent", text),
+                Span::styled(" · creation failed", red),
+            ],
+            head_area,
+            buf,
+        );
+        render_keys(None, &[("esc / ⏎", "close")], foot_area, buf);
+        if body.height == 0 {
             return;
         }
         let lines = vec![
             Line::from(vec![
-                Span::styled(
-                    "✖ ",
-                    Style::default()
-                        .fg(theme::DANGER)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("The agent was not created", theme::body()),
+                Span::styled("✖ ", red.add_modifier(Modifier::BOLD)),
+                Span::styled("The agent was not created", text),
             ]),
             Line::default(),
-            Line::from(Span::styled(error, Style::default().fg(theme::DANGER))),
+            Line::from(Span::styled(error, red)),
         ];
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .render(inner, buf);
+            .render(body, buf);
         return;
     }
 
@@ -439,31 +505,44 @@ fn render_create_done(panel: &mut InstalledPanel, area: Rect, buf: &mut Buffer) 
         .cloned();
     let Some(entry) = entry else {
         // The name vanished between snapshots — degrade honestly.
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(" New Agent — created · esc / ⏎ close ")
-            .border_style(Style::default().fg(theme::ACCENT));
-        let inner = block.inner(area);
-        block.render(area, buf);
+        render_head(
+            vec![
+                Span::styled("new agent", text),
+                Span::styled(" · created", muted),
+            ],
+            head_area,
+            buf,
+        );
+        render_keys(None, &[("esc / ⏎", "close")], foot_area, buf);
         Paragraph::new("created — but the entry is not in the latest list (press r to reload)")
-            .style(theme::muted())
-            .render(inner, buf);
+            .style(muted)
+            .render(body, buf);
         return;
     };
 
-    let title = format!(" ✓ created {} — ↑/↓ scroll · esc / ⏎ close ", entry.name);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(theme::ACCENT));
-    let inner = block.inner(area);
-    block.render(area, buf);
-    if inner.height == 0 || inner.width == 0 {
+    render_head(
+        vec![
+            Span::styled(
+                format!("{} created ", glyph::DONE),
+                Style::new().fg(token::GREEN),
+            ),
+            Span::styled(entry.name.clone(), text),
+        ],
+        head_area,
+        buf,
+    );
+    render_keys(
+        None,
+        &[("↑↓", "scroll"), ("esc / ⏎", "close")],
+        foot_area,
+        buf,
+    );
+    if body.height == 0 || body.width == 0 {
         return;
     }
     // A dim subtitle line (scope · version · toolbelt), then the scrollable
     // definition below — the skills preview's exact layout.
-    let bands = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(inner);
+    let split = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(body);
     Paragraph::new(Line::from(Span::styled(
         format!(
             "{} · v{} · {}",
@@ -471,19 +550,19 @@ fn render_create_done(panel: &mut InstalledPanel, area: Rect, buf: &mut Buffer) 
             entry.version,
             toolbelt_label(&entry.tools)
         ),
-        theme::muted(),
+        muted,
     )))
-    .render(bands[0], buf);
-    let body_area = bands[1];
+    .render(split[0], buf);
+    let body_area = split[1];
     // Render through Stella's own theme-obeying markdown renderer (the same
     // one the transcript and the skills ctrl+o preview use), then clamp the
     // scroll to content so the last page stays reachable.
-    let text = ratatui::text::Text::from(crate::markdown::render(&entry.content));
-    let content_h = text.height();
+    let rendered = ratatui::text::Text::from(crate::markdown::render(&entry.content));
+    let content_h = rendered.height();
     let max_scroll = content_h.saturating_sub(body_area.height as usize) as u16;
     let scroll = panel.created_scroll.min(max_scroll);
     panel.created_scroll = scroll;
-    Paragraph::new(text)
+    Paragraph::new(rendered)
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0))
         .render(body_area, buf);
@@ -495,18 +574,23 @@ fn render_version_picker(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
     let Some(entry) = panel.selected() else {
         return;
     };
-    let title = format!(
-        " Versions — {} · ⏎ pin (no new version) · esc close ",
-        entry.name
+    let (head_area, body, foot_area) = bands(area);
+    render_head(
+        vec![
+            Span::styled("versions ", Style::new().fg(token::MUTED)),
+            Span::styled(entry.name.clone(), Style::new().fg(token::TEXT)),
+        ],
+        head_area,
+        buf,
     );
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .border_style(Style::default().fg(theme::ACCENT));
-    let inner = block.inner(area);
-    block.render(area, buf);
+    render_keys(
+        None,
+        &[("⏎", "pin (no new version)"), ("esc", "close")],
+        foot_area,
+        buf,
+    );
     for (i, info) in entry.versions.iter().enumerate() {
-        if (i as u16) >= inner.height {
+        if (i as u16) >= body.height {
             break;
         }
         let selected = i == panel.version_sel;
@@ -522,16 +606,16 @@ fn render_version_picker(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
             info.label,
         );
         let mut style = if selected {
-            Style::default().add_modifier(Modifier::REVERSED)
+            Style::new().bg(token::HL).add_modifier(Modifier::BOLD)
         } else {
-            theme::body()
+            Style::new().fg(token::TEXT)
         };
         if info.version == entry.version {
-            style = style.fg(theme::ACCENT);
+            style = style.fg(token::GOLD);
         }
         Paragraph::new(line)
             .style(style)
-            .render(Rect::new(inner.x, inner.y + i as u16, inner.width, 1), buf);
+            .render(Rect::new(body.x, body.y + i as u16, body.width, 1), buf);
     }
 }
 
@@ -539,6 +623,7 @@ fn render_version_picker(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
 mod tests {
     use super::*;
     use crate::envelope::{AgentScope, AgentVersionInfo};
+    use crate::theme;
 
     fn buffer_text(buf: &Buffer) -> String {
         let area = *buf.area();
@@ -651,7 +736,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(&mut ui, 0, area, &mut buf);
         let text = buffer_text(&buf);
-        assert!(text.contains("Edit reviewer"), "{text}");
+        assert!(text.contains("edit reviewer"), "{text}");
         assert!(
             text.contains("NEW pinned version"),
             "the save-is-a-new-version contract is on screen:\n{text}"
@@ -687,8 +772,8 @@ mod tests {
         );
         assert_eq!(
             style_at(&buf, "plain prose").fg,
-            theme::body().fg,
-            "prose keeps the body style"
+            Some(token::TEXT),
+            "prose keeps the body tone"
         );
     }
 
@@ -779,7 +864,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         render(&mut ui, 0, area, &mut buf);
         let text = buffer_text(&buf);
-        assert!(text.contains("created drafted"), "title in border:\n{text}");
+        assert!(text.contains("created drafted"), "header:\n{text}");
         assert!(
             text.contains("project · v2 · all tools"),
             "scope/version/toolbelt subtitle:\n{text}"
@@ -804,5 +889,56 @@ mod tests {
             text.contains("draft call failed: boom"),
             "the driver's error is on screen:\n{text}"
         );
+    }
+
+    /// The witness for the port (#4676): every mode of this tab draws its own
+    /// content and no box around it. A border here would be the v1 chrome
+    /// SPEC 5 reclaimed, re-spent one tab at a time.
+    ///
+    /// Corners and verticals are what it looks for, not `─`: a box always has
+    /// all three, and the created agent's own markdown renders a `---` line as
+    /// a horizontal rule, which is content.
+    #[test]
+    fn no_mode_draws_a_box_around_the_tab() {
+        let modes = [
+            InstalledMode::Browse,
+            InstalledMode::Edit,
+            InstalledMode::CreateDescribe,
+            InstalledMode::CreateScope,
+            InstalledMode::Creating,
+            InstalledMode::CreateDone,
+            InstalledMode::PickVersion,
+        ];
+        for mode in modes {
+            let mut ui = ui_with(vec![entry("reviewer", None)]);
+            ui.installed.mode = mode;
+            ui.installed.editing = Some(("reviewer".into(), AgentScope::Project));
+            ui.installed.created_name = Some("reviewer".into());
+            ui.installed.editor.load("---\nname: reviewer\n---\nbody");
+            let area = Rect::new(0, 0, 100, 14);
+            let mut buf = Buffer::empty(area);
+            render(&mut ui, 0, area, &mut buf);
+            let text = buffer_text(&buf);
+            for glyph in ['┌', '┐', '└', '┘', '│', '├', '┤', '╭', '╮', '╰', '╯']
+            {
+                assert!(
+                    !text.contains(glyph),
+                    "{mode:?} drew border glyph {glyph:?}:\n{text}"
+                );
+            }
+        }
+    }
+
+    /// Colour comes from the token table, never from a hand-picked hex, and
+    /// the accent is gold — the same gold the tab row lights the active tab
+    /// with.
+    #[test]
+    fn the_assumed_agent_wears_the_token_gold() {
+        let mut ui = ui_with(vec![entry("reviewer", None)]);
+        ui.installed.assumed = Some("reviewer".into());
+        let area = Rect::new(0, 0, 120, 8);
+        let mut buf = Buffer::empty(area);
+        render(&mut ui, 0, area, &mut buf);
+        assert_eq!(style_at(&buf, "reviewer").fg, Some(token::GOLD));
     }
 }

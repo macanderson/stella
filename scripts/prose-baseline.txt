@@ -900,7 +900,6 @@ crates/stella-tui/src/v2/transcript_source.rs 6
 crates/stella-tui/src/views/approval.rs 1
 crates/stella-tui/src/views/engine.rs 2
 crates/stella-tui/src/views/files.rs 2
-crates/stella-tui/src/views/installed.rs 2
 crates/stella-tui/src/views/mcp.rs 1
 crates/stella-tui/src/views/mcp/detail.rs 1
 crates/stella-tui/src/views/models_card.rs 5
