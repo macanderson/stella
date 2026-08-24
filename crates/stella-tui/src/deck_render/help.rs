@@ -21,8 +21,8 @@
 //! the two holds them today. The `?` half arrived late (#4188 — until then
 //! the overlay drew keybindings against a spec that called it "help, full
 //! metric detail"), and the AGENTS half left with the executions dashboard
-//! #4342 removed: `views::agents::render` now forwards to `views::installed`,
-//! the installed-agents list, which draws no per-lane numbers and no per-row
+//! #4342 removed: that tab is now the installed-agents list
+//! ([`crate::v2::installed`]), which draws no per-lane numbers and no per-row
 //! model column. So `?` is the surviving surface for all five, `metric_rows`
 //! below is where they render, and
 //! `the_help_overlay_carries_the_metrics_spec_5_sends_behind_it`
@@ -65,10 +65,7 @@ fn role_word(role: crate::deck::PipelineRole) -> &'static str {
 /// #2290 and #4150 each cost a real defect to learn. A value with no source
 /// renders no row at all.
 ///
-/// The numbers are read from the same `AgentEntry` fields the lane views read,
-/// and `humanize_bytes` is `views::agents`'s own: two surfaces disagreeing
-/// about one number is worse than one surface missing it, and that stays true
-/// now that the AGENTS tab draws no numbers of its own (#4342).
+/// The numbers are read from the same `AgentEntry` fields the lane views read.
 fn metric_rows(model: &WorkspaceModel) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let now_ms = model.now_ms;
@@ -108,10 +105,7 @@ fn metric_rows(model: &WorkspaceModel) -> Vec<Line<'static>> {
     }
     if let Some(entry) = model.agents.first() {
         machine.push(help_row("cpu", &format!("{:.0}%", entry.res.cpu_pct)));
-        machine.push(help_row(
-            "mem",
-            &crate::views::agents::humanize_bytes(entry.res.mem_bytes),
-        ));
+        machine.push(help_row("mem", &humanize_bytes(entry.res.mem_bytes)));
         // Absent, not zero: no cached prefix at all and a prefix whose warmth
         // has just run out are different facts about the next call's price.
         if let Some(secs) = entry.cache_warmth_secs(now_ms) {
@@ -125,6 +119,22 @@ fn metric_rows(model: &WorkspaceModel) -> Vec<Line<'static>> {
     }
 
     lines
+}
+
+/// Bytes → `"212M"` style, binary (1024) units, whole numbers only.
+///
+/// The MEM row's own formatter. It arrived with the AGENTS tab's executions
+/// dashboard and outlived it (#4342): this overlay is the only surface left
+/// that prints a byte count, so it is the only place the format is decided.
+fn humanize_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
+    let mut val = bytes as f64;
+    let mut unit = 0;
+    while val >= 1024.0 && unit < UNITS.len() - 1 {
+        val /= 1024.0;
+        unit += 1;
+    }
+    format!("{val:.0}{}", UNITS[unit])
 }
 
 /// Cells the panel reserves for a row's description, beyond the key column
@@ -359,6 +369,14 @@ mod tests {
                 widest.keys
             );
         }
+    }
+
+    #[test]
+    fn humanize_bytes_rounds_to_whole_binary_units() {
+        assert_eq!(humanize_bytes(0), "0B");
+        assert_eq!(humanize_bytes(1023), "1023B");
+        assert_eq!(humanize_bytes(1024), "1K");
+        assert_eq!(humanize_bytes(148 * 1024 * 1024), "148M");
     }
 
     /// The metric block shares `help_row`, so its labels line up with the

@@ -31,6 +31,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use stella_protocol::{Attachment, AttachmentKind};
 use unicode_width::UnicodeWidthChar;
 
+pub mod args;
 pub mod palette;
 
 pub use palette::{PaletteState, RelevantNow, SlashDomain};
@@ -137,6 +138,13 @@ pub struct SlashCommand {
     /// Defaults to [`SlashDomain::Session`], so a caller that has not
     /// classified its vocabulary gets one group rather than a wrong one.
     pub domain: SlashDomain,
+    /// Whether a submit of this command runs BESIDE the prompt queue
+    /// ([`crate::envelope::WorkspaceInput::Command`]) instead of riding it:
+    /// it executes at once — mid-turn included — and never appears as a
+    /// queued prompt. Declared by the caller (the CLI knows which of its
+    /// commands touch the turn); defaults to `false`, the queueing behavior
+    /// every command had before this flag existed.
+    pub sideband: bool,
 }
 
 impl SlashCommand {
@@ -147,6 +155,7 @@ impl SlashCommand {
             description: description.into(),
             kind: SlashKind::Builtin,
             domain: SlashDomain::default(),
+            sideband: false,
         }
     }
 
@@ -154,6 +163,15 @@ impl SlashCommand {
     #[must_use]
     pub fn in_domain(self, domain: SlashDomain) -> Self {
         Self { domain, ..self }
+    }
+
+    /// The same command, declared queue-free — see [`Self::sideband`].
+    #[must_use]
+    pub fn sideband(self) -> Self {
+        Self {
+            sideband: true,
+            ..self
+        }
     }
 
     /// A custom command/skill loaded from a definition file — the ⚡ rows.

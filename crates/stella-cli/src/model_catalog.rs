@@ -1015,7 +1015,12 @@ pub async fn run_refresh(force: bool) -> Result<(), String> {
 /// deck's `/models refresh` uses: its transcript renders from events, so
 /// printing to stdout (which the alternate screen owns) is never an
 /// option. Lines are plain text (the ✓/– glyphs carry the state).
-pub async fn run_refresh_emit(force: bool, emit: &mut dyn FnMut(String)) -> Result<(), String> {
+pub async fn run_refresh_emit(
+    force: bool,
+    // `+ Send` because the deck runs a refresh on a spawned task
+    // (`command_side`), whose future holds this reference across awaits.
+    emit: &mut (dyn FnMut(String) + Send),
+) -> Result<(), String> {
     let store = store_for_command()?;
     ensure_seed_floor(&store);
     let (not_modified, providers, counts) = refresh_with_store(&store, force).await?;
