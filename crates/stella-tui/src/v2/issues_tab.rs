@@ -1,54 +1,96 @@
-//! ISSUES tab — the tracker-backed issue panel: browse/search the connected
-//! tracker's issues, create one through a form, comment, move status, and
-//! start work — all without leaving the deck.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! The ISSUES tab — SPEC 9.4, the tracker-backed issue panel: browse/search
+//! the connected tracker's issues, create one through a form, comment, move
+//! status, and start work — all without leaving the deck.
 //!
-//! State lives entirely in [`crate::deck_ui::IssuesPanel`] (a field on
-//! `DeckUi`); the driver services the [`crate::envelope::WorkspaceInput`]
+//! ```text
+//!  backlog · 3 listed
+//!   ⇢ #981 open · CI … running
+//!
+//!     ○ #874   Command-deck render golden tests   open · dev · enhancement
+//! ▸   ○ #826   run_deck event-loop pty harness     open · enhancement
+//!
+//!  ○ #826  run_deck event-loop pty harness
+//!    open · enhancement · updated 2026-01-14T09:30:00Z
+//!    ↵ open · c comment · s status · p to prompt
+//! ```
+//!
+//! Renders from [`crate::deck_ui::IssuesPanel`] and the session's own PR — a
+//! pure fold over both, taking no `DeckUi` and mutating nothing, so a mode,
+//! a form field or a type-ahead window can be pinned in a test without a
+//! terminal. The driver services the [`crate::envelope::WorkspaceInput`]
 //! requests the key handlers emit and answers with out-of-band
 //! [`crate::envelope::Inbound::IssuesList`] / `IssueActDone` / `EntityHits`
-//! snapshots. The create form's Assignee/Labels fields carry the type-ahead
-//! popup (people · agents · memories · symbols · labels), rendered here
-//! anchored under the active field.
+//! snapshots.
+//!
+//! The tab draws no frame of its own: the tab row, hint row, pulse row and
+//! status bar are [`super::frame`]'s, and the content fills the band they
+//! leave. The two popups below — the create form's type-ahead and the
+//! send-to-prompt confirmation — are floating cards over that band, not
+//! chrome around it.
+//!
+//! ## State glyphs
+//!
+//! SPEC 9.4 gives the tracker its own four-state alphabet — `▶` in progress,
+//! `○` open or triage, `✓` done, `◇` blocked — kept here as literals rather
+//! than mapped onto [`stella_tui_theme::glyph`]. Three of the four coincide
+//! with an agent-status glyph by shape alone: taking `glyph::GATE` for
+//! "blocked" would assert that a tracker state and an engine gate must move
+//! together, which is not true of either.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
+use stella_tui_theme::token;
 
-use crate::deck::WorkspaceModel;
-use crate::deck_ui::{DeckUi, IssueField, IssuesMode, IssuesPanel};
+use crate::deck::PrInfo;
+use crate::deck_ui::{IssueField, IssuesMode, IssuesPanel};
 use crate::envelope::{EntityHit, IssueRow};
 use crate::render::scroll_window_start;
-use crate::theme;
-use stella_tui_theme::token;
 
 /// Most hit rows the type-ahead popup shows before it scrolls.
 const TYPEAHEAD_MAX_ROWS: usize = 8;
 /// Most body lines the create form previews before eliding.
 const FORM_BODY_MAX_LINES: usize = 6;
 
-pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
-    // `loaded_page`, not `page`: the header describes the rows on screen, and
-    // `page` has already moved to whatever the last `]` asked for — which is a
-    // different number whenever that fetch failed or is still in flight.
-    let inner = area;
-    if inner.width == 0 || inner.height == 0 {
+/// Gold with bold — headings, focused labels, and the border of a floating
+/// card. One helper rather than a repeated pair of calls, because the weight
+/// is the half that is easy to drop by hand and it is what separates a
+/// heading from an ordinary gold key hint.
+fn gold_bold() -> Style {
+    Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD)
+}
+
+/// Draw the tab into `area`. `pr` is the session's own pull request, if the
+/// monitor has seen one.
+pub fn render(
+    pr: Option<&PrInfo>,
+    issues: &IssuesPanel,
+    accessible: bool,
+    area: Rect,
+    buf: &mut Buffer,
+) {
+    if area.width == 0 || area.height == 0 {
         return;
     }
     let dim = Style::new().fg(token::DIM);
     let muted = Style::new().fg(token::MUTED);
     let text = Style::new().fg(token::TEXT);
 
-    // `loaded_page`, not `page`: the header describes the rows on screen,
-    // and `page` has already moved to whatever the last `]` asked for.
+    // `loaded_page`, not `page`: the header describes the rows on screen, and
+    // `page` has already moved to whatever the last `]` asked for — which is a
+    // different number whenever that fetch failed or is still in flight.
     let mut head = vec![
         Span::styled(" backlog", text),
-        Span::styled(format!(" · {} listed", ui.issues.rows.len()), muted),
+        Span::styled(format!(" · {} listed", issues.rows.len()), muted),
     ];
-    if ui.issues.loaded_page > 0 {
+    if issues.loaded_page > 0 {
         head.push(Span::styled(
-            format!(" · page {}", ui.issues.loaded_page + 1),
+            format!(" · page {}", issues.loaded_page + 1),
             muted,
         ));
     }
@@ -56,7 +98,7 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // The session's own PR, above whatever mode the tab is in — it is a fact
     // about this session, not about the list, so a search or a half-filled
     // create form must not hide it.
-    if let Some(pr) = &model.pr {
+    if let Some(pr) = pr {
         lines.push(pr_strip(pr));
         lines.push(Line::default());
     }
@@ -64,64 +106,58 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     // the type-ahead popup anchors right under it.
     let mut active_field_line = 0usize;
 
-    match ui.issues.mode {
+    match issues.mode {
         IssuesMode::Create => {
-            active_field_line = render_form(&ui.issues, inner.width as usize, &mut lines);
+            active_field_line = render_form(issues, area.width as usize, &mut lines);
         }
         IssuesMode::SearchTracker => {
             lines.push(Line::from(vec![
-                Span::styled("  search tracker ", theme::accent()),
-                Span::styled(
-                    ui.issues.search_query.clone(),
-                    Style::default().fg(theme::INK),
-                ),
-                Span::styled("▏", Style::default().fg(theme::ACCENT)),
+                Span::styled("  search tracker ", gold_bold()),
+                Span::styled(issues.search_query.clone(), text),
+                Span::styled("▏", Style::new().fg(token::GOLD)),
             ]));
             lines.push(Line::default());
-            render_list(&ui.issues, ui.accessible, inner, &mut lines);
+            render_list(issues, accessible, area, &mut lines);
         }
         IssuesMode::Comment | IssuesMode::SetStatus => {
             let (label, target) = (
-                if ui.issues.mode == IssuesMode::Comment {
+                if issues.mode == IssuesMode::Comment {
                     "  comment on "
                 } else {
                     "  set status of "
                 },
-                ui.issues
-                    .selected()
-                    .map(|r| r.key.clone())
-                    .unwrap_or_default(),
+                issues.selected().map(|r| r.key.clone()).unwrap_or_default(),
             );
             lines.push(Line::from(vec![
-                Span::styled(label, theme::accent()),
-                Span::styled(target, Style::default().fg(theme::INK)),
-                Span::styled(": ", theme::muted()),
-                Span::styled(ui.issues.input.clone(), Style::default().fg(theme::INK)),
-                Span::styled("▏", Style::default().fg(theme::ACCENT)),
+                Span::styled(label, gold_bold()),
+                Span::styled(target, text),
+                Span::styled(": ", muted),
+                Span::styled(issues.input.clone(), text),
+                Span::styled("▏", Style::new().fg(token::GOLD)),
             ]));
             lines.push(Line::default());
-            render_list(&ui.issues, ui.accessible, inner, &mut lines);
+            render_list(issues, accessible, area, &mut lines);
         }
         IssuesMode::Browse => {
-            render_list(&ui.issues, ui.accessible, inner, &mut lines);
-            render_detail(&ui.issues, inner.width as usize, &mut lines);
+            render_list(issues, accessible, area, &mut lines);
+            render_detail(issues, area.width as usize, &mut lines);
         }
         // The confirmation is a floating popup rendered after the base view —
         // the browse list stays visible behind it.
         IssuesMode::ConfirmSend => {
-            render_list(&ui.issues, ui.accessible, inner, &mut lines);
+            render_list(issues, accessible, area, &mut lines);
         }
     }
 
     // Notice line (op outcomes, errors, the no-tracker hint) + key footer.
     lines.push(Line::default());
-    if let Some(notice) = &ui.issues.notice {
+    if let Some(notice) = &issues.notice {
         lines.push(Line::from(Span::styled(
-            format!("  {}{notice}", if ui.issues.busy { "◌ " } else { "" }),
+            format!("  {}{notice}", if issues.busy { "◌ " } else { "" }),
             Style::new().fg(token::GOLD),
         )));
     }
-    if ui.issues.mode == IssuesMode::Browse {
+    if issues.mode == IssuesMode::Browse {
         lines.push(Line::from(vec![
             Span::styled(" w", Style::new().fg(token::GOLD)),
             Span::styled(" start work", Style::new().fg(token::GOLD)),
@@ -132,42 +168,42 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
             ),
         ]));
     }
-    lines.push(footer(ui.issues.mode));
+    lines.push(footer(issues.mode));
 
-    Paragraph::new(lines).render(inner, buf);
+    Paragraph::new(lines).render(area, buf);
 
     // The type-ahead popup floats above the form, anchored to its field.
-    if ui.issues.mode == IssuesMode::Create && ui.issues.typeahead.open() {
-        render_typeahead(ui, inner, active_field_line, buf);
+    if issues.mode == IssuesMode::Create && issues.typeahead.open() {
+        render_typeahead(issues, area, active_field_line, buf);
     }
 
     // The send-to-prompt confirmation floats above the browse list.
-    if ui.issues.mode == IssuesMode::ConfirmSend {
-        render_confirm_send(ui, inner, buf);
+    if issues.mode == IssuesMode::ConfirmSend {
+        render_confirm_send(issues, area, buf);
     }
 }
 
 /// The `p` confirmation popup: names every issue about to be submitted so the
 /// human can verify the batch before ⏎ sends it. Esc cancels.
-fn render_confirm_send(ui: &DeckUi, inner: Rect, buf: &mut Buffer) {
-    let rows = ui.issues.picked_rows();
+fn render_confirm_send(issues: &IssuesPanel, area: Rect, buf: &mut Buffer) {
+    let rows = issues.picked_rows();
     // +4: title, blank, footer hint, and the border's own two rows are
     // accounted by the block; the content is title + one line per issue.
-    let height = (rows.len() as u16 + 4).min(inner.height.saturating_sub(2));
-    let width = (inner.width * 2 / 3)
+    let height = (rows.len() as u16 + 4).min(area.height.saturating_sub(2));
+    let width = (area.width * 2 / 3)
         .max(40)
-        .min(inner.width.saturating_sub(4));
+        .min(area.width.saturating_sub(4));
     let popup = Rect {
-        x: inner.x + (inner.width.saturating_sub(width)) / 2,
-        y: inner.y + (inner.height.saturating_sub(height)) / 2,
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
         width,
         height,
     };
     Clear.render(popup, buf);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::accent())
-        .title(Span::styled(" send to prompt ", theme::accent()));
+        .border_style(gold_bold())
+        .title(Span::styled(" send to prompt ", gold_bold()));
     let mut lines: Vec<Line<'static>> = Vec::new();
     lines.push(Line::from(Span::styled(
         format!(
@@ -180,7 +216,7 @@ fn render_confirm_send(ui: &DeckUi, inner: Rect, buf: &mut Buffer) {
     lines.push(Line::default());
     for row in rows {
         lines.push(Line::from(vec![
-            Span::styled(format!("  {}", row.key), theme::accent()),
+            Span::styled(format!("  {}", row.key), gold_bold()),
             Span::styled(format!("  {}", row.title), Style::new().fg(token::TEXT)),
         ]));
     }
@@ -196,27 +232,33 @@ fn render_confirm_send(ui: &DeckUi, inner: Rect, buf: &mut Buffer) {
 
 /// The session's own PR, as one strip above the list.
 ///
-/// SPEC 5 sends the v1 status wall's PR cell here (§9.4) rather than onto the
+/// SPEC 5 sends the status wall's PR cell here (§9.4) rather than onto the
 /// one-row status bar: a pull request is the tracker-side artifact of the work
 /// this tab is already about, and the bar is six values that fit on one row
-/// (#4126). What is kept from the v1 cell is the part that had teeth — failing
-/// CI is red and bold, because v1 gave a failing PR an elevated drop priority
+/// (#4126). What is kept from that cell is the part that had teeth — failing
+/// CI is red and bold, because a failing PR carried an elevated drop priority
 /// precisely so a narrow row could not hide it.
 ///
-/// The CI verdict carries its **word** as well as its glyph. v1 printed the
-/// glyph alone, which the status wall's width made defensible and a full-width
-/// tab does not: `✓`/`✗` differing only in colour and shape is the failure mode
-/// SPEC 2's "never colour alone" names. `None` prints nothing at all — the
-/// monitor has not polled yet, which is not the same claim as "passing".
-fn pr_strip(pr: &crate::deck::PrInfo) -> Line<'static> {
+/// The CI verdict carries its **word** as well as its glyph. The status wall
+/// printed the glyph alone, which its width made defensible and a full-width
+/// tab does not: `✓`/`✗` differing only in colour and shape is the failure
+/// mode SPEC 2's "never colour alone" names. `None` prints nothing at all —
+/// the monitor has not polled yet, which is not the same claim as "passing".
+///
+/// A draft is muted rather than amber. The amber that marked it is the one
+/// tone in this deck's palette with no token behind it and a hue that fails
+/// the gold clamp ([`crate::palette`]'s own note on `WARNING`), and a draft is
+/// in any case the state where nothing has been claimed yet.
+fn pr_strip(pr: &PrInfo) -> Line<'static> {
     use stella_protocol::{CiStatus, PrStatus};
 
+    let muted = Style::new().fg(token::MUTED);
     let status_color = match pr.status {
-        PrStatus::Draft => theme::WARNING,
-        PrStatus::Open | PrStatus::Merged => theme::ACCENT,
-        PrStatus::Closed => theme::DANGER,
+        PrStatus::Draft => token::MUTED,
+        PrStatus::Open | PrStatus::Merged => token::GOLD,
+        PrStatus::Closed => token::RED,
     };
-    let status_style = Style::default().fg(status_color);
+    let status_style = Style::new().fg(status_color);
     let ident = match pr.number {
         Some(n) => format!("#{n}"),
         // No number parsed out of the URL — its tail still identifies the PR.
@@ -228,7 +270,7 @@ fn pr_strip(pr: &crate::deck::PrInfo) -> Line<'static> {
             .to_string(),
     };
     let mut spans = vec![
-        Span::styled("  ⇢ ", theme::muted()),
+        Span::styled("  ⇢ ", muted),
         Span::styled(ident, status_style.add_modifier(Modifier::BOLD)),
         Span::styled(
             format!(" {}", crate::textline::pr_status_label(pr.status)),
@@ -237,15 +279,15 @@ fn pr_strip(pr: &crate::deck::PrInfo) -> Line<'static> {
     ];
     if let Some(ci) = pr.ci {
         let (glyph, style) = match ci {
-            CiStatus::Passing => ("✓", Style::default().fg(theme::OK)),
+            CiStatus::Passing => ("✓", Style::new().fg(token::GREEN)),
             CiStatus::Failing => (
                 "✗",
-                Style::default().fg(theme::BAD).add_modifier(Modifier::BOLD),
+                Style::new().fg(token::RED).add_modifier(Modifier::BOLD),
             ),
-            CiStatus::Pending => ("◌", theme::muted()),
-            CiStatus::Running => ("…", theme::muted()),
+            CiStatus::Pending => ("◌", muted),
+            CiStatus::Running => ("…", muted),
         };
-        spans.push(Span::styled(" · CI ", theme::muted()));
+        spans.push(Span::styled(" · CI ", muted));
         spans.push(Span::styled(glyph, style));
         spans.push(Span::styled(
             format!(" {}", crate::textline::ci_status_label(ci)),
@@ -256,12 +298,8 @@ fn pr_strip(pr: &crate::deck::PrInfo) -> Line<'static> {
 }
 
 /// The browse list, windowed on the selection so long lists keep it in view.
-fn render_list(
-    issues: &IssuesPanel,
-    accessible: bool,
-    inner: Rect,
-    lines: &mut Vec<Line<'static>>,
-) {
+fn render_list(issues: &IssuesPanel, accessible: bool, area: Rect, lines: &mut Vec<Line<'static>>) {
+    let muted = Style::new().fg(token::MUTED);
     if issues.rows.is_empty() {
         if !issues.busy {
             lines.push(Line::from(Span::styled(
@@ -270,7 +308,7 @@ fn render_list(
                 } else {
                     "  No issues loaded yet — press r to fetch the tracker's list."
                 },
-                theme::muted(),
+                muted,
             )));
         }
         return;
@@ -278,12 +316,12 @@ fn render_list(
     // Header lines already pushed, the detail pane, the notice and the two
     // footer rows.
     let reserved = lines.len() + DETAIL_ROWS + 4;
-    let visible = (inner.height as usize).saturating_sub(reserved).max(1);
+    let visible = (area.height as usize).saturating_sub(reserved).max(1);
     let selected = issues.sel.min(issues.rows.len() - 1);
     let first = scroll_window_start(issues.rows.len(), selected, visible);
     let last = (first + visible).min(issues.rows.len());
     for (i, row) in issues.rows.iter().enumerate().take(last).skip(first) {
-        let width = inner.width as usize;
+        let width = area.width as usize;
         let picked = issues.picked.contains(&row.key);
         lines.push(if accessible {
             issue_record(row, i == selected, width)
@@ -294,7 +332,7 @@ fn render_list(
     if last < issues.rows.len() {
         lines.push(Line::from(Span::styled(
             format!("  … {} more", issues.rows.len() - last),
-            theme::muted(),
+            muted,
         )));
     }
 }
@@ -312,16 +350,15 @@ fn issue_record(row: &IssueRow, selected: bool, width: usize) -> Line<'static> {
         ("assignee", row.assignee.clone().unwrap_or_default()),
         ("labels", row.labels.join(", ")),
     ];
-    crate::views::linear::record_line(
-        crate::views::linear::identity(row.key.clone(), selected, theme::ACCENT),
+    super::record::record_line(
+        super::record::identity(row.key.clone(), selected, token::GOLD),
         &fields,
         width,
     )
 }
 
 /// One issue row: `▸ ▶ KEY  title   state   assignee · labels   age` — the
-/// state's glyph (SPEC 9.4: `▶` in progress, `○` open or triage, `✓` done,
-/// `◇` blocked) beside the key, `●` marking a multiselect pick, `▸` the
+/// state's glyph beside the key, `●` marking a multiselect pick, `▸` the
 /// cursor.
 fn issue_line(row: &IssueRow, selected: bool, picked: bool, width: usize) -> Line<'static> {
     let dim = Style::new().fg(token::DIM);
@@ -385,7 +422,8 @@ fn issue_line(row: &IssueRow, selected: bool, picked: bool, width: usize) -> Lin
     Line::from(spans)
 }
 
-/// The glyph and tone for a tracker state word (SPEC 9.4).
+/// The glyph and tone for a tracker state word (SPEC 9.4; see the module doc
+/// on why these four are literals).
 fn state_mark(state: &str) -> (char, Style) {
     let lower = state.to_ascii_lowercase();
     if lower.contains("progress") || lower.contains("started") {
@@ -459,28 +497,25 @@ fn render_detail(issues: &IssuesPanel, width: usize, lines: &mut Vec<Line<'stati
 /// The create form. Returns the line index of the active field (for the
 /// type-ahead popup's anchor).
 fn render_form(issues: &IssuesPanel, width: usize, lines: &mut Vec<Line<'static>>) -> usize {
-    lines.push(Line::from(Span::styled(
-        "  new issue",
-        theme::accent().add_modifier(Modifier::BOLD),
-    )));
+    lines.push(Line::from(Span::styled("  new issue", gold_bold())));
     lines.push(Line::default());
     let mut active = 0usize;
 
     let field_line = |lines: &mut Vec<Line<'static>>, label: &str, value: &str, focused: bool| {
         let label_style = if focused {
-            theme::accent()
+            gold_bold()
         } else {
-            theme::muted()
+            Style::new().fg(token::MUTED)
         };
         let mut spans = vec![
             Span::styled(format!("  {label:<9} "), label_style),
             Span::styled(
                 truncate(value, width.saturating_sub(16)),
-                Style::default().fg(theme::INK),
+                Style::new().fg(token::TEXT),
             ),
         ];
         if focused {
-            spans.push(Span::styled("▏", Style::default().fg(theme::ACCENT)));
+            spans.push(Span::styled("▏", Style::new().fg(token::GOLD)));
         }
         lines.push(Line::from(spans));
     };
@@ -512,7 +547,7 @@ fn render_form(issues: &IssuesPanel, width: usize, lines: &mut Vec<Line<'static>
     if body_lines.len() > FORM_BODY_MAX_LINES {
         lines.push(Line::from(Span::styled(
             format!("            … {} more lines", body_lines.len() - shown),
-            theme::muted(),
+            Style::new().fg(token::MUTED),
         )));
     }
 
@@ -541,7 +576,7 @@ fn render_form(issues: &IssuesPanel, width: usize, lines: &mut Vec<Line<'static>
 /// The `Kind: label — description` text of one type-ahead row, split at the
 /// kind prefix (styled separately) and char-safe-truncated to `max_chars`
 /// across the pair. Pure — the row-format contract lives here.
-pub(crate) fn entity_hit_parts(hit: &EntityHit, max_chars: usize) -> (String, String) {
+fn entity_hit_parts(hit: &EntityHit, max_chars: usize) -> (String, String) {
     let kind = format!("{}: ", hit.kind);
     let rest = if hit.description.is_empty() {
         hit.label.clone()
@@ -555,22 +590,23 @@ pub(crate) fn entity_hit_parts(hit: &EntityHit, max_chars: usize) -> (String, St
     (kind, truncate(&rest, max_chars - kind_len))
 }
 
-/// The floating type-ahead popup: accent-bordered, selection windowed, one
-/// dim legend line. Anchored right under the active form field (clamped to
-/// the panel).
-fn render_typeahead(ui: &DeckUi, inner: Rect, field_line: usize, buf: &mut Buffer) {
-    let ta = &ui.issues.typeahead;
+/// The floating type-ahead popup: gold-bordered, selection windowed, one
+/// muted legend line. Anchored right under the active form field (clamped to
+/// the tab's band).
+fn render_typeahead(issues: &IssuesPanel, area: Rect, field_line: usize, buf: &mut Buffer) {
+    let muted = Style::new().fg(token::MUTED);
+    let ta = &issues.typeahead;
     let rows = ta.hits.len().clamp(1, TYPEAHEAD_MAX_ROWS);
-    let h = (rows as u16 + 3).min(inner.height);
-    let w = inner.width.saturating_sub(4).clamp(20, 56).min(inner.width);
-    let below = inner.y + (field_line as u16).saturating_add(1);
-    let y = if below + h <= inner.y + inner.height {
+    let h = (rows as u16 + 3).min(area.height);
+    let w = area.width.saturating_sub(4).clamp(20, 56).min(area.width);
+    let below = area.y + (field_line as u16).saturating_add(1);
+    let y = if below + h <= area.y + area.height {
         below
     } else {
-        (inner.y + inner.height).saturating_sub(h)
+        (area.y + area.height).saturating_sub(h)
     };
     let popup = Rect {
-        x: inner.x + inner.width.saturating_sub(w) / 2,
+        x: area.x + area.width.saturating_sub(w) / 2,
         y,
         width: w,
         height: h,
@@ -590,14 +626,14 @@ fn render_typeahead(ui: &DeckUi, inner: Rect, field_line: usize, buf: &mut Buffe
             } else {
                 "  no matches"
             },
-            theme::muted(),
+            muted,
         )));
     }
     for (i, hit) in ta.hits.iter().enumerate().take(last).skip(first) {
         let is_sel = i == selected;
         let marker = if is_sel { "▸ " } else { "  " };
-        let mut kind_style = theme::accent();
-        let mut rest_style = theme::body();
+        let mut kind_style = gold_bold();
+        let mut rest_style = Style::new().fg(token::TEXT);
         if is_sel {
             kind_style = kind_style.add_modifier(Modifier::REVERSED);
             rest_style = rest_style.add_modifier(Modifier::REVERSED);
@@ -615,13 +651,13 @@ fn render_typeahead(ui: &DeckUi, inner: Rect, field_line: usize, buf: &mut Buffe
     }
     lines.push(Line::from(Span::styled(
         " ↑↓ select · enter/tab insert · esc close",
-        theme::muted(),
+        muted,
     )));
 
     let field = ta.field.map(|f| f.label().to_string()).unwrap_or_default();
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::accent())
+        .border_style(gold_bold())
         .title(format!(" {field} · {} ", ta.hits.len()));
     Paragraph::new(lines).block(block).render(popup, buf);
 }
@@ -638,7 +674,7 @@ fn truncate(s: &str, max_chars: usize) -> String {
     format!("{head}…")
 }
 
-/// The keybind footer, per mode — the same violet-key/dim-word convention as
+/// The keybind footer, per mode — the same muted-key/dim-word convention as
 /// the MCP tab.
 fn footer(mode: IssuesMode) -> Line<'static> {
     let pairs: &[(&str, &str)] = match mode {
@@ -679,6 +715,10 @@ fn footer(mode: IssuesMode) -> Line<'static> {
 }
 
 #[cfg(test)]
+// The lint wants a struct literal, and `IssuesPanel` keeps a private request
+// counter — so `Default` followed by assignment is the only way to build one
+// from outside `deck_ui`.
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
@@ -689,6 +729,10 @@ mod tests {
             description: description.into(),
             insert: label.into(),
         }
+    }
+
+    fn text(line: Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.clone()).collect()
     }
 
     #[test]
@@ -716,9 +760,8 @@ mod tests {
         assert!(rest.is_empty());
     }
 
-    #[test]
-    fn issue_lines_mark_the_selection_and_carry_assignee_and_labels() {
-        let row = IssueRow {
+    fn eng_42() -> IssueRow {
+        IssueRow {
             key: "ENG-42".into(),
             title: "Fix flaky test".into(),
             state: "In Progress".into(),
@@ -726,9 +769,12 @@ mod tests {
             assignee: Some("mona@example.com".into()),
             url: String::new(),
             updated_at: None,
-        };
-        let text =
-            |line: Line<'_>| -> String { line.spans.iter().map(|s| s.content.clone()).collect() };
+        }
+    }
+
+    #[test]
+    fn issue_lines_mark_the_selection_and_carry_assignee_and_labels() {
+        let row = eng_42();
         let selected = text(issue_line(&row, true, false, 120));
         assert!(selected.starts_with("▸   ▶ ENG-42"), "{selected}");
         assert!(selected.contains("  In Progress"), "{selected}");
@@ -739,5 +785,29 @@ mod tests {
         // A multiselect pick shows its marker whether or not it is the cursor.
         let picked = text(issue_line(&row, false, true, 120));
         assert!(picked.starts_with("  ● ▶ ENG-42"), "{picked}");
+    }
+
+    /// The tab is a fold over the panel and the PR, so a browse list draws
+    /// from a `Rect` and a `Buffer` alone — no `DeckUi`, no terminal, and no
+    /// mutation the caller has to undo.
+    #[test]
+    fn the_tab_draws_from_the_panel_alone() {
+        let mut issues = IssuesPanel::default();
+        issues.rows = vec![eng_42()];
+        issues.loaded = true;
+        let area = Rect::new(0, 0, 120, 24);
+        let mut buf = Buffer::empty(area);
+        render(None, &issues, false, area, &mut buf);
+        let drawn: String = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(drawn.contains("backlog · 1 listed"), "{drawn}");
+        assert!(drawn.contains("ENG-42"), "{drawn}");
+        assert!(drawn.contains("start work"), "{drawn}");
     }
 }
