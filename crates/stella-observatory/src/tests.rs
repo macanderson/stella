@@ -391,6 +391,13 @@ fn tool_leaderboard_counts_errors() {
         .unwrap();
     assert_eq!(bash["calls"], 1);
     assert_eq!(bash["errors"], 1);
+    // This fixture's `tool_calls` predates the v25 `error_class` column, so
+    // this doubles as the old-store witness: the fallback scan keeps the
+    // totals and reports every error unclassified.
+    assert_eq!(
+        bash["errors_by_class"],
+        serde_json::json!({ "unclassified": 1 })
+    );
 }
 
 #[test]

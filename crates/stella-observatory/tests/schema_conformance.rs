@@ -56,7 +56,8 @@ use stella_core::context_record::{
 };
 use stella_observatory::respond;
 use stella_protocol::{
-    AgentEvent, ContextFrameRef, ProviderShare, TaskItem, TaskStatus, ToolCall, ToolOutput,
+    AgentEvent, ContextFrameRef, ErrorClass, ProviderShare, TaskItem, TaskStatus, ToolCall,
+    ToolOutput,
 };
 use stella_store::{
     AgentUseRow, ContextBlockRow, ExecutionReflectionRow, FileTouchRow, ManifestBlockRow,

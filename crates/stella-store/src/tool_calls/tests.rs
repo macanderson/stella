@@ -566,6 +566,62 @@ fn rollup_bucket_counts_errors_but_not_abandonment() {
     );
 }
 
+/// #4550's project-side half: the rollup carries the classified split of the
+/// errors it counts, so the hub can key an error rate by class with no string
+/// ever matched. Abandonment stays out of the split for the same reason it
+/// stays out of `errors` (#3146), and an unaudited site rides as `''` — not
+/// as any class.
+#[test]
+fn rollup_splits_errors_by_class_and_still_ignores_abandonment() {
+    use stella_protocol::ErrorClass;
+    let (store, id) = fixture();
+    store.record_event(id, 0, &start("c1", "bash")).unwrap();
+    store
+        .record_event(
+            id,
+            1,
+            &AgentEvent::ToolResult {
+                call_id: "c1".into(),
+                output: ToolOutput::classified_error(ErrorClass::Environment, "exit 1"),
+                duration_ms: 1,
+                speculated: false,
+            },
+        )
+        .unwrap();
+    store.record_event(id, 2, &start("c2", "bash")).unwrap();
+    store
+        .record_event(id, 3, &err_result("c2", "boom"))
+        .unwrap();
+    // Announced, never returned: settles to abandoned at the turn-end fold.
+    store.record_event(id, 4, &start("c3", "bash")).unwrap();
+    store.materialize_tool_calls(id).unwrap();
+    store.finish_execution(id, "completed", 0.0).unwrap();
+
+    let rollup = store
+        .execution_rollup(id, std::path::Path::new("/tmp/workspace"))
+        .unwrap()
+        .expect("a finished, accounted execution rolls up");
+    let split: Vec<(&str, i64)> = rollup
+        .error_class_histogram
+        .iter()
+        .map(|b| (b.class.as_str(), b.errors))
+        .collect();
+    assert_eq!(
+        split,
+        vec![("", 1), ("environment", 1)],
+        "classified and unaudited errors split apart; the abandoned call is neither"
+    );
+    assert_eq!(
+        rollup
+            .error_class_histogram
+            .iter()
+            .map(|b| b.errors)
+            .sum::<i64>(),
+        rollup.tool_histogram.iter().map(|b| b.errors).sum::<i64>(),
+        "the split's total is exactly the errors column it splits"
+    );
+}
+
 /// The repair fold keeps them apart too, or a turn-end re-materialization
 /// would silently re-collapse what the live fold recorded correctly. Moved
 /// here from `store::tests` with #4033: it is a projection test, and it

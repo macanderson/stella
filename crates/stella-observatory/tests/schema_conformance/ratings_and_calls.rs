@@ -258,4 +258,85 @@ fn an_abandoned_call_is_not_a_tool_error_on_the_leaderboard() {
         bash["abandoned"], 1,
         "the abandonment is visible, apart from the error count: {bash}"
     );
+    assert_eq!(
+        bash["errors_by_class"],
+        serde_json::json!({ "unclassified": 1 }),
+        "the class split carries only the real failure — an abandoned call \
+         lands in no bucket: {bash}"
+    );
+}
+
+/// Classified errors split by class on the leaderboard (#4550).
+///
+/// `errors` stays the total it always was; `errors_by_class` partitions it by
+/// the `ErrorClass` wire token, with the store's `''` default counted as
+/// `"unclassified"` — a key outside that vocabulary, so no future class can
+/// shadow it. The payoff asserted at the end: "errors for bash excluding
+/// invalid_input" is a subtraction over the payload, with no error prose
+/// consulted.
+#[test]
+fn tool_errors_split_by_error_class_on_the_leaderboard() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let store = Store::open(dir.path()).expect("store");
+    let id = store
+        .begin_execution("run", "three flavors of failure", "anthropic", "opus")
+        .expect("begin");
+    let outputs = [
+        ToolOutput::classified_error(ErrorClass::InvalidInput, "not the tool's schema"),
+        ToolOutput::classified_error(ErrorClass::Environment, "network unreachable"),
+        ToolOutput::error("not audited into a class yet"),
+    ];
+    for (i, output) in outputs.into_iter().enumerate() {
+        let call_id = format!("c{i}");
+        store
+            .record_event(
+                id,
+                (2 * i) as u64,
+                &AgentEvent::ToolStart {
+                    call: ToolCall {
+                        call_id: call_id.clone(),
+                        name: "bash".into(),
+                        input: serde_json::json!({ "command": "false" }),
+                    },
+                },
+            )
+            .expect("start");
+        store
+            .record_event(
+                id,
+                (2 * i + 1) as u64,
+                &AgentEvent::ToolResult {
+                    call_id,
+                    output,
+                    duration_ms: 1,
+                    speculated: false,
+                },
+            )
+            .expect("result");
+    }
+
+    let tools: serde_json::Value =
+        serde_json::from_slice(&respond(dir.path(), "/api/tools").body).expect("json");
+    let bash = tools
+        .as_array()
+        .expect("array")
+        .iter()
+        .find(|t| t["name"] == "bash")
+        .cloned()
+        .expect("bash row");
+    assert_eq!(bash["errors"], 3, "the total is unchanged: {bash}");
+    assert_eq!(
+        bash["errors_by_class"],
+        serde_json::json!({ "environment": 1, "invalid_input": 1, "unclassified": 1 }),
+        "and the split partitions it by class: {bash}"
+    );
+    let excluding_invalid_input = bash["errors"].as_i64().expect("errors")
+        - bash["errors_by_class"]["invalid_input"]
+            .as_i64()
+            .expect("invalid_input");
+    assert_eq!(
+        excluding_invalid_input, 2,
+        "errors that are not the model's own mistake, derived without \
+         touching a message string: {bash}"
+    );
 }
