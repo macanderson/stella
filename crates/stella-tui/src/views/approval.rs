@@ -17,7 +17,7 @@
 //!
 //! So this is a card of its own, in a file of its own. An approval is a
 //! yes/no over a call that is **already decided**; a question
-//! ([`crate::views::question`]) is a decision the model could not make. One
+//! ([`crate::v2::question`]) is a decision the model could not make. One
 //! fold with both jobs would serve neither, and their keys genuinely differ:
 //! a question wants a note editor and a review pane, an approval wants the
 //! shortest path to a defensible refusal.
@@ -146,7 +146,7 @@ impl ApprovalOverlay {
     /// Apply an inbound envelope, reporting whether it was one of ours.
     ///
     /// The card owns both directions of its own envelope contract, the shape
-    /// [`crate::views::question::QuestionOverlay::ingest`] establishes — and
+    /// [`crate::v2::question::QuestionOverlay::ingest`] establishes — and
     /// for the same reason: `deck_ui.rs` is a god file closed to growth
     /// (`scripts/file-size-baseline.txt`), so the fold there costs two lines.
     pub fn ingest(&mut self, inbound: &crate::envelope::Inbound) -> bool {

@@ -28,7 +28,7 @@ use crate::views;
 pub(super) fn render(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     if ui.question.is_open() {
         super::guarded_overlay(buf, area, "question", |b| {
-            views::question::render(&ui.question, ui.accessible, area, b)
+            crate::v2::question::render(&ui.question, ui.accessible, area, b)
         });
     }
     if ui.approval.is_open() {

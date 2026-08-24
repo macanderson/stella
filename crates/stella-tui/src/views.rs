@@ -42,7 +42,6 @@ pub mod issues;
 pub(crate) mod linear;
 pub mod mcp;
 pub mod picker;
-pub mod question;
 pub(crate) mod queue_popup;
 pub mod seats;
 pub mod session;
