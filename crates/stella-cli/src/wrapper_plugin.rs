@@ -87,10 +87,11 @@
 //! moments, not one function with an `Option` in it.
 //!
 //! And two scope limits. A plugin's `Unmet` fails the process only under
-//! `--require-verdict`, which `stella run` alone offers — the door where an
-//! exit status is a delivery gate. `stella goal` and `stella fleet` drive
-//! wrappers too and take no such flag yet (#3554 shipped the gate on the
-//! one-shot door; see `verdict_gate` for what the default is defending). And
+//! `--require-verdict`, which every wrapper-driving door now offers (#3554
+//! shipped the gate on `stella run`; #4543 took it to `stella goal` — the
+//! LAST round's verdict decides — and to `stella fleet`, where an unmet
+//! verdict fails that ATTEMPT and a failed attempt fails the run; see
+//! `verdict_gate` for what the default is defending). And
 //! only this driver of `doc:wrapper-socket` §6's three exists
 //! (#3551). `--pipeline <variant>` itself now reaches every door that takes
 //! it — `stella run` here, `stella goal` per judged round
@@ -142,7 +143,7 @@ use stella_core::ports::{ToolExecutor, TurnControls};
 use stella_core::router::Router;
 use stella_model::provider::Provider;
 use stella_plugin::{SignalValues, TurnOutcome as WrapperTurnOutcome};
-use stella_protocol::{AgentEvent, CompletionMessage};
+use stella_protocol::CompletionMessage;
 use stella_runtime::wrapper::{
     CandidateFanoutSpend, ChildTurnSpend, DEFAULT_HOST_MAX_CALLS, DEFAULT_HOST_MAX_CHILD_TURNS,
     DEFAULT_HOST_MAX_HOLDS, DispatchReport, DrivenTurn, HostCallGate, HostPlanes, RoundInput,
@@ -180,7 +181,7 @@ mod report;
 use report::{report_to, sweep_lines};
 /// Whether a wrapper's conclusion decides the run's exit status (#3554).
 mod verdict_gate;
-use verdict_gate::verdict_refusal;
+pub(crate) use verdict_gate::verdict_refusal;
 // The renderers `report_to` composes internally. Nothing in the shipped binary
 // calls them directly — only this module's tests do, through `super::` — so the
 // re-export is `#[cfg(test)]` rather than an `#[allow(unused_imports)]`: the
@@ -1015,10 +1016,12 @@ pub(crate) struct RawTurnDriver<'a> {
     pub(crate) session: &'a str,
     /// The variant id recorded on every execution row this driver opens.
     pub(crate) variant: &'a str,
-    /// This turn's `ContextRecall`, spent on the first round only — recall runs
-    /// once per session, and re-emitting its event on a held-open round would
-    /// claim a retrieval that never happened.
-    pub(crate) recall_event: Option<AgentEvent>,
+    /// This turn's opening recall: the `ContextRecall` event, spent on the
+    /// first round only — recall runs once per session, and re-emitting it on
+    /// a held-open round would claim a retrieval that never happened — and the
+    /// opening block's produced handles, which seed EVERY round's re-query
+    /// (#4498): the block is in `messages` for every round alike.
+    pub(crate) recall: crate::memory::OpeningRecall,
     /// The session memory, for the execution stamp and skill-usage record.
     pub(crate) memory: Option<&'a mut SessionMemory>,
     /// The artifacts this host pinned before the run, and the finding it
@@ -1096,7 +1099,10 @@ impl TurnDriver for RawTurnDriver<'_> {
                 .reporting_to(facts.clone()),
             self.prompt,
             Some(self.session),
-            self.recall_event.take(),
+            crate::memory::OpeningRecall {
+                event: self.recall.event.take(),
+                produced: self.recall.produced.clone(),
+            },
             self.memory.as_deref_mut(),
             // The host folds what it does see (#3976). This driver runs the
             // turn through the same `run_turn` every raw door uses, so its

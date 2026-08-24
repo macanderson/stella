@@ -447,6 +447,7 @@ nav.bar{position:sticky;top:0;z-index:20;display:flex;align-items:center;
 .tabs button:hover{color:var(--text);background:var(--accent-wash)}
 .tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
 .tf-wrap{margin-left:auto;display:flex;align-items:center;gap:var(--sp1);padding:6px 0}
+.tf-wrap[hidden]{display:none}
 .tf-label{font:var(--fs-micro)/1 var(--mono);color:var(--text-3)}
 .tf{display:flex;align-items:stretch;border:1px solid var(--control-edge);
     border-radius:var(--radius-sm);overflow:hidden}
@@ -870,7 +871,10 @@ footer b{color:var(--identity);font-weight:600}
       <button role="tab" id="tab-hub" aria-controls="panel-hub" data-tab="hub">Org / hub</button>
       <button role="tab" id="tab-config" aria-controls="panel-config" data-tab="config">Config</button>
     </div>
-    <div class="tf-wrap">
+    <!-- Shown only on the tabs whose surfaces the window actually filters
+         (TF_TABS in the script below). Everywhere else the control used to
+         sit in the nav and silently do nothing, which reads as broken. -->
+    <div class="tf-wrap" id="tfWrap">
       <span class="tf-label" id="tfLabel">Window</span>
       <div class="tf" id="tf" role="radiogroup" aria-labelledby="tfLabel">
         <button role="radio" data-tf="24h">24h</button>
@@ -2601,7 +2605,11 @@ async function openTranscript(id, full = false) {
       fileRows || `<div class="empty">This run touched no files.</div>`)
     + (rf ? sect("tx-reflection", "Self-reflection",
       "What the agent said about its own turn once it was over.",
+      /* `partial_run` leads: a cancelled run's reflection covers only what
+         ran, and a cancelled run with NO self-review still gets this section
+         so the reader sees why there is nothing to grade (#4538). */
       `<p style="font:var(--fs-base)/1.7 var(--mono);color:var(--text-2)">
+        ${rf.partial_run ? `<span class="badge warn">partial run</span> the turn was cancelled before it finished<br>` : ""}
         ${rf.self_rating != null ? `rated ${esc(String(rf.self_rating))}/10 · ` : ""}
         ${rf.delivered != null ? (rf.delivered ? "delivered" : "not delivered") : ""}
         ${rf.what_went_well ? `<br>went well: ${esc(rf.what_went_well)}` : ""}
@@ -2654,7 +2662,12 @@ function openCtxDialog(step, role) {
    `after_seq` probe still decides whether anything happened; when it did,
    the rendered fragment is re-fetched whole and repainted, because the
    shared renderer draws a tree, not an appendable list. The renderer pins
-   running work open, so the repaint lands the reader back on the live step. */
+   running work open, so the repaint lands the reader back on the live step —
+   and every fold the reader toggled by hand is put back the way they left it
+   (#4566): fold ids are stable NodeId keys (`t0s3`…), so the open/closed
+   state of each identified fold is read out of the shadow DOM before the
+   repaint and reapplied after. Folds new to this paint (the args fold has no
+   id) keep the renderer's own pin-open rules. */
 async function refreshTranscriptJournal() {
   if (!tx || tx.finished) return;
   if (state.tab !== "transcript") { tx = null; return; }
@@ -2675,7 +2688,15 @@ async function refreshTranscriptJournal() {
   } catch {
     return;
   }
-  if (frag && tx && tx.id === id) await paintRenderedTranscript(frag);
+  if (!frag || !tx || tx.id !== id) return;
+  const folds = { open: new Set(), shut: new Set() };
+  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? [])
+    (d.open ? folds.open : folds.shut).add(d.id);
+  await paintRenderedTranscript(frag);
+  for (const d of $("tx-render")?.shadowRoot?.querySelectorAll("details[id]") ?? []) {
+    if (folds.open.has(d.id)) d.open = true;
+    else if (folds.shut.has(d.id)) d.open = false;
+  }
 }
 /* The main poll already re-fetches `/api/executions` (with `finished_at`)
    on every cursor move — reuse that instead of a dedicated per-tick
@@ -4073,11 +4094,19 @@ const TABS = [...document.querySelectorAll('#tabs button[role="tab"]')];
    must not park focus on a `hidden` button — so the arrow keys walk the
    visible tabs, which is also the set the reader can see. */
 const visibleTabs = () => TABS.filter(b => !b.hidden);
+/* The tabs whose surfaces re-render under the time window (inTf/inTfDay):
+   Overview's KPIs, timeline and executions table, and Activity's daily
+   charts. Every other tab shows all-time or configuration state, so the
+   window control hides there — a visible control that filters nothing on
+   the tab in front of the reader is indistinguishable from a broken one.
+   The selection itself survives in state.tf while hidden. */
+const TF_TABS = new Set(["overview", "activity"]);
 function switchTab(tab, arg = "") {
   // A transcript route with no execution behind it is not a route.
   if (tab === "transcript" && !arg) { location.hash = "sessions"; return; }
   const left = state.tab === "transcript" && tab !== "transcript";
   state.tab = tab;
+  $("tfWrap").hidden = !TF_TABS.has(tab);
   if (tab === "transcript") $("tab-transcript").hidden = false;
   TABS.forEach(b => {
     const on = b.dataset.tab === tab;
