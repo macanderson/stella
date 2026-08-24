@@ -130,8 +130,18 @@ impl std::fmt::Debug for SeatProviders {
 ///
 /// - a model string naming no configured provider — the user assigned a seat a
 ///   model they have no key for,
+/// - a model outside a non-empty `allowed` list,
 /// - a provider whose credential did not discover,
 /// - an adapter that failed to build.
+///
+/// `allowed` is [`allowed_models`](crate::settings::AgentEngineConfig::allowed_models),
+/// and the second entry above is why it is a parameter rather than something
+/// this function reads for itself: a seat map is the one place a *plugin's*
+/// process reaches an operator's bill without the operator typing a model name,
+/// so an operator who narrowed their vocabulary to two models must not be
+/// billed for a third by one line in that map. The list bound the pickers and
+/// the `/model` forms and skipped this one until #4618, while the setting's own
+/// doc comment promised it.
 ///
 /// Under [`EnginePosture::Configured`] a skipped seat falls back to the
 /// session's model, which is the same answer an unassigned seat gets. That is
@@ -149,6 +159,7 @@ impl std::fmt::Debug for SeatProviders {
 pub(crate) fn resolve_seat_models(
     assignments: &BTreeMap<String, String>,
     configured: &[crate::config::ConfiguredProvider],
+    allowed: &[String],
     posture: EnginePosture,
 ) -> Result<(SeatProviders, Vec<String>), String> {
     let is_provider = |id: &str| configured.iter().any(|c| c.config.id == id);
@@ -164,6 +175,14 @@ pub(crate) fn resolve_seat_models(
             ));
             continue;
         };
+        let full_spec = format!("{}/{}", spec.provider, spec.model);
+        if !crate::settings::allowed_models::admits(allowed, &full_spec, requested) {
+            notices.push(format!(
+                "seat `{seat}`: {}; this seat runs on the session's model.",
+                crate::settings::allowed_models::denial(allowed, &full_spec)
+            ));
+            continue;
+        }
         let Some(entry) = configured.iter().find(|c| c.config.id == spec.provider) else {
             notices.push(format!(
                 "seat `{seat}`: no credential resolved for provider `{}` — this seat runs on the \
@@ -364,7 +383,7 @@ mod tests {
     #[test]
     fn no_assignments_resolves_no_seats() {
         let (seats, notices) =
-            resolve_seat_models(&BTreeMap::new(), &[], EnginePosture::Configured).unwrap();
+            resolve_seat_models(&BTreeMap::new(), &[], &[], EnginePosture::Configured).unwrap();
         assert_eq!(seats.seats().count(), 0, "resolved: {seats:?}");
         assert!(notices.is_empty(), "{notices:?}");
     }
@@ -379,7 +398,7 @@ mod tests {
             "no-such-provider/no-such-model".to_string(),
         )]);
         let (seats, notices) =
-            resolve_seat_models(&assignments, &[], EnginePosture::Configured).unwrap();
+            resolve_seat_models(&assignments, &[], &[], EnginePosture::Configured).unwrap();
         assert_eq!(seats.seats().count(), 0);
         assert_eq!(notices.len(), 1, "{notices:?}");
         assert!(notices[0].contains("planner"), "{notices:?}");
@@ -408,10 +427,10 @@ mod tests {
 
         // The control: an ordinary session carries on, on the session's model.
         let (_, notices) =
-            resolve_seat_models(&assignments, &[], EnginePosture::Configured).unwrap();
+            resolve_seat_models(&assignments, &[], &[], EnginePosture::Configured).unwrap();
         assert_eq!(notices.len(), 1, "premise: this seat degrades: {notices:?}");
 
-        let refusal = resolve_seat_models(&assignments, &[], EnginePosture::Trusted)
+        let refusal = resolve_seat_models(&assignments, &[], &[], EnginePosture::Trusted)
             .expect_err("a pinned seat that cannot be built must refuse the run");
         assert!(
             refusal.contains("planner"),
@@ -421,6 +440,103 @@ mod tests {
             refusal.contains("published claim"),
             "and says why a frozen posture may not degrade: {refusal}"
         );
+    }
+
+    /// A discovered provider with a key that is never spent: every assertion
+    /// below stops at whether an adapter was built, and none makes a call.
+    fn configured(id: &str) -> crate::config::ConfiguredProvider {
+        crate::config::ConfiguredProvider {
+            config: crate::config::PROVIDERS
+                .iter()
+                .find(|p| p.id == id)
+                .expect("a seeded provider")
+                .clone(),
+            api_key: stella_model::ApiKey::new("dummy-key-unused-offline"),
+            aux: Default::default(),
+        }
+    }
+
+    /// **Witness (#4618).** `allowed_models` is the ceiling on seat
+    /// assignments, which is what its doc comment has claimed since the key
+    /// existed and what nothing enforced: a seat naming a model outside a
+    /// non-empty list is skipped with a notice and rides the session's model,
+    /// exactly as an unbuildable seat does.
+    ///
+    /// The control is the same seat against an empty list, and it is what makes
+    /// this evidence of the ceiling rather than of a broken resolver: on the
+    /// base commit both arms build the adapter, because the list was never
+    /// read here at all.
+    #[test]
+    fn a_seat_outside_the_allowed_list_rides_the_session_model() {
+        let providers = [configured("anthropic")];
+        let assignments = BTreeMap::from([(
+            "stella-plan/planner".to_string(),
+            "anthropic/claude-sonnet-5".to_string(),
+        )]);
+
+        // The control: no list, no ceiling — the seat gets its own adapter.
+        let (unrestricted, notices) =
+            resolve_seat_models(&assignments, &providers, &[], EnginePosture::Configured).unwrap();
+        assert_eq!(
+            unrestricted.seats().collect::<Vec<_>>(),
+            ["stella-plan/planner"],
+            "premise: this seat resolves when nothing bounds it: {notices:?}"
+        );
+
+        let allowed = ["anthropic/claude-opus-5".to_string()];
+        let (bounded, notices) = resolve_seat_models(
+            &assignments,
+            &providers,
+            &allowed,
+            EnginePosture::Configured,
+        )
+        .unwrap();
+        assert_eq!(bounded.seats().count(), 0, "resolved: {bounded:?}");
+        assert_eq!(notices.len(), 1, "{notices:?}");
+        assert!(notices[0].contains("stella-plan/planner"), "{notices:?}");
+        assert!(
+            notices[0].contains("allowed model list"),
+            "the notice must say which restriction refused it: {notices:?}"
+        );
+        assert!(
+            notices[0].contains("anthropic/claude-opus-5"),
+            "and what it would have accepted: {notices:?}"
+        );
+        assert!(
+            notices[0].contains("session's model"),
+            "and what happens instead: {notices:?}"
+        );
+
+        // An on-list seat still resolves: the ceiling narrows the vocabulary,
+        // it does not close the plane.
+        let on_list = BTreeMap::from([(
+            "stella-plan/planner".to_string(),
+            "anthropic/claude-opus-5".to_string(),
+        )]);
+        let (seats, notices) =
+            resolve_seat_models(&on_list, &providers, &allowed, EnginePosture::Configured).unwrap();
+        assert!(notices.is_empty(), "{notices:?}");
+        assert_eq!(seats.seats().collect::<Vec<_>>(), ["stella-plan/planner"]);
+    }
+
+    /// A frozen posture may not quietly downgrade a seat it pins, and an
+    /// off-list seat is a downgrade like any other — so the trusted launcher
+    /// refuses the run rather than publishing a number against a model the
+    /// posture did not name.
+    #[test]
+    fn a_trusted_posture_refuses_an_off_list_seat() {
+        let providers = [configured("anthropic")];
+        let assignments = BTreeMap::from([(
+            "stella-plan/planner".to_string(),
+            "anthropic/claude-sonnet-5".to_string(),
+        )]);
+        let allowed = ["anthropic/claude-opus-5".to_string()];
+
+        let refusal =
+            resolve_seat_models(&assignments, &providers, &allowed, EnginePosture::Trusted)
+                .expect_err("an off-list pinned seat must refuse the run");
+        assert!(refusal.contains("stella-plan/planner"), "{refusal}");
+        assert!(refusal.contains("published claim"), "{refusal}");
     }
 
     fn declared(plugin: &str, roles: &[&str]) -> DeclaredSeats {

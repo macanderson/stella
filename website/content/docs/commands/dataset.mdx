@@ -73,7 +73,7 @@ All three halves matter. A turn that reported success but changed nothing is a r
 
 The transcript clause is what a store predating the receipts plane cannot satisfy: with no `step_receipt` rows there is no recorded model call at all, so the default filter exports **zero** records from it even though the journal still holds every one of those turns' prompt, tool calls, and changes.
 
-`--include-unverified-transcripts` exports them anyway, with the transcript honestly withheld rather than faked:
+`--include-unverified-transcripts` exports them anyway, with the transcript withheld rather than faked:
 
 - `calls` is `[]` — an unvouched transcript is withheld whole, never emitted with a silent gap in it;
 - `transcript_verified` is `false`, so the record says why;
@@ -158,7 +158,7 @@ Every record carries the same keys — absence is spelled `null`, never omitted 
 
 `calls` is every model call in wire order, each with the exact messages it was sent — rebuilt from the receipts plane by the same reconstruction `stella inspect` reads, and admitted only once its digest verifies. That is what makes an SFT pair derivable from a record alone. It is empty exactly when `transcript_verified` is `false`, which only `--include-unverified-transcripts` can produce.
 
-`reward` is the training label the settled verdict earned, computed under the workspace's resolved reward policy — and the policy rides on the label, so a scalar stays interpretable outside the workspace that produced it. It is `null` when the journal holds no verdict at all: there is nothing to derive a label from, and synthesizing one under a policy the run never saw would claim more than the store knows. The raw `verdict` is carried beside it so a reader can re-derive a label under different weights. A label that *is* present may still carry no scalar — `reward.reward` is `null` beside a named `reward.discard` whenever the trajectory cannot be priced honestly, including the `steps_unknown` case described above.
+`reward` is the training label the settled verdict earned, computed under the workspace's resolved reward policy — and the policy rides on the label, so a scalar stays interpretable outside the workspace that produced it. It is `null` when the journal holds no verdict at all: there is nothing to derive a label from, and synthesizing one under a policy the run never saw would claim more than the store knows. The raw `verdict` is carried beside it so a reader can re-derive a label under different weights. A label that *is* present may still carry no scalar — `reward.reward` is `null` beside a named `reward.discard` whenever the trajectory cannot be priced, including the `steps_unknown` case described above.
 
 ### Provenance
 
@@ -166,7 +166,7 @@ Every record carries the same keys — absence is spelled `null`, never omitted 
 
 `repo` is a hash of the workspace's normalized `origin` URL — the same identity telemetry scoping uses — so the dataset is attributable to a repository without carrying the URL. A workspace with no remote falls back to the path-derived project id. `session_id` is `null` for a one-shot `stella run`, which never stamps one; that is a fact about the turn, not missing data.
 
-### What `changes` can honestly claim
+### What `changes` can claim
 
 There is no unified diff anywhere in the store. `diff` is the recorder's changed-region hunk, bounded at 200 lines per side; `added` and `removed` are the recorder's own counts and are **authoritative** — do not re-derive them by counting `+`/`-` lines. `diff_truncated` is `true` when the hunk demonstrably shows fewer changed lines than were counted; `false` means "no evidence of truncation", not "provably complete". The exact bytes the model produced survive in the edit and write tool `arguments`.
 

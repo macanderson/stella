@@ -147,9 +147,17 @@ fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index
         role_block(out, "agent", "AGENT", &escape_paragraphs(answer), true);
     }
     if open {
-        turn_receipt(out, turn, &dig.chips);
+        turn_receipt(out, index, turn, &dig.chips);
     }
     out.push_str("</details>");
+}
+
+/// The DOM id a turn's receipt is addressed by — shared between
+/// [`render_run`]'s full paint and [`render_turn_tail`]'s replacement, which is
+/// what lets a live host page find and swap the one element that changes on
+/// every poll tick without repainting anything else.
+fn receipt_id(turn_index: usize) -> String {
+    format!("t{turn_index}-receipt")
 }
 
 /// The expanded turn's closing receipt — `grid::turn_frame_bottom`'s counterpart.
@@ -160,10 +168,16 @@ fn turn_block(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, index
 /// time as the turn runs, and neither fact exists when the top rail goes out.
 /// Keeping the web surface in step is what stops a reader who compares
 /// `stella run`'s scrollback with `stella observe` from finding two documents.
-fn turn_receipt(out: &mut String, turn: &Turn, chip_list: &[Chip]) {
+///
+/// Carries [`receipt_id`] so a live poll can replace exactly this element —
+/// the chip list is the one piece of a still-running turn's own chrome that
+/// changes every tick (accounting grows), while everything else about the
+/// turn's `<details>` stays put until it settles (see [`render_turn_tail`]).
+fn turn_receipt(out: &mut String, turn_index: usize, turn: &Turn, chip_list: &[Chip]) {
     let _ = write!(
         out,
-        "<div class=\"turnreceipt\"><span class=\"st {}\">{} {}</span>",
+        "<div class=\"turnreceipt\" id=\"{}\"><span class=\"st {}\">{} {}</span>",
+        receipt_id(turn_index),
         turn.status.token(),
         turn.status.glyph(),
         status_word(turn.status),
@@ -173,30 +187,125 @@ fn turn_receipt(out: &mut String, turn: &Turn, chip_list: &[Chip]) {
 }
 
 fn steps_and_prose(out: &mut String, run: &Run, state: &FoldState, turn: &Turn, ti: usize) {
+    steps_and_prose_from(out, run, state, turn, ti, TailCursor::default());
+}
+
+/// [`steps_and_prose`], starting at `cursor` rather than from the top — the
+/// loop [`render_turn_tail`] reuses so the two entry points cannot draw the
+/// interleaving order differently.
+fn steps_and_prose_from(
+    out: &mut String,
+    run: &Run,
+    state: &FoldState,
+    turn: &Turn,
+    ti: usize,
+    cursor: TailCursor,
+) {
     let offsets = digest::offsets(&turn.steps);
-    for (si, step) in turn.steps.iter().enumerate() {
-        for (ni, note) in turn.notes.iter().enumerate() {
+    let from_step = cursor.step.min(turn.steps.len());
+    for (si, step) in turn.steps.iter().enumerate().skip(from_step) {
+        for (ni, note) in turn.notes.iter().enumerate().skip(cursor.note) {
             if note.before_step == si {
                 note_block(out, run, state, note, ti, ni);
             }
         }
-        for (pi, prose) in turn.prose.iter().enumerate() {
+        for (pi, prose) in turn.prose.iter().enumerate().skip(cursor.prose) {
             if prose.before_step == si {
                 prose_block(out, run, state, prose, ti, pi);
             }
         }
         step_block(out, run, state, step, ti, si, &offsets[si]);
     }
-    for (ni, note) in turn.notes.iter().enumerate() {
+    for (ni, note) in turn.notes.iter().enumerate().skip(cursor.note) {
         if note.before_step >= turn.steps.len() {
             note_block(out, run, state, note, ti, ni);
         }
     }
-    for (pi, prose) in turn.prose.iter().enumerate() {
+    for (pi, prose) in turn.prose.iter().enumerate().skip(cursor.prose) {
         if prose.before_step >= turn.steps.len() {
             prose_block(out, run, state, prose, ti, pi);
         }
     }
+}
+
+/// Where a live poll's tail render resumes from.
+///
+/// `step` is the running boundary (see [`render_turn_tail`]): the index of a
+/// step that was still open at the caller's last render, or `steps.len()` if
+/// none was. `note`/`prose` are plain counts — a [`crate::model::Note`] or
+/// [`crate::model::Prose`] is never rewritten once folded, only appended
+/// past, so "how many the caller already has" is the whole cutoff.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TailCursor {
+    /// Index of the first step to (re-)render.
+    pub step: usize,
+    /// Count of notes the caller already has.
+    pub note: usize,
+    /// Count of prose blocks the caller already has.
+    pub prose: usize,
+}
+
+/// The blocks-plus-receipt pair [`render_turn_tail`] returns.
+pub struct TurnTail {
+    /// New step/note/prose markup, in document order. A host page splices
+    /// each top-level element in: one sharing an id already in its DOM
+    /// replaces that element (the one step that was still open at the last
+    /// render — see [`render_turn_tail`]); everything else is new and gets
+    /// inserted before the existing receipt element.
+    pub blocks: String,
+    /// The turn's receipt, freshly rendered. Always replaces the existing
+    /// element with the same id (`t{turn_index}-receipt`), because it is the
+    /// one already-rendered fragment whose *content* (not just its presence)
+    /// changes every tick.
+    pub receipt: String,
+}
+
+/// The tail half of [`render_run`] for one turn: the step/note/prose blocks
+/// grown since `cursor`, plus a freshly rendered receipt — the server-cost
+/// half of #4566 (client-side fold preservation across a full repaint,
+/// #4566's fix shape (b), already lives in the dashboard's
+/// `refreshTranscriptJournal`; this is shape (a)).
+///
+/// A live-running turn's `steps_and_prose` region is the only part of the
+/// page that grows every poll tick. The turn's own `<details>` chrome stays
+/// untouched while [`Status::Running`] (or a running step) pins it open — its
+/// status badge cannot become anything but `Running` until the turn settles —
+/// so nothing here rewrites it. The one already-rendered node this *can*
+/// rewrite is the step at `cursor.step` itself: [`Step`]/[`Call`] fold into
+/// the run before a `tool_result` arrives (`Status::Running`, no output yet),
+/// so the caller's own `cursor.step` — the index of that still-open step, or
+/// `turn.steps.len()` if the last one had already settled by the caller's
+/// last render — is exactly the boundary of what may have changed since.
+/// Everything before it is immutable by construction: the fold that builds a
+/// [`Run`] never mutates a [`Step`], [`crate::model::Note`] or
+/// [`crate::model::Prose`] once it is pushed, only appends past it — which is
+/// also why `cursor.note`/`cursor.prose` are plain lengths rather than
+/// another running-boundary: neither ever needs replacing, only extending.
+///
+/// Returns `None` when `cursor` no longer describes this run — an index past
+/// what the run actually holds, which means the caller's view is stale (a
+/// server restart, a pruned journal) rather than merely behind. The caller
+/// should fall back to [`render_run`] for a full repaint.
+#[must_use]
+pub fn render_turn_tail(
+    run: &Run,
+    state: &FoldState,
+    index: usize,
+    cursor: TailCursor,
+) -> Option<TurnTail> {
+    let turn = run.turns.get(index)?;
+    if cursor.step > turn.steps.len()
+        || cursor.note > turn.notes.len()
+        || cursor.prose > turn.prose.len()
+    {
+        return None;
+    }
+    let mut blocks = String::new();
+    steps_and_prose_from(&mut blocks, run, state, turn, index, cursor);
+    let dig = digest::turn_digest(turn, 64, digest::ChipStyle::Roomy);
+    let mut receipt = String::new();
+    turn_receipt(&mut receipt, index, turn, &dig.chips);
+    Some(TurnTail { blocks, receipt })
 }
 
 /// One non-call row. Mirrors [`note_lines`](crate::grid) on the character grid:
@@ -315,12 +424,13 @@ fn step_block(
 
     let _ = write!(
         out,
-        "<details class=\"step{err}\" id=\"{}\"{}><summary><div class=\"grid\">\
+        "<details class=\"step{err}\" id=\"{}\" data-status=\"{}\"{}><summary><div class=\"grid\">\
          <span class=\"t\">{}</span><span class=\"node\">\
          <span class=\"dot {}\" aria-hidden=\"true\">{}</span></span>\
          <div class=\"digest\"><span class=\"chev\">▶</span>\
          <span class=\"tool {}\">{}</span><span class=\"cmd\">{}</span>",
         node.key(),
+        dig.status.token(),
         open_attr(open),
         escape(offset),
         dig.class,

@@ -164,6 +164,14 @@ effort_auto = "off"
 # on | off (default off) — let stella decide whether to think per turn.
 reasoning_auto = "off"
 
+# on | off (default off) — run every session on the MINIMAL base system prompt:
+# a bare tool advertisement instead of the built-in persona, so the prose the
+# model is steered by comes from what you configure — `prompt` under
+# [agents.default] (which appends after the minimal base instead of replacing
+# it), workspace memories, rules, and SessionStart hook context. `--minimal`
+# forces it on for one invocation without touching this key.
+minimal_prompt = "off"
+
 # Seconds before a model call is abandoned.
 model_timeout_secs = 600
 
@@ -484,6 +492,33 @@ deterministic_weight = 1.0    # magnitude of a deterministic pass or fail
 per_step = 0.02               # subtracted per model call
 per_usd = 0.5                 # subtracted per USD spent
 per_revision = 0.1            # subtracted per verification round beyond the first
+
+
+# -----------------------------------------------------------------------------
+# PLAN REVIEW — the deck asks before it starts a plan
+#
+# Before the first step of a plan runs, the task board goes to whoever is
+# driving as a card they can approve or send back. Whether there is a gate at
+# all, and how big a plan has to be before it fires, live here rather than
+# compiled in.
+#
+# `enabled = "off"` is the interactive driver saying they do not want to be
+# asked. It is a different thing from an unattended run, which installs no gate
+# anyway because nobody is there to answer one.
+#
+# `min_steps` counts OPEN board rows, so a board most of the way through its work
+# does not raise a card over its last remaining step. 1 asks about every plan; 0
+# is refused at launch, because an empty board has no open rows and `enabled` is
+# how you say off.
+#
+# `stella run --plan-mode` overrides both for one invocation.
+#
+# Whole-block last-wins across scopes, like [ui] and [reward]: the switch and the
+# threshold are one policy, so a scope that declares either states both.
+# -----------------------------------------------------------------------------
+[plan_review]
+enabled = "on"      # "off" withholds the card entirely
+min_steps = 3       # open steps that raise a card
 
 
 # -----------------------------------------------------------------------------

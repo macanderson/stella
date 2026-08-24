@@ -114,6 +114,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-changelog-roll.sh
 
+      - name: which diffs run the Rust gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-ci-rust-scope.sh
+
       - name: consumer-sites guard failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-consumer-sites.sh
@@ -205,6 +209,10 @@ jobs:
       - name: tool-error-class ratchet direction
         if: ${{ !cancelled() }}
         run: ./scripts/test-tool-error-class.sh
+
+      - name: website-inputs guard failure directions
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-website-inputs.sh
 
       - name: wire-path guard failure directions
         if: ${{ !cancelled() }}

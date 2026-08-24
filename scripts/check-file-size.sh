@@ -39,7 +39,38 @@
 # from 2,400 to 2,100 lines does NOT fail the gate. Demanding a baseline edit for
 # every incremental improvement would tax exactly the refactoring work this
 # guard exists to encourage (see #458, which decomposes the two worst files).
-# Run --update after such work to tighten the ceilings.
+# Run --update --retighten after such work to tighten the ceilings; see the
+# next section for why the tightening is a separate, deliberate pass.
+#
+# ── --update raises; --retighten lowers, and only when asked (#4657) ──────────
+#
+# `--update` used to rewrite every ceiling to its file's current size on the
+# branch it ran on. Correct for that branch, and it turned the PR *repairing* a
+# red `main` into the next break, because a repair PR is the one PR guaranteed
+# to be racing every other merge — main is red and everyone is waiting on it.
+#
+# On 2026-08-24 that happened twice in a row, the second time caused by the
+# first one's fix. #4646 was `main` red on driver.rs and usage.rs. PR #4652
+# repaired those two, and the same run also lowered command_deck.rs from 3752
+# to 3656 — measured on #4652's branch, while main's copy was 3737 lines. The
+# moment #4652 merged, `main` was red again on command_deck.rs (+81),
+# deck_ui.rs (+15) and views/engine.rs (+1), which is #4654, and every open PR
+# was blocked by `main-red-hold` for half an hour. The author could not decline
+# those other twenty edits, and nothing in the diff said which of them were
+# newly risky.
+#
+# So the two directions are split. `--update` is RAISE-ONLY: a ceiling that
+# must go up to admit the tree goes up, every other live entry keeps the number
+# it had, and a repair PR edits exactly the lines it needs. `--retighten` adds
+# the lowering, for the deliberate pass that reclaims the slack — which is safe
+# precisely when nothing is blocked on it.
+#
+# Neither mode ADDS an entry (see the refusal below), and both still RETIRE
+# one: an entry whose file dropped to <= LIMIT, or whose file is gone, is a
+# hard failure of the check with `--update` named as the only remedy, so
+# raise-only that kept them would leave the gate red with no way out. Retiring
+# an exemption whose subject no longer exists is not a tightening of a live
+# ceiling, which is the thing that raced.
 #
 # What this guard does NOT do is forbid a grandfathered file from ever growing.
 # Adding any subcommand to stella-cli, or any module to stella-store, costs a
@@ -193,8 +224,13 @@ if [ "${1:-}" = "--update" ]; then
   shift
   grandfathered_arg="$(mktemp)"
   trap 'rm -f "$grandfathered_arg"' EXIT
+  retighten=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
+    --retighten)
+      retighten=1
+      shift
+      ;;
     --grandfather)
       if [ "$#" -lt 2 ]; then
         echo "check-file-size: --grandfather needs a path." >&2
@@ -265,6 +301,28 @@ if [ "${1:-}" = "--update" ]; then
     fi
   fi
 
+  # Raise-only unless --retighten was asked for (#4657). Every path here is
+  # already over the limit and already carries a prior decision or an explicit
+  # --grandfather, so the only question left is which number it gets: the size
+  # measured on this branch, or the larger of that and the ceiling the baseline
+  # already records. Taking the max is what stops a repair PR quietly lowering
+  # twenty ceilings it never looked at.
+  #
+  # A path with no recorded ceiling — the --grandfather case — takes its
+  # current size under both modes; `max(current, absent)` is `current`.
+  written="$over"
+  if [ -z "$retighten" ] && [ -f "$baseline" ]; then
+    written="$(printf '%s\n' "$over" | awk 'NF' | awk -v baseline="$baseline" '
+      BEGIN {
+        while ((getline line < baseline) > 0) {
+          if (line ~ /^#/) continue
+          if (split(line, f, " ") >= 2) ceiling[f[2]] = f[1] + 0
+        }
+      }
+      { n = $1 + 0; p = $2; if (p in ceiling && ceiling[p] > n) n = ceiling[p]; printf "%d %s\n", n, p }
+    ' | LC_ALL=C sort -k2)"
+  fi
+
   {
     echo "# Grandfathered files over the ${LIMIT}-line ratchet. See #629 and"
     echo "# scripts/check-file-size.sh. Format: <ceiling> <path>."
@@ -279,12 +337,17 @@ if [ "${1:-}" = "--update" ]; then
     # on every machine. A UTF-8 locale sorts punctuation differently (macOS
     # orders agent/tests.rs before agent.rs), which reshuffles untouched lines
     # and buries the one ceiling that actually moved.
-    # Already computed above, and deliberately not recomputed: the set written
-    # must be the exact set the refusal check judged.
-    if [ -n "$over" ]; then printf '%s\n' "$over"; fi
+    # Derived from `$over` above and deliberately not recomputed: the set of
+    # PATHS written must be the exact set the refusal check judged.
+    if [ -n "$written" ]; then printf '%s\n' "$written"; fi
   } >"$baseline.tmp"
   mv "$baseline.tmp" "$baseline"
-  echo "check-file-size: baseline updated — $(grep -cv '^#' "$baseline") grandfathered file(s) over $LIMIT lines."
+  if [ -n "$retighten" ]; then
+    mode="retightened to current sizes"
+  else
+    mode="raised where needed, no ceiling lowered"
+  fi
+  echo "check-file-size: baseline updated ($mode) — $(grep -cv '^#' "$baseline") grandfathered file(s) over $LIMIT lines."
   exit 0
 fi
 

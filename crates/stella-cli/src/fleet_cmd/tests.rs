@@ -171,6 +171,8 @@ async fn fleet_attempt_persists_usage_before_complete_closeout() {
         finish_reason: None,
         effort: None,
         max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     })
     .expect("event");
@@ -521,6 +523,7 @@ fn steered_config(workspace_root: PathBuf) -> Config {
         turn_timeout: None,
         max_output_tokens: None,
         plan_mode: false,
+        minimal_prompt: false,
         model_pinned_by_flag: false,
         durability: Default::default(),
         output_ceilings: Default::default(),
@@ -535,6 +538,7 @@ fn steered_config(workspace_root: PathBuf) -> Config {
         tool_policy: Default::default(),
         ignore_gitignore: true,
         reward_policy: crate::reward::RewardPolicy::default(),
+        plan_review: crate::settings::PlanReviewPolicy::default(),
         // Workspace skills sit behind the project-trust boundary, so a witness
         // about a worker receiving one has to open the session the way a
         // trusted project does.

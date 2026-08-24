@@ -273,12 +273,45 @@ pub(super) struct SettledCall<'a> {
     pub(super) estimated_input_tokens: u64,
     pub(super) duration_ms: u64,
     pub(super) retries: u32,
-    /// The resolved reasoning effort the dispatched request carried — what
-    /// actually went on the wire, never the configured value (#4565).
+    /// What the dispatched request asked for, read off the request itself.
+    pub(super) request: RequestShape,
+}
+
+/// The ask-side facts the metering record carries: everything a consumer needs
+/// to know what was requested, and nothing that could hold prompt text.
+///
+/// Built from the [`stella_protocol::CompletionRequestRef`] the call was
+/// actually dispatched with ([`RequestShape::of`]), which is why the metering
+/// record and the wire agree by construction rather than by two call sites
+/// reading the same bindings and being trusted to keep doing so. The whole
+/// request is
+/// deliberately not carried through: it holds the conversation and the tool
+/// schemas, and an emitter that can reach those is one edit away from putting
+/// content on a content-free event.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct RequestShape {
+    /// The resolved reasoning effort — what actually went on the wire, never
+    /// the configured value (#4565).
     pub(super) effort: Option<stella_protocol::completion::ReasoningEffort>,
-    /// The output ceiling the dispatched request asked for, after the turn's
-    /// standing clamp (`ModelCallShape::max_output_tokens`).
+    /// The output ceiling asked for, after the turn's standing clamp
+    /// (`ModelCallShape::max_output_tokens`).
     pub(super) max_output_tokens: Option<u32>,
+    /// The sampling temperature asked for (#4621).
+    pub(super) temperature: Option<f32>,
+    /// The sampling and routing overrides asked for (#4621).
+    pub(super) params: Option<stella_protocol::completion::GenerationParams>,
+}
+
+impl RequestShape {
+    /// The ask-side facts of the request this call dispatched.
+    pub(super) fn of(request: &stella_protocol::CompletionRequestRef<'_>) -> Self {
+        Self {
+            effort: request.effort,
+            max_output_tokens: request.max_output_tokens,
+            temperature: request.temperature,
+            params: request.params,
+        }
+    }
 }
 
 /// Who served one committed call, read off the settled result.
@@ -332,8 +365,10 @@ pub(super) fn emit_step_usage(events: &EventSender, call: SettledCall<'_>) {
         // `Length` here is the only truthful "this step hit the output
         // ceiling" signal any consumer gets.
         finish_reason: result.finish_reason,
-        effort: call.effort,
-        max_output_tokens: call.max_output_tokens,
+        effort: call.request.effort,
+        max_output_tokens: call.request.max_output_tokens,
+        temperature: call.request.temperature,
+        params: call.request.params,
         // The lead's own call. A delegate's is stamped where the delegate is
         // known — `subagent::child_sender`, the one place that can say which
         // of several concurrent children an event belongs to (#4383).

@@ -162,6 +162,8 @@ fn persist_event_records_cache_write_tokens_from_step_usage() {
         finish_reason: None,
         effort: None,
         max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     };
 
@@ -918,6 +920,8 @@ fn reflection_json_preserves_full_paid_call_envelope_and_cost() {
             finish_reason: None,
             effort: None,
             max_output_tokens: None,
+            temperature: None,
+            params: None,
             sub_agent_id: None,
         }],
     };

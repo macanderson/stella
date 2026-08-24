@@ -65,6 +65,7 @@ STUDY_MANIFEST_ENGINE_POSTURE_OPTIONAL_FIELDS = frozenset(
         "pipeline_research_model",
         "pipeline_plan_model",
         "model_timeout_secs",
+        "minimal_prompt",
     }
 )
 

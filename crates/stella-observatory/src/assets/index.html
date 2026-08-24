@@ -948,6 +948,7 @@ footer b{color:var(--identity);font-weight:600}
           <div class="ctx-toggle" role="tablist" aria-label="View">
             <button type="button" role="tab" data-view="diff" id="ctxViewDiff">Added since previous call</button>
             <button type="button" role="tab" data-view="full" id="ctxViewFull">Full prompt at this point</button>
+            <button type="button" role="tab" data-view="system" id="ctxViewSystem">System prompt</button>
           </div>
         </div>
         <div class="ctx-inspect-body" id="ctxBody" tabindex="-1"></div>
@@ -2152,6 +2153,26 @@ function profileSeats(calls, usage) {
   }
   return [...seats.values()];
 }
+/* The generation shape one metering row's request carried, as one line:
+   `temperature` plus whatever of `params` was pinned. Empty string when the
+   request pinned nothing at all, which is how the card tells "the request
+   asked for the provider's own defaults" from "this journal predates the
+   field" — the caller decides which of those two it is looking at. */
+const GEN_PARAM_LABELS = [
+  ["top_p", "top_p"], ["top_k", "top_k"],
+  ["frequency_penalty", "freq penalty"], ["presence_penalty", "presence penalty"],
+  ["repetition_penalty", "repetition penalty"], ["seed", "seed"],
+  ["verbosity", "verbosity"], ["service_tier", "tier"],
+];
+function genShape(u) {
+  const parts = [];
+  if (u.temperature != null) parts.push(`temperature ${u.temperature}`);
+  const p = u.params || {};
+  for (const [key, label] of GEN_PARAM_LABELS) {
+    if (p[key] != null) parts.push(`${label} ${p[key]}`);
+  }
+  return parts.join(" · ");
+}
 function seatCardHtml(s) {
   const upstreams = [...new Set(s.rows.map(u => u.upstream_provider).filter(Boolean))];
   const inTok = s.rows.reduce((a, u) => a + num(u.input_tokens), 0);
@@ -2162,8 +2183,17 @@ function seatCardHtml(s) {
   const efforts = [...new Set(s.rows.map(u => u.effort).filter(Boolean))];
   const caps = [...new Set(s.rows.map(u => u.max_output_tokens).filter(v => v != null))];
   const agents = [...new Set(s.rows.map(u => u.sub_agent_id).filter(Boolean))];
+  // A row that carries neither field asked for the provider's own defaults, and
+  // one from an older journal could not have said so — the two are told apart
+  // by whether ANY row on this card carries either, since a run's rows are all
+  // written by one build.
+  const gens = [...new Set(s.rows.map(genShape).filter(Boolean))];
+  const genRecorded = s.rows.some(u => u.temperature != null || u.params != null);
   const notRecorded = `<span class="prof-gap" title="No event carries this yet: it lives only in the session's config plane, so an honest per-turn card cannot claim it.">not recorded for this run</span>`;
   const notInJournal = `<span class="prof-gap" title="This journal predates the metering record carrying the request's effort and output cap, so an honest card cannot claim either.">not recorded for this run</span>`;
+  const genGap = genRecorded
+    ? `<span class="prof-gap" title="Every call on this card pinned no temperature and no sampling override, so the provider's own defaults decided.">provider defaults</span>`
+    : `<span class="prof-gap" title="This journal predates the metering record carrying the request's generation params, so an honest card cannot claim them.">not recorded for this run</span>`;
   return `<div class="prof-card">
     <div class="prof-head"><b>${esc(s.role)}</b>
       <span class="badge dim">${fmtInt(s.calls)} call${s.calls === 1 ? "" : "s"}</span>${
@@ -2180,6 +2210,7 @@ function seatCardHtml(s) {
         ? `${fmtMs(ms)} total · ${fmtMs(ms / s.rows.length)} / call` : "—"}</dd>
       <dt>effort</dt><dd>${efforts.length ? esc(efforts.join(", ")) : notInJournal}</dd>
       <dt>output cap</dt><dd>${caps.length ? caps.map(fmtTok).join(", ") + " tok" : notInJournal}</dd>
+      <dt>generation</dt><dd>${gens.length ? esc(gens.join(" / ")) : genGap}</dd>
       <dt>custom prompt</dt><dd>${notRecorded}</dd>
     </dl>
     <div class="prof-offer" data-provider="${esc(s.provider)}" data-slug="${esc(s.model)}">
@@ -2275,6 +2306,45 @@ async function loadSentContext(id, turn, step, callSeq, full = false, token) {
       ? `<button type="button" class="jrnl-full" id="ctx-full">show full bodies</button>` : ""}`;
   const btn = $("ctx-full");
   if (btn) btn.addEventListener("click", () => loadSentContext(id, turn, step, callSeq, true));
+}
+/* The effective system prompt this call was sent — the same reconstruction as
+   the full view, narrowed to the system_prefix bytes and sectioned by the
+   backend into the settings surface that produced each span: the base persona
+   (built-in, agents.default.prompt, or minimal mode), the computed session
+   environment, workspace memories, rules, and SessionStart hook context.
+   Fetched with full=1: the whole point of this view is the exact bytes, so a
+   clipped system prompt here would defeat it. */
+async function loadSystemPrompt(id, turn, step, callSeq, token) {
+  const body = $("ctxBody");
+  if (!body) return;
+  if (token === undefined) token = ++ctxRenderToken;
+  let cx = null;
+  try {
+    cx = await api(`/api/execution-context?id=${encodeURIComponent(id)}`
+      + `&turn=${encodeURIComponent(turn)}&step=${encodeURIComponent(step)}`
+      + `&call_seq=${encodeURIComponent(callSeq)}&full=1`);
+  } catch { cx = null; }
+  if (token !== ctxRenderToken) return; // a later step/view superseded this fetch
+  const c = cx && cx.context;
+  if (!c || !c.found) {
+    body.innerHTML = `<div class="empty">${
+      esc((c && c.note) || "That call has no recorded receipt.")}</div>`;
+    return;
+  }
+  const sp = c.system_prompt;
+  if (!sp || !sp.found) {
+    body.innerHTML = `<div class="empty">${
+      esc((sp && sp.note) || "No system_prefix block resolved for this call.")}</div>`;
+    return;
+  }
+  const sections = sp.sections ?? [];
+  body.innerHTML = `<div class="kick">Effective system prompt at step ${fmtInt(step)} ·
+      ${fmtInt(sections.length)} section${sections.length === 1 ? "" : "s"} ·
+      exact bytes, labelled by the setting that produced each</div>
+    ${sections.map(s => `<div class="jrnl">
+      <div class="kick">${esc(s.label ?? "")} · <span style="opacity:.8">${esc(s.source ?? "")}</span></div>
+      ${s.body ? `<pre class="jrnl-body">${maybeHighlight(s.body)}</pre>`
+               : `<div class="empty">(empty)</div>`}</div>`).join("")}`;
 }
 /* Git's hunk shape, drawn with both line-number gutters. The line numbers are
    walked from the hunk header rather than served: `@@ -old_start +new_start @@`
@@ -2372,6 +2442,7 @@ const ctxInspectCall = () => (ctxInspect ? ctxInspect.calls[ctxInspect.idx] : nu
 function ctxSyncToggle() {
   $("ctxViewDiff").classList.toggle("on", ctxInspect.view === "diff");
   $("ctxViewFull").classList.toggle("on", ctxInspect.view === "full");
+  $("ctxViewSystem").classList.toggle("on", ctxInspect.view === "system");
 }
 function ctxRenderHead() {
   const c = ctxInspectCall();
@@ -2390,6 +2461,7 @@ async function ctxRenderBody() {
   const token = ++ctxRenderToken;
   body.innerHTML = `<div class="empty">Loading…</div>`;
   if (ctxInspect.view === "diff") await loadContextDiff(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq), "all", token);
+  else if (ctxInspect.view === "system") await loadSystemPrompt(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq), token);
   else await loadSentContext(ctxInspect.id, num(c.turn), num(c.step), num(c.call_seq), false, token);
 }
 /* `calls` is the page's already-fetched `cx.calls` — focusing or stepping
@@ -2433,6 +2505,7 @@ function ctxInspectKeydown(e) {
   $("ctxNext").addEventListener("click", () => ctxStep(1));
   $("ctxViewDiff").addEventListener("click", () => ctxSetView("diff"));
   $("ctxViewFull").addEventListener("click", () => ctxSetView("full"));
+  $("ctxViewSystem").addEventListener("click", () => ctxSetView("system"));
   $("ctxClose").addEventListener("click", () => dlg.close());
   $("ctxInspect").addEventListener("keydown", ctxInspectKeydown);
 })();
@@ -2818,18 +2891,100 @@ function openCtxDialog(step, role) {
   $("ctxBody").focus();
 }
 
+/* Where the tail protocol (#4566's fix shape (a)) resumes from, read purely
+   from the shadow DOM's own markup rather than tracked out of band — the same
+   choice fold state already makes by living in `details[open]` instead of a
+   script-side map. A step is folded before its result arrives
+   (`data-status="run"`) and keeps that marker until the next paint replaces
+   it, so the last `.step` still carrying it is exactly the one node the
+   server may still need to rewrite; every note/prose the shadow root already
+   holds is immutable once rendered (`stella_transcript`'s fold never revisits
+   one), so their counts alone are the resume point for those. Null when
+   nothing has been painted yet (first load, or a repaint mid-flight moved the
+   transcript to a different execution). */
+function transcriptTailCursor(shadow) {
+  const receipt = shadow.querySelector(".turnreceipt[id]");
+  if (!receipt) return null;
+  const steps = shadow.querySelectorAll(".step");
+  const running = steps[steps.length - 1]?.dataset.status === "run";
+  return {
+    receiptId: receipt.id,
+    fromStep: steps.length - (running ? 1 : 0),
+    fromNote: shadow.querySelectorAll(".note").length,
+    fromProse: shadow.querySelectorAll(".prose-fold").length,
+  };
+}
+
+/* The incremental half of #4566: ask the server for only the blocks that
+   changed since `cursor`, then graft them into the existing shadow DOM
+   instead of repainting the whole fragment. Returns false on anything that is
+   not a clean splice — network failure, a response the server itself
+   downgraded to a full fragment (a stale cursor, `content-type: text/html`
+   rather than JSON), the shadow root having moved on to a different
+   execution mid-flight — so the caller falls back to a full repaint. This is
+   a fast path, never the only path: the fold-preserving full repaint below it
+   is what a first poll after load, and any of the above, still goes through. */
+async function spliceTranscriptTail(id, cursor) {
+  let r;
+  try {
+    r = await fetch(
+      `/api/transcript-html?id=${encodeURIComponent(id)}` +
+      `&from_step=${cursor.fromStep}&from_note=${cursor.fromNote}&from_prose=${cursor.fromProse}`);
+  } catch {
+    return false;
+  }
+  if (!r.ok || !(r.headers.get("content-type") ?? "").includes("application/json")) return false;
+  let payload;
+  try {
+    payload = await r.json();
+  } catch {
+    return false;
+  }
+  const shadow = $("tx-render")?.shadowRoot;
+  const receipt = shadow?.getElementById(cursor.receiptId);
+  if (!shadow || !receipt || !tx || tx.id !== id) return false;
+
+  const tpl = document.createElement("template");
+  tpl.innerHTML = payload.blocks ?? "";
+  for (const node of [...tpl.content.children]) {
+    const existing = node.id ? shadow.getElementById(node.id) : null;
+    if (existing) {
+      // The one node the server may rewrite: the step that was still open
+      // last tick. Carry over any fold the reader opened inside it — the
+      // same capture/reapply #4566's fix shape (b) uses for a full repaint.
+      const openIds = [...existing.querySelectorAll("details[open]")]
+        .map((d) => d.id)
+        .filter(Boolean);
+      existing.replaceWith(node);
+      for (const oid of openIds) {
+        const reopened = node.id === oid ? node : node.querySelector(`#${CSS.escape(oid)}`);
+        if (reopened && "open" in reopened) reopened.open = true;
+      }
+    } else {
+      receipt.before(node);
+    }
+  }
+  const rtpl = document.createElement("template");
+  rtpl.innerHTML = payload.receipt ?? "";
+  const newReceipt = rtpl.content.firstElementChild;
+  if (newReceipt) receipt.replaceWith(newReceipt);
+  return true;
+}
+
 /* Refresh an open, still-running transcript when the poll notices the
    cursor moved (#1476's slot in the poll, kept under its old name so both
    callers — `pollOnce` and the live-stream tick — stay wired). The cheap
    `after_seq` probe still decides whether anything happened; when it did,
-   the rendered fragment is re-fetched whole and repainted, because the
-   shared renderer draws a tree, not an appendable list. The renderer pins
-   running work open, so the repaint lands the reader back on the live step —
-   and every fold the reader toggled by hand is put back the way they left it
-   (#4566): fold ids are stable NodeId keys (`t0s3`…), so the open/closed
-   state of each identified fold is read out of the shadow DOM before the
-   repaint and reapplied after. Folds new to this paint (the args fold has no
-   id) keep the renderer's own pin-open rules. */
+   the fast path is `spliceTranscriptTail` — server work and client repaint
+   both bounded by what actually changed (#4566's fix shape (a)). Its
+   fallback, still needed for the first poll after load and for anything the
+   splice could not do cleanly, is the full repaint: the rendered fragment is
+   re-fetched whole, and because the shared renderer draws a tree rather than
+   an appendable list, every fold the reader toggled by hand has to be put
+   back afterward (#4566's fix shape (b)) — fold ids are stable NodeId keys
+   (`t0s3`…), so the open/closed state of each identified fold is read out of
+   the shadow DOM before the repaint and reapplied after. Folds new to this
+   paint (the args fold has no id) keep the renderer's own pin-open rules. */
 async function refreshTranscriptJournal() {
   if (!tx || tx.finished) return;
   if (state.tab !== "transcript") { tx = null; return; }
@@ -2843,6 +2998,11 @@ async function refreshTranscriptJournal() {
   const entries = Array.isArray(j) ? j : [];
   if (!entries.length) return;
   tx.lastSeq = entries[entries.length - 1].seq;
+
+  const shadow = $("tx-render")?.shadowRoot;
+  const cursor = shadow ? transcriptTailCursor(shadow) : null;
+  if (cursor && (await spliceTranscriptTail(id, cursor))) return;
+
   let frag = "";
   try {
     const r = await fetch(`/api/transcript-html?id=${encodeURIComponent(id)}`);

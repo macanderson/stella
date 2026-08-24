@@ -160,6 +160,18 @@ _WORKER_REASONING = "on"
 # still describes the posture that produced it.
 _MODEL_TIMEOUT_ENV = "STELLA_MODEL_TIMEOUT"
 
+# Host-side selector for the base persona (#4650). `minimal_prompt` runs the
+# session on a bare tool-advertisement persona, so the operator's own prompt
+# fields carry the prose instead of Stella's shipped one — which makes "how
+# much of the score is the persona" a measurable question rather than an
+# argument, and the persona is exactly the kind of thing this project measures.
+#
+# Unset omits the key, which is the rule every selector here follows and the
+# only reason the digests registered in `bench/READINESS.md` §8.4 keep
+# describing the postures that produced them. Setting it moves the digest,
+# which is the point: a run states the persona it measured.
+_MINIMAL_PROMPT_ENV = "STELLA_MINIMAL_PROMPT"
+
 # `STELLA_VERIFIER_EVIDENCE_DEMAND` selected the corroboration ask (#1295):
 # when a model verifier passed and nothing deterministic stood behind it, did
 # the pipeline spend one revision demanding the evidence, or record the pass as
@@ -381,6 +393,20 @@ def resolve_role_reasoning(value: str | None, *, role: str) -> bool | None:
     return _validated_toggle(value, label=f"{role} reasoning")
 
 
+def resolve_minimal_prompt(value: str | None) -> bool | None:
+    """Resolve the base-persona arm, or ``None`` to emit no key (#4650).
+
+    Both settings are written down when the selector is set, `off` included:
+    the key's absence already means "the shipped persona", so an arm that
+    measured the persona deliberately has no way to say so unless `off` is
+    expressible. Two runs that made the same choice for different reasons then
+    carry different digests, which is what a digest is for.
+    """
+    if value is None:
+        return None
+    return _validated_toggle(value, label="minimal prompt")
+
+
 def resolve_role_model(value: str | None) -> str | None:
     """Resolve a per-role model pin, or ``None`` to inherit.
 
@@ -452,6 +478,7 @@ POSTURE_SELECTOR_ENV = (
     _PLAN_REASONING_ENV,
     _PLAN_MODEL_ENV,
     _MODEL_TIMEOUT_ENV,
+    _MINIMAL_PROMPT_ENV,
 )
 
 
@@ -485,6 +512,7 @@ def read_posture_selectors(get: Callable[[str], str | None]) -> dict[str, Any]:
         ),
         "plan_model": resolve_role_model(get(_PLAN_MODEL_ENV)),
         "model_timeout_secs": resolve_model_timeout(get(_MODEL_TIMEOUT_ENV)),
+        "minimal_prompt": resolve_minimal_prompt(get(_MINIMAL_PROMPT_ENV)),
     }
 
 
@@ -660,6 +688,7 @@ def _benchmark_engine_posture(
     plan_reasoning: bool | None = None,
     plan_model: str | None = None,
     model_timeout_secs: int | None = None,
+    minimal_prompt: bool | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     """Return a canonical Terminal-Bench engine posture and its hash.
 
@@ -714,6 +743,12 @@ def _benchmark_engine_posture(
     (#2411), leaving the model's catalog maximum and the task's own wall clock.
     It is a key like any other — selecting it changes the digest, leaving it
     unset reproduces every historical one.
+
+    ``minimal_prompt`` is the same shape once more, for the base persona
+    (#4650). ``None`` emits no key and reproduces every registered digest;
+    ``True``/``False`` writes ``on``/``off`` and moves the digest, because a
+    run that measured the persona is a different system under test from one
+    that did not.
 
     The six ``research_*``/``plan_*`` arguments are the same rule applied to the
     two read-only roles (#2549). All six default to ``None``, which emits
@@ -903,6 +938,12 @@ def _benchmark_engine_posture(
     )
     if effective_timeout is not None:
         posture["model_timeout_secs"] = effective_timeout
+    # The base-persona arm (#4650), on the omit-when-unset rule every selector
+    # above follows: absent reproduces every digest registered before the arm
+    # existed, and either setting states itself in the digest of the run that
+    # chose it.
+    if minimal_prompt is not None:
+        posture["minimal_prompt"] = "on" if minimal_prompt else "off"
     normalized = json.dumps(
         posture,
         sort_keys=True,

@@ -273,6 +273,13 @@ impl Settings {
         if let Some(reward) = &scope.reward {
             self.reward = Some(reward.clone());
         }
+        // The plan gate (#4611): whole-block last-wins, on `reward`'s argument
+        // above — the switch and the threshold are one policy, and a scope
+        // holding half of another's is a policy nobody wrote. Explicit for the
+        // same reason as everything else in this run of blocks.
+        if let Some(plan_review) = &scope.plan_review {
+            self.plan_review = Some(plan_review.clone());
+        }
         // Adaptive-context config: whole-block last-wins (a higher-precedence
         // scope that declares `context` replaces a lower one's). Read by
         // `memory::tuning` (retrieval budgets, the lifecycle switch, promotion

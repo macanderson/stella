@@ -516,6 +516,54 @@ pub enum AgentEvent {
             )
         )]
         max_output_tokens: Option<u32>,
+        /// The sampling temperature the dispatched request carried
+        /// (`CompletionRequest::temperature`), and
+        /// [`params`](AgentEvent::StepUsage::params) beside it: together they
+        /// are the generation shape of the ask, the third row of the profile
+        /// card's gap that #4565 left (#4621).
+        ///
+        /// Two fields rather than one folded struct because
+        /// [`CompletionRequest`](crate::CompletionRequest) itself carries them
+        /// as two — mirroring its shape one-for-one leaves nothing to keep in
+        /// sync, where a purpose-built struct would be a second vocabulary that
+        /// silently stops matching the first time `GenerationParams` grows a
+        /// field.
+        ///
+        /// `None` means the request pinned no temperature (or the stream
+        /// predates this field — hence `serde(default)`), and must never be
+        /// read as `0.0`: an unpinned temperature is the provider's own
+        /// default, which is not a number this side knows.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "The sampling temperature the dispatched request carried. Absent when the request pinned none, or when the stream predates this field; absence is not zero -- an unpinned temperature is the provider's own default."
+            )
+        )]
+        temperature: Option<f32>,
+        /// The sampling and routing overrides the dispatched request carried
+        /// (`CompletionRequest::params`): `top_p`, `top_k`, the penalties,
+        /// `seed`, `verbosity`, `service_tier` (#4621).
+        ///
+        /// Content-free like the rest of this event — every field is a number
+        /// or a closed enum, and none of them can hold prompt text. Tool
+        /// schemas are the ask-side fact deliberately still absent: they are
+        /// content-bearing, so they stay off the event and in the wire log.
+        ///
+        /// The value that went on the wire, so a run's sampling posture is
+        /// answerable from the trace rather than from the settings file the
+        /// operator had at the time — which is a different question whenever a
+        /// seat, a sub-agent or a mid-run switch routed the call somewhere
+        /// else. `None` means the request carried no overrides at all (or the
+        /// stream predates this field).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(
+            feature = "schema",
+            schemars(
+                description = "The sampling and routing overrides the dispatched request carried -- top_p, top_k, the penalties, seed, verbosity, service_tier. Content-free: every field is a number or a closed enum. Absent when the request carried no overrides, or when the stream predates this field."
+            )
+        )]
+        params: Option<crate::completion::GenerationParams>,
         /// Which sub-agent spent this call, when a sub-agent did (#4383).
         ///
         /// `None` is the lead's own call. It is stamped at the sub-agent

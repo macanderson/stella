@@ -1106,7 +1106,7 @@ async fn run_task(
                 while let Some(ev) = src.recv().await {
                     let _ = dash.send(FleetMsg::Event {
                         id: id.clone(),
-                        event: ev.clone(),
+                        event: Box::new(ev.clone()),
                     });
                     if render_tx.send(ev).is_err() {
                         break;

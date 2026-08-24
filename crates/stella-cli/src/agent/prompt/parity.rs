@@ -61,7 +61,7 @@
 //! source, and a contract literal too short for `contains` to prove anything.
 //! `the_scan_fails_loudly_rather_than_finding_nothing` drives each one.
 
-use super::{PIPELINE_SYSTEM_PROMPT, SYSTEM_PROMPT};
+use super::{MINIMAL_SYSTEM_PROMPT, PIPELINE_SYSTEM_PROMPT, SYSTEM_PROMPT};
 
 /// `prompt.rs` read as text, at compile time.
 ///
@@ -111,6 +111,42 @@ pub(super) const STATIC_PROMPTS: &[(&str, &str)] = &[
     ("SYSTEM_PROMPT", SYSTEM_PROMPT),
     ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
 ];
+
+/// Every base persona the CLI can send: the contract-bearing static prompts
+/// plus the minimal one. `tool_names.rs` iterates THIS list — the minimal
+/// persona's whole job is advertising the tool surface, so it is held to the
+/// catalog exactly as the full prompts are — while the contract-parity checks
+/// above stay on [`STATIC_PROMPTS`], because embedding no contract is the
+/// minimal persona's defining property
+/// ([`the_minimal_persona_embeds_no_shared_contract`] pins it from this side).
+pub(super) const BASE_PROMPTS: &[(&str, &str)] = &[
+    ("SYSTEM_PROMPT", SYSTEM_PROMPT),
+    ("PIPELINE_SYSTEM_PROMPT", PIPELINE_SYSTEM_PROMPT),
+    ("MINIMAL_SYSTEM_PROMPT", MINIMAL_SYSTEM_PROMPT),
+];
+
+/// The minimal persona's defining property, pinned in both directions: none
+/// of the shared contracts' bytes reach it, and it stays an order of magnitude
+/// shorter than the full prompts — a "minimal" prompt that quietly grew a
+/// contract or a full prompt's length has stopped being the mode the flag
+/// promises.
+#[test]
+fn the_minimal_persona_embeds_no_shared_contract() {
+    for (contract, text) in SHARED_CONTRACTS {
+        assert!(
+            !MINIMAL_SYSTEM_PROMPT.contains(text),
+            "MINIMAL_SYSTEM_PROMPT embeds the `{contract}` block — minimal mode's contract \
+             is a bare tool advertisement, so a shared contract belongs in the full prompts \
+             only"
+        );
+    }
+    assert!(
+        MINIMAL_SYSTEM_PROMPT.chars().count() < SYSTEM_PROMPT.chars().count() / 5,
+        "the minimal persona is no longer minimal: {} chars against SYSTEM_PROMPT's {}",
+        MINIMAL_SYSTEM_PROMPT.chars().count(),
+        SYSTEM_PROMPT.chars().count()
+    );
+}
 
 /// Why a parity scan of `prompt.rs` could not be completed.
 ///

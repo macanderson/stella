@@ -119,7 +119,7 @@ use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
-use task_tap::{TaskTap, plan_goal};
+use task_tap::{PlanSetup, TaskTap};
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
@@ -3651,10 +3651,10 @@ async fn run_lead_turn(
             Principal::User,
             registry.hook_bus(),
         );
-        // The plan gate's headline, taken before the engine borrows
-        // `messages` mutably (`task_tap::plan_gate`, #4594).
-        let goal = plan_goal(messages);
-        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()), goal);
+        // The plan gate's headline and policy, taken before the engine borrows
+        // `messages` mutably (`task_tap::plan_gate`, #4594/#4611).
+        let plan = PlanSetup::for_turn(messages, cfg);
+        let tapped = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx.clone()), plan);
         let hook_runner = HostHookRunner;
         let mut engine = Engine::with_sleeper(
             provider,

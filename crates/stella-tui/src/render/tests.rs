@@ -394,6 +394,8 @@ fn the_receipt_reports_what_the_turn_measured() {
         finish_reason: None,
         effort: None,
         max_output_tokens: None,
+        temperature: None,
+        params: None,
         sub_agent_id: None,
     });
     // files ← FileChange, distinct paths
