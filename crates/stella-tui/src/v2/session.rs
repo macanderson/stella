@@ -1,16 +1,27 @@
-//! Session tab — the focused agent's REPL surface: any pending gate card,
-//! then the transcript at full width (SPEC 5).
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! Session tab — the focused agent's conversation: any pending gate card, then
+//! the transcript at full width (SPEC 5).
 //!
-//! It **reuses** the shared renderers (`render_ask_user`, `entry_lines`),
-//! just scoped to whichever agent `ui.focused` points at. No transcript
-//! rendering is duplicated — there is one implementation of "draw a
-//! session".
+//! The rows themselves are [`super::transcript`]'s vocabulary, reached through
+//! [`crate::render::entry_lines`] — this module orchestrates rather than draws:
+//! it carves the gate bands, keeps the incremental fold ([`SessionFold`])
+//! and its [`FoldPlan`] in step with the deck's state, and windows the result
+//! onto the rows the frame has. No transcript rendering is duplicated; there is
+//! one implementation of "draw a session".
+//!
+//! It draws no chrome of its own. The tab row, the pulse row, the hint row and
+//! the status bar are [`super::frame`]'s, [`super::pulse`]'s and
+//! [`super::status_bar`]'s, and the transcript takes the whole content area
+//! with no border around it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
+use stella_tui_theme::glyph;
 
 use std::collections::{HashMap, HashSet};
 
@@ -95,8 +106,13 @@ pub type FoldPlanKey = (String, usize, usize, u64);
 /// what the turn was asked to do and what it cost: tool calls, distinct files
 /// touched, elapsed time — and, in the danger colour, whether anything in
 /// there failed. A turn with a failure count is the one a reader opens.
-fn digest_line(d: &TurnDigest, folded: bool, width: usize) -> Vec<Line<'static>> {
-    let chevron = if folded { "▸" } else { "▾" };
+///
+/// The chevron is [`glyph::COLLAPSED`], the same cell a collapsed event head
+/// takes ([`super::transcript::EventKind::head_glyph`]), so a folded turn and
+/// a folded read read as the same gesture. There is no unfolded arm: an
+/// unfolded turn renders its entries, and the digest is only ever reached
+/// through [`FoldPlan::digests`].
+fn digest_line(d: &TurnDigest, width: usize) -> Vec<Line<'static>> {
     let mut metric: Vec<Span<'static>> = Vec::new();
     if d.failures > 0 {
         metric.push(Span::styled(
@@ -123,7 +139,7 @@ fn digest_line(d: &TurnDigest, folded: bool, width: usize) -> Vec<Line<'static>>
         Style::new().fg(theme::VIOLET),
     )];
     let mut spans = vec![Span::styled(
-        format!("{chevron} "),
+        format!("{} ", glyph::COLLAPSED),
         Style::new().fg(theme::VIOLET).add_modifier(Modifier::BOLD),
     )];
     spans.extend(crate::render::justify(left, metric, width, 2));

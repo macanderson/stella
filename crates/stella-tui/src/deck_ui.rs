@@ -705,13 +705,13 @@ pub struct DeckUi {
     /// from scratch by [`ingest_inbound`] on each fresh `HunkReview`.
     pub hunk_marks: std::collections::HashMap<String, HunkMarks>,
     /// The Session tab's incremental transcript fold cache.
-    pub session_fold: crate::views::session::SessionFold,
+    pub session_fold: crate::v2::session::SessionFold,
     /// The Session tab's memoized fold plan: the whole-transcript turn walk
-    /// reruns only when its [`crate::views::session::FoldPlanKey`] moves,
+    /// reruns only when its [`crate::v2::session::FoldPlanKey`] moves,
     /// not on every frame of the ~30fps draw loop.
     pub session_plan: Option<(
-        crate::views::session::FoldPlanKey,
-        crate::views::session::FoldPlan,
+        crate::v2::session::FoldPlanKey,
+        crate::v2::session::FoldPlan,
     )>,
     /// The terminal's color depth, detected once at startup. Render-time-visible
     /// so the progress bar can emit a per-cell ember gradient on truecolor and a
@@ -878,7 +878,7 @@ impl Default for DeckUi {
             ask_answered: std::collections::HashSet::new(),
             hunk_answered: std::collections::HashSet::new(),
             hunk_marks: std::collections::HashMap::new(),
-            session_fold: crate::views::session::SessionFold::default(),
+            session_fold: crate::v2::session::SessionFold::default(),
             session_plan: None,
             color_mode: crate::theme::ColorMode::default(),
             no_anim: false,

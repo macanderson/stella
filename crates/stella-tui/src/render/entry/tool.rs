@@ -96,7 +96,7 @@ fn push_body_line(
     };
     // The deck's single highlight site, and so where SPEC 6.4's "once when the
     // event arrives, never per frame" budget is counted. See
-    // [`crate::syntax::lex_count`], and `views::session::fold` for what holds it.
+    // [`crate::syntax::lex_count`], and `v2::session::fold` for what holds it.
     #[cfg(test)]
     syntax::lex_count::bump();
     let mut spans: Vec<Span<'static>> = Vec::new();

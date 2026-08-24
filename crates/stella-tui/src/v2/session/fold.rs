@@ -3,7 +3,7 @@
 
 //! The Session tab's incremental transcript fold.
 //!
-//! Split out of [`super`] rather than grown there: `views/session.rs` stays
+//! Split out of [`super`] rather than grown there: `v2/session.rs` stays
 //! under the 1500-line ratchet by growing sideways (AGENTS.md § God files),
 //! and the fold is a self-contained concern — it turns a
 //! transcript plus a set of view flags into `Line`s and their row ranges, and
@@ -174,7 +174,7 @@ impl SessionFold {
                 continue;
             }
             if let Some(d) = plan.digests.get(&i) {
-                self.prefix.extend(digest_line(d, true, width));
+                self.prefix.extend(digest_line(d, width));
             } else if plan.hides(i) {
                 // Swallowed by the turn above. It still gets a row range —
                 // the digest's — so that selecting, scrolling to, or
@@ -233,7 +233,7 @@ impl SessionFold {
                 // The tail obeys the same plan: a last entry inside a folded turn
                 // must not reappear below the digest that already stands for it.
                 if let Some(d) = plan.digests.get(&target) {
-                    self.tail.extend(digest_line(d, true, width));
+                    self.tail.extend(digest_line(d, width));
                 } else if !plan.hides(target) {
                     entry_lines(
                         last,
