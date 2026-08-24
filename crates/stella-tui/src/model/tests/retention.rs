@@ -124,6 +124,7 @@ fn replay_of_the_same_log_yields_identical_models() {
                 name: "read_file".into(),
                 input: serde_json::json!({"path": "src/lib.rs"}),
             },
+            sub_agent_id: None,
         },
         AgentEvent::FileChange {
             path: "src/lib.rs".into(),

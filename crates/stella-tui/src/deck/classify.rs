@@ -124,7 +124,7 @@ pub(super) fn trace_of(ev: &AgentEvent) -> (TraceKind, String) {
         // row per token would churn the capped ring — see the guard there).
         AgentEvent::TextDelta { delta } => (TraceKind::Text, snip(delta)),
         AgentEvent::Reasoning { delta } => (TraceKind::Reasoning, snip(delta)),
-        AgentEvent::ToolStart { call } => (TraceKind::Tool, format!("{}()", call.name)),
+        AgentEvent::ToolStart { call, .. } => (TraceKind::Tool, format!("{}()", call.name)),
         AgentEvent::SpeculationDiscarded { name, reason, .. } => {
             (TraceKind::Tool, format!("discarded {name} ({reason})"))
         }

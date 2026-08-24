@@ -364,7 +364,7 @@ built-ins, MCP-server tools, and tools you registered yourself:
 }
 ```
 
-A key is one of three things, and the most specific one wins:
+A key is one of the following, and the most specific one wins:
 
 1. an exact **tool name** — `task_assign`, `delegate`, `mcp__github__create_issue`,
    your own `deploy_to_staging`;
@@ -430,7 +430,7 @@ never recorded as a file touch, and never fed to the Files tab or the verificati
 ladder, because the repository has already declared it uninteresting. Source edits in
 the same delta are attributed exactly as before.
 
-Two boundaries keep the filter honest. It consults only the repository rooted **at
+Two boundaries keep the filter narrow. It consults only the repository rooted **at
 the workspace itself** — a workspace that merely sits under someone else's repository
 (say, a scratch directory beneath a `$HOME` dotfiles repo whose `.gitignore` says
 `*`) inherits nothing, so an ancestor's rules can never blind the probe. Outside

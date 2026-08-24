@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! One visual vocabulary for a plan step's lifecycle, shared by every surface
-//! that draws steps — the rail ([`crate::views::plan_rail`]) and the `/plan`
-//! card ([`crate::views::plan_card`]). The rail and the card used to carry two
-//! hand-copied versions of the same style match, which is exactly how the two
-//! surfaces drift apart one tweak at a time. A third consumer, the plan-review
-//! dialog, was removed in #3861.
+//! One visual vocabulary for a plan step's lifecycle.
+//!
+//! It was shared by three surfaces once — the `/plan` card, an always-on PLAN
+//! rail, and a plan-review dialog — because a hand-copied style match is how
+//! two surfaces drift apart one tweak at a time. The dialog went in #3861 and
+//! the rail folded into the tab row's breadcrumb (SPEC 5, [`crate::v2::frame`]),
+//! so the card is the surface that draws steps and this is its vocabulary. It
+//! stays a module of its own because the mapping below is a product decision
+//! with four states and a clock in it, and it is testable without a buffer.
 //!
 //! The mapping is the product spec:
 //!
@@ -18,10 +21,11 @@
 //!   function of the deck clock (`model.now_ms`), like every other motion in
 //!   this crate — no timer state, and `no_anim` pins it to the bright frame.
 //!   It steps through palette tokens rather than interpolated RGB because
-//!   [`crate::theme::apply_theme`] is a value-keyed remap: only named tokens
-//!   follow the light theme, so an interpolated white would stay white on
-//!   paper and vanish. `TEXT_PRIMARY` is white on `stella-dark` and ink on
-//!   `stella-light` by construction, which is the whole contract.
+//!   [`crate::theme::apply_theme`] is a value-keyed remap: only the tokens in
+//!   [`stella_tui_theme::token`] follow the light theme, so an interpolated
+//!   white would stay white on paper and vanish. [`token::TEXT`] is white on
+//!   `stella-dark` and ink on `stella-light` by construction, which is the
+//!   whole contract.
 //! - **Complete** — a `✓` sitting on the green indicator cell, and the title
 //!   keeps the primary tone with a strike through it: done, but still legible
 //!   as what was done.
@@ -31,9 +35,9 @@
 //!   the mark reads as cut *out of* the red in both themes.
 
 use ratatui::style::{Modifier, Style};
+use stella_tui_theme::token;
 
 use crate::plan::PlanStepState;
-use crate::theme;
 
 /// One full pulse (bright → dim → bright), in deck-clock milliseconds.
 const PULSE_PERIOD_MS: u64 = 1_200;
@@ -41,12 +45,8 @@ const PULSE_PERIOD_MS: u64 = 1_200;
 /// The pulse's tone ladder: down through the text ramp and back up. All four
 /// slots are palette tokens so the light-theme remap and the 256/16-colour
 /// fallbacks apply to every frame of the animation.
-const PULSE_PHASES: [ratatui::style::Color; 4] = [
-    theme::TEXT_PRIMARY,
-    theme::TEXT_SECONDARY,
-    theme::TEXT_TERTIARY,
-    theme::TEXT_SECONDARY,
-];
+const PULSE_PHASES: [ratatui::style::Color; 4] =
+    [token::TEXT, token::SILVER, token::MUTED, token::SILVER];
 
 /// How one plan-step row is drawn: the status indicator, the step number, the
 /// title, and the trailing `(note)` / `(owner)` metadata.
@@ -81,7 +81,7 @@ fn pulse_tone(now_ms: u64) -> ratatui::style::Color {
 /// The visual for one step. `animate` is the deck's motion switch
 /// (`!ui.no_anim`); off, the working row holds the bright frame.
 pub(crate) fn step_visual(state: PlanStepState, now_ms: u64, animate: bool) -> StepVisual {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     match state {
         PlanStepState::Planned => StepVisual {
             glyph: "○",
@@ -95,7 +95,7 @@ pub(crate) fn step_visual(state: PlanStepState, now_ms: u64, animate: bool) -> S
             let tone = if animate {
                 pulse_tone(now_ms)
             } else {
-                theme::TEXT_PRIMARY
+                token::TEXT
             };
             let live = Style::new().fg(tone).add_modifier(Modifier::BOLD);
             StepVisual {
@@ -112,12 +112,12 @@ pub(crate) fn step_visual(state: PlanStepState, now_ms: u64, animate: bool) -> S
             // The checkmark ON the green indicator: ground-colour mark, green
             // cell — one terminal cell can hold one glyph, so the overlay is
             // fg-on-bg rather than two stacked marks.
-            ring: Style::new().fg(theme::GROUND).bg(theme::OK),
+            ring: Style::new().fg(token::BG).bg(token::GREEN),
             num: Style::new()
-                .fg(theme::TEXT_PRIMARY)
+                .fg(token::TEXT)
                 .add_modifier(Modifier::CROSSED_OUT),
             text: Style::new()
-                .fg(theme::TEXT_PRIMARY)
+                .fg(token::TEXT)
                 .add_modifier(Modifier::CROSSED_OUT),
             meta: dim,
             gap: Style::new(),
@@ -126,7 +126,7 @@ pub(crate) fn step_visual(state: PlanStepState, now_ms: u64, animate: bool) -> S
             // The whole row painted red, the ✗ cut out of the indicator in
             // the ground colour — a failed or cancelled step is the one row
             // allowed to shout.
-            let row = Style::new().fg(theme::GROUND).bg(theme::DANGER);
+            let row = Style::new().fg(token::BG).bg(token::RED);
             StepVisual {
                 glyph: "✗",
                 ring: row.add_modifier(Modifier::BOLD),
@@ -152,7 +152,7 @@ mod tests {
         let v = step_visual(PlanStepState::Planned, 0, true);
         assert_eq!(v.glyph, "○");
         for style in [v.ring, v.num, v.text] {
-            assert_eq!(style.fg, Some(theme::TEXT_TERTIARY));
+            assert_eq!(style.fg, Some(token::MUTED));
             assert_eq!(style.bg, None);
         }
     }
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn a_started_step_pulses_ring_number_and_title_together() {
         let bright = step_visual(PlanStepState::Started, 0, true);
-        assert_eq!(bright.text.fg, Some(theme::TEXT_PRIMARY));
+        assert_eq!(bright.text.fg, Some(token::TEXT));
         // Half a period later the tone has moved down the ramp.
         let dimmed = step_visual(PlanStepState::Started, PULSE_PERIOD_MS / 2, true);
         assert_ne!(bright.text.fg, dimmed.text.fg, "the pulse must move");
@@ -184,7 +184,7 @@ mod tests {
     fn no_anim_freezes_the_pulse_on_the_bright_frame() {
         for now_ms in [0, 300, 599, 1_100] {
             let v = step_visual(PlanStepState::Started, now_ms, false);
-            assert_eq!(v.text.fg, Some(theme::TEXT_PRIMARY), "at {now_ms}ms");
+            assert_eq!(v.text.fg, Some(token::TEXT), "at {now_ms}ms");
         }
     }
 
@@ -194,12 +194,8 @@ mod tests {
     fn a_complete_step_is_a_check_on_green_with_struck_primary_text() {
         let v = step_visual(PlanStepState::Complete, 0, true);
         assert_eq!(v.glyph, "✓");
-        assert_eq!(v.ring.bg, Some(theme::OK), "the indicator cell is green");
-        assert_eq!(
-            v.text.fg,
-            Some(theme::TEXT_PRIMARY),
-            "the text stays bright"
-        );
+        assert_eq!(v.ring.bg, Some(token::GREEN), "the indicator cell is green");
+        assert_eq!(v.text.fg, Some(token::TEXT), "the text stays bright");
         assert!(v.text.add_modifier.contains(Modifier::CROSSED_OUT));
         assert!(v.num.add_modifier.contains(Modifier::CROSSED_OUT));
     }
@@ -211,8 +207,8 @@ mod tests {
         let v = step_visual(PlanStepState::Error, 0, true);
         assert_eq!(v.glyph, "✗");
         for style in [v.ring, v.num, v.text, v.meta, v.gap] {
-            assert_eq!(style.bg, Some(theme::DANGER), "the row is red end to end");
-            assert_eq!(style.fg, Some(theme::GROUND));
+            assert_eq!(style.bg, Some(token::RED), "the row is red end to end");
+            assert_eq!(style.fg, Some(token::BG));
         }
     }
 }

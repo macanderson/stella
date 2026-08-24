@@ -299,7 +299,7 @@ impl<'a> Fold<'a> {
                 ));
             }
 
-            AgentEvent::ToolStart { call } => {
+            AgentEvent::ToolStart { call, .. } => {
                 let args = self.clean(&pretty(&call.input));
                 let name = self.clean(&call.name);
                 self.tool_names.insert(call.call_id.clone(), name.clone());
@@ -322,6 +322,7 @@ impl<'a> Fold<'a> {
                 output,
                 duration_ms,
                 speculated,
+                ..
             } => self.close_tool(call_id, output, *duration_ms, *speculated),
 
             AgentEvent::FileChange {

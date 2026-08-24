@@ -51,6 +51,7 @@ mod abandoned_state;
 mod additive_tables;
 mod agent_use_kind;
 mod call_identity;
+mod dispatched_executions;
 mod error_class;
 mod execution_plane;
 mod execution_role;
@@ -62,6 +63,7 @@ pub(crate) mod pragmas;
 mod receipts;
 mod schema_removal;
 mod sub_agent_calls;
+mod sub_agent_tool_calls;
 mod task_contract;
 mod token_unit;
 
@@ -101,7 +103,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 34] = [
+pub(crate) const MIGRATIONS: [Migration; 36] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -280,6 +282,21 @@ pub(crate) const MIGRATIONS: [Migration; 34] = [
     // every direct-endpoint call and every pre-v34 row. See the module's
     // own doc.
     migrate_v33_to_v34,
+    // v34 → v35: `tool_calls` grows `sub_agent_id` — which delegate ran this
+    // call, or the lead (#4624). Additive, column-guarded ADD COLUMN, nullable
+    // with no default and no backfill, for the same three reasons v32 → v33
+    // gives one table over: NULL is the lead's own call rather than a gap,
+    // and the concurrent fan-out that makes the bracket unusable for
+    // attribution is exactly what makes a backfill a guess. See the module's
+    // own doc.
+    sub_agent_tool_calls::migrate_v34_to_v35,
+    // v35 → v36: `executions` grows `parent_execution_id` — which turn
+    // dispatched this one (#4628). Additive, column-guarded ADD COLUMN,
+    // nullable with no default and no backfill: NULL is "nobody's turn asked
+    // for this", which covers every lead turn and every lane a person started
+    // from the composer, and nothing recorded the fact for the rest. See the
+    // module's own doc.
+    dispatched_executions::migrate_v35_to_v36,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -328,7 +345,9 @@ pub(crate) const MIGRATIONS: [Migration; 34] = [
     //   v31 → v32: CLAIMED above by `execution_reflection.partial_run` (#3808).
     //   v32 → v33: CLAIMED above by `telemetry.sub_agent_id` (#4383).
     //   v33 → v34: CLAIMED above by `step_receipt.upstream_provider` (#3054).
-    // Nothing is reserved now: take v34 → v35 and add your own line here.
+    //   v34 → v35: CLAIMED above by `tool_calls.sub_agent_id` (#4624).
+    //   v35 → v36: CLAIMED above by `executions.parent_execution_id` (#4628).
+    // Nothing is reserved now: take v36 → v37 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];
@@ -393,7 +412,7 @@ pub(crate) fn any_store_table_exists(conn: &Connection) -> Result<bool> {
     Ok(count > 0)
 }
 
-pub(super) fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+pub(crate) fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let count: i64 = conn.query_row(
         "SELECT count(*) FROM pragma_table_info(?) WHERE name = ?",
         params![table, column],

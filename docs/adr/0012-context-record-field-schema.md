@@ -129,8 +129,18 @@ the record looks like it never had a chance to matter.
 load failure.** The ratified list:
 
 ```text
-build  ci  deploy  docs  install  lint  migrate  refactor  release  review  run  test
+benchmark  build  ci  deploy  docs  install  investigate  lint  migrate
+refactor  release  review  run  test
 ```
+
+`benchmark` and `investigate` were added in #4263. Every record this repository
+mined from its own `CLAUDE.md` about bench evidence — "a bench conclusion comes
+from the trace", "two runs differing by more than one commit are confounded",
+"run the cheap control before any bisect" — had no ratified name to select on and
+dropped its selector, so a rule about reading traces was carried by keywords
+alone. `run` cannot stand in for `benchmark`: it matches every `stella run`, so
+scoping a bench-only rule that way injects it on ordinary agent work, which is
+worse than not selecting on task at all.
 
 An open vocabulary means `intall` produces a record that matches nothing and
 reports nothing, which on screen is indistinguishable from a record whose task

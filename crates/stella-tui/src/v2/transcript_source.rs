@@ -537,6 +537,7 @@ mod tests {
                     name: "edit_file".into(),
                     input: serde_json::json!({ "path": path }),
                 },
+                sub_agent_id: None,
             });
             model.apply(&AgentEvent::ToolResult {
                 call_id: (*call_id).into(),
@@ -546,6 +547,7 @@ mod tests {
                 },
                 duration_ms: 2,
                 speculated: false,
+                sub_agent_id: None,
             });
         }
         for (_, path, added, removed) in mutations {
@@ -613,12 +615,14 @@ mod tests {
                     name: "read_file".into(),
                     input: serde_json::json!({ "path": "crates/stella-core/src/lifecycle.rs" }),
                 },
+                sub_agent_id: None,
             });
             model.apply(&AgentEvent::ToolResult {
                 call_id: "c1".into(),
                 output: ToolOutput::ok_with_data("     1\tfn main() {}".to_string(), data),
                 duration_ms: 3,
                 speculated: false,
+                sub_agent_id: None,
             });
             head_at(&model, 0)
         };
@@ -652,6 +656,7 @@ mod tests {
                 name: "read_file".into(),
                 input: serde_json::json!({ "path": "src/x.rs" }),
             },
+            sub_agent_id: None,
         });
         let head = head_at(&model, 0);
         assert!(!head.contains("lines"), "{head}");
@@ -671,6 +676,7 @@ mod tests {
                 name: "edit_file".into(),
                 input: serde_json::json!({ "path": "src/x.rs" }),
             },
+            sub_agent_id: None,
         });
         let head = head_at(&model, 0);
         for zero in ["+0", "-0", "+", "-"] {
