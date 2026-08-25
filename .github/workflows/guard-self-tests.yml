@@ -67,6 +67,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 ./scripts/check-prose.py
 
+      - name: prose cites code by name, never by line number
+        if: ${{ !cancelled() }}
+        run: python3 ./scripts/check-line-citations.py
+
       - name: no two web semantic roles sit within 30° in OKLCH
         if: ${{ !cancelled() }}
         run: python3 ./scripts/check-hue-separation.py
@@ -121,6 +125,10 @@ jobs:
       - name: consumer-sites guard failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-consumer-sites.sh
+
+      - name: line-citation ratchet direction
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-line-citations.sh
 
       - name: contrast ratchet direction
         if: ${{ !cancelled() }}

@@ -59,6 +59,8 @@ use crate::storage::{self, FieldEntry, RelationEntry};
 use crate::symbol::SymbolKind;
 use crate::walk::walk_indexable;
 
+pub(crate) mod image_check;
+
 /// The on-disk schema version stamped in `PRAGMA user_version`. Bump it in
 /// the same commit as a **reshape** — an altered or backfilled column,
 /// anything the `IF NOT EXISTS` guard would silently skip on an existing
@@ -393,13 +395,19 @@ pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
                 ),
                 None => eprintln!("code-graph store was corrupt — rebuilding from scratch"),
             }
-            open_migrated(db_path)
+            let conn = open_migrated(db_path)?;
+            // The image behind this connection is one this process just made
+            // from nothing, so it is intact by construction and a later open
+            // has nothing to re-walk.
+            image_check::remember_intact(db_path);
+            Ok(conn)
         }
         Err(error) => Err(error),
     }
 }
 
-/// [`open_migrated`] plus a structural `PRAGMA quick_check` over the image.
+/// [`open_migrated`] plus a structural `PRAGMA quick_check` over the image —
+/// **once per unchanged image**, not once per open.
 ///
 /// Migration alone proved too weak a probe for damage. The 2026-08-08 field
 /// corruption — rowid-out-of-order data pages under an intact schema page —
@@ -407,12 +415,25 @@ pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
 /// catch-up scan, whose error the mount path discards; the graph sat dead
 /// for four days, sessions re-creating the WAL sidecars and writing nothing,
 /// with no notice and no rebuild. `quick_check` walks every page, which is
-/// exactly what makes its "ok" trustworthy; it stops at the first fault, and
-/// the writer's open pays it once, ahead of a tree walk that dwarfs it.
+/// exactly what makes its "ok" trustworthy, and it stops at the first fault.
+///
+/// It was originally priced as something "the writer's open pays once, ahead
+/// of a tree walk that dwarfs it". The read path does not open once —
+/// `search::engine::report_with` opens the graph on **every `search` call** —
+/// and the catch-up walk it was priced against costs 78-97 ms warm against a
+/// full page walk of a 180 MB image. One recorded session paid it sixty-one
+/// times (#4385). [`image_check`] carries the key the memo uses — the image's
+/// own `(length, mtime)`, so a store damaged between two opens is still
+/// caught — and what it gives up in exchange.
 fn open_verified(db_path: &Path) -> Result<Connection, GraphError> {
     let conn = open_migrated(db_path)?;
+    if image_check::already_walked(db_path) {
+        return Ok(conn);
+    }
+    image_check::count_walk();
     let verdict: String = conn.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
     if verdict == "ok" {
+        image_check::remember_intact(db_path);
         return Ok(conn);
     }
     drop(conn);
@@ -423,7 +444,8 @@ fn open_verified(db_path: &Path) -> Result<Connection, GraphError> {
 }
 
 /// The unmolested open-and-migrate [`open`] retries after a quarantine — a
-/// store this process just created from nothing has no pages to re-verify.
+/// store this process just created from nothing has no pages to re-verify,
+/// which is also why the retry path records it as intact.
 fn open_migrated(db_path: &Path) -> Result<Connection, GraphError> {
     let conn = open_read(db_path)?;
     conn.execute_batch(MIGRATION)?;

@@ -10,10 +10,8 @@
  * `make gate` checks on every PR touching the TUI, so what is on screen here
  * is the deck's own output rather than a redrawn mock of it.
  *
- * Deliberately not a repeat of the old animated command-deck (see
- * `command-deck.tsx`'s doc comment for why that one was cut): there is no
- * timer, nothing plays on a loop, and nothing moves without a click — so
- * there is no `prefers-reduced-motion` case to design around.
+ * There is no timer, nothing plays on a loop, and nothing moves without a
+ * click — so there is no `prefers-reduced-motion` case to design around.
  */
 
 import { useRef, useState } from "react";

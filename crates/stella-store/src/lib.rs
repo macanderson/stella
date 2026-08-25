@@ -25,9 +25,8 @@
 //!   status, CI verdict, and the session that produced them. Write-ahead
 //!   state: the deck's PR tracking writes rows
 //!   ([`Store::upsert_pull_request`]) and [`Store::list_pull_requests`] is
-//!   the read API reserved for a future PR panel — no shipped reader
-//!   consumes it yet (the same posture the pre-v17 graph seam held, minus
-//!   the writer that seam never got).
+//!   the read API reserved for a future PR panel. No shipped reader consumes
+//!   it yet; #4754 decides whether it gets one or goes.
 //! - **telemetry** — one row per committed model call (from `StepUsage`):
 //!   provider, model, tokens in/out, the engine's pre-call input estimate
 //!   (the drift sample [`Store::drift_samples`] serves back to calibrate

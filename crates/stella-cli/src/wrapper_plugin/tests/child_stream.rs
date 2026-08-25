@@ -185,13 +185,13 @@ fn asking_plugin(
 /// durable was written — `stella stats`, `stella usage report` and the
 /// Observatory each under-reported a real spend.
 ///
-/// Both points, deliberately. `before_turn` is answered by the publication
+/// Both points. `before_turn` is answered by the publication
 /// [`PluginChildStream::open`] makes; `after_turn` is answered only by
 /// [`RepublishingDriver`], because the round in between clears the slot on its
 /// way out. A version of this fix that opened the stream and never re-published
 /// it passes on the first element of that vector and fails on the second.
 ///
-/// No store, deliberately: what this proves is that the events reach a stream
+/// No store: what this proves is that the events reach a stream
 /// with a drain behind it. Which execution row that drain writes them to is
 /// [`super::super::child_stream`]'s decision, and a store here would test
 /// `Store::record_telemetry` rather than the wiring.
