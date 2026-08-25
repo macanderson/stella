@@ -35,9 +35,9 @@ stella-diff = { path = "../stella-diff" }
 # (`transcript_build`), for the same near-leaf reason: the model must not learn
 # about the protocol, so the adapter lives on this side of the edge.
 stella-transcript = { path = "../stella-transcript" }
-# The v2 palette, glyph vocabulary and wordmark (`src/v2/`). A leaf whose only
+# The palette, glyph vocabulary and wordmark (`src/views/`). A leaf whose only
 # dependency is `ratatui`, so it costs this crate nothing and costs every other
-# v2 consumer nothing either.
+# consumer nothing either.
 stella-tui-theme = { path = "../stella-tui-theme" }
 arboard.workspace = true
 png.workspace = true

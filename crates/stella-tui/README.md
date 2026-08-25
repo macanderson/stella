@@ -117,7 +117,7 @@ key handling goes in a `src/deck_ui/` submodule the way
 
 `src/views/engine.rs` left this list when the SETTINGS tab's AGENTS pane was
 ported to the SPEC 5 frame: the panel now lives under
-[`src/v2/engine_panel.rs`](src/v2/engine_panel.rs), split three ways — `tabs.rs`
+[`src/views/engine_panel.rs`](src/views/engine_panel.rs), split three ways — `tabs.rs`
 holds the strip's vocabulary, `keys.rs` the modal key map, `paint.rs` the
 drawing — and none of the three is near the limit.
 
@@ -132,7 +132,7 @@ crate and the advice above applies to it in spirit — but the guard no longer
 grandfathers it, and it must not go back over.
 
 The session tab left this list in #4127: its incremental transcript fold moved
-to [`src/v2/session/fold.rs`](src/v2/session/fold.rs), which took it under the
+to [`src/views/session/fold.rs`](src/views/session/fold.rs), which took it under the
 limit. That is the shape a split is meant to have — a self-contained concern
 leaving, not lines redistributed.
 
@@ -157,21 +157,21 @@ escape hatch for an irreducible line (a module declaration in an oversized
 | [`src/envelope.rs`](src/envelope.rs) | The multi-agent wire types: `Inbound` in, `WorkspaceInput` out, and every out-of-band snapshot the driver pushes. |
 | [`src/composer.rs`](src/composer.rs) | The input model: textarea semantics, `classify_enter`, paste chips, and the slash popup shared by both surfaces. |
 | [`src/views/*.rs`](src/views) | The deck tabs still drawn from here — `graph` and `settings` — each exposing `render(model, ui, area, buf)`; `cards.rs` is the crate-private chrome the floating cards share. Every SETTINGS pane has moved to [`src/v2`](src/v2): AGENTS is `engine_panel`, TOOLS is `tools`, SEATS is `seats`. |
-| [`src/v2/engine_panel.rs`](src/v2/engine_panel.rs) | The SETTINGS tab's AGENTS pane — the `agent_engine_config` editor, modal while focused. `tabs.rs` is the strip's vocabulary, `keys.rs` the key map and the writes it makes into the working copy, `paint.rs` the five bands it draws. |
-| [`src/v2/session.rs`](src/v2/session.rs) | The SESSION tab, on the SPEC 5 frame: the gate bands, the incremental fold ([`src/v2/session/fold.rs`](src/v2/session/fold.rs)) and the scroll window over it. Draws no chrome — the transcript takes the whole content area. |
+| [`src/views/engine_panel.rs`](src/views/engine_panel.rs) | The SETTINGS tab's AGENTS pane — the `agent_engine_config` editor, modal while focused. `tabs.rs` is the strip's vocabulary, `keys.rs` the key map and the writes it makes into the working copy, `paint.rs` the five bands it draws. |
+| [`src/views/session.rs`](src/views/session.rs) | The SESSION tab, on the SPEC 5 frame: the gate bands, the incremental fold ([`src/views/session/fold.rs`](src/views/session/fold.rs)) and the scroll window over it. Draws no chrome — the transcript takes the whole content area. |
 | [`src/diff.rs`](src/diff.rs), [`src/syntax.rs`](src/syntax.rs), [`src/markdown.rs`](src/markdown.rs), [`src/textline.rs`](src/textline.rs) | Shared text presentation — one implementation each of "how a diff looks", source coloring, markdown, and the event→wording table (also consumed by `stella-cli`'s plain renderer). |
 | [`src/theme.rs`](src/theme.rs), [`src/palette.rs`](src/palette.rs) | Every color and glyph. `palette.rs` mirrors the brand kit at `docs/brand/`; `theme.rs` is the only module allowed to reference it. |
-| [`src/v2/status_bar.rs`](src/v2/status_bar.rs) | SPEC 5's one-row status bar — `worker · stage · ctx [meter] % · $spend · saved $x · ✉ n`, with `? help` pinned right. `cells` is the one decision function (pure over `Status`, so the golden frames are fixture data); `render_band` draws it plus the cache-diagnosis row beneath. Replaced the two-row v1 statline in #4123/#4129; `src/statline.rs` is deleted (#4128) and this module's doc keeps the record of why the two-row shape lost. |
-| [`src/v2/status_source.rs`](src/v2/status_source.rs) | `WorkspaceModel` → the v2 status bar's input struct. The **one** projection of SPEC 5's six values, since #4187 deleted the second one — which was the one that drew, and which printed the wire string `context_recall` where SPEC 5 says `context recall`. |
+| [`src/views/status_bar.rs`](src/views/status_bar.rs) | SPEC 5's one-row status bar — `worker · stage · ctx [meter] % · $spend · saved $x · ✉ n`, with `? help` pinned right. `cells` is the one decision function (pure over `Status`, so the golden frames are fixture data); `render_band` draws it plus the cache-diagnosis row beneath. The two-row statline it replaced (`src/statline.rs`) is deleted (#4123/#4128/#4129). |
+| [`src/views/status_source.rs`](src/views/status_source.rs) | `WorkspaceModel` → the status bar's input struct. The **one** projection of SPEC 5's six values, since #4187 deleted the second one — which was the one that drew, and which printed the wire string `context_recall` where SPEC 5 says `context recall`. |
 | [`src/progress.rs`](src/progress.rs), [`src/cache_panel.rs`](src/cache_panel.rs), [`src/splash.rs`](src/splash.rs) | Chrome widgets: the unified stage stepper + progress row, the cache formatters behind the status bar's `saved` cell / context overlay, and the launch mark held over session init. |
-| [`src/v2/plan_card.rs`](src/v2/plan_card.rs) · [`src/v2/models_card.rs`](src/v2/models_card.rs) · [`src/v2/budget_card.rs`](src/v2/budget_card.rs) | The three floating cards, over the shared chrome in [`src/views/cards.rs`](src/views/cards.rs); their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). `plan_card/step_style.rs` is the plan step's state→colour mapping — the card is the one surface that draws steps, now that SPEC 5 folded the always-on PLAN rail into the tab row's breadcrumb. |
-| [`src/v2/subagents.rs`](src/v2/subagents.rs) | The SUB-AGENTS overlay (`↓` from an empty prompt, `ctrl-a`, `/subagents`): every dispatched lane and every `delegate` child with its vitals (quiet time first), purpose and place, and the controls — `→`/`⏎` open, `n` nudge, `f` flag to the dispatcher, `ctrl-x ctrl-x` kill, `p` pause/resume, `r` restart, `l` back to the lead. `lifecycle.rs` is the place sentence the pulse row shares; `rows.rs` is the row model and the two messages. The one place the sub-agents are drawn; the SESSION tab stacks nothing above the transcript for them. |
-| [`src/v2/skills.rs`](src/v2/skills.rs) | The SKILLS tab (SPEC 9.2): one search box over the installed list and the npx registry, stacked so a read-aloud row carries one source. `skills/overlays.rs` holds the dialogs it floats — scope picker, the LLM-assisted create flow, the pin picker, the `SKILL.md` editor, and the `ctrl+o` markdown preview. |
-| [`src/v2/files_tab.rs`](src/v2/files_tab.rs) | The FILES tab: one row per (agent, path) the session touched, totals on a head strip, and `⏎` for the selected record's diff under the shared `src/diff.rs` chrome. The op badge takes SPEC 6.2's rail metals with the shared CRUD letter beside them, and the selection carries `▸` as well as a highlight. |
-| [`src/v2/traces.rs`](src/v2/traces.rs) | The TRACES tab: one header row — whose events, how many, where the viewport sits, and the `f` key that cycles the per-agent filter — over a line-exact timeline of every agent's events. |
-| [`src/v2/pulse.rs`](src/v2/pulse.rs) | The pulse row: the live agent's status, quiet time, place and last words, drawn in the air row above the composer on every tab but SESSION (and at an opened lane, where it is the lead). |
-| [`src/v2/seats.rs`](src/v2/seats.rs) | The SETTINGS tab's SEATS pane: one row per role an installed plugin declared — the seat key whole, the model on it or `default`, and the plugin it came from. Pure over the driver's `Vec<SeatRow>`, so it holds no list of roles and no `match` on a role name; read-only until `seat_models` gets its editor (`doc:roleless-core` slice 5b). |
-| [`src/v2/installed.rs`](src/v2/installed.rs) | The AGENTS tab: the agents installed at the user and project scopes, plus the definition editor, the create-from-prompt flow and the version picker. Every mode wears the same header · body · key-row bands, and none of them draws a box — the content area is already carved out by `src/v2/frame.rs`. |
+| [`src/views/plan_card.rs`](src/views/plan_card.rs) · [`src/views/models_card.rs`](src/views/models_card.rs) · [`src/views/budget_card.rs`](src/views/budget_card.rs) | The three floating cards, over the shared chrome in [`src/views/cards.rs`](src/views/cards.rs); their modal key handlers live in [`src/deck_ui/cards.rs`](src/deck_ui/cards.rs). `plan_card/step_style.rs` is the plan step's state→colour mapping — the card is the one surface that draws steps, now that SPEC 5 folded the always-on PLAN rail into the tab row's breadcrumb. |
+| [`src/views/subagents.rs`](src/views/subagents.rs) | The SUB-AGENTS overlay (`↓` from an empty prompt, `ctrl-a`, `/subagents`): every dispatched lane and every `delegate` child with its vitals (quiet time first), purpose and place, and the controls — `→`/`⏎` open, `n` nudge, `f` flag to the dispatcher, `ctrl-x ctrl-x` kill, `p` pause/resume, `r` restart, `l` back to the lead. `lifecycle.rs` is the place sentence the pulse row shares; `rows.rs` is the row model and the two messages. The one place the sub-agents are drawn; the SESSION tab stacks nothing above the transcript for them. |
+| [`src/views/skills.rs`](src/views/skills.rs) | The SKILLS tab (SPEC 9.2): one search box over the installed list and the npx registry, stacked so a read-aloud row carries one source. `skills/overlays.rs` holds the dialogs it floats — scope picker, the LLM-assisted create flow, the pin picker, the `SKILL.md` editor, and the `ctrl+o` markdown preview. |
+| [`src/views/files_tab.rs`](src/views/files_tab.rs) | The FILES tab: one row per (agent, path) the session touched, totals on a head strip, and `⏎` for the selected record's diff under the shared `src/diff.rs` chrome. The op badge takes SPEC 6.2's rail metals with the shared CRUD letter beside them, and the selection carries `▸` as well as a highlight. |
+| [`src/views/traces.rs`](src/views/traces.rs) | The TRACES tab: one header row — whose events, how many, where the viewport sits, and the `f` key that cycles the per-agent filter — over a line-exact timeline of every agent's events. |
+| [`src/views/pulse.rs`](src/views/pulse.rs) | The pulse row: the live agent's status, quiet time, place and last words, drawn in the air row above the composer on every tab but SESSION (and at an opened lane, where it is the lead). |
+| [`src/views/seats.rs`](src/views/seats.rs) | The SETTINGS tab's SEATS pane: one row per role an installed plugin declared — the seat key whole, the model on it or `default`, and the plugin it came from. Pure over the driver's `Vec<SeatRow>`, so it holds no list of roles and no `match` on a role name; read-only until `seat_models` gets its editor (`doc:roleless-core` slice 5b). |
+| [`src/views/installed.rs`](src/views/installed.rs) | The AGENTS tab: the agents installed at the user and project scopes, plus the definition editor, the create-from-prompt flow and the version picker. Every mode wears the same header · body · key-row bands, and none of them draws a box — the content area is already carved out by `src/views/frame.rs`. |
 | [`src/keymap.rs`](src/keymap.rs) | The one keymap table. The `?` sheet and the hint row render it; a row is a claim the witness tests under `src/deck_ui/tests/` establish. |
 | [`src/scroll.rs`](src/scroll.rs), [`src/input.rs`](src/input.rs), [`src/graph.rs`](src/graph.rs), [`src/resource.rs`](src/resource.rs), [`src/attach.rs`](src/attach.rs), [`src/clipboard.rs`](src/clipboard.rs) | Small leaf modules: line-exact viewport math, the outbound message enum, the graph snapshot types, CPU/MEM sampling, pasted-path detection, `⌃V` clipboard capture. |
 | [`src/fleet_dashboard.rs`](src/fleet_dashboard.rs) | A separate full-screen surface for `stella fleet` — its own fold (`FleetMsg`), its own `run`, monotonic `Instant` clocks only. |
@@ -231,7 +231,7 @@ dispatched each lane; the SESSION breadcrumb prints the path
 (`lead ▸ sub:2`), `⌫` walks back up it, and the SUB-AGENTS overlay's `f`
 flags a lane to whoever dispatched it. Off the SESSION tab the one row of
 air above the composer is the **pulse row**
-([`src/v2/pulse.rs`](src/v2/pulse.rs)): the live agent's status, quiet time,
+([`src/views/pulse.rs`](src/views/pulse.rs)): the live agent's status, quiet time,
 place and last words, so no tab is blind to the turn.
 
 **Slash commands are an input, not a hard-coded set.** The vocabulary arrives
@@ -242,7 +242,7 @@ it; `SlashKind` only distinguishes built-in from user-authored rows by glyph.
 `/files`, `/diff`, `/graph`, `/agents`, `/skills`, `/mcp`, `/mcp-search`,
 `/settings`, `/sessions`, `/context`, `/inspect`, `/inbox`, the floating
 cards `/plan`, `/info`, `/budget`, and the session-override pickers
-`/model`, `/agent` ([`src/v2/picker.rs`](src/v2/picker.rs)) — because
+`/model`, `/agent` ([`src/views/picker.rs`](src/views/picker.rs)) — because
 they change view state the driver has no say over. (`/budget` renders locally
 but its *edit* leaves as `WorkspaceInput::SetBudget`; the deck shows only the
 cap the budget stream folds back.) Everything else, `/help` included, is

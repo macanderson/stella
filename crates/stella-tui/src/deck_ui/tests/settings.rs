@@ -3,7 +3,7 @@
 //!
 //! The tab's other rows are witnessed where their vocabulary lives:
 //! `views::settings` for the browse-level `← →`, `e` and `t`, and
-//! `v2::engine_panel::keys` for the editor's `tab`, `⏎`, `space`, `x`,
+//! `views::engine_panel::keys` for the editor's `tab`, `⏎`, `space`, `x`,
 //! `s / S` and `esc`. The one row neither covers is witnessed here.
 
 use super::*;

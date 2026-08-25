@@ -1,0 +1,8 @@
+---
+source: crates/stella-tui/tests/status_bar_goldens.rs
+expression: "frame(StatusBar(Status\n{ ctx_used: 0.0, spend_usd: 0.0, saved_usd: 0.0, inbox: 0, ..demo() }), 100,\n1)"
+---
+kimi-k3 · execute · ctx ░░░░░░░░░░░░ 0% · $0.00 · saved $0.00 · ✉ 0                           ? help
+────────────────────────────────────────────────────────────────────────────────────────────────────
+metal map: G gold · B gold_bright · s silver · w text · m muted · d dim · b border · R red · n green
+wwwwwwwdddwwwwwwwdddmmmmbbbbbbbbbbbbwwwdddGGGGGdddmmmmmmGGGGGdddssw---------------------------dddddd

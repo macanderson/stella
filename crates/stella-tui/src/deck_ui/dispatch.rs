@@ -102,7 +102,7 @@ pub fn about_lane(lane: &crate::deck::AgentEntry, text: &str) -> String {
     format!(
         "[about {} — {} · {}] {}",
         lane.meta.id,
-        crate::v2::subagents::purpose(&lane.meta),
+        crate::views::subagents::purpose(&lane.meta),
         lane.status.label(),
         text.trim()
     )
