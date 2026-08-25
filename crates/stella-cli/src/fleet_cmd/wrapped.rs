@@ -122,13 +122,13 @@ mod tests;
 /// they already share.
 ///
 /// **Events only, and that is the difference from every other door.** This
-/// publishes the registry's own event slot and deliberately not the per-call
+/// publishes the registry's own event slot and not the per-call
 /// work-tree measurement beside it (`turn_files::open_turn_streams`), because a
 /// fleet worker rebinds `cfg.workspace_root` to its own worktree while the
 /// shared `SessionDurability` journal stays rooted at the lead's — a measurer
 /// attached here would snapshot the wrong tree, which is exactly why
 /// `turn_files`' `ENGINE_DRIVERS` records this door as `Blocked` on #3233 and
-/// why `STREAM_OWNERS` deliberately omits it. Publishing the measurer here
+/// why `STREAM_OWNERS` omits it. Publishing the measurer here
 /// would silently un-block #3233 rather than close #4730, so it stays withheld
 /// and this type is what says so out loud.
 pub(super) struct AttemptPointStream {
