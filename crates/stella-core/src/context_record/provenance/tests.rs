@@ -10,9 +10,9 @@
 use stella_protocol::provenance::{ImpactClass, ProvenanceGrade, PublicationAuthority, authorises};
 
 use super::*;
+use crate::context_record::Confidence;
 use crate::context_record::kind::{RecordProposalKind, RecordProposalStatus};
 use crate::context_record::lifecycle::{ProposalRecord, ProposalScore};
-use crate::context_record::Confidence;
 
 fn observation(source: ObservationSource, task: &str, text: &str) -> ObservationRecord {
     ObservationRecord::new(
@@ -77,7 +77,11 @@ fn every_observation_source_grades_deliberately() {
 fn a_proposal_carries_the_grade_of_the_observations_behind_it() {
     let observations = [
         observation(ObservationSource::ToolOutcome, "task-a", "the build failed"),
-        observation(ObservationSource::ToolOutcome, "task-b", "the build failed again"),
+        observation(
+            ObservationSource::ToolOutcome,
+            "task-b",
+            "the build failed again",
+        ),
     ];
     let pool = EvidencePool::from_observations(&observations).expect("a non-empty pool");
 
@@ -104,8 +108,16 @@ fn a_proposal_carries_the_grade_of_the_observations_behind_it() {
 fn three_agreeing_reflections_across_three_tasks_still_cannot_publish_a_tool() {
     let observations = [
         observation(ObservationSource::ReflectionLesson, "task-a", "prefer rg"),
-        observation(ObservationSource::ReflectionLesson, "task-b", "prefer rg here too"),
-        observation(ObservationSource::ReflectionLesson, "task-c", "prefer rg again"),
+        observation(
+            ObservationSource::ReflectionLesson,
+            "task-b",
+            "prefer rg here too",
+        ),
+        observation(
+            ObservationSource::ReflectionLesson,
+            "task-c",
+            "prefer rg again",
+        ),
     ];
     let pool = EvidencePool::from_observations(&observations).expect("a non-empty pool");
     let proposal = proposal(Some(pool));
@@ -123,7 +135,11 @@ fn three_agreeing_reflections_across_three_tasks_still_cannot_publish_a_tool() {
         ImpactClass::ExecutableTool,
     )
     .expect_err("an eligible proposal graded on critique alone still cannot publish a tool");
-    assert!(refusal.reason().contains("deterministic_proof"), "{}", refusal.reason());
+    assert!(
+        refusal.reason().contains("deterministic_proof"),
+        "{}",
+        refusal.reason()
+    );
 }
 
 /// One weak observation weakens a pool that is otherwise measured — the fold
@@ -194,7 +210,11 @@ fn a_pre_provenance_proposal_still_verifies_its_stored_hash() {
 /// crate writes — so the observatory and the CLI read one spelling.
 #[test]
 fn a_graded_proposal_serializes_its_grade_under_the_protocol_tag() {
-    let observations = [observation(ObservationSource::ToolOutcome, "task-a", "exit 0")];
+    let observations = [observation(
+        ObservationSource::ToolOutcome,
+        "task-a",
+        "exit 0",
+    )];
     let pool = EvidencePool::from_observations(&observations).expect("a non-empty pool");
     let proposal = proposal(Some(pool));
 

@@ -3165,6 +3165,7 @@ dependencies = [
 name = "stella-parity"
 version = "0.9.215"
 dependencies = [
+ "stella-protocol",
  "stella-serve",
 ]
 

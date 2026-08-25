@@ -91,11 +91,11 @@ pub use lifecycle::{
     PromotionEventError, PromotionEventRecord, ProposalRecord, ProposalScore,
     confidence_from_score,
 };
-pub use provenance::{EvidencePool, observation_grade};
 pub use outcome::{
     CompletionAssessment, CompletionStatus, CorrectnessAssessment, CorrectnessStatus,
     OutcomeAssessment, OutcomeAssessmentLevel, OutcomeReason,
 };
+pub use provenance::{EvidencePool, observation_grade};
 pub use representation::{
     ContentFidelity, FrameContentSpec, InlineContentRequirement, MinimumContentFidelity,
     Representation, validate_directive_minimum_fidelity,

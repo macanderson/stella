@@ -62,10 +62,7 @@ fn agreeing_model_critiques_never_authorise_a_blocking_guard() {
     )
     .expect_err("a blocking guard published on model critique alone must be refused");
 
-    assert!(matches!(
-        refusal,
-        PromotionRefusal::EvidenceTooWeak { .. }
-    ));
+    assert!(matches!(refusal, PromotionRefusal::EvidenceTooWeak { .. }));
 }
 
 /// Rule 1, stated over every grade rather than only the dangerous one: no
@@ -106,8 +103,12 @@ fn one_strong_source_does_not_lift_the_weak_ones_beside_it() {
 fn an_empty_pool_is_none_rather_than_the_weakest_grade() {
     assert_eq!(ProvenanceGrade::weakest(std::iter::empty()), None);
 
-    let refusal = authorises(None, PublicationAuthority::OrgPolicy, ImpactClass::PromptHint)
-        .expect_err("promoting with no evidence at all must be refused");
+    let refusal = authorises(
+        None,
+        PublicationAuthority::OrgPolicy,
+        ImpactClass::PromptHint,
+    )
+    .expect_err("promoting with no evidence at all must be refused");
     assert_eq!(
         refusal,
         PromotionRefusal::NoEvidence {
@@ -122,10 +123,15 @@ fn an_empty_pool_is_none_rather_than_the_weakest_grade() {
 #[test]
 fn the_grade_order_is_strictly_ascending() {
     assert!(
-        ProvenanceGrade::ALL.windows(2).all(|pair| pair[0] < pair[1]),
+        ProvenanceGrade::ALL
+            .windows(2)
+            .all(|pair| pair[0] < pair[1]),
         "ProvenanceGrade::ALL must be strictly weakest-first"
     );
-    assert_eq!(ProvenanceGrade::ALL.first(), Some(&ProvenanceGrade::ModelCritique));
+    assert_eq!(
+        ProvenanceGrade::ALL.first(),
+        Some(&ProvenanceGrade::ModelCritique)
+    );
     assert_eq!(
         ProvenanceGrade::ALL.last(),
         Some(&ProvenanceGrade::DeterministicProof)

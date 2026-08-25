@@ -36,11 +36,11 @@ use serde::{Deserialize, Serialize};
 use stella_protocol::provenance::ProvenanceGrade;
 
 use super::hash::{RecordHashError, record_hash};
-use super::provenance::EvidencePool;
 use super::kind::{
     ContextRecordKind, DirectiveEnforcement, Origin, PromotionAction, RecordProposalKind,
     RecordProposalStatus,
 };
+use super::provenance::EvidencePool;
 use super::{Confidence, RecordValidationError};
 
 /// The record schema version these bodies are written against. Stored on every

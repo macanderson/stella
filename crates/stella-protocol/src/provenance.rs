@@ -132,9 +132,15 @@ impl ProvenanceGrade {
         match self {
             Self::ModelCritique => "a model's judgement about a run",
             Self::HumanReview => "a person read it and signed off",
-            Self::TrajectoryAbstraction => "a pattern mined across runs, statistical rather than proven",
-            Self::EnvironmentObservation => "a command exit status, a build result, or a measured number",
-            Self::DeterministicProof => "a witness test that went fail to pass, or a guard that fails the gate",
+            Self::TrajectoryAbstraction => {
+                "a pattern mined across runs, statistical rather than proven"
+            }
+            Self::EnvironmentObservation => {
+                "a command exit status, a build result, or a measured number"
+            }
+            Self::DeterministicProof => {
+                "a witness test that went fail to pass, or a guard that fails the gate"
+            }
         }
     }
 
