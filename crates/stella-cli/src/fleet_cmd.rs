@@ -77,6 +77,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::config::Config;
 use crate::runtime::{SystemClock, TokioSleeper, WallClock};
+// The trait is in scope for `AttemptPointStream::publish` below — a fleet
+// attempt publishes its own channel across the dispatch's points (#4730).
+use crate::wrapper_plugin::PointStream;
 use crate::{agent, plain, rules};
 
 /// Cap on the per-task summary line so the report table stays a table.
@@ -1216,13 +1219,34 @@ async fn run_task(
                 Some(wrapper) => {
                     let input = wrapper.round_input(&task.prompt, budget_limit.is_some());
                     let mut driver = wrapper.driver(&engine, &mut messages, &mut budget, &tx);
+                    // The stream a plugin's own model calls meter into (#4730).
+                    // Published before the dispatch, because `before_turn` runs
+                    // before any turn exists and `SessionSubAgents::dispatch`
+                    // reads the registry's slot at dispatch time — this lane
+                    // attached nothing to that slot at all, so every `StepUsage`
+                    // a child emitted went to a sink and this attempt's real
+                    // spend reached no durable record.
+                    let points = wrapped::AttemptPointStream::new(&tx);
+                    points.publish(&registry, &cfg);
                     // The dispatch's own report is carried out of the race
                     // rather than settled inside it: `settle` consumes the
                     // driver for its last round's outcome, and the racing
                     // future still borrows it until the `select!` scope ends.
-                    let dispatched = tokio::select! {
-                        report = wrapper.dispatch(input, &mut driver) => Some(report),
-                        _ = stop_wait => None,
+                    let dispatched = {
+                        // Wrapped so the attempt's stream goes back after every
+                        // round: a round's own turn is what clears the slot, so
+                        // without this only the first `before_turn` would find a
+                        // stream.
+                        let mut points_driver = crate::wrapper_plugin::RepublishingDriver::new(
+                            &mut driver,
+                            &*registry,
+                            &cfg,
+                            &points,
+                        );
+                        tokio::select! {
+                            report = wrapper.dispatch(input, &mut points_driver) => Some(report),
+                            _ = stop_wait => None,
+                        }
                     };
                     let raced = match dispatched {
                         Some(report) => Raced::Outcome(wrapper.settle(
@@ -1237,6 +1261,21 @@ async fn run_task(
                     // left to fold it in (#3882) — see
                     // `wrapper_plugin::settle_plugin_child_spend`.
                     crate::wrapper_plugin::settle_plugin_child_spend(&*registry, &mut budget);
+                    // And the stream comes down with the dispatch that opened
+                    // it. Not optional and not deferrable to the `drop(tx)`
+                    // below: that drops this lane's own sender while the
+                    // registry still holds the clone published above, so the
+                    // renderer awaited a few lines further on would wait on a
+                    // channel that never closes and hang a finished attempt
+                    // (#960).
+                    points.detach(&registry);
+                    // And the binding itself, which holds a sender over this
+                    // lane's channel. It would fall out of scope here anyway;
+                    // said out loud because the `drop(tx)` and `renderer.await`
+                    // this protects are two hundred lines below, where nothing
+                    // would connect a hung attempt back to a stream opened up
+                    // here (#960).
+                    drop(points);
                     raced
                 }
                 // A fleet worker owns its run (#3379) — no pipeline above it,

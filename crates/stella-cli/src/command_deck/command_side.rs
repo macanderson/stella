@@ -16,6 +16,9 @@
 //! and between turns there is no `Running` flicker to undo.
 
 use super::*;
+// `/models` parsing moved next to the rest of the slash vocabulary in #4775;
+// this module is the queue-free half of the same vocabulary and still asks it.
+use super::slash_commands::{ModelsCommand, parse_models_command};
 
 /// Try `trimmed` as a queue-free command. `true` = recognized and handled
 /// (possibly by spawning a task that reports later); `false` = not one —

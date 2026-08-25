@@ -597,7 +597,9 @@ mod tests {
             // The raw engine turn: `stella run`, the plain REPL.
             ("agent.rs", "run_turn", &closing),
             // The interactive deck's lead turn — the driver that had the hole.
-            ("command_deck.rs", "run_lead_turn", &closing),
+            // In `command_deck/lead_turn.rs` since #4775 split the deck's
+            // driver loop into sibling modules.
+            ("command_deck/lead_turn.rs", "run_lead_turn", &closing),
             // The three drivers of #4159, which own several turns over one
             // stream and therefore pay the two debts at different points: the
             // measurement at each turn boundary inside their loop, and the
@@ -714,15 +716,17 @@ mod tests {
     /// `subsession.rs` and `fleet_cmd.rs` run on a `Config::clone` sharing one
     /// `SessionDurability` cell, so a per-call measurement there would read a
     /// journal another lane is also snapshotting. They join this list once
-    /// #3233 gives a lane its own durability, and `subsession.rs:882` is the
-    /// live `attach_events` call the widened `raw` check below would fail on
-    /// today.
+    /// #3233 gives a lane its own durability. Two live `attach_events` calls
+    /// are what the widened `raw` check below would fail on today:
+    /// `subsession.rs`, and `fleet_cmd/wrapped.rs`'s `AttemptPointStream`,
+    /// which publishes an attempt's channel across a wrapper's points (#4730)
+    /// with the measurer withheld for exactly the reason above.
     const STREAM_OWNERS: &[(&str, &str)] = &[
         // The raw engine turn, which reaches the seam through
         // `persistence::attach_run_streams`.
         ("agent/persistence.rs", "attach_run_streams"),
-        // The interactive deck's lead turn.
-        ("command_deck.rs", "run_lead_turn"),
+        // The interactive deck's lead turn (moved to its own module by #4775).
+        ("command_deck/lead_turn.rs", "run_lead_turn"),
         // `stella goal`'s raw arm — the loop over `Engine::run_goal`.
         ("agent/goal.rs", "run_goal_turn"),
         // `stella goal --pipeline <variant>`: one observed sender per round,
@@ -805,7 +809,7 @@ mod tests {
         // through `persistence::attach_run_streams`, which is why
         // `STREAM_OWNERS` names that file and this one names the driver's own.
         ("agent.rs", DriverPosture::Owns),
-        ("command_deck.rs", DriverPosture::Owns),
+        ("command_deck/lead_turn.rs", DriverPosture::Owns),
         ("agent/goal.rs", DriverPosture::Owns),
         ("agent/goal/goal_wrapped.rs", DriverPosture::Owns),
         ("agent/resume.rs", DriverPosture::Owns),
