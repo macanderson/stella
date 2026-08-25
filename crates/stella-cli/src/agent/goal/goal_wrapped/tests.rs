@@ -29,7 +29,7 @@ use crate::wrapper_plugin::child_turn_fixture::{asking_plugin, step_usage_count}
 /// rounds, so after a round the slot holds *that round's* sender rather than
 /// nothing.
 ///
-/// **The stand-in deliberately does not forward to the run's channel**, and
+/// **The stand-in does not forward to the run's channel**, and
 /// that is the instrument the assertion turns on. The real per-turn sender is a
 /// `TurnFacts` tap over a clone of the run's channel, so a child that metered
 /// into it would still reach the drain and be indistinguishable from one that
