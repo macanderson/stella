@@ -1135,7 +1135,7 @@ async fn run_task(
                         // stream.
                         let mut points_driver = crate::wrapper_plugin::RepublishingDriver::new(
                             &mut driver,
-                            &*registry,
+                            &registry,
                             &cfg,
                             &points,
                         );
