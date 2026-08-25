@@ -176,6 +176,7 @@ mod tests {
             error_class: None,
             bytes_out: 0,
             duration_ms: 1,
+            sub_agent_id: None,
         }
     }
 

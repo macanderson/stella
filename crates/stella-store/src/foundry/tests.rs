@@ -42,6 +42,7 @@ fn call(store: &Store, name: &str, ok: bool) {
                 error: String::new(),
                 bytes_out: 0,
                 duration_ms: 1,
+                sub_agent_id: None,
             }],
         )
         .expect("record");
@@ -235,6 +236,7 @@ fn an_in_flight_call_is_not_yet_a_use() {
                 error: String::new(),
                 bytes_out: 0,
                 duration_ms: 0,
+                sub_agent_id: None,
             }],
         )
         .expect("record");

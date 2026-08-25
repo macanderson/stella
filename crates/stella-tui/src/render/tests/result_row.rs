@@ -32,6 +32,7 @@ fn start(name: &str, path: Option<&str>) -> TranscriptEntry {
         input: path.unwrap_or("x").into(),
         raw: "{\"path\":\"src/lib.rs\"}".into(),
         path: path.map(str::to_owned),
+        sub_agent_id: None,
     }
 }
 
@@ -47,6 +48,7 @@ fn result(name: &str, ok: bool, path: Option<&str>, body: &str) -> TranscriptEnt
         speculated: false,
         diff: Vec::new(),
         read_size: None,
+        sub_agent_id: None,
     }
 }
 
@@ -179,6 +181,7 @@ fn a_reads_line_count_is_stated_once_in_its_block() {
                 shown: 200,
                 total: 500,
             }),
+            sub_agent_id: None,
         },
     ];
     let files: Vec<FileState> = Vec::new();
@@ -303,6 +306,7 @@ fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {
             seq: 1,
         }],
         read_size: None,
+        sub_agent_id: None,
     };
     let mut out = Vec::new();
     entry_lines(
@@ -459,6 +463,7 @@ fn a_measured_change_with_no_patch_states_its_size_and_invents_no_diff() {
             seq: 1,
         }],
         read_size: None,
+        sub_agent_id: None,
     };
     let mut out = Vec::new();
     entry_lines(

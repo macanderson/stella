@@ -114,6 +114,10 @@ pub enum TranscriptEntry {
         /// mutating tool's `ToolResult` can be correlated back to the file it
         /// touched without re-parsing the elided input summary.
         path: Option<String>,
+        /// Which sub-agent made this call — `AgentEvent::ToolStart`'s field of
+        /// the same name, carried straight through. `None` is the lead's own
+        /// call, which is the ordinary case (#4699).
+        sub_agent_id: Option<String>,
     },
     /// A tool invocation finished — `ok` is `false` for a typed tool error.
     ToolResult {
@@ -171,6 +175,11 @@ pub enum TranscriptEntry {
         /// reports no coverage, which is every result written before the
         /// payload existed.
         read_size: Option<ReadSize>,
+        /// Resolved the same way as `name` and `path`: from the matching
+        /// `ToolStart` when one is on the transcript, else this result's own
+        /// `AgentEvent::ToolResult.sub_agent_id` — the fallback a consumer
+        /// that never saw the start still needs (#4699).
+        sub_agent_id: Option<String>,
     },
     /// A model call was retried (surfaced only once the step commits — the
     /// engine defers these, L-E10).

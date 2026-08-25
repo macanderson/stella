@@ -434,7 +434,7 @@ impl SessionModel {
             }
             AgentEvent::TextDelta { delta } => self.push_streaming_delta(delta),
             AgentEvent::Reasoning { delta } => self.push_reasoning(delta),
-            AgentEvent::ToolStart { call, .. } => {
+            AgentEvent::ToolStart { call, sub_agent_id } => {
                 let path = tool_input_path(&call.input);
                 // Mark where the claim window stands *before* the call runs, so
                 // its result can tell a change of its own from one already
@@ -450,13 +450,15 @@ impl SessionModel {
                     input: format_tool_input(&call.input),
                     raw: cap_input_json(&call.input, INPUT_BUDGET),
                     path,
+                    sub_agent_id: sub_agent_id.clone(),
                 });
             }
             AgentEvent::ToolResult {
                 call_id,
                 output,
                 duration_ms,
-                speculated, .. } => {
+                speculated,
+                sub_agent_id, } => {
                 // ANSI escapes are stripped here, at fold time, and nowhere
                 // else: the fold cache would retain them if the renderer
                 // stripped per frame, and ratatui renders everything after
@@ -496,7 +498,7 @@ impl SessionModel {
                 // both: they answer to the same entry, and two reverse scans
                 // could only differ by finding different `ToolStart`s for one
                 // call id, which would be worse than either answer.
-                let (name, path) = self
+                let (name, path, started_sub_agent_id) = self
                     .transcript
                     .iter()
                     .rev()
@@ -505,11 +507,19 @@ impl SessionModel {
                             call_id: cid,
                             name,
                             path,
+                            sub_agent_id,
                             ..
-                        } if cid == call_id => Some((name.clone(), path.clone())),
+                        } if cid == call_id => {
+                            Some((name.clone(), path.clone(), sub_agent_id.clone()))
+                        }
                         _ => None,
                     })
-                    .unwrap_or_else(|| ("tool".to_string(), None));
+                    .unwrap_or_else(|| ("tool".to_string(), None, None));
+                // The announcement is where the row learns whose call it was
+                // (same precedence as the store's `project_tool_result`,
+                // `stella-store::tool_calls`); this result's own field is only
+                // the fallback for a consumer that never saw the start.
+                let sub_agent_id = started_sub_agent_id.or_else(|| sub_agent_id.clone());
                 // Read before `name` is moved into the transcript row below;
                 // consumed after it, where the rest of the pending-card latches
                 // are retired. See there for why this is the refusal (#4612).
@@ -611,6 +621,7 @@ impl SessionModel {
                     speculated: *speculated,
                     diff,
                     read_size,
+                    sub_agent_id,
                 });
                 // The answer to an `ask_user` question comes back as this very
                 // tool result (correlated by id) — there is no separate answer

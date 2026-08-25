@@ -104,6 +104,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             input: "ls".into(),
             raw: "{}".into(),
             path: None,
+            sub_agent_id: None,
         },
         TranscriptEntry::ToolResult {
             call_id: "c1".into(),
@@ -116,6 +117,7 @@ fn sample_entries() -> Vec<TranscriptEntry> {
             speculated: false,
             diff: Vec::new(),
             read_size: None,
+            sub_agent_id: None,
         },
         TranscriptEntry::Retry {
             attempt: 1,

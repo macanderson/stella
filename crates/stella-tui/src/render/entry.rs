@@ -214,6 +214,7 @@ fn projected_rows(
             input,
             raw,
             path,
+            sub_agent_id,
         } => {
             let scope = source::measured_scope(call_id, view.following, view.files);
             let read = source::read_size(call_id, view.following);
@@ -223,6 +224,7 @@ fn projected_rows(
                 input,
                 scope,
                 read,
+                sub_agent_id.as_deref(),
                 width,
             ));
             if expanded {

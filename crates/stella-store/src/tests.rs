@@ -331,6 +331,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     error: String::new(),
                     bytes_out: 120,
                     duration_ms: 14,
+                    sub_agent_id: None,
                 },
                 ToolCallRow {
                     error_class: None,
@@ -344,6 +345,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     error: String::new(),
                     bytes_out: 0,
                     duration_ms: 9,
+                    sub_agent_id: None,
                 },
                 ToolCallRow {
                     error_class: None,
@@ -357,6 +359,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     error: "nope".into(),
                     bytes_out: 0,
                     duration_ms: 3,
+                    sub_agent_id: None,
                 },
             ],
         )
