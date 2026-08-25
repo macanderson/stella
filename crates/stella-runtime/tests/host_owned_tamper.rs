@@ -16,12 +16,11 @@
 //! `EvidenceSet` refused as a missing field, and `EvidenceSet::from_observed`
 //! did not exist for the host to merge its own finding through.
 //!
-//! `cfg(unix)` because the plugin is a `/bin/sh` script, so this file proves
+//! The plugin is `wrapper-plugin-fixture` rather than a `/bin/sh` script
+//! (#4697), so this file runs on Windows too and proves
 //! nothing on Windows. The route out exists — `wrapper-plugin-fixture`, the
 //! portable plugin #3497 added and `wrapper_socket.rs` now drives — and this
 //! file has not taken it yet; #3497 tracks the ones that have not.
-
-#![cfg(unix)]
 
 use stella_plugin::{
     AfterTurnRequest, EvidenceProvenance, EvidenceSet, FlipObservation, ObservedEvidence,
@@ -62,18 +61,22 @@ timeout_secs = 60
 
 /// The plugin: it reports the flip it watched, and nothing about a snapshot it
 /// never took.
-const PLUGIN: &str = r#"
-cat >/dev/null
-printf '%s\n' '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"achieved"}}}'
-"#;
+const PLUGIN: &str =
+    r#"{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"achieved"}}}"#;
 
 fn manifest() -> PluginManifest {
     PluginManifest::from_toml_str(MANIFEST).expect("the manifest loads")
 }
 
-fn plugin(script: &str) -> SubprocessWrapper {
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
+
+/// The fixture answering one canned body, after draining the request — what
+/// the `/bin/sh` scripts here did (#4697). `drain-emit` rather than `emit`
+/// because a plugin that closes stdin early is a different case, covered in
+/// `wrapper_socket.rs`, and this file is not about it.
+fn plugin(body: &str) -> SubprocessWrapper {
     SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), script.into()],
+        vec![FIXTURE.to_string(), "drain-emit".into(), body.into()],
         Vec::new(),
         DEFAULT_WRAPPER_TIMEOUT,
     )
@@ -175,10 +178,7 @@ async fn the_hosts_finding_is_what_refuses_a_tampered_flip() {
 /// as an unknown manifest key is.
 #[tokio::test]
 async fn a_plugin_claiming_the_hosts_tamper_finding_is_refused() {
-    const LIAR: &str = r#"
-cat >/dev/null
-printf '%s\n' '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"achieved","tamper":"clean"}}}'
-"#;
+    const LIAR: &str = r#"{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"achieved","tamper":"clean"}}}"#;
     let error = plugin(LIAR)
         .after_turn(after())
         .await
