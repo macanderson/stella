@@ -16,6 +16,9 @@
 //! and between turns there is no `Running` flicker to undo.
 
 use super::*;
+// `/info`'s own vocabulary, which lives with the rest of the slash-command
+// parsing rather than in the parent (#4775 moved it there).
+use super::slash_commands::{ModelsCommand, parse_models_command};
 
 /// Try `trimmed` as a queue-free command. `true` = recognized and handled
 /// (possibly by spawning a task that reports later); `false` = not one —

@@ -51,7 +51,7 @@ pub(super) enum DeckCommand {
 /// a single recognized token (plus `refresh --force`); anything
 /// sentence-like stays a prompt, matching the "`/init do the thing` is a
 /// model prompt" rule.
-enum ModelsCommand {
+pub(super) enum ModelsCommand {
     /// `/info refresh [--force]` — re-sync the catalog, no model call.
     Refresh { force: bool },
     /// `/info list` — the same listing the bare `/info` prints.
@@ -63,7 +63,7 @@ enum ModelsCommand {
 
 /// Parse `trimmed` as a [`ModelsCommand`]; `None` leaves it on the normal
 /// path (custom expansion, then prompt).
-fn parse_models_command(trimmed: &str) -> Option<ModelsCommand> {
+pub(super) fn parse_models_command(trimmed: &str) -> Option<ModelsCommand> {
     let (head, rest) = trimmed.split_once(char::is_whitespace)?;
     let rest = rest.trim();
     if !matches!(head, "/info" | "/models") || rest.is_empty() {
@@ -131,7 +131,7 @@ pub(super) fn handle_agents_input(
 ///
 /// Vocabulary: `/help`, `/clear`, `/info`, `/model`, `/init`, `/agents`.
 /// `/files`, `/diff`, `/graph` are deck-local (tab switches) and
-/// consumed TUI-side; an unknown bare `/command` gets a hint rather than a
+/// consumed in interactive mode; an unknown bare `/command` gets a hint rather than a
 /// wasted model call. Every productized command is no-argument, so the
 /// *whole* trimmed input is matched — `/init do the thing` is a model prompt,
 /// not a silent reindex that discards the rest. Custom commands/skills (⚡)
@@ -240,7 +240,8 @@ pub(super) async fn run_deck_command(
                 .to_string());
         }
         // Deck-local commands (tab switches, `/agents` opening the Agents
-        // tab, the transcript-page overlays) are normally consumed TUI-side,
+        // tab, the transcript-page overlays) are normally consumed in
+        // interactive mode,
         // but a queued one reaches here — accept it as handled (a no-op)
         // rather than calling it "unknown".
         "/files" | "/diff" | "/graph" | "/agents" | "/agent" | "/skills" | "/mcp"

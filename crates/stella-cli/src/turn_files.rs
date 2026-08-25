@@ -597,7 +597,8 @@ mod tests {
             // The raw engine turn: `stella run`, the plain REPL.
             ("agent.rs", "run_turn", &closing),
             // The interactive deck's lead turn — the driver that had the hole.
-            ("command_deck.rs", "run_lead_turn", &closing),
+            // In `command_deck/lead_turn.rs` since #4775 split the parent up.
+            ("command_deck/lead_turn.rs", "run_lead_turn", &closing),
             // The three drivers of #4159, which own several turns over one
             // stream and therefore pay the two debts at different points: the
             // measurement at each turn boundary inside their loop, and the
@@ -721,8 +722,8 @@ mod tests {
         // The raw engine turn, which reaches the seam through
         // `persistence::attach_run_streams`.
         ("agent/persistence.rs", "attach_run_streams"),
-        // The interactive deck's lead turn.
-        ("command_deck.rs", "run_lead_turn"),
+        // The interactive deck's lead turn (#4775 moved it out of the parent).
+        ("command_deck/lead_turn.rs", "run_lead_turn"),
         // `stella goal`'s raw arm — the loop over `Engine::run_goal`.
         ("agent/goal.rs", "run_goal_turn"),
         // `stella goal --pipeline <variant>`: one observed sender per round,
@@ -805,7 +806,7 @@ mod tests {
         // through `persistence::attach_run_streams`, which is why
         // `STREAM_OWNERS` names that file and this one names the driver's own.
         ("agent.rs", DriverPosture::Owns),
-        ("command_deck.rs", DriverPosture::Owns),
+        ("command_deck/lead_turn.rs", DriverPosture::Owns),
         ("agent/goal.rs", DriverPosture::Owns),
         ("agent/goal/goal_wrapped.rs", DriverPosture::Owns),
         ("agent/resume.rs", DriverPosture::Owns),
