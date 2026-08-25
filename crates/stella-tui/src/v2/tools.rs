@@ -1,22 +1,41 @@
-//! The TOOLS panel — the SETTINGS tab's editor for `settings.json` →
-//! `tools`: the one map that decides which of this session's tools the agent
-//! may use, whether a tool is a built-in, an MCP server's, or one the customer
-//! wrote themselves.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
+//! The TOOLS pane — the SETTINGS tab's editor for `settings.json` → `tools`:
+//! the one map that decides which of this session's tools the agent may use,
+//! whether a tool is a built-in, an MCP server's, or one the customer wrote
+//! themselves.
 //!
-//! **Stella ships with every tool on.** This panel is how they go off, and it
+//! ```text
+//!  tools · 1 off · 1 org-locked · modified                            7 tools
+//!  ▸ CUSTOM                    on   1 tool
+//!      deploy_to_staging       on
+//!    TASK                      on   2 tools
+//!      delegate                on
+//!      task_assign             off  locked · "task_assign" off in org-managed settings
+//!  saved to user settings
+//!  ⏎/space toggle · x clear · s save user · S save project · r reload · esc done
+//! ```
+//!
+//! Four bands and no box: a header that carries the counts, the rows, the
+//! driver's last word, and the keys. The pane fills the body
+//! [`crate::v2::frame`] already carved out, so nothing here draws a border,
+//! a title bar or a second copy of the tab name.
+//!
+//! **Stella ships with every tool on.** This pane is how they go off, and it
 //! is the only surface that can show an operator what they actually have:
 //! MCP tools and customer-registered custom tools exist nowhere but the
 //! assembled session stack, so the rows come from the driver
 //! ([`crate::envelope::Inbound::ToolPolicy`]), never from a compiled-in table.
 //!
 //! Ownership mirrors [`crate::v2::engine_panel`]: the driver owns the settings
-//! files and pushes snapshots; the panel accumulates **unsaved switch edits**
+//! files and pushes snapshots; the pane accumulates **unsaved switch edits**
 //! and sends them back with [`WorkspaceInput::ToolsSave`]. What it sends is
 //! only the keys it changed — the driver merges them into the chosen scope's
 //! own `"tools"` object — because a whole-map save would copy the other two
 //! scopes' switches into the file being written and freeze them there.
 //!
-//! # Two invariants worth stating
+//! # Two rules
 //!
 //! 1. **Most specific key wins, and toggling writes the most specific key.**
 //!    Toggling one tool writes its exact name, never its group; toggling a
@@ -40,11 +59,12 @@ use std::collections::BTreeMap;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::buffer::Buffer;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Widget};
+use ratatui::widgets::{Paragraph, Widget};
 use stella_tools::policy::WILDCARD;
+use stella_tui_theme::{glyph, token};
 
 use crate::deck::DeckTab;
 use crate::deck_ui::{DeckAction, DeckUi, list_nav};
@@ -57,7 +77,7 @@ use crate::views::settings::SettingsPane;
 /// yet (a race right after startup, or a driver error).
 const NO_SNAPSHOT_HINT: &str = "waiting for the tool list — r to reload";
 
-/// One line of the panel: a group section header, or one tool under it.
+/// One line of the pane: a group section header, or one tool under it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolsRow {
     /// A section header for one catalog group (`"file"`, `"process"`, and the
@@ -68,12 +88,12 @@ pub enum ToolsRow {
     Tool(usize),
 }
 
-/// All TOOLS-panel view state (a field on [`DeckUi`]). The switches on disk
+/// All TOOLS-pane view state (a field on [`DeckUi`]). The switches on disk
 /// are driver-owned; `edits` is the unsaved working copy and the only thing a
 /// save sends.
 #[derive(Debug, Clone, Default)]
 pub struct ToolsOverlay {
-    /// Whether the panel owns the keyboard (modal while set, on the SETTINGS
+    /// Whether the pane owns the keyboard (modal while set, on the SETTINGS
     /// tab only — `t` focuses, Esc returns focus to the tab).
     pub focused: bool,
     /// The driver's snapshot. `None` until the first one lands.
@@ -91,7 +111,7 @@ pub struct ToolsOverlay {
 }
 
 impl ToolsOverlay {
-    /// The panel's rows in display order: groups sorted, tools sorted within
+    /// The pane's rows in display order: groups sorted, tools sorted within
     /// each group, one header per group.
     pub fn rows(&self) -> Vec<ToolsRow> {
         self.state.as_ref().map(rows).unwrap_or_default()
@@ -125,8 +145,8 @@ pub fn rows(state: &ToolPolicyState) -> Vec<ToolsRow> {
 }
 
 /// Whether `tool` is on right now: the saved switches overlaid with the
-/// panel's unsaved edits, resolved most-specific-first — the exact precedence
-/// [`stella_tools::policy::ToolPolicy::allows`] enforces, so what the panel
+/// pane's unsaved edits, resolved most-specific-first — the exact precedence
+/// [`stella_tools::policy::ToolPolicy::allows`] enforces, so what the pane
 /// shows and what the runtime does cannot disagree.
 ///
 /// A locked row is off, full stop. That short-circuit is the safety property:
@@ -218,7 +238,7 @@ pub fn ingest_policy(ui: &mut DeckUi, state: &ToolPolicyState, status: &Option<S
 
 // ── focus (`t` on the SETTINGS tab) ────────────────────────────────────────
 
-/// Focus the TOOLS panel (switching to the SETTINGS tab if needed) and ask the
+/// Focus the TOOLS pane (switching to the SETTINGS tab if needed) and ask the
 /// driver to re-enumerate the session's tools and re-read the settings chain.
 /// The engine panel gives up the keyboard: the SETTINGS tab hosts two editors,
 /// and exactly one of them is modal at a time.
@@ -237,16 +257,16 @@ pub fn focus_panel(ui: &mut DeckUi) -> DeckAction {
 
 // ── key handling ────────────────────────────────────────────────────────────
 
-/// The panel's modal key map, dispatched by [`crate::deck_ui::handle_deck_key`]
+/// The pane's modal key map, dispatched by [`crate::deck_ui::handle_deck_key`]
 /// while `ui.tools.focused`. The vocabulary is [`crate::v2::engine_panel`]'s, so
 /// the two editors on one tab never need two things learned.
 pub fn handle_tools_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
     let plain = !key
         .modifiers
         .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META);
-    // Row movement is the deck's one vocabulary, not this panel's: `↑`/`↓`,
+    // Row movement is the deck's one vocabulary, not this pane's: `↑`/`↓`,
     // `j`/`k`, `⇞`/`⇟` and `Home`/`End` all move the selection. `letters` is
-    // true because the panel is modal while focused — nothing here is
+    // true because the pane is modal while focused — nothing here is
     // composing a prompt for `j` to join (#4370).
     let count = ui.tools.rows().len();
     if list_nav::select(key, &mut ui.tools.row, count, true) {
@@ -304,9 +324,8 @@ fn toggle_row(ui: &mut DeckUi) -> DeckAction {
             // Member-level edits are dropped first: they are more specific and
             // would outrank the header the user just used, making it look
             // broken. Member-level keys already SAVED still outrank it — the
-            // row keeps reporting the key that did it, which is the honest
-            // answer rather than a silent rewrite of settings the user did not
-            // select.
+            // row keeps reporting the key that did it, rather than silently
+            // rewriting settings the user did not select.
             let members: Vec<String> = state
                 .tools
                 .iter()
@@ -371,25 +390,40 @@ fn refresh(ui: &mut DeckUi) -> DeckAction {
 // ── render ──────────────────────────────────────────────────────────────────
 
 /// Name column width — fits a namespaced MCP tool's head without pushing the
-/// on/off state off a narrow panel.
+/// on/off state off a narrow pane.
 const NAME_W: usize = 26;
 
-/// Render the TOOLS panel: an area-filling bordered panel (accent border while
-/// it owns the keyboard, hairline otherwise), windowed rows with the selection
-/// reversed, group headers, and — for anything off — the settings key and
-/// scope that did it.
+/// Draw the pane into the body the frame carved out: header, rows, the
+/// driver's last word, keys.
 pub fn render_panel(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     let t = &ui.tools;
-    let (w, h) = (area.width, area.height);
-    if w < 4 || h < 4 {
-        return; // no readable panel fits — draw nothing rather than garbage
+    if area.width < 4 || area.height == 0 {
+        return; // no readable pane fits — draw nothing rather than garbage
     }
-    let inner_h = (h as usize).saturating_sub(2);
-    let mut lines: Vec<Line<'static>> = Vec::new();
+    let bands = Layout::vertical([
+        Constraint::Length(1), // header · counts
+        Constraint::Min(0),    // rows
+        Constraint::Length(1), // the driver's last word
+        Constraint::Length(1), // keys
+    ])
+    .split(area);
 
-    let rows = t.rows();
-    let (off_count, locked_count) = match &t.state {
-        None => (0, 0),
+    render_header(t, bands[0], buf);
+    render_rows(ui, bands[1], buf);
+    render_status(t, bands[2], buf);
+    render_keys(t, bands[3], buf);
+}
+
+/// `tools · 1 off · 1 org-locked · modified` with the session's tool count on
+/// the right edge — the counts the bordered title used to carry, on a row
+/// that costs the same one line and can hold the total as well.
+fn render_header(t: &ToolsOverlay, area: Rect, buf: &mut Buffer) {
+    if area.height == 0 {
+        return;
+    }
+    let muted = Style::new().fg(token::MUTED);
+    let (off_count, locked_count, total) = match &t.state {
+        None => (0, 0, 0),
         Some(state) => (
             state
                 .tools
@@ -397,83 +431,135 @@ pub fn render_panel(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
                 .filter(|tool| !tool_enabled(state, &t.edits, tool))
                 .count(),
             state.tools.iter().filter(|tool| tool.locked).count(),
+            state.tools.len(),
         ),
     };
+
+    let mut left = vec![
+        Span::styled(
+            " tools",
+            Style::new().fg(token::TEXT).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!(" · {off_count} off"), muted),
+    ];
+    if locked_count > 0 {
+        left.push(Span::styled(format!(" · {locked_count} org-locked"), muted));
+    }
+    if t.dirty() {
+        // The one thing on the pane asking to be acted on, so it takes the
+        // accent and nothing else here does.
+        left.push(Span::styled(" · modified", Style::new().fg(token::GOLD)));
+    }
+
+    let right = format!("{total} {} ", plural_tools(total));
+    let used: usize = left.iter().map(Span::width).sum();
+    let width = area.width as usize;
+    if total > 0 && used + right.chars().count() < width {
+        left.push(Span::raw(" ".repeat(width - used - right.chars().count())));
+        left.push(Span::styled(right, Style::new().fg(token::DIM)));
+    }
+    Paragraph::new(Line::from(left)).render(area, buf);
+}
+
+/// The windowed row list, or the one line that says why there is none.
+fn render_rows(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
+    if area.height == 0 {
+        return;
+    }
+    let t = &ui.tools;
+    let muted = Style::new().fg(token::MUTED);
+    let visible = area.height as usize;
+    let mut lines: Vec<Line<'static>> = Vec::new();
 
     match &t.state {
         None => lines.push(Line::from(Span::styled(
             format!("  {NO_SNAPSHOT_HINT}"),
-            theme::muted(),
+            muted,
         ))),
         Some(state) => {
+            let rows = t.rows();
             let count = rows.len();
-            let sel = t.row.min(count.saturating_sub(1));
-            // status (1) + footer (1) bracket the rows.
-            let visible = inner_h.saturating_sub(2).max(1);
-            let first = scroll_window_start(count, sel, visible);
-            let last = (first + visible).min(count);
             if count == 0 {
                 lines.push(Line::from(Span::styled(
                     "  no tools in this session yet — r to reload",
-                    theme::muted(),
+                    muted,
                 )));
             }
+            let sel = t.row.min(count.saturating_sub(1));
+            let first = scroll_window_start(count, sel, visible);
+            let last = (first + visible).min(count);
             for (i, row) in rows.iter().enumerate().take(last).skip(first) {
                 lines.push(if ui.accessible {
-                    row_record(t, state, row, i == sel, w as usize)
+                    row_record(t, state, row, i == sel, area.width as usize)
                 } else {
-                    render_row(t, state, row, i == sel, w as usize)
+                    render_row(t, state, row, i == sel, area.width as usize)
                 });
             }
         }
     }
-
-    while lines.len() < inner_h.saturating_sub(2) {
-        lines.push(Line::default());
-    }
-    let status = t
-        .status
-        .clone()
-        .or_else(|| t.busy.then(|| "working…".to_string()));
-    lines.push(match status {
-        Some(s) => Line::from(Span::styled(
-            format!(" {s}"),
-            Style::default().fg(theme::ACCENT),
-        )),
-        None => Line::default(),
-    });
-    lines.push(Line::from(Span::styled(
-        if t.focused {
-            " ⏎/space toggle · x clear · s save user · S save project · r reload · esc done"
-        } else {
-            // `e` edits whichever pane the SETTINGS nav is on, so the hint on
-            // the visible panel is `e` — not the pane-specific `t`, which
-            // survives only as an accelerator from the other pane.
-            " e edit tool switches"
-        },
-        theme::muted(),
-    )));
-
-    let mut title = format!(" tools · {off_count} off");
-    if locked_count > 0 {
-        title.push_str(&format!(" · {locked_count} org-locked"));
-    }
-    if t.dirty() {
-        title.push_str(" · modified");
-    }
-    title.push(' ');
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(if t.focused {
-            theme::accent()
-        } else {
-            theme::rule()
-        })
-        .title(title);
-    Paragraph::new(lines).block(block).render(area, buf);
+    Paragraph::new(lines).render(area, buf);
 }
 
-/// One panel row: a group header, or `▸ name  on|off  reason`.
+/// The driver's last word on a save or a refresh, or the local refusal that
+/// replaced it. Blank while there is nothing to say.
+fn render_status(t: &ToolsOverlay, area: Rect, buf: &mut Buffer) {
+    if area.height == 0 {
+        return;
+    }
+    let Some(status) = t
+        .status
+        .clone()
+        .or_else(|| t.busy.then(|| "working…".to_string()))
+    else {
+        return;
+    };
+    Paragraph::new(Line::from(Span::styled(
+        format!(" {status}"),
+        Style::new().fg(token::GOLD),
+    )))
+    .render(area, buf);
+}
+
+/// The key row: the pane's verbs while it holds the keyboard, and the one key
+/// that takes it otherwise.
+///
+/// `e` edits whichever pane the SETTINGS nav is on, so the hint on the visible
+/// pane is `e` — not the pane-specific `t`, which survives only as an
+/// accelerator from the other pane.
+fn render_keys(t: &ToolsOverlay, area: Rect, buf: &mut Buffer) {
+    if area.height == 0 {
+        return;
+    }
+    let key = Style::new().fg(token::MUTED);
+    let dim = Style::new().fg(token::DIM);
+    let verbs: &[(&str, &str)] = if t.focused {
+        &[
+            ("⏎/space", "toggle"),
+            ("x", "clear"),
+            ("s", "save user"),
+            ("S", "save project"),
+            ("r", "reload"),
+            ("esc", "done"),
+        ]
+    } else {
+        &[("e", "edit tool switches")]
+    };
+    let mut spans = vec![Span::raw(" ")];
+    for (i, (chord, label)) in verbs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" · ", dim));
+        }
+        spans.push(Span::styled((*chord).to_string(), key));
+        spans.push(Span::styled(format!(" {label}"), dim));
+    }
+    Paragraph::new(Line::from(spans)).render(area, buf);
+}
+
+/// One pane row: a group header, or `▸ name  on|off  reason`.
+///
+/// The selected row takes the highlight ground and the caret; the caret keeps
+/// its two columns either way, so the name column never shifts under a moving
+/// selection.
 fn render_row(
     t: &ToolsOverlay,
     state: &ToolPolicyState,
@@ -481,13 +567,16 @@ fn render_row(
     is_sel: bool,
     panel_w: usize,
 ) -> Line<'static> {
-    let sel_mod = if is_sel {
-        Modifier::REVERSED
-    } else {
-        Modifier::empty()
-    };
-    let marker = if is_sel { "▸ " } else { "  " };
-    match row {
+    let muted = Style::new().fg(token::MUTED);
+    let caret = Span::styled(
+        if is_sel {
+            format!(" {} ", glyph::COLLAPSED)
+        } else {
+            "   ".to_string()
+        },
+        Style::new().fg(token::GOLD),
+    );
+    let mut line = match row {
         ToolsRow::Group(group) => {
             let on = group_enabled(state, &t.edits, group);
             let locked = group_locked(state, group);
@@ -497,25 +586,16 @@ fn render_row(
                 .filter(|tool| &tool.group == group)
                 .count();
             let mut spans = vec![
-                Span::styled(
-                    marker.to_string(),
-                    Style::default().fg(theme::ACCENT).add_modifier(sel_mod),
-                ),
+                caret,
                 Span::styled(
                     format!("{:<width$}", group.to_uppercase(), width = NAME_W),
-                    theme::accent().add_modifier(Modifier::BOLD | sel_mod),
+                    Style::new().fg(token::TEXT).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    format!("{:<5}", if on { "on" } else { "off" }),
-                    Style::default().fg(theme::INK).add_modifier(sel_mod),
-                ),
-                Span::styled(format!("{n} tools"), theme::muted().add_modifier(sel_mod)),
+                state_span(on),
+                Span::styled(format!("{n} {}", plural_tools(n)), muted),
             ];
             if locked {
-                spans.push(Span::styled(
-                    " · org-locked".to_string(),
-                    theme::muted().add_modifier(sel_mod),
-                ));
+                spans.push(Span::styled(" · org-locked".to_string(), muted));
             }
             Line::from(spans)
         }
@@ -524,10 +604,7 @@ fn render_row(
             let on = tool_enabled(state, &t.edits, tool);
             let pending = t.edits.contains_key(&tool.name);
             let mut spans = vec![
-                Span::styled(
-                    marker.to_string(),
-                    Style::default().fg(theme::ACCENT).add_modifier(sel_mod),
-                ),
+                caret,
                 Span::styled(
                     // Truncated one char shorter than the column so a long
                     // namespaced MCP name always keeps a gap before its state.
@@ -536,14 +613,9 @@ fn render_row(
                         truncate_chars(&tool.name, NAME_W - 3),
                         width = NAME_W - 2
                     ),
-                    Style::default().fg(theme::INK).add_modifier(sel_mod),
+                    Style::new().fg(token::SILVER),
                 ),
-                Span::styled(
-                    format!("{:<5}", if on { "on" } else { "off" }),
-                    Style::default()
-                        .fg(if on { theme::ACCENT } else { theme::MUTED })
-                        .add_modifier(sel_mod),
-                ),
+                state_span(on),
             ];
             // While an edit is pending the saved reason is stale — say
             // "unsaved" instead of a sentence that describes disk.
@@ -553,15 +625,34 @@ fn render_row(
                 off_reason(tool)
             };
             if let Some(tail) = tail {
-                let room = panel_w.saturating_sub(2 + 2 + NAME_W + 5 + 1).max(8);
+                let room = panel_w.saturating_sub(3 + 2 + NAME_W + 5 + 1).max(8);
                 spans.push(Span::styled(
                     truncate_chars(&tail, room),
-                    theme::muted().add_modifier(sel_mod),
+                    Style::new().fg(token::DIM),
                 ));
             }
             Line::from(spans)
         }
+    };
+    if is_sel {
+        line.style = Style::new().bg(token::HL).add_modifier(Modifier::BOLD);
     }
+    line
+}
+
+/// The `on`/`off` cell. Off is the exceptional state and takes the muted tone;
+/// on is ordinary and reads as text, because a pane where every row is lit is
+/// a pane where the lit rows say nothing.
+fn state_span(on: bool) -> Span<'static> {
+    Span::styled(
+        format!("{:<5}", if on { "on" } else { "off" }),
+        Style::new().fg(if on { token::TEXT } else { token::MUTED }),
+    )
+}
+
+/// `tool`/`tools` for a count.
+fn plural_tools(n: usize) -> &'static str {
+    if n == 1 { "tool" } else { "tools" }
 }
 
 /// One TOOLS row in accessible mode: the same fields, each named, with no
@@ -601,8 +692,8 @@ fn row_record(
                     },
                 ),
             ];
-            crate::views::linear::record_line(
-                crate::views::linear::identity(
+            crate::v2::record::record_line(
+                crate::v2::record::identity(
                     format!("group {}", group.to_uppercase()),
                     is_sel,
                     theme::ACCENT,
@@ -626,8 +717,8 @@ fn row_record(
                 ("group", tool.group.clone()),
                 ("why", reason.unwrap_or_default()),
             ];
-            crate::views::linear::record_line(
-                crate::views::linear::identity(tool.name.clone(), is_sel, theme::INK),
+            crate::v2::record::record_line(
+                crate::v2::record::identity(tool.name.clone(), is_sel, theme::INK),
                 &fields,
                 panel_w,
             )
@@ -669,7 +760,7 @@ mod tests {
     }
 
     /// A session with the built-in families, an MCP server's tool, and a
-    /// customer's own registered tool — the three sources the panel must show.
+    /// customer's own registered tool — the three sources the pane must show.
     fn sample_state() -> ToolPolicyState {
         ToolPolicyState {
             tools: vec![
@@ -754,7 +845,7 @@ mod tests {
         );
 
         // An edit at a LESS specific level must not defeat a saved exact key —
-        // the panel would otherwise show a tool as on that the runtime keeps off.
+        // the pane would otherwise show a tool as on that the runtime keeps off.
         let mut edits = BTreeMap::new();
         edits.insert("scratch".to_string(), true);
         assert!(
@@ -985,21 +1076,21 @@ mod tests {
         handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
         assert!(!ui.tools.focused, "esc hands the keyboard back to the tab");
         // `e` then reaches the engine panel, which takes the keyboard from the
-        // tools panel — one editor owns the SETTINGS keyboard at a time.
+        // tools pane — one editor owns the SETTINGS keyboard at a time.
         handle_deck_key(ch('t'), &model, &mut ui);
         crate::v2::engine_panel::focus_panel(&mut ui);
         assert!(ui.engine.focused);
         assert!(
             !ui.tools.focused,
-            "focusing the engine releases the tools panel"
+            "focusing the engine releases the tools pane"
         );
-        crate::views::tools::focus_panel(&mut ui);
+        focus_panel(&mut ui);
         assert!(ui.tools.focused);
         assert!(!ui.engine.focused, "and the other way around");
     }
 
     /// While one editor is modal, the other's focus key is swallowed rather
-    /// than leaking into the composer behind the panel — the same rule every
+    /// than leaking into the composer behind the pane — the same rule every
     /// modal surface on the deck follows.
     #[test]
     fn a_focused_editor_swallows_the_other_editors_focus_key() {
@@ -1025,20 +1116,26 @@ mod tests {
         assert_eq!(off_reason(&tool("get_state", "scratch")), None);
     }
 
-    #[test]
-    fn render_smoke_draws_groups_states_and_reasons() {
-        fn buffer_text(buf: &Buffer) -> String {
-            let area = buf.area();
-            (0..area.height)
-                .map(|y| {
-                    (0..area.width)
-                        .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
+    fn buffer_text(buf: &Buffer) -> String {
+        let area = buf.area();
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 
+    fn drawn(ui: &DeckUi, w: u16, h: u16) -> String {
+        let area = Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        render_panel(ui, area, &mut buf);
+        buffer_text(&buf)
+    }
+
+    fn locked_ui() -> DeckUi {
         let (_model, mut ui) = open_ui();
         let mut state = sample_state();
         state.switches.insert("scratch".into(), false);
@@ -1058,12 +1155,14 @@ mod tests {
             }
         }
         ui.tools.state = Some(state);
+        ui
+    }
 
-        let area = Rect::new(0, 0, 96, 24);
-        let mut buf = Buffer::empty(area);
-        render_panel(&ui, area, &mut buf);
-        let text = buffer_text(&buf);
-        assert!(text.contains("tools ·"), "title drawn");
+    #[test]
+    fn render_smoke_draws_groups_states_and_reasons() {
+        let ui = locked_ui();
+        let text = drawn(&ui, 96, 24);
+        assert!(text.contains("tools ·"), "header drawn");
         assert!(text.contains("SCRATCH"), "group headers drawn");
         assert!(text.contains("MCP"), "an MCP section is listed");
         assert!(text.contains("CUSTOM"), "a custom-tool section is listed");
@@ -1076,6 +1175,69 @@ mod tests {
             "an off row explains itself"
         );
         assert!(text.contains("locked"), "an org-denied row says so");
-        assert!(text.contains("org-locked"), "the title counts locked rows");
+        assert!(text.contains("org-locked"), "the header counts locked rows");
+    }
+
+    /// **The witness for the port.** The pane fills the body the frame carved
+    /// out and draws no box of its own: the counts are a header row and the
+    /// verbs are a key row, so nothing spends a column or a row on a border
+    /// that repeats what the tab strip already said.
+    #[test]
+    fn the_pane_draws_no_box_of_its_own() {
+        let ui = locked_ui();
+        let text = drawn(&ui, 96, 24);
+        for edge in ['┌', '┐', '└', '┘', '│', '─', '╭', '╮', '╰', '╯'] {
+            assert!(
+                !text.contains(edge),
+                "the pane drew a border glyph {edge:?}:\n{text}"
+            );
+        }
+        let first = text.lines().next().unwrap_or_default();
+        assert!(
+            first.trim_start().starts_with("tools ·"),
+            "the header is the first row, not a border: {first:?}"
+        );
+        assert!(
+            first.contains("6 tools"),
+            "the header carries the session's tool count: {first:?}"
+        );
+    }
+
+    /// The keys are the pane's last row either way, and they name what the
+    /// keyboard actually does right now — the verbs while it is focused, the
+    /// one key that focuses it while it is not.
+    #[test]
+    fn the_key_row_follows_the_keyboard() {
+        let mut ui = locked_ui();
+        let focused = drawn(&ui, 96, 24);
+        let last = focused.lines().last().unwrap_or_default().to_string();
+        assert!(last.contains("⏎/space toggle"), "{last:?}");
+        assert!(last.contains("esc done"), "{last:?}");
+
+        ui.tools.focused = false;
+        let browsing = drawn(&ui, 96, 24);
+        let last = browsing.lines().last().unwrap_or_default().to_string();
+        assert_eq!(last.trim_end(), " e edit tool switches");
+    }
+
+    /// A pane too short for its own bands still draws what fits rather than
+    /// panicking or painting outside the body.
+    #[test]
+    fn a_short_pane_still_renders() {
+        let ui = locked_ui();
+        for h in 1..=4u16 {
+            let text = drawn(&ui, 96, h);
+            assert_eq!(text.lines().count(), h as usize);
+        }
+        // Narrower than the caret plus a name is not a pane at all.
+        assert_eq!(drawn(&ui, 3, 24).trim(), "");
+    }
+
+    #[test]
+    fn the_modified_marker_appears_only_with_unsaved_edits() {
+        let mut ui = locked_ui();
+        assert!(!drawn(&ui, 96, 24).contains("modified"));
+        ui.tools.edits.insert("get_state".into(), false);
+        assert!(drawn(&ui, 96, 24).contains("· modified"));
     }
 }

@@ -374,7 +374,7 @@ fn slash_mcp_search_jumps_straight_into_registry_search() {
     let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
     assert_eq!(action, DeckAction::Handled, "/mcp-search is deck-local");
     assert_eq!(ui.tab, DeckTab::Mcp);
-    assert_eq!(ui.mcp.mode, crate::views::mcp::McpMode::Search);
+    assert_eq!(ui.mcp.mode, crate::v2::mcp_tab::McpMode::Search);
 }
 
 #[test]
@@ -389,7 +389,7 @@ fn slash_on_the_mcp_tab_opens_the_command_menu_not_search() {
     handle_deck_key(ch('/'), &model, &mut ui);
     assert_eq!(
         ui.mcp.mode,
-        crate::views::mcp::McpMode::Browse,
+        crate::v2::mcp_tab::McpMode::Browse,
         "`/` no longer enters MCP search"
     );
     assert_eq!(ui.composer.buffer(), "/", "the slash query is typing");
@@ -451,7 +451,7 @@ fn mcp_tab_navigates_toggles_and_enters_search() {
     // `s` enters search mode; typing builds the query; Enter searches.
     // (`/` no longer does — it belongs to the command menu everywhere.)
     handle_deck_key(ch('s'), &model, &mut ui);
-    assert_eq!(ui.mcp.mode, crate::views::mcp::McpMode::Search);
+    assert_eq!(ui.mcp.mode, crate::v2::mcp_tab::McpMode::Search);
     for c in "git".chars() {
         handle_deck_key(ch(c), &model, &mut ui);
     }
@@ -466,7 +466,7 @@ fn mcp_tab_navigates_toggles_and_enters_search() {
     assert!(ui.mcp.searching);
     // Esc leaves search mode.
     handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
-    assert_eq!(ui.mcp.mode, crate::views::mcp::McpMode::Browse);
+    assert_eq!(ui.mcp.mode, crate::v2::mcp_tab::McpMode::Browse);
 }
 
 #[test]
@@ -489,13 +489,13 @@ fn mcp_auth_prompt_captures_a_masked_value_as_a_redacted_secret() {
     }];
     // `a` enters auth mode.
     handle_deck_key(ch('a'), &model, &mut ui);
-    assert_eq!(ui.mcp.mode, crate::views::mcp::McpMode::Auth);
+    assert_eq!(ui.mcp.mode, crate::v2::mcp_tab::McpMode::Auth);
     // Type the field name, Enter advances to the value step.
     for c in "TOKEN".chars() {
         handle_deck_key(ch(c), &model, &mut ui);
     }
     handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
-    assert_eq!(ui.mcp.auth.step, crate::views::mcp::AuthStep::Value);
+    assert_eq!(ui.mcp.auth.step, crate::v2::mcp_tab::AuthStep::Value);
     for c in "sk-secret".chars() {
         handle_deck_key(ch(c), &model, &mut ui);
     }
@@ -514,7 +514,7 @@ fn mcp_auth_prompt_captures_a_masked_value_as_a_redacted_secret() {
         }
         other => panic!("expected McpAuth, got {other:?}"),
     }
-    assert_eq!(ui.mcp.mode, crate::views::mcp::McpMode::Browse);
+    assert_eq!(ui.mcp.mode, crate::v2::mcp_tab::McpMode::Browse);
 }
 
 #[test]
@@ -545,7 +545,7 @@ fn a_pasted_secret_lands_in_the_credential_value_never_the_composer() {
         handle_deck_key(ch(c), &model, &mut ui);
     }
     handle_deck_key(key(KeyCode::Enter), &model, &mut ui); // → Value step
-    assert_eq!(ui.mcp.auth.step, crate::views::mcp::AuthStep::Value);
+    assert_eq!(ui.mcp.auth.step, crate::v2::mcp_tab::AuthStep::Value);
 
     // Paste a multi-line secret blob.
     ui.paste("sk-pasted-token\nextra");

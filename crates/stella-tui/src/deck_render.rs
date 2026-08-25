@@ -112,14 +112,16 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     let content = bands[1];
     guarded_band(buf, content, tab.title(), |b| match tab {
-        DeckTab::Session => views::session::render(model, ui, content, b),
+        DeckTab::Session => crate::v2::session::render(model, ui, content, b),
         DeckTab::Agents => crate::v2::installed::render(ui, model.now_ms, content, b),
-        DeckTab::Traces => views::traces::render(model, ui, content, b),
+        DeckTab::Traces => crate::v2::traces::render(model, ui, content, b),
         DeckTab::Graph => views::graph::render(model, ui, content, b),
-        DeckTab::Files => views::files::render(model, ui, content, b),
-        DeckTab::Skills => views::skills::render(model, ui, content, b),
-        DeckTab::Mcp => views::mcp::render(model, ui, content, b),
-        DeckTab::Issues => views::issues::render(model, ui, content, b),
+        DeckTab::Files => crate::v2::files_tab::render(model, ui, content, b),
+        DeckTab::Skills => crate::v2::skills::render(model, ui, content, b),
+        DeckTab::Mcp => crate::v2::mcp_tab::render(model, ui, content, b),
+        DeckTab::Issues => {
+            crate::v2::issues_tab::render(model.pr.as_ref(), &ui.issues, ui.accessible, content, b)
+        }
         DeckTab::Settings => views::settings::render(model, ui, content, b),
     });
 
@@ -161,7 +163,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let arg_matches = crate::composer::args::arg_matches(
         &ui.composer,
         "/model",
-        &crate::views::picker::typeahead_candidates(model, ui),
+        &crate::v2::picker::typeahead_candidates(model, ui),
     );
     let arg_open = !arg_matches.is_empty();
     if arg_open {
@@ -179,7 +181,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     if ui.queue_open {
         guarded_overlay(buf, area, "queue", |b| {
-            views::queue_popup::render(model, ui, area, b)
+            crate::v2::queue::render(model, ui, area, b)
         });
     }
     // The STATE overlay (`⌃s`): the expansion of the Session tab's one-row
@@ -238,15 +240,17 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // body of the SETTINGS tab — see `views::settings::render`.)
 
     // The session-override pickers (`/model`, `/agent`): modal cards like
-    // the floating ones above; the parked asks still win the top.
+    // the floating ones above; the parked asks still win the top. They take
+    // the content band rather than the frame, so the card sits on its last
+    // row whatever the composer and the status bar are spending below.
     if ui.model_picker.open {
         guarded_overlay(buf, area, "model picker", |b| {
-            views::picker::render_model(model, ui, area, b)
+            crate::v2::picker::render_model(model, ui, content, b)
         });
     }
     if ui.agent_picker.open {
         guarded_overlay(buf, area, "agent picker", |b| {
-            views::picker::render_agent(ui, area, b)
+            crate::v2::picker::render_agent(ui, content, b)
         });
     }
 
@@ -368,8 +372,7 @@ fn slash_live_hints(model: &WorkspaceModel, ui: &DeckUi) -> Vec<(String, String)
     hints
 }
 
-// The queue editor popup lives in `views::queue_popup` (split out beside the
-// other popup renderers under the god-file rule).
+// The queue editor popup lives in `crate::v2::queue`.
 
 /// The INBOX overlay (`/inbox`): the persist-until-read notifications,
 /// newest first — unread bold with a ● dot, read dimmed with ✓, and a `↗`
@@ -544,7 +547,7 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
         } else {
             "not connected".to_string()
         };
-        let heading = crate::views::mcp::compact_heading(server);
+        let heading = crate::v2::mcp_tab::compact_heading(server);
         let mut spans = vec![
             Span::raw("  "),
             Span::styled(glyph, glyph_style),

@@ -25,7 +25,7 @@
 use std::path::Path;
 
 use stella_core::search::{Depth, Facet, facets_at};
-use stella_graph::{CodeGraph, NeighborhoodSymbol};
+use stella_graph::{BREADCRUMB_SEPARATOR, CodeGraph, NeighborhoodSymbol};
 
 use super::cache::{self, GatherCache};
 use super::engine::Hit;
@@ -397,12 +397,36 @@ const DEFINITION_KEYWORDS: &[&str] = &[
     "fn",
 ];
 
-/// Whether `s` is a bare Rust identifier — the only shape the code graph can
-/// be asked about, and the guard that keeps regex fragments out.
+/// Whether `s` is a bare Rust identifier — the shape the code graph answers a
+/// *lookup* for, and the guard that keeps regex fragments out.
 ///
 /// A query alternative like `rate.limit`, `429` or `PendingChunk\b` is a
 /// pattern, not a name; looking one up would always miss, and letting it
 /// through would cost a graph round-trip per junk term.
+///
+/// # Why a dotted key is deliberately still refused
+///
+/// The graph holds two symbol kinds whose names are not bare identifiers: a
+/// markdown section's breadcrumb, and a TOML table's dotted key
+/// (`record.steering.applies_to`). [`symbol_terms`] admits the first — see
+/// there for the separator that makes it safe — and refuses the second, which
+/// #4574 asked about and a census answered.
+///
+/// Admitting a dotted run means admitting `.` as a name character, and `.` is
+/// already spoken for: it is the regex any-char, and it separates a filename
+/// from its extension. Censused over 786 search-shaped tool calls in this
+/// repository's own store (`.stella/private/store.db`, 314 executions,
+/// 2026-08-24), a dotted rule newly offers a term for **five** queries, and
+/// all five are that collision — `settings.json` and `driver.rs` are
+/// filenames, `hot.reload` and `verifier.verdict` (twice) are regex fragments
+/// of exactly the `rate.limit` shape the paragraph above names. **Zero** are a
+/// table key. So the sketched widening buys, in a real log, five graph
+/// round-trips that must miss and no certainty at all.
+///
+/// What that census cannot settle is demand: TOML tables became indexable
+/// days before it was taken (#4571), so "nobody cited one" and "nobody could"
+/// are the same measurement here. It is evidence about the cost, and the cost
+/// is what decides a widening whose benefit is still hypothetical.
 fn is_bare_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_')
@@ -439,8 +463,38 @@ fn is_bare_identifier(s: &str) -> bool {
 /// Partial decomposition is deliberate: `429|retry|backoff` yields
 /// `[retry, backoff]`. The junk term costs nothing and the two real names
 /// are still facts.
+///
+/// # The one name that is not an identifier: a section breadcrumb
+///
+/// A markdown section is indexed under its breadcrumb — the enclosing
+/// headings joined by [`BREADCRUMB_SEPARATOR`] — so no section had ever been
+/// reachable by exact lookup (#3103, #4574). It is admitted here and a dotted
+/// TOML key is not, for one reason: the separator is `U+203A` between spaces,
+/// which cannot occur in a heading by accident and does not occur in a query
+/// by accident either. Zero of the 786 real queries the census on
+/// `is_bare_identifier` counted carry it, so the cost of trying the lookup is
+/// bounded by how often a caller writes one deliberately.
+///
+/// Two candidate names come out of such a query, because `stella-graph`'s
+/// citation format composes two things a reader writes as one:
+/// `AGENTS.md › Architecture › 8. Provider feature parity` is a **path** and a
+/// breadcrumb, and only the breadcrumb is the symbol's name (the path is
+/// `code_graph_files.path` — see `stella_graph`'s `markdown` module). So the
+/// whole query is tried, and so is the tail past its first separator. Neither
+/// is a guess: both are shapes that module documents.
 pub fn symbol_terms(query: &str) -> Vec<&str> {
     let mut terms = Vec::new();
+    let trimmed = query.trim();
+    if trimmed.contains(BREADCRUMB_SEPARATOR) {
+        terms.push(trimmed);
+        if let Some((_, tail)) = trimmed.split_once(BREADCRUMB_SEPARATOR) {
+            terms.push(tail);
+        }
+        // A breadcrumb is the whole query by construction — it carries the
+        // spaces `|` alternation and keyword peeling are defined against — so
+        // there is nothing further to decompose.
+        return terms;
+    }
     for alternative in query.split('|') {
         let mut term = alternative.trim();
         // Peel leading keywords one at a time so `pub async fn name` reduces
@@ -638,6 +692,54 @@ mod tests {
             symbol_terms("pub fn store_chunk_vectors|pub struct CodeGraph|impl CodeGraph"),
             vec!["store_chunk_vectors", "CodeGraph"],
             "the repeated type is named once"
+        );
+    }
+
+    /// A markdown section's breadcrumb is a name, and the citation form that
+    /// prefixes it with the file's path names the same one (#4574).
+    #[test]
+    fn a_breadcrumb_query_names_the_section_and_the_path_prefixed_citation() {
+        let bare = format!("Architecture{BREADCRUMB_SEPARATOR}8. Provider feature parity");
+        assert_eq!(
+            symbol_terms(&bare),
+            vec![bare.as_str(), "8. Provider feature parity"],
+            "the whole breadcrumb, then its tail — a two-level breadcrumb and \
+             a path-prefixed one-level citation are the same bytes"
+        );
+
+        let cited = format!("AGENTS.md{BREADCRUMB_SEPARATOR}{bare}");
+        assert_eq!(
+            symbol_terms(&cited),
+            vec![cited.as_str(), bare.as_str()],
+            "the path is `code_graph_files.path` and never part of the name, \
+             so the tail is what the graph is asked about"
+        );
+    }
+
+    /// The other half of #4574, and the one the census decided: a dotted TOML
+    /// key stays a pattern.
+    ///
+    /// Five of 786 real queries would newly admit a term under a dotted rule,
+    /// and all five are a filename or a regex `.` — the shapes below. Each
+    /// still decomposes to nothing, so each still costs no graph round-trip.
+    #[test]
+    fn a_dotted_key_is_still_not_a_name() {
+        assert!(symbol_terms("record.steering.applies_to").is_empty());
+        for censused in [
+            "driver.rs",
+            "settings.json",
+            "hot.reload",
+            "verifier.verdict",
+        ] {
+            assert!(
+                symbol_terms(censused).is_empty(),
+                "`{censused}` was a filename or a regex in the log, not a name"
+            );
+        }
+        assert_eq!(
+            symbol_terms("verifier.verdict|agent.error|retryable"),
+            vec!["retryable"],
+            "and the real name beside them is still found"
         );
     }
 
