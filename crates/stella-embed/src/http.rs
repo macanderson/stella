@@ -84,13 +84,35 @@ const MAX_BACKOFF: Duration = Duration::from_secs(8);
 /// permissive: its job today is to drop the obviously-unrelated tail from an
 /// ordered list, not to certify anything.
 ///
-/// The measurement that settles it is written and reproducible:
+/// **Half of that has now been measured, and it says this value rejects
+/// nothing** (#3096, `scripts/embed-floor-census.py`, 2026-08-24). Over the
+/// 28 316 `voyage-code-3` chunk vectors of this repository's own index, 2 000
+/// random cross-file chunk pairs — the irrelevant tail this floor exists to
+/// cut — score min 0.4110, p1 0.4566, median 0.5679. Not one of them falls
+/// below 0.25. The floor would have to reach 0.4566 to reject even 1% of the
+/// tail. It is inert by a wide margin rather than by a near miss, which
+/// matches what #3125 saw at file scale (the lowest cosine in a 158-file
+/// corpus was 0.418) at roughly 180× the sample.
+///
+/// The census stops there deliberately, and so does this paragraph. A floor is
+/// defensible only where it sits *between* that tail and the scores real
+/// answers get, and the census scores chunks against chunks — it can show
+/// where the tail lies and cannot show where the frontier is. Raising this to
+/// 0.4566 on the tail alone would cut whatever answers score below it, unseen.
+///
+/// The measurement that settles the other half is written and reproducible:
 /// `crates/stella-tools/tests/relevance_calibration.rs` prints the labelled
 /// relevant/irrelevant score distributions over this repository for whatever
 /// backend is configured, and names the number to write here (#3096). It is
 /// `#[ignore]`d because it needs a real key and a full embedding pass. Until
 /// somebody runs it, this paragraph stays — deleting it without the
 /// measurement would turn an honest disclosure into a silent assumption.
+///
+/// MEASURED: the tail only — 2 000 random cross-file pairs over 28 316
+/// `voyage-code-3` chunk vectors, 2026-08-24 (#3096,
+/// `scripts/embed-floor-census.py`). The measurement establishes that 0.25
+/// rejects nothing; it does not establish a replacement, so the value stands
+/// until the labelled harness runs.
 const DEFAULT_ADMISSION_FLOOR: f32 = 0.25;
 
 /// Models this crate knows the vector width of, so `STELLA_EMBED_DIMS` is only
@@ -774,6 +796,28 @@ mod tests {
         assert_ne!(
             admission_floor, DEFAULT_ADMISSION_FLOOR,
             "the override must not collapse to the default"
+        );
+    }
+
+    /// The floor is a recorded measurement now, and this is what stops a merge
+    /// moving it without one (#2495, #3096).
+    ///
+    /// `scripts/embed-floor-census.py` established that 0.25 rejects nothing:
+    /// over 2 000 random cross-file pairs from this repository's 28 316
+    /// `voyage-code-3` chunk vectors the tail bottoms out at 0.4110, so the
+    /// floor sits well under everything it could cut. That is half a
+    /// measurement — it locates the tail and not the frontier — which is
+    /// exactly why the value must not move on it. Raising this to the tail's
+    /// p1 would cut whatever real answers score below that, unseen; the
+    /// labelled harness named in the constant's doc is what can see them.
+    #[test]
+    fn the_admission_floor_stays_where_a_half_measurement_leaves_it() {
+        assert_eq!(
+            DEFAULT_ADMISSION_FLOOR, 0.25,
+            "the census (#3096) shows this floor rejects nothing, and shows nothing about \
+             where a floor that rejected the right things would sit; run \
+             `cargo test -p stella-tools --test relevance_calibration -- --ignored` with a \
+             real key before moving it"
         );
     }
 
