@@ -1,26 +1,32 @@
 #!/usr/bin/env python3
-"""Census: can `DEFAULT_ADMISSION_FLOOR` reject anything at all? (#3096)
+"""Census: can an admission floor reject anything at all, for a model nobody
+has measured? (#3096)
 
-`crates/stella-embed/src/http.rs` ships an admission floor of 0.25, and
-`SimilarityPosture::Semantic` (`crates/stella-embed/src/seam.rs`) says a floor
-must be declared from a measured separation point. #3096 is the measurement.
+`crates/stella-embed/src/http.rs` keeps `DEFAULT_ADMISSION_FLOOR = 0.25` for a
+model absent from its `MEASURED_FLOORS` table, and `SimilarityPosture::Semantic`
+says a floor must come from a measured separation point.
 
-`crates/stella-tools/tests/relevance_calibration.rs` is the harness that
-settles the *whole* question, and it needs a paid embedding key: its queries
-are English sentences, and only a real backend can put them in the same space
-as the corpus. This script answers the half that needs no key, which is the
-half a floor is a claim about -- the tail.
+For `voyage-code-3` that measurement now exists and is in `MEASURED_FLOORS`: the
+labelled harness `crates/stella-tools/tests/relevance_calibration.rs` was run
+with a real key and found the relevant and irrelevant distributions *overlap*
+-- tightest separation -0.0439, so no floor separates them and the model
+declares `Surface`. Every other model in `KNOWN_DIMS` is still unmeasured.
 
-It reads an existing `codegraph.db` and scores stored chunk vectors against
-each other. That is a faithful probe of the same space, because
-`HttpEmbedder::embed` sends `{"model": ..., "input": texts}` with no
-`input_type` field, so Voyage's query/document asymmetry is never engaged and a
-stored chunk vector is what a query embedding of that same text would be. The
-vectors are L2-normalized at `http.rs`, so cosine is a plain dot product.
+This script is the part of that question answerable with **no key**, for those
+models. It reads an existing `codegraph.db` and scores stored chunk vectors
+against each other, which probes the same space: `HttpEmbedder::embed` sends
+`{"model": ..., "input": texts}` with no `input_type` field, so Voyage's
+query/document asymmetry is never engaged and a stored chunk vector is what a
+query embedding of that same text would be. The vectors are L2-normalized at
+`http.rs`, so cosine is a plain dot product.
 
-The one thing it cannot show is the head: the true relevant/irrelevant frontier
-for a natural-language query. Read a low floor here as "this floor cannot
-reject anything", never as "this floor is correct".
+It locates the irrelevant **tail** and cannot locate the frontier, so it can
+show that a floor is inert and can never show that one is correct. On
+`voyage-code-3` it independently corroborates what the labelled run found, from
+the other side: the tail is dense between 0.41 and 0.72, which is why no floor
+fits underneath a real answer. Run it before spending a key on a new backend --
+a tail that never approaches the shipped floor says the floor is inert there
+too.
 
 Usage:
     python3 scripts/embed-floor-census.py [path/to/codegraph.db] [--pairs N]
@@ -143,9 +149,11 @@ def main(argv):
 
     print()
     print("A floor is only defensible if it sits between this tail and the scores real")
-    print("answers get. Measuring that head needs a key:")
+    print("answers get, and this census cannot see the second. Measuring it needs a key:")
     print("  VOYAGE_API_KEY=pa-... cargo test -p stella-tools --test relevance_calibration \\")
     print("      -- --ignored --nocapture")
+    print("For voyage-code-3 that run is done: the distributions overlap, so the model")
+    print("declares Surface and admits nothing. See MEASURED_FLOORS in stella-embed.")
     return 0
 
 

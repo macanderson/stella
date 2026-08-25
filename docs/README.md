@@ -13,8 +13,7 @@ Stella *user* should read.
 
 What lives here is the material that isn't site content: design specs a
 maintainer reads before changing the engine, the decision record behind those
-specs, the research papers, and the brand assets. There is one deliberate
-exception: [`why-stella.md`](why-stella.md) is written for an evaluator rather
+specs, the research papers, and the brand assets. There is one exception: [`why-stella.md`](why-stella.md) is written for an evaluator rather
 than a contributor but stays in the repo so it renders on GitHub without a
 round trip to the site.
 
@@ -35,7 +34,7 @@ plain language, before you go read the specs themselves.
 | [`ONBOARDING.md`](ONBOARDING.md) | **Start here.** Principles, current schema, and the ADR index — one document for ramping up. |
 | [`adr/`](adr/README.md) | Architecture Decision Records for the adaptive-context work — the ratified answers the specs below are built on. |
 | [`spec/`](spec/) | The specifications code depends on: the diagnostic plane, storage map, serve surface, witness protocol, adaptive context, telemetry receipts, the threat model, and the rest. Cited from rustdoc and enforced by `make design-refs`. |
-| [`design/`](design/) | **Work in flight — nothing outside this directory may cite it.** Proposals and RFCs that have not landed. Churn freely: rewrite, rename and delete in here, and retire a page once the work it planned has shipped. Deliberately not enumerated — the list drifted twice, naming two documents the directory no longer held. |
+| [`design/`](design/) | **Work in flight — nothing outside this directory may cite it.** Proposals and RFCs that have not landed. Churn freely: rewrite, rename and delete in here, and retire a page once the work it planned has shipped. Not enumerated here — the list drifted twice, naming two documents the directory no longer held. |
 | [`tools/`](tools/README.md) | **Generated — do not edit.** One TOML page per dispatchable tool: name, description, input schema, the `ToolOutput` envelope, the catalog's flags, and an example payload observed in a real run. Derived from `crates/stella-tools/src/catalog.rs` and each tool's own `ToolSchema` by the `tool-docs` gate step, so a tool added without regenerating reddens the gate. Regenerate with `make tool-docs-update`. Index: `doc:tool-reference`. |
 | [`prompts/`](prompts/README.md) | What each agent role actually sends to a provider — one page per `ModelCallRole`, with the instruction block verbatim, the payload template, the caps, and which `agents.<kind>.prompt` override reaches it. Transcribed from the code, which stays normative. Index: `doc:prompts`. |
 | [`papers/`](papers/README.md) | The research notes behind Stella's design: [The Deterministic Engine](papers/deterministic-engine.md) and [Stella's Defensible Position](papers/stella-defensible-position.md). The live site links to these at their exact paths — don't move or rename them. |
@@ -63,8 +62,8 @@ Move the file, rename the directory, reorganise the whole tree — the citation
 still resolves, because it never named a location in the first place.
 
 **Frontmatter is the admission ticket.** A document with no `id` cannot be
-cited, and `make doc-links` fails on any citation to one. That is deliberate
-rather than strict: a spec nobody has bothered to give an identity to is a spec
+cited, and `make doc-links` fails on any citation to one. That is not
+strictness: a spec nobody has bothered to give an identity to is a spec
 nobody is maintaining, and this is a cheaper way to find that out than reading
 it. To adopt a document, `make doc-adopt DOC=docs/design/thing.md`. <!-- doc-links:ignore -->
 
