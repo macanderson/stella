@@ -134,11 +134,11 @@ fn main() {
         // granted late, one never granted, so a mode that answered a
         // constant could not tell a delivered credential from a leaked one.
         // Declares a witness list that narrows at `research` — the `case`
-        // the shell plugin spelled out. Kept faithful, but note the
-        // narrowing is unobservable through `wrapper_declared_witness.rs`:
-        // it asserts the *union* across stages, which is the same set
-        // either way. Checked by ablation — pinning the list leaves both
-        // its tests green.
+        // the shell plugin spelled out. The narrowing is load-bearing:
+        // pinning the list fails
+        // `a_single_stage_round_is_handed_that_stages_own_declaration`
+        // (#4876). It is invisible to that file's union test, which is why
+        // the single-stage case had to be added to see it.
         "witness-by-stage" => {
             let request = read_request();
             let list = if request.contains("\"stage\":\"research\"") {
