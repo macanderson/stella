@@ -7,6 +7,15 @@ status: proposed
 # ADR 0013: The session artifact boundary
 
 - Status: **Proposed** — awaiting ratification by the repository owner.
+- **Amendment, 2026-08-25 (#4653):** this ADR founds its replay fingerprint on
+  `OBSERVED_BLOB`, the session's durable staleness map. That blob was removed
+  in #3780 (landed by PR #4645) because nothing ever wrote it and nothing ever
+  read it — the no-clobber guard that shipped keys on line coverage, not on a
+  digest map. Every reference to it below therefore describes a mechanism this
+  tree does not have. The decision text is left as written, because an ADR is a
+  record of what was decided and when; what needs settling before ratification
+  is which mechanism the fingerprint rests on instead. That choice is left to
+  whoever ratifies this ADR.
 - Date: 2026-08-02
 - Deciders: repository owner (pending)
 - Scope note: ADRs 0001–0012 are the Phase 0 adaptive-context series. This one

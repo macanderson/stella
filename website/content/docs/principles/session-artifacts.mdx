@@ -18,8 +18,10 @@ about, because it points straight at where the line belongs.
   reasoning below is settled in
   [ADR 0013](https://github.com/macanderson/stella/blob/main/docs/adr/0013-session-artifact-boundary.md);
   the export and replay APIs it describes are not built yet. Everything said
-  about *current* behaviour — the local store, the staleness map, the
-  reverse-RPC model — is shipping today.
+  about *current* behaviour — the local store, the reverse-RPC model — is
+  shipping today. The durable staleness map is **not**: it was removed in
+  #3780 as a map nothing ever wrote or read, so the fingerprint described
+  below has yet to be founded on a mechanism that exists.
 </Callout>
 
 ## Why local state is local on purpose
@@ -100,9 +102,12 @@ So the artifact carries a fingerprint of the tree it came from, and **replay
 verifies it and refuses by default**. stella is not naming your workspace. It is
 checking that this artifact belongs to this tree.
 
-The fingerprint is not a new mechanism — it is the staleness map the no-clobber
-guard already keeps: every path this session touched, and the digest of what it
-saw there. Verifying it is re-hashing those paths in the target tree. A mismatch
+The fingerprint was to be founded on the staleness map the no-clobber guard was
+thought to keep — every path this session touched, and the digest of what it saw
+there. That map was removed in #3780: nothing wrote it and nothing read it, so
+the fingerprint needs a mechanism this tree actually has before it can be built.
+What follows describes the intended shape, not a mechanism in place.
+Verifying it is re-hashing those paths in the target tree. A mismatch
 names the exact files, exactly as a refused write does, and nothing is consumed.
 Overriding it is possible, but it is a distinct argument you pass, never a
 fallback stella takes on your behalf when the check fails.
