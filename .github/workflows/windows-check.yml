@@ -52,7 +52,11 @@ name: windows-check
 # with the same guard and each backing onto the compile blocker two
 # paragraphs up: `--test group_kill_witnesses` links only the compiled
 # `stella-tools` library, not its `--lib` test binary, so it runs here without
-# waiting on that binary's Windows compile (#4698).
+# waiting on that binary's Windows compile (#4698). Only the custom-tool
+# witness runs unconditionally here today — the other two are `ignore`d on
+# Windows, where plain `bash` resolves to Windows' own WSL launcher stub
+# rather than a shell (#4861), a separate defect this step's green does not
+# claim is fixed.
 #
 # Its own file rather than a job in ci.yml for the reason wire-schema.yml has
 # one: ci.yml's required job is what every PR waits on, and a Windows runner is

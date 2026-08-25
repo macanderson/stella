@@ -21,12 +21,14 @@
 //! The custom-tool witness's heartbeat writer is `group-kill-fixture`, a
 //! portable binary (`tests/fixtures/`, the same pattern
 //! `wrapper-plugin-fixture` established for the plugin transport): the tool
-//! runs `command[0]` with no shell, so it needs none. The `bash` and hook
+//! runs `command[0]` with no shell, so it needs none, and it is the one
+//! witness here that runs unconditionally on Windows. The `bash` and hook
 //! witnesses have no such escape — both call sites hardcode
-//! `Command::new("bash")` — so they instead defend against a real
-//! environment hazard `ensure_bash_resolves_to_a_real_shell` documents: on
-//! `windows-latest`, plain `bash` can resolve to Windows' own WSL launcher
-//! stub ahead of Git for Windows' real shell.
+//! `Command::new("bash")` — and on `windows-latest` that resolves to
+//! Windows' own WSL launcher stub, not a real shell, regardless of `PATH`
+//! (`CreateProcessW` checks `System32` before `PATH` at all). They are
+//! `#[cfg_attr(windows, ignore)]` until #4861 fixes that, rather than forced
+//! green against an environment neither call site can see through.
 //!
 //! An integration test on purpose, not a `#[cfg(test)] mod` beside the
 //! production code: `custom/tests.rs` and several other `stella-tools`
@@ -116,53 +118,24 @@ fn backgrounding_command(pulse: &Path) -> String {
     )
 }
 
-/// Make `Command::new("bash")` — what `Bash::execute` and the hook runner's
-/// operator path both hardcode — resolve to a real shell on this runner.
-///
-/// On a stock `windows-latest` GitHub Actions image, `%SystemRoot%\System32`
-/// precedes Git for Windows in `PATH`, and Windows ships its own
-/// `bash.exe` there: the WSL launcher stub, which — with no distribution
-/// installed — prints an install prompt and exits nonzero instead of running
-/// anything. `Bash::execute`/`HostHookRunner::run` inherit this process's
-/// `PATH` (neither clears the operator's environment), so prepending Git's
-/// documented, stable install location — the same one GitHub's own
-/// `shell: bash` step type resolves — makes these two witnesses exercise a
-/// real shell here instead of failing on an environment quirk unrelated to
-/// `GroupKillGuard`. This is a Windows CI fixture concern, not a claim about
-/// what `stella-tools` does in production; #4861 tracks the underlying
-/// PATH-order hazard for a real fix.
-#[cfg(windows)]
-fn ensure_bash_resolves_to_a_real_shell() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let git_bin = std::path::PathBuf::from(
-            std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into()),
-        )
-        .join("Git")
-        .join("bin");
-        if !git_bin.join("bash.exe").is_file() {
-            return;
-        }
-        let mut path = std::ffi::OsString::from(&git_bin);
-        path.push(";");
-        path.push(std::env::var_os("PATH").unwrap_or_default());
-        // SAFETY: the `Once` above makes this run exactly once, and it runs
-        // before any of this binary's three tests spawn a child that reads
-        // `PATH` — `still_beating`/`beats` only ever touch the filesystem, so
-        // there is no concurrent reader of the environment block to race.
-        unsafe { std::env::set_var("PATH", path) };
-    });
-}
-
-#[cfg(not(windows))]
-fn ensure_bash_resolves_to_a_real_shell() {}
-
 /// **Witness 1** (ported from `bash.rs`'s `#[cfg(unix)]` test). Dropping the
 /// future driving a `bash` call — Esc during a long call — must kill the
 /// whole group, not just the shell that fronts it.
+///
+/// Ignored on Windows, not skipped silently: `Bash::execute` hardcodes
+/// `Command::new("bash")`, and on `windows-latest` that resolves to Windows'
+/// own WSL launcher stub — with no distribution installed it prints an
+/// install prompt and exits nonzero instead of running anything, ahead of
+/// Git for Windows' real shell regardless of `PATH` order (`CreateProcessW`
+/// checks `System32` before consulting `PATH` at all). #4861 tracks fixing
+/// that; until then this witness cannot prove `GroupKillGuard` reaches a
+/// backgrounded child here.
+#[cfg_attr(
+    windows,
+    ignore = "blocked on #4861: bash resolves to the WSL launcher stub here, not a real shell"
+)]
 #[tokio::test]
 async fn a_dropped_bash_call_kills_the_process_group() {
-    ensure_bash_resolves_to_a_real_shell();
     let dir = tempfile::tempdir().expect("tempdir");
     let pulse = dir.path().join("bash.pulse");
     let root = dir.path().to_path_buf();
@@ -245,9 +218,16 @@ async fn a_dropped_custom_tool_kills_the_process_group() {
 /// `a_timed_out_plugin_leaves_no_surviving_grandchild` proves for the plugin
 /// transport: `kill_now` on the timeout path reaches the grandchild, not
 /// only the hook process that fronted it.
+///
+/// Ignored on Windows for the same reason as Witness 1, tracked by the same
+/// #4861: the hook runner's operator path (an action with no `[plugin]`
+/// origin) also hardcodes `Command::new("bash")`.
+#[cfg_attr(
+    windows,
+    ignore = "blocked on #4861: bash resolves to the WSL launcher stub here, not a real shell"
+)]
 #[tokio::test]
 async fn a_timed_out_hook_leaves_no_surviving_grandchild() {
-    ensure_bash_resolves_to_a_real_shell();
     let dir = tempfile::tempdir().expect("tempdir");
     let pulse = dir.path().join("hook.pulse");
     let mut hung = HookAction::new(backgrounding_command(&pulse));
