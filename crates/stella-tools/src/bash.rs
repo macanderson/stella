@@ -908,52 +908,9 @@ mod tests {
         );
     }
 
-    /// Dropping the future mid-wait (a cancelled turn) must kill the whole
-    /// process group — the `crate::exec::GroupKillGuard` backstop. Without
-    /// it, Esc during a long `bash` call left the command running and
-    /// mutating the tree, `setsid`'d beyond the reach of anything else.
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn a_dropped_bash_call_kills_the_process_group() {
-        let dir = tempfile::tempdir().unwrap();
-        let pidfile = dir.path().join("pid");
-        // Record the *grandchild*'s pid: when the group dies, the orphaned
-        // sleep is reaped by init, so a surviving pid means a real leak.
-        // `kill_on_drop` alone would not reach it — only the group kill does.
-        let command = format!("sleep 30 & echo $! > {} && wait", pidfile.display());
-        let root = dir.path().to_path_buf();
-        let handle = tokio::spawn(async move {
-            Bash::new(None)
-                .execute(
-                    &serde_json::json!({"command": command, "timeout_secs": 60}),
-                    &cx(&root),
-                )
-                .await
-        });
-        let mut pid = None;
-        for _ in 0..250 {
-            if let Some(p) = std::fs::read_to_string(&pidfile)
-                .ok()
-                .and_then(|s| s.trim().parse::<i32>().ok())
-            {
-                pid = Some(p);
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        let pid = pid.expect("the child never started");
-        handle.abort();
-        let _ = handle.await;
-        let mut dead = false;
-        for _ in 0..250 {
-            if unsafe { libc::kill(pid, 0) } == -1 {
-                dead = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        assert!(dead, "cancelled bash call left subprocess {pid} running");
-    }
+    // `GroupKillGuard`'s own witness for this spawn site lives in
+    // `stella-tools/tests/group_kill_witnesses.rs`, not here: it needs to run
+    // on Windows too, and this file's `#[cfg(test)] mod` does not (#4698).
 
     #[tokio::test]
     async fn truncates_multibyte_output_without_panicking() {
