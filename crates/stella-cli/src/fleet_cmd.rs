@@ -69,7 +69,7 @@ use stella_fleet::{
     MonitorError, Plan, SystemGhCli, SystemGitCli, Task, TaskId, TimeoutReason, WatchConfig,
     WorkerControls, WorkerOutcome, WorktreeManager,
 };
-use stella_protocol::{AgentEvent, CompletionMessage, PrStatus};
+use stella_protocol::{AgentEvent, PrStatus};
 use stella_tools::ToolRegistry;
 use stella_tools::hook_runner::HostHookRunner;
 use stella_tui::{FleetDashResult, FleetMsg, FleetStatus};
@@ -984,6 +984,9 @@ async fn run_task(
     // lesson lands (`mine_attempt_lesson`) — the one durable tree in a run whose
     // task trees may not outlive it.
     let invocation_root = cfg.workspace_root.clone();
+    // This attempt's OWN durable record — never the handle on `cfg`, and
+    // rooted at the invocation root — `durability` argues each (#3232).
+    let attempt_durability = durability::bind(&invocation_root, claim_holder);
     let mut cfg = cfg.clone();
     cfg.workspace_root = root.to_path_buf();
     let provider = agent::build_provider(&cfg)?;
@@ -1061,16 +1064,17 @@ async fn run_task(
     // readable from the dispatch side (#1216).
     spend.publish(&execution);
 
-    let mut messages = vec![CompletionMessage::system(
-        // Each worker is its own session in its own workspace, so its
-        // SessionStart hooks fire here, in the worktree.
-        agent::with_session_hook_context(
-            agent::build_system_prompt(&cfg, root, &active_rules),
-            &cfg,
-        )
-        .await,
-    )];
-    messages.push(CompletionMessage::user(&task.prompt));
+    // Each worker is its own session in its own workspace, so its SessionStart
+    // hooks fire here, in the worktree.
+    let system_prompt = agent::with_session_hook_context(
+        agent::build_system_prompt(&cfg, root, &active_rules),
+        &cfg,
+    )
+    .await;
+    // A checkpoint under this attempt's own key means a prior attempt at this
+    // task was interrupted — re-enter it rather than start over (#3232).
+    let (mut messages, resume_note) =
+        attempt_durability.initial_messages(system_prompt, &task.prompt);
     // The volatile half of this worker's steering (#3947). `build_system_prompt`
     // above is only the byte-stable prefix — memories and enforced rules; the
     // selected skills, the matched context records, and today's date ride the
@@ -1144,6 +1148,8 @@ async fn run_task(
     if let Some(withheld) = cfg.authority.withheld.as_ref() {
         let _ = tx.send(withheld.event());
     }
+    // This attempt's durability, on the same lane and for the same reason.
+    attempt_durability.announce(&tx, resume_note);
 
     // The task's control lines (stella-fleet's `WorkerControls`), composed
     // with the dispatch-drop line from `EngineWorker::run` — see
@@ -1178,7 +1184,7 @@ async fn run_task(
             let mut engine = Engine::with_sleeper(
                 &*provider,
                 &permitted,
-                agent::engine_config_for(&cfg),
+                attempt_durability.engine_config(&cfg),
                 &TokioSleeper,
             )
             .with_gate(gate.as_ref());
@@ -1484,6 +1490,7 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
     );
 }
 
+mod durability;
 mod wrapped;
 
 /// Where the fleet command's plan-shape belongs in docs/tests: a plan file is

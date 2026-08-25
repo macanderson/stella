@@ -55,9 +55,10 @@ fn tuned_engine_config(cfg: &Config, catalog_ref: (&str, &str)) -> EngineConfig 
         // (which the engine crate cannot see, because a sub-session is built
         // through `Engine::with_sleeper` rather than `run_sub_agent`).
         //
-        // It does not reach the fleet at all: a fleet worker never binds this
-        // handle, so `sink()` answers `None` for every worker turn and the
-        // whole fan-out runs without step-level durability (#3232).
+        // A fleet worker is the third door and is closed the same way: it never
+        // binds this handle either, and `crate::fleet_cmd::durability` mints it
+        // one of its own keyed on the attempt's claim holder, re-keyed onto the
+        // config through `subsession_engine_config_for` below (#3232).
         //
         // `None` while the session has not bound its durable location — a
         // command with no turn to checkpoint, or a driver that has not yet
@@ -240,6 +241,15 @@ pub(crate) fn engine_config_for(cfg: &Config) -> EngineConfig {
 /// journal key (`{session}/{lane}`), so its steps checkpoint into their own
 /// ref namespace and can never collide with the lead's, or with a sibling
 /// lane's (#3233).
+///
+/// A fleet attempt takes the same seam for the same reason (#3232). Its
+/// handle is minted by `crate::fleet_cmd::durability` under the attempt's
+/// claim holder, so N workers of one wave hold N records over one workspace —
+/// which `stella_store::work_journal` establishes is sound: separate ref
+/// namespaces, separate `GIT_INDEX_FILE`, sharing only the object store. The
+/// name still says "sub-session" because that is the door that first needed
+/// it; what the function does is re-key a config onto a handle that is not the
+/// one on the `Config`, and both callers want exactly that.
 pub(crate) fn subsession_engine_config_for(
     cfg: &Config,
     durability: &crate::durability::SessionDurability,

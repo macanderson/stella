@@ -24,6 +24,17 @@ Machinery: `crates/stella-pipeline/src/replay.rs` (`validate_stream`,
 `crates/stella-pipeline/src/replay/golden.rs` (the fixture format and its load
 gates) — both deleted in #3865.
 
+One piece of it came back. `validate_stream` — the four structural rules over
+an event stream, and the JSONL reader that feeds it — lives in
+`crates/stella-core/src/event_stream.rs` since #4585, because those rules are
+about the event vocabulary every door emits rather than about the deleted
+pipeline. `structural_diff`, `streams_equivalent` and the golden-fixture
+format did **not** come back: they are about comparing two recordings of the
+same work, which is the trajectory-fixture approach this document records and
+a verification plugin's to implement. Read a reference to `validate_stream`
+below as naming the surviving checker under its new path; every other path,
+command and type here still does not exist in this tree.
+
 ---
 
 ## Two kinds of recording, deliberately not interchangeable
