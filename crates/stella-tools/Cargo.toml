@@ -77,3 +77,19 @@ windows-sys = { version = "0.61", features = [
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "fs", "io-util"] }
 # Property tests for foundry authorship and the approval precedence ladder.
 proptest.workspace = true
+
+# The custom-tool group-kill witness's own child (#4698), the same pattern
+# `stella-runtime`'s `wrapper-plugin-fixture` established (#3497): a portable
+# binary rather than a `/bin/sh` script, so `tests/group_kill_witnesses.rs`
+# locates it with `env!("CARGO_BIN_EXE_group-kill-fixture")` and needs no
+# shell to prove `run_custom`'s spawn (`command[0]` directly, no shell in
+# between) reaches a backgrounded grandchild. Under `tests/fixtures/`, not
+# `src/bin/`, for the same reason as its sibling: it is a process apart from
+# the library, not a second thing the library ships.
+[[bin]]
+name = "group-kill-fixture"
+path = "tests/fixtures/group-kill-fixture.rs"
+
+# A test fixture, never a shipped surface — keep it out of dist.
+[package.metadata.dist]
+dist = false

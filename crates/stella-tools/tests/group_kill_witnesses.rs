@@ -12,12 +12,21 @@
 //! `#[cfg(unix)]` tests — read a pid with `libc::kill`, which has no Windows
 //! answer, so nothing here ever exercised the guard's Windows arm. `hook_runner.rs`
 //! had no such test at all. This file replaces the two and adds the third,
-//! all three heartbeating to a file from a background shell job that touches
-//! no pipe, exactly as the plugin witness does: `ps -o state=` on a recorded
-//! pid cannot be ported (a killed orphan lingers as a zombie until reaped,
-//! which Windows has no state column for), but a file that stops growing
-//! reports the same fact — that the process is still *doing* something — on
-//! both platforms.
+//! all three heartbeating to a file instead of polling a pid, exactly as the
+//! plugin witness does: `ps -o state=` on a recorded pid cannot be ported (a
+//! killed orphan lingers as a zombie until reaped, which Windows has no
+//! state column for), but a file that stops growing reports the same fact —
+//! that the process is still *doing* something — on both platforms.
+//!
+//! The custom-tool witness's heartbeat writer is `group-kill-fixture`, a
+//! portable binary (`tests/fixtures/`, the same pattern
+//! `wrapper-plugin-fixture` established for the plugin transport): the tool
+//! runs `command[0]` with no shell, so it needs none. The `bash` and hook
+//! witnesses have no such escape — both call sites hardcode
+//! `Command::new("bash")` — so they instead defend against a real
+//! environment hazard `ensure_bash_resolves_to_a_real_shell` documents: on
+//! `windows-latest`, plain `bash` can resolve to Windows' own WSL launcher
+//! stub ahead of Git for Windows' real shell.
 //!
 //! An integration test on purpose, not a `#[cfg(test)] mod` beside the
 //! production code: `custom/tests.rs` and several other `stella-tools`
@@ -107,11 +116,53 @@ fn backgrounding_command(pulse: &Path) -> String {
     )
 }
 
+/// Make `Command::new("bash")` — what `Bash::execute` and the hook runner's
+/// operator path both hardcode — resolve to a real shell on this runner.
+///
+/// On a stock `windows-latest` GitHub Actions image, `%SystemRoot%\System32`
+/// precedes Git for Windows in `PATH`, and Windows ships its own
+/// `bash.exe` there: the WSL launcher stub, which — with no distribution
+/// installed — prints an install prompt and exits nonzero instead of running
+/// anything. `Bash::execute`/`HostHookRunner::run` inherit this process's
+/// `PATH` (neither clears the operator's environment), so prepending Git's
+/// documented, stable install location — the same one GitHub's own
+/// `shell: bash` step type resolves — makes these two witnesses exercise a
+/// real shell here instead of failing on an environment quirk unrelated to
+/// `GroupKillGuard`. This is a Windows CI fixture concern, not a claim about
+/// what `stella-tools` does in production; #4861 tracks the underlying
+/// PATH-order hazard for a real fix.
+#[cfg(windows)]
+fn ensure_bash_resolves_to_a_real_shell() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let git_bin = std::path::PathBuf::from(
+            std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into()),
+        )
+        .join("Git")
+        .join("bin");
+        if !git_bin.join("bash.exe").is_file() {
+            return;
+        }
+        let mut path = std::ffi::OsString::from(&git_bin);
+        path.push(";");
+        path.push(std::env::var_os("PATH").unwrap_or_default());
+        // SAFETY: the `Once` above makes this run exactly once, and it runs
+        // before any of this binary's three tests spawn a child that reads
+        // `PATH` — `still_beating`/`beats` only ever touch the filesystem, so
+        // there is no concurrent reader of the environment block to race.
+        unsafe { std::env::set_var("PATH", path) };
+    });
+}
+
+#[cfg(not(windows))]
+fn ensure_bash_resolves_to_a_real_shell() {}
+
 /// **Witness 1** (ported from `bash.rs`'s `#[cfg(unix)]` test). Dropping the
 /// future driving a `bash` call — Esc during a long call — must kill the
 /// whole group, not just the shell that fronts it.
 #[tokio::test]
 async fn a_dropped_bash_call_kills_the_process_group() {
+    ensure_bash_resolves_to_a_real_shell();
     let dir = tempfile::tempdir().expect("tempdir");
     let pulse = dir.path().join("bash.pulse");
     let root = dir.path().to_path_buf();
@@ -142,9 +193,11 @@ async fn a_dropped_bash_call_kills_the_process_group() {
 /// test). Dropping the future driving a custom tool must kill its whole
 /// group the same way — the same guard, a different spawn site.
 ///
-/// The tool's `command` runs `bash` directly (no shebang): `run_custom` spawns
-/// `command[0]` as the program with no shell, so a `#!/bin/sh` script — the
-/// shape the file's other fixtures use — never executes on Windows at all.
+/// The tool's `command` runs `group-kill-fixture` directly, not `bash`:
+/// `run_custom` spawns `command[0]` as the program with no shell in between
+/// (a `#!/bin/sh` script — the shape the file's other fixtures use — never
+/// executes on Windows at all), and a portable binary sidesteps needing a
+/// shell to exist on the runner in the first place, unlike Witnesses 1 and 3.
 #[tokio::test]
 async fn a_dropped_custom_tool_kills_the_process_group() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -153,7 +206,11 @@ async fn a_dropped_custom_tool_kills_the_process_group() {
     let tool = CustomTool {
         name: "bg".into(),
         description: "backgrounds a heartbeat writer".into(),
-        command: vec!["bash".into(), "-c".into(), backgrounding_command(&pulse)],
+        command: vec![
+            env!("CARGO_BIN_EXE_group-kill-fixture").to_string(),
+            "background".to_string(),
+            pulse.display().to_string(),
+        ],
         timeout_ms: MAX_TIMEOUT_MS,
         input_schema: serde_json::json!({ "type": "object" }),
         env: HashMap::new(),
@@ -190,6 +247,7 @@ async fn a_dropped_custom_tool_kills_the_process_group() {
 /// only the hook process that fronted it.
 #[tokio::test]
 async fn a_timed_out_hook_leaves_no_surviving_grandchild() {
+    ensure_bash_resolves_to_a_real_shell();
     let dir = tempfile::tempdir().expect("tempdir");
     let pulse = dir.path().join("hook.pulse");
     let mut hung = HookAction::new(backgrounding_command(&pulse));
