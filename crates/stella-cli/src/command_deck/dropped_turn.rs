@@ -33,6 +33,8 @@
 //! Lives here rather than inline in the driver's `TurnEnd` arms: those are in
 //! a god file closed to growth.
 
+use stella_core::BudgetGuard;
+
 use super::*;
 
 /// Close the execution a dropped turn left open, correct the guard from the

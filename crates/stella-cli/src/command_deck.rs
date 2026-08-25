@@ -67,37 +67,36 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use stella_core::ports::{Principal, ToolExecutor};
-use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
+use stella_core::ports::ToolExecutor;
 use stella_model::provider::Provider;
 use stella_protocol::{
-    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, QuestionOutcome, TaskItem,
+    AgentEvent, CompletionMessage, CompletionRequest, QuestionOutcome, TaskItem,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
-use stella_tools::custom::CustomTool;
-use stella_tools::hook_runner::HostHookRunner;
 use stella_tools::registry::approval::ApprovalResponse;
 use stella_tui::{
-    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityHit, Inbound, SkillOp, SkillScope,
-    SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
+    AgentMeta, AgentScope, AgentStatus, DeckOptions, Inbound, SkillOp, SkillScope, SkillSearchHit,
+    SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedSender};
 
-use crate::claims::ClaimTap;
 use crate::config::Config;
-use crate::interactive::{AskUserIo, SkillRegistry};
+use crate::interactive::SkillRegistry;
 use crate::{agent, rules};
 
 mod add_dir;
 mod authoring;
+mod driver_support;
 mod command_side;
 mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;
 mod inspect_service;
 mod lead_control;
+mod lead_turn;
 mod model_cmd;
+mod panel_snapshots;
 mod pr_observe;
 mod profile_cmd;
 mod session_clear;
@@ -105,21 +104,27 @@ mod session_override;
 mod sessions_view;
 mod settings_io;
 mod settle;
+mod slash_commands;
 mod slash_pump;
 mod steering;
 mod task_tap;
 mod theme_cmd;
 mod worker_control;
+use driver_support::{
+    handle_supervisor_msg, service_registry_action, spawn_mcp_connect, spawn_notification_poller,
+    spawn_pr_monitor,
+};
+use lead_turn::run_lead_turn;
+use panel_snapshots::{engine_config_inbound, tool_policy_inbound};
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
+use slash_commands::{DeckCommand, handle_agents_input, run_deck_command};
 
 use crate::memory::{SessionMemory, TurnFriction};
-use crate::runtime::TokioSleeper;
 use crate::subsession::{self, SubSessions, SupervisorMsg};
-use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
+use authoring::{agents_list_creating, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
-use task_tap::{PlanSetup, TaskTap};
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
@@ -2494,93 +2499,12 @@ pub async fn run_deck_session(
     }
 }
 
-/// Run the MCP connect on its own task, landing the connected set in `slot`
-/// for turns to pick up at dispatch. Returns whether any servers are
-/// configured at all (`false` = the slot will stay empty forever, so no
-/// "still connecting" note is ever warranted). Always seeds the MCP tab and
-/// releases the splash leg, whatever the plan resolves to.
-///
-/// Connect narration is session chrome (`chrome_tx`, the direct deck path):
-/// it re-runs at every boot, so journaling it would pile stale "connecting…"
-/// lines onto every resumed transcript. The status flips ride the journaled
-/// `in_tx` — `waiting_input` is also the journal's settle marker.
-fn spawn_mcp_connect(
-    cfg: Config,
-    registry: Arc<ToolRegistry>,
-    disabled: stella_mcp::DisabledServers,
-    slot: Arc<tokio::sync::OnceCell<Arc<stella_mcp::McpToolSet>>>,
-    in_tx: UnboundedSender<Inbound>,
-    chrome_tx: UnboundedSender<Inbound>,
-    release_splash: impl FnOnce() + Send + 'static,
-) -> bool {
-    let plan = agent::load_mcp_plan(&cfg);
-    let configured = matches!(plan, agent::McpPlan::Servers(_));
-    tokio::spawn(async move {
-        match plan {
-            agent::McpPlan::None => {}
-            agent::McpPlan::Invalid(reason) => {
-                let _ = chrome_tx.send(system_notice(reason));
-                let _ = in_tx.send(Inbound::Status {
-                    agent: LEAD.to_string(),
-                    status: AgentStatus::WaitingInput,
-                });
-            }
-            agent::McpPlan::Servers(servers) => {
-                let _ = chrome_tx.send(system_notice(format!(
-                    "connecting {} MCP server(s)…",
-                    servers.len()
-                )));
-                match crate::mcp_cmd::oauth_manager(&cfg.workspace_root) {
-                    Ok(auth) => {
-                        let set = agent::connect_mcp_servers(
-                            &servers,
-                            registry.clone(),
-                            Some(registry.mcp_usage_ledger()),
-                            Some(disabled.clone()),
-                            Some(auth),
-                        )
-                        .await;
-                        let _ =
-                            chrome_tx.send(system_notice(crate::mcp_cmd::mcp_connect_report(&set)));
-                        // `set` is infallible here (the cell is set exactly once,
-                        // by this task); an in-flight turn keeps its resolved
-                        // executor and the NEXT turn picks the servers up. Arc'd so
-                        // a turn can share it into Best-of-N candidates (#248 Ph1).
-                        let _ = slot.set(Arc::new(set));
-                    }
-                    Err(error) => {
-                        let _ = chrome_tx.send(system_notice(format!(
-                            "MCP authentication unavailable: {error} — continuing with native tools only"
-                        )));
-                    }
-                }
-                // No turn is in flight — assert the idle status so the
-                // dashboard cannot show a busy lead. (The chrome above no
-                // longer folds it to `Running`; see `system_notice`.)
-                let _ = in_tx.send(Inbound::Status {
-                    agent: LEAD.to_string(),
-                    status: AgentStatus::WaitingInput,
-                });
-            }
-        }
-        // Seed the MCP tab with the configured servers and their live state.
-        crate::deck_mcp::send_mcp_snapshot(&cfg, slot.get().map(Arc::as_ref), &disabled, &in_tx)
-            .await;
-        // MCP connect settled (or there was nothing to connect) — the other
-        // init leg the launch splash waits on.
-        release_splash();
-    });
-    configured
-}
-
 /// Registry hygiene: terminal session records older than this are swept at
 /// deck startup (30 days).
 const SESSION_RECORD_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 /// Inbox hygiene: **read** notifications older than this are swept at deck
 /// startup (14 days). Unread ones persist regardless — that is the contract.
 const NOTIFICATION_MAX_AGE_MS: u64 = 14 * 24 * 60 * 60 * 1000;
-/// How often the deck re-reads the machine-wide notification store.
-const NOTIFY_POLL_MS: u64 = 3_000;
 /// A successful turn at least this long lands a "work finished" notification
 /// — long enough that the user has plausibly looked away.
 const LONG_TURN_NOTIFY_SECS: i64 = 60;
