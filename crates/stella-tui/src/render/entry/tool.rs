@@ -164,6 +164,17 @@ pub(super) fn argument_rows(metal: Color, raw: &str, width: usize, out: &mut Vec
 /// `#[allow]`. Any other entry renders nothing: the arm in [`super::entry_body`]
 /// is the only caller and it matches on this variant, so the `else` is
 /// structural rather than a case that can happen.
+///
+/// **`read_size` is not rendered here** (#4640, the open question #4297
+/// left). The carrier is on the entry, and the row could show it; the
+/// count is already stated one row above, because a v1 `ToolStart` head routes
+/// through `v2::transcript_source::head_rows` and resolves the number off this
+/// very result (`super::v2_rows`). Restating it would put the same measurement
+/// in two cells of one block — the defect the metric column below already had
+/// once, when its size chip duplicated the count on the reveal hint under it.
+/// One count, in the row that also carries the affordance for what it counts.
+/// The `result_row` tests pin both halves, so a head that stops stating it
+/// fails rather than leaving the block silent.
 pub(super) fn result_body(
     entry: &TranscriptEntry,
     view: EntryView<'_>,

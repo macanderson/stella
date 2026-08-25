@@ -1,0 +1,45 @@
+# deck golden · page_agents_reply
+# the AGENTS page with a command's reply quoted in its own pane and a task half-typed
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ AGENTS · 1 waiting · 1 working · 0 completed
+
+ WORKING
+ ▸ ◆ sub:auth  needs input · 5:12 · glm-5.2 · $0.01
+     wire automations triggers API
+   ◆ sub:ci  running · 5:12 · glm-5.2-air · $0.00
+     watch CI + open PR
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ REPLY
+  worker · zai/glm-5.2 · effort high
+
+ /model sent
+ ❯ rewrite the parser
+   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · n new session · ⌃x⌃x kill · r refresh · esc back

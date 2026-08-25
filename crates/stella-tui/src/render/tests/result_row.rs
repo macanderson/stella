@@ -152,6 +152,75 @@ fn a_reads_whole_block_wears_the_reading_metal() {
     );
 }
 
+/// **The decision #4640 asked for, pinned from both sides.** A read's line
+/// count is stated exactly once in its block: on the head, not on the result
+/// row under it.
+///
+/// #4297 gave `TranscriptEntry::ToolResult` a `ReadSize` carrier and left the
+/// v1 result row an open question. The answer is that the row does not restate
+/// it, and this is what makes that an answer rather than an omission — the
+/// negative half alone would also pass on a deck that had lost the count
+/// altogether, which is the failure the issue was actually worried about.
+#[test]
+fn a_reads_line_count_is_stated_once_in_its_block() {
+    let transcript = vec![
+        start("read_file", Some("src/main.rs")),
+        TranscriptEntry::ToolResult {
+            call_id: "c1".into(),
+            name: "read_file".into(),
+            path: Some("src/main.rs".into()),
+            ok: true,
+            summary: "ok".into(),
+            full: "     1\tfn main() {}\n     2\t\n     3\t// end".into(),
+            duration_ms: 42,
+            speculated: false,
+            diff: Vec::new(),
+            read_size: Some(crate::model::ReadSize {
+                shown: 200,
+                total: 500,
+            }),
+        },
+    ];
+    let files: Vec<FileState> = Vec::new();
+    let rows = |idx: usize| -> Vec<String> {
+        let mut out = Vec::new();
+        entry_lines(
+            &transcript[idx],
+            EntryView::at(&files, &transcript, idx),
+            false,
+            false,
+            false,
+            WIDTH,
+            &mut out,
+        );
+        out.iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect()
+    };
+
+    let head = rows(0);
+    assert!(
+        head.iter().any(|l| l.contains("200 of 500 lines")),
+        "the head must state the coverage the tool reported, truncation and \
+         all — that is where the count lives: {head:?}"
+    );
+
+    // The result block does state a count — `⋯ 3 lines · ctrl+o`, the rows of
+    // output folded behind the reveal key. That is a different measurement
+    // from the read's coverage, and asserting it is present is what keeps the
+    // next assertion about the coverage rather than about an empty block.
+    let body = rows(1);
+    assert!(
+        body.iter().any(|l| l.contains("⋯ 3 lines · ctrl+o")),
+        "the reveal row and its own count are unaffected: {body:?}"
+    );
+    assert!(
+        !body.iter().any(|l| l.contains("200") || l.contains("500")),
+        "the result row restated a coverage the head above it already \
+         carries: {body:?}"
+    );
+}
+
 /// A failure overrides its call's metal on every row of the result — and keeps
 /// a glyph, because SPEC 13 will not let colour be the only carrier.
 #[test]
