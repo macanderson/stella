@@ -730,6 +730,14 @@ def report_orphans(docs, cited_ids):
     for doc in docs:
         if doc.status == "archived":
             continue
+        # A superseded document cannot be cited without failing this same
+        # guard -- `check` errors on `doc:<id>` naming one and tells the
+        # reader to cite the successor. So it can never legitimately appear
+        # in `cited_ids`, and listing it under "retire or adopt" asks for the
+        # one thing the guard forbids. `superseded_by` already records where
+        # it went; being uncited is the correct end state, not a finding.
+        if doc.status == "superseded":
+            continue
         if doc.id and cited_ids.get(doc.id):
             continue
         # A bare document is uncitable by construction, so "uncited" is not news
