@@ -28,10 +28,13 @@
 //! driver and drawn only when it is there — a demo snapshot nobody timed
 //! carries `None` and the bar simply omits it.
 //!
-//! The renderings' `q free-form query` still has no producer: the picker
-//! re-roots on a file name only, and there is no `WorkspaceInput` for a
-//! symbol or free-text query the CGP host could answer (#4335). It is elided
-//! rather than drawn with a stand-in.
+//! The renderings' `q free-form query` is the query bar's second mode. `q`
+//! opens a modal box on this tab; `⏎` sends the text as a
+//! [`crate::envelope::WorkspaceInput::GraphQuery`], and the driver answers
+//! with a snapshot whose [`GraphSnapshot::query`] echoes what was asked. The
+//! bar reads `q:<text>` in that mode and `file:<focus>` otherwise, so it
+//! always names which of the two produced the neighborhood on screen
+//! (#4335).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -89,11 +92,19 @@ fn rounded(title: Line<'static>) -> Block<'static> {
 
 /// Draw the tab. `cursor` is already clamped by the caller; `changed` is the
 /// focused lane's changed paths.
+///
+/// `typing` is the query box's live buffer while it is open — deck state, not
+/// snapshot state, because it is text nobody has answered yet. Once the
+/// driver answers, the same text arrives back as
+/// [`GraphSnapshot::query`] and the bar reads it from there instead, which is
+/// what keeps the bar from claiming a neighborhood answers a query it does
+/// not (#4335).
 pub fn render(
     snapshot: &GraphSnapshot,
     cursor: usize,
     changed: &[String],
     accessible: bool,
+    typing: Option<&str>,
     area: Rect,
     buf: &mut Buffer,
 ) {
@@ -110,15 +121,27 @@ pub fn render(
     ])
     .split(area);
 
-    // The query bar: the selector the view is rooted on, the picker's key,
-    // and the index's size.
-    let mut query = vec![
-        Span::styled(" ⌕ ", gold),
-        Span::styled("file:", muted),
-        Span::styled(snapshot.focus.clone(), text),
-    ];
-    if !snapshot.files.is_empty() {
-        query.push(Span::styled("   / files", dim));
+    // The query bar: the selector the view is rooted on, the keys that change
+    // it, and the index's size. Three states, in priority order — typing a
+    // query beats showing the one already answered, which beats the file the
+    // neighborhood is rooted on.
+    let mut query = vec![Span::styled(" ⌕ ", gold)];
+    match (typing, snapshot.query.as_deref()) {
+        (Some(text_so_far), _) => {
+            query.push(Span::styled("q:", gold));
+            query.push(Span::styled(format!("{text_so_far}▏"), text));
+        }
+        (None, Some(answered)) => {
+            query.push(Span::styled("q:", muted));
+            query.push(Span::styled(answered.to_string(), text));
+        }
+        (None, None) => {
+            query.push(Span::styled("file:", muted));
+            query.push(Span::styled(snapshot.focus.clone(), text));
+        }
+    }
+    if !snapshot.files.is_empty() && typing.is_none() {
+        query.push(Span::styled("   / files · q query", dim));
     }
     // `438 nodes · 12ms · det`. The timing is drawn only when the caller
     // measured one: a snapshot nobody timed (a demo, a scenario fixture)
@@ -166,11 +189,26 @@ pub fn render(
         super::graph::render(snapshot, cursor, coupling_area, buf);
     }
 
-    let mut keys = vec![Span::styled(" ↵", muted), Span::styled(" open file", dim)];
-    if !snapshot.files.is_empty() {
+    // While the query box is open its own keys are the only ones that do
+    // anything, so the footer says those instead of the tab's.
+    let mut keys = if typing.is_some() {
+        vec![
+            Span::styled(" ↵", muted),
+            Span::styled(" run query", dim),
+            Span::styled(" · ", dim),
+            Span::styled("esc", muted),
+            Span::styled(" cancel", dim),
+        ]
+    } else {
+        vec![Span::styled(" ↵", muted), Span::styled(" open file", dim)]
+    };
+    if !snapshot.files.is_empty() && typing.is_none() {
         keys.push(Span::styled(" · ", dim));
         keys.push(Span::styled("/", muted));
         keys.push(Span::styled(" files", dim));
+        keys.push(Span::styled(" · ", dim));
+        keys.push(Span::styled("q", muted));
+        keys.push(Span::styled(" query", dim));
     }
     keys.push(Span::styled(" · ", dim));
     keys.push(Span::styled("↑↓", muted));

@@ -705,6 +705,56 @@ fn deck_render_snapshots_pin_the_graph_query_time() {
     );
 }
 
+/// **The witness (#4335).** The GRAPH query bar's second mode: a
+/// neighborhood that answers a free-form query reads `q:<text>`, not
+/// `file:<focus>`, so it names which of the two ways of re-rooting produced
+/// what is on screen.
+#[test]
+fn deck_render_snapshots_pin_the_graph_free_form_query() {
+    let model = fixture_model();
+    let mut ui = ui_for(DeckTab::Graph);
+    if let Some(graph) = ui.graph.as_mut() {
+        graph.query = Some("run_turn".into());
+        graph.query_ms = Some(12);
+    }
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        frame.contains("q:run_turn"),
+        "the bar reads the query it answers:\n{frame}"
+    );
+    assert!(
+        !frame.contains("file:"),
+        "and not the file selector it is standing in for:\n{frame}"
+    );
+    assert_golden(
+        "tab_graph_query",
+        "the GRAPH tab rooted on a free-form query rather than a file",
+        W,
+        H,
+        &frame,
+    );
+}
+
+/// The query box while it is being typed: the bar echoes the buffer with a
+/// caret, and the footer swaps the tab's keys for the box's, because those
+/// are the only ones that do anything while it is up.
+#[test]
+fn deck_render_snapshots_pin_the_graph_query_box() {
+    let model = fixture_model();
+    let mut ui = ui_for(DeckTab::Graph);
+    ui.graph_query = Some("run_tu".into());
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert!(frame.contains("q:run_tu"), "{frame}");
+    assert!(frame.contains("run query"), "{frame}");
+    assert_golden(
+        "tab_graph_query_box",
+        "the GRAPH tab with the free-form query box open mid-type",
+        W,
+        H,
+        &frame,
+    );
+}
+
 #[test]
 fn deck_render_snapshots_pin_the_settings_tools_pane() {
     let model = fixture_model();

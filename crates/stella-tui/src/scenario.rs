@@ -92,6 +92,7 @@ pub fn demo_graph() -> GraphSnapshot {
         // Synthesized, never queried — the query bar draws no timing rather
         // than a made-up one.
         query_ms: None,
+        query: None,
     }
 }
 

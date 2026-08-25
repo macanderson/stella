@@ -869,6 +869,18 @@ pub enum WorkspaceInput {
     /// only knows the file *names* (shipped in [`GraphSnapshot::files`]), never
     /// their neighborhoods. `file` is a root-relative path from that list.
     FocusGraphFile { file: String },
+    /// Re-root the Graph tab on a free-form query — a symbol name, or any
+    /// text the driver's index can resolve to definitions. Sent by the tab's
+    /// `q` box; answered, like [`Self::FocusGraphFile`], with a fresh
+    /// [`Inbound::GraphSnapshot`], whose
+    /// [`query`](GraphSnapshot::query) echoes `text` back so the bar shows
+    /// what the neighborhood on screen actually answers (#4335).
+    ///
+    /// A separate verb rather than a mode flag on `FocusGraphFile`: the two
+    /// resolve differently on the driver side (a path lookup versus a symbol
+    /// lookup), and a query that matches nothing has to be able to say so
+    /// without being mistaken for a missing file.
+    GraphQuery { text: String },
     /// The INSTALLED AGENTS pane opened (or wants a reload): enumerate the
     /// agent definitions installed at both scopes and answer with
     /// [`Inbound::AgentsList`].
