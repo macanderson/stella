@@ -78,6 +78,7 @@ fn fixture() -> Run {
         status: Status::Ok,
         duration_ms: 9,
         speculated: false,
+        sub_agent_id: None,
     };
 
     let reproduce = Call {
@@ -97,6 +98,7 @@ fn fixture() -> Run {
         status: Status::Warn,
         duration_ms: 1_400,
         speculated: false,
+        sub_agent_id: None,
     };
 
     let edit = Call {
@@ -114,6 +116,7 @@ fn fixture() -> Run {
         status: Status::Ok,
         duration_ms: 34,
         speculated: false,
+        sub_agent_id: None,
     };
 
     let write = Call {
@@ -133,6 +136,7 @@ fn fixture() -> Run {
         status: Status::Ok,
         duration_ms: 11,
         speculated: true,
+        sub_agent_id: None,
     };
 
     let verify = Call {
@@ -145,6 +149,7 @@ fn fixture() -> Run {
         status: Status::Ok,
         duration_ms: 1_300,
         speculated: false,
+        sub_agent_id: None,
     };
 
     let delete = Call {
@@ -162,6 +167,7 @@ fn fixture() -> Run {
         status: Status::Ok,
         duration_ms: 4,
         speculated: false,
+        sub_agent_id: None,
     };
 
     let setup = Turn {
@@ -185,6 +191,7 @@ fn fixture() -> Run {
                     status: Status::Ok,
                     duration_ms: 8,
                     speculated: false,
+                    sub_agent_id: None,
                 },
                 1_000,
                 300,
@@ -199,6 +206,7 @@ fn fixture() -> Run {
                     status: Status::Ok,
                     duration_ms: 900,
                     speculated: false,
+                    sub_agent_id: None,
                 },
                 5_000,
                 300,

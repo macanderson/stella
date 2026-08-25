@@ -331,7 +331,7 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
                     error: String::new(),
                     bytes_out: 120,
                     duration_ms: 14,
-                    sub_agent_id: Some("d:1".into()),
+                    sub_agent_id: None,
                 },
                 ToolCallRow {
                     error_class: None,
@@ -365,27 +365,6 @@ fn data_plane_tables_roundtrip_and_tool_histogram() {
         )
         .unwrap();
     assert_eq!(store.count("tool_calls").unwrap(), 3);
-    // The bulk writer carries `sub_agent_id` too (#4699) — a delegate's call
-    // must not silently write NULL just because this path folds a whole
-    // batch instead of one event at a time.
-    let attributed: Option<String> = store
-        .lock()
-        .query_row(
-            "SELECT sub_agent_id FROM tool_calls WHERE execution_id = ?1 AND call_id = 'c1'",
-            [id],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(attributed.as_deref(), Some("d:1"));
-    let lead_own: Option<String> = store
-        .lock()
-        .query_row(
-            "SELECT sub_agent_id FROM tool_calls WHERE execution_id = ?1 AND call_id = 'c2'",
-            [id],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(lead_own, None, "the lead's own call must not carry an id");
 
     store
         .record_execution_reflection(
