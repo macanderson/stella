@@ -825,7 +825,11 @@ impl SessionMemory {
             if !self.include_workspace_skills {
                 continue;
             }
-            match super::rules_mining::write_rule(&self.workspace_root, &rule.candidate) {
+            match super::rules_mining::write_rule(
+                &self.workspace_root,
+                &rule.candidate,
+                rule.proposal.provenance,
+            ) {
                 Ok(Some(path)) if !quiet => {
                     println!(
                         "  {} new advisory rule from recurring observations: {} ({})",

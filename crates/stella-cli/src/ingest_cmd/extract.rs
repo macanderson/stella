@@ -636,6 +636,9 @@ fn build_defaults(
             commit: git(root, &["rev-parse", "--short", "HEAD"]),
             ingest_run_id: Some(ingest_run_id.to_string()),
             extracted_at: Some(extracted_at.to_string()),
+            // Ingested from a document rather than induced from a run, so
+            // there is no run-evidence grade to carry (#2782).
+            evidence_grade: None,
             extractor: Some(extractor.to_string()),
         }),
     }

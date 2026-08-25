@@ -13,3 +13,7 @@ publish.workspace = true
 # else: the CLI is a binary crate, so its surface is checked against source
 # text (the same discipline provider_parity.rs uses for adapter witnesses).
 stella-serve = { path = "../stella-serve" }
+# For the provenance grades the evolution matrix's evidence column is derived
+# from (#2782). The matrix reads that policy rather than restating it, which is
+# what keeps the two ledgers from drifting apart.
+stella-protocol = { path = "../stella-protocol" }

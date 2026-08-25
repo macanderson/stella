@@ -69,6 +69,7 @@ pub mod journal;
 pub mod ladder;
 pub mod lane;
 pub mod proof;
+pub mod provenance;
 pub mod provider;
 pub mod question;
 pub mod recall;

@@ -77,6 +77,7 @@ fn an_inferred_rule_is_never_blocking() {
         &stripped.text,
         "observation",
         "proposal:rule:some-lesson-abcd1234",
+        None,
     )
     .expect("a publishable record");
     assert!(
@@ -114,7 +115,7 @@ fn a_written_rule_file_is_prompt_only() {
         }),
         score: 30,
     };
-    let path = write_rule(dir.path(), &candidate)
+    let path = write_rule(dir.path(), &candidate, None)
         .expect("publishable")
         .expect("written");
     assert_eq!(
@@ -256,7 +257,7 @@ fn writing_never_clobbers_an_existing_rule_file() {
         score: 30,
     };
     assert!(
-        write_rule(dir.path(), &candidate)
+        write_rule(dir.path(), &candidate, None)
             .expect("an existing file is a skip, not an error")
             .is_none(),
         "the writer claimed to write over an existing file"
@@ -304,7 +305,7 @@ fn mined_rules_land_where_the_loader_reads() {
         guard: None,
         score: 30,
     };
-    write_rule(dir.path(), &candidate)
+    write_rule(dir.path(), &candidate, None)
         .expect("publishable")
         .expect("written");
 
@@ -318,5 +319,68 @@ fn mined_rules_land_where_the_loader_reads() {
             .any(|r| r.id.contains("landing-abcd1234") && r.text.contains("database migration")),
         "a mined rule did not reach the loader: {:?}",
         loaded.iter().map(|r| &r.id).collect::<Vec<_>>()
+    );
+}
+
+/// **The hop out of the ledger** (#2782): a rule published from a proposal
+/// carries that proposal's evidence grade onto the record on disk.
+///
+/// This is the boundary where provenance was previously lost for good. A
+/// proposal keeps its observations' ids; the published record keeps neither,
+/// so a grade not written here cannot be recovered by anything downstream —
+/// including the human reading the rule file to decide whether to trust it.
+#[test]
+fn a_published_rule_carries_the_grade_of_the_proposal_it_came_from() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let candidate = RuleCandidate {
+        id: "graded-abcd1234".into(),
+        text: LESSON.into(),
+        description: "d".into(),
+        occurrences: 3,
+        salient: false,
+        evidence: Vec::new(),
+        guard: None,
+        score: 30,
+    };
+
+    let path = write_rule(
+        dir.path(),
+        &candidate,
+        Some(stella_protocol::provenance::ProvenanceGrade::ModelCritique),
+    )
+    .expect("publishable")
+    .expect("written");
+
+    let written = std::fs::read_to_string(&path).expect("the published record is readable");
+    assert!(
+        written.contains("model_critique"),
+        "the published rule dropped the grade it was published on:\n{written}"
+    );
+}
+
+/// A rule published with no grade behind it writes no grade — absent evidence
+/// stays absent rather than being spelled as a weak one.
+#[test]
+fn a_published_rule_with_no_grade_writes_none() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let candidate = RuleCandidate {
+        id: "ungraded-abcd1234".into(),
+        text: LESSON.into(),
+        description: "d".into(),
+        occurrences: 3,
+        salient: false,
+        evidence: Vec::new(),
+        guard: None,
+        score: 30,
+    };
+
+    let path = write_rule(dir.path(), &candidate, None)
+        .expect("publishable")
+        .expect("written");
+
+    let written = std::fs::read_to_string(&path).expect("the published record is readable");
+    assert!(
+        !written.contains("evidence_grade"),
+        "an absent grade must not be written at all:\n{written}"
     );
 }
