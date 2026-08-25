@@ -109,6 +109,15 @@ expect "a composing tree passes" 0 "OK — main composes green" --manifest-dir "
 refute "a green run announces nothing" "gh issue create" \
   --announce --dry-run --manifest-dir "$tmp/clean"
 
+# The prose row RUNS, rather than merely being present in the checks array
+# (#4828). It cannot be exercised the way `compile` and `lockfile-sync` are:
+# those two take `--manifest-dir` and can be pointed at a broken fixture,
+# while `check-prose` reads the live tree and has no such switch — the same
+# reason `file-size` has no red fixture case here either. So the assertion
+# available is that the row reports its verdict at all, which is exactly what
+# was missing when the canary called a prose-red `main` green.
+expect "the prose row runs and reports" 0 "ok   prose" --manifest-dir "$tmp/clean"
+
 # ── red: the 2026-08-16 incident ──────────────────────────────────────────
 # The shared-cell shape: the version moved and the lock did not. Both PRs that
 # composed into this were green on their own.
