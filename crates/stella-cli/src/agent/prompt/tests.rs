@@ -150,6 +150,51 @@ fn both_prompts_void_measurements_whose_producing_command_errored() {
     }
 }
 
+/// **Witness (#2670).** Two bench cells lost to one line each, in opposite
+/// directions, and neither prompt said anything that would have caught either.
+///
+/// `extract-elf` bare: a +0x400000 rebase read out of the task's example
+/// output, applied, then reasoned about until the worker concluded "the
+/// example values are generic illustrations, not from this file" — and kept
+/// the offset the example was the only evidence for. It then "verified" 698 of
+/// 698 entries against its own rebased model, which cannot disagree with
+/// itself. Claude Code emitted the vaddr unchanged and passed.
+///
+/// `build-pov-ray` bare: two of three tests passed at SSIM 0.873; the third
+/// failed on `file_id.diz not found` because the archive it built held
+/// `FILE_ID.DIZ`, which its own step 150 had printed.
+///
+/// So pin the shared literal verbatim in both prompts, and each of the three
+/// clauses separately — a hollowed-out literal must not pass this.
+#[test]
+fn both_prompts_rank_a_task_supplied_example_above_the_workers_own_derivation() {
+    let shared = example_discipline!();
+    assert!(
+        shared.contains("treat the disagreement as your defect"),
+        "the example has to outrank the derivation by name"
+    );
+    assert!(
+        shared.contains("stand or fall together"),
+        "keeping a transform derived from an example later called illustrative is the \
+         extract-elf defect and has to be ruled out on its own"
+    );
+    assert!(
+        shared.contains("filename and its case"),
+        "the deliverable-shape check is the build-pov-ray half"
+    );
+    assert!(
+        shared.contains("confirms your arithmetic"),
+        "verifying against a re-derivation of the worker's own model has to be named as \
+         proving nothing"
+    );
+    for (label, prompt) in PROMPTS {
+        assert!(
+            prompt.contains(shared),
+            "{label} does not embed the shared example-discipline block verbatim"
+        );
+    }
+}
+
 /// Witness for the verification-proportionality defect (#1958): in the same
 /// TB2.1 `git-multibranch` trace, turns whose step was already satisfied on
 /// disk still ran the maximum-strength check — install sshpass, clone, push
