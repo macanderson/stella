@@ -131,7 +131,7 @@ impl StorageExtract {
 
 /// Standalone extraction handle for callers without a [`crate::CodeGraph`]
 /// (the pre-write gate parses *proposed* content before any write lands).
-/// [`Grammars::load`] caches the compiled queries process-wide, so
+/// `Grammars::load` caches the compiled queries process-wide, so
 /// constructing this after any [`crate::CodeGraph::open`] in the same
 /// process is a pointer clone, not a recompile.
 pub struct StorageExtractor {
