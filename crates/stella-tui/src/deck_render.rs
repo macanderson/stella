@@ -114,7 +114,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     guarded_band(buf, content, tab.title(), |b| match tab {
         DeckTab::Session => crate::v2::session::render(model, ui, content, b),
         DeckTab::Agents => crate::v2::installed::render(ui, model.now_ms, content, b),
-        DeckTab::Traces => views::traces::render(model, ui, content, b),
+        DeckTab::Traces => crate::v2::traces::render(model, ui, content, b),
         DeckTab::Graph => views::graph::render(model, ui, content, b),
         DeckTab::Files => crate::v2::files_tab::render(model, ui, content, b),
         DeckTab::Skills => crate::v2::skills::render(model, ui, content, b),
