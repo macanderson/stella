@@ -112,17 +112,31 @@ silent quality regression.
   attempts were made so a slow pass is not mistaken for one that never waited.
   This matters because the chunk embedding pass keeps several requests in
   flight (#4144), and concurrency is precisely what provokes a rate limit.
-- **The default admission floor is provisional, not measured.** The
-  `SimilarityPosture` contract asks for a floor derived from a model's observed
-  relevant/irrelevant score distributions on a real corpus, and no such
-  measurement exists yet for these backends on code. The shipped value is
-  deliberately permissive and its job is to drop the obviously-unrelated tail
-  from an ordered list, not to certify anything. The measurement is written
-  and reproducible — `crates/stella-tools/tests/relevance_calibration.rs`,
-  `#[ignore]`d because it needs a real key and a full embedding pass — and
-  running it once per backend is what turns this paragraph into a number
-  (#3096). It lives in `stella-tools` rather than here so this crate's own
-  tests stay hermetic and its leaf status is untouched.
+- **`voyage-code-3` admits nothing, and that is a measured result.** On
+  2026-08-24 `crates/stella-tools/tests/relevance_calibration.rs` was run
+  against it over this repository's own index (28 744 chunks, four labelled
+  queries, 40 candidates deep). The relevant and irrelevant distributions
+  **overlap**: tightest separation −0.0439, with one query's labelled answer
+  ranking 39th at 0.5978 beneath 38 irrelevant chunks scoring 0.6006–0.6436,
+  and two of the four queries returning no labelled answer in 40 candidates at
+  all. No floor separates those, so the model declares
+  `SimilarityPosture::Surface` — its cosines order candidates and certify none,
+  exactly as `HashEmbedder` already reports. #2993 named that outcome in
+  advance as the one to expect.
+- **Every other backend is unmeasured and says so.** `MEASURED_FLOORS` in
+  `src/http.rs` is the per-model table, and a model absent from it keeps
+  `DEFAULT_ADMISSION_FLOOR` (0.25) and declares `Semantic`. That number is
+  still not a separation point; what it now has is a stated scope — it is the
+  value for a model nobody has measured, and a permissive floor is all such a
+  backend can defend. `text-embedding-3-small`,
+  `text-embedding-3-large` and a local `nomic-embed-text` are the three #2993
+  also names, and each needs its own run of the harness. An explicit
+  `STELLA_EMBED_FLOOR` outranks the table either way: the operator is then
+  making the claim, about a corpus the measurement did not see.
+- **The harness lives in `stella-tools`, not here**, so this crate's own tests
+  stay hermetic and its leaf status is untouched. Point it at an already-filled
+  index with `STELLA_CALIBRATION_INDEX` and one run costs a query embedding per
+  labelled query instead of a full pass over the repository.
 
 ## God files — do not add lines
 
