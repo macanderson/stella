@@ -59,6 +59,48 @@ pub struct EngineConfig {
     /// ([`Engine::with_calibration`](super::Engine::with_calibration)) the comparison uses the
     /// drift-corrected estimate, so this budget is honored in the model's
     /// own observed tokens rather than raw heuristic tokens.
+    ///
+    /// The value is unmeasured and stands (#4391). #2738 asked for the
+    /// compaction defaults to be re-tuned if "thrash" — compaction firing
+    /// repeatedly in a short window with summariser spend dominating the step
+    /// — persisted after #2681 anchored context accounting to provider-reported
+    /// usage. Two post-#2681 arenabench panels, read from `stella-events.jsonl`
+    /// rather than any summary layer, say it does not:
+    ///
+    /// | panel | trials / turns | turns firing >1 compaction | summariser spend |
+    /// |---|---|---|---|
+    /// | glm-5.2 bare loop, 2026-08-11 | 89 / 87 | 12 (13.8%) | $0.00 of $14.39 |
+    /// | sonnet-5 + fable-5, 2026-08-14 | 114 / 148 | 18 (12.2%) | $0.00 of $116.97 |
+    ///
+    /// Compaction does fire more than once on about an eighth of turns, and
+    /// every one of those firings is free. Two signals say so, and each can
+    /// come out the other way:
+    ///
+    /// - No `step_usage` row in either panel carries
+    ///   `ModelCallRole::Summarization`. The summariser is a model call, so a
+    ///   run that paid one would have a row; the panels' roles are the worker
+    ///   and the deleted pipeline's.
+    /// - All 159 `compaction` events report `summarized: 0`. The two emitters
+    ///   set that field differently — `run_compaction_pass` hardcodes 0
+    ///   because the pure passes never summarize, and
+    ///   `driver::restore`'s splice sets the count it folded, always at least
+    ///   one — so 0 everywhere means the summariser emitted none of them.
+    ///
+    /// Repeated firing here is eviction and aging, pure functions over the
+    /// block set. The cost the thrash concern was about does not exist to tune
+    /// away, and moving this number on the strength of a free operation's
+    /// frequency would be tuning against a signal that does not track spend.
+    ///
+    /// What the measurement does **not** establish: that summarisation is
+    /// cheap when it happens. It never fired in 235 turns, so those panels
+    /// bound its *frequency* at zero and say nothing about its cost. Nor does
+    /// it speak for interactive sessions — both panels are one-shot benchmark
+    /// trials, and a long multi-turn session is the shape most likely to reach
+    /// the budget by a different route.
+    ///
+    /// `driver::tests::context_efficiency` pins this value so a struct-literal
+    /// rewrite cannot carry a different one back over the top, which is how
+    /// #2414's measured latency ceiling was silently reverted.
     pub compaction_budget_tokens: u64,
     /// Age-based tool-result retention (#1285): results older than this many
     /// tool-bearing steps are middle-out aged on every step, gated so the
