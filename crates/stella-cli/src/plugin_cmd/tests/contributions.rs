@@ -755,7 +755,10 @@ fn a_plugins_skill_is_listed_as_the_plugins_and_is_not_deletable_from_the_tab() 
         Some("vera"),
         "the row names the package that shipped it"
     );
-    assert_eq!(row.origin, "plugin", "and no longer claims to be the user's");
+    assert_eq!(
+        row.origin, "plugin",
+        "and no longer claims to be the user's"
+    );
     assert_eq!(row.provenance(), "plugin:vera", "which is what renders");
     assert!(
         !row.removable,
