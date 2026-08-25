@@ -264,7 +264,7 @@ impl<'a> GatedToolSet<'a> {
     /// contributed the tool, or — for everything the user wrote themselves
     /// and every built-in — this stack's own principal.
     /// Who a call to `name` would be authorized as — the question
-    /// [`Self::principal_for`] answers, exposed so a host can assert the
+    /// What `principal_for` answers (private), exposed so a host can assert the
     /// answer instead of inferring it from a gate's behaviour.
     #[must_use]
     pub fn principal_of(&self, name: &str) -> Principal {

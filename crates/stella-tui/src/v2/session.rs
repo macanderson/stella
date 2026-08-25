@@ -291,10 +291,8 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
                 line.style = line.style.bg(token::HL);
                 if !caret_placed {
                     caret_placed = true;
-                    line.spans.insert(
-                        0,
-                        Span::styled(SELECT_MARKER, Style::new().fg(token::GOLD)),
-                    );
+                    line.spans
+                        .insert(0, Span::styled(SELECT_MARKER, Style::new().fg(token::GOLD)));
                 }
             }
         }
@@ -947,7 +945,10 @@ mod tests {
         render(&model, &mut ui, area, &mut buf);
 
         let text = buffer_text(&buf);
-        assert!(text.contains('▸'), "selected row carries the marker:\n{text}");
+        assert!(
+            text.contains('▸'),
+            "selected row carries the marker:\n{text}"
+        );
 
         let marker_row = text
             .lines()
