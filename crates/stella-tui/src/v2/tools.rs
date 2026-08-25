@@ -71,7 +71,7 @@ use crate::deck_ui::{DeckAction, DeckUi, list_nav};
 use crate::envelope::{AgentScope, ToolPolicyState, ToolRow, ToolScope, WorkspaceInput};
 use crate::render::scroll_window_start;
 use crate::theme;
-use crate::views::settings::SettingsPane;
+use crate::v2::settings::SettingsPane;
 
 /// Hint shown when an action needs the snapshot the driver has not delivered
 /// yet (a race right after startup, or a driver error).

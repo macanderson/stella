@@ -23,7 +23,7 @@ use stella_tui_theme::token;
 
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
-use crate::views::cards;
+use crate::v2::cards;
 
 /// Render the budget editor over `frame`.
 pub fn render(model: &WorkspaceModel, ui: &DeckUi, frame: Rect, buf: &mut Buffer) {

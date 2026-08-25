@@ -422,7 +422,7 @@ fn render_creating(
     if body.height == 0 {
         return;
     }
-    let spinner = crate::views::spinner_glyph(now_ms, no_anim);
+    let spinner = crate::theme::spinner_glyph(now_ms, no_anim);
     let mut lines = vec![
         Line::from(vec![
             Span::styled(

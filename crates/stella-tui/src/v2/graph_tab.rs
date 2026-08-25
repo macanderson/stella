@@ -34,11 +34,14 @@
 //! rather than drawn with a stand-in.
 
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use stella_tui_theme::{glyph, token};
+
+use crate::deck::WorkspaceModel;
+use crate::deck_ui::DeckUi;
 
 use crate::graph::{GraphNode, GraphSnapshot};
 
@@ -87,9 +90,68 @@ fn rounded(title: Line<'static>) -> Block<'static> {
         .title(title)
 }
 
-/// Draw the tab. `cursor` is already clamped by the caller; `changed` is the
-/// focused lane's changed paths.
-pub fn render(
+/// Draw the GRAPH tab, in the deck's tab signature.
+///
+/// The empty state and the cursor clamp live here with the drawing they guard.
+/// They were a separate module for as long as this tab had two renderers and
+/// the older one still owned the deck's entry point; it has one now.
+pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
+    let Some(snapshot) = ui.graph.as_ref().filter(|g| !g.is_empty()) else {
+        render_empty(area, buf);
+        return;
+    };
+
+    // Defensive clamp: the deck's key handler (`handle_graph_key`) already
+    // keeps `graph_cursor` in range on every keypress, but this view must
+    // never index out of bounds regardless of how the cursor got here (a
+    // fresh `DeckUi`, a test, a snapshot swapped out from under a stale
+    // cursor).
+    let cursor = ui.graph_cursor.min(snapshot.nodes.len() - 1);
+    ui.graph_cursor = cursor;
+
+    // The files this session changed, for the `● hot` mark.
+    let changed: Vec<String> = model
+        .agents
+        .get(ui.focused)
+        .map(|a| a.model.files.iter().map(|f| f.path.clone()).collect())
+        .unwrap_or_default();
+    paint(snapshot, cursor, &changed, ui.accessible, area, buf);
+}
+
+/// The "nothing loaded" state: a centered muted hint, no border chrome beyond
+/// the tab's own frame.
+fn render_empty(area: Rect, buf: &mut Buffer) {
+    let block = Block::default().borders(Borders::ALL).title(" Graph ");
+    let inner = block.inner(area);
+    block.render(area, buf);
+    // A 1–2 row tab body leaves no interior at all, and `inner.y` is then one
+    // past the block — drawing the hint there would target a row outside the
+    // buffer. Same guard the Files tab's empty state carries.
+    if inner.height == 0 || inner.width == 0 {
+        return;
+    }
+
+    let line = Line::from(Span::styled(
+        "no neighborhood loaded — the code graph appears here",
+        crate::theme::muted(),
+    ))
+    .alignment(Alignment::Center);
+
+    // Vertically center the single line (mirrors the splash's centering idiom
+    // — this crate doesn't carry a generic `centered_rect` helper).
+    let mid = inner.height / 2;
+    let row = Rect {
+        x: inner.x,
+        y: inner.y + mid,
+        width: inner.width,
+        height: inner.height.saturating_sub(mid).max(1),
+    };
+    Paragraph::new(line).render(row, buf);
+}
+
+/// Draw the loaded tab. `cursor` is already clamped by the caller; `changed`
+/// is the focused lane's changed paths.
+pub fn paint(
     snapshot: &GraphSnapshot,
     cursor: usize,
     changed: &[String],
@@ -380,6 +442,9 @@ fn render_card(
     }
     Paragraph::new(lines).render(inner, buf);
 }
+
+#[cfg(test)]
+mod tab;
 
 #[cfg(test)]
 mod tests {

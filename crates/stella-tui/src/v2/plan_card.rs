@@ -43,7 +43,7 @@ use stella_protocol::ScopeProposal;
 use crate::deck::{AgentEntry, PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::plan::{Plan, PlanState};
-use crate::views::cards;
+use crate::v2::cards;
 
 /// Width of the dimmed left label column.
 const LABEL_W: usize = 10;

@@ -78,7 +78,7 @@ use crate::deck::{PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
 use crate::envelope::{EngineConfigState, RoleWiringRow, role_table};
 use crate::theme;
-use crate::views::cards;
+use crate::v2::cards;
 
 /// Wider than [`cards::CARD_MAX_W`], the only card that is: a model slug and
 /// the settings key that chose it are fixed strings that lose their meaning

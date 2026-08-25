@@ -40,7 +40,7 @@ use crate::deck::{AgentEntry, DelegateClock, WorkspaceModel};
 use crate::envelope::{AgentStatus, WorkspaceInput};
 use crate::model::{SubAgentSummary, TranscriptEntry};
 use crate::v2::pulse::STALL_AFTER_MS;
-use crate::views::cards;
+use crate::v2::cards;
 
 /// One listed row.
 #[derive(Debug, Clone, PartialEq)]

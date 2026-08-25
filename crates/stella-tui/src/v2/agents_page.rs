@@ -61,7 +61,7 @@ use crate::deck::{AgentEntry, DeckTab, WorkspaceModel};
 use crate::deck_ui::sessions::{is_live, visible_session_rows};
 use crate::deck_ui::{DeckAction, DeckUi};
 use crate::envelope::{AgentControl, AgentStatus, SessionInfo, WorkspaceInput};
-use crate::views::cards;
+use crate::v2::cards;
 
 /// The second `←` must land inside this window to open the page.
 pub const LEFT_DOUBLE_WINDOW: Duration = Duration::from_millis(1500);

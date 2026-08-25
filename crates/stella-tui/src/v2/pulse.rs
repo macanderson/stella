@@ -46,7 +46,7 @@ use crate::deck_ui::DeckUi;
 use crate::envelope::AgentStatus;
 use crate::model::TranscriptEntry;
 use crate::theme;
-use crate::views::cards;
+use crate::v2::cards;
 
 /// What the row says about one agent.
 #[derive(Debug, Clone)]

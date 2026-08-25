@@ -11,7 +11,7 @@
 use crate::deck::AgentEntry;
 use crate::envelope::{AgentMeta, AgentStatus};
 use crate::model::TranscriptEntry;
-use crate::views::cards;
+use crate::v2::cards;
 
 /// What the lane is for: the purpose the driver supplied, else its title.
 pub fn purpose(meta: &AgentMeta) -> &str {

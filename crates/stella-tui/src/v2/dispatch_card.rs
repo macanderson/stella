@@ -24,7 +24,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget};
 use stella_tui_theme::{glyph, token};
 
-use crate::views::cards::truncate_cols;
+use crate::v2::cards::truncate_cols;
 
 /// The mid-turn routing card: the user's words, held, and the three places
 /// they can go.

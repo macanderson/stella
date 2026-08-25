@@ -31,7 +31,7 @@ use stella_tui_theme::token;
 
 use crate::deck::WorkspaceModel;
 use crate::deck_ui::DeckUi;
-use crate::views::cards;
+use crate::v2::cards;
 
 /// Tallest the overlay grows, in rows. Past it the list windows on the
 /// selection instead: a queue deep enough to fill the frame would leave the

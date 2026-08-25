@@ -21,6 +21,7 @@
 pub mod agents_page;
 pub mod approval;
 pub mod budget_card;
+pub(crate) mod cards;
 pub mod dispatch_card;
 pub mod engine_panel;
 pub mod fields;
@@ -41,6 +42,7 @@ pub(crate) mod record;
 pub mod seats;
 pub mod session;
 pub mod sessions;
+pub mod settings;
 pub mod skills;
 pub mod status_bar;
 pub mod status_source;

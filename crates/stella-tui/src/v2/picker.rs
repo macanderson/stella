@@ -46,7 +46,7 @@ use stella_tui_theme::token;
 
 use crate::deck::{PipelineRole, WorkspaceModel};
 use crate::deck_ui::DeckUi;
-use crate::views::cards::truncate_cols;
+use crate::v2::cards::truncate_cols;
 
 /// Both pickers' card width. Wider than the frame's other floats for the
 /// reason the `/info` dialog runs wide: a `provider/vendor/slug` spec may

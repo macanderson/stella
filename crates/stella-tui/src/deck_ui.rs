@@ -567,7 +567,7 @@ pub struct DeckUi {
     pub tab: DeckTab,
     /// The SETTINGS tab's secondary nav: AGENTS | TOOLS. Which editor the tab
     /// renders full-width, and which one `e` focuses.
-    pub settings_pane: crate::views::settings::SettingsPane,
+    pub settings_pane: crate::v2::settings::SettingsPane,
     /// The INSTALLED AGENTS pane's state.
     pub installed: InstalledPanel,
     /// The SKILLS tab's view state (installed list, search, overlays).
@@ -830,7 +830,7 @@ impl Default for DeckUi {
     fn default() -> Self {
         Self {
             tab: DeckTab::Session,
-            settings_pane: crate::views::settings::SettingsPane::default(),
+            settings_pane: crate::v2::settings::SettingsPane::default(),
             installed: InstalledPanel::default(),
             skills: SkillsPanel::default(),
             issues: IssuesPanel::default(),
@@ -3178,9 +3178,9 @@ pub(crate) fn focused_id(model: &WorkspaceModel, ui: &DeckUi) -> Option<AgentId>
 /// focused, that editor claims every key ahead of this handler (see
 /// `handle_deck_key`), so ←/→ can never move the nav mid-edit.
 /// The SETTINGS tab's browse-level keys, which live with the panes they are
-/// about — see [`crate::views::settings::handle_key`].
+/// about — see [`crate::v2::settings::handle_key`].
 fn handle_settings_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
-    crate::views::settings::handle_key(key, ui, composer_empty)
+    crate::v2::settings::handle_key(key, ui, composer_empty)
 }
 
 fn handle_agents_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {

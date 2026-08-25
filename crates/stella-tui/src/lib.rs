@@ -87,7 +87,6 @@ pub mod tool_class;
 pub mod transcript_build;
 pub mod transcript_nav;
 pub mod v2;
-pub mod views;
 
 pub use accessible::{FlushBlock, NOTICE_MARKER, Scrollback};
 pub use ansi::strip_ansi;
@@ -129,4 +128,4 @@ pub use fleet_dashboard::{
 pub use graph::{GraphEdge, GraphNode, GraphSnapshot};
 pub use resource::ResourceMonitor;
 pub use splash::SplashState;
-pub use views::settings::SettingsPane;
+pub use v2::settings::SettingsPane;

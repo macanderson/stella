@@ -66,7 +66,7 @@ use stella_tui_theme::{glyph, token};
 
 use stella_tools::registry::approval::{ApprovalRequest, ApprovalResponse};
 
-use crate::views::cards::truncate_cols;
+use crate::v2::cards::truncate_cols;
 
 /// Matches the question overlay's width so the two mid-turn asks read as one
 /// system — a driver should not have to re-find the layout depending on

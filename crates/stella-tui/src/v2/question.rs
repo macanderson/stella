@@ -68,7 +68,7 @@ use ratatui::text::{Line, Span};
 use stella_protocol::{Answer, FREE_TEXT_LABEL, Question, QuestionOutcome, QuestionRequest};
 use stella_tui_theme::token;
 
-use crate::views::cards;
+use crate::v2::cards;
 
 /// The overlay is wider than the `/plan`-family cards: a question's options
 /// carry descriptions, and eliding the half that says what a choice *means*

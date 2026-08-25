@@ -23,7 +23,7 @@ use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
 use crate::render::{render_arg_popup, render_slash_popup, scroll_window_start, slash_popup_area};
-use crate::{notice, splash, theme, views};
+use crate::{notice, splash, theme};
 
 /// The accent prompt prefix on every composer row. Chrome, not content — it
 /// is never part of the submitted string and the caret cannot enter it.
@@ -128,14 +128,14 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         DeckTab::Session => crate::v2::session::render(model, ui, content, b),
         DeckTab::Agents => crate::v2::installed::render(ui, model.now_ms, content, b),
         DeckTab::Traces => crate::v2::traces::render(model, ui, content, b),
-        DeckTab::Graph => views::graph::render(model, ui, content, b),
+        DeckTab::Graph => crate::v2::graph_tab::render(model, ui, content, b),
         DeckTab::Files => crate::v2::files_tab::render(model, ui, content, b),
         DeckTab::Skills => crate::v2::skills::render(model, ui, content, b),
         DeckTab::Mcp => crate::v2::mcp_tab::render(model, ui, content, b),
         DeckTab::Issues => {
             crate::v2::issues_tab::render(model.pr.as_ref(), &ui.issues, ui.accessible, content, b)
         }
-        DeckTab::Settings => views::settings::render(model, ui, content, b),
+        DeckTab::Settings => crate::v2::settings::render(model, ui, content, b),
     });
 
     // The pulse row (`v2::pulse`) draws in the air row off the SESSION tab,
@@ -250,7 +250,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         }
     }
     // (The former ENGINE overlay is gone: the engine panel is the full-width
-    // body of the SETTINGS tab — see `views::settings::render`.)
+    // body of the SETTINGS tab — see `crate::v2::settings::render`.)
 
     // The session-override pickers (`/model`, `/agent`): modal cards like
     // the floating ones above; the parked asks still win the top. They take

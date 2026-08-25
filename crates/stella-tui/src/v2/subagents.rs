@@ -70,7 +70,7 @@ use crate::deck::{AgentEntry, DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckAction, DeckUi, list_nav};
 use crate::envelope::{AgentControl, AgentStatus, WorkspaceInput};
 use crate::theme;
-use crate::views::cards;
+use crate::v2::cards;
 pub use lifecycle::{lifecycle, purpose};
 use rows::Row;
 

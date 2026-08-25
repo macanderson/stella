@@ -50,7 +50,7 @@
 use crate::deck::DeckTab;
 use crate::deck_ui::{DeckAction, DeckUi};
 use crate::envelope::{EngineAgentState, EngineConfigState, EngineRole, WorkspaceInput};
-use crate::views::settings::SettingsPane;
+use crate::v2::settings::SettingsPane;
 
 pub mod keys;
 pub mod paint;

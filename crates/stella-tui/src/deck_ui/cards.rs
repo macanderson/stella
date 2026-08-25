@@ -3,7 +3,7 @@
 //! of `deck_ui.rs` (already the crate's largest file) so the file-size guard
 //! holds; the rendering lives in
 //! `crate::v2::{plan_card, models_card, budget_card}` over the shared
-//! chrome in `crate::views::cards`.
+//! chrome in `crate::v2::cards`.
 //!
 //! `/plan` is one card where there used to be three. `/tasks` showed a board
 //! nothing ever populated, `/scope` showed the same plan's envelope without
