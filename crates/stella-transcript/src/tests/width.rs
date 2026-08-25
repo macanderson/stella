@@ -239,6 +239,7 @@ fn a_call() -> impl Strategy<Value = Call> {
             status,
             duration_ms: 226,
             speculated: false,
+            sub_agent_id: None,
         })
 }
 

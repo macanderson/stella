@@ -64,6 +64,7 @@ fn bash(command: &str, out: &[&str], status: Status) -> Call {
         status,
         duration_ms: 226,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 
@@ -83,6 +84,7 @@ fn edit(path: &str, before: &str, after: &str) -> Call {
         status: Status::Ok,
         duration_ms: 12,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 
@@ -149,6 +151,7 @@ fn read_call(path: &str, lines: Vec<String>) -> Call {
         status: Status::Ok,
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 
@@ -877,6 +880,28 @@ fn speculation_renders_as_a_badge_not_prose() {
     call.speculated = true;
     let chips = digest::step_chips(&step(call, 0));
     assert!(chips.iter().any(|c| c.text == "⚡ spec"));
+}
+
+/// The witness for #4699 on this crate's surface. `step_chips` is the shared
+/// fold behind both the CLI's default plain transcript and the Observatory's
+/// HTML view, so without the chip a delegate's call reads as the lead's own
+/// on both at once. The lead's arm is asserted too: a badge that never
+/// appears and a badge that always appears both satisfy the first assertion.
+#[test]
+fn a_delegates_call_is_chipped_and_the_leads_own_is_not() {
+    let mut delegated = bash("a", &[], Status::Ok);
+    delegated.sub_agent_id = Some("d:1".to_string());
+    let chips = digest::step_chips(&step(delegated, 0));
+    assert!(
+        chips.iter().any(|c| c.text == "↳ d:1"),
+        "expected the delegate's attribution chip, got {chips:?}"
+    );
+
+    let chips = digest::step_chips(&step(bash("a", &[], Status::Ok), 0));
+    assert!(
+        chips.iter().all(|c| !c.text.starts_with('↳')),
+        "the lead's own call carried an attribution chip: {chips:?}"
+    );
 }
 
 /// A step is one call; the token rollup is a turn's job. Per-step chips carry

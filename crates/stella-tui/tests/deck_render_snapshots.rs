@@ -80,6 +80,10 @@ use stella_tui::{
 #[path = "deck_render_snapshots/graph.rs"]
 mod graph;
 
+/// See [`graph`]'s doc for why this is `#[path]` rather than a plain `mod`.
+#[path = "deck_render_snapshots/attribution.rs"]
+mod attribution;
+
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
 /// looking for it.

@@ -71,6 +71,12 @@ pub struct Metrics {
     model_calls_total: AtomicU64,
     model_retries_total: AtomicU64,
     tool_calls_total: AtomicU64,
+    /// Of `tool_calls_total`, how many a delegate made rather than the lead
+    /// (#4699) — the scrape surface for
+    /// [`super::event::TurnTally::tool_calls_by_sub_agent`],
+    /// which settles per turn and is otherwise unreadable by a poller. The
+    /// lead's own share is `tool_calls_total - tool_calls_by_sub_agent_total`.
+    tool_calls_by_sub_agent_total: AtomicU64,
     tools_failed_total: AtomicU64,
     speculation_discarded_total: AtomicU64,
     loop_detections_total: AtomicU64,
@@ -142,6 +148,7 @@ pub struct Snapshot {
     pub model_calls_total: u64,
     pub model_retries_total: u64,
     pub tool_calls_total: u64,
+    pub tool_calls_by_sub_agent_total: u64,
     pub tools_failed_total: u64,
     pub speculation_discarded_total: u64,
     pub loop_detections_total: u64,
@@ -215,6 +222,7 @@ impl Metrics {
             model_calls_total: self.model_calls_total.load(ORDER),
             model_retries_total: self.model_retries_total.load(ORDER),
             tool_calls_total: self.tool_calls_total.load(ORDER),
+            tool_calls_by_sub_agent_total: self.tool_calls_by_sub_agent_total.load(ORDER),
             tools_failed_total: self.tools_failed_total.load(ORDER),
             speculation_discarded_total: self.speculation_discarded_total.load(ORDER),
             loop_detections_total: self.loop_detections_total.load(ORDER),
@@ -316,6 +324,8 @@ impl Observer for Metrics {
                     .fetch_add(u64::from(tally.retries), ORDER);
                 self.tool_calls_total
                     .fetch_add(u64::from(tally.tool_calls), ORDER);
+                self.tool_calls_by_sub_agent_total
+                    .fetch_add(u64::from(tally.tool_calls_by_sub_agent), ORDER);
                 self.tools_failed_total
                     .fetch_add(u64::from(tally.tools_failed), ORDER);
                 self.speculation_discarded_total
@@ -578,6 +588,7 @@ mod tests {
         assert_eq!(snap.model_calls_total, 3);
         assert_eq!(snap.model_retries_total, 2);
         assert_eq!(snap.tool_calls_total, 5);
+        assert_eq!(snap.tool_calls_by_sub_agent_total, 2);
         assert_eq!(snap.tools_failed_total, 1);
         assert_eq!(snap.speculation_discarded_total, 4);
         assert_eq!(snap.loop_detections_total, 1);

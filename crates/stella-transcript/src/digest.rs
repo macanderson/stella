@@ -270,6 +270,14 @@ pub fn step_chips(step: &Step) -> Vec<Chip> {
         }
     }
     chips.extend(cost_chip(step.accounting.micros));
+    // The delegate that made this call, or nothing for the lead's own
+    // (#4699) — last, the same position `stella-tui`'s deck gives it beside
+    // its `→ task N` chip.
+    if let Some(call) = &step.call
+        && let Some(id) = &call.sub_agent_id
+    {
+        chips.push(Chip::mute(format!("↳ {id}")));
+    }
     chips
 }
 

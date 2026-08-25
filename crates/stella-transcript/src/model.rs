@@ -443,6 +443,9 @@ pub struct Call {
     /// Whether the engine ran this speculatively — renders as a `⚡ spec`
     /// badge, never as a sentence.
     pub speculated: bool,
+    /// The delegate child that made this call, or `None` for the lead's own
+    /// (#4699) — renders as a `↳ {id}` chip, the same glyph the deck uses.
+    pub sub_agent_id: Option<String>,
 }
 
 impl Call {

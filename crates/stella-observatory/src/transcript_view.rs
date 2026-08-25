@@ -401,6 +401,9 @@ fn call_from_start(row: &Value) -> Call {
         status: Status::Running,
         duration_ms: 0,
         speculated: false,
+        // Stamped on the same journal row `meter_note` already reads for a
+        // model call's spend (#4699) — a `tool_start` row carries it too.
+        sub_agent_id: row["sub_agent_id"].as_str().map(str::to_string),
     }
 }
 
