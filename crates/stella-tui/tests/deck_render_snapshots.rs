@@ -1285,8 +1285,8 @@ fn deck_render_snapshots_pin_the_armed_deadline_statline() {
     );
 }
 
-/// SPEC 5 re-homes the v1 wall's PR cell to the ISSUES tab (§9.4), and the
-/// half of it with teeth is failing CI: v1 gave a failing PR an elevated drop
+/// SPEC 5 re-homes the PR cell to the ISSUES tab (§9.4), and the
+/// half of it with teeth is failing CI: the old row gave a failing PR an elevated drop
 /// priority so a narrow row could not hide it, and that intent has to survive
 /// the move.
 ///

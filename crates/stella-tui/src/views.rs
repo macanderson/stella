@@ -1,30 +1,47 @@
-//! The deck's tab views. Each exposes
-//! `render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer)`
-//! — a deterministic draw of the (model, ui) into a sub-area, recording any
-//! viewport metrics it needs for scroll clamping back onto `ui.metrics`.
-//! No SETTINGS pane is left in this module: AGENTS is
-//! [`crate::v2::engine_panel`], TOOLS is [`crate::v2::tools`] and SEATS is
-//! [`crate::v2::seats`], each with its own key handler, modal while that pane
-//! is focused. The AGENTS tab and its INSTALLED AGENTS pane are
-//! [`crate::v2::agents_page`] and [`crate::v2::installed`].
+//! The command deck's surfaces: every tab body, every overlay, every floating
+//! card, and the chrome that wraps them — the tab row, the hint row, the
+//! status bar and the pulse row.
+//!
+//! [`crate::deck_render`] is the dispatcher; each module here draws one
+//! surface and owns the state only that surface reads. The two `*_source`
+//! modules are the halves that decide *what* a surface shows, split from the
+//! ratatui that draws it so the decision is testable without a terminal.
+//!
+//! Every colour comes from [`stella_tui_theme::token`] and every state glyph
+//! from [`stella_tui_theme::glyph`]. A hex literal below this line is a
+//! defect, not a shortcut — `no_hex_literals_in_render_code` in
+//! `tests/status_bar_goldens.rs` is what says so.
 
-/// The braille spinner's frames — the classic 10-frame dot cycle.
-const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-/// One spinner frame advance per ~80ms.
-const SPINNER_PERIOD_MS: u64 = 80;
-
-/// The animated in-flight spinner glyph, a pure function of the deck clock
-/// (`model.now_ms`, advanced by the shell's ~30 fps tick) — no timer state.
-/// `no_anim` (`--no-anim` / `NO_COLOR`) pins it to a static glyph so
-/// recordings stay byte-stable.
-pub(crate) fn spinner_glyph(now_ms: u64, no_anim: bool) -> &'static str {
-    if no_anim {
-        return SPINNER_FRAMES[0];
-    }
-    SPINNER_FRAMES[((now_ms / SPINNER_PERIOD_MS) as usize) % SPINNER_FRAMES.len()]
-}
-
+pub mod agents_page;
+pub mod approval;
+pub mod budget_card;
 pub(crate) mod cards;
+pub mod dispatch_card;
+pub mod engine_panel;
+pub mod fields;
+pub mod files_tab;
+pub mod frame;
 pub mod graph;
+pub mod graph_tab;
+pub mod installed;
+pub mod issues_tab;
+pub mod mcp_tab;
+pub mod models_card;
+pub mod picker;
+pub mod plan_card;
+pub mod pulse;
+pub mod question;
+pub mod queue;
+pub(crate) mod record;
+pub mod seats;
+pub mod session;
+pub mod sessions;
 pub mod settings;
+pub mod skills;
+pub mod status_bar;
+pub mod status_source;
+pub mod subagents;
+pub mod tools;
+pub mod traces;
+pub mod transcript;
+pub mod transcript_source;

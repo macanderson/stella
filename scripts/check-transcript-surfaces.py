@@ -123,7 +123,7 @@ SURFACES: list[Surface] = [
         note="`stella observe` -> the turn page embeds /api/transcript-html.",
     ),
     Surface(
-        ident="deck-v1",
+        ident="deck-body",
         path="crates/stella-tui/src/render/entry.rs",
         entry=GRID,
         shared=False,
@@ -134,8 +134,8 @@ SURFACES: list[Surface] = [
         "`tabs::expand` from the shared crate.",
     ),
     Surface(
-        ident="deck-v2",
-        path="crates/stella-tui/src/v2/transcript.rs",
+        ident="deck-spec6",
+        path="crates/stella-tui/src/views/transcript.rs",
         entry=GRID,
         shared=False,
         issue=4289,

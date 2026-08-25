@@ -267,7 +267,7 @@ fn the_model_menu_offers_this_providers_allowed_models_only() {
     let (model, mut ui) =
         ui_with_models(&["zai/glm-5.2", "zai/glm-5.1", "anthropic/claude-opus-5"]);
     ui.composer.load("/model ".to_string());
-    let offered = crate::v2::picker::typeahead_candidates(&model, &ui);
+    let offered = crate::views::picker::typeahead_candidates(&model, &ui);
     assert_eq!(
         offered,
         vec!["zai/glm-5.2".to_string(), "zai/glm-5.1".to_string()],
@@ -282,7 +282,7 @@ fn the_model_menu_offers_this_providers_allowed_models_only() {
     });
     ui.composer.load("/model ".to_string());
     assert_eq!(
-        crate::v2::picker::typeahead_candidates(&model, &ui),
+        crate::views::picker::typeahead_candidates(&model, &ui),
         vec!["zai/glm-5.2".to_string()]
     );
 }

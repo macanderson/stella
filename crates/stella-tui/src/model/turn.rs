@@ -184,7 +184,7 @@ pub struct TurnOpening {
 ///
 /// Every field here was counted. A field with no source is **absent from this
 /// struct** rather than present and zero — see [`TurnCounters`] for what is
-/// counted and `crate::v2::transcript::Receipt` for what is still missing.
+/// counted and `crate::views::transcript::Receipt` for what is still missing.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnReceipt {
     /// Tokens this turn spent, summed from its `StepUsage` events.
@@ -222,7 +222,7 @@ pub struct TurnReceipt {
 /// either a verification plugin reporting its `EvidenceSet` per check, or a
 /// test-runner tool that returns structured results instead of text.
 ///
-/// **`det %`.** Removed from the design; see `crate::v2::transcript::Receipt`.
+/// **`det %`.** Removed from the design; see `crate::views::transcript::Receipt`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TurnCounters {
     /// Summed from `AgentEvent::StepUsage`'s **token** fields only.
@@ -287,7 +287,7 @@ pub struct Hud {
     /// reason: a HUD showing `0s` for an unarmed run would put back into the
     /// UI the confusion #2240 took out of the journal. `None` draws no cell at
     /// all and `Some(0)` draws the word `expired`
-    /// ([`crate::v2::status_bar`]).
+    /// ([`crate::views::status_bar`]).
     ///
     /// Milliseconds rather than a `Duration` because that is the wire shape
     /// (`AgentEvent::BudgetTick::deadline_remaining_ms`), and this struct is a

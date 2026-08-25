@@ -913,6 +913,23 @@ pub fn stage_rule_color(stage: &stella_protocol::StageName) -> Color {
     }
 }
 
+/// The braille spinner's frames — the classic 10-frame dot cycle.
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// One spinner frame advance per ~80ms.
+const SPINNER_PERIOD_MS: u64 = 80;
+
+/// The animated in-flight spinner glyph, a pure function of the deck clock
+/// (`model.now_ms`, advanced by the shell's ~30 fps tick) — no timer state.
+/// `no_anim` (`--no-anim` / `NO_COLOR`) pins it to a static glyph so
+/// recordings stay byte-stable.
+pub(crate) fn spinner_glyph(now_ms: u64, no_anim: bool) -> &'static str {
+    if no_anim {
+        return SPINNER_FRAMES[0];
+    }
+    SPINNER_FRAMES[((now_ms / SPINNER_PERIOD_MS) as usize) % SPINNER_FRAMES.len()]
+}
+
 /// A compact status glyph.
 pub fn status_glyph(status: AgentStatus) -> &'static str {
     match status {
