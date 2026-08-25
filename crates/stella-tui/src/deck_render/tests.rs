@@ -96,7 +96,7 @@ fn full_deck_frame_grows_a_second_status_band_row_for_a_diagnosed_agent() {
     // The acceptance case: an opt-in provider (anthropic), 4 calls (past
     // MIN_TURNS=3), 0% hit rate, 0 cache writes — the marker never
     // engaged. `render_deck` must reserve the band's second row and
-    // `v2::status_bar::render_band` must fill it with the full-sentence
+    // `views::status_bar::render_band` must fill it with the full-sentence
     // hint, not a clipped fragment.
     let mut model = running_model_with_queue();
     for step in 1..=4usize {
@@ -476,7 +476,7 @@ fn the_agents_page_shows_a_page_submitted_commands_reply() {
     );
 }
 
-// The queue editor's own paint is covered where it lives — `v2::queue`.
+// The queue editor's own paint is covered where it lives — `views::queue`.
 
 /// A `DeckUi` on the Graph tab with an `n`-file snapshot rooted on the
 /// middle file, its picker open.

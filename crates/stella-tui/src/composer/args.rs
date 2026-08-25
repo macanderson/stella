@@ -11,7 +11,7 @@
 //! as you type, Tab completes, ⏎ submits the completed command.
 //!
 //! Same shape as the slash menu: the caller owns the candidate vocabulary.
-//! The deck's caller is `v2::picker`'s `typeahead_candidates`, which
+//! The deck's caller is `views::picker`'s `typeahead_candidates`, which
 //! narrows the `/model` picker's own list — `allowed_models` when one is
 //! configured, else the credentialed catalog — to the session's active
 //! provider; this module only filters and navigates. One argument, no

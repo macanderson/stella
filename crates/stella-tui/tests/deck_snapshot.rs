@@ -652,7 +652,7 @@ fn mcp_inspector_renders_over_the_list_and_answers_what_the_row_cannot() {
     let _ = writeln!(out, "\n═══ MCP tab — list ═══\n");
     let _ = writeln!(out, "{}", buffer_text(terminal.backend().buffer()));
 
-    ui.mcp.inspector = Some(stella_tui::v2::mcp_tab::McpInspector {
+    ui.mcp.inspector = Some(stella_tui::views::mcp_tab::McpInspector {
         server: "mcp".into(),
         detail: Some(stella_tui::McpServerDetail {
             name: "mcp".into(),

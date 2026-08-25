@@ -88,8 +88,8 @@ use crate::{agent, rules};
 
 mod add_dir;
 mod authoring;
-mod driver_support;
 mod command_side;
+mod driver_support;
 mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;

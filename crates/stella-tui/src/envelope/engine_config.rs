@@ -21,7 +21,7 @@
 /// pane's replacement is a **list**, not a single row: slice 5 (#3909) turns
 /// this into rows from the live session — the installed plugins' declared
 /// seats, each with its assigned model or `default` — the way
-/// `v2/tools.rs` already sources MCP and custom tools. Keeping the
+/// `views/tools.rs` already sources MCP and custom tools. Keeping the
 /// role-indexed shape is what lets that land without re-plumbing
 /// `EngineConfigState`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

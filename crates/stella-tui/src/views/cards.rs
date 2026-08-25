@@ -1,10 +1,10 @@
 //! Shared chrome for the floating cards (`/plan` · `/models` · `/budget`):
 //! one `BorderType::Rounded` block in `token::BORDER`, floated above the
-//! composer, max-width ~56 cells — the same border every other v2 overlay
-//! draws (`crate::v2::approval`, `v2::picker`, `v2::queue`, …), so these
+//! composer, max-width ~56 cells — the same border every other overlay
+//! draws (`crate::views::approval`, `views::picker`, `views::queue`, …), so these
 //! three cards are not a second chrome family. Title row = gold name +
 //! dimmed context; the key hints ride the BOTTOM border, right-aligned, the
-//! way every hand-rolled v2 overlay already places them. Implemented once so
+//! way every hand-rolled overlay already places them. Implemented once so
 //! the three cards read as one system, and so the selection convention — a
 //! `▸` marker glyph **plus** the background tint — is structural: the golden
 //! suite strips style, so a style-only selection would be invisible to it.
@@ -56,8 +56,8 @@ pub(crate) fn card_area(frame: Rect, body_rows: u16, max_w: u16, full_width: boo
 /// The title row rides the top border: `name` in the accent, the `context`
 /// spans (dim by convention; the task card's fraction bar keeps its own
 /// success color) beside it. `hints` rides the BOTTOM border, right-aligned —
-/// `crate::v2::approval`, `v2::picker`, `v2::queue` and every other
-/// hand-rolled v2 overlay already draw hints there rather than on the top
+/// `crate::views::approval`, `views::picker`, `views::queue` and every other
+/// hand-rolled overlay already draws hints there rather than on the top
 /// title; this shared helper used to be the one holdout, so `/plan`,
 /// `/models` and `/budget` (its only callers) read as a different chrome
 /// family from the rest of the deck's floating cards. Everything meaningful
@@ -148,7 +148,7 @@ pub(crate) fn mini_fraction_bar(
 }
 
 /// Format a millisecond span as `m:ss` (the clock on each lane in the
-/// SUB-AGENTS overlay — `crate::v2::subagents`).
+/// SUB-AGENTS overlay — `crate::views::subagents`).
 pub(crate) fn fmt_mss(ms: u64) -> String {
     let secs = ms / 1000;
     format!("{}:{:02}", secs / 60, secs % 60)
@@ -205,7 +205,7 @@ pub(crate) fn truncate_cols(text: &str, max_cols: usize) -> String {
 mod tests {
     use super::*;
 
-    /// `card_frame` draws the same chrome family as every hand-rolled v2
+    /// `card_frame` draws the same chrome family as every hand-rolled
     /// overlay: a rounded border, and hints on the bottom rule rather than
     /// the top title. This pins the port against regressing to the old
     /// `Plain` border with top-title hints.

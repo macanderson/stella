@@ -586,7 +586,7 @@ fn a_stage_inside_a_turn_is_not_a_second_turn_rule() {
         false,
         100,
     );
-    // The v1 section rule sets its label in caps; what matters here is that the
+    // The long-form section rule sets its label in caps; what matters here is that the
     // stage still names itself and that no turn number rides beside it.
     assert!(
         text.to_ascii_lowercase().contains("verify"),
@@ -669,7 +669,7 @@ fn a_folded_turn_renders_its_whole_lifecycle_in_order() {
     );
 }
 
-/// SPEC 2: money is gold. The v1 row rendered a settled turn cost in
+/// SPEC 2: money is gold. The row used to render a settled turn cost in
 /// `SUCCESS_BRIGHT` green, which spends the pass colour on an amount — and
 /// green is reserved for pass semantics, not for spending.
 #[test]
@@ -1188,7 +1188,7 @@ fn an_unmeasured_recall_latency_is_omitted_not_printed_as_zero() {
 /// a hand-built [`crate::model::TurnOpening`].
 ///
 /// The renderer half has been covered since #4123
-/// (`v2::transcript::tests::a_consumed_steer_is_named_on_the_turn_rule`); what
+/// (`views::transcript::tests::a_consumed_steer_is_named_on_the_turn_rule`); what
 /// was missing, and what the two tests below are, is the producer.
 fn opening_rule_of_a_steered_turn(cause: SteerCause) -> String {
     let mut model = SessionModel::new();

@@ -379,7 +379,7 @@ impl AgentEntry {
 /// whichever agent emitted it. A session tells one PR story at a time — the
 /// newest event wins outright, so a CI update on the same PR simply replaces
 /// the snapshot in place. Drives the ISSUES tab's PR strip (SPEC 5 §9.4),
-/// which is where the v1 statline's PR cell went.
+/// which is where the statline's PR cell went.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrInfo {
     pub url: String,
@@ -1216,7 +1216,7 @@ pub struct FileLedger {
 /// [`FileLedger::record`] runs on every single `FileChange` event — without
 /// limit for the life of the deck. Oldest-first eviction on overflow, mirroring
 /// the other capped logs; the type stays `Vec` (not `VecDeque`) because
-/// `v2::files_tab` range-slices `ledger.records` directly.
+/// `views::files_tab` range-slices `ledger.records` directly.
 const MAX_LEDGER_RECORDS: usize = 4096;
 
 impl FileLedger {

@@ -73,7 +73,7 @@ use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 
 use stella_tui::scenario::{demo_engine_config, demo_graph, demo_inbound};
-use stella_tui::v2::engine_panel::EngineTab;
+use stella_tui::views::engine_panel::EngineTab;
 use stella_tui::{
     AgentScope, AgentVersionInfo, DeckTab, DeckUi, EngineRole, InstalledAgentEntry, IssueRow,
     McpServerInfo, ResourceSample, SettingsPane, SkillRow, SkillScope, SkillsView, ToolDenial,

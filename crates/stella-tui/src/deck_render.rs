@@ -23,7 +23,7 @@ use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
 use crate::render::{render_arg_popup, render_slash_popup, scroll_window_start, slash_popup_area};
-use crate::{notice, splash, theme, views};
+use crate::{notice, splash, theme};
 
 /// The accent prompt prefix on every composer row. Chrome, not content — it
 /// is never part of the submitted string and the caret cannot enter it.
@@ -65,7 +65,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // exactly as they stack over the normal bands below.
     if ui.agents_page.open {
         guarded_band(buf, area, "agents page", |b| {
-            crate::v2::agents_page::render(model, ui, area, b)
+            crate::views::agents_page::render(model, ui, area, b)
         });
         parked::render(ui, area, buf);
         if ui.notice.is_visible() {
@@ -79,9 +79,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         // while an overlay owns the keyboard ahead of it, or while one of the
         // page's own popups is claiming keys. The startup notice is excluded
         // here for the reason it is excluded there — it is non-modal.
-        let page_menu_open = crate::v2::agents_page::menu_is_open(model, ui);
+        let page_menu_open = crate::views::agents_page::menu_is_open(model, ui);
         if !(ui.help_open || parked::owns_keyboard(ui) || page_menu_open)
-            && let Some(pos) = crate::v2::agents_page::composer_cursor(model, ui, area)
+            && let Some(pos) = crate::views::agents_page::composer_cursor(model, ui, area)
         {
             frame.set_cursor_position(pos);
         }
@@ -89,8 +89,8 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
 
     // SPEC 5, top to bottom: tab row (one row, the breadcrumb on SESSION) |
-    // content | composer | keybinding hint row | status bar. `v2::frame`
-    // carries the account of the v1 chrome this replaced. The composer grows
+    // content | composer | keybinding hint row | status bar. `views::frame`
+    // The composer grows
     // with its soft-wrapped content up to a cap, then scrolls to keep the
     // cursor visible; its text width is the frame minus the 4-column `>>> `
     // prefix and the 1-column scroll gutter.
@@ -98,7 +98,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let c_layout = composer_layout(&ui.composer, text_w.max(1));
     let composer_h = c_layout.rows.len().clamp(1, DECK_COMPOSER_MAX_ROWS) as u16;
     // One row (SPEC 5), and a second only for an earned low-hit-rate
-    // diagnosis (#267). `v2::status_bar` carries the argument for why the
+    // diagnosis (#267). `views::status_bar` carries the argument for why the
     // two-row labelled band is gone.
     let has_diagnosis = model
         .agents
@@ -118,38 +118,42 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     let tab = ui.tab;
     guarded_band(buf, bands[0], "tab bar", |b| {
-        crate::v2::frame::render_tab_row(model, ui, bands[0], b)
+        crate::views::frame::render_tab_row(model, ui, bands[0], b)
     });
 
     let content = bands[1];
     guarded_band(buf, content, tab.title(), |b| match tab {
-        DeckTab::Session => crate::v2::session::render(model, ui, content, b),
-        DeckTab::Agents => crate::v2::installed::render(ui, model.now_ms, content, b),
-        DeckTab::Traces => crate::v2::traces::render(model, ui, content, b),
-        DeckTab::Graph => views::graph::render(model, ui, content, b),
-        DeckTab::Files => crate::v2::files_tab::render(model, ui, content, b),
-        DeckTab::Skills => crate::v2::skills::render(model, ui, content, b),
-        DeckTab::Mcp => crate::v2::mcp_tab::render(model, ui, content, b),
-        DeckTab::Issues => {
-            crate::v2::issues_tab::render(model.pr.as_ref(), &ui.issues, ui.accessible, content, b)
-        }
-        DeckTab::Settings => views::settings::render(model, ui, content, b),
+        DeckTab::Session => crate::views::session::render(model, ui, content, b),
+        DeckTab::Agents => crate::views::installed::render(ui, model.now_ms, content, b),
+        DeckTab::Traces => crate::views::traces::render(model, ui, content, b),
+        DeckTab::Graph => crate::views::graph_tab::render(model, ui, content, b),
+        DeckTab::Files => crate::views::files_tab::render(model, ui, content, b),
+        DeckTab::Skills => crate::views::skills::render(model, ui, content, b),
+        DeckTab::Mcp => crate::views::mcp_tab::render(model, ui, content, b),
+        DeckTab::Issues => crate::views::issues_tab::render(
+            model.pr.as_ref(),
+            &ui.issues,
+            ui.accessible,
+            content,
+            b,
+        ),
+        DeckTab::Settings => crate::views::settings::render(model, ui, content, b),
     });
 
-    // The pulse row (`v2::pulse`) draws in the air row off the SESSION tab,
+    // The pulse row (`views::pulse`) draws in the air row off the SESSION tab,
     // and at an opened lane: the live agent's status, quiet time, place and
     // last words, so no tab is blind to the turn.
     guarded_band(buf, bands[2], "pulse", |b| {
-        crate::v2::pulse::render_row(model, ui, bands[2], b)
+        crate::views::pulse::render_row(model, ui, bands[2], b)
     });
     guarded_band(buf, bands[3], "composer", |b| {
         render_composer(&c_layout, bands[3], b)
     });
     guarded_band(buf, bands[4], "hints", |b| {
-        crate::v2::frame::render_hint_row(model, ui, bands[4], b)
+        crate::views::frame::render_hint_row(model, ui, bands[4], b)
     });
     guarded_band(buf, bands[5], "statline", |b| {
-        crate::v2::status_bar::render_band(model, ui, bands[5], b)
+        crate::views::status_bar::render_band(model, ui, bands[5], b)
     });
     let composer_cursor = composer_cursor_position(&c_layout, bands[3]);
 
@@ -174,7 +178,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let arg_matches = crate::composer::args::arg_matches(
         &ui.composer,
         "/model",
-        &crate::v2::picker::typeahead_candidates(model, ui),
+        &crate::views::picker::typeahead_candidates(model, ui),
     );
     let arg_open = !arg_matches.is_empty();
     if arg_open {
@@ -192,7 +196,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     if ui.queue_open {
         guarded_overlay(buf, area, "queue", |b| {
-            crate::v2::queue::render(model, ui, area, b)
+            crate::views::queue::render(model, ui, area, b)
         });
     }
     // The STATE overlay (`⌃s`): the expansion of the Session tab's one-row
@@ -207,12 +211,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // the whole frame like the queue editor; help (below) still wins the top.
     if ui.sessions_open {
         guarded_overlay(buf, area, "sessions", |b| {
-            crate::v2::sessions::render(model, ui, area, b)
+            crate::views::sessions::render(model, ui, area, b)
         });
     }
     if ui.subagents.open {
         guarded_overlay(buf, area, "sub-agents", |b| {
-            crate::v2::subagents::render(model, ui, area, b)
+            crate::views::subagents::render(model, ui, area, b)
         });
     }
     if ui.inbox_open {
@@ -237,18 +241,18 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         use crate::deck_ui::cards::Card;
         match card {
             Card::Plan => guarded_overlay(buf, area, "plan card", |b| {
-                crate::v2::plan_card::render(model, ui, area, b)
+                crate::views::plan_card::render(model, ui, area, b)
             }),
             Card::Models => guarded_overlay(buf, area, "models card", |b| {
-                crate::v2::models_card::render(model, ui, area, b)
+                crate::views::models_card::render(model, ui, area, b)
             }),
             Card::Budget => guarded_overlay(buf, area, "budget card", |b| {
-                crate::v2::budget_card::render(model, ui, area, b)
+                crate::views::budget_card::render(model, ui, area, b)
             }),
         }
     }
     // (The former ENGINE overlay is gone: the engine panel is the full-width
-    // body of the SETTINGS tab — see `views::settings::render`.)
+    // body of the SETTINGS tab — see `crate::views::settings::render`.)
 
     // The session-override pickers (`/model`, `/agent`): modal cards like
     // the floating ones above; the parked asks still win the top. They take
@@ -256,12 +260,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // row whatever the composer and the status bar are spending below.
     if ui.model_picker.open {
         guarded_overlay(buf, area, "model picker", |b| {
-            crate::v2::picker::render_model(model, ui, content, b)
+            crate::views::picker::render_model(model, ui, content, b)
         });
     }
     if ui.agent_picker.open {
         guarded_overlay(buf, area, "agent picker", |b| {
-            crate::v2::picker::render_agent(ui, content, b)
+            crate::views::picker::render_agent(ui, content, b)
         });
     }
 
@@ -383,7 +387,7 @@ fn slash_live_hints(model: &WorkspaceModel, ui: &DeckUi) -> Vec<(String, String)
     hints
 }
 
-// The queue editor popup lives in `crate::v2::queue`.
+// The queue editor popup lives in `crate::views::queue`.
 
 /// The INBOX overlay (`/inbox`): the persist-until-read notifications,
 /// newest first — unread bold with a ● dot, read dimmed with ✓, and a `↗`
@@ -558,7 +562,7 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
         } else {
             "not connected".to_string()
         };
-        let heading = crate::v2::mcp_tab::compact_heading(server);
+        let heading = crate::views::mcp_tab::compact_heading(server);
         let mut spans = vec![
             Span::raw("  "),
             Span::styled(glyph, glyph_style),

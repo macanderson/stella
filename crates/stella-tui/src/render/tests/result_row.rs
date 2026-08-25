@@ -3,8 +3,8 @@
 
 //! The tool-result row through SPEC 6 (#4127).
 //!
-//! #4123 routed a call's **head** through the v2 renderer and left the result
-//! on v1, because the result carries four things a fresh v2 renderer had not
+//! #4123 routed a call's **head** through the projection and left the result
+//! long-form, because the result carries four things a fresh renderer had not
 //! been taught — syntax highlighting in the file's own language, word-level
 //! inline diffs, the emitter's line-number gutter, and a truncation notice that
 //! has to agree with the export fold. Those four are pinned by
@@ -19,7 +19,7 @@
 //! siblings, which landed in #4169. Nothing here re-tests it.
 
 use super::*;
-use crate::v2::transcript_source as v2;
+use crate::views::transcript_source as source;
 use ratatui::style::Color;
 use stella_tui_theme::token;
 
@@ -73,8 +73,8 @@ fn rail_metals(entries: &[TranscriptEntry], expanded: bool) -> Vec<Color> {
 
 /// **The witness.** A mutation's whole block wears one metal.
 ///
-/// It did not. The head rendered through v2 and took its event's gold
-/// ([`v2::head_metal`]); the result under it took a fixed muted tone from
+/// It did not. The head rendered through the projection and took its event's gold
+/// ([`source::head_metal`]); the result under it took a fixed muted tone from
 /// `Rail::style`, so an `edit_file` block drew `Rgb(239, 197, 63)` on its first
 /// row and `Rgb(169, 170, 181)` on every row after it — a rail that changed
 /// colour one row into the block it exists to hold together. SPEC 6.2 makes the
@@ -111,7 +111,7 @@ fn a_mutations_whole_block_wears_one_metal() {
     );
     assert_eq!(
         metals[0],
-        v2::head_metal("edit_file"),
+        source::head_metal("edit_file"),
         "and the metal is the call's own (SPEC 6.2), not a tone picked by the \
          row that happens to be drawing"
     );
@@ -146,8 +146,8 @@ fn a_reads_whole_block_wears_the_reading_metal() {
     );
     assert_eq!(metals[0], token::MUTED, "a read takes the silver-dim rail");
     assert_ne!(
-        v2::head_metal("read_file"),
-        v2::head_metal("edit_file"),
+        source::head_metal("read_file"),
+        source::head_metal("edit_file"),
         "the two metals must differ, or the rail says nothing"
     );
 }
@@ -157,7 +157,7 @@ fn a_reads_whole_block_wears_the_reading_metal() {
 /// row under it.
 ///
 /// #4297 gave `TranscriptEntry::ToolResult` a `ReadSize` carrier and left the
-/// v1 result row an open question. The answer is that the row does not restate
+/// long-form result row an open question. The answer is that the row does not restate
 /// it, and this is what makes that an answer rather than an omission — the
 /// negative half alone would also pass on a deck that had lost the count
 /// altogether, which is the failure the issue was actually worried about.
@@ -266,7 +266,7 @@ fn a_failure_overrides_the_metal_and_still_says_so_without_colour() {
 /// language's own syntax foreground, and an add/remove ground.
 ///
 /// The rows themselves are `crate::diff`'s and are tested there; what this pins
-/// is that routing the result through v2 did not cost them — which is the
+/// is that routing the result through the projection did not cost them — which is the
 /// specific loss #4123 refused to take.
 #[test]
 fn a_rust_diff_renders_add_and_remove_rows_per_spec_64() {

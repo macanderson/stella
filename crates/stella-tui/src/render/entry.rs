@@ -158,7 +158,7 @@ pub(crate) fn entry_lines(
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) {
-    if !v2_rows(entry, view, expanded, width, out) {
+    if !projected_rows(entry, view, expanded, width, out) {
         entry_body(entry, view, expand_thinking, expanded, live, width, out);
     }
     if closes_block(entry) {
@@ -166,25 +166,25 @@ pub(crate) fn entry_lines(
     }
 }
 
-/// SPEC 6 rows for the entries the v2 transcript owns; `false` leaves the entry
-/// to the v1 renderer below.
+/// SPEC 6 rows for the entries the shared projection owns; `false` leaves the
+/// entry to [`entry_body`] below.
 ///
 /// Two arms, deliberately: a tool call's **head** and compaction's one quiet
-/// line. Everything else still renders v1 until its phase lands, which is why
+/// line. Everything else still draws long-form until its phase lands, which is why
 /// this is a router rather than a replacement — a half-migrated transcript must
-/// still draw every row it holds, not drop the ones v2 has no arm for yet.
+/// still draw every row it holds, not drop the ones the projection has no arm for yet.
 ///
 /// A tool **result** is pointedly not here. Its body already carries syntax
 /// highlighting in the file's own language, inline word-level diffs, a line
 /// number gutter and a truncation notice naming the key that reveals the rest
 /// (#4019, #4020, #4036) — and SPEC 6.4 keeps every one of them. Routing the
-/// result through a v2 renderer that has not been taught them yet would delete
+/// result through a projection that has not been taught them yet would delete
 /// working features to make the screen look newer, which is a regression
 /// wearing a redesign's clothes. The result row is restyled in P2, where the
 /// highlighter it needs is built, not here.
 ///
 /// **A router still owes every feature of the arm it intercepts.** This one did
-/// not: taking the `ToolStart` head made the whole v1 arm unreachable, and the
+/// not: taking the `ToolStart` head made the whole long-form arm unreachable, and the
 /// `ctrl+o` argument view living in its second half went with it — silently,
 /// because a dead *match arm* is invisible to `dead-code-allows` and to
 /// `module-reachability`, which see items. The row rendered identically
@@ -196,17 +196,17 @@ pub(crate) fn entry_lines(
 /// drawn at dispatch, when nothing has measured the change it is about to make,
 /// so the number can only come from the paired result and the ledger behind it
 /// (#4154). Resolving it here rather than inside the projection keeps
-/// [`crate::v2::transcript_source::head_rows`] a pure function of what is known
-/// about one call. (Spelled in full: the `v2` alias below is a `use` inside the
+/// [`crate::views::transcript_source::head_rows`] a pure function of what is known
+/// about one call. (Spelled in full: the `source` alias below is a `use` inside the
 /// body, and rustdoc resolves a link against the module, not the function.)
-fn v2_rows(
+fn projected_rows(
     entry: &TranscriptEntry,
     view: EntryView<'_>,
     expanded: bool,
     width: usize,
     out: &mut Vec<Line<'static>>,
 ) -> bool {
-    use crate::v2::transcript_source as v2;
+    use crate::views::transcript_source as source;
     match entry {
         TranscriptEntry::ToolStart {
             call_id,
@@ -215,9 +215,9 @@ fn v2_rows(
             raw,
             path,
         } => {
-            let scope = v2::measured_scope(call_id, view.following, view.files);
-            let read = v2::read_size(call_id, view.following);
-            out.extend(v2::head_rows(
+            let scope = source::measured_scope(call_id, view.following, view.files);
+            let read = source::read_size(call_id, view.following);
+            out.extend(source::head_rows(
                 name,
                 path.as_deref(),
                 input,
@@ -226,7 +226,7 @@ fn v2_rows(
                 width,
             ));
             if expanded {
-                tool::argument_rows(v2::head_metal(name), raw, width, out);
+                tool::argument_rows(source::head_metal(name), raw, width, out);
             }
             true
         }
@@ -236,7 +236,7 @@ fn v2_rows(
             evicted,
             deduped,
         } => {
-            out.extend(v2::compaction_rows(
+            out.extend(source::compaction_rows(
                 *before_tokens,
                 *after_tokens,
                 *evicted,
@@ -250,7 +250,7 @@ fn v2_rows(
             receipt,
             ..
         } => {
-            out.extend(v2::turn_end_rows(*turn, *cost_usd, receipt, width));
+            out.extend(source::turn_end_rows(*turn, *cost_usd, receipt, width));
             true
         }
         // Only the boundary that *opens* the turn. A later stage of the same
@@ -261,7 +261,7 @@ fn v2_rows(
             name,
             opens: Some(opening),
         } => {
-            out.extend(v2::turn_begin_rows(
+            out.extend(source::turn_begin_rows(
                 opening.turn,
                 stage_label(name),
                 opening.model.as_deref(),
@@ -362,12 +362,12 @@ fn entry_body(
             push_row_block(Rail::User, lines, width, out);
         }
         // Reached only for a boundary *inside* a turn — the one that opens the
-        // turn is claimed by the v2 router above, which draws SPEC 6.1's
+        // turn is claimed by the SPEC 6 router above, which draws SPEC 6.1's
         // labelled rule instead.
         TranscriptEntry::Stage { name, .. } => {
             // A section rule, not a row — see `push_rule`. Quiet, in the rule
             // tone with a muted lowercase word: SPEC 6.1 makes the *turn* the
-            // transcript's rhythm, and its opening rule (drawn by the v2
+            // transcript's rhythm, and its opening rule (drawn by the SPEC 6
             // router above) already names the stage the turn opened in. A
             // later stage of the same turn is a sub-heading, and a bold
             // uppercase one outshouted the turn rules it sits between.
@@ -898,7 +898,7 @@ fn entry_body(
                 out,
             );
         }
-        // Owned by the v2 router above, which returns `true` for it and so
+        // Owned by the SPEC 6 router above, which returns `true` for it and so
         // never falls through to here — the closing rule and receipt of
         // SPEC 6.1. The arm exists because the match must stay exhaustive, and
         // it draws nothing rather than panicking: if the router is ever
@@ -914,7 +914,7 @@ fn entry_body(
         // Delegating means there is one implementation to keep correct and no
         // second one to rot.
         TranscriptEntry::ToolStart { .. } => {
-            v2_rows(entry, view, expanded, width, out);
+            projected_rows(entry, view, expanded, width, out);
         }
     }
 }
