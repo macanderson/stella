@@ -21,6 +21,7 @@ use stella_runtime::wrapper::TurnDriver;
 use super::*;
 use crate::plugin_cmd::roster::{InstalledPlugin, PluginScope};
 
+mod child_stream;
 mod composition;
 mod report;
 mod round_driver;

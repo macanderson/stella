@@ -32,9 +32,11 @@ deadline, and a crash-restart story drives `run_step`, persists the
 
 This door deliberately does not carry:
 
-- **No verification.** The staged pipeline is a *wrapper* around the loop, not
-  part of it, and it is leaving the workspace to become a plugin (#3246,
-  `doc:turn-loop-wrappers`). A host driving steps through this facade gets the
+- **No verification.** The staged pipeline was a *wrapper* around the loop,
+  never part of it, and it has left the workspace: #3865 deleted
+  `crates/stella-pipeline`, and verification now arrives as an installed
+  plugin (#3246, `doc:turn-loop-wrappers`). A host driving steps through this
+  facade gets the
   loop and the loop's own ending — since #3379 `run_turn` always emits its
   terminal completion and no caller may filter it — and gets nothing that
   adjudicates whether the work was correct. That is the plugin's job, and the

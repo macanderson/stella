@@ -109,7 +109,7 @@ mod tests {
     /// every best-of-N candidate. A comment cannot hold that line; a test
     /// naming the constructor can.
     ///
-    /// Deliberately a source scan rather than a runtime check: the defect is
+    /// A source scan rather than a runtime check, because the defect is
     /// *which call site was used*, which no assembled registry can report. A
     /// new session path either goes through this module or adds itself to the
     /// exemption list with a reason a reviewer reads.
@@ -119,12 +119,6 @@ mod tests {
         /// with the reason it needs no grant.
         const EXEMPT: &[(&str, &str)] = &[
             ("src/write_dirs.rs", "this module — it IS the grant"),
-            (
-                "src/candidate_ws.rs",
-                "grants explicitly from `with_allowed_write_dirs`, because a \
-                 candidate is rooted at its own snapshot rather than the \
-                 session workspace",
-            ),
             (
                 "src/enterprise_telemetry.rs",
                 "a content-free rollup probe that dispatches no model-supplied \
@@ -139,6 +133,21 @@ mod tests {
         ];
 
         let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        // An exemption naming a file that no longer exists can never match,
+        // so it reads as a granted permission while granting nothing. One
+        // outlived the deletion of `stella-pipeline` (#4392).
+        let stale: Vec<&str> = EXEMPT
+            .iter()
+            .map(|(file, _)| *file)
+            .filter(|file| !crate_dir.join(file).exists())
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "exemption(s) naming a file that no longer exists: {stale:?}. \
+             Delete the entry, or repoint it at the file that replaced it."
+        );
+
         let mut offenders: Vec<String> = Vec::new();
         let mut stack = vec![crate_dir.join("src")];
         while let Some(dir) = stack.pop() {

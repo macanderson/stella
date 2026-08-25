@@ -1,0 +1,61 @@
+ToolExecutor trait
+command_deck FileChangeTap FileChange emitter
+run_turn agent turn loop in stella-core
+budget guard consulted between model calls
+Provider trait definition model provider abstraction
+parity matrix provider parity axes posture
+where is the system prompt assembled, session environment block, workspace rules, workspace memories
+determinism byte-stability of system prompt for prompt cache
+conversation history compaction summarization context window trimming
+step_usage telemetry content_free allowlist
+apply_edits batch tool edits array
+run_model_call retry_with_backoff_observed streaming model call Engine
+execute_tool_calls dispatch tool execution ToolCallStart ToolCallEnd
+how a user prompt starts an agent turn in stella-tui model.rs
+CompletionRequestRef CompletionResult CompletionRequest types definition
+ToolSchema struct definition read_only speculation_safe input_schema
+"FileChangeTap" struct tap measuring work tree changes emitting FileChange events
+enum AgentEvent variants definition stella-protocol
+run_deck function deck shell render loop inbound receiver WorkspaceInput sender
+stella-cli run_prompt non-interactive one-shot plain renderer AgentEvent output
+PROVIDERS built-in provider config env var api key base url ProviderConfig stella-cli config.rs
+FileChangeTap
+ClaimTap struct claims.rs file locks claim on first write
+static PROVIDERS anthropic openai gemini local base_url default_model env_var table in config.rs
+ToolCallObserver implementation engine streaming text_delta reasoning_delta mapped to engine events stella-core driver
+stella-events.jsonl event log written per session
+StepUsage struct definition fields per step telemetry record
+schema.sql sessions events tables in stella-store
+check_budget method Engine BudgetGuard evaluate abort
+"pub static PROVIDERS" or "PROVIDERS: &[ProviderConfig]" with LOCAL_PROVIDER env var names like ANTHROPIC_API_KEY
+StepUsage AgentEvent variant fields model tokens cache_read cache_write cost_usd
+"stella-events.jsonl" file name
+where stella-cli assembles system prompt and message history before run_turn
+ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY OPENROUTER_API_KEY provider row env_var definition
+apply_edits.rs file in stella-tools
+run_lead_turn dispatch lead turn engine run_turn pipeline in command_deck driver loop
+AgentEvent enum variants ToolCall ToolResult AskUser TurnComplete in stella-protocol event
+engine passes tool schemas to provider complete request; tool results appended as Tool message to history
+CACHE_POSTURE REASONING_POSTURE OVERFLOW_POSTURE OUTPUT_BUDGET_POSTURE STREAM_FALLBACK_POSTURE static tables accessors cache_posture reasoning_posture overflow_posture output_budget_posture
+main.rs dispatch default command deck when tty run_interactive fallback run_one_shot for stella run
+run_deck_session spawn driver task submissions recv Prompt run_lead_turn
+rules.rs MidTurnAsk enum approval responder policy engine ask question tool registry
+Provider trait definition in stella-core ports
+provider parity matrix
+run_turn in crates/stella-cli/src/agent.rs
+FileChangeTap FileChange emitter in stella-cli/src/command_deck.rs
+fleet_dashboard.rs purpose stella-tui
+model id parsing provider selection env var API key build provider from model string
+FileChangeTap
+spawn_renderer drain event channel EventSender unbounded channel stella-cli agent.rs
+stella-tui model.rs prompt submit starts turn engine event receiver Inbound
+CompletionRequest CompletionResult struct definitions and env var names ANTHROPIC_API_KEY OPENAI_API_KEY resolution
+"FileChangeTap" tap file changes command_deck
+Tap struct in command_deck.rs that emits FileChange events into the turn stream
+seeded provider table env var name api_key_env ZAI_API_KEY ANTHROPIC_API_KEY GEMINI_API_KEY in stella-model catalog
+what calls emit_shared_tree_changes or open_turn_streams in command_deck run_lead_turn
+PromptStarted event emitted in stella-cli when prompt submitted command deck
+stella-tui main loop drains Inbound receiver apply_inbound render tick
+FileChangeTap emits FileChange event when the user edits a file in the deck
+"run_turn" async fn in crates/stella-cli/src/agent.rs interactive session driver
+command deck issues tab selection key handling IssuesRefresh IssueAct

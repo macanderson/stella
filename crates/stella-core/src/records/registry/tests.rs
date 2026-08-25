@@ -8,6 +8,7 @@ fn md(path: &str, contents: &str) -> RuleFile {
     RuleFile {
         path: path.to_string(),
         contents: contents.to_string(),
+        contributed_by: None,
     }
 }
 

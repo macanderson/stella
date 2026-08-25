@@ -370,6 +370,112 @@ fn render_deck_hides_the_hardware_cursor_under_a_modal_overlay() {
     );
 }
 
+/// One printable key, as the deck's own handler receives it.
+fn page_char(c: char) -> crossterm::event::KeyEvent {
+    crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Char(c),
+        crossterm::event::KeyModifiers::NONE,
+    )
+}
+
+/// **The witness for #4626's first half.** The AGENTS page's composer carries
+/// the hardware caret, on the row it is typing into and at the column it has
+/// reached.
+///
+/// The page took the frame's early return in [`render_deck`] and positioned no
+/// cursor at all, so ratatui hid the caret — while the page's composer is a
+/// real text input. Position, not mere visibility: a caret parked at a
+/// constant would satisfy "there is one" and still open an IME candidate
+/// window over the wrong cell.
+#[test]
+fn render_deck_positions_the_hardware_cursor_on_the_agents_page_composer() {
+    let model = running_model_with_queue();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.agents_page.open = true;
+    for c in "fix the parser".chars() {
+        ui.agents_page.composer.insert_char(c);
+    }
+
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+
+    assert!(
+        term.backend().cursor_visible(),
+        "the page's composer is taking dictation and nothing sits above it — \
+         the terminal caret must be shown"
+    );
+    let text = buffer_text(term.backend().buffer());
+    let row = text
+        .lines()
+        .position(|l| l.contains("❯ fix the parser"))
+        .unwrap_or_else(|| panic!("the typed page composer row is on screen:\n{text}"));
+    let pos = term.backend().cursor_position();
+    assert_eq!(
+        pos.y as usize, row,
+        "the caret must sit on the composer row it belongs to:\n{text}"
+    );
+    assert_eq!(
+        pos.x as usize,
+        3 + "fix the parser".len(),
+        "…and just past the text, one cell per typed character (3-column \
+         ` ❯ ` prefix)"
+    );
+}
+
+/// **The witness for #4626's second half.** A command submitted on the AGENTS
+/// page is answered on the AGENTS page.
+///
+/// Driven through the real keys and the real inbound, because the whole defect
+/// was a routing one: the reply has always reached the session's fold, and the
+/// page — a full frame drawn over that fold — could only print a sentence
+/// saying where to go and read it.
+#[test]
+fn the_agents_page_shows_a_page_submitted_commands_reply() {
+    let mut model = running_model_with_queue();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.slash_commands = vec![crate::composer::SlashCommand::new("/info", "model routing")];
+    ui.agents_page.open = true;
+
+    for c in "/info".chars() {
+        crate::deck_ui::handle_deck_key(page_char(c), &model, &mut ui);
+    }
+    crate::deck_ui::handle_deck_key(
+        crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ),
+        &model,
+        &mut ui,
+    );
+    assert!(
+        ui.agents_page.reply_from.is_some(),
+        "a sent command marks the transcript its answer will land in"
+    );
+
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    assert!(
+        !buffer_text(term.backend().buffer()).contains("REPLY"),
+        "the pane must not appear before an answer does"
+    );
+
+    model.apply_inbound(&Inbound::ShellEvent {
+        agent: "lead".into(),
+        event: AgentEvent::Text {
+            text: "routing: zai/glm-5.2".into(),
+        },
+    });
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    let text = buffer_text(term.backend().buffer());
+    assert!(
+        text.contains("routing: zai/glm-5.2"),
+        "the answer must be readable without leaving the page:\n{text}"
+    );
+}
+
 // The queue editor's own paint is covered where it lives — `v2::queue`.
 
 /// A `DeckUi` on the Graph tab with an `n`-file snapshot rooted on the

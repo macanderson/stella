@@ -54,7 +54,7 @@ pub(crate) fn workspace_skills_dir(workspace_root: &Path) -> String {
 /// Every `*.md` file physically present in `dir`, as the exact path strings
 /// [`stella_core::skills::decide_auto_creation`] builds and compares against.
 ///
-/// Deliberately a directory read rather than a view of the loaded skill list:
+/// A directory read rather than a view of the loaded skill list, because
 /// a file can sit on disk and still be absent from [`load_workspace_skills_with_authority`]
 /// — disabled from the SKILLS tab, excluded by authority, or dropped by a load
 /// diagnostic — and the no-clobber guard has to see it anyway (#737). Paths are
@@ -127,6 +127,18 @@ pub(crate) fn load_workspace_skills_with_authority(
 /// instead of a name collision inside your own load.
 ///
 /// Roster order decides plugin-versus-plugin, matching the tool surface.
+///
+/// # The stamp is this function's, not the file's
+///
+/// Every skill loaded here is stamped with the contributing plugin's name
+/// (#3567), because this is the one place that knows which package's directory
+/// was scanned. A skill's `origin:` frontmatter marker *can* set
+/// [`skills::SkillOrigin`] — so a package could otherwise declare itself the
+/// user's own — and `contributed_by` is not reachable that way.
+/// It is the same unforgeable-stamp rule
+/// `stella_tools::custom::CustomTool::contributed_by` follows for the tool
+/// surface, and the reason a caller no longer has to parse
+/// [`skills::Skill::source_path`] to answer "which plugin gave me this?".
 fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills) {
     for contributed in crate::plugin_cmd::package::contributed_skill_dirs(workspace_root) {
         let found = skills::load_skills_with_diagnostics(
@@ -137,16 +149,17 @@ fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills
             },
         );
         loaded.diagnostics.extend(found.diagnostics);
-        for skill in found.skills {
+        for mut skill in found.skills {
             if loaded.skills.iter().any(|held| held.name == skill.name) {
                 continue;
             }
+            skill.contributed_by = Some(contributed.plugin.clone());
             loaded.skills.push(skill);
         }
     }
 }
 
-/// Compatibility seam for callers that deliberately request the historical
+/// Compatibility seam for callers that ask for the historical
 /// user-plus-workspace skill view. Authority-aware session assembly uses
 /// [`load_workspace_skills_with_authority`] directly.
 #[cfg(test)]

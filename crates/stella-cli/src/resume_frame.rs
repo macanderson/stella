@@ -1,38 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! What a killed classic-pipeline turn was running *inside*, so a resume
-//! never presents an unverified answer as a finished one (#1615).
+//! Reads the pipeline frame an older build may have left on disk, so a
+//! resume never presents an unverified answer as a finished one (#1615).
 //!
-//! `stella run --pipeline classic` used to drive a staged pipeline — triage,
-//! plan, execute, witness, verify — and declared a **frame** beside the
-//! ordinary engine checkpoint, in the same work-journal commit
-//! ([`stella_store::work_journal::PIPELINE_BLOB`]), naming the staging the
-//! killed turn belonged to. The staged pipeline itself has been removed from
-//! this build (#3865: `crates/stella-pipeline` is gone workspace-wide), so
-//! there is no more restoration path — but an operator's disk may still hold
-//! a frame an *older* build wrote, and `stella daemon resume` must keep
-//! reading it rather than crash on it.
-//!
-//! # Detect, never reconstruct
-//!
-//! [`PipelineFrame`] therefore keeps only the plain-scalar fields
-//! (`test_command`, `witness_writer`, `candidates`, `isolation_possible`,
-//! `max_revisions`) that this module's own advisory needs, and reads
-//! `responsibilities`/`progress` — the two fields that used to decode into
-//! `stella_pipeline` types — as opaque JSON. A historical frame still
-//! deserializes byte-for-byte (nothing about its on-disk shape changed), but
-//! nothing in this build re-hydrates those two fields into a roster or a
-//! resumable pipeline state, because the code that could act on them is gone.
-//! [`ResumeFrame::advisory`] reports the graceful refusal: the resume always
-//! takes the bare-turn path now, and says so.
-//!
-//! # Fail loud, not open
-//!
-//! A frame this build cannot parse is [`ResumeFrame::Unreadable`], not
-//! [`ResumeFrame::BareTurn`]. The two are indistinguishable to a naive reader
-//! and opposite in consequence: guessing "bare turn" on an unreadable frame is
-//! precisely the silent degradation this module exists to end.
+//! Nothing in this build writes a frame or acts on one. The staged pipeline
+//! that wrote them was removed in #3865, so [`ResumeFrame::advisory`] reports
+//! a graceful refusal and the resume takes the bare-turn path. A frame this
+//! build cannot parse is [`ResumeFrame::Unreadable`], never
+//! [`ResumeFrame::BareTurn`] — guessing "bare turn" is the silent degradation
+//! this module exists to end.
 
 use serde::{Deserialize, Serialize};
 
@@ -47,16 +24,10 @@ pub const FRAME_VERSION: u32 = 1;
 /// The staged pipeline a checkpointed turn was running inside, as far as this
 /// build can still say.
 ///
-/// **Detection-only, since #3865.** `responsibilities` and `progress` used to
-/// decode into `stella_pipeline::AssignmentOverride`/`FrameProgress` — real
-/// types owned by the crate that has been deleted. They are read here as
-/// opaque JSON instead: a historical frame's bytes still parse (nothing about
-/// the on-disk shape changed, so `#[serde(default)]` never has to fire on
-/// these two), but nothing reconstructs a roster or a resumable pipeline
-/// state from them any more, because the code that could act on either is
-/// gone. The five plain-scalar fields are unaffected — they were always just
-/// data, never `stella_pipeline` types — and are what
-/// [`ResumeFrame::advisory`] still reports from.
+/// Detection only, since #3865. An old frame's bytes still parse, but
+/// `responsibilities` and `progress` are read as opaque JSON and nothing
+/// reconstructs a roster or a resumable pipeline state from them. The five
+/// plain-scalar fields are what [`ResumeFrame::advisory`] reports from.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PipelineFrame {
     /// See [`FRAME_VERSION`].
