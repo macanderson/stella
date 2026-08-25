@@ -45,6 +45,7 @@ mod budget;
 mod engine;
 mod goal;
 mod graph;
+mod graph_view;
 mod init;
 pub(crate) mod outcome;
 mod output;
@@ -60,6 +61,7 @@ pub(crate) mod tool_stack;
 pub(crate) mod tools;
 mod turn_close;
 pub(crate) use budget::{build_budget_guard, remaining_budget, settle_reflection_budget};
+pub(crate) use graph_view::{graph_query_snapshot, graph_snapshot, graph_snapshot_focus};
 
 pub(crate) use engine::*;
 pub(crate) use goal::*;
@@ -660,108 +662,6 @@ pub(crate) async fn record_turn_episode<T, E>(
     // all.
     m.record_episode(prompt, episode_outcome, &[], started_unix, None)
         .await;
-}
-
-/// Query the code graph (if `stella init` has built it) for the
-/// best-connected file's neighborhood, converted to the deck's Graph-tab
-/// snapshot. `None` when there is no index, it is empty, or any read fails —
-/// the tab then shows its "run stella init" hint instead of an empty graph.
-///
-/// This is [`graph_snapshot_focus`] with no explicit focus: the neighborhood
-/// centers on [`busiest_file`](stella_graph::CodeGraph::busiest_file), which
-/// the deck opens on and can re-root away from via the picker.
-pub(crate) fn graph_snapshot(
-    workspace_root: &std::path::Path,
-) -> Option<stella_tui::GraphSnapshot> {
-    graph_snapshot_focus(workspace_root, None)
-}
-
-/// Build the Graph-tab snapshot centered on `focus` (a root-relative file
-/// path), or on the busiest file when `focus` is `None`. The snapshot always
-/// carries the full [`files`](stella_tui::GraphSnapshot::files) list so the
-/// deck's picker can re-root onto any of them — the deck answers a
-/// `FocusGraphFile` request by calling this with `Some(file)` and shipping the
-/// result back as a fresh `Inbound::GraphSnapshot`. `None` when there is no
-/// index, it is empty, or any read fails.
-pub(crate) fn graph_snapshot_focus(
-    workspace_root: &std::path::Path,
-    focus: Option<&str>,
-) -> Option<stella_tui::GraphSnapshot> {
-    use stella_tui::{GraphEdge, GraphNode, GraphSnapshot};
-
-    let db_path =
-        stella_store::existing_workspace_private_sqlite_path(workspace_root, "codegraph.db")
-            .ok()??;
-    if !db_path.exists() {
-        return None;
-    }
-    // The query bar reports what this cost, so the clock covers the whole
-    // round-trip — open, read, close — and not just the neighborhood read.
-    // Opening the database is a real per-query cost here (there is no pooled
-    // handle to amortize it against), so a number that excluded it would be
-    // the answer to a question nobody asked (#4335).
-    let started = std::time::Instant::now();
-    let graph = stella_graph::CodeGraph::open(workspace_root, &db_path).ok()?;
-    // An explicit pick roots there; otherwise fall back to the busiest file.
-    let focus = match focus {
-        Some(f) => f.to_string(),
-        None => graph.busiest_file().ok()??,
-    };
-    let hood = graph.file_neighborhood(std::path::Path::new(&focus)).ok()?;
-    // The full file list backs the picker (a superset of this neighborhood).
-    let files = graph.all_files().unwrap_or_default();
-    graph.shutdown();
-    let query_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-
-    let mut nodes = vec![GraphNode {
-        label: hood.file.clone(),
-        kind: "file".to_string(),
-        location: Some(hood.file.clone()),
-    }];
-    let mut edges = Vec::new();
-    for symbol in &hood.symbols {
-        edges.push(GraphEdge {
-            from: 0,
-            to: nodes.len(),
-            kind: "defines".to_string(),
-        });
-        nodes.push(GraphNode {
-            label: symbol.name.clone(),
-            kind: symbol.kind.clone(),
-            location: Some(format!("{}:{}", hood.file, symbol.start_line)),
-        });
-    }
-    for import in &hood.imports {
-        edges.push(GraphEdge {
-            from: 0,
-            to: nodes.len(),
-            kind: "imports".to_string(),
-        });
-        nodes.push(GraphNode {
-            label: import.clone(),
-            kind: "module".to_string(),
-            location: None,
-        });
-    }
-    for importer in &hood.importers {
-        edges.push(GraphEdge {
-            from: nodes.len(),
-            to: 0,
-            kind: "imports".to_string(),
-        });
-        nodes.push(GraphNode {
-            label: importer.clone(),
-            kind: "file".to_string(),
-            location: Some(importer.clone()),
-        });
-    }
-    Some(GraphSnapshot {
-        focus: hood.file,
-        nodes,
-        edges,
-        files,
-        query_ms: Some(query_ms),
-    })
 }
 
 /// Cap on each MCP server's connect — the per-server bound

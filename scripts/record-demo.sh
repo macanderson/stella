@@ -23,6 +23,14 @@
 #         --cols N         recorded terminal width (default: 100)
 #         --rows N         recorded terminal height (default: 30)
 #         --theme NAME     agg color theme (default: dracula)
+#         --size WxH       target output size; the agg font size is derived
+#                          from the cast's grid so the raster fits inside it
+#                          (e.g. --size 3840x2160). Capped at 4K — see below
+#         --font-size N    agg font size in pixels, instead of --size
+#         --ladder         also encode the delivery ladder derived from the
+#                          master: 6144x3456, 3840x2160, 1920x1080, 1280x720,
+#                          854x480, 640x360 — every rung at or below the
+#                          master's size, never an upscale
 #         --cast-only      record but skip rendering
 #         --render-only F  skip recording; render an existing .cast file
 #     -h, --help           show this help text
@@ -57,6 +65,10 @@
 #   # Re-render yesterday's cast as a 30-second cut:
 #   scripts/record-demo.sh --render-only recordings/soak.cast --target 30
 #
+#   # A 4K master plus the whole delivery ladder under it:
+#   scripts/record-demo.sh --render-only recordings/soak.cast \
+#     --size 3840x2160 --ladder
+#
 #   # For multi-DAY horizons, record one segment per day and stitch the
 #   # rendered mp4s: printf "file '%s'\n" recordings/day-*.mp4 > list.txt
 #   #                ffmpeg -f concat -safe 0 -i list.txt -c copy full.mp4
@@ -67,11 +79,23 @@
 # Tooling: asciinema (recorder) and agg (renderer) are auto-installed on
 # first use — agg from its prebuilt release binary, falling back to cargo.
 # ffmpeg is optional; without it you still get the .cast and .gif.
+#
+# Why the raster is capped at 4K: agg writes GIF and nothing else, so every
+# pixel of the master goes through a lossless-palette GIF before ffmpeg sees
+# it. At 4K that intermediate is already hundreds of megabytes; at the
+# ladder's 6144x3456 top rung it is multiple gigabytes, which is the
+# bottleneck the issue behind this flag (#4375) measured. So `--size` clamps
+# the derived font size at 4K and says so, `--ladder` emits only the rungs at
+# or below the master it actually has, and the 6K rung stays the deck film's
+# (`scripts/render-deck-film.py --size WxH`, which rasterises frames directly
+# and never makes a GIF).
 
 set -euo pipefail
 
 # shellcheck source=scripts/lib/help-header.sh
 . "$(dirname "$0")/lib/help-header.sh"
+# shellcheck source=scripts/lib/agg-geometry.sh
+. "$(dirname "$0")/lib/agg-geometry.sh"
 
 # ── Output helpers (house style: scripts/release.sh) ────────────────────────
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -92,9 +116,17 @@ FPS=30
 COLS=100
 ROWS=30
 THEME="dracula"
+SIZE=""
+FONT_SIZE=""
+LADDER=0
 CAST_ONLY=0
 RENDER_ONLY=""
 CMD=()
+
+# The widest raster agg is asked for. Its GIF intermediate is what this
+# bounds — see the header.
+MAX_RASTER_W=3840
+MAX_RASTER_H=2160
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -107,6 +139,9 @@ while [ $# -gt 0 ]; do
     --cols)         COLS="$2"; shift 2 ;;
     --rows)         ROWS="$2"; shift 2 ;;
     --theme)        THEME="$2"; shift 2 ;;
+    --size)         SIZE="$2"; shift 2 ;;
+    --font-size)    FONT_SIZE="$2"; shift 2 ;;
+    --ladder)       LADDER=1; shift ;;
     --cast-only)    CAST_ONLY=1; shift ;;
     --render-only)  RENDER_ONLY="$2"; shift 2 ;;
     -h|--help)      usage; exit 0 ;;
@@ -252,25 +287,97 @@ esac
 SPEED="$(awk -v d="$DURATION" -v t="$TARGET" \
   'BEGIN { s = d / t; if (s < 1) s = 1; printf "%.2f", s }')"
 
+# The recorded grid: the cast's own header when re-rendering someone else's
+# recording, the flags otherwise. Read from the header rather than assumed,
+# because `--render-only` is exactly the case where --cols/--rows describe a
+# recording that was never made here.
+if [ -n "$RENDER_ONLY" ]; then
+  CAST_COLS="$(awk 'NR==1 { if (match($0, /"width":[ ]*[0-9]+/)) { s = substr($0, RSTART, RLENGTH); sub(/[^0-9]*/, "", s); print s } exit }' "$CAST")"
+  CAST_ROWS="$(awk 'NR==1 { if (match($0, /"height":[ ]*[0-9]+/)) { s = substr($0, RSTART, RLENGTH); sub(/[^0-9]*/, "", s); print s } exit }' "$CAST")"
+  [ -n "$CAST_COLS" ] && COLS="$CAST_COLS"
+  [ -n "$CAST_ROWS" ] && ROWS="$CAST_ROWS"
+fi
+
+# --size derives the font size from that grid; --font-size sets it outright.
+if [ -n "$SIZE" ]; then
+  [ -z "$FONT_SIZE" ] || die "--size and --font-size set the same thing; pass one"
+  case "$SIZE" in
+    [0-9]*x[0-9]*) ;;
+    *) die "--size wants WxH (e.g. 3840x2160), got: $SIZE" ;;
+  esac
+  WANT_W="${SIZE%x*}"
+  WANT_H="${SIZE#*x}"
+  if [ "$WANT_W" -gt "$MAX_RASTER_W" ] || [ "$WANT_H" -gt "$MAX_RASTER_H" ]; then
+    info "capping the raster at ${MAX_RASTER_W}x${MAX_RASTER_H}: agg writes a GIF first, and above 4K that intermediate is the bottleneck (--help says why)"
+    [ "$WANT_W" -gt "$MAX_RASTER_W" ] && WANT_W="$MAX_RASTER_W"
+    [ "$WANT_H" -gt "$MAX_RASTER_H" ] && WANT_H="$MAX_RASTER_H"
+  fi
+  FONT_SIZE="$(agg_font_size_for "$COLS" "$ROWS" "$WANT_W" "$WANT_H")"
+  info "grid ${COLS}x${ROWS} at --font-size ${FONT_SIZE} renders $(agg_raster "$COLS" "$ROWS" "$FONT_SIZE")"
+fi
+
 ensure_agg
 GIF="$OUT_DIR/$NAME.gif"
 info "rendering ${DURATION}s of terminal time at ${SPEED}x -> $GIF"
-agg --speed "$SPEED" --fps-cap "$FPS" --theme "$THEME" "$CAST" "$GIF"
+AGG_ARGS=(--speed "$SPEED" --fps-cap "$FPS" --theme "$THEME")
+[ -n "$FONT_SIZE" ] && AGG_ARGS+=(--font-size "$FONT_SIZE")
+agg "${AGG_ARGS[@]}" "$CAST" "$GIF"
+
+# One rung of the ladder: H.264 High, yuv420p, faststart, letterboxed into the
+# exact rung so a cell grid that does not divide evenly is padded rather than
+# stretched.
+encode_rung() {
+  local src="$1" out="$2" w="$3" h="$4" level
+  level="$(agg_h264_level "$w")"
+  ffmpeg -hide_banner -loglevel error -y -i "$src" \
+    -c:v libx264 -profile:v high -level:v "$level" -crf 18 \
+    -movflags faststart -pix_fmt yuv420p \
+    -vf "scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:color=black" \
+    "$out"
+}
 
 MP4=""
+LADDER_FILES=()
 if command -v ffmpeg > /dev/null 2>&1; then
   MP4="$OUT_DIR/$NAME.mp4"
   info "encoding $MP4"
-  # yuv420p + even dimensions for player compatibility everywhere.
-  ffmpeg -hide_banner -loglevel error -y -i "$GIF" \
-    -movflags faststart -pix_fmt yuv420p \
-    -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "$MP4"
+  if [ -n "$SIZE" ]; then
+    # A cell grid rarely divides a ladder rung evenly, so the derived font
+    # size lands just under the request (a 126x30 grid at 4K renders
+    # 3763x2127). Pad the master out to the exact size instead of shipping
+    # the near-miss: the ladder is then derived by downscaling only, and
+    # asking for 4K does not silently drop the 4K rung.
+    encode_rung "$GIF" "$MP4" "$WANT_W" "$WANT_H"
+  else
+    # yuv420p + even dimensions for player compatibility everywhere.
+    ffmpeg -hide_banner -loglevel error -y -i "$GIF" \
+      -movflags faststart -pix_fmt yuv420p \
+      -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" "$MP4"
+  fi
+  if [ "$LADDER" -eq 1 ]; then
+    MASTER_W="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$MP4")"
+    MASTER_H="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$MP4")"
+    info "master is ${MASTER_W}x${MASTER_H}; deriving the ladder from it"
+    while read -r rung; do
+      [ -n "$rung" ] || continue
+      RUNG_OUT="$OUT_DIR/$NAME-${rung%x*}p.mp4"
+      info "  $rung -> $RUNG_OUT"
+      encode_rung "$MP4" "$RUNG_OUT" "${rung%x*}" "${rung#*x}"
+      LADDER_FILES+=("$RUNG_OUT")
+    done < <(agg_ladder_for "$MASTER_W" "$MASTER_H")
+    [ ${#LADDER_FILES[@]} -gt 0 ] ||
+      info "  no ladder rung fits inside ${MASTER_W}x${MASTER_H} — render larger with --size"
+  fi
 else
   info "ffmpeg not found — skipping mp4 (the .gif and .cast are complete)"
+  [ "$LADDER" -eq 0 ] || info "--ladder needs ffmpeg too"
 fi
 
 bold "Done."
 ok "cast:  $CAST (${DURATION}s of terminal time, idle collapsed)"
 ok "gif:   $GIF (${SPEED}x timelapse, ~${TARGET}s)"
 [ -n "$MP4" ] && ok "video: $MP4"
+for rung in "${LADDER_FILES[@]+"${LADDER_FILES[@]}"}"; do
+  ok "rung:  $rung"
+done
 exit "${REC_STATUS:-0}"

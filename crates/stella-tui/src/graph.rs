@@ -36,6 +36,15 @@ pub struct GraphSnapshot {
     /// again — which is the number a reader is asking about when they wonder
     /// whether the tab is slow.
     pub query_ms: Option<u64>,
+    /// The free-form query this neighborhood answers, when it answers one.
+    ///
+    /// `None` for a snapshot rooted on a *file* — the picker's re-root, the
+    /// busiest-file seed, an `/init` rebuild — and the query bar then reads
+    /// `file:<focus>` as it always has. `Some(text)` is what the user typed
+    /// into the `q` box, echoed back by the producer rather than remembered
+    /// deck-side, so the bar can never show a query that some later snapshot
+    /// did not answer (#4335).
+    pub query: Option<String>,
 }
 
 /// One node — a symbol or file. Cited by human label, never a raw UUID (L-C4).
@@ -98,6 +107,7 @@ mod tests {
             edges: Vec::new(),
             files: files.iter().map(|s| s.to_string()).collect(),
             query_ms: None,
+            query: None,
         }
     }
 

@@ -643,8 +643,10 @@ fn attachment_block(part: crate::attachment::WirePart) -> AnthropicContentBlock 
             cache_control: None,
         },
         // Audio/video are switched off in ANTHROPIC_CAPS, so wire_parts has
-        // already degraded them to Text notes. Turning either cap on without
-        // adding a block arm lands here — degrade, never abort the turn.
+        // already degraded them before this sees them — audio to a Text note,
+        // video to sampled Image parts plus the note saying they are frames
+        // (`crate::keyframes`). Turning either cap on without adding a block
+        // arm lands here — degrade, never abort the turn.
         part @ (crate::attachment::WirePart::Audio { .. }
         | crate::attachment::WirePart::Video { .. }) => AnthropicContentBlock::Text {
             text: crate::attachment::unsupported_part_note(&part, "Anthropic Messages API"),

@@ -58,6 +58,7 @@
 //!   retains what that cancel dropped so the second press still has a
 //!   prompt to requeue and park.
 
+mod graph_input;
 mod skills;
 use skills::{deck_slash_commands, handle_skills_input, skills_snapshot};
 
@@ -1072,16 +1073,14 @@ pub async fn run_deck_session(
                         requeue_front(&mut queue, &in_tx, dispatch.stop_and_hold(None));
                         continue 'session;
                     }
-                    // The Graph tab's file picker asked to re-root on a file:
-                    // requery its neighborhood and push a fresh snapshot back, the
-                    // same out-of-band refresh `/init` uses. The loop is idle here,
-                    // so the read runs inline.
-                    Some(WorkspaceInput::FocusGraphFile { file }) => {
-                        if let Some(snapshot) =
-                            agent::graph_snapshot_focus(&cfg.workspace_root, Some(&file))
-                        {
-                            let _ = in_tx.send(Inbound::GraphSnapshot(snapshot));
-                        }
+                    // The Graph tab asked to re-root — on a file (the picker)
+                    // or on a query (the `q` box). The loop is idle here, so
+                    // the read runs inline.
+                    Some(
+                        input @ (WorkspaceInput::FocusGraphFile { .. }
+                        | WorkspaceInput::GraphQuery { .. }),
+                    ) => {
+                        graph_input::answer(input, &cfg.workspace_root, &in_tx);
                         continue 'session;
                     }
                     // SKILLS-tab ops work whether or not a turn is running — handled
@@ -1951,20 +1950,19 @@ pub async fn run_deck_session(
                                     .to_string(),
                             }));
                         }
-                        // The Graph tab's file picker can re-root mid-turn (a
-                        // user browsing the graph while an agent works). The
-                        // requery opens SQLite + loads grammars, so run it on
-                        // the blocking pool rather than stalling this event
-                        // pump; it sends the fresh snapshot back when done.
-                        Some(WorkspaceInput::FocusGraphFile { file }) => {
+                        // The Graph tab can re-root mid-turn (a user browsing
+                        // the graph while an agent works). The requery opens
+                        // SQLite + loads grammars, so run it on the blocking
+                        // pool rather than stalling this event pump; it sends
+                        // the fresh snapshot back when done.
+                        Some(
+                            input @ (WorkspaceInput::FocusGraphFile { .. }
+                            | WorkspaceInput::GraphQuery { .. }),
+                        ) => {
                             let tx = in_tx.clone();
                             let root = cfg.workspace_root.clone();
                             tokio::task::spawn_blocking(move || {
-                                if let Some(snapshot) =
-                                    agent::graph_snapshot_focus(&root, Some(&file))
-                                {
-                                    let _ = tx.send(Inbound::GraphSnapshot(snapshot));
-                                }
+                                graph_input::answer(input, &root, &tx);
                             });
                         }
                         // The INSTALLED AGENTS pane stays live while a turn

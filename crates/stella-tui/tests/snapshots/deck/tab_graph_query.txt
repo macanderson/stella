@@ -1,11 +1,11 @@
-# deck golden · tab_graph
-# the GRAPH tab over the scripted demo session
+# deck golden · tab_graph_query
+# the GRAPH tab rooted on a free-form query rather than a file
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
  SESSION AGENTS TRACES   GRAPH   FILES SKILLS MCP ISSUES SETTINGS                                                                                       stella*
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ⌕ file:run_turn — engine step driver   / files · q query                                                                                       6 nodes · det │
+│ ⌕ q:run_turn   / files · q query                                                                                                        6 nodes · 12ms · det │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  nodes · 6 in file
 ╭────────────────────────────────────────────────────────╮╭ ▢ Engine ──────────────────────────────────────────────────────────────────────────────────────────╮

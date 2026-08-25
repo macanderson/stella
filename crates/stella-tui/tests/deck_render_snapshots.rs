@@ -68,6 +68,18 @@ use stella_tui::{
     render_deck,
 };
 
+/// The GRAPH tab's query-bar goldens. Split out because this file is the
+/// whole deck's golden surface and every tab wants rows in it, so it is the
+/// one that reaches the 1500-line ceiling first; the submodule shares every
+/// helper below and blesses with the same command.
+///
+/// `#[path]` because this target's module root is `tests/`, so a plain
+/// `mod graph` would want `tests/graph.rs` — and Cargo compiles every
+/// `tests/*.rs` as its own test binary, which would build these three
+/// goldens twice under two names.
+#[path = "deck_render_snapshots/graph.rs"]
+mod graph;
+
 /// The command used to regenerate every golden in this file. Quoted verbatim in
 /// each snapshot header and in every failure message, so nobody has to go
 /// looking for it.
@@ -671,35 +683,6 @@ fn deck_render_snapshots_pin_a_multiline_successful_tool_result() {
     assert_golden(
         "session_tool_result_multiline",
         "a folded multi-line success and a syntax-coloured JSON result",
-        W,
-        H,
-        &frame,
-    );
-}
-
-/// **The witness (#4335).** The GRAPH query bar reports what the query cost
-/// when the driver measured one.
-///
-/// A second golden rather than a changed `tab_graph`: the demo snapshot is
-/// synthesized and carries no timing, and that is the state the bar must keep
-/// rendering — `0ms` on a query nobody ran would be worse than silence. So
-/// both halves are pinned, the untimed one by `tab_graph` and the timed one
-/// here.
-#[test]
-fn deck_render_snapshots_pin_the_graph_query_time() {
-    let model = fixture_model();
-    let mut ui = ui_for(DeckTab::Graph);
-    if let Some(graph) = ui.graph.as_mut() {
-        graph.query_ms = Some(12);
-    }
-    let frame = render_frame(&model, &mut ui, W, H);
-    assert!(
-        frame.contains("· 12ms ·"),
-        "the query bar reports the timing:\n{frame}"
-    );
-    assert_golden(
-        "tab_graph_timed",
-        "the GRAPH tab with a measured query time in the query bar",
         W,
         H,
         &frame,

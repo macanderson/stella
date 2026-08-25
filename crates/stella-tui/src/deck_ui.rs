@@ -617,6 +617,11 @@ pub struct DeckUi {
     /// Selected row in the picker, indexing the *filtered* match list
     /// ([`GraphSnapshot::matching_files`]). Reset to 0 on every query edit.
     pub graph_picker_sel: usize,
+    /// The Graph tab's free-form query box: `Some(text)` while it is open,
+    /// holding what has been typed. Modal like the picker beside it — `q`
+    /// opens it, `⏎` sends a [`WorkspaceInput::GraphQuery`], `esc` closes —
+    /// and kept apart from the composer for the same reason (#4335).
+    pub graph_query: Option<String>,
     /// All MCP-tab state: the configured-servers snapshot, the list cursor, the
     /// search/auth sub-modes and their input buffers (the auth value is
     /// redacted in `Debug`). Out-of-band, driven by [`Inbound::McpServers`] /
@@ -855,6 +860,7 @@ impl Default for DeckUi {
             graph_picker_open: false,
             graph_picker_query: String::new(),
             graph_picker_sel: 0,
+            graph_query: None,
             mcp: crate::v2::mcp_tab::McpTabState::default(),
             files_sel: 0,
             files_diff_open: false,
@@ -1001,9 +1007,13 @@ impl DeckUi {
             return;
         }
 
-        // 2. The Graph tab's modal file-filter input.
+        // 2. The Graph tab's modal file-filter input, or its query box.
         if self.graph_picker_open {
             push_single_line(&mut self.graph_picker_query, text);
+            return;
+        }
+        if let Some(query) = self.graph_query.as_mut() {
+            push_single_line(query, text);
             return;
         }
 
@@ -1589,6 +1599,8 @@ pub mod dispatch;
 /// The focus tree — `←`/`→` siblings, `⏎` open, `⌫` back.
 pub mod focus;
 mod gates;
+/// The GRAPH tab's keys: the neighborhood walk, the file picker, the `q` box.
+pub(crate) mod graph;
 /// `↑`/`↓`/`j`/`k`/`⇞`/`⇟`/`Home`/`End` — one vocabulary for every list and body.
 pub mod list_nav;
 mod local;
@@ -1844,7 +1856,13 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // re-root, Esc close) — before the composer or any tab handler sees it, so a
     // filter keystroke can never leak into a half-typed prompt.
     if ui.graph_picker_open {
-        return handle_graph_picker_key(key, ui);
+        return graph::handle_picker_key(key, ui);
+    }
+    // The query box is modal on exactly the same terms, and for the stronger
+    // reason: every printable key is its text, so a leak here would scatter a
+    // query across the composer.
+    if ui.graph_query.is_some() {
+        return graph::handle_query_key(key, ui);
     }
 
     // The ENGINE panel (the SETTINGS tab's config editor) is modal exactly
@@ -2015,7 +2033,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     if let Some(action) = match ui.tab {
         DeckTab::Agents => handle_agents_key(key, ui, composer_empty),
         DeckTab::Traces => handle_traces_key(key, model, ui, composer_empty),
-        DeckTab::Graph => handle_graph_key(key, ui, composer_empty),
+        DeckTab::Graph => graph::handle_key(key, ui, composer_empty),
         DeckTab::Files => handle_files_key(key, model, ui, composer_empty),
         DeckTab::Mcp => handle_mcp_key(key, ui, composer_empty),
         DeckTab::Issues => handle_issues_browse_key(key, model, ui, composer_empty),
@@ -3303,104 +3321,6 @@ fn handle_traces_key(
             Some(DeckAction::Handled)
         }
         _ => None,
-    }
-}
-
-fn handle_graph_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
-    let node_count = ui.graph.as_ref().map(|g| g.nodes.len()).unwrap_or(0);
-    // The neighborhood is one list; `←`/`→` are the focus tree's sibling
-    // step (the tabs either side of GRAPH), not a second way to walk it.
-    if list_nav::select(key, &mut ui.graph_cursor, node_count, composer_empty) {
-        return Some(DeckAction::Handled);
-    }
-    match key.code {
-        // `/` (filter-as-you-type) or Enter opens the file picker so a user can
-        // re-root the neighborhood on any indexed file, not just the busiest
-        // one the tab seeds. Gated on an empty composer so both keys stay
-        // typeable as the first character of a prompt. Only meaningful once a
-        // graph with a file list has loaded.
-        KeyCode::Char('/') | KeyCode::Enter if composer_empty && graph_has_files(ui) => {
-            open_graph_picker(ui);
-            Some(DeckAction::Handled)
-        }
-        _ => None,
-    }
-}
-
-/// Whether a graph snapshot with at least one listed file is loaded — the
-/// precondition for opening the file picker.
-fn graph_has_files(ui: &DeckUi) -> bool {
-    ui.graph.as_ref().is_some_and(|g| !g.files.is_empty())
-}
-
-/// Open the file picker, defaulting the selection to the file the neighborhood
-/// is currently rooted on (`focus`) — the busiest file on first load. That
-/// keeps the sensible default while making every other file reachable: the
-/// selection starts on "where you already are", not forced there.
-fn open_graph_picker(ui: &mut DeckUi) {
-    ui.graph_picker_query.clear();
-    ui.graph_picker_open = true;
-    ui.graph_picker_sel = ui
-        .graph
-        .as_ref()
-        .and_then(|g| g.files.iter().position(|f| *f == g.focus))
-        .unwrap_or(0);
-}
-
-/// The modal file picker's key map. Printable keys narrow the filter, ↑/↓ walk
-/// the filtered matches, Enter re-roots the neighborhood on the selected file
-/// (a [`WorkspaceInput::FocusGraphFile`] round-trip — see the envelope docs),
-/// and Esc / a cleared-then-Backspace closes it. Selection bounds and the
-/// selected path both come from [`GraphSnapshot::matching_files`] so they can
-/// never disagree with the rendered list.
-fn handle_graph_picker_key(key: KeyEvent, ui: &mut DeckUi) -> DeckAction {
-    // Snapshot the current match count/selection off the shared filter helper.
-    let match_count = ui
-        .graph
-        .as_ref()
-        .map(|g| g.matching_files(&ui.graph_picker_query).len())
-        .unwrap_or(0);
-
-    // A type-to-filter input: letters are the query, so only the arrow
-    // forms move the selection and only Esc closes.
-    if list_nav::select(key, &mut ui.graph_picker_sel, match_count, false) {
-        return DeckAction::Handled;
-    }
-    match key.code {
-        KeyCode::Esc => {
-            ui.graph_picker_open = false;
-            DeckAction::Handled
-        }
-        KeyCode::Enter => {
-            let picked = ui.graph.as_ref().and_then(|g| {
-                g.matching_files(&ui.graph_picker_query)
-                    .get(ui.graph_picker_sel)
-                    .map(|f| f.to_string())
-            });
-            ui.graph_picker_open = false;
-            match picked {
-                Some(file) => DeckAction::Send(WorkspaceInput::FocusGraphFile { file }),
-                None => DeckAction::Handled, // filter matched nothing — just close
-            }
-        }
-        KeyCode::Backspace => {
-            ui.graph_picker_query.pop();
-            ui.graph_picker_sel = 0; // the match set changed — re-anchor
-            DeckAction::Handled
-        }
-        // Printable characters extend the filter. Modified chords (Ctrl/Cmd)
-        // are not filter input — let them fall through as Ignored so global
-        // shortcuts still resolve.
-        KeyCode::Char(c)
-            if !key
-                .modifiers
-                .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER | KeyModifiers::META) =>
-        {
-            ui.graph_picker_query.push(c);
-            ui.graph_picker_sel = 0; // the match set changed — re-anchor
-            DeckAction::Handled
-        }
-        _ => DeckAction::Ignored,
     }
 }
 

@@ -18,11 +18,19 @@ use crate::theme;
 
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let Some(snapshot) = ui.graph.as_ref().filter(|g| !g.is_empty()) else {
-        render_empty(area, buf);
+        // An empty snapshot that carries a query is a query that matched
+        // nothing, which is a different fact from "no index here" and gets
+        // its own sentence — otherwise a search for a misspelt symbol reads
+        // as advice to run `stella init` (#4335).
+        let hint = match ui.graph.as_ref().and_then(|g| g.query.as_deref()) {
+            Some(query) => format!("nothing in the index matches `{query}`"),
+            None => "no neighborhood loaded — the code graph appears here".to_string(),
+        };
+        render_empty(&hint, area, buf);
         return;
     };
 
-    // Defensive clamp: the deck's key handler (`handle_graph_key`) already
+    // Defensive clamp: the deck's key handler (`deck_ui::graph`) already
     // keeps `graph_cursor` in range on every keypress, but this view must
     // never index out of bounds regardless of how the cursor got here (a
     // fresh `DeckUi`, a test, a snapshot swapped out from under a stale
@@ -36,12 +44,20 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         .get(ui.focused)
         .map(|a| a.model.files.iter().map(|f| f.path.clone()).collect())
         .unwrap_or_default();
-    crate::v2::graph_tab::render(snapshot, cursor, &changed, ui.accessible, area, buf);
+    crate::v2::graph_tab::render(
+        snapshot,
+        cursor,
+        &changed,
+        ui.accessible,
+        ui.graph_query.as_deref(),
+        area,
+        buf,
+    );
 }
 
-/// The "nothing loaded" state: a centered muted hint, no border chrome beyond
-/// the tab's own frame.
-fn render_empty(area: Rect, buf: &mut Buffer) {
+/// The "nothing to draw" state: one centered muted `hint`, no border chrome
+/// beyond the tab's own frame.
+fn render_empty(hint: &str, area: Rect, buf: &mut Buffer) {
     let block = Block::default().borders(Borders::ALL).title(" Graph ");
     let inner = block.inner(area);
     block.render(area, buf);
@@ -52,11 +68,8 @@ fn render_empty(area: Rect, buf: &mut Buffer) {
         return;
     }
 
-    let line = Line::from(Span::styled(
-        "no neighborhood loaded — the code graph appears here",
-        theme::muted(),
-    ))
-    .alignment(Alignment::Center);
+    let line =
+        Line::from(Span::styled(hint.to_string(), theme::muted())).alignment(Alignment::Center);
 
     // Vertically center the single line (mirrors the splash's centering idiom
     // — this crate doesn't carry a generic `centered_rect` helper).
@@ -134,6 +147,7 @@ mod tests {
             ],
             files: vec!["driver.rs".into(), "src/lib.rs".into()],
             query_ms: None,
+            query: None,
         }
     }
 
@@ -227,6 +241,7 @@ mod tests {
             edges: vec![],
             files: vec![],
             query_ms: None,
+            query: None,
         });
         let text = draw(&mut ui, 100, 24);
         assert!(
@@ -252,6 +267,7 @@ mod tests {
             edges: vec![],
             files: vec![],
             query_ms: None,
+            query: None,
         };
         let mut ui = DeckUi::default();
         ui.graph = Some(snapshot);
