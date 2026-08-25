@@ -26,10 +26,10 @@ so the net of firing is `A - r*B - r*R*(N-1)` for `R = B - A` reclaimed and
 `N` further worker calls. Negative is a saving. A firing pays for itself only
 once the turn runs far enough past it to amortize the prefix invalidation.
 
-Two things the census cannot do, both first-order limits rather than noise:
-suppressing a firing changes the transcript the next one sees, and a
-conversation left un-aged can reach the budget passes, which are lossier. It
-bounds the effect; a replay through `age_stale_tool_results` would settle it.
+The census is first-order and bounds the effect rather than settling it.
+Suppressing a firing changes the transcript the next one sees, and a
+conversation left un-aged can reach the budget passes, which are lossier. A
+replay through `age_stale_tool_results` would settle it.
 
 Usage: python3 scripts/retention-census.py
 """
