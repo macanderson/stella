@@ -12,6 +12,7 @@
 //! regions, not the whole index batch.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 
 use tree_sitter::{Node, Parser, Query, QueryCursor, StreamingIterator};
 
@@ -20,12 +21,14 @@ use crate::import::ImportSpec;
 use crate::lang::Language;
 use crate::symbol::{CallSite, Symbol, SymbolKind};
 
-/// Compiled grammars + queries for every supported language, built once and
-/// shared by reference across the whole index (`Send + Sync`, so it lives
-/// behind the [`crate::graph::CodeGraph`] handle and is reused by the
-/// background watcher). Compiling the queries here — not per file — keeps
-/// re-indexing cheap while still sourcing them from compile-time data
-/// (L-L2).
+/// Compiled grammars + queries for every supported language. [`Grammars::load`]
+/// compiles the 11 query pairs once per process — measured at ~100ms in a
+/// release build (#4782) — and caches the result behind a process-wide
+/// `OnceLock`, so every [`crate::graph::CodeGraph::open`] and
+/// [`crate::storage::StorageExtractor::new`] after the first shares the same
+/// `Arc` rather than paying the compile again. `Send + Sync`, so the cached
+/// value is reused by the background watcher too.
+///
 /// `None` per language means "this build did not compile that grammar"
 /// (#1268), not "loading failed" — a load failure is still a hard error,
 /// because a `.scm` that does not compile is a programmer error the crate's
@@ -83,11 +86,17 @@ impl LangPack {
 }
 
 impl Grammars {
-    /// Compile every grammar's query pair. Fails loudly only if one of the
-    /// crate's own `.scm` strings does not compile — a programmer error the
-    /// crate's tests catch.
-    pub(crate) fn load() -> Result<Grammars, GraphError> {
-        Ok(Grammars {
+    /// Compile every grammar's query pair, or hand back the already-compiled
+    /// set. Fails loudly only if one of the crate's own `.scm` strings does
+    /// not compile — a programmer error the crate's tests catch; a failure
+    /// here leaves the cache unset, so a later call retries the compile
+    /// rather than latching the error in.
+    pub(crate) fn load() -> Result<Arc<Grammars>, GraphError> {
+        static CACHE: OnceLock<Arc<Grammars>> = OnceLock::new();
+        if let Some(cached) = CACHE.get() {
+            return Ok(Arc::clone(cached));
+        }
+        let grammars = Arc::new(Grammars {
             rust: LangPack::load(Language::Rust)?,
             python: LangPack::load(Language::Python)?,
             javascript: LangPack::load(Language::JavaScript)?,
@@ -99,7 +108,11 @@ impl Grammars {
             typescript: LangPack::load(Language::TypeScript)?,
             tsx: LangPack::load(Language::Tsx)?,
             sql: LangPack::load(Language::Sql)?,
-        })
+        });
+        // `OnceLock::get_or_try_init` is still unstable (rust#109737); racing
+        // in with a redundant compile and losing is the fallback, not a bug —
+        // whichever caller's `Arc` lands first is the one everyone shares.
+        Ok(Arc::clone(CACHE.get_or_init(move || grammars)))
     }
 
     /// `None` when this build carries no grammar for `lang`. Callers already
@@ -706,6 +719,16 @@ mod tests {
         // Guards the compile-time .scm strings (L-L2): a mis-edit fails here,
         // not at a host's runtime.
         Grammars::load().expect("every language query compiles");
+    }
+
+    #[test]
+    fn load_is_cached_process_wide() {
+        let first = Grammars::load().expect("grammars compile");
+        let second = Grammars::load().expect("grammars compile");
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "second load() must hand back the same Arc, not recompile (#4782)"
+        );
     }
 
     #[test]

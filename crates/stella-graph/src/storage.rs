@@ -131,9 +131,11 @@ impl StorageExtract {
 
 /// Standalone extraction handle for callers without a [`crate::CodeGraph`]
 /// (the pre-write gate parses *proposed* content before any write lands).
-/// Compiles the grammars once; reuse across calls.
+/// [`Grammars::load`] caches the compiled queries process-wide, so
+/// constructing this after any [`crate::CodeGraph::open`] in the same
+/// process is a pointer clone, not a recompile.
 pub struct StorageExtractor {
-    grammars: Grammars,
+    grammars: std::sync::Arc<Grammars>,
 }
 
 impl StorageExtractor {
