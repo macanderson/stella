@@ -133,6 +133,24 @@ fn main() {
         // probe used. `wrapper_late_credential.rs` reads both back: one
         // granted late, one never granted, so a mode that answered a
         // constant could not tell a delivered credential from a leaked one.
+        // Declares a witness list that narrows at `research` — the `case`
+        // the shell plugin spelled out. Kept faithful, but note the
+        // narrowing is unobservable through `wrapper_declared_witness.rs`:
+        // it asserts the *union* across stages, which is the same set
+        // either way. Checked by ablation — pinning the list leaves both
+        // its tests green.
+        "witness-by-stage" => {
+            let request = read_request();
+            let list = if request.contains("\"stage\":\"research\"") {
+                "\"tests/flip.rs\""
+            } else {
+                "\"tests/flip.rs\",\"tests/second.rs\""
+            };
+            emit(&format!(
+                "{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\
+                 \"witness\":[{list}]}}}}"
+            ));
+        }
         "two-env-probe" => {
             let _ = read_request();
             let present = |name: &str| {
