@@ -21,12 +21,13 @@
 //! this file runs on Windows too (#4697). Its `witness-by-stage` mode carries
 //! the `case` the script spelled out: the declared list narrows at `research`.
 //!
-//! That narrowing is **not** observable through the tests below, and the
-//! shell script it replaces was no better: the assertion is on the *union*
-//! across stages, which is the same set whether each stage declares its own
-//! list or every stage declares the widest one. So these tests prove the
-//! union is folded and de-duplicated, not that the declaration is per-stage.
-//! A test that reads one stage's list on its own would settle it.
+//! The union test alone cannot see that narrowing: its assertion is the
+//! *union* across stages, which is the same set whether each stage declares
+//! its own list or every stage declares the widest one. So it proves the
+//! union is folded and de-duplicated, and
+//! `a_single_stage_round_is_handed_that_stages_own_declaration` proves the
+//! declaration is per-stage — one stage, nothing for the union to hide
+//! behind (#4876).
 
 use std::sync::Arc;
 
@@ -52,6 +53,24 @@ id = "declaring-v1"
 name = "research"
 [[wrapper.stages]]
 name = "verify"
+"#;
+
+/// The same wrapper with **one** stage, so a round asks it once and the
+/// union has nothing to fold. This is what makes the per-stage declaration
+/// observable: with two stages the union is the same set whether each stage
+/// narrows or every stage declares the widest list (#4876).
+const ONE_STAGE_MANIFEST: &str = r#"
+name = "declares-its-witness"
+description = "names the artifacts its flip is measured against"
+
+[loop]
+participation = "steering"
+points = ["before_turn"]
+
+[wrapper]
+id = "declaring-v1"
+[[wrapper.stages]]
+name = "research"
 "#;
 
 /// Each stage declares one artifact, and both stages declare `tests/flip.rs` —
@@ -141,6 +160,48 @@ async fn every_stage_of_a_round_declares_its_witness_into_one_union() {
         host.declared,
         vec!["tests/flip.rs".to_string(), "tests/second.rs".to_string()],
         "the union across stages, in first-seen order, folding the shared artifact"
+    );
+}
+
+/// **The per-stage half.** One stage, so the union cannot mask what was
+/// declared: a plugin that narrows at `research` hands the host that stage's
+/// list alone.
+///
+/// Without this, `witness-by-stage` could answer the widest list at every
+/// stage and every assertion in this file would still pass — the union of a
+/// narrowed set and a wide one is the wide one. Ablating the fixture's branch
+/// fails this test and nothing else here (#4876).
+#[tokio::test]
+async fn a_single_stage_round_is_handed_that_stages_own_declaration() {
+    let admitted = SubprocessWrapper::declare(
+        vec![FIXTURE.to_string(), "witness-by-stage".into()],
+        Vec::new(),
+        DEFAULT_WRAPPER_TIMEOUT,
+    )
+    .expect("the transport is declared with a program and a budget");
+    let manifest =
+        PluginManifest::from_toml_str(ONE_STAGE_MANIFEST).expect("the one-stage manifest loads");
+    let dispatch = WrapperDispatch::bind(manifest, Arc::new(admitted.wrapper))
+        .expect("it declares a [wrapper]");
+
+    let mut host = Recording::default();
+    dispatch
+        .run(
+            RoundInput {
+                goal: "make the flaky test deterministic".into(),
+                signals: signals(),
+                candidate: None,
+            },
+            &mut host,
+        )
+        .await
+        .expect("a validated manifest resolves");
+
+    assert_eq!(
+        host.declared,
+        vec!["tests/flip.rs".to_string()],
+        "research narrows to its own artifact; the wide list would mean the \
+         declaration is not per-stage"
     );
 }
 
