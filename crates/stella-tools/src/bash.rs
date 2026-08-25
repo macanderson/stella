@@ -603,11 +603,29 @@ impl Tool for Bash {
                 );
             }
             Err(_) => {
-                // Timeout — kill the process group.
+                // Timeout — kill the process group. The message names the two
+                // moves that are not "send the same command again", because
+                // that is the one a timeout otherwise invites and the one that
+                // cannot work: nothing about the command or the machine
+                // changed between the kill and the resubmit. Measured (#2670):
+                // one bench transcript spent three consecutive steps on
+                // `timeout 110/115 python3 <<EOF` kills of the same shape, and
+                // four of sixteen cells lost their dominant time to re-parsing
+                // a 48 MB input every step that a single cached parse would
+                // have carried.
                 guard.kill_now();
                 return ToolOutput::classified_error(
                     stella_protocol::ErrorClass::Timeout,
-                    format!("command timed out after {timeout_secs}s"),
+                    format!(
+                        "command timed out after {timeout_secs}s and its process group was \
+                         killed; no output was captured. Re-sending it unchanged will time out \
+                         again. Either raise timeout_secs (up to {max}) when the command was \
+                         making progress and needs longer, or split the work so each step \
+                         finishes — and save an expensive intermediate (a parse, a build, a \
+                         decoded file) to the scratch state plane or $STELLA_SCRATCH so the next \
+                         step reads it instead of recomputing it.",
+                        max = crate::exec::MAX_TIMEOUT_SECS
+                    ),
                 );
             }
         };
@@ -837,9 +855,9 @@ mod tests {
         }
     }
 
-    /// #3167 witness: a timeout is classified `Timeout` and the message bytes
-    /// are exactly what they were before classification. Fails on the
-    /// pre-#3167 tree, where `class` is always `None`.
+    /// #3167 witness: a timeout is classified `Timeout`, and its message is
+    /// the one the tool built rather than anything classification rewrote.
+    /// Fails on the pre-#3167 tree, where `class` is always `None`.
     #[tokio::test]
     async fn timeout_is_classified_timeout_with_unchanged_message_bytes() {
         let dir = std::env::temp_dir();
@@ -849,12 +867,44 @@ mod tests {
                 &cx(&dir),
             )
             .await;
-        assert_eq!(
-            result,
-            ToolOutput::classified_error(
-                stella_protocol::ErrorClass::Timeout,
-                "command timed out after 1s"
+        let ToolOutput::Error { message, class } = result else {
+            panic!("a killed command is an error");
+        };
+        assert_eq!(class, Some(stella_protocol::ErrorClass::Timeout));
+        assert!(
+            message.starts_with("command timed out after 1s and its process group was killed"),
+            "{message}"
+        );
+    }
+
+    /// **Witness (#2670).** A timeout that says only how long it waited
+    /// invites the one move that cannot work — the same command again, which
+    /// three consecutive steps of one bench transcript spent. The message
+    /// names the two that can: raise the ceiling, or carry the expensive
+    /// intermediate forward instead of recomputing it every step.
+    #[tokio::test]
+    async fn a_timeout_directs_a_strategy_change_rather_than_a_resubmit() {
+        let dir = std::env::temp_dir();
+        let result = Bash::new(None)
+            .execute(
+                &serde_json::json!({"command": "sleep 30", "timeout_secs": 1}),
+                &cx(&dir),
             )
+            .await;
+        let ToolOutput::Error { message, .. } = result else {
+            panic!("a killed command is an error");
+        };
+        assert!(
+            message.contains("Re-sending it unchanged will time out again"),
+            "the resubmit has to be ruled out by name: {message}"
+        );
+        assert!(
+            message.contains("raise timeout_secs (up to 600)"),
+            "the ceiling the model may ask for has to be a number it can act on: {message}"
+        );
+        assert!(
+            message.contains("$STELLA_SCRATCH"),
+            "the place a parse survives to the next step has to be named: {message}"
         );
     }
 

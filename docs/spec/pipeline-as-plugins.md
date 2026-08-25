@@ -778,6 +778,15 @@ Order, easiest and least risky first:
    prompt but not `FrameProgress` or the execute cursor the way the built-in
    plan did. An A/B against the built-in path is therefore measuring a
    deliberately weaker input, and any result has to say so.
+
+   Each narrowing has a number and an order, which is what #3562 asked for
+   before it closed: #4728 gives `repo_structure` and the `--revise` note wire
+   representations on `BeforeTurnRequest` (additive, `PROTOCOL_VERSION`
+   unchanged), and #4729 decides whether the socket grows a plan response shape
+   at all — a change with the same weight `doc:wrapper-socket` §6b had, which
+   is why it is not folded into the first. #4728 comes first: it closes a gap
+   with a known shape, and an A/B run before it lands is measuring two
+   narrowings at once.
 3. **vera** — `after_turn` + `judge`. Needs A10 (worktrees) and A6 (structured
    verdicts). Ported, not copied: see §8.
 4. **stella-candidates** — the heaviest, needs `again?` with different setup per
@@ -800,9 +809,10 @@ deleted. The dependency cut — `stella-cli` no longer declaring
 `stella-pipeline` — was the **last** slice, never the first, and it has now
 landed (#3865, 2026-08-19): the crate is deleted from the workspace and
 `stella run --pipeline classic` is refused. It shipped **ahead of** the bar
-stated above — `stella-plan`, `vera`, `stella-candidates`, and `stella-goal`
-remain unstarted or blocked (#3844), so no side-by-side benchmark exists for
-most of what the built-in path covered. That is a deliberate maintainer call
+stated above — `vera`, `stella-candidates` and `stella-goal` remain unstarted
+or blocked (#3844), `stella-plan` has landed but is narrower than the stage it
+replaces and has held no side-by-side against it, so no side-by-side benchmark
+exists for most of what the built-in path covered. That is a deliberate maintainer call
 recorded here per CLAUDE.md's "now vs. right", not an oversight this
 paragraph is silent about: the built-in path's own verification machinery
 had already stopped being the default (#3381) and stopped being reachable

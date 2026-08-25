@@ -17,15 +17,17 @@ fn debug_never_prints_the_secret_value() {
 
 /// The #3036 witness: a redirected stdout must decline the prompt even
 /// with a live keyboard on stdin — the disagreeing configuration a
-/// stdin-only check could not see. On `main` before this fix,
+/// stdin-only check could not see. On `main` before that fix,
 /// `ApiKey::resolve`'s interactive gate was `interactive &&
 /// stdin_is_terminal` alone, so a `stella config > out.txt` from a real
 /// terminal would have `rpassword` write its "enter it now" prompt where
 /// nobody could read it and then block on an answer nobody knew to give.
+/// The predicate moved to [`TerminalPrompt`] with the prompt port (#4576);
+/// what it asserts is unchanged.
 #[test]
 fn a_redirected_stdout_declines_the_prompt_even_with_a_live_stdin() {
     assert!(
-        !ApiKey::can_prompt_interactively(true, true, false),
+        !TerminalPrompt::decide(true, true, false),
         "a human at the keyboard is not enough if the prompt itself is invisible"
     );
 }
@@ -34,7 +36,7 @@ fn a_redirected_stdout_declines_the_prompt_even_with_a_live_stdin() {
 /// missing condition rather than an always-false predicate.
 #[test]
 fn a_full_terminal_can_host_the_prompt() {
-    assert!(ApiKey::can_prompt_interactively(true, true, true));
+    assert!(TerminalPrompt::decide(true, true, true));
 }
 
 #[test]

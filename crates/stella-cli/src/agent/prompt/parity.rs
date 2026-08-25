@@ -93,6 +93,7 @@ const SHARED_CONTRACTS: &[(&str, &str)] = &[
     ("skill_use", skill_use!()),
     ("scope_discipline", scope_discipline!()),
     ("measurement_discipline", measurement_discipline!()),
+    ("example_discipline", example_discipline!()),
     (
         "verification_proportionality",
         verification_proportionality!(),

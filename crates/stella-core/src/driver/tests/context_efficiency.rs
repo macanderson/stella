@@ -241,3 +241,28 @@ async fn a_truncated_step_with_tool_calls_retains_elided_narration() {
     assert_tool_pairing(&messages);
     drain_events(&mut rx);
 }
+
+/// #4391's pin. The compaction defaults were re-measured after #2681 and left
+/// alone; the measurement and its two panels are on
+/// [`EngineConfig::compaction_budget_tokens`]'s doc comment. A number a
+/// measurement decided not to move is exactly as vulnerable to a struct-literal
+/// rewrite as one a measurement chose (#2414/#2462), so it is asserted here
+/// rather than trusted to review.
+#[test]
+fn the_measured_compaction_defaults_stand() {
+    let config = EngineConfig::default();
+    assert_eq!(
+        config.compaction_budget_tokens, 150_000,
+        "changing this needs a fresh trace measurement, not a struct-literal edit — see \
+         EngineConfig::compaction_budget_tokens"
+    );
+    assert_eq!(
+        config.summarize_keep_recent, 8,
+        "the summariser's untouched tail moves with the budget above, not on its own"
+    );
+    assert!(
+        config.summarize_overflow,
+        "reactive overflow recovery stays armed: the panels bound how often it fires at \
+         zero, not what happens when it does"
+    );
+}

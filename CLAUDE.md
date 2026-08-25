@@ -108,6 +108,10 @@ b
   **If you touch a file, you own its prose and its comments.** A doc comment,
   a module header, a shell script's banner and a `.md` page are all text a
   human reads, and they are held to one bar.
+  - **The full rules are `doc:prose-guidelines`**, written in plain English
+    with before/after examples and no dependency on this repository, so it
+    can be copied into any codebase. Read it once; the summary below is the
+    part a session needs in view.
   - **The test is deletion.** Cut the clause. If the reader lost nothing, it
     was carrying nothing, and it goes. `Two things stated rather than
     hidden:` is the specimen this rule is named for — strip it and every
@@ -117,17 +121,33 @@ b
     reader which item to care about instead of putting it first (`the part
     that matters`, `and the second is the hard one`); prose about the prose
     (`stated rather than hidden`, `worth naming`); the `X, not Y` tail where
-    `Y` is a foil nobody proposed (`, not decoration`); and tired metaphor
+    `Y` is a foil nobody proposed (`, not decoration`); tired metaphor
     standing in for the plain word (`load-bearing` → *required*, `belt and
-    braces` → *checked twice*).
+    braces` → *checked twice*); the filler adverb that sounds like a reason
+    and is not (`deliberately` → the reason, or nothing); and an issue number
+    standing in for an explanation (`See #1234.` → what it decided, with the
+    number beside it).
+  - **A count or a line number in prose is a promise to update it, and
+    nobody does.** Point at the list (*the entries in `token::ALL`*) rather
+    than counting it, and cite code by symbol — `fleet.rs`'s `dispatch` —
+    never by a pinned line number, which is wrong the moment anyone inserts a
+    line above it and reports nothing. `make line-citations` holds the second
+    half
+    (`scripts/check-line-citations.py`, a down-only ratchet); the first is a
+    review question, and #4392 is where the counts that had already drifted
+    were repaired.
   - **Enforced by `make prose`** (`scripts/check-prose.py`), a down-only
-    ratchet over `scripts/prose-baseline.txt`. `make prose-report` names
-    every remaining line and what to write instead. `make prose-update`
-    refuses to raise a count or add a file, so a red gate is cleared by
-    deleting the prose. The baseline records debt older than the guard, it
-    is meant to reach empty, and adding a line to it is the expedient this
-    file forbids. A backticked span or a fenced block is exempt: naming a
-    banned construction in order to ban it is a citation.
+    ratchet over `scripts/prose-baseline.txt`, kept per (file, pattern) so a
+    file cannot pay for new prose of one kind by deleting prose of another.
+    `make prose-report` names every remaining line and what to write instead.
+    `make prose-update` refuses to raise a count or add a pair, so a red gate
+    is cleared by deleting the prose. The baseline records debt older than
+    the guard, it is meant to reach empty, and adding a line to it is the
+    expedient this file forbids. Adding a *pattern* is the one exception, and
+    it has its own door: `make prose-adopt PATTERN=<name>` records that
+    pattern's pre-existing hits, once, and refuses to touch any other
+    pattern's numbers. A backticked span or a fenced block is exempt: naming
+    a banned construction in order to ban it is a citation.
 - **AGENTS.md is the orientation document.** Commands, architectural
   invariants, workspace routing, testing approach, and gotchas all live there
   (imported above). When this file and AGENTS.md disagree, AGENTS.md wins —

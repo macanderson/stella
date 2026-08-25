@@ -1295,6 +1295,7 @@ mod tests {
                 body: "Lowercase keywords.".to_string(),
                 source_path: "x/sql-style/SKILL.md".to_string(),
                 origin: stella_core::skills::SkillOrigin::Workspace,
+                contributed_by: None,
             }],
             agents: vec![AgentDef {
                 name: "reviewer".to_string(),

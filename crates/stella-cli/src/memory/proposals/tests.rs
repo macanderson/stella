@@ -152,6 +152,7 @@ fn an_already_captured_lesson_induces_no_proposal() {
         domains: vec!["testing".into()],
         source_path: ".stella/skills/witness-assertions.md".into(),
         origin: stella_core::skills::SkillOrigin::AutoCreated,
+        contributed_by: None,
     }];
     let observations: Vec<_> = [100, 200, 300]
         .into_iter()

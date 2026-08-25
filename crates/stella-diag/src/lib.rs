@@ -4,7 +4,7 @@
 //! The **diagnostic plane**: why the program behaved the way it did.
 //!
 //! Stella has four observability planes and, until this crate, had built
-//! three. `docs/spec/diagnostics.md` §2 is the table:
+//! three. `doc:diagnostics` §2 is the table:
 //!
 //! | Plane | Question it answers | Where it lives |
 //! |---|---|---|
@@ -13,9 +13,11 @@
 //! | **Presentation** | *What should the human see?* | `println!`, the TUI |
 //! | **Diagnostic** | *Why did the program behave this way?* | **here** |
 //!
-//! The missing fourth is why 682 `println!`s and 625 `let _ =`s coexisted: a
-//! statement with no home gets split between the plane that is easiest to
-//! reach (stdout) and the one that costs nothing (the floor).
+//! The missing fourth is why the tree carried thousands of `println!`s
+//! alongside thousands of discarded `Result`s: a statement with no home gets
+//! split between the plane that is easiest to reach (stdout) and the one that
+//! costs nothing (the floor). `doc:diagnostics` §1 pins the counts to the
+//! tree they were measured against.
 //!
 //! ## The routing rule
 //!
@@ -27,8 +29,6 @@
 //! > it is not a log line, it is a metric.**
 //!
 //! ## What is distinctive here
-//!
-//! Two things, and neither is available off the shelf.
 //!
 //! **Content in a log does not compile** ([`Loggable`], §5.2). A field value is
 //! not `serde_json::Value` and not `impl Display`; it is a closed type

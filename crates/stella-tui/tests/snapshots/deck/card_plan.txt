@@ -23,7 +23,7 @@
  │ ⎿ 312 lines                                                                                                                               42ms
 
  │ ● edit apps/app/automations/page.tsx +4 -1
- │ ⎿                                                ┌ plan  pending approval · 3 steps  x skip · esc close ┐                         +4 −1 · 18ms
+ │ ⎿                                                ╭ plan  pending approval · 3 steps ────────────────────╮                         +4 −1 · 18ms
  │     10 -  const items = []                       │Refactor the automations store into a shared worksp…  │
  │     10 +  const items = useAutomations()         │                                                      │
  │     11 +  const [q, setQ] = useState("")         │▸ ○ 1. extract types                                  │
@@ -36,7 +36,7 @@
                                                     │budget    $0.04 of $2.50 ▰▱▱▱▱▱▱                      │
                                                     │models    think — · work glm-5.2-air · verify —       │
                                                     │shell     allowlisted                                 │
-                                                    └──────────────────────────────────────────────────────┘
+                                                    ╰────────────────────────────────── x skip · esc close ╯
 
 
 

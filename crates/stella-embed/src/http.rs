@@ -75,23 +75,51 @@ const INITIAL_BACKOFF: Duration = Duration::from_millis(500);
 /// often a misconfigured proxy than a real instruction.
 const MAX_BACKOFF: Duration = Duration::from_secs(8);
 
-/// The admission floor applied when nothing overrides it.
+/// The admission floor for a model **nobody has measured**, and for nothing
+/// else.
 ///
-/// **This number is provisional and is not a measured separation point.** The
-/// [`SimilarityPosture`] contract asks for a floor derived from a model's
-/// observed relevant/irrelevant score distributions, and no such measurement
-/// exists yet for these backends on a code corpus. It is deliberately
-/// permissive: its job today is to drop the obviously-unrelated tail from an
-/// ordered list, not to certify anything.
+/// It is still not a separation point and still certifies nothing; what has
+/// changed is that its scope is now stated. A model whose distributions have
+/// been measured takes its posture from [`MEASURED_FLOORS`] and never reaches
+/// this number, so this is the value for an unknown backend and the
+/// justification for it is that a permissive floor is all an unmeasured
+/// backend can defend: it drops the obviously-unrelated tail from an
+/// ordered list and admits everything else, which understates the backend
+/// rather than overstating it.
 ///
-/// The measurement that settles it is written and reproducible:
-/// `crates/stella-tools/tests/relevance_calibration.rs` prints the labelled
-/// relevant/irrelevant score distributions over this repository for whatever
-/// backend is configured, and names the number to write here (#3096). It is
-/// `#[ignore]`d because it needs a real key and a full embedding pass. Until
-/// somebody runs it, this paragraph stays — deleting it without the
-/// measurement would turn an honest disclosure into a silent assumption.
+/// The measurement that would replace it for a given model is written and
+/// reproducible: `crates/stella-tools/tests/relevance_calibration.rs` prints
+/// the labelled relevant/irrelevant distributions over this repository for
+/// whatever backend is configured (#3096, #2993). It is `#[ignore]`d because
+/// it needs a real key.
 const DEFAULT_ADMISSION_FLOOR: f32 = 0.25;
+
+/// Which models have had their score distributions measured, and what the
+/// measurement found.
+///
+/// MEASURED: 2026-08-24, `voyage-code-3@1/1024/l2` over this repository's own
+/// index (28 744 chunks), four labelled queries from
+/// `crates/stella-tools/tests/relevance_calibration.rs`, 40 candidates deep
+/// each. Tightest separation across the set **-0.0439**: on "why is the Rust
+/// toolchain pinned to an exact version" the labelled answer ranked 39th, at
+/// 0.5978, under 38 irrelevant chunks scoring 0.6006-0.6436. The widest
+/// positive separation was +0.0140. Two of the four queries returned no
+/// labelled answer in 40 candidates at all, which makes their separation
+/// unmeasurable rather than good.
+///
+/// `Some(floor)` is a floor a measurement put between the two distributions.
+/// `None` is the other outcome, and the one this table currently records: the
+/// distributions **overlap**, so no floor separates them and the model must
+/// declare [`SimilarityPosture::Surface`] — scores order candidates and admit
+/// none, exactly as `HashEmbedder` already reports. #2993 named that outcome
+/// in advance as the one to expect, and it is the one that came back.
+///
+/// A model absent from this table is unmeasured, keeps
+/// [`DEFAULT_ADMISSION_FLOOR`], and says so in its own doc comment above. An
+/// explicit `STELLA_EMBED_FLOOR` outranks this table for either kind of
+/// entry: the operator is then making the claim, about a corpus this
+/// measurement did not see.
+const MEASURED_FLOORS: &[(&str, Option<f32>)] = &[("voyage-code-3", None)];
 
 /// Models this crate knows the vector width of, so `STELLA_EMBED_DIMS` is only
 /// mandatory for something it has never heard of. Width matters before the
@@ -244,10 +272,14 @@ pub enum Resolution {
 
 /// Resolve an embedder from a captured environment. Pure.
 pub fn resolve(env: &EmbedderEnv) -> Resolution {
-    let floor = match env.floor.as_deref() {
-        None => DEFAULT_ADMISSION_FLOOR,
+    // `None` is carried through rather than collapsed onto the default here:
+    // downstream, "the operator set a floor" and "nobody did" select different
+    // postures, and a default substituted at this line erases the difference
+    // before anything can read it.
+    let floor: Option<f32> = match env.floor.as_deref() {
+        None => None,
         Some(raw) => match raw.parse::<f32>() {
-            Ok(value) if value.is_finite() => value,
+            Ok(value) if value.is_finite() => Some(value),
             _ => {
                 return Resolution::Incomplete(format!(
                     "STELLA_EMBED_FLOOR is `{raw}`, which is not a finite number"
@@ -376,26 +408,53 @@ pub struct HttpEmbedder {
     model: String,
     api_key: Option<String>,
     dims: usize,
-    admission_floor: f32,
+    posture: SimilarityPosture,
     client: reqwest::Client,
+}
+
+/// What this backend's scores are allowed to certify, decided once at
+/// construction from the operator's override, then the measurement table,
+/// then the unmeasured default — in that order, because each step is a
+/// stronger claim than the one after it.
+fn posture_for(model: &str, operator_floor: Option<f32>) -> SimilarityPosture {
+    if let Some(admission_floor) = operator_floor {
+        return SimilarityPosture::Semantic { admission_floor };
+    }
+    match MEASURED_FLOORS
+        .iter()
+        .find(|(known, _)| *known == model)
+        .map(|(_, floor)| *floor)
+    {
+        Some(Some(admission_floor)) => SimilarityPosture::Semantic { admission_floor },
+        Some(None) => SimilarityPosture::Surface,
+        None => SimilarityPosture::Semantic {
+            admission_floor: DEFAULT_ADMISSION_FLOOR,
+        },
+    }
 }
 
 impl HttpEmbedder {
     /// Build an embedder against `base_url` (with or without a trailing
     /// slash); `/embeddings` is appended.
+    ///
+    /// `admission_floor` is the **operator's** floor (`STELLA_EMBED_FLOOR`)
+    /// and nothing else. `None` is not "use the default" — it is "nobody
+    /// overrode this", which is what lets this crate tell an operator's claim
+    /// apart from a measured one apart from an unmeasured fallback. A caller
+    /// that only wants a fingerprint passes `None`.
     pub fn new(
         base_url: &str,
         model: &str,
         api_key: Option<String>,
         dims: usize,
-        admission_floor: f32,
+        admission_floor: Option<f32>,
     ) -> Self {
         Self {
             endpoint: format!("{}/embeddings", base_url.trim_end_matches('/')),
             model: model.to_string(),
             api_key,
             dims,
-            admission_floor,
+            posture: posture_for(model, admission_floor),
             // A builder failure here means the TLS backend could not be
             // initialised at all. Falling back to a default client keeps this
             // constructor infallible — the very next request fails with a
@@ -426,7 +485,7 @@ impl fmt::Debug for HttpEmbedder {
             .field("model", &self.model)
             .field("api_key", &Redacted(&self.api_key))
             .field("dims", &self.dims)
-            .field("admission_floor", &self.admission_floor)
+            .field("posture", &self.posture)
             .finish_non_exhaustive()
     }
 }
@@ -577,17 +636,18 @@ impl Embedder for HttpEmbedder {
             .collect()
     }
 
-    /// A trained embedding model maps meaning, which is the whole reason this
-    /// backend exists — a query and a file that share no token can still land
-    /// close together. The *floor*, unlike the posture, is provisional: no
-    /// measured separation point exists yet for these backends on a code
-    /// corpus. Measuring one per model is tracked in #2993 and #3096, and the
-    /// harness that produces the distribution is
-    /// `crates/stella-tools/tests/relevance_calibration.rs`.
+    /// Decided at construction from the measurement, rather than from the
+    /// fact that this backend is a trained model.
+    ///
+    /// Mapping meaning is why this backend exists, and it is not the question
+    /// [`SimilarityPosture`] asks. That question is whether a score may
+    /// **admit** a candidate on its own, which needs the two distributions to
+    /// separate — and for `voyage-code-3` on a code corpus they do not; this
+    /// module's `MEASURED_FLOORS` carries the numbers. A model nobody has
+    /// measured still declares `Semantic` on an unmeasured default floor, and
+    /// both of those constants' doc comments say which it is.
     fn similarity_posture(&self) -> SimilarityPosture {
-        SimilarityPosture::Semantic {
-            admission_floor: self.admission_floor,
-        }
+        self.posture
     }
 }
 
@@ -777,13 +837,63 @@ mod tests {
         );
     }
 
+    /// An **unmeasured** model still declares `Semantic`, on
+    /// `DEFAULT_ADMISSION_FLOOR`. `text-embedding-3-small` is one: #2993 names
+    /// it as a model to measure and nobody has.
     #[test]
-    fn the_http_backend_declares_a_semantic_posture() {
+    fn an_unmeasured_backend_declares_a_semantic_posture() {
         let Resolution::Configured(embedder) = resolve(&env_with(&[("OPENAI_API_KEY", "sk")]))
         else {
             panic!("expected a configured embedder");
         };
         assert!(embedder.similarity_posture().admits());
+        assert_eq!(
+            embedder.similarity_posture(),
+            SimilarityPosture::Semantic {
+                admission_floor: DEFAULT_ADMISSION_FLOOR
+            }
+        );
+    }
+
+    /// The measurement, pinned (#2993). `voyage-code-3`'s relevant and
+    /// irrelevant distributions overlap on a code corpus — tightest separation
+    /// -0.0439 — so its scores order candidates and admit none. A merge that
+    /// carried the old unconditional `Semantic` back over the top fails here
+    /// instead of silently re-asserting a separation nobody measured.
+    #[test]
+    fn the_measured_backend_declares_the_posture_its_distribution_earned() {
+        let Resolution::Configured(embedder) = resolve(&env_with(&[("VOYAGE_API_KEY", "pa-k")]))
+        else {
+            panic!("expected a configured embedder");
+        };
+        assert_eq!(embedder.similarity_posture(), SimilarityPosture::Surface);
+        assert!(
+            !embedder.similarity_posture().admits(),
+            "a measured overlap must not admit on its own say-so"
+        );
+        assert_eq!(
+            MEASURED_FLOORS,
+            &[("voyage-code-3", None)],
+            "the table is the record of what was measured; changing a row means re-running \
+             crates/stella-tools/tests/relevance_calibration.rs, not editing this assertion"
+        );
+    }
+
+    /// An operator's floor outranks the table: `STELLA_EMBED_FLOOR` against a
+    /// measured-overlapping model is a claim about a corpus the measurement
+    /// did not see, and it must not be swallowed by the row.
+    #[test]
+    fn an_operator_floor_outranks_the_measured_row() {
+        let env = env_with(&[("STELLA_EMBED_FLOOR", "0.72"), ("VOYAGE_API_KEY", "pa-k")]);
+        let Resolution::Configured(embedder) = resolve(&env) else {
+            panic!("expected a configured embedder");
+        };
+        assert_eq!(
+            embedder.similarity_posture(),
+            SimilarityPosture::Semantic {
+                admission_floor: 0.72
+            }
+        );
     }
 
     #[tokio::test]
@@ -806,7 +916,7 @@ mod tests {
             "text-embedding-3-small",
             Some("sk-test".into()),
             2,
-            0.25,
+            None,
         );
         let out = embedder
             .embed(&["first".to_string(), "second".to_string()])
@@ -828,7 +938,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, 0.25);
+        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, None);
         assert!(matches!(
             embedder.embed(&["only".to_string()]).await,
             Err(EmbedError::DimensionMismatch {
@@ -847,7 +957,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, 0.25);
+        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, None);
         let Err(EmbedError::Backend(message)) = embedder.embed(&["x".to_string()]).await else {
             panic!("expected a backend error");
         };
@@ -883,7 +993,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, 0.25);
+        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, None);
         let out = embedder
             .embed(&["only".to_string()])
             .await
@@ -908,7 +1018,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, 0.25);
+        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, None);
         let Err(EmbedError::Backend(message)) = embedder.embed(&["x".to_string()]).await else {
             panic!("expected a backend error once the attempts ran out");
         };
@@ -931,7 +1041,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, 0.25);
+        let embedder = HttpEmbedder::new(&format!("{}/v1", server.uri()), "m", None, 2, None);
         assert!(embedder.embed(&["x".to_string()]).await.is_err());
         // `expect(1)` is verified on drop: a second attempt fails the test.
         drop(server);

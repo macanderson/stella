@@ -1364,6 +1364,69 @@ fn deck_render_snapshots_pin_the_agents_page() {
     );
 }
 
+/// The AGENTS page mid-conversation: a task half-typed into its composer and
+/// the answer to the command before it standing in the page's own reply pane
+/// (#4626).
+///
+/// A second golden rather than a change to the one above, because the two pin
+/// different claims and folding them together would lose one. `page_agents` is
+/// the page at rest — blank composer, nothing asked — and it is *unchanged* by
+/// #4626, which is itself worth pinning: the caret and the reply pane must cost
+/// the resting page no rows. This one is the page with both features engaged,
+/// so the `REPLY` heading, the quoted transcript row and the typed composer are
+/// all in a frame a reviewer can read.
+#[test]
+fn deck_render_snapshots_pin_the_agents_page_reply_pane() {
+    let mut model = fixture_model();
+    model.apply_inbound(&Inbound::ShellEvent {
+        agent: fixture_lead(&model),
+        event: AgentEvent::Text {
+            text: "worker · zai/glm-5.2 · effort high".into(),
+        },
+    });
+    let mut ui = ui_for(DeckTab::Session);
+    ui.agents_page.open = true;
+    // The mark the page sets when it sends a command: everything after it is
+    // the answer. One short of the end, so exactly the reply above is quoted.
+    ui.agents_page.reply_from = Some(
+        model.agents[ui.focused]
+            .model
+            .transcript
+            .len()
+            .saturating_sub(1),
+    );
+    ui.agents_page.notice = Some("/model sent".to_string());
+    for c in "rewrite the parser".chars() {
+        ui.agents_page.composer.insert_char(c);
+    }
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        frame.contains("worker · zai/glm-5.2"),
+        "the reply pane must quote the session's own answer:\n{frame}"
+    );
+    assert!(
+        frame.contains("rewrite the parser"),
+        "…above the composer that is still being typed into:\n{frame}"
+    );
+    assert_golden(
+        "page_agents_reply",
+        "the AGENTS page with a command's reply quoted in its own pane and a task half-typed",
+        W,
+        H,
+        &frame,
+    );
+}
+
+/// The lead lane's id in the demo fixture — the session a page-submitted
+/// command is answered in.
+fn fixture_lead(model: &WorkspaceModel) -> String {
+    model
+        .agents
+        .first()
+        .map(|a| a.meta.id.clone())
+        .expect("the demo fixture registers at least one lane")
+}
+
 #[test]
 fn deck_render_snapshots_pin_the_subagents_overlay() {
     let mut model = fixture_model();

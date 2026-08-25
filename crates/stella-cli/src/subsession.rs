@@ -459,6 +459,23 @@ impl stella_core::ports::TurnSteering for SteeringTap {
     }
 }
 
+// Agent whistle's push-side seam (`crate::whistle::tap::Whistleable`): this
+// tap is already what `>` feeds in-process (see the type's own doc comment),
+// so a whistle connection reaching it needs nothing new here — only a
+// listener that calls this. Not yet wired to one: the deck mints a fresh
+// `SteeringTap` per turn (`command_deck.rs`'s per-turn `steering` local), and
+// that file is closed to growth under the file-size ratchet
+// (AGENTS.md "God files"), so publishing a session-scoped whistle socket
+// there needs either a small `file-size-update` or the per-turn construction
+// moved into a sibling module first. This impl exists so that follow-up is
+// exactly "spawn a listener and hand it `Arc::clone(&steering) as Arc<dyn
+// Whistleable>`", not "also design the trait".
+impl crate::whistle::tap::Whistleable for SteeringTap {
+    fn push(&self, text: String) {
+        SteeringTap::push(self, text);
+    }
+}
+
 /// Where a prompt submitted while the lead's turn future is still alive
 /// should actually go.
 ///

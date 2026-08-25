@@ -67,37 +67,36 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use stella_core::ports::{Principal, ToolExecutor};
-use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
+use stella_core::ports::ToolExecutor;
 use stella_model::provider::Provider;
 use stella_protocol::{
-    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, QuestionOutcome, TaskItem,
+    AgentEvent, CompletionMessage, CompletionRequest, QuestionOutcome, TaskItem,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
-use stella_tools::custom::CustomTool;
-use stella_tools::hook_runner::HostHookRunner;
 use stella_tools::registry::approval::ApprovalResponse;
 use stella_tui::{
-    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityHit, Inbound, SkillOp, SkillScope,
-    SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
+    AgentMeta, AgentScope, AgentStatus, DeckOptions, Inbound, SkillOp, SkillScope, SkillSearchHit,
+    SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedSender};
 
-use crate::claims::ClaimTap;
 use crate::config::Config;
-use crate::interactive::{AskUserIo, SkillRegistry};
+use crate::interactive::SkillRegistry;
 use crate::{agent, rules};
 
 mod add_dir;
 mod authoring;
+mod driver_support;
 mod command_side;
 mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;
 mod inspect_service;
 mod lead_control;
+mod lead_turn;
 mod model_cmd;
+mod panel_snapshots;
 mod pr_observe;
 mod profile_cmd;
 mod session_clear;
@@ -105,21 +104,27 @@ mod session_override;
 mod sessions_view;
 mod settings_io;
 mod settle;
+mod slash_commands;
 mod slash_pump;
 mod steering;
 mod task_tap;
 mod theme_cmd;
 mod worker_control;
+use driver_support::{
+    handle_supervisor_msg, service_registry_action, spawn_mcp_connect, spawn_notification_poller,
+    spawn_pr_monitor,
+};
+use lead_turn::run_lead_turn;
+use panel_snapshots::{engine_config_inbound, tool_policy_inbound};
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
+use slash_commands::{DeckCommand, handle_agents_input, run_deck_command};
 
 use crate::memory::{SessionMemory, TurnFriction};
-use crate::runtime::TokioSleeper;
 use crate::subsession::{self, SubSessions, SupervisorMsg};
-use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
+use authoring::{agents_list_creating, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
-use task_tap::{PlanSetup, TaskTap};
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
@@ -2585,8 +2590,6 @@ const SESSION_RECORD_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 /// Inbox hygiene: **read** notifications older than this are swept at deck
 /// startup (14 days). Unread ones persist regardless — that is the contract.
 const NOTIFICATION_MAX_AGE_MS: u64 = 14 * 24 * 60 * 60 * 1000;
-/// How often the deck re-reads the machine-wide notification store.
-const NOTIFY_POLL_MS: u64 = 3_000;
 /// A successful turn at least this long lands a "work finished" notification
 /// — long enough that the user has plausibly looked away.
 const LONG_TURN_NOTIFY_SECS: i64 = 60;

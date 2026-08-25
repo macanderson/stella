@@ -101,6 +101,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + contrast (WCAG, down-only ratchet)
                          #   + transcript-surfaces
                          #   + prose (no content-free constructions added)
+                         #   + line-citations (prose cites code by symbol
+                         #     name; a pinned line number drifts silently)
                          #   + deck-fit-all-test (the deck enumeration)
                          #   + deck-paths (the decks' code-map citations)
                          #   + css-vars (every var() in a token sheet resolves)

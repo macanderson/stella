@@ -813,3 +813,92 @@ fn a_plugins_skill_never_displaces_one_the_user_wrote() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// **Witness (#3567).** A contributed record and a contributed skill each name
+/// the plugin that shipped them as a **field**, so no caller has to parse a
+/// path to learn it.
+///
+/// Fails before this change because neither type had the field:
+/// `context_records::plugin_first` flattened every contributed directory into
+/// the `Vec<String>` a `RuleSource` takes and threw the plugin's name away at
+/// the boundary, and `memory::skill_files::append_plugin_skills` had
+/// `ContributedDir::plugin` in scope and never read it. The answer was
+/// recoverable only by matching `LoadedRecord::source` / `Skill::source_path`
+/// against a package directory — the shape this repository treats as a defect
+/// wherever else it appears, and the reason `stella context explain` could not
+/// say "this record came from the `vera` plugin".
+///
+/// The claim is negative as well as positive: the workspace's own record in the
+/// same registry reports `None`, or a field answering `Some(_)` for everything
+/// would pass while saying nothing.
+#[test]
+fn a_contributed_record_and_skill_each_name_their_plugin_as_a_field() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-provenance");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    // The workspace's own record, so the negative half of the claim has
+    // something to be negative about.
+    let own = root.join(".stella").join("rules");
+    std::fs::create_dir_all(&own).expect("rules dir");
+    std::fs::write(
+        own.join("house.toml"),
+        "schema = \"context-record/v0.1\"\nset_id = \"house\"\n\
+         \n[[record]]\nlineage_id = \"ctx.house.marker\"\nkind = \"rule\"\n\
+         statement = \"OUR_OWN_RECORD_MARKER\"\n\
+         \n[record.steering]\nforce = \"must\"\n",
+    )
+    .expect("our own record");
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    let authority = crate::settings::AuthorityPolicy {
+        project_prompts_allowed: true,
+        ..Default::default()
+    };
+    let loaded = crate::rules::load_workspace_rules(&root, &authority);
+    let contributed_by = |marker: &str| {
+        loaded
+            .registry()
+            .entries
+            .iter()
+            .find(|entry| entry.record.record.statement.contains(marker))
+            .unwrap_or_else(|| panic!("{marker} is in the registry"))
+            .record
+            .contributed_by
+            .clone()
+    };
+    assert_eq!(
+        contributed_by("PACKAGE_RECORD_MARKER"),
+        Some("vera".to_string()),
+        "the record the package shipped names it"
+    );
+    assert_eq!(
+        contributed_by("OUR_OWN_RECORD_MARKER"),
+        None,
+        "and the workspace's own record names nobody"
+    );
+
+    let skills = crate::memory::load_workspace_skills_with_authority(&root, true).skills;
+    let skill = skills
+        .iter()
+        .find(|skill| skill.name == "house-style")
+        .expect("the package's skill is loaded");
+    assert_eq!(skill.contributed_by, Some("vera".to_string()));
+
+    remove(&root, "vera").expect("remove must succeed");
+    let _ = std::fs::remove_dir_all(&root);
+}
