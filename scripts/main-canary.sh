@@ -195,6 +195,28 @@ checks=(
   # trying to report. `--offline` applies only to the hermetic fixture, whose
   # workspace has no dependencies to fetch.
   "compile|cargo check --workspace --all-targets --locked${manifest_dir:+ --offline --manifest-path $manifest_dir/Cargo.toml}"
+  # A third shared cell: `scripts/prose-baseline.txt`. It earns its row the
+  # same way the two above do, and the mechanism is the one that makes a
+  # post-merge check the only possible catcher — `check-prose` judges the
+  # whole tree with no base-relative branch, so the moment drift lands on
+  # `main` it fails every open PR at once, for a reason none of their authors
+  # caused and none of them can see coming.
+  #
+  # That is worse than the file-size case rather than milder. `check-file-size`
+  # at least reports inherited drift as drift and passes the branch; the prose
+  # gate has no such arm, so the first PR to run after the drift lands simply
+  # goes red and its author starts debugging their own diff.
+  #
+  # It has happened: at a7a46d3b6 this canary ran, reported `FAIL file-size`
+  # alone and filed #4821 naming only that. Prose was red too, in three files
+  # nobody in flight had touched (#4763 had re-partitioned the baseline into
+  # per-category counts mid-session). The prose failure surfaced later on an
+  # unrelated repair PR's `gate steps` job, where it read as that PR's fault
+  # and cost a full CI cycle to attribute (#4828).
+  #
+  # No `--absolute` equivalent is needed or available: the guard is already
+  # whole-tree, which is the property that makes it belong here.
+  "prose|python3 ./scripts/check-prose.py"
 )
 
 # The remediation for ONE failing check. Per-check on purpose: this block used
@@ -221,6 +243,14 @@ SH
   compile)
     cat <<'SH'
 cargo check --workspace --all-targets --locked
+SH
+    ;;
+  prose)
+    cat <<'SH'
+# Delete the flagged constructions — never raise the baseline. Run
+#   make prose-report
+# for the file, line and what to write instead. `make prose-update` refuses to
+# raise a count or add a file, so a red gate clears only by deleting prose.
 SH
     ;;
   *)
