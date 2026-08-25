@@ -109,3 +109,4 @@ jobs:
           cargo test -p stella-runtime
           --test wrapper_socket
           --test wrapper_transport_limits
+          --test wrapper_dispatch
