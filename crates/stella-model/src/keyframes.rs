@@ -367,6 +367,85 @@ mod tests {
         assert!(note.contains("NOT the video"), "{note}");
     }
 
+    /// The one test that runs the real thing: `FfmpegSampler` against a
+    /// video `ffmpeg` generates for it. The argument vector, the `-ss`
+    /// timestamp spelling, the probe's number parsing and the stdout capture
+    /// are settled by nothing else in this crate — the fake sampler in
+    /// `crate::attachment` proves the fan-out and never touches a decoder.
+    ///
+    /// Skipped where `ffmpeg` is absent, which includes CI: `ubuntu-latest`
+    /// does not ship one. A skip here is a gap, not a pass — it is recorded
+    /// as one rather than dressed up, and the test is written so a dev box
+    /// with `ffmpeg` (every machine that will ever change this module) runs
+    /// it for real.
+    #[test]
+    fn the_ffmpeg_sampler_lifts_real_frames_out_of_a_real_video() {
+        use base64::Engine as _;
+        use std::process::Stdio;
+        let have = |bin: &str| {
+            Command::new(bin)
+                .arg("-version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        if !have("ffmpeg") || !have("ffprobe") {
+            eprintln!("SKIPPED: no ffmpeg/ffprobe on PATH — the sampler ran against nothing");
+            return;
+        }
+        let dir = tempfile::tempdir().expect("temp dir");
+        let clip = dir.path().join("clip.mp4");
+        let made = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=640x360:rate=10:duration=6",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&clip)
+            .status()
+            .expect("spawn ffmpeg");
+        assert!(made.success(), "could not synthesize the fixture clip");
+
+        let video = FfmpegSampler
+            .sample(&clip, MAX_SAMPLED_FRAMES)
+            .expect("a six-second clip samples");
+
+        assert!(
+            (5_900..=6_100).contains(&video.duration_ms),
+            "probed duration {}ms is not the six seconds asked for",
+            video.duration_ms
+        );
+        assert_eq!(
+            video.frames.len(),
+            6,
+            "one frame per second of a six-second clip, under the ceiling of {MAX_SAMPLED_FRAMES}"
+        );
+        assert_eq!(
+            video.frames.iter().map(|f| f.at_ms).collect::<Vec<_>>(),
+            plan_timestamps(video.duration_ms, MAX_SAMPLED_FRAMES),
+            "every planned instant decoded"
+        );
+        for frame in &video.frames {
+            assert_eq!(frame.media_type, "image/jpeg");
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&frame.base64)
+                .expect("the frame is valid base64");
+            assert!(
+                bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+                "frame at {}ms is not a JPEG",
+                frame.at_ms
+            );
+        }
+    }
+
     #[test]
     fn every_failure_names_a_reason_the_user_can_act_on() {
         for failure in [
