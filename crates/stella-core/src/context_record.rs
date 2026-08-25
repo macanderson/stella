@@ -65,6 +65,7 @@ pub mod hash;
 pub mod kind;
 pub mod lifecycle;
 pub mod outcome;
+pub mod provenance;
 pub mod representation;
 pub mod scope;
 pub mod selection_health;
@@ -90,6 +91,7 @@ pub use lifecycle::{
     PromotionEventError, PromotionEventRecord, ProposalRecord, ProposalScore,
     confidence_from_score,
 };
+pub use provenance::{EvidencePool, observation_grade};
 pub use outcome::{
     CompletionAssessment, CompletionStatus, CorrectnessAssessment, CorrectnessStatus,
     OutcomeAssessment, OutcomeAssessmentLevel, OutcomeReason,

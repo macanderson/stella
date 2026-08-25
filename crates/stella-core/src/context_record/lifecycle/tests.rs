@@ -42,7 +42,11 @@ fn proposal(score: ProposalScore) -> ProposalRecord {
         "Prefer rg over grep",
         "Use ripgrep instead of grep in this repository.",
         vec!["tooling".into()],
-        vec!["obs_a".into(), "obs_b".into(), "obs_c".into()],
+        EvidencePool::from_observations(&[
+            observation("task-1", "Prefer rg over grep."),
+            observation("task-2", "Prefer rg over grep."),
+            observation("task-3", "Prefer rg over grep."),
+        ]),
         score,
         confidence_from_score(&score).expect("confidence"),
         AT,

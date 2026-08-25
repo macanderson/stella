@@ -30,8 +30,8 @@ use std::collections::{BTreeSet, HashMap};
 
 use stella_context::{ContextStore, LedgerAppend};
 use stella_core::context_record::{
-    ContextRecordKind, LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ProposalRecord, ProposalScore,
-    RecordProposalKind, RecordProposalStatus, confidence_from_score,
+    ContextRecordKind, EvidencePool, LIFECYCLE_SCHEMA_VERSION, ObservationRecord, ProposalRecord,
+    ProposalScore, RecordProposalKind, RecordProposalStatus, confidence_from_score,
 };
 use stella_core::skills::{self, Skill, SkillCandidate, SkillMineConfig, SkillObservation};
 
@@ -109,7 +109,10 @@ pub(crate) fn induce_proposals(
         // The observations behind this candidate, resolved back through the
         // evidence the miner recorded.
         let mut tasks: BTreeSet<&str> = BTreeSet::new();
-        let mut supporting: Vec<String> = Vec::new();
+        // The observations themselves, not just their ids: the proposal's
+        // evidence grade is folded from them, and a grade cannot be folded
+        // from an id (#2782).
+        let mut supporting: Vec<&ObservationRecord> = Vec::new();
         for evidence in &candidate.evidence {
             // The miner truncates the snippet to 160 chars; match on the same
             // prefix so a long lesson still resolves.
@@ -119,7 +122,7 @@ pub(crate) fn induce_proposals(
             });
             if let Some(observation) = key {
                 tasks.insert(observation.task_id.as_str());
-                supporting.push(observation.record_id.clone());
+                supporting.push(observation);
             } else if let Some(task) = task_index.get(&(evidence.reference.clone(), String::new()))
             {
                 tasks.insert(task.as_str());
@@ -150,7 +153,7 @@ pub(crate) fn induce_proposals(
             &candidate.description,
             &candidate.body,
             candidate.domains.clone(),
-            supporting,
+            EvidencePool::from_observations(supporting),
             score,
             confidence,
             proposal_observed_at(&candidate),

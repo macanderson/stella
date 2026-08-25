@@ -38,8 +38,8 @@ use std::path::Path;
 
 use stella_context::ContextStore;
 use stella_core::context_record::{
-    ObservationRecord, ProposalRecord, ProposalScore, RecordProposalKind, RecordProposalStatus,
-    confidence_from_score,
+    EvidencePool, ObservationRecord, ProposalRecord, ProposalScore, RecordProposalKind,
+    RecordProposalStatus, confidence_from_score,
 };
 use stella_core::rules::{self, EvidenceSource, MineConfig, RawObservation, Rule, RuleCandidate};
 
@@ -116,14 +116,17 @@ pub(crate) fn induce_rule_proposals(
         // Resolve the miner's evidence back to the observations behind it, so
         // the proposal carries distinct TASKS rather than raw occurrences.
         let mut tasks: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        let mut supporting: Vec<String> = Vec::new();
+        // The observations themselves, not just their ids: the proposal's
+        // evidence grade is folded from them, and a grade cannot be folded
+        // from an id (#2782).
+        let mut supporting: Vec<&ObservationRecord> = Vec::new();
         for evidence in &candidate.evidence {
             if let Some(observation) = observations.iter().find(|o| {
                 o.source_ref == evidence.reference
                     && o.text.chars().take(160).collect::<String>() == evidence.snippet
             }) {
                 tasks.insert(observation.task_id.as_str());
-                supporting.push(observation.record_id.clone());
+                supporting.push(observation);
             }
         }
 
@@ -148,7 +151,7 @@ pub(crate) fn induce_rule_proposals(
             &candidate.description,
             &candidate.text,
             Vec::new(),
-            supporting,
+            EvidencePool::from_observations(supporting),
             score,
             confidence,
             stella_context::format_rfc3339(
