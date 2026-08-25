@@ -105,7 +105,62 @@ use stella_runtime::wrapper::{DispatchReport, DrivenTurn, RoundInput, TurnDriver
 use tokio::sync::mpsc;
 
 use crate::wrapper_candidate::GrantedCandidate;
-use crate::wrapper_plugin::BoundWrapper;
+use crate::wrapper_plugin::{BoundWrapper, PointStream};
+
+/// This attempt's own channel, held open across the dispatch's points so a
+/// plugin's `child_turn` meters into it rather than into a sink (#4730).
+///
+/// **This door's row, not a `plugin` row of its own**, for
+/// `agent::goal::goal_wrapped::GoalPointStream`'s reason: `crate::fleet_cmd`
+/// opens ONE execution per attempt and every round of the dispatch journals
+/// against it, so a child dispatched between two of those rounds is exactly as
+/// attempt-scoped as the rounds are and lands joinable to them through the row
+/// they already share.
+///
+/// **Events only, and that is the difference from every other door.** This
+/// publishes the registry's own event slot and deliberately not the per-call
+/// work-tree measurement beside it (`turn_files::open_turn_streams`), because a
+/// fleet worker rebinds `cfg.workspace_root` to its own worktree while the
+/// shared `SessionDurability` journal stays rooted at the lead's — a measurer
+/// attached here would snapshot the wrong tree, which is exactly why
+/// `turn_files`' `ENGINE_DRIVERS` records this door as `Blocked` on #3233 and
+/// why `STREAM_OWNERS` deliberately omits it. Publishing the measurer here
+/// would silently un-block #3233 rather than close #4730, so it stays withheld
+/// and this type is what says so out loud.
+pub(super) struct AttemptPointStream {
+    /// A sender over the attempt's raw channel — the one `run_task`'s renderer
+    /// drains and whose registry clone [`Self::detach`] takes down.
+    tx: stella_core::EventSender,
+}
+
+impl AttemptPointStream {
+    /// A stream over the attempt's channel, not yet published.
+    pub(super) fn new(tx: &mpsc::UnboundedSender<AgentEvent>) -> Self {
+        Self {
+            tx: stella_core::EventSender::new(tx.clone()),
+        }
+    }
+
+    /// Take the stream off `registry` at the end of the dispatch.
+    ///
+    /// Not optional, and the reason this type owns the call rather than leaving
+    /// it to the caller's `drop(tx)`: while the stream is published the registry
+    /// holds a live sender on the renderer's channel, and a completed attempt
+    /// whose renderer never sees that channel close hangs on a `recv()` that
+    /// stays pending forever (#960).
+    pub(super) fn detach(&self, registry: &stella_tools::ToolRegistry) {
+        registry.detach_event_stream();
+    }
+}
+
+impl PointStream for AttemptPointStream {
+    fn publish(&self, registry: &stella_tools::ToolRegistry, _cfg: &crate::config::Config) {
+        // `cfg` is ignored rather than used: the workspace it names is the one
+        // this door must NOT measure against — see the type's doc comment and
+        // #3233.
+        registry.attach_events(self.tx.clone());
+    }
+}
 
 /// One installed wrapper, bound for one worker attempt, together with the
 /// candidate grant that names the tree that attempt runs in.
@@ -187,10 +242,14 @@ impl AttemptWrapper {
     /// Whatever [`stella_runtime::wrapper::WrapperDispatch::run`] refuses — a
     /// plugin process that cannot be started, times out, or answers off
     /// contract.
+    /// `driver` is `&mut dyn TurnDriver` rather than this door's own
+    /// [`AttemptDriver`] because the attempt is driven through
+    /// `crate::wrapper_plugin::RepublishingDriver`, which wraps it to put this
+    /// attempt's stream back after every round (#4730).
     pub(super) async fn dispatch(
         &self,
         input: RoundInput,
-        driver: &mut AttemptDriver<'_, '_>,
+        driver: &mut dyn TurnDriver,
     ) -> Result<DispatchReport, stella_runtime::wrapper::WrapperError> {
         self.bound.dispatch.run(input, driver).await
     }
