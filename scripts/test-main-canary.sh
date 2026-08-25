@@ -185,6 +185,19 @@ expect "the issue explains the pre-merge blind spot" 1 "shared cell" \
 expect "the issue is labelled so only one stays open" 1 "main-red" \
   --announce --dry-run --manifest-dir "$tmp/red"
 
+# The body must not assert that the break STARTED at the commit it tested
+# (#4815). It cannot know that without checking the parent, which this run
+# does not do. #4810 made exactly that claim about `ce6b1cf3c` — an innocent
+# merge whose whole diff to the broken file was three of its own lines — and
+# the first instinct of everyone reading it was to revert that commit. The
+# real cause was many merges older.
+expect "the issue says what it tested, not what broke" 1 "tested \`main\` at" \
+  --announce --dry-run --manifest-dir "$tmp/red"
+expect "and warns the cause may be older" 1 "not the commit that broke the tree" \
+  --announce --dry-run --manifest-dir "$tmp/red"
+refute "and never claims the break started there" "canary found \`main\` broken at" \
+  --announce --dry-run --manifest-dir "$tmp/red"
+
 # The label does not exist in this repository yet, and `gh issue create
 # --label` fails outright on an unknown label — the canary would have broken at
 # the exact moment it first had something to say. Creating it is idempotent.
