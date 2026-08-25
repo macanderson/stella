@@ -754,7 +754,7 @@ pub(crate) fn graph_snapshot_focus(
 }
 
 /// Cap on each MCP server's connect — the per-server bound
-/// `McpToolSet::connect` enforces. Deliberately short: a server that cannot
+/// `McpToolSet::connect` enforces. Short: a server that cannot
 /// even complete its handshake in 10s should not stall session start. Each
 /// later `tools/call` gets the much longer `stella_mcp::DEFAULT_CALL_TIMEOUT`
 /// instead (applied in [`connect_mcp_servers`]) — without that override the
@@ -822,7 +822,7 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
     //
     // It gates the packages too, and needs no second check to: a project-tier
     // package does not reach the roster at all in an untrusted checkout, and a
-    // user-tier one deliberately is not gated because nothing arrives there
+    // user-tier one is not gated, because nothing arrives there
     // except through `stella plugin install`'s consent transaction
     // (`plugin_cmd::roster::read_project_tier`). What the flag does decide here
     // is the workspace's own file, below.

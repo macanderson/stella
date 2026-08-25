@@ -106,7 +106,7 @@ pub struct SkillContribution {
 /// until it could be enumerated.** A server's tools enter the registry as
 /// `mcp__<server>__<tool>`, so installing one hands the model a set of calls
 /// whose membership the server decides *at connect time* — and
-/// [`crate::configure`] refused an `mcp` section for exactly that reason: "the
+/// `crate::configure` refused an `mcp` section for exactly that reason: "the
 /// effect of one line is a set of tools the consent document never listed".
 ///
 /// Declaring the server by name is what answers that. It does not make the
