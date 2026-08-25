@@ -698,8 +698,9 @@ impl Store {
     /// transaction. `seq` is the call's index in the batch; UNIQUE
     /// (execution_id, seq) guards double-writes.
     ///
-    /// Distinct from the repair fold ([`refold_tool_calls`]), which owns its
-    /// own `INSERT` against the raw event log and is guarded for replay
+    /// Distinct from the repair fold (`refold_tool_calls`, crate-private),
+    /// which owns its own `INSERT` against the raw event log and is guarded
+    /// for replay
     /// against pre-v35 schemas; this is a standalone writer for a caller that
     /// has already folded a batch, so it names `sub_agent_id` unconditionally.
     /// The live path ([`Store::record_event`]) writes one row at a time
