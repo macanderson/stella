@@ -732,7 +732,12 @@ fn kind_detail(kind: &EventKind) -> Vec<Span<'static>> {
             vec![Span::styled(format!(" · {tokens_per_sec} tok/s"), dim)]
         }
         EventKind::Run { touched } | EventKind::Other { touched, .. } => touched_detail(*touched),
-        _ => Vec::new(),
+        // Named rather than swept up by a wildcard, so adding an `EventKind`
+        // is an `E0004` here the way it already is in `head_glyph` (#4320).
+        // A kind that earns no detail column says so; it does not fall
+        // through. Both of these carry their measurement in the head's own
+        // subject, leaving nothing for a tail to add.
+        EventKind::Memory | EventKind::Compaction { .. } => Vec::new(),
     }
 }
 
