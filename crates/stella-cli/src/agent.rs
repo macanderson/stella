@@ -294,6 +294,16 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     // so its sessions are findable in every SESSIONS overlay and replayable
     // from their journals. No inbox notifications — the user is right here.
     let mut presence = SessionPresence::announce(cfg, "interactive session");
+    // Agent whistle: one tap for the whole REPL session, not one per turn —
+    // a message whistled between turns still has somewhere to land, and
+    // `HeadlessSteerTap::drain_steering` reads empty when there is nothing
+    // queued, exactly as it does for a one-shot run. See `crate::whistle`'s
+    // module docs and `crate::agent::goal::run_raw_one_shot`, which wires
+    // the same tap the same way.
+    let whistle_tap: std::sync::Arc<crate::whistle::tap::HeadlessSteerTap> =
+        std::sync::Arc::default();
+    let _whistle_listener = crate::whistle::spawn_for_session(presence.id(), whistle_tap.clone());
+    let controls = stella_core::ports::TurnControls::none().with_steering(whistle_tap);
 
     loop {
         print!("{} ", ">".bright_cyan().bold());
@@ -582,6 +592,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             Some(presence.id()),
             recall,
             memory.as_mut(),
+            controls.clone(),
             Some(&mut friction),
         )
         .await;
@@ -1180,6 +1191,14 @@ pub(crate) async fn run_turn(
     // same memory afterwards, and a reflection that cannot name its execution
     // files an id-less row (NULL `self_rating`).
     mut session_memory: Option<&mut SessionMemory>,
+    // This turn's boundary controls — the pause gate and steering tap, when
+    // its caller has one. Every raw door but the deck publishes
+    // `TurnControls::none()` (a headless run has nobody to pause for and,
+    // until agent whistle, nowhere to steer from); `crate::agent::goal`'s
+    // one-shot doors now publish a `whistle::tap::HeadlessSteerTap` here
+    // instead, exactly the seam this field was already documented for on
+    // `wrapper_plugin::RawTurnDriver` (#3554).
+    controls: stella_core::ports::TurnControls,
     // Where this turn's friction ledger lands, for a caller that reflects
     // afterwards (#3946). An out-parameter rather than a second return value
     // because the wrapped door reaches this function through the wrapper
@@ -1244,6 +1263,12 @@ pub(crate) async fn run_turn(
         if let Some(requery) = &requery {
             engine = engine.with_requery(requery);
         }
+        if let Some(gate) = controls.gate.as_deref() {
+            engine = engine.with_gate(gate);
+        }
+        if let Some(steering) = controls.steering.as_deref() {
+            engine = engine.with_steering(steering);
+        }
         engine.run_turn_with_sender(messages, budget, &tx).await
     } else {
         // Customs, the operator's switches, and the authorization gate,
@@ -1268,6 +1293,12 @@ pub(crate) async fn run_turn(
         }
         if let Some(requery) = &requery {
             engine = engine.with_requery(requery);
+        }
+        if let Some(gate) = controls.gate.as_deref() {
+            engine = engine.with_gate(gate);
+        }
+        if let Some(steering) = controls.steering.as_deref() {
+            engine = engine.with_steering(steering);
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };

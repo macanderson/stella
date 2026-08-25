@@ -1104,6 +1104,7 @@ impl TurnDriver for RawTurnDriver<'_> {
                 produced: self.recall.produced.clone(),
             },
             self.memory.as_deref_mut(),
+            self.controls.clone(),
             // The host folds what it does see (#3976). This driver runs the
             // turn through the same `run_turn` every raw door uses, so its
             // journal is reachable and the caller reflects with it; the
