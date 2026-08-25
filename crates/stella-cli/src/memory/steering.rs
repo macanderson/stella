@@ -351,6 +351,7 @@ mod tests {
                 body: "x".repeat(body_bytes),
                 source_path: format!(".stella/skills/{name}/SKILL.md"),
                 origin: SkillOrigin::Workspace,
+                contributed_by: None,
             },
             score: 1.0,
             matched_terms: Vec::new(),
