@@ -334,7 +334,12 @@ Checked: $(printf '%s ' "${checks[@]%%|*}")"
       printf 'main-canary: main recovered — closed #%s\n' "$open_issue" || true
     fi
   else
-    body="The post-merge canary found \`main\` broken at \`${short_sha}\`.
+    body="The post-merge canary tested \`main\` at \`${short_sha}\` and it is red.
+
+**This names the commit that was tested, not the commit that broke the tree.**
+This run did not check \`${short_sha}\`'s parent, so the break may be older —
+possibly by many merges. Confirm before reverting anything: re-run the failing
+check on \`${short_sha}^\` and walk back while it still fails.
 
 Failing: **${failed_names}**
 
