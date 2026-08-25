@@ -923,10 +923,7 @@ docs/brand/prompts/stella-tui-prompt.md 3
 docs/brand/spinners/build_spinners.py 1
 docs/brand/wallpapers/build_wallpapers.py 2
 docs/demo/README.md 1
-docs/design/agent-loop-skills-survey.md 5
-docs/design/build-plan.md 11
 docs/design/pipeline-journey.md 8
-docs/design/zappy-comparison-2026-08.md 1
 docs/papers/README.md 2
 docs/papers/self-evolving-coding-agents-assessment.md 1
 docs/papers/stella-defensible-position.md 13
@@ -941,7 +938,6 @@ docs/prompts/triage.md 1
 docs/prompts/witness-author.md 1
 docs/prompts/worker.md 3
 docs/reference/diagnostics.md 3
-docs/spec/adaptive-context/adaptive-context-plan.md 4
 docs/spec/adaptive-context/adaptive-context.md 4
 docs/spec/adaptive-context/context-frame-spec.md 1
 docs/spec/adaptive-context/context-graph-protocol-build-prompt.md 3
