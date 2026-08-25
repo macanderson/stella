@@ -235,7 +235,7 @@ fn one_grade_below_the_requirement_is_always_refused() {
     }
 }
 
-/// Invariant #4: every type crossing a crate boundary round-trips through
+/// `invariant #4`: every type crossing a crate boundary round-trips through
 /// `serde_json` byte-for-byte.
 #[test]
 fn every_tag_round_trips_byte_for_byte() {

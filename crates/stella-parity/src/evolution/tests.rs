@@ -14,15 +14,14 @@ use super::*;
 
 /// A witness exists if the swept sources declare a function by that name —
 /// the same substring check [`crate`]'s matrix and `provider_parity` use, and
-/// deliberately not an AST walk: a moved witness should fail loudly rather
-/// than be quietly re-resolved.
+/// not an AST walk: a moved witness should fail loudly rather than be quietly
+/// re-resolved.
 fn witness_exists(sources: &[&str], witness: &str) -> bool {
     let needle = format!("fn {witness}(");
     sources.iter().any(|source| source.contains(&needle))
 }
 
-/// **The check that keeps a row honest.** Every live row names a test, and
-/// that test still exists.
+/// **Every live row names a test, and that test still exists.**
 #[test]
 fn every_named_witness_exists_in_the_swept_sources() {
     let sources = evolution_sources();
@@ -142,8 +141,8 @@ fn every_prohibited_row_cites_a_design_document_by_id() {
 }
 
 /// Unwitnessed debt is a down-only ratchet, checked for exact equality so that
-/// raising it is a deliberate edit a reviewer sees rather than a threshold
-/// quietly absorbing a new row.
+/// raising it is an edit a reviewer sees rather than a threshold quietly
+/// absorbing a new row.
 #[test]
 fn unwitnessed_rows_match_the_declared_baseline_exactly() {
     let count = EVOLUTION_SURFACES
@@ -154,7 +153,7 @@ fn unwitnessed_rows_match_the_declared_baseline_exactly() {
     assert_eq!(
         count, UNWITNESSED_EVOLUTION_BASELINE,
         "write the missing witness and lower UNWITNESSED_EVOLUTION_BASELINE, or — if this \
-         is genuinely new debt — raise it deliberately and say why in the PR"
+         is genuinely new debt — raise it and say why in the PR"
     );
 }
 

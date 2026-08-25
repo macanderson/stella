@@ -10,10 +10,10 @@
 //! This repository already enforces three declaration ledgers, each born from
 //! the same defect shape — a capability that shipped on one axis and silently
 //! missed another, found by a run paying for it rather than by a test:
-//! provider feature parity (`stella-model`'s `provider_parity`, invariant #8),
-//! cross-surface capability parity ([`crate`], the sibling of this module),
-//! and signal consumption (`stella-protocol`'s `event::consumers`, invariant
-//! #10).
+//! provider feature parity (`stella-model`'s `provider_parity`,
+//! `invariant #8`), cross-surface capability parity ([`crate`], the sibling of
+//! this module), and signal consumption (`stella-protocol`'s
+//! `event::consumers`, `invariant #10`).
 //!
 //! Self-improvement had none, and it is the surface where a gap costs most.
 //! Stella changes itself through several distinct object classes, and each one
@@ -29,13 +29,12 @@
 //!
 //! - **A row per surface, and no way to skip one.** [`EvolutionSurface`] and
 //!   [`EVOLUTION_SURFACES`] are generated from one `evolution_surfaces!`
-//!   invocation, so the enum variant and its row are the same table cell. A
-//!   new surface with no row is not a red test that can be forgotten — it is
-//!   unwritable, because the only place a variant can be added is the place
+//!   invocation, so a surface and its row are the same table cell. A new
+//!   surface with no row is not a red test that can be forgotten — it is
+//!   unwritable, because the only place a surface can be named is the place
 //!   the row is required. This is the `consumers.rs` treatment #2780 asked
-//!   for, one turn stronger: there the variant lives on a hand-written enum
-//!   and omission is an `E0004`, and here there is no hand-written enum to
-//!   omit from.
+//!   for, one turn stronger: there the enum is hand-written and omission is
+//!   an `E0004`, and here there is no hand-written enum to omit from.
 //! - **Witness tests named and checked.** A [`EvolutionPosture::Shipped`] or
 //!   [`EvolutionPosture::Experimental`] row names the test proving the surface
 //!   can actually be changed, and this module's tests fail when that function
@@ -145,16 +144,14 @@ pub enum EvolutionPosture {
         design_doc: &'static str,
         reason: &'static str,
     },
-    /// Considered, and deliberately dropped. Cites the issue where that was
-    /// decided.
+    /// Considered, and dropped. Cites the issue where that was decided.
     ///
     /// #2780's four postures do not describe this, and the tree contains it:
     /// weight-space adaptation was designed, filed, and closed as **not
     /// planned**. Calling that `Planned` would be false, and `Prohibited`
     /// wants a design document that was never written — the decision lives in
-    /// the closed issue and nowhere else. Recording it honestly is worth one
-    /// more variant; the alternative is a row that reads as parked work
-    /// somebody will pick up.
+    /// the closed issue and nowhere else. A fifth posture costs one line; the
+    /// alternative is a row that reads as parked work somebody will pick up.
     NotPursued {
         /// A `#NNNN` GitHub issue, closed as not planned.
         decided_in: &'static str,
@@ -232,36 +229,36 @@ impl EvolutionRow {
 macro_rules! evolution_surfaces {
     ($(
         $(#[$meta:meta])*
-        $variant:ident => $tag:literal, $posture:expr, $timing:expr, $impact:expr, $rollback:literal;
+        $surface:ident => $tag:literal, $posture:expr, $timing:expr, $impact:expr, $rollback:literal;
     )*) => {
         /// A class of thing Stella can change about itself.
         ///
-        /// Generated together with [`EVOLUTION_SURFACES`], so a variant and
+        /// Generated together with [`EVOLUTION_SURFACES`], so a surface and
         /// its row are one edit.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub enum EvolutionSurface {
-            $($(#[$meta])* $variant,)*
+            $($(#[$meta])* $surface,)*
         }
 
         impl EvolutionSurface {
             /// Every surface, in ledger order.
-            pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
+            pub const ALL: &'static [Self] = &[$(Self::$surface,)*];
 
             /// The canonical `snake_case` tag.
             #[must_use]
             pub fn as_str(self) -> &'static str {
                 match self {
-                    $(Self::$variant => $tag,)*
+                    $(Self::$surface => $tag,)*
                 }
             }
 
             /// This surface's row.
             ///
             /// Total by construction, and by the cheapest possible route: the
-            /// enum is fieldless and both lists come from one table, so a
-            /// variant's discriminant *is* its row index. Pinned by
-            /// `a_surfaces_discriminant_is_its_row_index`, which is what keeps
-            /// this indexing honest if the enum ever grows a payload.
+            /// enum carries no payload and both lists come from one table, so
+            /// a surface's discriminant *is* its row index. Pinned by
+            /// `a_surfaces_discriminant_is_its_row_index`, which fails if the
+            /// enum ever grows a payload and the two stop lining up.
             #[must_use]
             pub fn row(self) -> &'static EvolutionRow {
                 &EVOLUTION_SURFACES[self as usize]
@@ -272,7 +269,7 @@ macro_rules! evolution_surfaces {
         /// [`EvolutionSurface`].
         pub static EVOLUTION_SURFACES: &[EvolutionRow] = &[
             $(EvolutionRow {
-                surface: EvolutionSurface::$variant,
+                surface: EvolutionSurface::$surface,
                 posture: $posture,
                 timing: $timing,
                 impact: $impact,

@@ -58,14 +58,14 @@
 //! `stella-core` derives a grade from the observation records it owns,
 //! `stella-parity`'s evolution ledger types its `evidence` column as one, and
 //! `stella-cli` renders it where a human decides. A type crossing crate
-//! boundaries belongs in this crate by invariant #1, and by invariant #4 it
+//! boundaries belongs in this crate by `invariant #1`, and by `invariant #4` it
 //! round-trips through `serde_json` byte-for-byte — see this module's tests.
 //!
-//! Every variant is a closed, `'static`-nameable tag: a grade emitted into a
+//! Every grade is a closed, `'static`-nameable tag: one emitted into a
 //! `stella-diag` field has to be an enum, never a `String` carrying model
 //! output, and [`ProvenanceGrade::as_str`] is what makes that possible without
 //! an allocation. The grade is metadata and may cross an egress encoder; the
-//! evidence it points at is content and may not (invariant #3,
+//! evidence it points at is content and may not (`invariant #3`,
 //! `stella-store/src/content_free.rs`).
 
 use serde::{Deserialize, Serialize};
@@ -73,9 +73,9 @@ use serde::{Deserialize, Serialize};
 /// How reproducible the evidence behind an artifact is.
 ///
 /// **Ordered weakest-first**, so the derived [`Ord`] is the strength order and
-/// `min` is the aggregation rule. Adding a variant means placing it in that
-/// order deliberately — the position is the semantics, not a formatting
-/// choice.
+/// `min` is the aggregation rule. Adding a grade means choosing its place in
+/// that order: the position is the semantics, and moving a grade one rung
+/// changes what it authorises.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
@@ -100,9 +100,9 @@ pub enum ProvenanceGrade {
 }
 
 impl ProvenanceGrade {
-    /// Every grade, weakest first — the enumeration a sweep iterates so a new
-    /// variant reaches each exhaustiveness check rather than being missed by a
-    /// hand-written list.
+    /// Every grade, weakest first — the enumeration a sweep iterates, so a new
+    /// grade reaches each check rather than being missed by a hand-written
+    /// list.
     pub const ALL: &'static [Self] = &[
         Self::ModelCritique,
         Self::HumanReview,
@@ -147,13 +147,13 @@ impl ProvenanceGrade {
     /// **The aggregation rule: combining evidence can only weaken it.**
     ///
     /// Returns the weakest grade in `grades`, or `None` for an empty pool —
-    /// which is the honest answer, because no evidence is not the same as weak
-    /// evidence and must not round up to one.
+    /// because no evidence is not the same as weak evidence and must not round
+    /// up to one.
     ///
     /// This is the whole of #2782's rule 1. A caller that wants a stronger
     /// grade has to re-derive the claim against a stronger source and build a
-    /// new record; there is deliberately no `promote`, no vote count, and no
-    /// confidence threshold that crosses a grade boundary.
+    /// new record; there is no `promote`, no vote count, and no confidence
+    /// threshold that crosses a grade boundary.
     #[must_use]
     pub fn weakest(grades: impl IntoIterator<Item = Self>) -> Option<Self> {
         grades.into_iter().min()
@@ -282,7 +282,7 @@ impl ImpactClass {
 }
 
 /// Why a promotion was refused — typed, because a caller has to branch on
-/// which half was short (invariant #5).
+/// which half was short (`invariant #5`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case", tag = "refusal")]
@@ -343,7 +343,7 @@ impl PromotionRefusal {
 /// **The gate.** Whether evidence of this grade, published by this authority,
 /// may become an artifact of this impact class.
 ///
-/// Both halves are checked and the evidence half is checked first, so a
+/// The evidence half is checked first, so a
 /// refusal names the missing witness rather than the missing signature when
 /// both are short — the more useful of the two answers.
 ///

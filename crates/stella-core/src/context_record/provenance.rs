@@ -47,7 +47,7 @@ use super::lifecycle::{ObservationRecord, ObservationSource};
 /// - [`ObservationSource::MemoryCitation`] pairs an observed retrieval with a
 ///   model's usefulness judgement. The retrieval is observed and the judgement
 ///   is not, so the pair is graded at the weaker half. Splitting the citation
-///   into its observed and judged parts would promote it honestly; counting
+///   into its observed and judged parts would promote it; counting
 ///   citations would not, and that is the door this grading closes.
 #[must_use]
 pub fn observation_grade(source: ObservationSource) -> ProvenanceGrade {

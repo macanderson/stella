@@ -53,10 +53,10 @@ fn proposal(evidence: Option<EvidencePool>) -> ProposalRecord {
 }
 
 /// Each source grades to exactly one thing, and the mapping is total — a new
-/// `ObservationSource` variant fails to compile here rather than defaulting to
+/// `ObservationSource` fails to compile here rather than defaulting to
 /// a grade nobody chose.
 #[test]
-fn every_observation_source_grades_deliberately() {
+fn every_observation_source_grades_to_one_named_thing() {
     assert_eq!(
         observation_grade(ObservationSource::ToolOutcome),
         ProvenanceGrade::EnvironmentObservation
