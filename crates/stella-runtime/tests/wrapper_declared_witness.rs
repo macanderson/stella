@@ -17,9 +17,16 @@
 //! that repeats it says nothing extra.
 //!
 //! `cfg(unix)` for `wrapper_socket.rs`'s reason and tracked in the same place
-//! (#3497): the plugin is a `/bin/sh` script.
-
-#![cfg(unix)]
+//! The plugin is `wrapper-plugin-fixture` rather than a `/bin/sh` script, so
+//! this file runs on Windows too (#4697). Its `witness-by-stage` mode carries
+//! the `case` the script spelled out: the declared list narrows at `research`.
+//!
+//! That narrowing is **not** observable through the tests below, and the
+//! shell script it replaces was no better: the assertion is on the *union*
+//! across stages, which is the same set whether each stage declares its own
+//! list or every stage declares the widest one. So these tests prove the
+//! union is folded and de-duplicated, not that the declaration is per-stage.
+//! A test that reads one stage's list on its own would settle it.
 
 use std::sync::Arc;
 
@@ -50,17 +57,7 @@ name = "verify"
 /// Each stage declares one artifact, and both stages declare `tests/flip.rs` —
 /// the overlap is the point, because the union has to fold it.
 ///
-/// A plugin that writes JSON with `printf` and reads its request with `case`,
-/// which is `doc:pipeline-as-plugins` §5 commitment 2 held to: a capability
-/// only Rust can reach is a Rust API with extra steps.
-const DECLARES: &str = r#"
-request=$(cat)
-case "$request" in
-  *'"stage":"research"'*) list='"tests/flip.rs"' ;;
-  *)                      list='"tests/flip.rs","tests/second.rs"' ;;
-esac
-printf '{"point":"before_turn","body":{"protocol_version":1,"witness":[%s]}}\n' "$list"
-"#;
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
 
 fn manifest() -> PluginManifest {
     PluginManifest::from_toml_str(MANIFEST).expect("the manifest loads")
@@ -119,7 +116,7 @@ impl TurnDriver for Recording {
 #[tokio::test]
 async fn every_stage_of_a_round_declares_its_witness_into_one_union() {
     let admitted = SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), DECLARES.into()],
+        vec![FIXTURE.to_string(), "witness-by-stage".into()],
         Vec::new(),
         DEFAULT_WRAPPER_TIMEOUT,
     )
@@ -156,11 +153,9 @@ async fn every_stage_of_a_round_declares_its_witness_into_one_union() {
 async fn a_wrapper_that_declares_nothing_hands_the_host_an_empty_watch() {
     let admitted = SubprocessWrapper::declare(
         vec![
-            "/bin/sh".into(),
-            "-c".into(),
-            "cat >/dev/null; printf '{\"point\":\"before_turn\",\"body\":{\"protocol_version\":1}}\
-             \\n'"
-                .into(),
+            FIXTURE.to_string(),
+            "drain-emit".into(),
+            "{\"point\":\"before_turn\",\"body\":{\"protocol_version\":1}}".into(),
         ],
         Vec::new(),
         DEFAULT_WRAPPER_TIMEOUT,
