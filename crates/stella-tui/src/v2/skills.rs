@@ -206,10 +206,13 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         } else {
             format!("v{}", row.version)
         };
-        let meta = if row.origin == "auto" {
-            " learned ".to_string()
-        } else {
-            format!(" {ver} · {} ", row.scope.label())
+        // A contributed skill names its package instead of a version and a
+        // scope: neither is a thing it has (`skill_manager::contributed_rows`),
+        // and whose it is is the column a reader of this row actually needs.
+        let meta = match (&row.contributed_by, row.origin.as_str()) {
+            (Some(plugin), _) => format!(" via {plugin} "),
+            (None, "auto") => " learned ".to_string(),
+            (None, _) => format!(" {ver} · {} ", row.scope.label()),
         };
         let name = format!("{:<24}", row.name);
         let used = marker.chars().count()
@@ -531,6 +534,7 @@ mod tests {
             version,
             latest,
             removable: true,
+            contributed_by: None,
         }
     }
 

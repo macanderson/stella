@@ -572,6 +572,87 @@ fn a_plugins_skill_is_selectable_and_stops_on_remove() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// **The listing witness** (#4734). A skill that steers a turn has to be
+/// visible in the tab a user opens to ask what is steering them, saying whose
+/// it is — a contributed skill used to be absent from the listing entirely and
+/// to report the origin `workspace`, which is the user's own.
+///
+/// Asserted through `skill_manager::enumerate` — the rows the SKILLS tab
+/// renders — rather than through the loader, because the loader half already
+/// passes above and passed while the tab showed nothing.
+#[test]
+fn a_plugins_skill_is_listed_as_the_plugins_and_is_not_removable_there() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-skill-listing");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let listed = |root: &Path| {
+        crate::skill_manager::enumerate(root)
+            .into_iter()
+            .find(|row| row.name == "house-style")
+    };
+    assert!(listed(&root).is_none(), "anti-vacuity");
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    let row = listed(&root).expect("a package's skill appears in the skills listing");
+    assert_eq!(
+        row.contributed_by.as_deref(),
+        Some("vera"),
+        "and names the package that shipped it"
+    );
+    assert_eq!(
+        row.origin, "plugin",
+        "not `workspace` — that is a claim to be the user's own"
+    );
+    assert!(
+        !row.removable,
+        "uninstall unlinks an entry under a scope root and this has none; \
+         retraction is `stella plugin remove`"
+    );
+    assert!(row.enabled, "and it is in force until switched off");
+
+    // The tab's own switch reaches it: the state file that governs the tier
+    // the package is installed at governs its contributed skills too, so the
+    // row can be turned off and the recall path stops injecting it.
+    crate::skill_manager::set_enabled(
+        stella_tui::SkillScope::Project,
+        "house-style",
+        false,
+        &root,
+    )
+    .expect("disable must succeed");
+    assert!(
+        !listed(&root).expect("still listed while disabled").enabled,
+        "the row shows it off rather than dropping it"
+    );
+    assert!(
+        !crate::memory::load_workspace_skills_with_authority(&root, true)
+            .skills
+            .iter()
+            .any(|skill| skill.name == "house-style"),
+        "and a disabled contributed skill stops reaching the prompt"
+    );
+
+    remove(&root, "vera").expect("remove must succeed");
+    assert!(listed(&root).is_none(), "and leaves the listing with it");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// **The precedence witness.** A package may not silently take over a skill
 /// the user wrote: the user's body is the one that loads, and the plugin's
 /// same-named skill is dropped.

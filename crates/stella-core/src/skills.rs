@@ -88,6 +88,16 @@ pub enum SkillOrigin {
     AutoCreated,
     /// Installed from a registry into the `<dir>/<slug>/SKILL.md` layout.
     Installed,
+    /// Shipped by an installed plugin package, from its own `skills/`
+    /// directory rather than either of the user's.
+    ///
+    /// It is its own variant because the other four all answer "which of the
+    /// user's directories is this under", and a package's directory is none of
+    /// them. Without it [`default_origin_for`] has no true answer and falls
+    /// through to [`SkillOrigin::Workspace`], reporting a third party's skill
+    /// as the user's own — which is what every surface that has to say whose
+    /// skill is steering a turn would then repeat.
+    Contributed,
 }
 
 /// One workspace skill, parsed from a `SKILL.md`/`<slug>.md` file.
@@ -333,14 +343,41 @@ pub fn load_skills_with_diagnostics(
 ) -> LoadedSkills {
     let dirs = skill_search_dirs(opts);
     let files = source.read_skill_files(&dirs);
+    merge_by_name(files, |path| default_origin_for(path, opts))
+}
 
+/// Load every skill in one directory, tagged with the `origin` the caller
+/// names rather than one derived from the path.
+///
+/// [`default_origin_for`] answers "which of the user's two configured
+/// directories is this file under", and a directory that is neither — a
+/// plugin package's own `skills/` — has no true answer there: it falls through
+/// to [`SkillOrigin::Workspace`] and a third party's skill reports as the
+/// user's own. A caller walking a directory whose provenance it already knows
+/// states it here instead of letting the path be re-guessed.
+pub fn load_skills_from_dir(
+    source: &dyn SkillSource,
+    dir: &str,
+    origin: SkillOrigin,
+) -> LoadedSkills {
+    let files = source.read_skill_files(&[dir.to_string()]);
+    merge_by_name(files, |_| origin)
+}
+
+/// Parse each file with the origin `origin_of` gives it and merge by skill
+/// name: a later file overrides an earlier one of the same name but keeps the
+/// first-seen ordering position (JS `Map.set` semantics), and a file that does
+/// not parse becomes a diagnostic instead of a skill.
+fn merge_by_name(
+    files: Vec<SkillFile>,
+    origin_of: impl Fn(&str) -> SkillOrigin,
+) -> LoadedSkills {
     let mut order: Vec<String> = Vec::new();
     let mut by_name: HashMap<String, Skill> = HashMap::new();
     let mut diagnostics: Vec<SkillDiagnostic> = Vec::new();
 
     for file in files {
-        let default_origin = default_origin_for(&file.path, opts);
-        match skill_from_file_with_origin(&file.path, &file.content, default_origin) {
+        match skill_from_file_with_origin(&file.path, &file.content, origin_of(&file.path)) {
             Ok(skill) => {
                 if !by_name.contains_key(&skill.name) {
                     order.push(skill.name.clone());

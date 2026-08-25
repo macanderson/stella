@@ -127,15 +127,24 @@ pub(crate) fn load_workspace_skills_with_authority(
 /// instead of a name collision inside your own load.
 ///
 /// Roster order decides plugin-versus-plugin, matching the tool surface.
+/// Read one plugin's `skills/` directory, tagged [`skills::SkillOrigin::Contributed`].
+///
+/// The tag is named rather than derived because a package's `skills/` is under
+/// neither of the user's own directories: the path-derived default has no true
+/// answer for it and falls through to `Workspace`, reporting a third party's
+/// skill as the user's own (#4734). Shared with `crate::skill_manager` so the
+/// SKILLS tab lists exactly the skills recall injects, read the same way.
+pub(crate) fn load_contributed_dir(dir: &Path) -> skills::LoadedSkills {
+    skills::load_skills_from_dir(
+        &FsSkillSource,
+        &dir.display().to_string(),
+        skills::SkillOrigin::Contributed,
+    )
+}
+
 fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills) {
     for contributed in crate::plugin_cmd::package::contributed_skill_dirs(workspace_root) {
-        let found = skills::load_skills_with_diagnostics(
-            &FsSkillSource,
-            &LoadSkillsOptions {
-                workspace_skills_dir: contributed.dir.display().to_string(),
-                user_skills_dir: String::new(),
-            },
-        );
+        let found = load_contributed_dir(&contributed.dir);
         loaded.diagnostics.extend(found.diagnostics);
         for skill in found.skills {
             if loaded.skills.iter().any(|held| held.name == skill.name) {

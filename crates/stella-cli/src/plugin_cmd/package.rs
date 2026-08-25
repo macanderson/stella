@@ -90,7 +90,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::roster::{InstalledPlugin, PluginRoster};
+use super::roster::{InstalledPlugin, PluginRoster, PluginScope};
 use crate::settings::Settings;
 
 /// `<plugin_dir>/tools` — custom script-tool manifests, the format
@@ -123,6 +123,13 @@ pub(crate) struct ContributedDir {
     /// has no `skills/`, and every loader here treats an absent directory as
     /// an empty one rather than an error.
     pub(crate) dir: PathBuf,
+    /// The tier the contributing package is installed at. A contributed
+    /// surface is not installed under one of the user's scope roots, but the
+    /// package that ships it *is*, so this is the honest answer to "which
+    /// scope is this under" for any surface that has to ask — and it is what
+    /// decides which per-scope state file governs a contributed skill
+    /// (`crate::skill_manager`).
+    pub(crate) scope: PluginScope,
 }
 
 /// Every plugin's contributed directory of one kind, in roster order,
@@ -143,6 +150,7 @@ fn dirs_of(roster: &PluginRoster, kind: &str) -> Vec<ContributedDir> {
             plugin: plugin.manifest.name.clone(),
             package_dir: plugin.dir.clone(),
             dir: plugin.dir.join(kind),
+            scope: plugin.scope,
         })
         .collect()
 }
