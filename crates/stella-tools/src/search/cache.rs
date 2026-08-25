@@ -60,6 +60,56 @@
 //! linearly is the right structure at this size: 256 entries is a few pages
 //! of pointers, a lookup touches at most one screen of memory, and the
 //! workspace already carries no LRU crate to reach for.
+//!
+//! # Why the cache stops at the session (#3198)
+//!
+//! #3163 sketched more than this — a tier under `.stella/private/` surviving
+//! the process, grouped by `.stella/domains.toml`, with git as the
+//! invalidation authority for entries that outlive a content hash's usefulness
+//! — and #3198 carried that half as a handoff, asking for the measurement
+//! before the build: **graph reads per call, and wall clock**. The
+//! measurement was taken on 2026-08-24 against this repository's own index
+//! (1 769 indexed files, 28 813 chunk vectors), and it says the tier should
+//! not be built.
+//!
+//! **One gather costs 3.7 ms.** That is the three indexed queries
+//! [`stella_graph::CodeGraph::file_neighborhood`] issues — symbols, imports,
+//! importers — timed over a random 200-file sample of `crates/**`, driven
+//! from Python against the same SQL, which bounds the Rust path from above
+//! rather than flattering it. A call enriches whole blocks until the 9 000
+//! character budget is spent, so it gathers a handful of files, and the
+//! ceiling on what any gather cache can ever save is tens of milliseconds.
+//!
+//! **The terms it would be saving against are one to two orders of magnitude
+//! larger.** Measured on the same index the same day: the chunk ranking scan
+//! 220-296 ms (118 MB of stored vectors read and decoded per call), a full
+//! `PRAGMA quick_check` page walk 333 ms (paid on every call until #4385
+//! removed it), the `index_all` catch-up 78-97 ms warm, and the query's own
+//! embedding round trip 111-202 ms. Against those, a persisted gather cache
+//! is a rounding error.
+//!
+//! The cache's own guard is in the same range as the thing it guards:
+//! [`stella_graph::CodeGraph::index_generation`] re-hashes every indexed
+//! file's `(path, content sha)` once per render, 21.8 ms over 1 808 rows by
+//! the same Python bound.
+//!
+//! A faster machine does not change the answer, because the second half of it
+//! is structural. [`GatherCache::observe_generation`] empties the whole cache
+//! whenever the index generation moves — which it does the moment **any** file
+//! in the tree is re-indexed, because the stamp is a digest over every indexed
+//! file's `(path, content sha)`. A persisted tier inherits that key: it has to,
+//! since the cross-file half of a neighborhood (`importers`, a resolved import
+//! target) is a function of the rest of the tree and no per-file identity can
+//! invalidate it. So the cross-session case #3163 wants — "the sessions of a
+//! team working the same tree" — is exactly the case where every teammate's
+//! commit invalidates every persisted entry. The cache would be coldest where
+//! it was meant to pay most.
+//!
+//! **The decision, not a deferral:** the session-lifetime cache is where this
+//! stops. Building the persisted tier is legitimate again if the two heavy
+//! terms above are removed first and the generation key is narrowed to the
+//! cross-file half alone (#3196's subject), because only then is a gather a
+//! large enough share of a call to be worth surviving the process.
 
 use sha2::{Digest, Sha256};
 use stella_graph::FileNeighborhood;
