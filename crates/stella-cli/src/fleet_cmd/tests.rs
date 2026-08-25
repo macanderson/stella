@@ -4,6 +4,10 @@
 use std::path::PathBuf;
 
 use stella_fleet::CommitRecord;
+// Imported here rather than inherited through `super::*`: the parent stopped
+// building an opening transcript by hand when a fleet attempt gained its own
+// durable record (#3232), so this is the only remaining use of the type.
+use stella_protocol::CompletionMessage;
 
 use super::*;
 
