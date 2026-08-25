@@ -8,7 +8,7 @@
 //!
 //! `ScopeReview` had a complete consumer chain and no producer at all after
 //! the staged pipeline left the workspace (#3865): the deck's plan card, the
-//! plan rail, the fleet dashboard's `Blocked` row, the transcript fold and
+//! fleet dashboard's `Blocked` row, the transcript fold and
 //! the forwarder's board seeding all branch on it, and every `ScopeProposal`
 //! in the tree was a fixture. The pipeline's own emitter had asked a planner
 //! model to write a plan and then gated on it — but the raw step loop that

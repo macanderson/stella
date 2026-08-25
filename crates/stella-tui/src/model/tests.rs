@@ -131,8 +131,8 @@ fn a_turn_that_ends_mid_park_closes_the_span_anyway() {
 }
 
 /// A *retryable* error is a warning mid-flight, not the end of the turn, so it
-/// must leave an open park alone — the same reading the plan rail and the
-/// plan take of the identical event.
+/// must leave an open park alone — the same reading the plan takes of the
+/// identical event.
 #[test]
 fn a_retryable_error_does_not_close_an_open_park() {
     let mut model = SessionModel::new();
