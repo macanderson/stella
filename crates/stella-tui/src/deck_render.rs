@@ -74,6 +74,17 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         if ui.help_open {
             guarded_overlay(buf, area, "help", |b| render_help(model, ui, area, b));
         }
+        // The page's composer is a real text input, so it gets the hardware
+        // caret on the same terms the deck's own does below (#4626): withheld
+        // while an overlay owns the keyboard ahead of it, or while one of the
+        // page's own popups is claiming keys. The startup notice is excluded
+        // here for the reason it is excluded there — it is non-modal.
+        let page_menu_open = crate::v2::agents_page::menu_is_open(model, ui);
+        if !(ui.help_open || parked::owns_keyboard(ui) || page_menu_open)
+            && let Some(pos) = crate::v2::agents_page::composer_cursor(model, ui, area)
+        {
+            frame.set_cursor_position(pos);
+        }
         return;
     }
 
@@ -112,14 +123,16 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
 
     let content = bands[1];
     guarded_band(buf, content, tab.title(), |b| match tab {
-        DeckTab::Session => views::session::render(model, ui, content, b),
+        DeckTab::Session => crate::v2::session::render(model, ui, content, b),
         DeckTab::Agents => crate::v2::installed::render(ui, model.now_ms, content, b),
-        DeckTab::Traces => views::traces::render(model, ui, content, b),
+        DeckTab::Traces => crate::v2::traces::render(model, ui, content, b),
         DeckTab::Graph => views::graph::render(model, ui, content, b),
-        DeckTab::Files => views::files::render(model, ui, content, b),
-        DeckTab::Skills => views::skills::render(model, ui, content, b),
-        DeckTab::Mcp => views::mcp::render(model, ui, content, b),
-        DeckTab::Issues => views::issues::render(model, ui, content, b),
+        DeckTab::Files => crate::v2::files_tab::render(model, ui, content, b),
+        DeckTab::Skills => crate::v2::skills::render(model, ui, content, b),
+        DeckTab::Mcp => crate::v2::mcp_tab::render(model, ui, content, b),
+        DeckTab::Issues => {
+            crate::v2::issues_tab::render(model.pr.as_ref(), &ui.issues, ui.accessible, content, b)
+        }
         DeckTab::Settings => views::settings::render(model, ui, content, b),
     });
 
@@ -161,7 +174,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     let arg_matches = crate::composer::args::arg_matches(
         &ui.composer,
         "/model",
-        &crate::views::picker::typeahead_candidates(model, ui),
+        &crate::v2::picker::typeahead_candidates(model, ui),
     );
     let arg_open = !arg_matches.is_empty();
     if arg_open {
@@ -179,7 +192,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     }
     if ui.queue_open {
         guarded_overlay(buf, area, "queue", |b| {
-            views::queue_popup::render(model, ui, area, b)
+            crate::v2::queue::render(model, ui, area, b)
         });
     }
     // The STATE overlay (`⌃s`): the expansion of the Session tab's one-row
@@ -238,15 +251,17 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     // body of the SETTINGS tab — see `views::settings::render`.)
 
     // The session-override pickers (`/model`, `/agent`): modal cards like
-    // the floating ones above; the parked asks still win the top.
+    // the floating ones above; the parked asks still win the top. They take
+    // the content band rather than the frame, so the card sits on its last
+    // row whatever the composer and the status bar are spending below.
     if ui.model_picker.open {
         guarded_overlay(buf, area, "model picker", |b| {
-            views::picker::render_model(model, ui, area, b)
+            crate::v2::picker::render_model(model, ui, content, b)
         });
     }
     if ui.agent_picker.open {
         guarded_overlay(buf, area, "agent picker", |b| {
-            views::picker::render_agent(ui, area, b)
+            crate::v2::picker::render_agent(ui, content, b)
         });
     }
 
@@ -368,8 +383,7 @@ fn slash_live_hints(model: &WorkspaceModel, ui: &DeckUi) -> Vec<(String, String)
     hints
 }
 
-// The queue editor popup lives in `views::queue_popup` (split out beside the
-// other popup renderers under the god-file rule).
+// The queue editor popup lives in `crate::v2::queue`.
 
 /// The INBOX overlay (`/inbox`): the persist-until-read notifications,
 /// newest first — unread bold with a ● dot, read dimmed with ✓, and a `↗`
@@ -544,7 +558,7 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
         } else {
             "not connected".to_string()
         };
-        let heading = crate::views::mcp::compact_heading(server);
+        let heading = crate::v2::mcp_tab::compact_heading(server);
         let mut spans = vec![
             Span::raw("  "),
             Span::styled(glyph, glyph_style),
@@ -1024,7 +1038,12 @@ fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
 /// offset that keeps the caret's row always within the window. Split out of
 /// [`render_composer`] so [`composer_cursor_position`] computes the exact
 /// same windowing rather than a second copy that could drift from it.
-fn composer_scroll_first(cursor_row: usize, visible: usize) -> usize {
+///
+/// `pub(crate)` for the AGENTS page's own composer, which is a second text
+/// input with a caret to place (#4626) and must window its rows by the same
+/// rule — a page that scrolled differently from where it put the caret would
+/// be the drift this split exists to prevent, one surface over.
+pub(crate) fn composer_scroll_first(cursor_row: usize, visible: usize) -> usize {
     if cursor_row < visible {
         0
     } else {

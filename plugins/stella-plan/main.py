@@ -67,9 +67,9 @@ takes four inputs beside the goal. None of them cross this wire today:
   - `repo_structure` — no `BeforeTurnRequest` field carries it, and this
     plugin declares no `read_file`/`search` capability to approximate it
     itself (that would measure a second change alongside the one this
-    extraction is meant to isolate) — #3562 item 2.
+    extraction is meant to isolate) — #4728.
   - `revision` — the `--revise` flag's note has no wire representation
-    either — #3562 item 3.
+    either — #4728.
 
 So the prompt this plugin sends is honestly narrower: goal only. The fixed
 instruction block is copied byte-for-byte from `PLANNER_INSTRUCTIONS`
@@ -84,7 +84,7 @@ per-step mechanism (`crates/stella-plugin/src/wire.rs`'s only fields are
 one-user-message-per-step walk is a host mechanism this plugin cannot drive.
 So the parsed steps ride as one prose `VolatileContext` the worker reads
 before its own turn, weaker than the built-in stage's execution loop and
-honestly labelled as such in the text it contributes (#3562 item 4).
+honestly labelled as such in the text it contributes (#4729).
 
 **`scope` is always empty.** `BeforeTurnResponse.scope` is "workspace-relative
 paths the wrapper believes the turn should stay within" — advisory input to

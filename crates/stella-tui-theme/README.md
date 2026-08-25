@@ -9,7 +9,7 @@ use stella_tui_theme::{glyph, token, wordmark};
 Span::styled(format!("{} gate types", glyph::GATE), Style::new().fg(token::GOLD));
 ```
 
-Seventeen tokens (SPEC 3.1), the hue clamp that holds them (SPEC 3.2), the
+The tokens in `token::ALL` (SPEC 3.1), the hue clamp that holds them (SPEC 3.2), the
 state glyph vocabulary (SPEC 4), the `stella*` wordmark (SPEC 3.3), and the
 16-color fallback for terminals without truecolor (SPEC 3.5).
 
@@ -128,10 +128,9 @@ that emitted it would put the algorithm somewhere its proof could not follow.
 anchored clamp, since a lift is checked against another token's value and no
 per-row template can reach one.
 
-This was two files for a few hours. #4055 created this crate with a
-hand-written table; #4066 added the generator and emitted `generated.rs`
-beside it; the two landed 41 seconds apart with no textual conflict, leaving
-one palette defined twice (#4083, #4058).
+The palette is defined once, in `src/token.rs`, and generated. Do not add a
+second table beside it: two landed 41 seconds apart once and the crate carried
+one palette twice for a few hours (#4055, #4066, #4083, #4058).
 
 ## Two hue functions, named for their spaces
 

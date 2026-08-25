@@ -60,6 +60,17 @@ create_worktrees = "ask"
 # on (default) | off — the workspace probe skips paths your .gitignore excludes.
 ignore_gitignore = "on"
 
+# Default: false. true trusts every project this machine opens by default —
+# the config-file alternative to typing STELLA_TRUST_PROJECT=1 on every
+# launch; see [context_providers] above and [hooks] below for what that
+# unlocks. HONORED ONLY HERE, in the user or org-managed file. Written in a
+# project's own stella.toml (the file you are looking at, if this is
+# <repo>/stella.toml) it is parsed and then IGNORED — a project cannot vote
+# on its own trust, which is the one thing this key must never do. Put it in
+# ~/.stella/stella.toml instead. STELLA_TRUST_PROJECT always overrides this,
+# either direction, for one launch.
+auto_trust_project = false
+
 # NOTE: `recap` and `trace_capture` used to live here. Both were retired in
 # #3870 — the code behind them was orphaned by the staged pipeline's removal
 # (#3865). Stella recognizes them, reads nothing, and says so on load rather

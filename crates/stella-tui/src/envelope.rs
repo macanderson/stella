@@ -367,7 +367,7 @@ pub enum Inbound {
     ShowHelp,
     /// An agent asked the driver a question and its turn is **parked** on the
     /// answer (#4220). Raises the question overlay
-    /// ([`crate::views::question`]); the driver is holding a `QuestionResponder`
+    /// ([`crate::v2::question`]); the driver is holding a `QuestionResponder`
     /// open on the other side and unblocks only on
     /// [`WorkspaceInput::QuestionAnswered`] or its own TTL.
     ///
@@ -393,7 +393,7 @@ pub enum Inbound {
     QuestionWithdrawn,
     /// A gate demands a human yes/no before a tool call may run, and that
     /// dispatch is **parked** on the answer (#4240). Raises the approval card
-    /// ([`crate::views::approval`]).
+    /// ([`crate::v2::approval`]).
     ///
     /// Separate from [`Inbound::QuestionAsked`] because the two asks are
     /// different decisions: this one is a yes/no over a call already chosen,

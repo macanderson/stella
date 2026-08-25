@@ -28,12 +28,11 @@
 //!
 //! [`record_turn`], [`sweep`], [`record_appraisal`] and [`queued_candidates`]
 //! are the retirement half, and they carry `#[allow(dead_code)]` because they
-//! have no production caller **yet** — the two seams they need are a turn-end
-//! hook that knows both the offered and the selected skill sets, and the
-//! retirement sweep that writes the tombstone. The lint is right and the
-//! allow says so; what it is not is dead code, because every function here is
-//! exercised by `tests.rs` and the shapes are the ones the wiring will call.
-//! An allow without that follow-up is how a module rots, so it names it.
+//! have no production caller yet. The two seams they need are a turn-end hook
+//! that knows both the offered and the selected skill sets, and the retirement
+//! sweep that writes the tombstone. Wiring them is tracked in #4754; every
+//! function here is exercised by `tests.rs` and the shapes are the ones that
+//! wiring will call.
 
 use std::collections::HashMap;
 use std::path::Path;

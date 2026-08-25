@@ -1,14 +1,19 @@
 ---
 id: adaptive-context-plan
 title: "Adaptive Context — Implementation Plan"
-status: proposed
+status: implemented
 ---
 
 # Adaptive Context — Implementation Plan
 
-**Status:** Plan — supersedes the eleven-phase roadmap
+**Status:** All four phases shipped — Phase 1 unconditionally, Phases 2 and 3
+before the `context.lifecycle.enabled` default flipped to on, Phase 4 on
+2026-07-26 (#715). Kept as the record of what was built and why, and of the
+three results in Phase 4's status note that the deliverable checklist does not
+carry. What remains open is named there: automatic retirement still needs a
+pruning-eligible source that is not a human.
+**Supersedes:** the eleven-phase roadmap
 **Spec:** [`adaptive-context.md`](adaptive-context.md)
-**Phases:** four, each shippable and observable
 
 ---
 
@@ -74,8 +79,8 @@ plane with no supersede path.
 
 3. **Make the drop report mean something.** Its denominator becomes candidates
    *considered*, not corpus size. Today a workspace with 500 memories reports
-   ~495 drops and permanent truncation every turn, which makes the honest-budget
-   discipline honest about the wrong number.
+   ~495 drops and permanent truncation every turn, so the budget discipline
+   reports against the wrong number.
 
 4. **Supersede and tombstone in the plane that owns the data.** Write the
    supersede column that exists in the schema and has never been written. Move
@@ -95,7 +100,7 @@ plane with no supersede path.
    stop it shipping. Apply the same tombstone-plus-restatement filter used on
    every other surface. This closes a hole in a guarantee already made.
 
-7. **Make the point-in-time cutoff honest.** Apply it to node, vector, and
+7. **Apply the point-in-time cutoff everywhere.** Apply it to node, vector, and
    recency reads as well as adjacency, so a query that sets `as_of` is answered
    from one instant across every signal. Decided 2026-07-26 (#711, decision 3);
    the alternative — refusing the query — was rejected because the cutoff is
@@ -299,8 +304,8 @@ beyond the checklist:
 execution — an aggregate folded over them is *not* rebuildable across a prune,
 and the first gate criterion would have been false the first time anyone
 pruned. `context_records` is append-only enforced by SQLite triggers and is
-never pruned. The consequence is an ordering dependency, stated rather than
-hidden: extraction must reach an execution before a prune does.
+never pruned. The consequence is an ordering dependency: extraction must reach
+an execution before a prune does.
 
 **Retirement never writes `superseded_at`.** `node_by_public_id` filters on
 that column, so routing retirement through `supersede_node` would have made a

@@ -5,10 +5,10 @@
 //! `executions`, tool calls from `tool_calls`, and the verdict — when the work
 //! produced a pull request — from `pull_requests.status`.
 //!
-//! Nothing here verifiers anything. The rollup is arithmetic over recorded events,
+//! Nothing here verifies anything. The rollup is arithmetic over recorded events,
 //! and the one subjective field is read from a PR that a human merged or closed.
 //!
-//! # What is deliberately absent
+//! # What is absent
 //!
 //! **Interrupts.** A follow-up that stopped the agent mid-flight is the one
 //! correction signal needing no interpretation, and nothing in this store

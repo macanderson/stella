@@ -1,7 +1,7 @@
 //! **The witness (#4368).** The FILES tab's one row of [`crate::keymap`] —
 //! `⏎`, "open / close the diff" — pressed through [`super::handle_deck_key`].
 //!
-//! `views::files`'s render tests set `files_diff_open` by hand, so the key
+//! `v2::files_tab`'s render tests set `files_diff_open` by hand, so the key
 //! that flips it had no witness at all: the row was a claim about an arm of
 //! `handle_files_key` nothing had pressed.
 

@@ -56,8 +56,8 @@ four inputs beside the goal, and none of them cross this wire today:
 | --- | --- |
 | `recall` | This plugin declares no `recall` call — asking for both `recall` and `child_turn` in one `before_turn` call would spend two host-call ceilings for one stage's contribution, and `plugins/stella-research` is the sibling that already reads recall. Running the two together under one `--pipeline` selection is not possible today (#3801). |
 | `research` | `ResearchFinding{question, answer}` has no wire representation. `stella-research`'s own findings ride as prose `VolatileContext`, not a typed value a second plugin could re-read. |
-| `repo_structure` | No `BeforeTurnRequest` field carries it, and this plugin declares no `read_file`/`search` capability to approximate it — that would measure a second change alongside the one this extraction is meant to isolate (#3562 item 2). |
-| `revision` | The `--revise` flag's note has no wire representation either (#3562 item 3). |
+| `repo_structure` | No `BeforeTurnRequest` field carries it, and this plugin declares no `read_file`/`search` capability to approximate it — that would measure a second change alongside the one this extraction is meant to isolate (#4728). |
+| `revision` | The `--revise` flag's note has no wire representation either (#4728). |
 
 So the prompt this plugin sends is honestly narrower than the built-in's:
 `## Goal` and the `## Plan (JSON array of step strings)` header, nothing else.
@@ -74,7 +74,7 @@ did not actually offer.
 engine turn per step, host-executed; this plugin cannot drive that walk, so
 the parsed steps ride as **one prose block the worker reads before its own
 turn**, weaker than the built-in's execution loop and said so in the text it
-contributes (#3562 item 4).
+contributes (#4729).
 
 **`scope` is always empty.** It is "workspace-relative paths the wrapper
 believes the turn should stay within" — advisory input to the host's own
@@ -178,9 +178,9 @@ test. Blessing a vector that carries a `.refusal.txt` sibling is refused.
 | --- | --- |
 | No plan plugin can also read recall or research findings under one `--pipeline` selection — `WrapperDispatch::bind` takes exactly one manifest | #3801 |
 | Selecting `--pipeline plan-v1` now buys a planner child turn on every wrapped turn. The `plan` stage carried `if = "plans"` until #3547; no host runs a triage stage, so `plans` was published `false` unconditionally and the plugin was inert end to end — `plan` is the only stage it answers at. Until something publishes a real triage assessment, the selection is the only signal there is | #3547 |
-| No `repo_structure` wire representation, so the planner prompt omits the section the built-in reads | #3562 (item 2) |
-| No `--revise` wire representation, so a rejected plan's revision note cannot reach a re-plan | #3562 (item 3) |
-| The parsed plan rides as prose, not the typed `Vec<PlanStep>` the built-in's per-step engine-turn walk needs | #3562 (item 4) |
+| No `repo_structure` wire representation, so the planner prompt omits the section the built-in reads | #4728 |
+| No `--revise` wire representation, so a rejected plan's revision note cannot reach a re-plan | #4728 |
+| The parsed plan rides as prose, not the typed `Vec<PlanStep>` the built-in's per-step engine-turn walk needs | #4729 |
 | `stella run`'s driver installs the `ChildTurns` plane but does not yet fold its spend back into the receipt or surface it beside `HostCallGate::refusals()` | #3576 (open items) |
 | Nobody has benchmarked it against the built-in stage | (none yet — parallel to #3544 for `stella-research`) |
 | `plan-v1` runs on every door that takes `--pipeline` now (`stella run`, `stella goal` per round, `stella fleet` per worker attempt, #3695) — but only `stella run`'s door installs a `ChildTurns` plane, so the planner role intent it asks for is answered `Unavailable` on the other two | #3833 (goal), #3882 (fleet) |
