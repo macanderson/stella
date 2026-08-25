@@ -154,8 +154,8 @@ pub use oracle::{
     FlipPolicy, Oracle, OracleCommand, OracleProcess, OracleProcessSource, TamperPolicy,
 };
 pub use package::{
-    ContributionKind, KindMismatch, PackageListing, PackageMismatch, RecordContribution,
-    RecordEnforcement, SkillContribution, ToolContribution,
+    ContributionKind, KindMismatch, McpContribution, PackageListing, PackageMismatch,
+    RecordContribution, RecordEnforcement, SkillContribution, ToolContribution,
 };
 pub use program::{SignalValues, StageProgram};
 pub use progressive::{ProgressiveResolver, StageDecision};

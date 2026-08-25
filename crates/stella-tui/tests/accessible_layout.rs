@@ -143,6 +143,7 @@ fn skills_ui(accessible: bool) -> DeckUi {
             version: 1,
             latest: 1,
             removable: true,
+            contributed_by: None,
         }],
         ..Default::default()
     };

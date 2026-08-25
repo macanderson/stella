@@ -331,6 +331,7 @@ fn a_package_whose_declaration_and_directories_disagree_is_refused() {
         tools: vec!["vera_review".into()],
         skills: vec!["house-style".into()],
         records: vec!["ctx.acme.web.no-force-push".into()],
+        mcp: Vec::new(),
     };
     manifest
         .reconcile(&honest)

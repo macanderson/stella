@@ -2499,6 +2499,91 @@ pub async fn run_deck_session(
     }
 }
 
+/// Run the MCP connect on its own task, landing the connected set in `slot`
+/// for turns to pick up at dispatch. Returns whether any servers are
+/// configured at all (`false` = the slot will stay empty forever, so no
+/// "still connecting" note is ever warranted). Always seeds the MCP tab and
+/// releases the splash leg, whatever the plan resolves to.
+///
+/// Connect narration is session chrome (`chrome_tx`, the direct deck path):
+/// it re-runs at every boot, so journaling it would pile stale "connecting…"
+/// lines onto every resumed transcript. The status flips ride the journaled
+/// `in_tx` — `waiting_input` is also the journal's settle marker.
+fn spawn_mcp_connect(
+    cfg: Config,
+    registry: Arc<ToolRegistry>,
+    disabled: stella_mcp::DisabledServers,
+    slot: Arc<tokio::sync::OnceCell<Arc<stella_mcp::McpToolSet>>>,
+    in_tx: UnboundedSender<Inbound>,
+    chrome_tx: UnboundedSender<Inbound>,
+    release_splash: impl FnOnce() + Send + 'static,
+) -> bool {
+    let plan = agent::load_mcp_plan(&cfg);
+    let configured = matches!(plan, agent::McpPlan::Servers(..));
+    tokio::spawn(async move {
+        match plan {
+            agent::McpPlan::None => {}
+            agent::McpPlan::Invalid(reason) => {
+                let _ = chrome_tx.send(system_notice(reason));
+                let _ = in_tx.send(Inbound::Status {
+                    agent: LEAD.to_string(),
+                    status: AgentStatus::WaitingInput,
+                });
+            }
+            agent::McpPlan::Servers(servers, notices) => {
+                // Whose server was dropped, and whose package's file did not
+                // parse — before the connect, so the report below is read
+                // against a list the human knows was narrowed.
+                for notice in notices {
+                    let _ = chrome_tx.send(system_notice(notice));
+                }
+                let _ = chrome_tx.send(system_notice(format!(
+                    "connecting {} MCP server(s)…",
+                    servers.len()
+                )));
+                match crate::mcp_cmd::oauth_manager(&cfg.workspace_root) {
+                    Ok(auth) => {
+                        let set = agent::connect_mcp_servers(
+                            &servers,
+                            registry.clone(),
+                            Some(registry.mcp_usage_ledger()),
+                            Some(disabled.clone()),
+                            Some(auth),
+                        )
+                        .await;
+                        let _ =
+                            chrome_tx.send(system_notice(crate::mcp_cmd::mcp_connect_report(&set)));
+                        // `set` is infallible here (the cell is set exactly once,
+                        // by this task); an in-flight turn keeps its resolved
+                        // executor and the NEXT turn picks the servers up. Arc'd so
+                        // a turn can share it into Best-of-N candidates (#248 Ph1).
+                        let _ = slot.set(Arc::new(set));
+                    }
+                    Err(error) => {
+                        let _ = chrome_tx.send(system_notice(format!(
+                            "MCP authentication unavailable: {error} — continuing with native tools only"
+                        )));
+                    }
+                }
+                // No turn is in flight — assert the idle status so the
+                // dashboard cannot show a busy lead. (The chrome above no
+                // longer folds it to `Running`; see `system_notice`.)
+                let _ = in_tx.send(Inbound::Status {
+                    agent: LEAD.to_string(),
+                    status: AgentStatus::WaitingInput,
+                });
+            }
+        }
+        // Seed the MCP tab with the configured servers and their live state.
+        crate::deck_mcp::send_mcp_snapshot(&cfg, slot.get().map(Arc::as_ref), &disabled, &in_tx)
+            .await;
+        // MCP connect settled (or there was nothing to connect) — the other
+        // init leg the launch splash waits on.
+        release_splash();
+    });
+    configured
+}
+
 /// Registry hygiene: terminal session records older than this are swept at
 /// deck startup (30 days).
 const SESSION_RECORD_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;

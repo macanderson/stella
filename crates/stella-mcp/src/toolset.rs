@@ -644,6 +644,23 @@ pub fn wire_name(server: &str, tool: &str) -> String {
     format!("{NS_PREFIX}{server}{NS_SEP}{tool}")
 }
 
+/// The prefix every one of `server`'s wire names starts with —
+/// `mcp__<server>__`, which is [`wire_name`] with the tool half left off.
+///
+/// Here for the same reason [`wire_name`] is: the encoding lives in one place.
+/// A caller that has to recognise "any tool from this server" — authorizing a
+/// contributed server's calls as the plugin that shipped it
+/// (`stella-cli`'s `agent::tool_stack`, #4733) — asks for the prefix rather
+/// than spelling `format!("mcp__{server}__")` at a second site.
+///
+/// Sound as a prefix test for the same reason [`split_wire_name`] is exact:
+/// an accepted server name contains no `__` and does not end in `_`, so
+/// `mcp__a__` can never prefix a name belonging to a different server.
+#[must_use]
+pub fn namespace_prefix(server: &str) -> String {
+    format!("{NS_PREFIX}{server}{NS_SEP}")
+}
+
 /// The inverse of [`wire_name`]: `(server, tool)` for an `mcp__…` name, or
 /// `None` for a name outside the MCP namespace.
 ///
