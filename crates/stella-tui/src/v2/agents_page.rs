@@ -42,6 +42,19 @@
 //! which only the driver loop can do) and then applies it between turns, or
 //! backlogs it when a turn is in flight. So the page offers one route and
 //! the driver decides what each command costs.
+//!
+//! **The answer is readable here.** A page-submitted command replies over
+//! `ShellEvent` into the session's own fold, which is behind this page —
+//! until #4626 the page could only point at it, so choosing a model meant
+//! leaving the page to find out whether it took. [`AgentsPage::reply_from`]
+//! marks the transcript as the command leaves and the foot shows the tail
+//! past that mark, drawn by the deck's own row builder.
+//!
+//! **And the composer carries the terminal's caret** ([`composer_cursor`]).
+//! The page suppressed it like a modal overlay, but a modal overlay is not
+//! taking dictation — IME candidate windows, screen readers, and
+//! cursor-following tmux panes all anchor to the hardware cursor and had
+//! nothing to hold while a task was being typed.
 
 use std::time::{Duration, Instant};
 
@@ -54,8 +67,8 @@ use ratatui::widgets::{Clear, Paragraph, Widget};
 use stella_tui_theme::token;
 
 use crate::composer::{
-    Composer, EnterAction, PaletteState, SlashCommand, SlashPopupOutcome, args, classify_enter,
-    handle_edit_key, handle_slash_popup_key,
+    Composer, ComposerLayout, EnterAction, PaletteState, SlashCommand, SlashPopupOutcome, args,
+    classify_enter, handle_edit_key, handle_slash_popup_key,
 };
 use crate::deck::{AgentEntry, DeckTab, WorkspaceModel};
 use crate::deck_ui::sessions::{is_live, visible_session_rows};
@@ -72,6 +85,17 @@ pub const LEFT_DOUBLE_WINDOW: Duration = Duration::from_millis(1500);
 /// `/inspect`), and `/export` is the named example of one that must not run
 /// from here at all.
 pub const PAGE_COMMANDS: &[&str] = &["/model", "/info", "/models", "/theme", "/help"];
+
+/// The composer's prompt prefix, and its display width — chrome, never part of
+/// the submitted string, and the offset the caret sits past.
+const PROMPT_PREFIX: &str = " ❯ ";
+/// Display width of [`PROMPT_PREFIX`].
+const PROMPT_PREFIX_W: usize = 3;
+
+/// Rows of a command's reply the page shows: enough for a `/model` summary or
+/// a short refusal, and bounded because the page's subject is the fleet — a
+/// reader who wants the whole answer has `esc` and the transcript.
+const REPLY_ROWS: usize = 6;
 
 /// The page's state: whether it is up, the selected row, its own composer
 /// (never the deck's — opening the page must not disturb a half-typed
@@ -94,6 +118,17 @@ pub struct AgentsPage {
     /// Consumed by every key ([`crate::deck_ui::handle_deck_key`]'s take), so
     /// only two *consecutive* presses open the page.
     pub left_armed_at: Option<Instant>,
+    /// Where the focused session's transcript stood when this page last sent a
+    /// command, so its reply can be read here (#4626).
+    ///
+    /// A **mark**, not a copy of the reply: a page-submitted `/model` answers
+    /// over `ShellEvent` into that session's own fold, and the page renders
+    /// the tail past this index through the deck's own row builder. Storing
+    /// the rendered text instead would be a second renderer of the same
+    /// events, free to disagree with the transcript it claims to be showing.
+    /// `None` before the page has sent anything, and again after a submission
+    /// that starts a lane rather than asking a question.
+    pub reply_from: Option<usize>,
 }
 
 /// One page row: a lane of this session, or a registry session.
@@ -190,6 +225,7 @@ pub fn open(ui: &mut DeckUi) -> DeckAction {
     ui.agents_page.kill_armed = false;
     ui.agents_page.notice = None;
     ui.agents_page.left_armed_at = None;
+    ui.agents_page.reply_from = None;
     DeckAction::Send(WorkspaceInput::SessionsRefresh)
 }
 
@@ -209,6 +245,17 @@ fn slash_matches(ui: &DeckUi) -> Vec<String> {
         &page_commands(ui),
         &PaletteState::default(),
     )
+}
+
+/// Whether one of the page's own popups — the scoped slash menu or `/model`'s
+/// argument menu — is up and claiming keys ahead of the composer.
+///
+/// The caret is withheld while one is, matching what the deck does under its
+/// own two menus (`deck_render`'s `overlay_owns_keyboard`). One rule for both
+/// composers: a reader who has learnt what the caret means on the SESSION tab
+/// must not have to learn a second meaning here.
+pub fn menu_is_open(model: &WorkspaceModel, ui: &DeckUi) -> bool {
+    !model_arg_matches(model, ui).is_empty() || !slash_matches(ui).is_empty()
 }
 
 /// The page's `/model` argument-menu matches, or empty.
@@ -245,7 +292,7 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
     {
         return match outcome {
             SlashPopupOutcome::Handled => DeckAction::Handled,
-            SlashPopupOutcome::Submit(text) => submit(ui, text),
+            SlashPopupOutcome::Submit(text) => submit(model, ui, text),
         };
     }
     let slash = slash_matches(ui);
@@ -259,7 +306,7 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
     {
         return match outcome {
             SlashPopupOutcome::Handled => DeckAction::Handled,
-            SlashPopupOutcome::Submit(text) => submit(ui, text),
+            SlashPopupOutcome::Submit(text) => submit(model, ui, text),
         };
     }
 
@@ -268,7 +315,7 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
         match classify_enter(&key) {
             EnterAction::Submit => {
                 return match ui.agents_page.composer.take_submission() {
-                    Some(sub) => submit(ui, sub.text),
+                    Some(sub) => submit(model, ui, sub.text),
                     None => DeckAction::Handled,
                 };
             }
@@ -331,7 +378,11 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
 /// Route one submitted line: a scoped command leaves queue-free, an
 /// out-of-scope command is refused with a notice, and anything else starts a
 /// new agent lane on it.
-fn submit(ui: &mut DeckUi, text: String) -> DeckAction {
+///
+/// A command also marks where the focused session's transcript stands, which
+/// is what lets [`reply_rows`] show the answer on the page. Marked before the
+/// command leaves, so nothing the reply appends can land above the mark.
+fn submit(model: &WorkspaceModel, ui: &mut DeckUi, text: String) -> DeckAction {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return DeckAction::Handled;
@@ -344,11 +395,21 @@ fn submit(ui: &mut DeckUi, text: String) -> DeckAction {
             ));
             return DeckAction::Handled;
         }
-        ui.agents_page.notice = Some(format!("{head} sent — its reply prints in the transcript"));
+        ui.agents_page.notice = Some(format!("{head} sent"));
+        ui.agents_page.reply_from = Some(
+            model
+                .agents
+                .get(ui.focused)
+                .map_or(0, |a| a.model.transcript.len()),
+        );
         return DeckAction::Send(WorkspaceInput::Command {
             text: trimmed.to_string(),
         });
     }
+    // A dispatched task is not a question, so it retires the reply pane rather
+    // than leaving the previous command's answer standing under an unrelated
+    // notice.
+    ui.agents_page.reply_from = None;
     ui.agents_page.notice = Some(format!(
         "starting a new agent on: {}",
         crate::v2::sessions::truncate(trimmed, 60)
@@ -410,6 +471,125 @@ fn kill_selected(model: &WorkspaceModel, ui: &mut DeckUi, list: &[Row], armed: b
         }
         None => DeckAction::Handled,
     }
+}
+
+/// The page's bottom chrome, measured once.
+///
+/// Two callers read it and must agree to the cell: [`render`], which draws the
+/// rows, and [`composer_cursor`], which puts the terminal's caret on one of
+/// them. Deriving the geometry twice is how a caret ends up a row off from the
+/// text it is supposed to be in front of — and off is worse than absent, since
+/// an IME candidate window would then open over the wrong line.
+struct Foot {
+    /// The composer's soft-wrapped rows and caret.
+    layout: ComposerLayout,
+    /// The reply pane's rows, drawn above the notice; empty when the page has
+    /// asked nothing or its answer has not landed.
+    reply: Vec<Line<'static>>,
+    /// Composer rows actually drawn.
+    composer_h: u16,
+    /// Total rows the foot occupies.
+    height: u16,
+}
+
+/// Measure the foot: the reply pane, one notice row, the composer, one hint
+/// row.
+fn foot(model: &WorkspaceModel, ui: &DeckUi, area: Rect) -> Foot {
+    let inner_w = (area.width as usize).saturating_sub(2);
+    let layout = crate::composer::layout(
+        &ui.agents_page.composer,
+        inner_w.saturating_sub(PROMPT_PREFIX_W),
+    );
+    let composer_h = layout.rows.len().clamp(1, 3) as u16;
+    let reply = reply_rows(model, ui, inner_w);
+    Foot {
+        composer_h,
+        height: reply.len() as u16 + composer_h + 2,
+        reply,
+        layout,
+    }
+}
+
+/// The tail of the focused session's transcript since the page last sent a
+/// command — a page-submitted `/model`'s answer, read without leaving the page
+/// (#4626).
+///
+/// Rendered through the deck's own [`entry_lines`](crate::render::entry_lines),
+/// not a second painter: these are the same rows the SESSION tab draws for the
+/// same events, so the page cannot come to disagree with the transcript it is
+/// quoting. Bounded to [`REPLY_ROWS`] from the **end**, because the last thing
+/// said is the answer.
+///
+/// Folded **backwards** from the newest entry and stopped as soon as the budget
+/// is filled. The mark can be left standing while the session works — a turn
+/// started after a `/model` appends without limit — and a forward fold would
+/// render every one of those entries on every frame in order to throw all but
+/// six away.
+fn reply_rows(model: &WorkspaceModel, ui: &DeckUi, width: usize) -> Vec<Line<'static>> {
+    let (Some(from), Some(agent)) = (ui.agents_page.reply_from, model.agents.get(ui.focused))
+    else {
+        return Vec::new();
+    };
+    let transcript = &agent.model.transcript;
+    if from >= transcript.len() {
+        return Vec::new();
+    }
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for i in (from..transcript.len()).rev() {
+        let mut entry = Vec::new();
+        crate::render::entry_lines(
+            &transcript[i],
+            crate::render::EntryView::at(&agent.model.files, transcript, i),
+            false,
+            false,
+            false,
+            width,
+            &mut entry,
+        );
+        entry.append(&mut rows);
+        rows = entry;
+        if rows.len() >= REPLY_ROWS {
+            break;
+        }
+    }
+    if rows.is_empty() {
+        return rows;
+    }
+    let mut out = vec![Line::from(Span::styled(
+        " REPLY".to_string(),
+        Style::new().fg(token::DIM),
+    ))];
+    out.extend(rows.split_off(rows.len().saturating_sub(REPLY_ROWS)));
+    out
+}
+
+/// Absolute screen cell of the page composer's caret, or `None` when the page
+/// draws no composer row for it to sit in.
+///
+/// The page is a full frame with a real text input in it, and until #4626 it
+/// positioned no cursor at all — so ratatui hid the hardware caret, which is
+/// what CJK/IME candidate windows anchor to, what a screen reader tracks, and
+/// what a cursor-following tmux pane follows. The same reasoning as
+/// `deck_render::composer_cursor_position`, over this composer.
+pub fn composer_cursor(model: &WorkspaceModel, ui: &DeckUi, area: Rect) -> Option<(u16, u16)> {
+    if area.width == 0 || area.height == 0 {
+        return None;
+    }
+    let geom = foot(model, ui, area);
+    let body_h = area.height.saturating_sub(geom.height);
+    let visible = geom.composer_h as usize;
+    let first = crate::deck_render::composer_scroll_first(geom.layout.cursor_row, visible);
+    let row_in_view = geom.layout.cursor_row.checked_sub(first)?;
+    let top = area
+        .y
+        .checked_add(body_h)?
+        .checked_add(u16::try_from(geom.reply.len()).ok()?)?
+        .checked_add(1)?;
+    let y = top.checked_add(u16::try_from(row_in_view).ok()?)?;
+    let x = area
+        .x
+        .checked_add(u16::try_from(PROMPT_PREFIX_W + geom.layout.cursor_col).ok()?)?;
+    (y < area.y.saturating_add(area.height)).then_some((x, y))
 }
 
 /// Draw the page over the whole frame.
@@ -481,47 +661,61 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         )));
     }
 
-    // Bottom chrome: notice, composer, hints — pinned to the frame's foot.
-    let c_layout = crate::composer::layout(&ui.agents_page.composer, inner_w.saturating_sub(3));
-    let composer_h = c_layout.rows.len().clamp(1, 3) as u16;
-    let foot_h = composer_h + 2;
-    let body_h = area.height.saturating_sub(foot_h);
+    // Bottom chrome: the reply pane, the notice, the composer, the hint row —
+    // pinned to the frame's foot by the one geometry `composer_cursor` reads.
+    let foot_geom = foot(model, ui, area);
+    let body_h = area.height.saturating_sub(foot_geom.height);
     let body = Rect {
         height: body_h,
         ..area
     };
     Paragraph::new(lines.into_iter().take(body_h as usize).collect::<Vec<_>>()).render(body, buf);
 
-    let mut foot: Vec<Line<'static>> = Vec::new();
+    let reply_h = foot_geom.reply.len() as u16;
+    let mut foot_lines: Vec<Line<'static>> = foot_geom.reply;
     if let Some(notice) = &ui.agents_page.notice {
-        foot.push(Line::from(Span::styled(format!(" {notice}"), gold)));
+        foot_lines.push(Line::from(Span::styled(format!(" {notice}"), gold)));
     } else {
-        foot.push(Line::default());
+        foot_lines.push(Line::default());
     }
-    for (r, row) in c_layout.rows.iter().enumerate() {
-        let prefix = if r == 0 { " ❯ " } else { "   " };
+    // Windowed on the caret's row, so a task longer than the composer's three
+    // rows keeps the line being typed on screen — and keeps it where
+    // `composer_cursor` puts the hardware caret.
+    let first = crate::deck_render::composer_scroll_first(
+        foot_geom.layout.cursor_row,
+        foot_geom.composer_h as usize,
+    );
+    for (r, row) in foot_geom
+        .layout
+        .rows
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(foot_geom.composer_h as usize)
+    {
+        let prefix = if r == 0 { PROMPT_PREFIX } else { "   " };
         if r == 0 && row.is_empty() && ui.agents_page.composer.is_blank() {
-            foot.push(Line::from(vec![
+            foot_lines.push(Line::from(vec![
                 Span::styled(prefix.to_string(), gold),
                 Span::styled("describe a task for a new session".to_string(), dim),
             ]));
         } else {
-            foot.push(Line::from(vec![
+            foot_lines.push(Line::from(vec![
                 Span::styled(prefix.to_string(), gold),
                 Span::styled(row.clone(), text),
             ]));
         }
     }
-    foot.push(Line::from(Span::styled(
+    foot_lines.push(Line::from(Span::styled(
         "   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · n new session · ⌃x⌃x kill · r refresh · esc back",
         dim,
     )));
     let foot_area = Rect {
         y: area.y + body_h,
-        height: foot_h.min(area.height),
+        height: foot_geom.height.min(area.height),
         ..area
     };
-    Paragraph::new(foot).render(foot_area, buf);
+    Paragraph::new(foot_lines).render(foot_area, buf);
 
     // The page's popups, anchored above the composer: the scoped slash menu,
     // or `/model`'s argument menu.
@@ -532,7 +726,7 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         arg
     };
     if !menu.is_empty() {
-        render_menu(ui, &menu, area, foot_area.y + 1, buf);
+        render_menu(ui, &menu, area, foot_area.y + reply_h + 1, buf);
     }
 }
 

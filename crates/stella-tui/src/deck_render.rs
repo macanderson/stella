@@ -74,6 +74,17 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         if ui.help_open {
             guarded_overlay(buf, area, "help", |b| render_help(model, ui, area, b));
         }
+        // The page's composer is a real text input, so it gets the hardware
+        // caret on the same terms the deck's own does below (#4626): withheld
+        // while an overlay owns the keyboard ahead of it, or while one of the
+        // page's own popups is claiming keys. The startup notice is excluded
+        // here for the reason it is excluded there — it is non-modal.
+        let page_menu_open = crate::v2::agents_page::menu_is_open(model, ui);
+        if !(ui.help_open || parked::owns_keyboard(ui) || page_menu_open)
+            && let Some(pos) = crate::v2::agents_page::composer_cursor(model, ui, area)
+        {
+            frame.set_cursor_position(pos);
+        }
         return;
     }
 
@@ -1024,7 +1035,12 @@ fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
 /// offset that keeps the caret's row always within the window. Split out of
 /// [`render_composer`] so [`composer_cursor_position`] computes the exact
 /// same windowing rather than a second copy that could drift from it.
-fn composer_scroll_first(cursor_row: usize, visible: usize) -> usize {
+///
+/// `pub(crate)` for the AGENTS page's own composer, which is a second text
+/// input with a caret to place (#4626) and must window its rows by the same
+/// rule — a page that scrolled differently from where it put the caret would
+/// be the drift this split exists to prevent, one surface over.
+pub(crate) fn composer_scroll_first(cursor_row: usize, visible: usize) -> usize {
     if cursor_row < visible {
         0
     } else {
