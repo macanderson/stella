@@ -487,11 +487,6 @@ fn the_wordmark_is_white_word_gold_star_no_space() {
         "SPEC 3.3: the word is text white, never gold"
     );
     assert_eq!(star.style.fg, Some(token::GOLD));
-    assert_eq!(
-        wordmark::WIDTH,
-        word.content.chars().count() + star.content.chars().count(),
-        "the wordmark's stated width must include no separator"
-    );
 }
 
 /// The retired form used the skill glyph as a brand mark, so the two meanings

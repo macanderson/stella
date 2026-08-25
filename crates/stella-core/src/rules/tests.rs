@@ -165,6 +165,7 @@ fn rule_file(dir: &str, name: &str, contents: &str) -> RuleFile {
     RuleFile {
         path: format!("{dir}/{name}"),
         contents: contents.to_string(),
+        contributed_by: None,
     }
 }
 

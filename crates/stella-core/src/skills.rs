@@ -107,6 +107,24 @@ pub struct Skill {
     pub source_path: String,
     /// Provenance — see [`SkillOrigin`].
     pub origin: SkillOrigin,
+    /// The plugin whose package contributed this skill, when one did (#3567).
+    /// `None` is the workspace's or the user's own.
+    ///
+    /// Set by the loader that **chose** the directory, never from the file's
+    /// own frontmatter — the same rule
+    /// `stella_tools::custom::CustomTool::contributed_by` follows, and for the
+    /// same reason: a package cannot name itself something it is not. Note that
+    /// [`SkillOrigin`] *can* be set from frontmatter
+    /// ([`skill_from_file_with_origin`]), which is exactly why this is a
+    /// separate field and not another value of it.
+    ///
+    /// A field beside [`Self::origin`] rather than inside it because the two
+    /// answer different questions. `SkillOrigin` is a tier — a `Copy` value the
+    /// selection tie-break and the demotion gate do arithmetic on, and
+    /// `skill_manager::origin_label` renders as a `&'static str`. "Which third
+    /// party shipped this" is not a tier and does not belong in that
+    /// vocabulary; it belongs where the tool surface already keeps it.
+    pub contributed_by: Option<String>,
 }
 
 // Discovery port + parsing
@@ -289,6 +307,10 @@ pub fn skill_from_file_with_origin(
         body: fm.body.trim().to_string(),
         source_path: path.to_string(),
         origin,
+        // Nobody's, until the loader that chose the directory says whose. This
+        // function is handed a path and a string of markdown, and the file's own
+        // frontmatter is exactly what must not be able to answer it.
+        contributed_by: None,
     })
 }
 

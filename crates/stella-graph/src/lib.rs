@@ -88,6 +88,7 @@ pub use markdown::BREADCRUMB_SEPARATOR;
 pub use reconcile::{FullWalkReason, GitCli, Plan, RepoOracle};
 pub use storage::{StorageExtract, StorageExtractor, StorageSnapshot};
 pub use store::IndexStats;
+pub use store::image_check::image_walks;
 pub use symbol::{CallSite, Symbol, SymbolKind};
 pub use vectors::chunks::{
     ChunkVector, MAX_FILES_PER_CHUNK_PASS, PendingChunk, PendingChunkFile, PendingChunkScan,

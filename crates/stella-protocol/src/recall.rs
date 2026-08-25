@@ -244,8 +244,12 @@ impl Recall {
     }
 }
 
-/// A [`ContextRecallPort`] that recalls nothing — the correct default before
-/// a context plane is wired, and for tasks where context grounding is off.
+/// A [`ContextRecallPort`] that recalls nothing — the default before a
+/// context plane is wired, and for tasks where context grounding is off.
+///
+/// Nothing in this workspace instantiates it; it is here for an external host
+/// driving `stella-engine` with no context plane of its own. #4754 decides
+/// whether that is reason enough to keep shipping it.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoContextRecall;
 

@@ -159,6 +159,7 @@ step_command() {
   contrast) echo 'check-contrast' ;;
   transcript-surfaces) echo 'check-transcript-surfaces' ;;
   prose) echo 'check-prose' ;;
+  line-citations) echo 'check-line-citations' ;;
   deck-paths) echo 'check-deck-paths' ;;
   css-vars) echo 'check-css-vars' ;;
   doc-warnings) echo 'cargo doc' ;;

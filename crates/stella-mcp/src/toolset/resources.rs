@@ -37,8 +37,7 @@
 //! `false` and they stay withheld from Best-of-N candidates.
 //!
 //! Everything advertised is deterministic prose over the server name, so the
-//! schema surface is byte-stable across sessions (invariant #7's discipline
-//! applied to the tool surface).
+//! schema surface is the same bytes in every session.
 
 use serde_json::Value;
 use stella_core::mcp_usage::{McpUsageRecord, push_usage};

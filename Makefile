@@ -43,6 +43,7 @@ GATE_GUARDS_FAST := no-scratch no-secrets design-refs action-pins cargo-install-
                     dead-code-allows measured-constants diagnostic-codes consumer-sites \
                     bench-suites wire-paths \
                     tokens hue-separation contrast transcript-surfaces prose \
+                    line-citations \
                     deck-fit-all-test deck-paths css-vars reserved-paths
 GATE_GUARDS := $(GATE_GUARDS_FAST) wire-schema
 
@@ -435,6 +436,27 @@ prose-report: ## Name every remaining content-free construction, with its remedy
 .PHONY: prose-update
 prose-update: ## Retighten the prose ratchet (run after deleting some)
 	@python3 ./scripts/check-prose.py --update
+
+.PHONY: line-citations
+line-citations: ## Assert prose cites code by name, never by line number (down-only ratchet, #4392)
+	@python3 ./scripts/check-line-citations.py
+
+.PHONY: line-citations-report
+line-citations-report: ## Name every line-pinned citation still in the tree
+	@python3 ./scripts/check-line-citations.py --report
+
+.PHONY: line-citations-update
+line-citations-update: ## Retighten the line-citation ratchet (run after rewriting some)
+	@python3 ./scripts/check-line-citations.py --update
+
+.PHONY: line-citations-test
+line-citations-test: ## Test the line-citation ratchet's direction (hermetic; not part of `gate`)
+	./scripts/test-line-citations.sh
+
+.PHONY: prose-adopt
+prose-adopt: ## Record a newly added prose pattern's pre-existing debt: make prose-adopt PATTERN=filler-adverb
+	@test -n "$(PATTERN)" || { echo "usage: make prose-adopt PATTERN=<name>[,<name>]"; exit 2; }
+	@python3 ./scripts/check-prose.py --adopt=$(PATTERN)
 
 .PHONY: prose-test
 prose-test: ## Test the prose ratchet's direction (hermetic; not part of `gate`)
