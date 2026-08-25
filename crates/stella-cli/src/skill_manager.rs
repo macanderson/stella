@@ -11,6 +11,11 @@
 //! same-named skill in each is listed twice, each independently manageable —
 //! unlike the recall loader, which merges by name with the project winning).
 //!
+//! A third source steers a session without being a scope: the skills an
+//! installed plugin ships. Those are listed too, marked as the package's and
+//! not deletable from the tab — see [`append_contributed`] for the column-by-
+//! column argument.
+//!
 //! ## State that isn't in the `SKILL.md`
 //!
 //! `stella_core::skills::Skill` carries no enabled/version/pin state, so this
@@ -102,12 +107,18 @@ struct Entry {
     skill: Skill,
 }
 
-/// List every skill directly under `scope_root`, honoring both the flat
-/// `<slug>.md` and nested `<slug>/SKILL.md` layouts (shallow — never descends
-/// into `<slug>/versions/`, matching the recall loader).
+/// List every skill directly under a scope root, with the origin a file there
+/// carries by default.
 fn list_scope(scope: SkillScope, scope_root: &Path) -> Vec<Entry> {
+    list_dir(scope_root, origin_for(scope))
+}
+
+/// List every skill directly under `dir`, honoring both the flat `<slug>.md`
+/// and nested `<slug>/SKILL.md` layouts (shallow — never descends into
+/// `<slug>/versions/`, matching the recall loader).
+fn list_dir(dir: &Path, origin: SkillOrigin) -> Vec<Entry> {
     let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(scope_root) else {
+    let Ok(entries) = std::fs::read_dir(dir) else {
         return out;
     };
     for entry in entries.flatten() {
@@ -126,11 +137,9 @@ fn list_scope(scope: SkillScope, scope_root: &Path) -> Vec<Entry> {
         } else {
             continue;
         };
-        if let Ok(skill) = skill_from_file_with_origin(
-            &skill_file.display().to_string(),
-            &content,
-            origin_for(scope),
-        ) {
+        if let Ok(skill) =
+            skill_from_file_with_origin(&skill_file.display().to_string(), &content, origin)
+        {
             out.push(Entry {
                 entry_path: path,
                 skill,
@@ -161,8 +170,9 @@ fn latest_version(entry_path: &Path) -> u32 {
         .unwrap_or(0)
 }
 
-/// Enumerate every installed skill across BOTH scopes, with its enabled /
-/// version / pin state, as the wire rows the SKILLS tab renders.
+/// Enumerate every skill steering this workspace — both scopes, plus the ones
+/// installed plugins contribute — with its enabled / version / pin state, as
+/// the wire rows the SKILLS tab renders.
 pub fn enumerate(workspace_root: &Path) -> Vec<SkillRow> {
     let mut rows = Vec::new();
     for scope in [SkillScope::Project, SkillScope::User] {
@@ -182,6 +192,7 @@ pub fn enumerate(workspace_root: &Path) -> Vec<SkillRow> {
                 description: entry.skill.description,
                 body: entry.skill.body,
                 origin: origin_label(entry.skill.origin).to_string(),
+                contributed_by: None,
                 version,
                 latest,
                 // Everything under a managed scope dir is deletable — uninstall
@@ -190,7 +201,60 @@ pub fn enumerate(workspace_root: &Path) -> Vec<SkillRow> {
             });
         }
     }
+    append_contributed(workspace_root, &mut rows);
     rows
+}
+
+/// Add a row for every skill an installed plugin ships
+/// (`<plugin_dir>/skills/`, #3380), which is otherwise absent from the tab
+/// entirely (#4734) — a user asking "what is steering me?" was shown the two
+/// directories they own and nothing else.
+///
+/// The columns a scope dir answers, answered for a directory that is not one:
+///
+/// - **`scope`** is `Project`. A contributed skill is installed under no scope
+///   of the user's, and `SkillScope` is on the wire, so rather than widen it
+///   the row borrows the scope whose state file governs it — the workspace's,
+///   matching the roster that decided this plugin loads here at all
+///   (`plugin_cmd::package::session_roster` reads workspace settings). Space
+///   in the tab therefore disables a contributed skill for real, through
+///   [`retain_enabled`]'s contributed branch.
+/// - **`removable`** is `false`. Uninstall unlinks an entry under a scope
+///   root; this has none. Retraction is `stella plugin remove` (or
+///   `plugins.<name> = "off"`), and the deck already points at space for a row
+///   it may not delete.
+/// - **`version`/`latest`** are 1. They read `<slug>/versions/vN/`, which a
+///   package need not ship, and the ops that would move them — `save_edit`,
+///   `set_pin` — look the name up under a scope root and refuse it, which is
+///   the correct answer: the tab does not edit a third party's package.
+///
+/// A name already claimed by one of the user's own rows is skipped, because
+/// `memory::skill_files::append_plugin_skills` skips it on the load side: a
+/// row for a skill that is not steering anything would answer the tab's
+/// question wrongly in the other direction.
+fn append_contributed(workspace_root: &Path, rows: &mut Vec<SkillRow>) {
+    let disabled = scope_root(SkillScope::Project, workspace_root)
+        .map(|root| disabled_names(&root))
+        .unwrap_or_default();
+    for contributed in crate::plugin_cmd::package::contributed_skill_dirs(workspace_root) {
+        for entry in list_dir(&contributed.dir, SkillOrigin::Installed) {
+            if rows.iter().any(|row| row.name == entry.skill.name) {
+                continue;
+            }
+            rows.push(SkillRow {
+                scope: SkillScope::Project,
+                enabled: !disabled.contains(&entry.skill.name),
+                name: entry.skill.name,
+                description: entry.skill.description,
+                body: entry.skill.body,
+                origin: "plugin".to_string(),
+                contributed_by: Some(contributed.plugin.clone()),
+                version: 1,
+                latest: 1,
+                removable: false,
+            });
+        }
+    }
 }
 
 // ── Enable / disable (persistent) ───────────────────────────────────────────
@@ -225,6 +289,13 @@ pub fn disabled_names(scope_root: &Path) -> HashSet<String> {
 /// Drop disabled skills from a merged skill list (used by the recall/selection
 /// path so a disabled skill is never injected — its file stays on disk). A
 /// skill is matched to its scope by `source_path` containment.
+///
+/// A plugin's skill is under neither scope root, so it is matched by its
+/// [`Skill::contributed_by`] stamp instead and governed by the **workspace**
+/// state file — the one [`enumerate`] gives its row, so the tab's space key
+/// and this filter are the same decision (#4734). Before that branch existed
+/// it fell through to "keep", and disabling a contributed skill silently did
+/// nothing.
 pub fn retain_enabled(skills: &mut Vec<Skill>, workspace_root: &Path) {
     let project = scope_root(SkillScope::Project, workspace_root);
     let user = scope_root(SkillScope::User, workspace_root);
@@ -235,7 +306,7 @@ pub fn retain_enabled(skills: &mut Vec<Skill>, workspace_root: &Path) {
             root.as_ref()
                 .is_some_and(|r| Path::new(&s.source_path).starts_with(r))
         };
-        if under(&project) {
+        if s.contributed_by.is_some() || under(&project) {
             !project_disabled.contains(&s.name)
         } else if under(&user) {
             !user_disabled.contains(&s.name)

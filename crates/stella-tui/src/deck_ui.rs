@@ -2780,7 +2780,13 @@ fn open_installed_preview(ui: &mut DeckUi) -> Option<DeckAction> {
     let row = ui.skills.view.rows.get(ui.skills.sel)?;
     ui.skills.preview = Some(SkillPreview {
         title: row.name.clone(),
-        subtitle: format!("{} · {} · v{}", row.scope.label(), row.origin, row.version),
+        // A contributed skill has no scope of the user's to name, so its
+        // package stands where the scope would (`plugin:vera · v1`).
+        subtitle: if row.contributed_by.is_some() {
+            format!("{} · v{}", row.provenance(), row.version)
+        } else {
+            format!("{} · {} · v{}", row.scope.label(), row.origin, row.version)
+        },
         pending: None,
         body: Some(if row.body.trim().is_empty() {
             "*(this skill has an empty body)*".to_string()

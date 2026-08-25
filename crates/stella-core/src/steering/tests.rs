@@ -229,6 +229,7 @@ fn a_skill_candidate_costs_exactly_its_rendered_block() {
             body: "ALWAYS_REVIEW_DATABASES".into(),
             source_path: ".stella/skills/reviewer/SKILL.md".into(),
             origin: crate::skills::SkillOrigin::Workspace,
+            contributed_by: None,
         },
         score: 0.42,
         matched_terms: vec!["database".into(), "review".into()],
@@ -335,6 +336,7 @@ fn scoring_skill(name: &str, body_bytes: usize) -> crate::skills::Skill {
         body: "x".repeat(body_bytes),
         source_path: format!("{name}.md"),
         origin: crate::skills::SkillOrigin::Workspace,
+        contributed_by: None,
     }
 }
 

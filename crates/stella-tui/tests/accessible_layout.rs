@@ -139,6 +139,7 @@ fn skills_ui(accessible: bool) -> DeckUi {
             description: "read and write PDFs".into(),
             body: String::new(),
             origin: "workspace".into(),
+            contributed_by: None,
             enabled: true,
             version: 1,
             latest: 1,

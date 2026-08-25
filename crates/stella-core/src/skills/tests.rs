@@ -218,6 +218,7 @@ fn skill(name: &str, description: &str, domains: &[&str], origin: SkillOrigin) -
         body: format!("body of {name}"),
         source_path: format!("{name}.md"),
         origin,
+        contributed_by: None,
     }
 }
 

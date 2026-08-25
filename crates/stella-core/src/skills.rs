@@ -107,6 +107,16 @@ pub struct Skill {
     pub source_path: String,
     /// Provenance — see [`SkillOrigin`].
     pub origin: SkillOrigin,
+    /// The plugin package that shipped this skill, by its manifest `name`, or
+    /// `None` for one the user wrote or installed themselves (#3380).
+    ///
+    /// [`SkillOrigin`] cannot carry this: it answers *which of the user's
+    /// directories* a skill lives under, and a package's `skills/` directory
+    /// is none of them. A skill parser reading a file has no way to know, so
+    /// this is stamped by whoever walked the package directory
+    /// (`stella-cli`'s `memory::skill_files`), and it is what every surface
+    /// that has to say whose skill is steering a turn reads.
+    pub contributed_by: Option<String>,
 }
 
 // Discovery port + parsing
@@ -289,6 +299,11 @@ pub fn skill_from_file_with_origin(
         body: fm.body.trim().to_string(),
         source_path: path.to_string(),
         origin,
+        // A file cannot name the package that shipped it — a frontmatter key
+        // would be a claim the file makes about itself, which is the shape of
+        // provenance this repository refuses everywhere else
+        // (`CustomTool::contributed_by`). The walker stamps it.
+        contributed_by: None,
     })
 }
 

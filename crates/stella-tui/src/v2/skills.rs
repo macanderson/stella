@@ -208,6 +208,11 @@ fn render_installed(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         };
         let meta = if row.origin == "auto" {
             " learned ".to_string()
+        } else if let Some(plugin) = &row.contributed_by {
+            // The package's name, where an installed skill shows its scope: a
+            // contributed skill lives under no scope of the user's, and which
+            // plugin shipped it is the fact this column is for.
+            format!(" {ver} · {plugin} ")
         } else {
             format!(" {ver} · {} ", row.scope.label())
         };
@@ -527,6 +532,7 @@ mod tests {
             description: format!("{name} does a thing"),
             body: format!("body of {name}"),
             origin: "workspace".to_string(),
+            contributed_by: None,
             enabled,
             version,
             latest,

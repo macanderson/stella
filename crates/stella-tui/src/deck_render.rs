@@ -514,7 +514,7 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
             Span::styled(glyph, glyph_style),
             Span::raw(" "),
             Span::styled(skill.name.clone(), Style::default().fg(theme::INK)),
-            Span::styled(format!("  [{}]", skill.origin), theme::muted()),
+            Span::styled(format!("  [{}]", skill.provenance()), theme::muted()),
             Span::styled(format!("  {desc}"), theme::muted()),
         ]));
     }

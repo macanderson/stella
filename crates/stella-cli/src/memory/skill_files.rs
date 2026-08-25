@@ -127,6 +127,19 @@ pub(crate) fn load_workspace_skills_with_authority(
 /// instead of a name collision inside your own load.
 ///
 /// Roster order decides plugin-versus-plugin, matching the tool surface.
+///
+/// # Provenance is stamped here, never read off the file
+///
+/// Passing the package's directory as `workspace_skills_dir` is what makes
+/// [`skills::load_skills_with_diagnostics`] read it at all, and it leaves
+/// every skill in `found` claiming [`skills::SkillOrigin::Workspace`] — a
+/// third party's skill reporting as the user's own (#4734). This is the one
+/// place that knows which package a file came from, so it is the place that
+/// says so: [`skills::Skill::contributed_by`] names the plugin and the origin
+/// becomes `Installed`. Both are overwritten unconditionally, including over
+/// an `origin: auto` frontmatter marker — that marker buys a selection
+/// tie-break ([`skills::select_skills`]), and a package must not be able to
+/// claim the boost reserved for what this workspace learned for itself.
 fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills) {
     for contributed in crate::plugin_cmd::package::contributed_skill_dirs(workspace_root) {
         let found = skills::load_skills_with_diagnostics(
@@ -137,10 +150,12 @@ fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills
             },
         );
         loaded.diagnostics.extend(found.diagnostics);
-        for skill in found.skills {
+        for mut skill in found.skills {
             if loaded.skills.iter().any(|held| held.name == skill.name) {
                 continue;
             }
+            skill.origin = skills::SkillOrigin::Installed;
+            skill.contributed_by = Some(contributed.plugin.clone());
             loaded.skills.push(skill);
         }
     }

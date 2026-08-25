@@ -21,6 +21,7 @@ fn a_row(name: &str, scope: SkillScope, enabled: bool) -> SkillRow {
         description: "d".to_string(),
         body: "b".to_string(),
         origin: "workspace".to_string(),
+        contributed_by: None,
         enabled,
         version: 1,
         latest: 1,

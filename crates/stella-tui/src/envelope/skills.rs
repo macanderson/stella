@@ -37,8 +37,15 @@ pub struct SkillRow {
     /// The pinned version's markdown body — carried so the tab can open the
     /// edit overlay with no extra round-trip.
     pub body: String,
-    /// Provenance label — `"workspace"`, `"user"`, `"installed"`, `"auto"`.
+    /// Provenance label — `"workspace"`, `"user"`, `"installed"`, `"auto"`,
+    /// `"plugin"`.
     pub origin: String,
+    /// The plugin package that shipped this skill, when one did — the answer
+    /// to "who is steering me?" for a row the user did not install under a
+    /// scope of their own. `origin` says *that* a package shipped it; this
+    /// says which, and the two are separate so a renderer can key on the
+    /// label without parsing a name out of it.
+    pub contributed_by: Option<String>,
     /// Session/persistent enabled state (a disabled skill is excluded from
     /// recall injection; the file stays on disk).
     pub enabled: bool,
@@ -48,6 +55,17 @@ pub struct SkillRow {
     pub latest: u32,
     /// Whether the deck may uninstall (delete) it.
     pub removable: bool,
+}
+
+impl SkillRow {
+    /// The provenance label to show, naming the package for a contributed
+    /// skill (`plugin:vera`) and reading as the bare origin otherwise.
+    pub fn provenance(&self) -> String {
+        match &self.contributed_by {
+            Some(plugin) => format!("{}:{plugin}", self.origin),
+            None => self.origin.clone(),
+        }
+    }
 }
 
 /// One registry search hit, parsed from `npx skills find` into structured

@@ -618,3 +618,134 @@ fn a_plugins_skill_never_displaces_one_the_user_wrote() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// **The listing witness (#4734).** A skill a package ships is on the SKILLS
+/// tab, named as that package's, and not deletable from there.
+///
+/// The tab is where a user goes to ask "what is steering me?", and it walked
+/// exactly the two directories they own — so a contributed skill was loaded,
+/// selectable, and invisible, with `stella plugin list` the only place the
+/// answer existed. It also reported `workspace` on the recall side, a third
+/// party's skill claiming to be the user's own, because the origin is derived
+/// from which *configured* directory a path sits under and a package's is
+/// neither.
+#[test]
+fn a_plugins_skill_is_listed_as_the_plugins_and_is_not_deletable_from_the_tab() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-skill-listing");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let listed = |root: &Path| {
+        crate::skill_manager::enumerate(root)
+            .into_iter()
+            .find(|row| row.name == "house-style")
+    };
+    assert!(
+        listed(&root).is_none(),
+        "anti-vacuity: nothing is listed before install"
+    );
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    let row = listed(&root).expect("a package's skill must appear on the tab");
+    assert_eq!(
+        row.contributed_by.as_deref(),
+        Some("vera"),
+        "the row names the package that shipped it"
+    );
+    assert_eq!(
+        row.origin, "plugin",
+        "and no longer claims to be the user's"
+    );
+    assert_eq!(row.provenance(), "plugin:vera", "which is what renders");
+    assert!(
+        !row.removable,
+        "uninstall unlinks an entry under a scope root and this has none — \
+         retraction is `stella plugin remove`"
+    );
+    assert!(row.enabled, "and it is steering until told otherwise");
+
+    // The same provenance on the recall side: the loaded skill carries the
+    // package's name, and an origin that is not the workspace's.
+    let loaded = crate::memory::load_workspace_skills_with_authority(&root, true).skills;
+    let skill = loaded
+        .iter()
+        .find(|skill| skill.name == "house-style")
+        .expect("the package's skill loads");
+    assert_eq!(skill.contributed_by.as_deref(), Some("vera"));
+    assert_eq!(skill.origin, stella_core::skills::SkillOrigin::Installed);
+
+    remove(&root, "vera").expect("remove must succeed");
+    assert!(
+        listed(&root).is_none(),
+        "and the row leaves with the package"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// **The disable witness (#4734).** The deck refuses to delete a contributed
+/// row and points at space instead ("press space to disable it"), so space has
+/// to work: the workspace state file governs a contributed skill, and a
+/// disabled one stops being injected.
+#[test]
+fn disabling_a_plugins_skill_from_the_tab_stops_it_steering() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-skill-disable");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    let steering = |root: &Path| {
+        crate::memory::load_workspace_skills_with_authority(root, true)
+            .skills
+            .iter()
+            .any(|skill| skill.name == "house-style")
+    };
+    assert!(steering(&root), "anti-vacuity: it steers to begin with");
+
+    crate::skill_manager::set_enabled(stella_tui::SkillScope::Project, "house-style", false, &root)
+        .expect("the row's scope is one `set_enabled` can write");
+    assert!(
+        !steering(&root),
+        "a disabled contributed skill is not injected — before this it was \
+         under neither scope root and fell through to `keep`"
+    );
+    let row = crate::skill_manager::enumerate(&root)
+        .into_iter()
+        .find(|row| row.name == "house-style")
+        .expect("and it stays listed, marked off — the file is the package's");
+    assert!(!row.enabled);
+
+    crate::skill_manager::set_enabled(stella_tui::SkillScope::Project, "house-style", true, &root)
+        .expect("re-enable");
+    assert!(steering(&root), "and comes back");
+
+    let _ = std::fs::remove_dir_all(&root);
+}
