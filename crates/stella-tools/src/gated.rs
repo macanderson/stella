@@ -260,17 +260,17 @@ impl<'a> GatedToolSet<'a> {
         self
     }
 
-    /// The caller the gate is asked about for `name`: the plugin that
-    /// contributed the tool, or — for everything the user wrote themselves
-    /// and every built-in — this stack's own principal.
-    /// Who a call to `name` would be authorized as — the question
-    /// [`Self::principal_for`] answers, exposed so a host can assert the
-    /// answer instead of inferring it from a gate's behaviour.
+    /// Who a call to `name` would be authorized as, owned rather than
+    /// borrowed — so a host can assert the answer instead of inferring it
+    /// from how the gate behaved.
     #[must_use]
     pub fn principal_of(&self, name: &str) -> Principal {
         self.principal_for(name).clone()
     }
 
+    /// The caller the gate is asked about for `name`: the plugin that
+    /// contributed the tool, or — for everything the user wrote themselves
+    /// and every built-in — this stack's own principal.
     fn principal_for(&self, name: &str) -> &Principal {
         // Exact first, then the namespace families, then this stack's own
         // caller — so a tool named outright is never overridden by a prefix
