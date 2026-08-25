@@ -188,7 +188,7 @@ pub fn validate_stream(events: &[AgentEvent]) -> Vec<StreamViolation> {
 
 /// The run's stages walk one legal order.
 ///
-/// Two kinds of `Stage` event are deliberately not judged here. Turn-scoped
+/// Two kinds of `Stage` event are not judged here. Turn-scoped
 /// ones are the engine's own phases, several per run, and folding them into
 /// this single order would report a violation at every turn boundary (#3398).
 /// A stage whose name the host does not know — a name an installed plugin
@@ -378,7 +378,7 @@ pub fn to_jsonl(events: &[AgentEvent]) -> String {
 
 /// Read a recording and check it — [`parse_jsonl`] then [`validate_stream`].
 ///
-/// The three outcomes are deliberately distinct: `Ok(vec![])` is a conforming
+/// The three outcomes stay distinct: `Ok(vec![])` is a conforming
 /// recording, `Ok(violations)` is one that read cleanly and breaks the rules,
 /// and `Err` is one that is not a readable recording at all. A checker that
 /// collapsed the third into the first would report a clean bill of health for a
@@ -396,7 +396,7 @@ mod tests {
     use super::*;
     use stella_protocol::{BudgetMode, ToolCall, ToolOutput};
 
-    /// `AgentEvent` deliberately carries no `PartialEq` — it holds a
+    /// `AgentEvent` carries no `PartialEq` — it holds a
     /// `serde_json::Value` payload on its forward-compatible arm — so two
     /// streams are compared as the bytes they serialize to, which is the
     /// equality a recording actually has.

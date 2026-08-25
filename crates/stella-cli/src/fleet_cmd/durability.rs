@@ -6,7 +6,7 @@
 //!
 //! Every other door binds `crate::durability::SessionDurability` before its
 //! first turn — `SessionPresence::announce` for `stella run` and the plain
-//! REPL, the deck at its session switch, `stella resume`, and a deck lane at
+//! shell, the deck at its session switch, `stella resume`, and a deck lane at
 //! its own key. The fan-out bound nothing, so `sink()` answered `None` for
 //! every worker turn and a worker killed at step 40 of 50 lost all 40 steps of
 //! transcript. The tree kept whatever it wrote; the conversation that produced

@@ -230,7 +230,7 @@ correction is the live half of the gap.** It said serve adopts
 `stella-runtime` for its resource half, on the strength of the `with_provider`
 seam having been built for the `RemoteProvider` case. Serve cannot: it
 executes no tool and holds no credential, so it depends on three workspace
-crates and deliberately not on `stella-store`
+crates and not on `stella-store`
 (`crates/stella-serve/Cargo.toml`, and the reason in its README), while
 `stella-runtime` depends on `stella-model`, `stella-tools` and `stella-store`
 and `RuntimeBuilder::build` refuses a `workspace_root` that is not a directory
