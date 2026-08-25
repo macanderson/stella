@@ -378,9 +378,12 @@ fn render_create_scope(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
             break;
         }
         let selected = i == panel.scope_sel.min(1);
-        let line = format!("{} {option}", if selected { ">" } else { " " });
+        let line = format!("{} {option}", if selected { "▸" } else { " " });
         let style = if selected {
-            Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD)
+            Style::new()
+                .fg(token::GOLD)
+                .bg(token::HL)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::new().fg(token::TEXT)
         };
@@ -601,7 +604,7 @@ fn render_version_picker(panel: &InstalledPanel, area: Rect, buf: &mut Buffer) {
         };
         let line = format!(
             "{} v{}  {}{pinned}",
-            if selected { ">" } else { " " },
+            if selected { "▸" } else { " " },
             info.version,
             info.label,
         );
@@ -791,6 +794,43 @@ mod tests {
         assert!(
             text.contains("no new version"),
             "the pin-does-not-increment contract is on screen:\n{text}"
+        );
+    }
+
+    /// `crate::views::cards`'s convention: a `▸` marker glyph plus a
+    /// `token::HL` background tint on the selected row, together — the
+    /// golden suite strips style, so a tint with no glyph is invisible to
+    /// it, and a glyph with no tint drops the other half of the pair. Both
+    /// of this tab's modal pickers used a bare `>` before this pin, and the
+    /// scope picker carried no background at all.
+    #[test]
+    fn the_version_and_scope_pickers_select_with_a_glyph_and_a_tint() {
+        let mut ui = ui_with(vec![entry("reviewer", None)]);
+        ui.installed.mode = InstalledMode::PickVersion;
+        ui.installed.version_sel = 0;
+        let area = Rect::new(0, 0, 80, 8);
+        let mut buf = Buffer::empty(area);
+        render(&mut ui, 0, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains('▸'), "version picker marker:\n{text}");
+        assert_eq!(
+            style_at(&buf, "▸").bg,
+            Some(token::HL),
+            "version picker selected row carries the background tint"
+        );
+
+        let mut ui = ui_with(vec![]);
+        ui.installed.mode = InstalledMode::CreateScope;
+        ui.installed.scope_sel = 0;
+        let area = Rect::new(0, 0, 80, 6);
+        let mut buf = Buffer::empty(area);
+        render(&mut ui, 0, area, &mut buf);
+        let text = buffer_text(&buf);
+        assert!(text.contains('▸'), "scope picker marker:\n{text}");
+        assert_eq!(
+            style_at(&buf, "▸").bg,
+            Some(token::HL),
+            "scope picker selected row carries the background tint"
         );
     }
 

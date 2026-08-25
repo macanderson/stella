@@ -513,6 +513,10 @@ measured-constants-test: ## Test the measured-constants guard's directions (herm
 shellcheck-guard-test: ## Test the shellcheck step's presence guard (hermetic; not part of `gate`)
 	./scripts/test-shellcheck-guard.sh
 
+.PHONY: record-demo-size-test
+record-demo-size-test: ## Test record-demo.sh's raster/ladder arithmetic (hermetic; not part of `gate`)
+	./scripts/test-record-demo-size.sh
+
 .PHONY: diagnostic-codes
 diagnostic-codes: ## Assert docs/reference/diagnostics.md documents every emitted diagnostic code (#2507)
 	@./scripts/check-diagnostic-codes.sh

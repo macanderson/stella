@@ -62,6 +62,7 @@ fn small_snapshot() -> GraphSnapshot {
         ],
         files: vec!["driver.rs".into(), "src/lib.rs".into()],
         query_ms: None,
+        query: None,
     }
 }
 
@@ -157,6 +158,7 @@ fn a_node_with_no_edges_says_so_instead_of_an_empty_list() {
             edges: vec![],
             files: vec![],
             query_ms: None,
+            query: None,
         }),
         ..DeckUi::default()
     };
@@ -185,6 +187,7 @@ fn node_list_windows_to_keep_the_cursor_visible() {
             edges: vec![],
             files: vec![],
             query_ms: None,
+            query: None,
         }),
         graph_cursor: n - 1,
         ..DeckUi::default()

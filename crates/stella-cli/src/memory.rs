@@ -75,7 +75,7 @@ pub(crate) mod replay;
 pub(crate) mod retirement;
 pub(crate) mod rules_mining;
 pub(crate) mod self_tuning;
-mod skill_files;
+pub(crate) mod skill_files;
 // #3349: the SteeringPlane implementation — the frame adapter and the one
 // packing pass behind `recall_block_reported`.
 mod steering;

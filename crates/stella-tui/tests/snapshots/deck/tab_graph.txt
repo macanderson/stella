@@ -5,7 +5,7 @@
 
  SESSION AGENTS TRACES   GRAPH   FILES SKILLS MCP ISSUES SETTINGS                                                                                       stella*
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ⌕ file:run_turn — engine step driver   / files                                                                                                 6 nodes · det │
+│ ⌕ file:run_turn — engine step driver   / files · q query                                                                                       6 nodes · det │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
  nodes · 6 in file
 ╭────────────────────────────────────────────────────────╮╭ ▢ Engine ──────────────────────────────────────────────────────────────────────────────────────────╮
@@ -37,7 +37,7 @@
 │ ▤ file · ▢ type · ƒ fn                                 ││                                                                                                    │
 │ right column = edge count                              ││high coupling = blast radius if you edit this file                                                  │
 ╰────────────────────────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
- ↵ open file · / files · ↑↓ walk
+ ↵ open file · / files · q query · ↑↓ walk
  every answer here is deterministic · $0.00
  ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>

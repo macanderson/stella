@@ -147,6 +147,36 @@ impl AnthropicProvider {
     ///
     /// Session-scoped by construction: the policy is part of the request
     /// prefix the cache is keyed on, so it must not change mid-session.
+    ///
+    /// # Reach, and why the gateway arm is unaffected
+    ///
+    /// `context_management` is a Messages API parameter and this builder is
+    /// the only thing in the workspace that sets one. `factory::build_provider`
+    /// hands `Dialect::Anthropic` to this adapter and every
+    /// `Dialect::OpenaiCompatible` provider — `openrouter` included — to the
+    /// shared chat-completions adapter (`crate::zai`), which has no such
+    /// field. So a session routed through OpenRouter never puts this on the
+    /// wire, whatever the gateway would have done with it if asked.
+    ///
+    /// #3756 framed that as an open question, on a hand-rolled probe that sent
+    /// the field to OpenRouter and got HTTP 200 — a status equally consistent
+    /// with "forwarded" and "dropped". The question does not need settling for
+    /// Stella: the arm cannot be affected by a field it does not send, so a
+    /// benchmark measured through the gateway measures this feature as absent
+    /// regardless of the answer. Enabling it on a gateway route needs a
+    /// context-management field in the chat-completions dialect first, plus a
+    /// row on [`crate::provider_parity`] — neither exists.
+    ///
+    /// # No caller, until the trigger is measured
+    ///
+    /// Nothing calls this outside its tests, because the value that decides
+    /// whether it helps or hurts — `trigger_tokens` — has not been measured.
+    /// Below the trigger nothing clears and a short conversation stays fully
+    /// cached; above it, every edit invalidates the cached prefix from the
+    /// edit point and pays a cache write. At Stella's observed cache-hit rate
+    /// that is a read at $0.30/MTok against a write at $3.75/MTok, so a
+    /// guessed trigger is a 12.5x mistake in whichever direction it is wrong.
+    /// #3756 holds the panel design that would settle it.
     #[must_use]
     pub fn with_context_editing(
         mut self,
@@ -613,8 +643,10 @@ fn attachment_block(part: crate::attachment::WirePart) -> AnthropicContentBlock 
             cache_control: None,
         },
         // Audio/video are switched off in ANTHROPIC_CAPS, so wire_parts has
-        // already degraded them to Text notes. Turning either cap on without
-        // adding a block arm lands here — degrade, never abort the turn.
+        // already degraded them before this sees them — audio to a Text note,
+        // video to sampled Image parts plus the note saying they are frames
+        // (`crate::keyframes`). Turning either cap on without adding a block
+        // arm lands here — degrade, never abort the turn.
         part @ (crate::attachment::WirePart::Audio { .. }
         | crate::attachment::WirePart::Video { .. }) => AnthropicContentBlock::Text {
             text: crate::attachment::unsupported_part_note(&part, "Anthropic Messages API"),

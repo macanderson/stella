@@ -635,8 +635,12 @@ fn render_typeahead(issues: &IssuesPanel, area: Rect, field_line: usize, buf: &m
         let mut kind_style = gold_bold();
         let mut rest_style = Style::new().fg(token::TEXT);
         if is_sel {
-            kind_style = kind_style.add_modifier(Modifier::REVERSED);
-            rest_style = rest_style.add_modifier(Modifier::REVERSED);
+            // The marker glyph plus a background tint, not `REVERSED` — the
+            // convention `crate::views::cards`'s module doc states (the
+            // golden suite strips style, so the tint has to ride alongside
+            // the glyph rather than a swap no other v2 list uses).
+            kind_style = kind_style.bg(token::HL);
+            rest_style = rest_style.bg(token::HL);
         }
         let (kind, rest) = entity_hit_parts(hit, (w as usize).saturating_sub(6));
         lines.push(Line::from(vec![
@@ -733,6 +737,49 @@ mod tests {
 
     fn text(line: Line<'_>) -> String {
         line.spans.iter().map(|s| s.content.clone()).collect()
+    }
+
+    /// The typeahead popup's selected row used `Modifier::REVERSED` where
+    /// every other v2 list marks a selection with a `▸` glyph plus a
+    /// `token::HL` tint (`crate::views::cards`'s stated convention — the
+    /// golden suite strips style, so the two have to ride together). Both
+    /// assertions read the rendered cell rather than the source, so this
+    /// fails against the old `REVERSED` styling.
+    #[test]
+    fn the_typeahead_popup_selects_with_a_glyph_and_a_tint_not_reversed() {
+        let mut issues = IssuesPanel::default();
+        issues.typeahead.hits = vec![
+            hit("Person", "octocat", "Octo Cat"),
+            hit("Label", "bug", ""),
+        ];
+        issues.typeahead.sel = 0;
+        let area = Rect::new(0, 0, 60, 10);
+        let mut buf = Buffer::empty(area);
+        render_typeahead(&issues, area, 0, &mut buf);
+
+        let rendered = (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+        let marker_row = rendered
+            .iter()
+            .position(|line| line.contains('▸'))
+            .expect("marker row");
+        assert!(
+            (0..area.width).any(|x| buf
+                .cell((x, marker_row as u16))
+                .is_some_and(|c| c.style().bg == Some(token::HL))),
+            "selected row carries the background tint, not just the glyph"
+        );
+        assert!(
+            !(0..area.width).any(|x| buf
+                .cell((x, marker_row as u16))
+                .is_some_and(|c| c.style().add_modifier.contains(Modifier::REVERSED))),
+            "selected row no longer uses REVERSED"
+        );
     }
 
     #[test]

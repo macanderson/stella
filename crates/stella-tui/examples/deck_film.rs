@@ -527,6 +527,7 @@ fn fixture_skills() -> SkillsView {
             version,
             latest,
             removable: origin != "workspace",
+            contributed_by: None,
         };
     SkillsView {
         rows: vec![

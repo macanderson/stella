@@ -190,6 +190,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-prose-guard.sh
 
+      - name: the demo recorder's raster and ladder arithmetic
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-record-demo-size.sh
+
       - name: a release version stamp leaves Cargo.lock resolvable
         if: ${{ !cancelled() }}
         run: ./scripts/test-release-lockfile.sh

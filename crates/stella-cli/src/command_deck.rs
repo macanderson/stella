@@ -58,6 +58,7 @@
 //!   retains what that cancel dropped so the second press still has a
 //!   prompt to requeue and park.
 
+mod graph_input;
 mod skills;
 use skills::{deck_slash_commands, handle_skills_input, skills_snapshot};
 
@@ -67,37 +68,36 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use stella_core::ports::{Principal, ToolExecutor};
-use stella_core::{BudgetGuard, CalibrationMap, Engine, TurnOutcome};
+use stella_core::ports::ToolExecutor;
 use stella_model::provider::Provider;
 use stella_protocol::{
-    AgentEvent, CiStatus, CompletionMessage, CompletionRequest, PrStatus, QuestionOutcome, TaskItem,
+    AgentEvent, CompletionMessage, CompletionRequest, QuestionOutcome, TaskItem,
 };
 use stella_store::Store;
 use stella_tools::ToolRegistry;
-use stella_tools::custom::CustomTool;
-use stella_tools::hook_runner::HostHookRunner;
 use stella_tools::registry::approval::ApprovalResponse;
 use stella_tui::{
-    AgentMeta, AgentScope, AgentStatus, DeckOptions, EntityHit, Inbound, SkillOp, SkillScope,
-    SkillSearchHit, SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
+    AgentMeta, AgentScope, AgentStatus, DeckOptions, Inbound, SkillOp, SkillScope, SkillSearchHit,
+    SkillsView, SlashCommand, SplashCue, UserInput, WorkspaceInput, run_deck,
 };
 use tokio::sync::mpsc::{self, UnboundedSender};
 
-use crate::claims::ClaimTap;
 use crate::config::Config;
-use crate::interactive::{AskUserIo, SkillRegistry};
+use crate::interactive::SkillRegistry;
 use crate::{agent, rules};
 
 mod add_dir;
 mod authoring;
 mod command_side;
+mod driver_support;
 mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;
 mod inspect_service;
 mod lead_control;
+mod lead_turn;
 mod model_cmd;
+mod panel_snapshots;
 mod pr_observe;
 mod profile_cmd;
 mod session_clear;
@@ -105,21 +105,27 @@ mod session_override;
 mod sessions_view;
 mod settings_io;
 mod settle;
+mod slash_commands;
 mod slash_pump;
 mod steering;
 mod task_tap;
 mod theme_cmd;
 mod worker_control;
+use driver_support::{
+    handle_supervisor_msg, service_registry_action, spawn_mcp_connect, spawn_notification_poller,
+    spawn_pr_monitor,
+};
+use lead_turn::run_lead_turn;
+use panel_snapshots::{engine_config_inbound, tool_policy_inbound};
 use pr_observe::{ci_status_token, observe_pr, pr_status_token};
+use slash_commands::{DeckCommand, handle_agents_input, run_deck_command};
 
 use crate::memory::{SessionMemory, TurnFriction};
-use crate::runtime::TokioSleeper;
 use crate::subsession::{self, SubSessions, SupervisorMsg};
-use authoring::{agents_list_creating, agents_list_inbound, handle_agent_create};
+use authoring::{agents_list_creating, handle_agent_create};
 pub(crate) use forwarder::{close_turn_stream, spawn_forwarder};
 use sessions_view::sessions_inbound;
 use settings_io::{apply_pending_reload, handle_engine_config_input, handle_tools_input};
-use task_tap::{PlanSetup, TaskTap};
 
 /// Where an Esc-delivered steer lands, driver-side.
 mod steer;
@@ -1067,16 +1073,14 @@ pub async fn run_deck_session(
                         requeue_front(&mut queue, &in_tx, dispatch.stop_and_hold(None));
                         continue 'session;
                     }
-                    // The Graph tab's file picker asked to re-root on a file:
-                    // requery its neighborhood and push a fresh snapshot back, the
-                    // same out-of-band refresh `/init` uses. The loop is idle here,
-                    // so the read runs inline.
-                    Some(WorkspaceInput::FocusGraphFile { file }) => {
-                        if let Some(snapshot) =
-                            agent::graph_snapshot_focus(&cfg.workspace_root, Some(&file))
-                        {
-                            let _ = in_tx.send(Inbound::GraphSnapshot(snapshot));
-                        }
+                    // The Graph tab asked to re-root — on a file (the picker)
+                    // or on a query (the `q` box). The loop is idle here, so
+                    // the read runs inline.
+                    Some(
+                        input @ (WorkspaceInput::FocusGraphFile { .. }
+                        | WorkspaceInput::GraphQuery { .. }),
+                    ) => {
+                        graph_input::answer(input, &cfg.workspace_root, &in_tx);
                         continue 'session;
                     }
                     // SKILLS-tab ops work whether or not a turn is running — handled
@@ -1946,20 +1950,19 @@ pub async fn run_deck_session(
                                     .to_string(),
                             }));
                         }
-                        // The Graph tab's file picker can re-root mid-turn (a
-                        // user browsing the graph while an agent works). The
-                        // requery opens SQLite + loads grammars, so run it on
-                        // the blocking pool rather than stalling this event
-                        // pump; it sends the fresh snapshot back when done.
-                        Some(WorkspaceInput::FocusGraphFile { file }) => {
+                        // The Graph tab can re-root mid-turn (a user browsing
+                        // the graph while an agent works). The requery opens
+                        // SQLite + loads grammars, so run it on the blocking
+                        // pool rather than stalling this event pump; it sends
+                        // the fresh snapshot back when done.
+                        Some(
+                            input @ (WorkspaceInput::FocusGraphFile { .. }
+                            | WorkspaceInput::GraphQuery { .. }),
+                        ) => {
                             let tx = in_tx.clone();
                             let root = cfg.workspace_root.clone();
                             tokio::task::spawn_blocking(move || {
-                                if let Some(snapshot) =
-                                    agent::graph_snapshot_focus(&root, Some(&file))
-                                {
-                                    let _ = tx.send(Inbound::GraphSnapshot(snapshot));
-                                }
+                                graph_input::answer(input, &root, &tx);
                             });
                         }
                         // The INSTALLED AGENTS pane stays live while a turn
@@ -2514,7 +2517,7 @@ fn spawn_mcp_connect(
     release_splash: impl FnOnce() + Send + 'static,
 ) -> bool {
     let plan = agent::load_mcp_plan(&cfg);
-    let configured = matches!(plan, agent::McpPlan::Servers(_));
+    let configured = matches!(plan, agent::McpPlan::Servers(..));
     tokio::spawn(async move {
         match plan {
             agent::McpPlan::None => {}
@@ -2525,7 +2528,13 @@ fn spawn_mcp_connect(
                     status: AgentStatus::WaitingInput,
                 });
             }
-            agent::McpPlan::Servers(servers) => {
+            agent::McpPlan::Servers(servers, notices) => {
+                // Whose server was dropped, and whose package's file did not
+                // parse — before the connect, so the report below is read
+                // against a list the human knows was narrowed.
+                for notice in notices {
+                    let _ = chrome_tx.send(system_notice(notice));
+                }
                 let _ = chrome_tx.send(system_notice(format!(
                     "connecting {} MCP server(s)…",
                     servers.len()
@@ -2579,8 +2588,6 @@ const SESSION_RECORD_MAX_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 /// Inbox hygiene: **read** notifications older than this are swept at deck
 /// startup (14 days). Unread ones persist regardless — that is the contract.
 const NOTIFICATION_MAX_AGE_MS: u64 = 14 * 24 * 60 * 60 * 1000;
-/// How often the deck re-reads the machine-wide notification store.
-const NOTIFY_POLL_MS: u64 = 3_000;
 /// A successful turn at least this long lands a "work finished" notification
 /// — long enough that the user has plausibly looked away.
 const LONG_TURN_NOTIFY_SECS: i64 = 60;

@@ -1,19 +1,20 @@
 //! Shared chrome for the floating cards (`/plan` · `/models` · `/budget`):
-//! one bordered block floated above the composer,
-//! max-width ~56 cells, title row = accent-colored name + dimmed context +
-//! right-aligned dim key hints; body rows below. Implemented once so the three
-//! cards read as one system, and so the selection convention — a `▸` marker
-//! glyph **plus** the background tint — is structural: the golden suite
-//! strips style, so a style-only selection would be invisible to it (the
-//! exact gap the FILES list has today).
+//! one `BorderType::Rounded` block in `token::BORDER`, floated above the
+//! composer, max-width ~56 cells — the same border every other v2 overlay
+//! draws (`crate::views::approval`, `views::picker`, `views::queue`, …), so these
+//! three cards are not a second chrome family. Title row = gold name +
+//! dimmed context; the key hints ride the BOTTOM border, right-aligned, the
+//! way every hand-rolled v2 overlay already places them. Implemented once so
+//! the three cards read as one system, and so the selection convention — a
+//! `▸` marker glyph **plus** the background tint — is structural: the golden
+//! suite strips style, so a style-only selection would be invisible to it.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::Style;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
-
-use crate::theme;
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
+use stella_tui_theme::token;
 
 /// Widest card, in columns (matches the panic boundary's error card).
 pub(crate) const CARD_MAX_W: u16 = 56;
@@ -54,8 +55,13 @@ pub(crate) fn card_area(frame: Rect, body_rows: u16, max_w: u16, full_width: boo
 ///
 /// The title row rides the top border: `name` in the accent, the `context`
 /// spans (dim by convention; the task card's fraction bar keeps its own
-/// success color) beside it, `hints` dim and right-aligned. Everything
-/// meaningful in it is a glyph/word (style-blind goldens can pin it).
+/// success color) beside it. `hints` rides the BOTTOM border, right-aligned —
+/// `crate::views::approval`, `views::picker`, `views::queue` and every other
+/// hand-rolled v2 overlay already draw hints there rather than on the top
+/// title; this shared helper used to be the one holdout, so `/plan`,
+/// `/models` and `/budget` (its only callers) read as a different chrome
+/// family from the rest of the deck's floating cards. Everything meaningful
+/// in it is still a glyph/word (style-blind goldens can pin it).
 pub(crate) fn card_frame(
     area: Rect,
     name: &str,
@@ -64,7 +70,10 @@ pub(crate) fn card_frame(
     buf: &mut Buffer,
 ) -> Rect {
     Clear.render(area, buf);
-    let mut title = vec![Span::styled(format!(" {name} "), theme::accent())];
+    let mut title = vec![Span::styled(
+        format!(" {name} "),
+        Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD),
+    )];
     if !context.is_empty() {
         title.push(Span::raw(" "));
         title.extend(context);
@@ -72,13 +81,14 @@ pub(crate) fn card_frame(
     }
     let mut block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::panel_rule())
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(token::BORDER))
         .title(Line::from(title));
     if !hints.is_empty() {
-        block = block.title(
+        block = block.title_bottom(
             Line::from(Span::styled(
                 format!(" {hints} "),
-                Style::new().fg(theme::TEXT_TERTIARY),
+                Style::new().fg(token::DIM),
             ))
             .alignment(Alignment::Right),
         );
@@ -90,11 +100,11 @@ pub(crate) fn card_frame(
 
 /// The selection affordance every card row uses: the mandatory `▸ ` marker
 /// (unselected rows get two spaces so columns hold), and the row tint via
-/// `SELECT_BG` layered by the caller. Returned as a span so the caller
+/// [`token::HL`] layered by the caller. Returned as a span so the caller
 /// controls the rest of the row.
 pub(crate) fn marker(selected: bool) -> Span<'static> {
     if selected {
-        Span::styled("▸ ", theme::accent())
+        Span::styled("▸ ", Style::new().fg(token::GOLD))
     } else {
         Span::raw("  ")
     }
@@ -112,7 +122,7 @@ pub(crate) fn render_body(
     if let Some(sel) = selected_row
         && let Some(line) = lines.get_mut(sel)
     {
-        line.style = line.style.bg(theme::SELECT_BG);
+        line.style = line.style.bg(token::HL);
     }
     Paragraph::new(lines).render(inner, buf);
 }
@@ -133,10 +143,7 @@ pub(crate) fn mini_fraction_bar(
     let filled = (done * width).div_ceil(total).min(width);
     vec![
         Span::styled("▰".repeat(filled), Style::new().fg(color)),
-        Span::styled(
-            "▱".repeat(width - filled),
-            Style::new().fg(theme::TEXT_TERTIARY),
-        ),
+        Span::styled("▱".repeat(width - filled), Style::new().fg(token::MUTED)),
     ]
 }
 
@@ -197,6 +204,40 @@ pub(crate) fn truncate_cols(text: &str, max_cols: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `card_frame` draws the same chrome family as every hand-rolled v2
+    /// overlay: a rounded border, and hints on the bottom rule rather than
+    /// the top title. This pins the port against regressing to the old
+    /// `Plain` border with top-title hints.
+    #[test]
+    fn card_frame_draws_the_shared_v2_chrome() {
+        let area = Rect::new(0, 0, 30, 6);
+        let mut buf = Buffer::empty(area);
+        card_frame(area, "plan", Vec::new(), "esc close", &mut buf);
+        assert_eq!(
+            buf.cell((0, 0)).map(|c| c.symbol()),
+            Some("╭"),
+            "top-left corner is rounded"
+        );
+        let bottom_row: String = (0..area.width)
+            .map(|x| {
+                buf.cell((x, area.height - 1))
+                    .map(|c| c.symbol())
+                    .unwrap_or(" ")
+            })
+            .collect();
+        assert!(
+            bottom_row.contains("esc close"),
+            "hints ride the bottom border: {bottom_row:?}"
+        );
+        let top_row: String = (0..area.width)
+            .map(|x| buf.cell((x, 0)).map(|c| c.symbol()).unwrap_or(" "))
+            .collect();
+        assert!(
+            !top_row.contains("esc close"),
+            "hints no longer ride the top title: {top_row:?}"
+        );
+    }
 
     #[test]
     fn card_area_fits_inside_any_frame() {

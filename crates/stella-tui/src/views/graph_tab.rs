@@ -28,10 +28,13 @@
 //! driver and drawn only when it is there — a demo snapshot nobody timed
 //! carries `None` and the bar simply omits it.
 //!
-//! The renderings' `q free-form query` still has no producer: the picker
-//! re-roots on a file name only, and there is no `WorkspaceInput` for a
-//! symbol or free-text query the CGP host could answer (#4335). It is elided
-//! rather than drawn with a stand-in.
+//! The renderings' `q free-form query` is the query bar's second mode. `q`
+//! opens a modal box on this tab; `⏎` sends the text as a
+//! [`crate::envelope::WorkspaceInput::GraphQuery`], and the driver answers
+//! with a snapshot whose [`GraphSnapshot::query`] echoes what was asked. The
+//! bar reads `q:<text>` in that mode and `file:<focus>` otherwise, so it
+//! always names which of the two produced the neighborhood on screen
+//! (#4335).
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -96,11 +99,19 @@ fn rounded(title: Line<'static>) -> Block<'static> {
 /// the older one still owned the deck's entry point; it has one now.
 pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
     let Some(snapshot) = ui.graph.as_ref().filter(|g| !g.is_empty()) else {
-        render_empty(area, buf);
+        // An empty snapshot that carries a query is a query that matched
+        // nothing, which is a different fact from "no index here" and gets
+        // its own sentence — otherwise a search for a misspelt symbol reads
+        // as advice to run `stella init` (#4335).
+        let hint = match ui.graph.as_ref().and_then(|g| g.query.as_deref()) {
+            Some(query) => format!("nothing in the index matches `{query}`"),
+            None => "no neighborhood loaded — the code graph appears here".to_string(),
+        };
+        render_empty(&hint, area, buf);
         return;
     };
 
-    // Defensive clamp: the deck's key handler (`handle_graph_key`) already
+    // Defensive clamp: the deck's key handler (`deck_ui::graph`) already
     // keeps `graph_cursor` in range on every keypress, but this view must
     // never index out of bounds regardless of how the cursor got here (a
     // fresh `DeckUi`, a test, a snapshot swapped out from under a stale
@@ -114,12 +125,20 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
         .get(ui.focused)
         .map(|a| a.model.files.iter().map(|f| f.path.clone()).collect())
         .unwrap_or_default();
-    paint(snapshot, cursor, &changed, ui.accessible, area, buf);
+    paint(
+        snapshot,
+        cursor,
+        &changed,
+        ui.accessible,
+        ui.graph_query.as_deref(),
+        area,
+        buf,
+    );
 }
 
-/// The "nothing loaded" state: a centered muted hint, no border chrome beyond
-/// the tab's own frame.
-fn render_empty(area: Rect, buf: &mut Buffer) {
+/// The "nothing to draw" state: one centered muted `hint`, no border chrome
+/// beyond the tab's own frame.
+fn render_empty(hint: &str, area: Rect, buf: &mut Buffer) {
     let block = Block::default().borders(Borders::ALL).title(" Graph ");
     let inner = block.inner(area);
     block.render(area, buf);
@@ -130,11 +149,8 @@ fn render_empty(area: Rect, buf: &mut Buffer) {
         return;
     }
 
-    let line = Line::from(Span::styled(
-        "no neighborhood loaded — the code graph appears here",
-        crate::theme::muted(),
-    ))
-    .alignment(Alignment::Center);
+    let line = Line::from(Span::styled(hint.to_string(), crate::theme::muted()))
+        .alignment(Alignment::Center);
 
     // Vertically center the single line (mirrors the splash's centering idiom
     // — this crate doesn't carry a generic `centered_rect` helper).
@@ -150,11 +166,19 @@ fn render_empty(area: Rect, buf: &mut Buffer) {
 
 /// Draw the loaded tab. `cursor` is already clamped by the caller; `changed`
 /// is the focused lane's changed paths.
+///
+/// `typing` is the query box's live buffer while it is open — deck state, not
+/// snapshot state, because it is text nobody has answered yet. Once the
+/// driver answers, the same text arrives back as
+/// [`GraphSnapshot::query`] and the bar reads it from there instead, which is
+/// what keeps the bar from claiming a neighborhood answers a query it does
+/// not (#4335).
 pub fn paint(
     snapshot: &GraphSnapshot,
     cursor: usize,
     changed: &[String],
     accessible: bool,
+    typing: Option<&str>,
     area: Rect,
     buf: &mut Buffer,
 ) {
@@ -171,15 +195,27 @@ pub fn paint(
     ])
     .split(area);
 
-    // The query bar: the selector the view is rooted on, the picker's key,
-    // and the index's size.
-    let mut query = vec![
-        Span::styled(" ⌕ ", gold),
-        Span::styled("file:", muted),
-        Span::styled(snapshot.focus.clone(), text),
-    ];
-    if !snapshot.files.is_empty() {
-        query.push(Span::styled("   / files", dim));
+    // The query bar: the selector the view is rooted on, the keys that change
+    // it, and the index's size. Three states, in priority order — typing a
+    // query beats showing the one already answered, which beats the file the
+    // neighborhood is rooted on.
+    let mut query = vec![Span::styled(" ⌕ ", gold)];
+    match (typing, snapshot.query.as_deref()) {
+        (Some(text_so_far), _) => {
+            query.push(Span::styled("q:", gold));
+            query.push(Span::styled(format!("{text_so_far}▏"), text));
+        }
+        (None, Some(answered)) => {
+            query.push(Span::styled("q:", muted));
+            query.push(Span::styled(answered.to_string(), text));
+        }
+        (None, None) => {
+            query.push(Span::styled("file:", muted));
+            query.push(Span::styled(snapshot.focus.clone(), text));
+        }
+    }
+    if !snapshot.files.is_empty() && typing.is_none() {
+        query.push(Span::styled("   / files · q query", dim));
     }
     // `438 nodes · 12ms · det`. The timing is drawn only when the caller
     // measured one: a snapshot nobody timed (a demo, a scenario fixture)
@@ -227,11 +263,26 @@ pub fn paint(
         super::graph::render(snapshot, cursor, coupling_area, buf);
     }
 
-    let mut keys = vec![Span::styled(" ↵", muted), Span::styled(" open file", dim)];
-    if !snapshot.files.is_empty() {
+    // While the query box is open its own keys are the only ones that do
+    // anything, so the footer says those instead of the tab's.
+    let mut keys = if typing.is_some() {
+        vec![
+            Span::styled(" ↵", muted),
+            Span::styled(" run query", dim),
+            Span::styled(" · ", dim),
+            Span::styled("esc", muted),
+            Span::styled(" cancel", dim),
+        ]
+    } else {
+        vec![Span::styled(" ↵", muted), Span::styled(" open file", dim)]
+    };
+    if !snapshot.files.is_empty() && typing.is_none() {
         keys.push(Span::styled(" · ", dim));
         keys.push(Span::styled("/", muted));
         keys.push(Span::styled(" files", dim));
+        keys.push(Span::styled(" · ", dim));
+        keys.push(Span::styled("q", muted));
+        keys.push(Span::styled(" query", dim));
     }
     keys.push(Span::styled(" · ", dim));
     keys.push(Span::styled("↑↓", muted));

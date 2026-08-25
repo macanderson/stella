@@ -21,6 +21,7 @@ fn ui_with_graph() -> DeckUi {
         edges: vec![],
         files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
         query_ms: None,
+        query: None,
     });
     ui
 }
@@ -53,7 +54,7 @@ fn enter_also_opens_the_picker() {
 fn typing_filters_and_re_anchors_the_selection() {
     let model = model_with(&["lead"]);
     let mut ui = ui_with_graph();
-    open_graph_picker(&mut ui);
+    crate::deck_ui::graph::open_picker(&mut ui);
     // Filter to just "a.rs" — one match, selection re-anchors to 0.
     handle_deck_key(ch('a'), &model, &mut ui);
     assert_eq!(ui.graph_picker_query, "a");
@@ -70,7 +71,7 @@ fn typing_filters_and_re_anchors_the_selection() {
 fn enter_in_the_picker_re_roots_on_the_selected_file() {
     let model = model_with(&["lead"]);
     let mut ui = ui_with_graph();
-    open_graph_picker(&mut ui);
+    crate::deck_ui::graph::open_picker(&mut ui);
     // A multi-char needle (`c.rs`) narrows to exactly src/c.rs — a bare
     // `c` would also match the shared `src/` prefix of every file.
     for c in "c.rs".chars() {
@@ -91,7 +92,7 @@ fn enter_in_the_picker_re_roots_on_the_selected_file() {
 fn down_arrow_walks_the_filtered_matches_and_clamps() {
     let model = model_with(&["lead"]);
     let mut ui = ui_with_graph();
-    open_graph_picker(&mut ui);
+    crate::deck_ui::graph::open_picker(&mut ui);
     ui.graph_picker_sel = 0;
     handle_deck_key(key(KeyCode::Down), &model, &mut ui);
     handle_deck_key(key(KeyCode::Down), &model, &mut ui);
@@ -103,7 +104,7 @@ fn down_arrow_walks_the_filtered_matches_and_clamps() {
 fn esc_closes_the_picker_without_re_rooting() {
     let model = model_with(&["lead"]);
     let mut ui = ui_with_graph();
-    open_graph_picker(&mut ui);
+    crate::deck_ui::graph::open_picker(&mut ui);
     let action = handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
     assert_eq!(action, DeckAction::Handled);
     assert!(!ui.graph_picker_open);
@@ -115,7 +116,7 @@ fn the_picker_is_modal_over_the_composer() {
     // into the global composer (the queue-editor modality contract).
     let model = model_with(&["lead"]);
     let mut ui = ui_with_graph();
-    open_graph_picker(&mut ui);
+    crate::deck_ui::graph::open_picker(&mut ui);
     handle_deck_key(ch('b'), &model, &mut ui);
     assert_eq!(ui.graph_picker_query, "b");
     assert!(
@@ -140,6 +141,7 @@ fn a_re_rooted_snapshot_resets_the_node_cursor() {
         edges: vec![],
         files: vec!["src/a.rs".into(), "src/b.rs".into(), "src/c.rs".into()],
         query_ms: None,
+        query: None,
     };
     ingest_inbound(&Inbound::GraphSnapshot(rerooted), &mut model, &mut ui);
     assert_eq!(ui.graph_cursor, 0, "the cursor lands on the new focus");
@@ -191,4 +193,87 @@ fn the_picker_does_not_open_without_a_loaded_graph() {
     ui.tab = DeckTab::Graph; // no snapshot loaded
     handle_deck_key(ch('/'), &model, &mut ui);
     assert!(!ui.graph_picker_open, "nothing to pick from — stays closed");
+}
+
+/// **The witness (#4335).** `q` on the Graph tab opens the free-form query
+/// box, typing fills it without touching the composer, and `⏎` sends the text
+/// as a `GraphQuery` for the driver to resolve against the index. Before
+/// this the only re-root the deck could ask for was a file name.
+#[test]
+fn q_opens_the_query_box_and_enter_sends_the_query() {
+    let model = model_with(&["lead"]);
+    let mut ui = ui_with_graph();
+
+    let action = handle_deck_key(ch('q'), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert_eq!(ui.graph_query.as_deref(), Some(""), "q opens the box empty");
+    assert!(!ui.graph_picker_open, "and not the file picker");
+
+    for c in "run_turn".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    assert_eq!(ui.graph_query.as_deref(), Some("run_turn"));
+    assert!(
+        ui.composer.buffer().is_empty(),
+        "query keys never reach the composer"
+    );
+
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(
+        action,
+        DeckAction::Send(WorkspaceInput::GraphQuery {
+            text: "run_turn".into()
+        })
+    );
+    assert!(ui.graph_query.is_none(), "the box closes on submit");
+}
+
+#[test]
+fn esc_closes_the_query_box_without_asking_anything() {
+    let model = model_with(&["lead"]);
+    let mut ui = ui_with_graph();
+    handle_deck_key(ch('q'), &model, &mut ui);
+    handle_deck_key(ch('x'), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Esc), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert!(ui.graph_query.is_none());
+}
+
+/// A blank query closes without sending: the driver would have nothing to
+/// look up, and a snapshot of nothing is a worse answer than the
+/// neighborhood already on screen.
+#[test]
+fn an_empty_query_closes_rather_than_asking_for_nothing() {
+    let model = model_with(&["lead"]);
+    let mut ui = ui_with_graph();
+    handle_deck_key(ch('q'), &model, &mut ui);
+    handle_deck_key(ch(' '), &model, &mut ui);
+    let action = handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    assert_eq!(action, DeckAction::Handled);
+    assert!(ui.graph_query.is_none());
+}
+
+/// Backspace past the start closes the box — the same clear-then-back
+/// gesture the picker answers to.
+#[test]
+fn backspace_empties_then_closes_the_query_box() {
+    let model = model_with(&["lead"]);
+    let mut ui = ui_with_graph();
+    handle_deck_key(ch('q'), &model, &mut ui);
+    handle_deck_key(ch('z'), &model, &mut ui);
+    handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
+    assert_eq!(ui.graph_query.as_deref(), Some(""));
+    handle_deck_key(key(KeyCode::Backspace), &model, &mut ui);
+    assert!(ui.graph_query.is_none());
+}
+
+/// Without a loaded graph there is no index to ask, so `q` stays typeable as
+/// the first character of a prompt — the same gate `/` carries.
+#[test]
+fn q_does_not_open_the_box_without_a_loaded_graph() {
+    let model = model_with(&["lead"]);
+    let mut ui = ready_ui();
+    ui.tab = DeckTab::Graph;
+    handle_deck_key(ch('q'), &model, &mut ui);
+    assert!(ui.graph_query.is_none());
 }

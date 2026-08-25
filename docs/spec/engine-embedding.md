@@ -218,15 +218,31 @@ silent omissions.
 Ordered by how much they matter to an embedding customer. Each is verified
 against the tree, not aspirational.
 
-**G1 — The split-brain assembly layer** (#3731)**.** `stella-runtime` is
-CLI-only (and only its `parts::*`; `RuntimeBuilder` has zero call sites), `stella-engine`
-is serve-only, and the CLI drives `stella-core` directly. Consequence: there
-is no single "construct a Stella" path a Mode-A host can copy, and every
-capability serve lacks (G3–G5) is a re-implementation away rather than a
-builder call away. Convergence direction: serve adopts `stella-runtime` for
-its resource half (its `with_provider` seam was built for exactly the
-`RemoteProvider` case), and the CLI adopts `stella-engine`'s step loop —
-after which `RuntimeBuilder → Engine` *is* the Mode-A quickstart.
+**G1 — The split-brain assembly layer** (#4403; #3731 closed by #4402)**.**
+`stella-runtime` is CLI-only (and only its `parts::*`; `RuntimeBuilder` has
+zero call sites), `stella-engine` is serve-only, and the CLI drives
+`stella-core` directly. Consequence: there is no single "construct a Stella"
+path a Mode-A host can copy, and every capability serve lacks (G3–G5) is a
+re-implementation away rather than a builder call away.
+
+**The convergence direction this gap first named is refuted, and the
+correction is the live half of the gap.** It said serve adopts
+`stella-runtime` for its resource half, on the strength of the `with_provider`
+seam having been built for the `RemoteProvider` case. Serve cannot: it
+executes no tool and holds no credential, so it depends on three workspace
+crates and not on `stella-store`
+(`crates/stella-serve/Cargo.toml`, and the reason in its README), while
+`stella-runtime` depends on `stella-model`, `stella-tools` and `stella-store`
+and `RuntimeBuilder::build` refuses a `workspace_root` that is not a directory
+before handing back an `Arc<ToolRegistry>` rooted at it — a filesystem and a
+local executor, which is exactly what ADR-033 Option B withholds from the
+sidecar. The candidate caller left is the one the crate was written for:
+`stella-cli`'s drivers, which have all five resources and re-type the assembly
+today. Whether G1 is closed by retargeting the composite at them or by
+deleting it and declaring `parts::*` the whole surface is #4403's open
+decision, and it is a decision about who `stella-runtime` serves rather than a
+defect to fix. The other half of the direction is unaffected: the CLI adopting
+`stella-engine`'s step loop still stands.
 
 **G2 — The API cannot tune the engine.** One knob (`max_steps`) of ~15 is
 wire-settable; effort, reasoning, output caps, model/tool timeouts,

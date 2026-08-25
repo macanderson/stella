@@ -25,7 +25,7 @@
  │ ● edit apps/app/automations/page.tsx +4 -1
  │ ⎿                                                                                                                                 +4 −1 · 18ms
  │     10 -  const items = []
- │     10 +  const items = useAutomations(┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐
+ │     10 +  const items = useAutomations(╭ question ────────────────────────────────────────────────────────────────╮
  │     11 +  const [q, setQ] = useState(""│from the `research-child` sub-agent                                       │
  │     12 +  const filtered = filter(items│                                                                          │
  │     13 +  const onNew = () => open()   │● Auth method  ○ Rollout                                                  │
@@ -36,7 +36,7 @@
                                           │▸ [ ] staging — the usual soak                                            │
                                           │  [ ] canary                                                              │
                                           │  [ ] Type your own answer                                                │
-                                          └──────────────────────────────────────────────────────────────────────────┘
+                                          ╰────────────── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ╯
 
 
 

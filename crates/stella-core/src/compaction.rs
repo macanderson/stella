@@ -296,23 +296,49 @@ const RETENTION_MIN_RECLAIM_CHARS: usize = 12_000;
 /// carrying, and paying a full prefix invalidation to take some of them back
 /// buys nothing it needs yet.
 ///
-/// **That is an argument, and the census that followed it is unflattering**
-/// (#4452, over 93 session journals): of 330 firings on binaries with no gate,
-/// the conversation sat at a median 0.372 of its budget, so half suppresses
-/// 233 of them — 70.6%, forgoing 1.62 M of the 2.40 M tokens the pass
-/// reclaimed. A divisor of 3 suppresses 41.8%, 4 suppresses 23.6%.
+/// **That is an argument, and the census that answered it says the argument
+/// picked the wrong quantity to gate on** (#4452,
+/// `scripts/retention-census.py` over 96 session journals from binaries with
+/// no gate, so the counterfactual is askable). Of 370 pure pass-0 firings the
+/// conversation sat at a median 0.370 of its budget, so half suppresses 258 of
+/// them — 69.7%, forgoing 1.76 M of the 2.77 M tokens the pass reclaimed. A
+/// divisor of 3 suppresses 42.2%, 4 suppresses 23.8%.
 ///
-/// It is recorded here rather than acted on because it does not yet answer
-/// the question: it counts firings and reclaimed tokens, not *billed* input
-/// tokens, and the miss those firings cost is the other half of the trade.
-/// Suppressing a firing also changes the transcript the next one sees, so the
-/// number bounds the effect rather than picking the divisor. #4452 is where
-/// the replay that settles it lives; this constant moves when that lands, not
-/// before.
+/// Priced, the picture reverses and then indicts the key. A firing re-bills
+/// the whole surviving prefix uncached (the measured miss is real: the cached
+/// fraction is a median 0.487 on the call before a firing and 0.196 on the
+/// call after) and buys back `reclaimed` tokens at the cache-read price on
+/// every later call of the turn, so its net in uncached-equivalent tokens is
+/// `after − r·before − r·reclaimed·(N−1)` for `N` further worker calls and a
+/// cache read priced at `r`. Summed over the same 370 firings, at `r = 0.10`
+/// the gate at half costs **+5.63 M** tokens against **+2.92 M** for no gate
+/// at all; at `r = 0.25` it saves 3.04 M where no gate saves 24.6 M, and at
+/// `r = 0.50`, 17.5 M against 70.6 M. At every price the gate at half is the
+/// worse of the two.
 ///
-/// MEASURED: 330 retention firings across 93 session journals (#4452). The
-/// census is why the divisor is still 2 rather than 3 or 4, so a merge that
-/// changed it would be discarding the measurement, not disagreeing with it.
+/// It loses because budget fraction is *anti-correlated* with the trade.
+/// Profitable firings sit at a median 0.266 of budget and unprofitable ones at
+/// 0.425, because what actually decides a firing is how far the turn runs past
+/// it — a median 90 further worker calls where it profits against 26 where it
+/// does not — and a turn is furthest from its ceiling early, which is exactly
+/// the band half suppresses. At `r = 0.10` the gate admits 112 firings of
+/// which 15 profit: precision 0.13 against a 0.32 base rate, so it selects
+/// worse than admitting everything.
+///
+/// The divisor stays at 2 anyway, because the census disqualifies the key and
+/// names no replacement value for it: every divisor is a worse classifier than
+/// no gate, so moving to 3 or 4 would trade one unmeasured number for another.
+/// What the census does name is the gate to build instead — the reclaim ratio
+/// `reclaimed / after`, which is the other term of the break-even expression
+/// and, unlike the remaining call count, is known at firing time. A gate at
+/// `ratio >= 0.15` admits 152 firings at precision 0.60 and turns the same
+/// corpus from +5.63 M into **−5.61 M**. That is #4753, and it is a new gate
+/// with its own witness rather than a new value for this one.
+///
+/// MEASURED: 370 pure pass-0 retention firings across 96 session journals,
+/// 2026-08-24 (#4452, `scripts/retention-census.py`). The census is why the
+/// divisor is still 2 rather than 3 or 4, so a merge that changed it would be
+/// discarding the measurement, not disagreeing with it.
 const RETENTION_TRIGGER_BUDGET_DIVISOR: u64 = 2;
 
 /// The bytes one aged payload retains: both kept ends plus the elision

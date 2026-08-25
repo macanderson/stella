@@ -277,6 +277,7 @@ mod tests {
             ],
             files: Vec::new(),
             query_ms: None,
+            query: None,
         }
     }
 

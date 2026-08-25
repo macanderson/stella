@@ -254,6 +254,25 @@ async fn main() -> std::io::Result<()> {
                         edges: vec![],
                         files: demo_graph().files,
                         query_ms: None,
+                        query: None,
+                    }));
+                }
+                // A free-form query. With no index the demo cannot resolve it,
+                // so it answers with a single node named after the query and
+                // echoes the query back: enough to show the ask → answer
+                // round-trip, while looking nothing up.
+                WorkspaceInput::GraphQuery { text } => {
+                    let _ = react_tx.send(Inbound::GraphSnapshot(GraphSnapshot {
+                        focus: text.clone(),
+                        nodes: vec![GraphNode {
+                            label: text.clone(),
+                            kind: "function".into(),
+                            location: None,
+                        }],
+                        edges: vec![],
+                        files: demo_graph().files,
+                        query_ms: None,
+                        query: Some(text),
                     }));
                 }
                 // The installed-agents manager needs the real driver (disk +

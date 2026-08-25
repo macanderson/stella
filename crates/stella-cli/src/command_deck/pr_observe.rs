@@ -2,17 +2,17 @@
 //! half of the deck's PR monitor.
 //!
 //! Split out of `command_deck.rs` because that file is a grandfathered god
-//! file closed to growth (AGENTS.md § "God files"), and this cluster is the
-//! largest piece of it that is genuinely self-contained: every function here
-//! is a pure fold or a single `gh` invocation, with the spawning half
-//! (`spawn_pr_monitor`) left behind because it owns the deck's channels.
+//! file closed to growth (AGENTS.md § "God files"): every function here is a
+//! pure fold or a single `gh` invocation. The spawning half (`spawn_pr_monitor`,
+//! which owns the deck's channels) lives beside the driver loop's other
+//! channel-owning tasks in `driver_support`.
 
 use std::time::Duration;
 
 use serde_json::Value;
 use stella_protocol::{CiStatus, PrStatus};
 
-use super::PrObservation;
+use super::driver_support::PrObservation;
 
 /// Stable store tokens for PR/CI states (schema strings, not display).
 pub(super) fn pr_status_token(status: PrStatus) -> &'static str {
