@@ -83,7 +83,7 @@
 //! schema that names which field addresses a file — at which point the
 //! constant below becomes a lookup over the schemas the model's own calls are
 //! built from, with no new list to maintain. That is a tool-contract change,
-//! not a restoration change, and is deliberately not started here.
+//! not a restoration change, and is not started here.
 
 use std::collections::HashSet;
 

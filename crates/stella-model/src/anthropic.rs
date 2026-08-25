@@ -167,7 +167,7 @@ impl AnthropicProvider {
     /// context-management field in the chat-completions dialect first, plus a
     /// row on [`crate::provider_parity`] — neither exists.
     ///
-    /// # No caller, deliberately
+    /// # No caller, until the trigger is measured
     ///
     /// Nothing calls this outside its tests, because the value that decides
     /// whether it helps or hurts — `trigger_tokens` — has not been measured.
