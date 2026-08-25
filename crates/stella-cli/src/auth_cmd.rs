@@ -83,7 +83,7 @@ fn read_key_value(provider: &str, key: Option<&str>, use_stdin: bool) -> Result<
     // Both remaining paths build a buffer the caller never sees — only the
     // trimmed value below escapes — so the original is wiped on drop rather
     // than left legible in freed heap for the life of the process. Same
-    // treatment `stella_model::credential::prompt_for_key` gives its own.
+    // treatment `stella_model::credential::TerminalPrompt::ask` gives its own.
     if use_stdin {
         let mut buf = Zeroizing::new(String::new());
         std::io::stdin()

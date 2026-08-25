@@ -22,18 +22,22 @@
 // Not `aux`: that spelling made the repository un-checkoutable on Windows.
 // `scripts/check-reserved-paths.sh` is what stops it coming back.
 mod aux_credentials;
+mod prompt;
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroize;
 
 pub use aux_credentials::AuxCredentials;
+pub use prompt::{CredentialPrompt, TerminalPrompt};
 
-#[derive(Error, Debug, PartialEq, Eq)]
+/// `Clone` because every variant is owned strings with no secret in them — a
+/// caller that fans one failure out to several reports (or a test that scripts
+/// the same error into repeated prompts) should not have to rebuild it.
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum CredentialError {
     #[error(
         "no credential found for `{env_var}` — set the environment variable, add it to \
@@ -103,7 +107,7 @@ pub enum CredentialSource {
 /// cannot reach a copy someone else already made — a `String` that grew and
 /// reallocated, a page the OS swapped out, or a `HeaderValue` reqwest built
 /// from `reveal()`. Every copy this crate makes on purpose is wrapped in
-/// [`Zeroizing`] at its call site; the ones inside a third-party HTTP stack
+/// [`Zeroizing`](zeroize::Zeroizing) at its call site; the ones inside a third-party HTTP stack
 /// are out of our reach and are not claimed to be covered.
 #[derive(Clone)]
 pub struct ApiKey(String);
@@ -138,32 +142,6 @@ impl ApiKey {
         }
     }
 
-    /// Whether this invocation can host the interactive credential prompt.
-    /// Pure over already-observed booleans (rather than calling `IsTerminal`
-    /// itself) so the exact condition is directly unit-testable — the same
-    /// shape `stella-cli`'s `agent::engine::approval_capability_for` and
-    /// `daemon::approval::console_is_interactive` use.
-    ///
-    /// The single "is a human present?" derivation (#3036), shared with
-    /// `stella-cli`'s approval prompts without this crate depending on that
-    /// one (invariant 1). `interactive` here already plays
-    /// [`stella_tty::human_can_answer`]'s `interactive_output` role — the
-    /// caller's "would I even attempt a prompt" decision (`stella-cli` clears
-    /// it for a machine `--output-format`) — so this only adds the check that
-    /// was missing: a redirected stdout must decline exactly as a redirected
-    /// stdin does, not just print a prompt nobody reads before blocking on an
-    /// answer nobody can give. `stdout_is_terminal` is a proxy for whether
-    /// `rpassword`'s prompt is actually visible rather than an exact match —
-    /// it writes to `/dev/tty` directly on Unix, not stdout — tracked
-    /// separately as #3052 rather than folded into this fix.
-    fn can_prompt_interactively(
-        interactive: bool,
-        stdin_is_terminal: bool,
-        stdout_is_terminal: bool,
-    ) -> bool {
-        stella_tty::human_can_answer(interactive, stdin_is_terminal, stdout_is_terminal)
-    }
-
     /// The full resolution chain: CLI flag -> env
     /// var -> `credentials_file` -> interactive prompt. `provider_id` keys
     /// both the credentials-file lookup and, on a successful interactive
@@ -172,12 +150,43 @@ impl ApiKey {
     /// callers (CI, `--output-format stream-json`) should pass `false` and
     /// get a clean [`CredentialError::NotFound`] instead of hanging on a
     /// read from a stdin that isn't there.
+    ///
+    /// The prompt is [`TerminalPrompt`]; [`ApiKey::resolve_with_prompt`] is
+    /// the same chain over any other [`CredentialPrompt`].
     pub fn resolve(
         provider_id: &str,
         env_var: &str,
         cli_flag: Option<&str>,
         credentials_file: Option<&CredentialsFile>,
         interactive: bool,
+    ) -> Result<(Self, CredentialSource), CredentialError> {
+        Self::resolve_with_prompt(
+            provider_id,
+            env_var,
+            cli_flag,
+            credentials_file,
+            interactive,
+            &TerminalPrompt,
+        )
+    }
+
+    /// [`ApiKey::resolve`] with the interactive step supplied rather than
+    /// assumed.
+    ///
+    /// A host that already knows how it talks to its user — a GUI, a daemon
+    /// with its own secret store, a test — injects that here instead of
+    /// inheriting `rpassword` on the controlling terminal. It is also the only
+    /// way to reach the swallow below deterministically: the shipping
+    /// [`TerminalPrompt`] declines under `cargo test`, where stdout is not a
+    /// terminal, so a test driving `resolve` alone exercises the gate and
+    /// never the arm underneath it (#4576).
+    pub fn resolve_with_prompt(
+        provider_id: &str,
+        env_var: &str,
+        cli_flag: Option<&str>,
+        credentials_file: Option<&CredentialsFile>,
+        interactive: bool,
+        prompt: &dyn CredentialPrompt,
     ) -> Result<(Self, CredentialSource), CredentialError> {
         if let Some(flag_value) = cli_flag
             && !flag_value.is_empty()
@@ -200,11 +209,7 @@ impl ApiKey {
             return Ok((Self(value.to_string()), CredentialSource::ConfigFile));
         }
 
-        if Self::can_prompt_interactively(
-            interactive,
-            std::io::stdin().is_terminal(),
-            std::io::stdout().is_terminal(),
-        ) {
+        if prompt.can_prompt(interactive) {
             // A successful prompt returns immediately. A failure — most
             // commonly because stdin reports as a terminal (`is_terminal()`
             // == true) yet is not genuinely readable (the libtest pty,
@@ -215,7 +220,7 @@ impl ApiKey {
             // degrades to a clean [`CredentialError::NotFound`] rather than
             // surfacing the opaque [`PromptFailed`] at this trust boundary —
             // never hang, never leak an opaque error.
-            if let Ok(value) = prompt_for_key(provider_id, env_var) {
+            if let Ok(value) = prompt.ask(provider_id, env_var) {
                 return Ok((Self(value), CredentialSource::Interactive));
             }
         }
@@ -258,31 +263,6 @@ impl fmt::Debug for ApiKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("ApiKey").field(&"<redacted>").finish()
     }
-}
-
-/// Prompt the user on stdin for a provider's API key, masking input (never
-/// echoed) since the terminal itself isn't a redaction boundary. Called
-/// only when `resolve` has exhausted the flag/env/file steps and the caller
-/// opted into interactive mode on an actual TTY.
-fn prompt_for_key(provider_id: &str, env_var: &str) -> Result<String, CredentialError> {
-    // `Zeroizing` because the raw prompt buffer is a second copy of the
-    // secret that the caller never sees: the trimmed `String` returned below
-    // is what becomes an `ApiKey`, and without this the untrimmed original
-    // would be dropped intact into freed heap.
-    let value = Zeroizing::new(
-        rpassword::prompt_password(format!(
-            "No {env_var} found for `{provider_id}`. Enter it now (saved to \
-             ~/.stella/credentials.toml for next time; input hidden): "
-        ))
-        .map_err(|e| CredentialError::PromptFailed(e.to_string()))?,
-    );
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(CredentialError::PromptFailed(
-            "empty input — no credential entered".into(),
-        ));
-    }
-    Ok(trimmed.to_string())
 }
 
 /// `~/.stella/credentials.toml` — optional provider keys for users
