@@ -15,7 +15,6 @@ use stella_core::skills::{
     self, AutoCreateConfig, AutoCreateDecision, SkillMineConfig, SkillObservation,
 };
 use stella_protocol::Provider;
-use stella_protocol::provenance::ProvenanceGrade;
 
 use super::{
     LessonKind, ReflectionLesson, ReflectionReport, SessionMemory, TurnEvidence, reflect_on_turn,
@@ -591,18 +590,7 @@ impl SessionMemory {
     /// Shared by both paths, so the cap and the guard are literally the same
     /// code on each — asserted by test rather than by inspection, which is what
     /// spec §8 asks for.
-    /// Write the eligible skill candidates, each with the evidence grade of
-    /// the proposal it was promoted from (#2782).
-    ///
-    /// The grade rides alongside the candidate rather than inside it because a
-    /// `SkillCandidate` is the miner's output and knows nothing about the
-    /// lifecycle ledger — the proposal is where the two meet, and this is the
-    /// hop that used to drop it.
-    fn write_candidates(
-        &mut self,
-        candidates: Vec<(skills::SkillCandidate, Option<ProvenanceGrade>)>,
-        quiet: bool,
-    ) {
+    fn write_candidates(&mut self, candidates: Vec<skills::SkillCandidate>, quiet: bool) {
         // The workspace-skills authority gate, on the write it actually
         // describes. Without it the loader is handed an empty workspace dir, so
         // a skill written here would never be read back — and computing the
@@ -636,7 +624,7 @@ impl SessionMemory {
         // ledger rather than from this turn — one turn cannot measure a skill
         // that has never been injected.
         let verdicts = super::appraisals::latest_verdicts(&self.workspace_root);
-        for (candidate, evidence_grade) in candidates {
+        for candidate in candidates {
             let evidence = verdicts
                 .get(&candidate.name)
                 .copied()
@@ -650,7 +638,7 @@ impl SessionMemory {
                 &config,
             ) {
                 AutoCreateDecision::Create { path } => {
-                    let markdown = skills::render_skill_markdown(&candidate, evidence_grade);
+                    let markdown = skills::render_skill_markdown(&candidate);
                     let path = PathBuf::from(path);
                     if let Some(parent) = path.parent() {
                         let _ = std::fs::create_dir_all(parent);
@@ -769,7 +757,7 @@ impl SessionMemory {
                 i.proposal
                     .is_eligible(promotion.min_distinct_tasks, promotion.min_observations)
             })
-            .map(|i| (i.candidate, i.proposal.provenance))
+            .map(|i| i.candidate)
             .collect();
         self.write_candidates(eligible, quiet);
 
@@ -896,9 +884,6 @@ impl SessionMemory {
         let existing = self.load_skills();
         let candidates =
             skills::mine_skill_candidates(observations, &existing, &SkillMineConfig::default());
-        // The lexical path has no proposal behind it, so it carries no
-        // grade — absent rather than guessed.
-        let candidates = candidates.into_iter().map(|c| (c, None)).collect();
         self.write_candidates(candidates, quiet);
     }
 }

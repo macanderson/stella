@@ -876,10 +876,7 @@ pub fn mine_skill_candidates(
 /// section listing the backing occurrences. Writing this to disk is the I/O
 /// half `stella-cli` owns; this half is pure and round-trips through the
 /// parser above.
-pub fn render_skill_markdown(
-    candidate: &SkillCandidate,
-    evidence_grade: Option<stella_protocol::provenance::ProvenanceGrade>,
-) -> String {
+pub fn render_skill_markdown(candidate: &SkillCandidate) -> String {
     let mut out = String::from("---\n");
     out.push_str(&format!("name: {}\n", candidate.name));
     out.push_str(&format!("description: {}\n", candidate.description));
@@ -887,14 +884,6 @@ pub fn render_skill_markdown(
         out.push_str(&format!("domains: [{}]\n", candidate.domains.join(", ")));
     }
     out.push_str("origin: auto\n");
-    // The grade of the proposal this skill was promoted from (#2782). Written
-    // only when there is one, so a skill from a path that carries no proposal
-    // says nothing rather than claiming a grade it never had. The Evidence
-    // section below lists what was observed; this line says what kind of
-    // evidence that was.
-    if let Some(grade) = evidence_grade {
-        out.push_str(&format!("evidence_grade: {}\n", grade.as_str()));
-    }
     out.push_str("---\n\n");
     out.push_str(&candidate.body);
     out.push_str("\n\n## Evidence\n\n");
