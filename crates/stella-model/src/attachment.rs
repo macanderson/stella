@@ -15,6 +15,14 @@
 //! the conversation replays every turn, so a hard error here would brick the
 //! session permanently.
 //!
+//! Video is the one kind with a rung between native and the note. A dialect
+//! that carries images but not video gets the clip as sampled stills plus a
+//! note saying they are stills (`crate::keyframes`), because an image-capable
+//! model shown eight frames can answer most questions about a clip and a note
+//! naming the filename can answer none. The note remains the floor: no
+//! decoder, an unreadable container, or a `Data` payload with no file on disk
+//! all land back on it (#3340).
+//!
 //! [`DialectCaps`] is what normally keeps a part an adapter has no wire shape
 //! for from ever reaching that adapter. The two are edited independently
 //! though — switching a cap on is a one-line change — so adapters back the
@@ -47,6 +55,11 @@ use std::time::SystemTime;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use stella_protocol::{Attachment, AttachmentKind, AttachmentSource};
+
+use crate::keyframes::{
+    FfmpegSampler, FrameSampler, MAX_SAMPLED_FRAMES, SampleFailure, SampledVideo, sampling_note,
+    unsampled_note,
+};
 
 /// What a dialect can ingest natively. Anything switched off degrades to a
 /// descriptive [`WirePart::Text`] note.
@@ -119,22 +132,43 @@ pub(crate) fn unsupported_part_note(part: &WirePart, dialect: &str) -> String {
 /// Resolve a message's attachments into wire parts for a dialect. Infallible
 /// by design: unreadable payloads and unsupported kinds come back as
 /// [`WirePart::Text`] notes rather than errors (see module docs).
+///
+/// One attachment is usually one part, but not always — a sampled video is
+/// several images plus a note — so this is a flat map, and an adapter must
+/// not assume the two slices line up index for index.
 pub(crate) fn wire_parts(attachments: &[Attachment], caps: DialectCaps) -> Vec<WirePart> {
+    wire_parts_with(attachments, caps, &FfmpegSampler)
+}
+
+/// [`wire_parts`] against a caller-supplied frame sampler.
+///
+/// The seam exists so the video fan-out can be witnessed without a decoder
+/// installed on the machine running the test: a fake sampler settles what the
+/// resolve path does with frames, and `crate::keyframes`'s own tests settle
+/// which frames get asked for. Neither needs `ffmpeg`, which is exactly the
+/// property a probe-and-degrade dependency has to have to be testable at all.
+fn wire_parts_with(
+    attachments: &[Attachment],
+    caps: DialectCaps,
+    sampler: &dyn FrameSampler,
+) -> Vec<WirePart> {
     attachments
         .iter()
-        .map(|attachment| resolve_one(attachment, caps))
+        .flat_map(|attachment| resolve_one(attachment, caps, sampler))
         .collect()
 }
 
 /// A payload hydrated into the one wire form its kind consumes: inlined
-/// (lossy UTF-8) content for text-like files, base64 for the binary kinds.
+/// (lossy UTF-8) content for text-like files, base64 for the binary kinds,
+/// sampled stills for a video a dialect can only see as images.
 /// Hydrating straight to the consumed form is what lets [`PATH_CACHE`] pay:
-/// the expensive transform (read + encode) is what gets memoized, not just
-/// the raw bytes.
+/// the expensive transform (read + encode, or a decoder invocation) is what
+/// gets memoized, not just the raw bytes.
 #[derive(Clone)]
 enum HydratedBody {
     Text(String),
     Base64(String),
+    Frames(SampledVideo),
 }
 
 impl HydratedBody {
@@ -145,17 +179,38 @@ impl HydratedBody {
         match self {
             HydratedBody::Text(text) => text.len(),
             HydratedBody::Base64(encoded) => encoded.len(),
+            HydratedBody::Frames(video) => video.retained_bytes(),
         }
     }
 }
 
+/// Which hydrated form a lookup wants.
+///
+/// The cache is keyed by path, and the same path can be attached under
+/// different media types (and a video sampled at a different ceiling), so the
+/// form is part of freshness: serving base64 where inlined text belongs — or
+/// four frames where eight were asked for — is a wrong answer, not a stale
+/// one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Text,
+    Base64,
+    /// Stills sampled from a video, at most this many.
+    Frames(usize),
+}
+
 /// One cached path payload, valid while the file's `(mtime, len)`
-/// fingerprint holds. `last_used` is the cache's logical clock at the last
-/// hit, which is what makes eviction least-recently-used rather than
-/// arbitrary.
+/// fingerprint and the requested [`Form`] both hold. `last_used` is the
+/// cache's logical clock at the last hit, which is what makes eviction
+/// least-recently-used rather than arbitrary.
 struct CachedPayload {
     modified: Option<SystemTime>,
     len: u64,
+    /// The form this entry was hydrated for. Recorded rather than inferred
+    /// from `body`, because a short video sampled at a ceiling of eight
+    /// yields three frames and is indistinguishable, by its body alone, from
+    /// the same video sampled at a ceiling of three.
+    form: Form,
     body: HydratedBody,
     last_used: u64,
 }
@@ -201,17 +256,12 @@ impl PathCache {
         path: &Path,
         modified: Option<SystemTime>,
         len: u64,
-        want_text: bool,
+        form: Form,
     ) -> Option<HydratedBody> {
         let entry = self.entries.get_mut(path)?;
         // The stored form must also be the one this kind consumes — the same
         // path re-attached under a different media type recomputes.
-        let fresh = entry.modified == modified
-            && entry.len == len
-            && matches!(
-                (&entry.body, want_text),
-                (HydratedBody::Text(_), true) | (HydratedBody::Base64(_), false)
-            );
+        let fresh = entry.modified == modified && entry.len == len && entry.form == form;
         if !fresh {
             return None;
         }
@@ -229,6 +279,7 @@ impl PathCache {
         path: PathBuf,
         modified: Option<SystemTime>,
         len: u64,
+        form: Form,
         body: &HydratedBody,
     ) {
         // Replacing an entry frees its old bytes first, so a re-hydrated
@@ -262,6 +313,7 @@ impl PathCache {
             CachedPayload {
                 modified,
                 len,
+                form,
                 body: body.clone(),
                 last_used: self.tick,
             },
@@ -289,26 +341,72 @@ fn path_cache() -> std::sync::MutexGuard<'static, PathCache> {
     }
 }
 
-/// Hydrate a path payload in the form `want_text` selects, through
-/// [`PATH_CACHE`]. IO errors propagate for the caller to degrade to a note.
-fn hydrate_path(path: &str, want_text: bool) -> std::io::Result<HydratedBody> {
+/// Hydrate a path payload in the form `form` selects, through [`PATH_CACHE`].
+/// IO errors propagate for the caller to degrade to a note.
+fn hydrate_path(path: &str, form: Form) -> std::io::Result<HydratedBody> {
     let meta = std::fs::metadata(path)?;
     let modified = meta.modified().ok();
     let len = meta.len();
-    if let Some(body) = path_cache().get_fresh(Path::new(path), modified, len, want_text) {
+    if let Some(body) = path_cache().get_fresh(Path::new(path), modified, len, form) {
         return Ok(body);
     }
     let bytes = std::fs::read(path)?;
-    let body = if want_text {
-        HydratedBody::Text(String::from_utf8_lossy(&bytes).into_owned())
-    } else {
-        HydratedBody::Base64(BASE64.encode(&bytes))
+    let body = match form {
+        Form::Text => HydratedBody::Text(String::from_utf8_lossy(&bytes).into_owned()),
+        // A sampled video never reaches here: `sample_video` owns that form's
+        // hydration because its expensive half is a decoder invocation, not a
+        // read. Returning the raw base64 would be wrong rather than slow, so
+        // it is not offered.
+        Form::Base64 | Form::Frames(_) => HydratedBody::Base64(BASE64.encode(&bytes)),
     };
-    path_cache().store(PathBuf::from(path), modified, len, &body);
+    path_cache().store(PathBuf::from(path), modified, len, form, &body);
     Ok(body)
 }
 
-fn resolve_one(attachment: &Attachment, caps: DialectCaps) -> WirePart {
+/// Sample a video on disk into stills, memoized per file version through
+/// [`PATH_CACHE`] like any other hydration.
+///
+/// The memoization is what makes this affordable at all: the conversation
+/// replays every turn, so without it `ffmpeg` would run once per model call
+/// for the rest of the session on a file that has not changed.
+fn sample_video(
+    path: &str,
+    sampler: &dyn FrameSampler,
+    max_frames: usize,
+) -> Result<SampledVideo, SampleFailure> {
+    let form = Form::Frames(max_frames);
+    let meta = std::fs::metadata(path).ok();
+    let fingerprint = meta.as_ref().map(|m| (m.modified().ok(), m.len()));
+    if let Some((modified, len)) = fingerprint
+        && let Some(HydratedBody::Frames(video)) =
+            path_cache().get_fresh(Path::new(path), modified, len, form)
+    {
+        return Ok(video);
+    }
+    let video = sampler.sample(Path::new(path), max_frames)?;
+    if let Some((modified, len)) = fingerprint {
+        path_cache().store(
+            PathBuf::from(path),
+            modified,
+            len,
+            form,
+            &HydratedBody::Frames(video.clone()),
+        );
+    }
+    Ok(video)
+}
+
+/// The wire parts one attachment resolves to.
+///
+/// Almost always exactly one. A video sampled into stills is the exception —
+/// it fans out to one [`WirePart::Image`] per frame plus the note that says
+/// they are frames — which is why this returns a `Vec` rather than a
+/// `WirePart`.
+fn resolve_one(
+    attachment: &Attachment,
+    caps: DialectCaps,
+    sampler: &dyn FrameSampler,
+) -> Vec<WirePart> {
     let kind = attachment.kind();
     let ingestible = match kind {
         AttachmentKind::Text => true,
@@ -318,26 +416,37 @@ fn resolve_one(attachment: &Attachment, caps: DialectCaps) -> WirePart {
         AttachmentKind::Video => caps.video,
         AttachmentKind::Binary => false,
     };
+    // A video this dialect cannot carry, on a dialect that CAN carry images,
+    // takes the sampled rung of the degrade ladder before the note. Checked
+    // before the `!ingestible` bail below, which is where every other
+    // unsupported kind still lands.
+    if kind == AttachmentKind::Video && !caps.video && caps.images {
+        return sampled_video_parts(attachment, sampler);
+    }
     // A kind this dialect cannot carry degrades before any hydration: the
     // note describes what was attached, which needs no payload — reading and
     // encoding bytes only to discard them would be pure waste on every turn.
     if !ingestible {
-        return WirePart::Text {
+        return vec![WirePart::Text {
             text: degrade_note(attachment, kind),
-        };
+        }];
     }
-    let want_text = matches!(kind, AttachmentKind::Text);
+    let form = if matches!(kind, AttachmentKind::Text) {
+        Form::Text
+    } else {
+        Form::Base64
+    };
     let body = match &attachment.source {
-        AttachmentSource::Path { path } => match hydrate_path(path, want_text) {
+        AttachmentSource::Path { path } => match hydrate_path(path, form) {
             Ok(body) => body,
             Err(err) => {
-                return WirePart::Text {
+                return vec![WirePart::Text {
                     text: format!(
                         "[attachment {} was provided by the user but its payload could not \
                          be read: {err}]",
                         attachment.label()
                     ),
-                };
+                }];
             }
         },
         // An inline `Data` source already carries the caller's base64: the
@@ -346,22 +455,22 @@ fn resolve_one(attachment: &Attachment, caps: DialectCaps) -> WirePart {
         // instead of paying a decode+re-encode round trip. Never cached —
         // the payload is already in memory on the message.
         AttachmentSource::Data { base64 } => match BASE64.decode(base64) {
-            Ok(bytes) if want_text => {
+            Ok(bytes) if form == Form::Text => {
                 HydratedBody::Text(String::from_utf8_lossy(&bytes).into_owned())
             }
             Ok(_) => HydratedBody::Base64(base64.clone()),
             Err(err) => {
-                return WirePart::Text {
+                return vec![WirePart::Text {
                     text: format!(
                         "[attachment {} was provided by the user but its inline payload is \
                          not valid base64: {err}]",
                         attachment.label()
                     ),
-                };
+                }];
             }
         },
     };
-    match (kind, body) {
+    let part = match (kind, body) {
         (AttachmentKind::Text, HydratedBody::Text(content)) => WirePart::Text {
             text: inline_text(attachment, &content),
         },
@@ -387,7 +496,52 @@ fn resolve_one(attachment: &Attachment, caps: DialectCaps) -> WirePart {
         (kind, _) => WirePart::Text {
             text: degrade_note(attachment, kind),
         },
-    }
+    };
+    vec![part]
+}
+
+/// A video resolved for a dialect that sees images but not video: one
+/// [`WirePart::Image`] per sampled still, then the note saying they are
+/// stills.
+///
+/// The note comes last on purpose. It is the model's instruction for how to
+/// read the images above it, and an instruction that arrives before its
+/// subject is one the model has to hold in mind rather than apply.
+///
+/// The floor never moves: every failure below — no file on disk, no decoder,
+/// an unreadable container — returns exactly one text note, which is what a
+/// video attachment produced on these dialects before sampling existed.
+fn sampled_video_parts(attachment: &Attachment, sampler: &dyn FrameSampler) -> Vec<WirePart> {
+    // Sampling needs a file for the decoder to seek in. An inline `Data`
+    // video has bytes but no path, and spilling a caller's payload to a temp
+    // file to hand it to a subprocess is a different decision (a write to
+    // disk the user did not ask for) than reading a file they pointed at, so
+    // it degrades to the note rather than being decided here silently.
+    let AttachmentSource::Path { path } = &attachment.source else {
+        return vec![WirePart::Text {
+            text: degrade_note(attachment, AttachmentKind::Video),
+        }];
+    };
+    let video = match sample_video(path, sampler, MAX_SAMPLED_FRAMES) {
+        Ok(video) => video,
+        Err(failure) => {
+            return vec![WirePart::Text {
+                text: unsampled_note(&attachment.label(), failure),
+            }];
+        }
+    };
+    let mut parts: Vec<WirePart> = video
+        .frames
+        .iter()
+        .map(|frame| WirePart::Image {
+            media_type: frame.media_type.clone(),
+            base64: frame.base64.clone(),
+        })
+        .collect();
+    parts.push(WirePart::Text {
+        text: sampling_note(&attachment.label(), &video),
+    });
+    parts
 }
 
 /// A text-like file inlined in full, framed so the model knows what it is
@@ -581,14 +735,14 @@ mod tests {
         let third = MAX_CACHE_BYTES / 3 + 1;
 
         let mut cache = PathCache::default();
-        cache.store(path(0), None, 0, &body(third));
-        cache.store(path(1), None, 0, &body(third));
+        cache.store(path(0), None, 0, Form::Base64, &body(third));
+        cache.store(path(1), None, 0, Form::Base64, &body(third));
         // Touch 0 so 1 — not insertion-order-oldest 0 — is the LRU victim.
         assert!(
-            cache.get_fresh(&path(0), None, 0, false).is_some(),
+            cache.get_fresh(&path(0), None, 0, Form::Base64).is_some(),
             "entry 0 is fresh and must hit"
         );
-        cache.store(path(2), None, 0, &body(third));
+        cache.store(path(2), None, 0, Form::Base64, &body(third));
 
         assert!(
             cache.entries.contains_key(&path(0)),
@@ -613,12 +767,19 @@ mod tests {
     fn a_payload_larger_than_the_whole_budget_is_never_retained() {
         let mut cache = PathCache::default();
         let keeper = PathBuf::from("/tmp/keeper.png");
-        cache.store(keeper.clone(), None, 0, &HydratedBody::Base64("x".into()));
+        cache.store(
+            keeper.clone(),
+            None,
+            0,
+            Form::Base64,
+            &HydratedBody::Base64("x".into()),
+        );
 
         cache.store(
             PathBuf::from("/tmp/whale.mp4"),
             None,
             0,
+            Form::Base64,
             &HydratedBody::Base64("x".repeat(MAX_CACHE_BYTES + 1)),
         );
 
@@ -646,6 +807,7 @@ mod tests {
                 path.clone(),
                 None,
                 len as u64,
+                Form::Text,
                 &HydratedBody::Text("x".repeat(len)),
             );
             assert_eq!(
@@ -674,6 +836,162 @@ mod tests {
             panic!("expected inlined text, got {parts:?}");
         };
         assert!(text.contains("hello body"), "{text}");
+    }
+
+    /// A sampler that answers from a fixture, so the resolve path's fan-out
+    /// is witnessed without `ffmpeg` on the machine running the test.
+    struct FakeSampler {
+        result: Result<SampledVideo, SampleFailure>,
+        calls: std::cell::Cell<usize>,
+    }
+
+    impl FakeSampler {
+        fn frames(n: usize) -> Self {
+            Self {
+                result: Ok(SampledVideo {
+                    duration_ms: 20_000,
+                    frames: (0..n)
+                        .map(|i| crate::keyframes::SampledFrame {
+                            at_ms: (i as u64 + 1) * 2_000,
+                            media_type: "image/jpeg".into(),
+                            base64: format!("frame{i}"),
+                        })
+                        .collect(),
+                }),
+                calls: std::cell::Cell::new(0),
+            }
+        }
+
+        fn failing(failure: SampleFailure) -> Self {
+            Self {
+                result: Err(failure),
+                calls: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl FrameSampler for FakeSampler {
+        fn sample(&self, _path: &Path, _max_frames: usize) -> Result<SampledVideo, SampleFailure> {
+            self.calls.set(self.calls.get() + 1);
+            self.result.clone()
+        }
+    }
+
+    const IMAGES_ONLY: DialectCaps = DialectCaps {
+        images: true,
+        pdfs: true,
+        audio: false,
+        video: false,
+    };
+
+    /// **The witness (#3340).** On a dialect that carries images but not
+    /// video, a video attachment resolves to one image part per sampled frame
+    /// plus a note saying they are frames — where before it was a single text
+    /// note and nothing the model could look at.
+    #[test]
+    fn a_video_on_an_image_capable_dialect_resolves_to_sampled_frames() {
+        let (att, _guard) = file_attachment("clip.mp4", "video/mp4", b"\x00\x00\x00 ftypisom");
+        let sampler = FakeSampler::frames(3);
+        let parts = wire_parts_with(std::slice::from_ref(&att), IMAGES_ONLY, &sampler);
+
+        assert_eq!(parts.len(), 4, "three frames and the note: {parts:?}");
+        for (i, part) in parts[..3].iter().enumerate() {
+            assert_eq!(
+                part,
+                &WirePart::Image {
+                    media_type: "image/jpeg".into(),
+                    base64: format!("frame{i}"),
+                }
+            );
+        }
+        let WirePart::Text { text } = &parts[3] else {
+            panic!("the note rides last, after the frames it describes: {parts:?}");
+        };
+        assert!(text.contains("clip.mp4"), "{text}");
+        assert!(text.contains("3 still frames"), "{text}");
+        assert!(text.contains("NOT the video"), "{text}");
+        assert!(text.contains("audio was not transcribed"), "{text}");
+    }
+
+    /// The floor never moved: a dialect with no image shape either, and a
+    /// dialect that carries video natively, both behave exactly as before.
+    #[test]
+    fn sampling_fires_only_where_images_ride_but_video_does_not() {
+        let (att, _guard) = file_attachment("clip.mp4", "video/mp4", b"\x00\x00\x00 ftypisom");
+
+        let sampler = FakeSampler::frames(3);
+        let parts = wire_parts_with(std::slice::from_ref(&att), NONE, &sampler);
+        assert!(
+            matches!(&parts[0], WirePart::Text { text } if text.contains("cannot ingest video")),
+            "no images either: today's note, unchanged — {parts:?}"
+        );
+        assert_eq!(parts.len(), 1);
+
+        let sampler = FakeSampler::frames(3);
+        let parts = wire_parts_with(std::slice::from_ref(&att), ALL, &sampler);
+        assert!(
+            matches!(&parts[0], WirePart::Video { .. }),
+            "native video is untouched — {parts:?}"
+        );
+        assert_eq!(sampler.calls.get(), 0, "and the sampler is never consulted");
+    }
+
+    /// Degradation stays total. Every way sampling can fail lands back on one
+    /// text note — the model is told what it cannot see and why, and the turn
+    /// survives.
+    #[test]
+    fn an_unsampleable_video_degrades_to_a_note_naming_the_reason() {
+        let (att, _guard) = file_attachment("clip.mp4", "video/mp4", b"\x00\x00\x00 ftypisom");
+        for failure in [
+            SampleFailure::ToolMissing,
+            SampleFailure::UnreadableDuration,
+            SampleFailure::NoFrames,
+        ] {
+            let sampler = FakeSampler::failing(failure);
+            let parts = wire_parts_with(std::slice::from_ref(&att), IMAGES_ONLY, &sampler);
+            let [WirePart::Text { text }] = parts.as_slice() else {
+                panic!("expected exactly one note for {failure:?}, got {parts:?}");
+            };
+            assert!(text.contains("clip.mp4"), "{text}");
+            assert!(text.contains(failure.reason()), "{text}");
+        }
+    }
+
+    /// An inline `Data` video has no file for a decoder to seek in, so it
+    /// takes the note rather than a temp-file spill the user never asked for.
+    #[test]
+    fn an_inline_video_payload_degrades_rather_than_spilling_to_disk() {
+        let att = Attachment {
+            name: "clip.mp4".into(),
+            media_type: "video/mp4".into(),
+            byte_len: 4,
+            source: AttachmentSource::Data {
+                base64: BASE64.encode(b"vvvv"),
+            },
+        };
+        let sampler = FakeSampler::frames(3);
+        let parts = wire_parts_with(&[att], IMAGES_ONLY, &sampler);
+        assert_eq!(parts.len(), 1, "{parts:?}");
+        assert_eq!(sampler.calls.get(), 0, "no decoder was invoked");
+    }
+
+    /// The conversation replays every turn, so an uncached sampler would run
+    /// `ffmpeg` on an unchanged file once per model call for the rest of the
+    /// session. Witness: two resolutions of the same video, one extraction.
+    #[test]
+    fn a_video_is_sampled_once_per_file_version_not_once_per_turn() {
+        let (att, _guard) = file_attachment("cached.mp4", "video/mp4", b"\x00\x00\x00 ftypisom");
+        let sampler = FakeSampler::frames(2);
+
+        let first = wire_parts_with(std::slice::from_ref(&att), IMAGES_ONLY, &sampler);
+        let second = wire_parts_with(std::slice::from_ref(&att), IMAGES_ONLY, &sampler);
+
+        assert_eq!(first, second);
+        assert_eq!(
+            sampler.calls.get(),
+            1,
+            "the second turn must be served from the path cache"
+        );
     }
 
     #[test]

@@ -37,6 +37,9 @@
 //! - `stream_recovery` (crate-private) — the streaming→non-streaming
 //!   fallback latch armed when a stream hangs before its first byte or
 //!   comes back empty (#2686).
+//! - `attachment` / `keyframes` (crate-private) — attachment → wire-part
+//!   resolution and its degrade ladder, including the frame sampler that
+//!   lets an image-capable dialect see a video as stills (#3340).
 pub mod anthropic;
 pub(crate) mod attachment;
 pub mod bedrock;
@@ -46,6 +49,7 @@ pub mod credential;
 pub mod factory;
 pub mod gemini;
 pub(crate) mod http;
+pub(crate) mod keyframes;
 pub mod modelsdev;
 pub mod openai;
 pub mod provider;
