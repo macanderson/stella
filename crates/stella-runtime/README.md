@@ -42,7 +42,7 @@ crate is that shared home.
 
 The line `SessionRuntime` draws (`src/session.rs` states it in full): **below
 it sit the resources**, which are pure functions of a `RuntimeSpec` and
-identical whether a TUI, an SSE stream, or a test harness is driving. **Above
+identical whether interactive mode, an SSE stream, or a test harness is driving. **Above
 it sit the ports** — the approval gate is a terminal prompt in one host and a
 reverse HTTP request in another; the event sink is a renderer thread in one
 and an SSE pump in the other. Only the bottom half lives here; the top half
@@ -65,7 +65,7 @@ one loop, several doors, and everything wrapped around it a plugin
 wrapper contract `before_turn` / `after_turn` / `judge` / `again?` (#3380) —
 **lives here** ([`src/wrapper/`](src/wrapper), landed #3479), and the reason is
 the boundary above: `before_turn` recalls and researches, `after_turn` runs a
-test command or an oracle process, and invariant #2 forbids that I/O inside
+test command or an oracle process, and rule #2 forbids that I/O inside
 [`stella-core`](../stella-core). A socket defined in core would either be a
 trait core never calls, or a trait core awaits — which puts a process spawn
 inside the engine (`doc:turn-loop-wrappers` §9.1). This crate already owns
@@ -164,7 +164,7 @@ allocation that lifts it — `stella_core::turn_slots` partitions
 `turn_instance` by residue, so a plane counting only its own calls can never
 land where a door's rounds will, without either counter knowing the other's.
 One limit stands on every door that attaches the plane: the `verifier` tier is
-deliberately bound to no seat, so a plugin naming it is answered `Unavailable`
+bound to no seat, so a plugin naming it is answered `Unavailable`
 rather than having its call attributed to a role the host never made
 (`ChildTurns::with_seat` is how a driver that wants it owns the claim).
 
@@ -184,7 +184,7 @@ stream across the points — a child there is exactly as run-scoped as the round
 beside it, and a second row would split one run's spend in `stella stats`. The
 shared half is `RepublishingDriver`, which puts a door's stream back after every
 round it drives; what each door publishes is its own `PointStream`. `stella
-fleet` publishes the registry's event slot alone and deliberately not the
+fleet` publishes the registry's event slot alone and not the
 per-call work-tree measurement beside it: its worker rebinds
 `cfg.workspace_root` to its own worktree while the shared journal stays rooted
 at the lead's, so a measurer there would read the wrong tree (#3233).
@@ -212,7 +212,7 @@ the plugin is told about rather than a silence.
 spawns a driver, opens a session, relays every capability ask through the
 grant a human consented to, and reads back the `next` that ends it —
 `tests/driver_socket.rs` drives a `/bin/sh` driver through all of it. Two
-things are deliberately still absent. Every capability answers `unsupported`,
+things are still absent. Every capability answers `unsupported`,
 because `NoDriverCapabilities` is the only implementation and B1-B6 (#3599)
 are what give the verbs something to do; and nothing in `stella-cli` opens a
 driver session yet, so `plugins/stella-selfdriving`'s `[driver]` grant remains

@@ -19,12 +19,12 @@
 //! invoked `stella fleet` from. An isolated task's worktree is a fresh
 //! checkout of a branch, so `.stella/plugins/` (untracked in every repository
 //! that does not commit it) need not exist there at all: resolving the
-//! variant against the worker's own root would make `--pipeline` work on a
+//! pipeline name against the worker's own root would make `--pipeline` work on a
 //! shared-tree task and fail as "no installed plugin declares…" on an
 //! isolated one, for reasons the operator has no way to see. So the roster is
 //! read from the invocation root — the same root
 //! [`crate::fleet_cmd::run_fleet`]'s own pre-flight resolve reads, which is
-//! what makes a typo'd variant fail the command before a single task is
+//! what makes a typo'd pipeline name fail the command before a single task is
 //! dispatched — and the *tree* the plugin is told about is the worker's, via
 //! the candidate grant below.
 //!
@@ -122,13 +122,13 @@ mod tests;
 /// they already share.
 ///
 /// **Events only, and that is the difference from every other door.** This
-/// publishes the registry's own event slot and deliberately not the per-call
+/// publishes the registry's own event slot and not the per-call
 /// work-tree measurement beside it (`turn_files::open_turn_streams`), because a
 /// fleet worker rebinds `cfg.workspace_root` to its own worktree while the
 /// shared `SessionDurability` journal stays rooted at the lead's — a measurer
 /// attached here would snapshot the wrong tree, which is exactly why
 /// `turn_files`' `ENGINE_DRIVERS` records this door as `Blocked` on #3233 and
-/// why `STREAM_OWNERS` deliberately omits it. Publishing the measurer here
+/// why `STREAM_OWNERS` omits it. Publishing the measurer here
 /// would silently un-block #3233 rather than close #4730, so it stays withheld
 /// and this type is what says so out loud.
 pub(super) struct AttemptPointStream {
