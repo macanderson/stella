@@ -164,7 +164,7 @@ fn measurements(pairs: &[(&str, &str)]) -> String {
 /// The reference wrapper: a budget rather than a flip, so its verdict is
 /// decided by a number it reports against a threshold a human read at install.
 /// `wrapper_dispatch.rs`'s own reference plugin, which its `/bin/sh` script
-/// used to spell out (#4697). Distinct from [`reference`] above in two ways
+/// used to spell out (#4697). Distinct from [`fn@reference`] above in two ways
 /// the tests assert on: the `after_turn` p50 keys on "unrolled the loop"
 /// rather than "slower", and the `before_turn` declares a `scope`.
 ///
