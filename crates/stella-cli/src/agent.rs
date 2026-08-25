@@ -767,20 +767,20 @@ const MCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// can announce the slow part before awaiting it (#98).
 #[derive(Debug)]
 pub(crate) enum McpPlan {
-    /// No config file, no package servers, or nothing but empty ones.
+    /// No config file, no package servers, and nothing to say about it.
     None,
-    /// The **workspace's own** config exists but is unreadable/invalid: MCP is
-    /// disabled this session, and the reason must be surfaced exactly once.
+    /// No MCP this session, and a reason to surface exactly once.
     ///
-    /// A *package's* broken file never lands here. One third party's typo must
-    /// not be able to disable the servers a user configured themselves, so a
-    /// package that does not parse contributes nothing and is reported in
-    /// [`Self::Servers`]'s notices instead (#4733).
+    /// **A broken package cannot land here while any server would otherwise
+    /// start** (#4733). One third party's typo must not disable the servers a
+    /// user configured themselves, so a package that does not parse
+    /// contributes nothing and rides in [`Self::Servers`]'s notices. It is
+    /// only when nothing at all is left to connect that its reason becomes the
+    /// session's reason — disabling nothing needs no protecting.
     Invalid(String),
-    /// Servers to connect via [`connect_mcp_servers`], and anything worth
-    /// saying about how the list was assembled — a package whose file did not
-    /// parse, or whose server was dropped because the user runs one under the
-    /// same name.
+    /// Servers to connect via [`connect_mcp_servers`] — never empty — and how
+    /// the list was narrowed on the way: a package whose file did not parse, or
+    /// whose server was dropped because the user runs one under the same name.
     Servers(Vec<McpServerConfig>, Vec<String>),
 }
 
@@ -870,13 +870,11 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
         }
     }
 
-    if servers.is_empty() && notices.is_empty() {
-        McpPlan::None
-    } else if servers.is_empty() {
-        // Nothing to connect, but something a human has to hear.
-        McpPlan::Servers(Vec::new(), notices)
-    } else {
-        McpPlan::Servers(servers, notices)
+    match (servers.is_empty(), notices.is_empty()) {
+        (true, true) => McpPlan::None,
+        // Nothing left to connect, so the packages' reasons are the session's.
+        (true, false) => McpPlan::Invalid(notices.join(" · ")),
+        _ => McpPlan::Servers(servers, notices),
     }
 }
 
@@ -937,9 +935,6 @@ pub(crate) async fn connect_mcp(
                 for notice in notices {
                     eprintln!("  {} {notice}", "!".yellow());
                 }
-            }
-            if servers.is_empty() {
-                return Ok(None);
             }
             servers
         }

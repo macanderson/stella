@@ -322,10 +322,7 @@ pub fn retain_enabled(skills: &mut Vec<Skill>, workspace_root: &Path) {
             !project_disabled.contains(&s.name)
         } else if under(&user) {
             !user_disabled.contains(&s.name)
-        } else if let Some(dir) = contributed
-            .iter()
-            .find(|dir| source.starts_with(&dir.dir))
-        {
+        } else if let Some(dir) = contributed.iter().find(|dir| source.starts_with(&dir.dir)) {
             match scope_of(dir.scope) {
                 SkillScope::Project => !project_disabled.contains(&s.name),
                 SkillScope::User => !user_disabled.contains(&s.name),

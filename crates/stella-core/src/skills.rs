@@ -91,7 +91,7 @@ pub enum SkillOrigin {
     /// Shipped by an installed plugin package, from its own `skills/`
     /// directory rather than either of the user's.
     ///
-    /// It is its own variant because the other four all answer "which of the
+    /// Separate from the other four because they all answer "which of the
     /// user's directories is this under", and a package's directory is none of
     /// them. Without it [`default_origin_for`] has no true answer and falls
     /// through to [`SkillOrigin::Workspace`], reporting a third party's skill
@@ -368,10 +368,7 @@ pub fn load_skills_from_dir(
 /// name: a later file overrides an earlier one of the same name but keeps the
 /// first-seen ordering position (JS `Map.set` semantics), and a file that does
 /// not parse becomes a diagnostic instead of a skill.
-fn merge_by_name(
-    files: Vec<SkillFile>,
-    origin_of: impl Fn(&str) -> SkillOrigin,
-) -> LoadedSkills {
+fn merge_by_name(files: Vec<SkillFile>, origin_of: impl Fn(&str) -> SkillOrigin) -> LoadedSkills {
     let mut order: Vec<String> = Vec::new();
     let mut by_name: HashMap<String, Skill> = HashMap::new();
     let mut diagnostics: Vec<SkillDiagnostic> = Vec::new();

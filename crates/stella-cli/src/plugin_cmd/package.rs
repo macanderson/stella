@@ -138,8 +138,8 @@ pub(crate) struct ContributedDir {
     pub(crate) dir: PathBuf,
     /// The tier the contributing package is installed at. A contributed
     /// surface is not installed under one of the user's scope roots, but the
-    /// package that ships it *is*, so this is the honest answer to "which
-    /// scope is this under" for any surface that has to ask — and it is what
+    /// package that ships it *is*, so this is the answer to "which scope is
+    /// this under" for any surface that has to ask — and it is what
     /// decides which per-scope state file governs a contributed skill
     /// (`crate::skill_manager`).
     pub(crate) scope: PluginScope,

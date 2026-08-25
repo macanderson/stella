@@ -477,9 +477,7 @@ fn an_untrusted_projects_contributed_tool_never_loads() {
 fn ships_a_server(source: &Path, plugin: &str, server: &str) {
     std::fs::write(
         source.join(package::MCP_FILE),
-        format!(
-            "[servers.{server}]\ntransport = \"stdio\"\ncmd = \"/bin/echo\"\nargs = []\n"
-        ),
+        format!("[servers.{server}]\ntransport = \"stdio\"\ncmd = \"/bin/echo\"\nargs = []\n"),
     )
     .expect("mcp.toml");
     let manifest_path = source.join(roster::MANIFEST_FILE);
@@ -749,13 +747,8 @@ fn a_plugins_skill_is_listed_as_the_plugins_and_is_not_removable_there() {
     // The tab's own switch reaches it: the state file that governs the tier
     // the package is installed at governs its contributed skills too, so the
     // row can be turned off and the recall path stops injecting it.
-    crate::skill_manager::set_enabled(
-        stella_tui::SkillScope::Project,
-        "house-style",
-        false,
-        &root,
-    )
-    .expect("disable must succeed");
+    crate::skill_manager::set_enabled(stella_tui::SkillScope::Project, "house-style", false, &root)
+        .expect("disable must succeed");
     assert!(
         !listed(&root).expect("still listed while disabled").enabled,
         "the row shows it off rather than dropping it"

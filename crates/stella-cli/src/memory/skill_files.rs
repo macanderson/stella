@@ -110,6 +110,23 @@ pub(crate) fn load_workspace_skills_with_authority(
     loaded
 }
 
+/// Read one plugin's `skills/` directory, tagged
+/// [`skills::SkillOrigin::Contributed`].
+///
+/// This caller states the tag; the path-derived default cannot. A package's
+/// `skills/` is under neither of the user's own directories, so that default
+/// has no true answer for it and falls through to `Workspace`, reporting a
+/// third party's skill as the user's own (#4734). Shared with
+/// `crate::skill_manager` so the SKILLS tab lists exactly the skills recall
+/// injects, read the same way.
+pub(crate) fn load_contributed_dir(dir: &Path) -> skills::LoadedSkills {
+    skills::load_skills_from_dir(
+        &FsSkillSource,
+        &dir.display().to_string(),
+        skills::SkillOrigin::Contributed,
+    )
+}
+
 /// Add the skills installed plugins ship (`<plugin_dir>/skills/<slug>/SKILL.md`,
 /// #3380), after the user's own.
 ///
@@ -127,21 +144,6 @@ pub(crate) fn load_workspace_skills_with_authority(
 /// instead of a name collision inside your own load.
 ///
 /// Roster order decides plugin-versus-plugin, matching the tool surface.
-/// Read one plugin's `skills/` directory, tagged [`skills::SkillOrigin::Contributed`].
-///
-/// The tag is named rather than derived because a package's `skills/` is under
-/// neither of the user's own directories: the path-derived default has no true
-/// answer for it and falls through to `Workspace`, reporting a third party's
-/// skill as the user's own (#4734). Shared with `crate::skill_manager` so the
-/// SKILLS tab lists exactly the skills recall injects, read the same way.
-pub(crate) fn load_contributed_dir(dir: &Path) -> skills::LoadedSkills {
-    skills::load_skills_from_dir(
-        &FsSkillSource,
-        &dir.display().to_string(),
-        skills::SkillOrigin::Contributed,
-    )
-}
-
 fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills) {
     for contributed in crate::plugin_cmd::package::contributed_skill_dirs(workspace_root) {
         let found = load_contributed_dir(&contributed.dir);

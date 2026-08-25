@@ -159,9 +159,10 @@ fn contributed_server_principals(workspace_root: &std::path::Path) -> Vec<(Strin
         .into_iter()
         .flat_map(|contributed| {
             let plugin = contributed.plugin;
-            contributed.servers.into_iter().map(move |server| {
-                (server.name, Principal::Plugin(plugin.clone()))
-            })
+            contributed
+                .servers
+                .into_iter()
+                .map(move |server| (server.name, Principal::Plugin(plugin.clone())))
         })
         .filter(|(server, _)| !taken.iter().any(|held| held == server))
         .map(|(server, plugin)| (stella_mcp::namespace_prefix(&server), plugin))
