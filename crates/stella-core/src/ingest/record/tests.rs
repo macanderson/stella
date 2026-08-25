@@ -81,6 +81,7 @@ fn repository_defaults() -> Defaults {
             repo: Some("git@github.com:acme/web.git".to_string()),
             commit: Some("9f2c1ab".to_string()),
             ingest_run_id: None,
+            evidence_grade: None,
             extracted_at: Some("2026-07-27T09:00:00Z".to_string()),
             extractor: Some("claude-opus-5".to_string()),
         }),

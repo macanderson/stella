@@ -20,8 +20,6 @@
 //!
 //! `cfg(unix)` for `wrapper_socket.rs`'s reason (#3497).
 
-#![cfg(unix)]
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -144,36 +142,20 @@ name = "execute"
 
 /// Echoes which plugin and which stage it was asked about, so the fold is
 /// readable off the messages the turn receives rather than inferred.
-fn echoing(label: &str) -> String {
-    format!(
-        r#"
-input=$(cat)
-case "$input" in
-  *'"point":"before_turn"'*)
-    stage=$(printf '%s' "$input" | sed 's/.*"stage":"\([a-z_]*\)".*/\1/')
-    printf '{{"point":"before_turn","body":{{"protocol_version":1,"context":[{{"label":"{label}","text":"{label} contributed at STAGE"}}]}}}}\n' | sed "s/STAGE/$stage/"
-    ;;
-  *)
-    printf '%s\n' '{{"point":"after_turn","body":{{"protocol_version":1,"evidence":{{"flip":"not-attempted","measurements":{{}}}}}}}}'
-    ;;
-esac
-"#
-    )
-}
-
 fn manifest(text: &str) -> PluginManifest {
     PluginManifest::from_toml_str(text).expect("the fixture manifest loads")
 }
 
-fn plugin(script: &str) -> Arc<SubprocessWrapper> {
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
+
+/// One member of a composition, driving the portable fixture (#4697).
+fn plugin(mode: &[&str]) -> Arc<SubprocessWrapper> {
+    let mut argv = vec![FIXTURE.to_string()];
+    argv.extend(mode.iter().map(|part| (*part).to_string()));
     Arc::new(
-        SubprocessWrapper::declare(
-            vec!["/bin/sh".into(), "-c".into(), script.into()],
-            Vec::new(),
-            DEFAULT_WRAPPER_TIMEOUT,
-        )
-        .expect("the transport is declared with a program and a budget")
-        .wrapper,
+        SubprocessWrapper::declare(argv, Vec::new(), DEFAULT_WRAPPER_TIMEOUT)
+            .expect("the transport is declared with a program and a budget")
+            .wrapper,
     )
 }
 
@@ -248,8 +230,8 @@ impl Recorder {
 #[tokio::test]
 async fn two_plugins_compose_into_one_selection_and_both_reach_the_turn() {
     let dispatch = WrapperDispatch::bind_composed(vec![
-        (manifest(RECALLER), plugin(&echoing("recaller"))),
-        (manifest(PLANNER), plugin(&echoing("planner"))),
+        (manifest(RECALLER), plugin(&["echo-stage", "recaller"])),
+        (manifest(PLANNER), plugin(&["echo-stage", "planner"])),
     ])
     .expect("two agreeing manifests compose");
 
@@ -308,8 +290,8 @@ async fn two_plugins_compose_into_one_selection_and_both_reach_the_turn() {
 async fn composition_unions_contributions_and_not_permissions() {
     // The arbiter declares `points = ["after_turn"]` only.
     let dispatch = WrapperDispatch::bind_composed(vec![
-        (manifest(RECALLER), plugin(&echoing("recaller"))),
-        (manifest(ARBITER), plugin(&echoing("arbiter"))),
+        (manifest(RECALLER), plugin(&["echo-stage", "recaller"])),
+        (manifest(ARBITER), plugin(&["echo-stage", "arbiter"])),
     ])
     .expect("a steering member and an arbiter member compose");
 
@@ -339,8 +321,8 @@ async fn composition_unions_contributions_and_not_permissions() {
 #[test]
 fn a_stage_order_conflict_is_refused_at_bind_time() {
     let error = WrapperDispatch::bind_composed(vec![
-        (manifest(RECALLER), plugin("exit 0")),
-        (manifest(CONTRARIAN), plugin("exit 0")),
+        (manifest(RECALLER), plugin(&["exit", "0", ""])),
+        (manifest(CONTRARIAN), plugin(&["exit", "0", ""])),
     ])
     .expect_err("`recall` before `execute` and `execute` before `recall` have no one order");
 
@@ -371,8 +353,8 @@ fn a_stage_order_conflict_is_refused_at_bind_time() {
 #[test]
 fn two_arbiters_are_refused_at_bind_time() {
     let error = WrapperDispatch::bind_composed(vec![
-        (manifest(ARBITER), plugin("exit 0")),
-        (manifest(OTHER_ARBITER), plugin("exit 0")),
+        (manifest(ARBITER), plugin(&["exit", "0", ""])),
+        (manifest(OTHER_ARBITER), plugin(&["exit", "0", ""])),
     ])
     .expect_err("at most one member may hold a turn open");
     match error {
@@ -425,8 +407,8 @@ name = "execute"
     // refusal, arrived at one layer up.
     assert!(matches!(
         WrapperDispatch::bind_composed(vec![
-            (manifest(ARBITER), plugin("exit 0")),
-            (manifest(ARBITER), plugin("exit 0")),
+            (manifest(ARBITER), plugin(&["exit", "0", ""])),
+            (manifest(ARBITER), plugin(&["exit", "0", ""])),
         ])
         .expect_err("two oracles are two arbiters"),
         WrapperError::TwoArbiters { .. }
@@ -459,8 +441,8 @@ fn only_an_arbiter_may_declare_requirements_which_is_why_they_cannot_collide() {
     // And the arbiter that *may* declare them composes with a member that has
     // none, which is the ordinary case the fold exists to serve.
     WrapperDispatch::bind_composed(vec![
-        (manifest(ARBITER), plugin("exit 0")),
-        (manifest(RECALLER), plugin("exit 0")),
+        (manifest(ARBITER), plugin(&["exit", "0", ""])),
+        (manifest(RECALLER), plugin(&["exit", "0", ""])),
     ])
     .expect("one member's requirements and another's none is a union of one");
 }

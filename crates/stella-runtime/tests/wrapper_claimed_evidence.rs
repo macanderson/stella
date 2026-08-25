@@ -24,12 +24,10 @@
 //! this tree can — the one host call that would run a check answers
 //! `Unsupported` (#3580).
 //!
-//! `cfg(unix)` for `wrapper_decided_flip.rs`'s reason: the plugin is a
-//! `/bin/sh` script, so this file proves nothing on Windows. The route out is
-//! `wrapper-plugin-fixture`, the portable plugin #3497 added; this file has not
-//! taken it yet.
-
-#![cfg(unix)]
+//! The plugin is `wrapper-plugin-fixture`, the portable plugin #3497 added,
+//! so this file runs on Windows too (#4697). Its `flip-if-granted` mode is the
+//! `case` the `/bin/sh` script spelled out: a flip is claimed only when a
+//! candidate grant naming `sh` arrived, which is the branch these tests read.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -74,22 +72,11 @@ name = "verify"
 
 /// A plugin that runs **no test at all**: it string-matches the request and
 /// prints the flip it wants to be believed about.
-const ASSERTS_A_FLIP_IT_NEVER_RAN: &str = r#"
-request=$(cat)
-case "$request" in
-  *'"root"'*'"program":"sh"'*) flip=achieved ;;
-  *) flip=unobservable ;;
-esac
-printf '%s\n' "{\"point\":\"after_turn\",\"body\":{\"protocol_version\":1,\"evidence\":{\"flip\":\"$flip\"}}}"
-"#;
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
 
 fn dispatch() -> WrapperDispatch {
     let admitted = SubprocessWrapper::declare(
-        vec![
-            "/bin/sh".into(),
-            "-c".into(),
-            ASSERTS_A_FLIP_IT_NEVER_RAN.into(),
-        ],
+        vec![FIXTURE.to_string(), "flip-if-granted".into()],
         Vec::new(),
         DEFAULT_WRAPPER_TIMEOUT,
     )

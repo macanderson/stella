@@ -111,6 +111,68 @@ fn main() {
         }
         "dispatch-reference" => dispatch_reference(&read_request()),
         "dispatch-contributed" => dispatch_contributed(&read_request()),
+        // Claims a flip only when a candidate grant naming `sh` arrived, and
+        // says `unobservable` otherwise — so a host that withholds the grant
+        // gets an honest refusal rather than an assertion the plugin could
+        // not have made. The two-substring match is the `case` the shell
+        // script spelled out.
+        //
+        // Both arms are load-bearing, from different files.
+        // `wrapper_claimed_evidence.rs` takes only the granted side (its
+        // `report()` always passes `candidate: Some(..)`), while
+        // `wrapper_decided_flip.rs` calls `run(None, ..)` — so neutering
+        // this branch fails `without_the_grant_or_the_snapshot_the_verdict_is_undecided`
+        // there. Checked by ablation, not assumed.
+        // Echoes back the stage it was asked at, labelled — what
+        // `wrapper_composition.rs` used `sed` for. Composition tests read
+        // those labels to prove each member saw its own declared stages and
+        // no others, so echoing a fixed string here would let a composition
+        // that dispatched the wrong stage pass.
+        // Reports which of two named variables reached the child, as `10`
+        // for present and `0` for absent — the `${VAR:+1}0` idiom the shell
+        // probe used. `wrapper_late_credential.rs` reads both back: one
+        // granted late, one never granted, so a mode that answered a
+        // constant could not tell a delivered credential from a leaked one.
+        "two-env-probe" => {
+            let _ = read_request();
+            let present = |name: &str| {
+                if std::env::var_os(name).is_some() {
+                    "10"
+                } else {
+                    "0"
+                }
+            };
+            emit(&measurements(&[
+                ("late", present(arg(&args, 1))),
+                ("mode", present(arg(&args, 2))),
+            ]));
+        }
+        "echo-stage" => {
+            let request = read_request();
+            let label = arg(&args, 1);
+            if request.contains("\"point\":\"before_turn\"") {
+                let stage = string_field(&request, "stage").unwrap_or_default();
+                emit(&format!(
+                    "{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\
+                     \"context\":[{{\"label\":\"{label}\",\
+                     \"text\":\"{label} contributed at {stage}\"}}]}}}}"
+                ));
+            } else {
+                emit(&measurements(&[]));
+            }
+        }
+        "flip-if-granted" => {
+            let request = read_request();
+            let flip = if request.contains("\"root\"") && request.contains("\"program\":\"sh\"") {
+                "achieved"
+            } else {
+                "unobservable"
+            };
+            emit(&format!(
+                "{{\"point\":\"after_turn\",\"body\":{{\"protocol_version\":1,\
+                 \"evidence\":{{\"flip\":\"{flip}\"}}}}}}"
+            ));
+        }
         "candidate-probe" => candidate_probe(&read_request()),
         "flood" => flood(arg(&args, 1).parse().unwrap_or(0), arg(&args, 2)),
         "trailing" => trailing(arg(&args, 1).parse().unwrap_or(0)),

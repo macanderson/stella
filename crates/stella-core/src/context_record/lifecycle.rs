@@ -33,12 +33,14 @@
 //!   so no number of `occurrences` can substitute for it.
 
 use serde::{Deserialize, Serialize};
+use stella_protocol::provenance::ProvenanceGrade;
 
 use super::hash::{RecordHashError, record_hash};
 use super::kind::{
     ContextRecordKind, DirectiveEnforcement, Origin, PromotionAction, RecordProposalKind,
     RecordProposalStatus,
 };
+use super::provenance::EvidencePool;
 use super::{Confidence, RecordValidationError};
 
 /// The record schema version these bodies are written against. Stored on every
@@ -188,6 +190,19 @@ pub struct ProposalRecord {
     /// surface can show "three separate tasks, here they are" without
     /// re-deriving anything.
     pub supporting_observations: Vec<String>,
+    /// **How strong the evidence behind this proposal actually is** (#2782),
+    /// folded from the observations above at construction and never asserted
+    /// by the code doing the promoting — see
+    /// [`crate::context_record::provenance::EvidencePool`], which is the only
+    /// way to populate it.
+    ///
+    /// The proposal has to store it because it keeps only the observations'
+    /// `record_id`s and so cannot re-derive the grade later. `None` means a
+    /// record written before provenance was carried: absent, not weak, and
+    /// refused by [`stella_protocol::provenance::authorises`] rather than
+    /// rounded down to a grade it never earned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<ProvenanceGrade>,
     pub score: ProposalScore,
     pub confidence: Confidence,
     pub observed_at: String,
@@ -212,6 +227,14 @@ impl ProposalRecord {
     /// SKILL.md that informs, the other a rule that steers. Without the
     /// namespace they would collide onto one lineage, and declining the rule
     /// would silently decline the skill too.
+    ///
+    /// **`evidence` carries both the supporting observations and their grade**
+    /// (#2782). It is an [`EvidencePool`] rather than a `Vec<String>` of ids
+    /// plus a grade because the pool has no public constructor that accepts a
+    /// grade: a caller can hand this record the evidence it has, and cannot
+    /// hand it a grade it prefers. `None` is a proposal with no supporting
+    /// observations at all, which stores no grade — absent evidence, not weak
+    /// evidence.
     #[allow(clippy::too_many_arguments)] // content-addressed constructor: every field feeds the hash, so a builder would just hide the same list
     pub fn new(
         proposal_kind: RecordProposalKind,
@@ -220,12 +243,19 @@ impl ProposalRecord {
         title: impl Into<String>,
         body: impl Into<String>,
         domains: Vec<String>,
-        supporting_observations: Vec<String>,
+        evidence: Option<EvidencePool>,
         score: ProposalScore,
         confidence: Confidence,
         observed_at: impl Into<String>,
     ) -> Result<Self, RecordHashError> {
         let candidate_id = candidate_id.into();
+        let (provenance, supporting_observations) = match evidence {
+            Some(pool) => {
+                let (grade, ids) = pool.into_parts();
+                (Some(grade), ids)
+            }
+            None => (None, Vec::new()),
+        };
         let mut record = Self {
             schema_version: LIFECYCLE_SCHEMA_VERSION.to_string(),
             record_kind: ContextRecordKind::RecordProposal,
@@ -238,6 +268,7 @@ impl ProposalRecord {
             body: body.into(),
             domains,
             supporting_observations,
+            provenance,
             score,
             confidence,
             observed_at: observed_at.into(),
