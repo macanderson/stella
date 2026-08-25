@@ -45,7 +45,7 @@ members = [
 exclude = [".stella-examples"]
 
 [workspace.package]
-version = "0.9.199"
+version = "0.9.201"
 edition = "2024"
 rust-version = "1.90"
 license = "AGPL-3.0-only"
