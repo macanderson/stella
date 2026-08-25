@@ -167,6 +167,10 @@ use candidates::ended_abnormally;
 /// `candidates.rs`'s reason: this one sits under the 1500-line ratchet.
 mod child_stream;
 use child_stream::PluginChildStream;
+/// The plugin, the dispatcher and the manifest every door's child-turn witness
+/// is built from. Shared rather than copied per door — see the module doc.
+#[cfg(test)]
+pub(crate) mod child_turn_fixture;
 // The two halves the other doors reuse (#4730). `stella goal --pipeline
 // <variant>` and `stella fleet` each publish a stream of their own — their own
 // run-scoped execution row, not a `plugin` row — and drive it through the same

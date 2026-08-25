@@ -107,6 +107,10 @@ use tokio::sync::mpsc;
 use crate::wrapper_candidate::GrantedCandidate;
 use crate::wrapper_plugin::{BoundWrapper, PointStream};
 
+/// This door's half of the child-turn metering witness (#4730).
+#[cfg(test)]
+mod tests;
+
 /// This attempt's own channel, held open across the dispatch's points so a
 /// plugin's `child_turn` meters into it rather than into a sink (#4730).
 ///

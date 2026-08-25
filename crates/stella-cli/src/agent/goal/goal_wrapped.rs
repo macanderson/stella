@@ -80,6 +80,10 @@ use async_trait::async_trait;
 use stella_plugin::TurnOutcome as WrapperTurnOutcome;
 use stella_runtime::wrapper::{DrivenTurn, RoundInput, TurnDriver, TurnPrelude};
 
+/// This door's half of the child-turn metering witness (#4730).
+#[cfg(test)]
+mod tests;
+
 use super::*;
 use crate::wrapper_plugin::{BoundWrapper, PointStream, RepublishingDriver};
 
@@ -232,9 +236,10 @@ struct GoalPointStream<'r> {
 
 impl PointStream for GoalPointStream<'_> {
     fn publish(&self, registry: &ToolRegistry, cfg: &Config) {
-        // Both halves of the seam, exactly as `GoalRoundDriver::run_turn`
-        // publishes its per-turn sender: this door's workspace is the one the
-        // measurer reads, so there is nothing here to withhold.
+        // The registry's own events and the per-call work-tree measurement
+        // together, exactly as `GoalRoundDriver::run_turn` publishes its
+        // per-turn sender: this door's workspace is the one the measurer reads,
+        // so there is nothing here to withhold.
         persistence::attach_run_streams(registry, cfg, &self.tx, self.execution);
     }
 }
@@ -555,6 +560,12 @@ pub(crate) async fn run_goal_wrapped_turn(
     // run's single terminator.
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
+    // The plugin-point stream goes first, and it is not optional: it holds a
+    // sender over this run's channel, so a `points` still alive when the
+    // renderer is awaited below keeps that channel open and hangs a goal run
+    // whose work is finished (#960). Detaching the registry alone does not
+    // reach it — the clone lives on this binding, not in the slot.
+    drop(points);
     // The canonical teardown (#960): each round republished the registry's
     // streams onto its own sender, so those clones are detached before the
     // renderer is awaited or a completed goal run hangs on a channel that

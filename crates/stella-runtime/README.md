@@ -174,9 +174,20 @@ report and the session's budget guard, and never the store. `stella run
 --pipeline <variant>` closed that (#3802): `crates/stella-cli/src/wrapper_plugin/child_stream.rs`
 holds one run-scoped execution row and its event stream open for the span of
 the dispatch, re-published after each round, so the plugin's own model calls
-land in `executions` and `step_usage` beside the rounds they bracket. The two
-round-driving doors above still meter their plugin's children into a sink
-(#4730); `stella run` is the door #3802's definition of done named.
+land in `executions` and `step_usage` beside the rounds they bracket. All three
+doors close it now (#4730), and the two round-driving ones close it
+differently rather than by copying: `stella run` opens a `plugin` execution row
+of its own because each of its rounds opens a row, so a between-rounds child
+belongs to neither, while `stella goal --pipeline <variant>` and `stella fleet`
+already run every round under **one** row and simply re-publish *that* row's
+stream across the points — a child there is exactly as run-scoped as the rounds
+beside it, and a second row would split one run's spend in `stella stats`. The
+shared half is `RepublishingDriver`, which puts a door's stream back after every
+round it drives; what each door publishes is its own `PointStream`. `stella
+fleet` publishes the registry's event slot alone and deliberately not the
+per-call work-tree measurement beside it: its worker rebinds
+`cfg.workspace_root` to its own worktree while the shared journal stays rooted
+at the lead's, so a measurer there would read the wrong tree (#3233).
 
 **The candidate-fanout plane, and where its substrate comes from.**
 `candidate_fanout` and `adopt_candidate` (#3844) are the capability

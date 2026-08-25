@@ -77,6 +77,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::config::Config;
 use crate::runtime::{SystemClock, TokioSleeper, WallClock};
+// The trait is in scope for `AttemptPointStream::publish` below — a fleet
+// attempt publishes its own channel across the dispatch's points (#4730).
+use crate::wrapper_plugin::PointStream;
 use crate::{agent, plain, rules};
 
 /// Cap on the per-task summary line so the report table stays a table.
@@ -1266,6 +1269,13 @@ async fn run_task(
                     // channel that never closes and hang a finished attempt
                     // (#960).
                     points.detach(&registry);
+                    // And the binding itself, which holds a sender over this
+                    // lane's channel. It would fall out of scope here anyway;
+                    // said out loud because the `drop(tx)` and `renderer.await`
+                    // this protects are two hundred lines below, where nothing
+                    // would connect a hung attempt back to a stream opened up
+                    // here (#960).
+                    drop(points);
                     raced
                 }
                 // A fleet worker owns its run (#3379) — no pipeline above it,
