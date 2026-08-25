@@ -140,7 +140,7 @@ pub(crate) fn load_workspace_skills_with_authority(
 /// surface, and the reason a caller no longer has to parse
 /// [`skills::Skill::source_path`] to answer "which plugin gave me this?".
 ///
-/// The origin is stamped for the same reason and in the same breath (#4734).
+/// The origin is stamped here for the same reason (#4734).
 /// Passing the package's directory as `workspace_skills_dir` is what makes the
 /// loader read it at all, and it leaves every skill here claiming
 /// [`skills::SkillOrigin::Workspace`] — a third party's skill reporting as the
