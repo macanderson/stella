@@ -16,7 +16,7 @@ Each page carries the tool's name, description, input schema, output schema, `re
 
 One field remains a stated absence rather than a value, because inventing it would manufacture a source of truth nobody reviewed:
 
-- **`output_schema` is the envelope only.** Every tool answers in `ToolOutput { ok | error }`, which is declared and is what the field holds; the shape of the text inside `ok.content` is a per-tool convention with nothing behind it, so the observed example is its only evidence.
+- **`output_schema` is the envelope only.** Every tool answers in `ToolOutput { ok | error }`, which is declared and is what the field holds — including the two optional members a result may carry, `ok.data` and `error.class`. What the envelope does not declare is what rides *inside* those: the text in `ok.content` and the structure in `ok.data` are per-tool conventions with nothing behind them, so the observed example is their only evidence.
 
 **Examples are observed, not written.** They come from Terminal-Bench trial traces (stella-events.jsonl), distilled by scripts/build-tool-doc-examples.py, captured 2026-08-11 over 2829 call/result pairs across 10 tasks. 4 of 19 tools carry a real example; the rest say so. 5 tools were advertised and never called once across 408 trials and 15304 model calls — the most interesting fact on those pages, and input to #3032. Advertisement is the census's own `in_schema` column, not the presence of a row (#4420).
 

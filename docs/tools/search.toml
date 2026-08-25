@@ -67,8 +67,9 @@ input_schema = '''
 }
 '''
 
-# The envelope every tool answers in. Declared; what rides inside
-# `ok.content` is a per-tool text convention with no schema behind it.
+# The envelope every tool answers in, optional members included.
+# Declared; what rides inside `ok.content` and `ok.data` is a per-tool
+# convention with no schema behind it.
 output_schema = '''
 {
   "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. The envelope is declared; the payload inside is not.",
@@ -81,6 +82,9 @@ output_schema = '''
           "properties": {
             "content": {
               "type": "string"
+            },
+            "data": {
+              "$comment": "per-tool structure, undeclared by the envelope; the observed example below is its only evidence"
             }
           },
           "required": [
@@ -100,6 +104,9 @@ output_schema = '''
         "error": {
           "additionalProperties": false,
           "properties": {
+            "class": {
+              "type": "string"
+            },
             "message": {
               "type": "string"
             }
