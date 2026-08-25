@@ -242,7 +242,6 @@ crates/stella-cli/README.md rust-jargon 3
 crates/stella-cli/src/accounted_call.rs filler-adverb 2
 crates/stella-cli/src/accounted_call.rs honesty-declaration 2
 crates/stella-cli/src/accounted_call.rs meta-writing 1
-crates/stella-cli/src/agent.rs filler-adverb 1
 crates/stella-cli/src/agent.rs honesty-declaration 1
 crates/stella-cli/src/agent.rs interface-jargon 10
 crates/stella-cli/src/agent.rs rust-jargon 2
@@ -250,8 +249,8 @@ crates/stella-cli/src/agent/engine.rs filler-adverb 6
 crates/stella-cli/src/agent/engine.rs honesty-declaration 1
 crates/stella-cli/src/agent/engine.rs interface-jargon 1
 crates/stella-cli/src/agent/goal.rs filler-adverb 6
-crates/stella-cli/src/agent/goal.rs honesty-declaration 2
-crates/stella-cli/src/agent/goal.rs interface-jargon 3
+crates/stella-cli/src/agent/goal.rs honesty-declaration 1
+crates/stella-cli/src/agent/goal.rs interface-jargon 2
 crates/stella-cli/src/agent/goal.rs rust-jargon 13
 crates/stella-cli/src/agent/goal/goal_wrapped.rs filler-adverb 1
 crates/stella-cli/src/agent/goal/goal_wrapped.rs honesty-declaration 2
@@ -347,9 +346,9 @@ crates/stella-cli/src/cli/help/tests.rs interface-jargon 1
 crates/stella-cli/src/cli/subcommands.rs filler-adverb 3
 crates/stella-cli/src/cli/subcommands.rs rust-jargon 1
 crates/stella-cli/src/cloud_drain.rs filler-adverb 1
-crates/stella-cli/src/command_deck.rs filler-adverb 3
-crates/stella-cli/src/command_deck.rs honesty-declaration 3
-crates/stella-cli/src/command_deck.rs interface-jargon 9
+crates/stella-cli/src/command_deck.rs filler-adverb 2
+crates/stella-cli/src/command_deck.rs honesty-declaration 2
+crates/stella-cli/src/command_deck.rs interface-jargon 7
 crates/stella-cli/src/command_deck.rs rust-jargon 7
 crates/stella-cli/src/command_deck/add_dir.rs filler-adverb 1
 crates/stella-cli/src/command_deck/add_dir.rs honesty-declaration 1
@@ -1152,10 +1151,9 @@ crates/stella-diff/src/view.rs filler-adverb 1
 crates/stella-diff/src/view.rs honesty-declaration 3
 crates/stella-diff/src/view.rs meta-writing 1
 crates/stella-diff/tests/view_plan_matrix.rs filler-adverb 1
-crates/stella-embed/README.md filler-adverb 2
+crates/stella-embed/README.md filler-adverb 1
 crates/stella-embed/README.md rust-jargon 2
-crates/stella-embed/src/http.rs filler-adverb 3
-crates/stella-embed/src/http.rs honesty-declaration 1
+crates/stella-embed/src/http.rs filler-adverb 2
 crates/stella-embed/src/lib.rs honesty-declaration 2
 crates/stella-embed/src/lib.rs rust-jargon 2
 crates/stella-embed/src/rank.rs honesty-declaration 3
@@ -1580,7 +1578,6 @@ crates/stella-protocol/tests/wire_contract.rs rust-jargon 8
 crates/stella-protocol/tests/wire_contract/samples.rs filler-adverb 2
 crates/stella-protocol/tests/wire_contract/samples.rs rust-jargon 2
 crates/stella-runtime/Cargo.toml rust-jargon 2
-crates/stella-runtime/README.md filler-adverb 2
 crates/stella-runtime/README.md honesty-declaration 2
 crates/stella-runtime/README.md interface-jargon 1
 crates/stella-runtime/README.md rust-jargon 4

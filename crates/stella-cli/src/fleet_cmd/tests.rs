@@ -315,7 +315,7 @@ fn watch_targets_are_successful_committed_branches_watched_once() {
         ..FleetRunReport::default()
     };
     assert_eq!(
-        watch_targets(&report),
+        branch_watch::watch_targets(&report),
         vec![("t1".to_string(), "fleet/t1-a".to_string())]
     );
 }
@@ -329,7 +329,7 @@ async fn watch_branch_reports_green_ci_and_open_pr() {
     let calls = gh.calls.clone();
     let monitor = Monitor::new(gh, Box::new(SystemClock::new()));
 
-    let watched = watch_branch(&monitor, "t1", "fleet/t1-abc").await;
+    let watched = branch_watch::watch_branch(&monitor, "t1", "fleet/t1-abc").await;
     assert!(watched.is_green());
     assert_eq!(watched.pr, Some(PrStatus::Open));
 
@@ -357,7 +357,7 @@ async fn watch_branch_red_ci_and_a_missing_pr_are_states_not_errors() {
     );
     let monitor = Monitor::new(gh, Box::new(SystemClock::new()));
 
-    let watched = watch_branch(&monitor, "t1", "fleet/t1-abc").await;
+    let watched = branch_watch::watch_branch(&monitor, "t1", "fleet/t1-abc").await;
     assert!(!watched.is_green());
     assert_eq!(watched.pr, None, "no PR for the branch is a normal state");
     assert!(matches!(
@@ -383,7 +383,7 @@ async fn watch_branch_treats_a_ci_timeout_as_red() {
         ..WatchConfig::default()
     });
 
-    let watched = watch_branch(&monitor, "t1", "fleet/t1-abc").await;
+    let watched = branch_watch::watch_branch(&monitor, "t1", "fleet/t1-abc").await;
     assert!(!watched.is_green());
     assert!(matches!(
         watched.ci,

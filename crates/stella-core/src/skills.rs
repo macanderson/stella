@@ -93,7 +93,7 @@ pub enum SkillOrigin {
     ///
     /// Separate from the other four because they all answer "which of the
     /// user's directories is this under", and a package's directory is none of
-    /// them. Without it `default_origin_for` (private) has no true answer and falls
+    /// them. Without it the path-derived default has no true answer and falls
     /// through to [`SkillOrigin::Workspace`], reporting a third party's skill
     /// as the user's own — which is what every surface that has to say whose
     /// skill is steering a turn would then repeat.
@@ -371,7 +371,7 @@ pub fn load_skills_with_diagnostics(
 /// Load every skill in one directory, tagged with the `origin` the caller
 /// names rather than one derived from the path.
 ///
-/// `default_origin_for` (private) answers "which of the user's two configured
+/// The path-derived default answers "which of the user's two configured
 /// directories is this file under", and a directory that is neither — a
 /// plugin package's own `skills/` — has no true answer there: it falls through
 /// to [`SkillOrigin::Workspace`] and a third party's skill reports as the
