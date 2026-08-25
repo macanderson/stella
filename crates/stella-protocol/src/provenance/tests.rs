@@ -220,8 +220,7 @@ fn one_grade_below_the_requirement_is_always_refused() {
         let Some(weaker) = ProvenanceGrade::ALL
             .iter()
             .copied()
-            .filter(|grade| *grade < required)
-            .next_back()
+            .rfind(|grade| *grade < required)
         else {
             continue;
         };
