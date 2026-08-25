@@ -10,15 +10,16 @@
 //! handle and no dispatch.
 //!
 //! These tests drive `stella_runtime::WrapperDispatch` — the production
-//! sequence — with a plugin written in `sh` on one side and a recording
+//! sequence — with a plugin binary on one side and a recording
 //! [`TurnDriver`] on the other. They fail before the change for the plainest
 //! possible reason: `WrapperDispatch` did not exist, so no code path anywhere
 //! carried a contribution from a plugin into a turn.
 //!
-//! `cfg(unix)` for the reason `wrapper_socket.rs` states: the plugins here are
-//! `/bin/sh` scripts, so on Windows this file compiles to nothing (#3497).
-
-#![cfg(unix)]
+//! The plugins here drive `wrapper-plugin-fixture`, the in-tree binary
+//! `wrapper_socket.rs` introduced, so this file runs on Windows too (#4697).
+//! Its branching modes are what the `/bin/sh` scripts used to spell out; the
+//! branch is asserted by the tests below rather than assumed, so a fixture
+//! that stopped branching fails them.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -79,38 +80,19 @@ if = "questions > 0"
 name = "execute"
 "#;
 
-/// The plugin. It contributes a budget note at every stage, and reports a p50
-/// that is **outside** the budget until the turn it is told about mentions the
-/// correction — so a second round is the only thing that can make it green.
-const PLUGIN: &str = r#"
-input=$(cat)
-case "$input" in
-  *'"point":"after_turn"'*)
-    case "$input" in
-      *"unrolled the loop"*) p50=101 ;;
-      *) p50=118 ;;
-    esac
-    printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"p50":%s}}}}\n' "$p50"
-    ;;
-  *)
-    printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"budget","text":"the recorded p50 budget is 105"}],"role":"triage","scope":["crates/stella-core"],"publish":[{"signal":"questions","value":{"count":2}}]}}'
-    ;;
-esac
-"#;
-
 fn manifest() -> PluginManifest {
     PluginManifest::from_toml_str(MANIFEST).expect("the reference manifest loads")
 }
 
-fn plugin(script: &str) -> Arc<SubprocessWrapper> {
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
+
+fn plugin(mode: &[&str]) -> Arc<SubprocessWrapper> {
+    let mut argv = vec![FIXTURE.to_string()];
+    argv.extend(mode.iter().map(|part| (*part).to_string()));
     Arc::new(
-        SubprocessWrapper::declare(
-            vec!["/bin/sh".into(), "-c".into(), script.into()],
-            Vec::new(),
-            DEFAULT_WRAPPER_TIMEOUT,
-        )
-        .expect("the transport is declared with a program and a budget")
-        .wrapper,
+        SubprocessWrapper::declare(argv, Vec::new(), DEFAULT_WRAPPER_TIMEOUT)
+            .expect("the transport is declared with a program and a budget")
+            .wrapper,
     )
 }
 
@@ -213,7 +195,8 @@ impl TurnDriver for Recorder {
 /// for another one.
 #[tokio::test]
 async fn a_wrapper_plugins_verdict_decides_whether_another_turn_runs() {
-    let dispatch = WrapperDispatch::bind(manifest(), plugin(PLUGIN)).expect("[wrapper] declared");
+    let dispatch = WrapperDispatch::bind(manifest(), plugin(&["dispatch-reference"]))
+        .expect("[wrapper] declared");
     assert_eq!(dispatch.variant(), "reference-v1");
 
     // The first turn does not mention the correction, so the plugin measures
@@ -341,21 +324,6 @@ name = "execute"
 /// A plugin that answers **differently per stage**, so what reaches it is
 /// observable rather than assumed: only the request naming `triage-lite`
 /// produces the lite-triage note.
-const CONTRIBUTED_PLUGIN: &str = r#"
-input=$(cat)
-case "$input" in
-  *'"point":"after_turn"'*)
-    printf '%s\n' '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"answers":1}}}}'
-    ;;
-  *'"stage":"triage-lite"'*)
-    printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"triage-lite","text":"this task is small; skip the plan"}]}}'
-    ;;
-  *)
-    printf '%s\n' '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"other","text":"a host stage"}]}}'
-    ;;
-esac
-"#;
-
 /// **The witness for #3963.** A stage that exists only because a manifest said
 /// so is dispatched under its own word: the plugin is asked `before_turn` for
 /// `triage-lite`, and what it contributes for that stage reaches the turn.
@@ -367,7 +335,7 @@ esac
 async fn a_contributed_stage_is_dispatched_under_its_own_word() {
     let manifest = PluginManifest::from_toml_str(CONTRIBUTED_MANIFEST)
         .expect("a manifest may contribute a stage");
-    let dispatch = WrapperDispatch::bind(manifest, plugin(CONTRIBUTED_PLUGIN))
+    let dispatch = WrapperDispatch::bind(manifest, plugin(&["dispatch-contributed"]))
         .expect("[wrapper] declared")
         .with_host_max_holds(0);
 
@@ -407,7 +375,7 @@ async fn a_contributed_stage_is_dispatched_under_its_own_word() {
 /// running forever — and the unmet clause is reported, never dropped.
 #[tokio::test]
 async fn a_spent_allowance_stops_the_loop_and_still_reports_what_is_unmet() {
-    let dispatch = WrapperDispatch::bind(manifest(), plugin(PLUGIN))
+    let dispatch = WrapperDispatch::bind(manifest(), plugin(&["dispatch-reference"]))
         .expect("[wrapper] declared")
         .with_host_max_holds(1);
     let mut host = Recorder::new(vec!["rewrote the parser"]);
@@ -451,8 +419,8 @@ async fn a_spent_allowance_stops_the_loop_and_still_reports_what_is_unmet() {
 /// collected. Both failures are reported.
 #[tokio::test]
 async fn a_wrapper_that_fails_abstains_and_the_turn_still_runs() {
-    let dispatch = WrapperDispatch::bind(manifest(), plugin("cat >/dev/null; exit 7"))
-        .expect("[wrapper] declared");
+    let dispatch =
+        WrapperDispatch::bind(manifest(), plugin(&["exit", "7", ""])).expect("[wrapper] declared");
     let mut host = Recorder::new(vec!["did the work anyway"]);
     let report = dispatch
         .run(input("make the parser faster"), &mut host)
@@ -501,8 +469,8 @@ async fn an_undeclared_point_is_never_dispatched() {
     // a fault and an undispatched one is silence. Three stages resolve, and if
     // `before_turn` were asked anyway there would be four faults rather than
     // the one `after_turn` earns.
-    let dispatch = WrapperDispatch::bind(manifest, plugin("cat >/dev/null; exit 7"))
-        .expect("[wrapper] declared");
+    let dispatch =
+        WrapperDispatch::bind(manifest, plugin(&["exit", "7", ""])).expect("[wrapper] declared");
     let mut host = Recorder::new(vec!["work"]);
     let report = dispatch
         .run(input("make the parser faster"), &mut host)
@@ -581,19 +549,12 @@ points = ["before_turn"]
 /// One `before_turn` answer, and one line appended to `path` per process start
 /// — counted by the child itself, because that is the only place the cost is
 /// real.
-fn counting_plugin(path: &str) -> String {
-    format!(
-        "cat >/dev/null\nprintf 'x\\n' >>{path}\n\
-         printf '%s\\n' '{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1}}}}'\n"
-    )
-}
-
 /// Run one round against the counting plugin and answer with how many times it
 /// was started.
 async fn process_starts(manifest: &str, path: &str) -> usize {
     let dispatch = WrapperDispatch::bind(
         PluginManifest::from_toml_str(manifest).expect("the counting manifest loads"),
-        plugin(&counting_plugin(path)),
+        plugin(&["tally", path]),
     )
     .expect("[wrapper] declared");
     let mut host = Recorder::new(vec!["done"]);

@@ -42,6 +42,13 @@
 //! - `hang` — never read, never answer (the timeout case).
 //! - `env-probe` — report whether the parent's environment leaked in, and what
 //!   was granted.
+//! - `tally <path>` — append a byte per start, so a caller counting bytes
+//!   counts process starts.
+//! - `dispatch-reference` — `wrapper_dispatch.rs`'s reference wrapper: a
+//!   `scope`-declaring `before_turn`, and an `after_turn` p50 that keys on
+//!   whether the turn mentioned the correction.
+//! - `dispatch-contributed` — the same, with a third branch for a contributed
+//!   stage name, which is what proves it reaches the plugin as itself.
 //! - `candidate-probe` — report facts about the candidate grant that arrived in
 //!   the request: whether its root really holds the test file, whether the test
 //!   program is the one named, whether the baseline was red.
@@ -88,6 +95,22 @@ fn main() {
                 ("granted", &granted),
             ]));
         }
+        // Appends one byte per start, so a caller counting bytes counts
+        // process starts — how `wrapper_dispatch.rs` proves a composition
+        // reuses one process rather than spawning per point.
+        "tally" => {
+            let _ = read_request();
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(arg(&args, 1))
+            {
+                let _ = f.write_all(b"x\n");
+            }
+            emit("{\"point\":\"before_turn\",\"body\":{\"protocol_version\":1}}");
+        }
+        "dispatch-reference" => dispatch_reference(&read_request()),
+        "dispatch-contributed" => dispatch_contributed(&read_request()),
         "candidate-probe" => candidate_probe(&read_request()),
         "flood" => flood(arg(&args, 1).parse().unwrap_or(0), arg(&args, 2)),
         "trailing" => trailing(arg(&args, 1).parse().unwrap_or(0)),
@@ -140,6 +163,52 @@ fn measurements(pairs: &[(&str, &str)]) -> String {
 
 /// The reference wrapper: a budget rather than a flip, so its verdict is
 /// decided by a number it reports against a threshold a human read at install.
+/// `wrapper_dispatch.rs`'s own reference plugin, which its `/bin/sh` script
+/// used to spell out (#4697). Distinct from [`reference`] above in two ways
+/// the tests assert on: the `after_turn` p50 keys on "unrolled the loop"
+/// rather than "slower", and the `before_turn` declares a `scope`.
+///
+/// The branch is the whole point. A mode that answered one canned body
+/// whatever it was asked would pass nothing here — the dispatch tests read
+/// both p50 values back and compare them, so a fixture that stopped
+/// branching fails them rather than passing vacuously.
+fn dispatch_reference(request: &str) {
+    if request.contains("\"point\":\"after_turn\"") {
+        let p50 = if request.contains("unrolled the loop") {
+            101
+        } else {
+            118
+        };
+        emit(&measurements(&[("p50", &p50.to_string())]));
+    } else {
+        emit(
+            "{\"point\":\"before_turn\",\"body\":{\"protocol_version\":1,\"context\":\
+             [{\"label\":\"budget\",\"text\":\"the recorded p50 budget is 105\"}],\
+             \"role\":\"triage\",\"scope\":[\"crates/stella-core\"],\
+             \"publish\":[{\"signal\":\"questions\",\"value\":{\"count\":2}}]}}",
+        );
+    }
+}
+
+/// The contributed-stage plugin, whose three-way branch is what proves a
+/// contributed stage name reaches the plugin as itself rather than as the
+/// host stage it runs under.
+fn dispatch_contributed(request: &str) {
+    if request.contains("\"point\":\"after_turn\"") {
+        emit(&measurements(&[("answers", "1")]));
+    } else if request.contains("\"stage\":\"triage-lite\"") {
+        emit(
+            "{\"point\":\"before_turn\",\"body\":{\"protocol_version\":1,\"context\":\
+             [{\"label\":\"triage-lite\",\"text\":\"this task is small; skip the plan\"}]}}",
+        );
+    } else {
+        emit(
+            "{\"point\":\"before_turn\",\"body\":{\"protocol_version\":1,\"context\":\
+             [{\"label\":\"other\",\"text\":\"a host stage\"}]}}",
+        );
+    }
+}
+
 fn reference(request: &str) {
     if request.contains("\"point\":\"after_turn\"") {
         let p50 = if request.contains("slower") { 118 } else { 103 };
