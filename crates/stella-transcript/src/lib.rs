@@ -26,57 +26,36 @@
 //! re-implementing the TUI's renderer in JavaScript, and that copy had silently
 //! drifted to the point of having no diff rendering at all.
 //!
-//! ## Which frame is the one frame: SPEC 6, and [`grid`] is where it lands
+//! ## One frame: SPEC 6
 //!
-//! Settled 2026-08-22, owner's call, recorded here because #4271 asked for it
-//! in this charter specifically — a decision that lives only in an issue is one
-//! the next author re-litigates.
+//! Two frames draw the same information. [`grid`] draws a `╭─ … ─╮` / `│` /
+//! `╰──╯` box with [`digest::Chip`] right-aligned; `stella-tui`'s
+//! `v2::transcript` draws `design/tui-v2/SPEC.md` §6 — a full-width labelled
+//! rule, a run of railed event rows, a closing rule and a one-line receipt.
 //!
-//! Two frames were drawing the same information. [`grid`] draws a
-//! `╭─ … ─╮` / `│` / `╰──╯` box with [`digest::Chip`] right-aligned;
-//! `stella-tui`'s `v2::transcript` draws `design/tui-v2/SPEC.md` §6 — a
-//! full-width labelled rule, a run of railed event rows, a closing rule and a
-//! one-line receipt. Neither was wrong, and the deck's was written without
-//! reference to this crate at all.
+//! **SPEC 6 is the frame this crate will draw** (settled 2026-08-22, owner's
+//! call, recorded here because #4271 asked for it in this charter). [`grid`]
+//! has not been changed yet and still draws the box; #4756 tracks the change.
+//! SPEC 6 wins because it is the authored product design, because the box
+//! cannot carry SPEC 2's two-metal rule ([`grid::Color`]'s `Cyan` for "tool
+//! identity" is the per-class hue SPEC 3.2's clamp rejects), and because
+//! [`grid`] has one shipping caller — the plain `stella run` transcript
+//! (`crates/stella-cli/src/plain/transcript.rs`) — so the cost is one terminal
+//! surface, not three.
 //!
-//! **SPEC 6 wins, and [`grid`] is changed to draw it** rather than the deck
-//! being bent onto the box. Three reasons, in order of weight:
+//! [`grid`] does **not** gain a dependency on `stella-tui-theme`. It emits a
+//! *role* and encodes at the very end, which is what keeps it free of a
+//! terminal dependency: **[`grid`] owns the role, the surface owns the
+//! pigment**. [`grid::Color`] gains the two metals as roles, and the deck maps
+//! role → `stella_tui_theme::token` RGB at its own encode step, where the hue
+//! clamp still guards every token the mapping can produce.
 //!
-//! 1. SPEC 6 is the *authored product design*; the box frame is an artifact of
-//!    this crate's extraction (#3764) and was never designed against it. When a
-//!    spec and an implementation disagree about a product decision, the spec is
-//!    the side that was decided on purpose.
-//! 2. The box cannot carry SPEC 2's **two-metal rule**. [`grid::Color`]'s roles
-//!    are `Ink`/`Dim`/`Faint`/`Cyan`/`Green`/`Red`/…, and `Cyan` for "tool
-//!    identity" is exactly the per-class hue SPEC 3.2's clamp rejects and #4125
-//!    is about removing. Adopting the box would mean relaxing the palette rule
-//!    the whole v2 theme is built on.
-//! 3. The blast radius is one surface. [`grid`] has exactly one shipping caller
-//!    — the plain `stella run` transcript
-//!    (`crates/stella-cli/src/plain/transcript.rs`). The Observatory renders
-//!    through [`html`] and is untouched by the frame decision. So "one frame"
-//!    costs a changed appearance on one terminal surface, not three.
-//!
-//! ### Where the theme sits, which is the other half of the question
-//!
-//! [`grid`] does **not** gain a dependency on `stella-tui-theme`, and the deck
-//! does not stop using it. The existing seam already answers this: this crate
-//! emits a *role* and encodes at the very end, which is what keeps it free of a
-//! terminal dependency. So the rule is **[`grid`] owns the role, the surface
-//! owns the pigment** — [`grid::Color`] gains the two metals as roles, and the
-//! deck maps role → `stella_tui_theme::token` RGB at its own encode step. A
-//! warm gray cannot be smuggled in that way, because the deck's hue clamp still
-//! guards every token the mapping can produce.
-//!
-//! ### The gap this exposes, which is real and is not the frame
-//!
-//! `v2::transcript`'s file-event fields are all `Option` because a head row
-//! renders before anything is measured, and a `+0 -0` beside a path is a
-//! different and louder claim than "not measured yet". [`model`] has no
-//! equivalent notion of an unmeasured row. That is a genuine hole in the shared
-//! model — the same one #4181 describes from the accessibility side — and it
-//! has to be closed *before* the deck can render through [`grid`], not after,
-//! or the migration silently reintroduces the fabricated zero.
+//! One hole has to close first. `v2::transcript`'s file-event fields are all
+//! `Option` because a head row renders before anything is measured, and a
+//! `+0 -0` beside a path is a louder claim than "not measured yet". [`model`]
+//! has no notion of an unmeasured row (the hole #4181 describes from the
+//! accessibility side). Close it *before* the deck renders through [`grid`],
+//! or the migration reintroduces the fabricated zero.
 //!
 //! ## Which surfaces actually draw through this crate
 //!
@@ -87,9 +66,9 @@
 //! `scripts/check-transcript-surfaces.py` (`make transcript-surfaces`): one row
 //! per surface, a row that claims to share must really reference the entry
 //! point, a row that does not must cite the issue deciding it, and the caller
-//! sets must match in both directions. That file is the current answer; this
-//! paragraph deliberately does not repeat a count, because a number in two
-//! places is how the last one died.
+//! sets must match in both directions. That file is the current answer; no
+//! count is repeated here, because a number in two places is how the last one
+//! died.
 //!
 //! ## A turn closes with its outcome, on both renderers
 //!

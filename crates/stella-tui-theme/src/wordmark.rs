@@ -24,9 +24,6 @@ pub const WORD: &str = "stella";
 /// The ornament. The whole brand, in one cell.
 pub const ORNAMENT: &str = "*";
 
-/// The wordmark's width in cells — `stella` plus the asterisk, no space.
-pub const WIDTH: usize = WORD.len() + ORNAMENT.len();
-
 /// The wordmark as two styled spans: white word, gold asterisk, no separator.
 ///
 /// Returned as spans rather than a `Line` so a caller can pad or place it
