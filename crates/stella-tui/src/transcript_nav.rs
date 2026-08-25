@@ -361,6 +361,7 @@ mod tests {
             speculated: false,
             diff: Vec::new(),
             read_size: None,
+            sub_agent_id: None,
         }
     }
 
@@ -379,6 +380,7 @@ mod tests {
                 seq,
             }],
             read_size: None,
+            sub_agent_id: None,
         }
     }
 
@@ -450,6 +452,7 @@ mod tests {
                 speculated: false,
                 diff: Vec::new(),
                 read_size: None,
+                sub_agent_id: None,
             },
         ];
         assert_eq!(search_hits(&t, "deadlock"), vec![1]);
@@ -485,6 +488,7 @@ mod tests {
             input: "src/auth.rs".into(),
             raw: r#"{"path":"src/auth.rs"}"#.into(),
             path: Some("src/auth.rs".into()),
+            sub_agent_id: None,
         };
         assert_eq!(
             entry_fields(&start),
@@ -590,6 +594,7 @@ mod tests {
                 input: "a.rs".into(),
                 raw: "{}".into(),
                 path: Some("a.rs".into()),
+                sub_agent_id: None,
             },
             edit("a.rs", 1),
             edit("a.rs", 2),

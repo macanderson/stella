@@ -1,0 +1,45 @@
+# deck golden · session_delegate_tool_call
+# a delegate's call badged ↳ d:1, the lead's own call unbadged
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION  ▸ plan pending approval · 0/3                                                                                                       ⌃S plan   stella*
+◉ recalled  2 frames · 210 tok  ·  34ms  ·  ann
+    symbol  engine step-driver                  crates/stella-core/src/driver.rs:88                                                      120 tok
+    memory  event-log REPL                                                                                                                90 tok
+    ⋯ ctrl+o for provenance and budget
+
+── PLAN ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Planning the automations cluster: list, editor, triggers, workflows.
+
+☰  plan  4/7  ·  Wire the triggers API
+
+── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ │ ⊙ apps/app/automations/page.tsx
+ │ ⎿ 312 lines                                                                                                                               42ms
+
+ │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ⎿                                                                                                                                 +4 −1 · 18ms
+ │     10 -  const items = []
+ │     10 +  const items = useAutomations()
+ │     11 +  const [q, setQ] = useState("")
+ │     12 +  const filtered = filter(items, q)
+ │     13 +  const onNew = () => open()
+
+☰  plan  5/7  ·  Workflows canvas
+
+⏸ plan  Refactor the automations store into a shared workspace package  ·  3 steps · ~11 files
+
+ │ ◌ get_state verify
+ │ ⎿                                                                                                                                          4ms
+ │   verify true
+
+ │ ◌ search sub_agent_id                                                                                                                                   ↳ d:1
+ │ ⎿ crates/stella-tui/src/model/entry.rs:105                                                                                                 9ms
+
+
+>>>
+ ⏎ queue · esc steer · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

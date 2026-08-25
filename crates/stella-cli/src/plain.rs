@@ -176,7 +176,15 @@ pub fn rename_tab(title: &str) {
 }
 
 /// Print a tool-call card: name, input summary, status.
-pub fn tool_call_card(name: &str, input: &serde_json::Value, status: &str) {
+///
+/// `sub_agent` is the delegate child that made this call, or `None` for the
+/// lead's own — the same distinction the deck badges (#4699).
+pub fn tool_call_card(
+    name: &str,
+    input: &serde_json::Value,
+    status: &str,
+    sub_agent: Option<&str>,
+) {
     let icon = match status {
         "running" => "▶".bright_red(),
         "ok" => "✓".green(),
@@ -211,11 +219,15 @@ pub fn tool_call_card(name: &str, input: &serde_json::Value, status: &str) {
     // what a reader scans a scrollback *for*. It was `bright_yellow` — this
     // file's own stand-in for the retired gold — which survived the recolour
     // because no "gold" string named it.
+    let agent = sub_agent
+        .map(|id| format!(" {}", format!("↳ {id}").dimmed()))
+        .unwrap_or_default();
     println!(
-        "  {} {}({})",
+        "  {} {}({}){}",
         icon,
         name.color(accent()),
-        input_str.dimmed()
+        input_str.dimmed(),
+        agent
     );
 }
 

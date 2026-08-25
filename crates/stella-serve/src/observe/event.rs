@@ -581,6 +581,15 @@ pub struct TurnTally {
     /// this at zero is a hang.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub parked_deadline_secs: u64,
+
+    /// Of [`Self::tool_calls`], how many a delegate child made rather than
+    /// the lead (`AgentEvent::ToolStart.sub_agent_id`, #4699) — the lead's
+    /// own share is `tool_calls - delegate_tool_calls`. This tally is a flat
+    /// operator wedge/health signal by design (no per-agent breakdown); this
+    /// is the minimal split that lets a host tell "the lead is stalled" from
+    /// "a delegate is stalled" without one.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub delegate_tool_calls: u32,
 }
 
 impl TurnTally {
@@ -954,6 +963,7 @@ mod tests {
                     parked_spans_woken: 1,
                     parked_polls: 37,
                     parked_deadline_secs: 2400,
+                    delegate_tool_calls: 1,
                 },
             },
         ];

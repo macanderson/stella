@@ -343,6 +343,10 @@ pub struct Event {
     /// The task this event is attributed to, rendered `→ task 3` when a plan
     /// is active (SPEC 6.2). Attribution is what makes per-task cost free.
     pub task: Option<u32>,
+    /// The delegate child that made this call, rendered `↳ d:1` — the same
+    /// glyph [`crate::views::subagents`] uses for a delegate's own rows.
+    /// `None` is the lead's own call, which is unmarked (#4699).
+    pub sub_agent: Option<String>,
     /// Whether the user has folded it. `None` takes the kind's default.
     pub collapsed: Option<bool>,
     /// Rows under the head, already rendered. Only drawn when expanded.
@@ -360,6 +364,7 @@ impl Event {
             subject: subject.into(),
             duration_ms: 0,
             task: None,
+            sub_agent: None,
             collapsed: None,
             body: Vec::new(),
             footer: None,
@@ -795,6 +800,15 @@ fn metrics(event: &Event) -> Vec<Span<'static>> {
         }
         spans.push(Span::styled(
             format!("→ task {task}"),
+            Style::new().fg(token::MUTED),
+        ));
+    }
+    if let Some(agent) = &event.sub_agent {
+        if !spans.is_empty() {
+            spans.push(Span::styled(" · ", dim));
+        }
+        spans.push(Span::styled(
+            format!("↳ {agent}"),
             Style::new().fg(token::MUTED),
         ));
     }

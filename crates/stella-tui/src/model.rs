@@ -434,7 +434,10 @@ impl SessionModel {
             }
             AgentEvent::TextDelta { delta } => self.push_streaming_delta(delta),
             AgentEvent::Reasoning { delta } => self.push_reasoning(delta),
-            AgentEvent::ToolStart { call, .. } => {
+            AgentEvent::ToolStart {
+                call,
+                sub_agent_id,
+            } => {
                 let path = tool_input_path(&call.input);
                 // Mark where the claim window stands *before* the call runs, so
                 // its result can tell a change of its own from one already
@@ -450,13 +453,16 @@ impl SessionModel {
                     input: format_tool_input(&call.input),
                     raw: cap_input_json(&call.input, INPUT_BUDGET),
                     path,
+                    sub_agent_id: sub_agent_id.clone(),
                 });
             }
             AgentEvent::ToolResult {
                 call_id,
                 output,
                 duration_ms,
-                speculated, .. } => {
+                speculated,
+                sub_agent_id,
+            } => {
                 // ANSI escapes are stripped here, at fold time, and nowhere
                 // else: the fold cache would retain them if the renderer
                 // stripped per frame, and ratatui renders everything after
@@ -611,6 +617,7 @@ impl SessionModel {
                     speculated: *speculated,
                     diff,
                     read_size,
+                    sub_agent_id: sub_agent_id.clone(),
                 });
                 // The answer to an `ask_user` question comes back as this very
                 // tool result (correlated by id) — there is no separate answer

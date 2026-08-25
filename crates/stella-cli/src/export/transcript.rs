@@ -299,17 +299,24 @@ impl<'a> Fold<'a> {
                 ));
             }
 
-            AgentEvent::ToolStart { call, .. } => {
+            AgentEvent::ToolStart { call, sub_agent_id } => {
                 let args = self.clean(&pretty(&call.input));
                 let name = self.clean(&call.name);
                 self.tool_names.insert(call.call_id.clone(), name.clone());
                 let index = self.rows.len();
                 let stamp = self.stamp();
+                // The delegate that made this call, or nothing for the
+                // lead's own — stamped at dispatch, since `sub_agent_id`
+                // never differs between a call's start and its result.
+                let agent = sub_agent_id
+                    .as_deref()
+                    .map(|id| format!(r#"<span class="agent">↳ {}</span>"#, escape(id)))
+                    .unwrap_or_default();
                 // The result arrives later in the stream and is patched into
                 // this row; until then it is honestly marked pending, because
                 // a killed run leaves calls that genuinely never returned.
                 self.row(format!(
-                    r#"<details class="ev tool" open><summary>{stamp}<span class="lbl">TOOL</span><b>{name}</b></summary><pre class="in">{args}</pre><pre class="out pending">(no result recorded — the run ended before this call returned)</pre></details>"#,
+                    r#"<details class="ev tool" open><summary>{stamp}<span class="lbl">TOOL</span><b>{name}</b>{agent}</summary><pre class="in">{args}</pre><pre class="out pending">(no result recorded — the run ended before this call returned)</pre></details>"#,
                     name = escape(&name),
                     args = escape(&clip(&args)),
                 ));
@@ -466,12 +473,12 @@ impl<'a> Fold<'a> {
                 .html
                 .replacen(r#"class="ev tool""#, r#"class="ev tool err""#, 1);
         }
+        // Not `</b></summary>`: an attributed call's row carries an `.agent`
+        // span between them (#4699), so the meta patch anchors on the
+        // summary's own close rather than assuming what precedes it.
         row.html = row.html.replacen(
-            "</b></summary>",
-            &format!(
-                "</b><span class=\"meta\">{}</span></summary>",
-                escape(&meta)
-            ),
+            "</summary>",
+            &format!("<span class=\"meta\">{}</span></summary>", escape(&meta)),
             1,
         );
         row.html = row.html.replacen(

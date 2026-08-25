@@ -64,6 +64,7 @@ fn bash(command: &str, out: &[&str], status: Status) -> Call {
         status,
         duration_ms: 226,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 
@@ -83,6 +84,7 @@ fn edit(path: &str, before: &str, after: &str) -> Call {
         status: Status::Ok,
         duration_ms: 12,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 
@@ -149,6 +151,7 @@ fn read_call(path: &str, lines: Vec<String>) -> Call {
         status: Status::Ok,
         duration_ms: 1,
         speculated: false,
+        sub_agent_id: None,
     }
 }
 

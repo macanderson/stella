@@ -361,9 +361,14 @@ pub(crate) fn spawn_renderer(
                     }
                 }
                 OutputFormat::Text => match &event {
-                    AgentEvent::ToolStart { call, .. } => {
+                    AgentEvent::ToolStart { call, sub_agent_id } => {
                         tool_names.insert(call.call_id.clone(), call.name.clone());
-                        plain::tool_call_card(&call.name, &call.input, "running");
+                        plain::tool_call_card(
+                            &call.name,
+                            &call.input,
+                            "running",
+                            sub_agent_id.as_deref(),
+                        );
                     }
                     AgentEvent::ToolResult {
                         call_id,

@@ -39,6 +39,7 @@ fn mutation_entry_and_files() -> (TranscriptEntry, Vec<FileState>) {
             seq: 1,
         }],
         read_size: None,
+        sub_agent_id: None,
     };
     let (added, removed) = crate::diff::count_diff_lines(&diff_text);
     let files = vec![FileState {

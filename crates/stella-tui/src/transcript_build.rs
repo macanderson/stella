@@ -116,7 +116,9 @@ impl RunBuilder {
             AgentEvent::Text { text, .. } => self.set_answer(text),
             AgentEvent::TextDelta { delta, .. } => self.append_answer(delta),
             AgentEvent::Reasoning { delta } => self.append_prose(delta),
-            AgentEvent::ToolStart { call, .. } => self.open_call(call),
+            AgentEvent::ToolStart { call, sub_agent_id } => {
+                self.open_call(call, sub_agent_id.clone())
+            }
             AgentEvent::ToolResult {
                 call_id,
                 output,
@@ -277,7 +279,7 @@ impl RunBuilder {
         }
     }
 
-    fn open_call(&mut self, call: &stella_protocol::ToolCall) {
+    fn open_call(&mut self, call: &stella_protocol::ToolCall, sub_agent_id: Option<String>) {
         let tool = ToolKind::from_name(&call.name);
         self.pending.push((
             call.call_id.clone(),
@@ -290,6 +292,7 @@ impl RunBuilder {
                 status: Status::Running,
                 duration_ms: 0,
                 speculated: false,
+                sub_agent_id,
             },
         ));
     }

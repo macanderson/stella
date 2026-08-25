@@ -176,6 +176,9 @@ pub struct ToolCallRow {
     pub error_class: Option<ErrorClass>,
     pub bytes_out: i64,
     pub duration_ms: i64,
+    /// The delegate child that made this call, or `None` for the lead's own
+    /// (#4699) — the same column the live per-event fold already writes.
+    pub sub_agent_id: Option<String>,
 }
 
 impl ToolCallRow {
@@ -691,13 +694,16 @@ pub(crate) fn refold_tool_calls(tx: &Connection, execution_id: i64) -> rusqlite:
 }
 
 impl Store {
-    /// Record the normalized per-call `tool_calls` log for an execution.
-    /// `seq` is the call's index in the batch; UNIQUE (execution_id, seq)
-    /// guards double-writes. One transaction.
+    /// Bulk-write a batch of already-folded [`ToolCallRow`]s in one
+    /// transaction. `seq` is the call's index in the batch; UNIQUE
+    /// (execution_id, seq) guards double-writes.
     ///
-    /// This is the bulk writer the repair fold uses. The live path
-    /// ([`Store::record_event`]) writes one row at a time instead, inside the
-    /// event's own transaction.
+    /// Distinct from the repair fold ([`refold_tool_calls`]), which owns its
+    /// own `INSERT` against the raw event log and is guarded for replay
+    /// against pre-v35 schemas; this is a standalone writer for a caller that
+    /// has already folded a batch, so it names `sub_agent_id` unconditionally.
+    /// The live path ([`Store::record_event`]) writes one row at a time
+    /// instead, inside the event's own transaction.
     pub fn record_tool_calls(&self, execution_id: i64, calls: &[ToolCallRow]) -> Result<()> {
         let mut conn = self.lock();
         let tx = conn.transaction()?;
@@ -705,8 +711,9 @@ impl Store {
             tx.execute(
                 "INSERT OR REPLACE INTO tool_calls \
                  (execution_id, seq, call_id, name, surface, args_json, args_digest, \
-                  reason, ok, state, error, error_class, bytes_out, duration_ms) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  reason, ok, state, error, error_class, bytes_out, duration_ms, \
+                  sub_agent_id) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     execution_id,
                     seq as i64,
@@ -722,6 +729,7 @@ impl Store {
                     class_token(row.error_class),
                     row.bytes_out,
                     row.duration_ms,
+                    row.sub_agent_id,
                 ],
             )?;
         }

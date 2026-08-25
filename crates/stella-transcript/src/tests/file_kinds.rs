@@ -102,6 +102,7 @@ fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithm
         status: Status::Ok,
         duration_ms: 4,
         speculated: false,
+        sub_agent_id: None,
     };
     let dig = digest::step_digest(&step(delete, 0), 40);
     assert_eq!(dig.delta.unwrap().label(), "deleted · −2");
@@ -121,6 +122,7 @@ fn a_mutation_digest_names_what_happened_rather_than_making_the_reader_do_arithm
         status: Status::Ok,
         duration_ms: 4,
         speculated: false,
+        sub_agent_id: None,
     };
     let dig = digest::step_digest(&step(create, 0), 40);
     assert_eq!(dig.delta.unwrap().label(), "new file · +3");

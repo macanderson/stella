@@ -71,7 +71,12 @@ impl TallyFold {
             AgentEvent::RetriesExhausted { attempts, .. } => {
                 tally.retries = tally.retries.saturating_add(attempts.saturating_sub(1));
             }
-            AgentEvent::ToolStart { .. } => tally.tool_calls = tally.tool_calls.saturating_add(1),
+            AgentEvent::ToolStart { sub_agent_id, .. } => {
+                tally.tool_calls = tally.tool_calls.saturating_add(1);
+                if sub_agent_id.is_some() {
+                    tally.delegate_tool_calls = tally.delegate_tool_calls.saturating_add(1);
+                }
+            }
             AgentEvent::ToolResult { output, .. } if output.is_error() => {
                 tally.tools_failed = tally.tools_failed.saturating_add(1);
             }
@@ -185,6 +190,30 @@ mod tests {
         assert_eq!(tally.tools_failed, 1, "only the error arm counts as failed");
         assert_eq!(tally.retries, 1);
         assert_eq!(tally.speculation_discarded, 1);
+    }
+
+    /// A delegate's call is counted separately from the lead's own (#4699):
+    /// `tool_calls` still counts every call, and `delegate_tool_calls` is the
+    /// subset a child made — the lead's own share is the difference.
+    #[test]
+    fn the_fold_separates_a_delegates_calls_from_the_leads_own() {
+        let mut fold = TallyFold::default();
+        fold.observe(&AgentEvent::ToolStart {
+            call: tool_call("lead-call"),
+            sub_agent_id: None,
+        });
+        fold.observe(&AgentEvent::ToolStart {
+            call: tool_call("delegate-call"),
+            sub_agent_id: Some("d:1".into()),
+        });
+        fold.observe(&AgentEvent::ToolStart {
+            call: tool_call("another-delegate-call"),
+            sub_agent_id: Some("d:2".into()),
+        });
+
+        let tally = fold.finish();
+        assert_eq!(tally.tool_calls, 3);
+        assert_eq!(tally.delegate_tool_calls, 2);
     }
 
     /// A doomed retry sequence reports once, for the whole run — so counting
