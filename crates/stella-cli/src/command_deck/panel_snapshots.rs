@@ -20,7 +20,7 @@ use crate::config::Config;
 /// credentialed providers (plus the session's active one): a model you
 /// have no key for is not an option, and offering it anyway was exactly
 /// the "selectable but unusable" bug. Re-reading the chain (rather than
-/// caching) keeps the overlay honest about hand edits and about what a
+/// caching) is what makes the overlay reflect a hand edit, and show what a
 /// save at one scope means under the others.
 pub(super) fn engine_config_inbound(cfg: &Config, status: Option<String>) -> Inbound {
     let engine = crate::settings::Settings::load(&cfg.workspace_root)
