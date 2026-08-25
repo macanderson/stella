@@ -14,7 +14,7 @@
 //! `agent/engine.rs`'s SessionStart hook append) actually emit — the same
 //! bargain `sent_context` takes for the receipt fold. Two tests pin the
 //! copy: `sections_split_a_real_shaped_prompt` here pins the exact bytes,
-//! and `the_observatory_provenance_markers_are_what_this_assembler_emits` in
+//! and `the_provenance_markers_are_what_this_assembler_emits` in
 //! `stella-cli`'s `agent/prompt/tests.rs` asserts a really-assembled prompt
 //! contains them, in this order, so a reworded heading fails on whichever
 //! side moved.

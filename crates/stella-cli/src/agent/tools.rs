@@ -11,9 +11,10 @@ use super::*;
 use stella_plugin::{ArtifactIdentity, ArtifactKind};
 
 /// The single filesystem-isolation seam for developer script-tool discovery.
-/// The session stack goes through this report; candidate workspaces still
-/// call `discover_in_scopes` directly (see `workspace_ports`) and therefore
-/// miss the isolation gate.
+/// The session stack goes through this report, and since #3865 deleted the
+/// candidate-workspace tool chain there is no second path around it: every
+/// remaining `discover_in_scopes` caller lives inside `stella_tools::custom`
+/// itself.
 #[cfg(test)]
 pub(crate) fn custom_tool_report_for_workspace(
     root: &std::path::Path,
