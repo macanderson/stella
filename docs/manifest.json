@@ -42,7 +42,7 @@
       "sections": [
         0
       ],
-      "status": "proposed",
+      "status": "implemented",
       "title": "Adaptive Context \u2014 Implementation Plan"
     },
     "adr-readme": {
@@ -715,7 +715,7 @@
       "title": "Stella: A Defensible Technology Position"
     },
     "step-grading-and-productive-ratio": {
-      "path": "docs/designs/step-grading-and-productive-ratio.md",
+      "path": "docs/spec/step-grading-and-productive-ratio.md",
       "sections": [
         0,
         1,
@@ -728,7 +728,7 @@
         8,
         9
       ],
-      "status": "proposed",
+      "status": "living",
       "title": "Step grading and the agent productive step ratio"
     },
     "storage-map": {

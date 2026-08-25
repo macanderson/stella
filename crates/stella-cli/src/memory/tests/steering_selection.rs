@@ -557,6 +557,7 @@ applies_to = { paths = ["deny.toml"] }
         &[stella_core::rules::RuleFile {
             path: ".stella/rules/acme.web.toml".to_string(),
             contents: records.to_string(),
+            contributed_by: None,
         }],
         &stella_core::records::Facts {
             now: "2026-07-20T00:00:00Z",

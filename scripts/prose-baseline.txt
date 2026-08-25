@@ -576,7 +576,6 @@ crates/stella-cli/src/memory/rules_mining.rs meta-writing 1
 crates/stella-cli/src/memory/self_tuning.rs filler-adverb 2
 crates/stella-cli/src/memory/self_tuning.rs meta-writing 1
 crates/stella-cli/src/memory/self_tuning.rs rust-jargon 1
-crates/stella-cli/src/memory/skill_files.rs filler-adverb 2
 crates/stella-cli/src/memory/steering.rs filler-adverb 3
 crates/stella-cli/src/memory/steering.rs honesty-declaration 1
 crates/stella-cli/src/memory/steering.rs meta-writing 1
@@ -777,7 +776,7 @@ crates/stella-cli/src/wrapper_candidate.rs honesty-declaration 2
 crates/stella-cli/src/wrapper_candidate.rs rust-jargon 1
 crates/stella-cli/src/wrapper_plugin.rs enumerative-announcement 1
 crates/stella-cli/src/wrapper_plugin.rs filler-adverb 4
-crates/stella-cli/src/wrapper_plugin.rs honesty-declaration 3
+crates/stella-cli/src/wrapper_plugin.rs honesty-declaration 2
 crates/stella-cli/src/wrapper_plugin.rs interface-jargon 2
 crates/stella-cli/src/wrapper_plugin.rs meta-writing 1
 crates/stella-cli/src/wrapper_plugin.rs rust-jargon 58
@@ -2291,7 +2290,6 @@ design/tui-v2/SPEC.md filler-adverb 2
 design/tui-v2/SPEC.md honesty-declaration 2
 design/tui-v2/SPEC.md interface-jargon 4
 design/tui-v2/SPEC.md rust-jargon 1
-docs/README.md filler-adverb 2
 docs/adr/0006-contextframe-vs-compiledcontextframe.md enumerative-announcement 1
 docs/adr/0006-contextframe-vs-compiledcontextframe.md filler-adverb 1
 docs/adr/0006-contextframe-vs-compiledcontextframe.md honesty-declaration 3
@@ -2331,19 +2329,11 @@ docs/brand/wallpapers/build_wallpapers.py enumerative-announcement 1
 docs/demo/README.md filler-adverb 2
 docs/demo/README.md honesty-declaration 1
 docs/demo/stella-deck-script.md filler-adverb 1
-docs/design/agent-loop-skills-survey.md filler-adverb 1
-docs/design/agent-loop-skills-survey.md interface-jargon 2
-docs/design/agent-loop-skills-survey.md rust-jargon 3
-docs/design/build-plan.md enumerative-announcement 1
-docs/design/build-plan.md filler-adverb 6
-docs/design/build-plan.md honesty-declaration 1
-docs/design/build-plan.md rust-jargon 9
 docs/design/pipeline-journey.md enumerative-announcement 1
 docs/design/pipeline-journey.md filler-adverb 3
 docs/design/pipeline-journey.md honesty-declaration 2
 docs/design/pipeline-journey.md interface-jargon 4
 docs/design/pipeline-journey.md rust-jargon 1
-docs/design/zappy-comparison-2026-08.md honesty-declaration 1
 docs/papers/README.md honesty-declaration 1
 docs/papers/README.md rust-jargon 1
 docs/papers/deterministic-engine.md filler-adverb 3
@@ -2381,8 +2371,6 @@ docs/prose-guidelines.md filler-adverb 1
 docs/reference/diagnostics.md filler-adverb 4
 docs/reference/diagnostics.md rust-jargon 3
 docs/spec/adaptive-context/adaptive-context-plan.md filler-adverb 2
-docs/spec/adaptive-context/adaptive-context-plan.md honesty-declaration 3
-docs/spec/adaptive-context/adaptive-context-plan.md meta-writing 1
 docs/spec/adaptive-context/adaptive-context.md filler-adverb 2
 docs/spec/adaptive-context/adaptive-context.md honesty-declaration 2
 docs/spec/adaptive-context/adaptive-context.md meta-writing 1
