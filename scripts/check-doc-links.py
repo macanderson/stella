@@ -636,6 +636,23 @@ def check(docs, manifest_on_disk, fix=False):
                     f"     `doc:<id>` so it cannot break again. `make doc-links-fix`\n"
                     f"     repoints one across a move it can prove."
                 )
+            else:
+                # A resolved relative href is a citation, and the orphan report
+                # has to count it as one (#4757). `docs/README.md` calls this
+                # the prevailing style inside `docs/`, so without this a
+                # document every neighbour links to is still reported as cited
+                # by nothing -- and a report whose entries are mostly wrong is
+                # one people stop reading, which costs the real orphan its
+                # only surface.
+                #
+                # Recorded here rather than by widening `cited_ids` at the
+                # bottom of the loop, because the branch above returns before
+                # reaching it: the two rooted forms resolve to a `Doc`, and
+                # this one resolves to a path that may belong to no document
+                # at all.
+                target_doc = by_path.get(resolved)
+                if target_doc is not None:
+                    cited_ids[target_doc.id].append(f"{path}:{line}")
             continue
         if kind == "id":
             doc = by_id.get(target)
