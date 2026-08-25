@@ -17,15 +17,15 @@
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
-│                                                 ┌ install scope ───────────────────────────────────────────┐                                                 │
+│                                                 ╭ install scope ───────────────────────────────────────────╮                                                 │
 │                                                 │Create the new skill                                      │                                                 │
 │                                                 │Where should it live?                                     │                                                 │
 │                                                 │                                                          │                                                 │
 │                                                 │▸ [p] Project  .stella/skills — travels with the repo     │                                                 │
 │                                                 │[u] User  ~/.stella/skills — global to you                │                                                 │
 │                                                 │                                                          │                                                 │
-│                                                 │←/→ or p/u choose · ⏎ confirm · esc cancel                │                                                 │
-│                                                 └──────────────────────────────────────────────────────────┘                                                 │
+│                                                 ╰────────────── ←/→ or p/u choose · ⏎ confirm · esc cancel ╯                                                 │
+│                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │

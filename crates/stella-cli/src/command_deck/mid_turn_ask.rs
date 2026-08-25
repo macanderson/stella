@@ -29,8 +29,8 @@
 //! "no driver is attached" decline (#4220).
 //!
 //! Everything here is transport. No decision about what a driver may do
-//! lives in this file: the folds (`stella_tui::views::question` and
-//! `stella_tui::views::approval`) own those, and are unit-tested without a
+//! lives in this file: the folds (`stella_tui::v2::question` and
+//! `stella_tui::v2::approval`) own those, and are unit-tested without a
 //! terminal.
 //!
 //! The one invariant this file does carry is the **direction of failure**.
@@ -272,7 +272,7 @@ impl stella_tools::registry::approval::ApprovalResponder for DeckApprovalRespond
 ///
 /// The overlay is a pure fold, so **every** decision about what the driver
 /// may do — the note editor, the free-text row, the review pane's three ways
-/// out — lives in `stella_tui::views::question` and is unit-tested without a
+/// out — lives in `stella_tui::v2::question` and is unit-tested without a
 /// terminal. Nothing here interprets an answer; it only carries one.
 ///
 /// [r]: stella_tools::registry::question::QuestionResponder
@@ -553,7 +553,7 @@ mod tests {
     /// the outcome the overlay folds out comes back as this call's answer —
     /// note and all.
     ///
-    /// The overlay's own fold is tested in `stella_tui::views::question`;
+    /// The overlay's own fold is tested in `stella_tui::v2::question`;
     /// what is proved here is that nothing is lost in the round trip, which
     /// is the half a pure fold cannot cover.
     #[tokio::test]

@@ -95,8 +95,9 @@ untrusted input.
 Dropped from an untrusted project scope: `hooks`, `context_providers`,
 per-provider `base_url` / `api_key` / `api_key_env`, `mcp.registry_url`,
 any `tools.*` entry set to `"on"`, and agent `prompt` overrides. Never
-read from the project scope at any trust level: the `authority` block
-(`#[serde(skip)]`) and `enterprise_telemetry`.
+read from the project scope **at any trust level** — trusted or not —
+because the value would itself be a trust grant: the `authority` block
+(`#[serde(skip)]`), `enterprise_telemetry`, and `run.auto_trust_project`.
 
 Honored from an untrusted project: model, effort, sampling, `allowed_models`
 — they carry no credential routing — and `tools.*` set to `"off"`, because
@@ -105,7 +106,11 @@ lower authority may always narrow.
 The asymmetry in that last pair is the whole design: **lower-precedence input
 may narrow authority but never widen it.**
 
-Trust is granted by `STELLA_TRUST_PROJECT=1` (`settings.rs:718`). See
+Trust is granted by `STELLA_TRUST_PROJECT=1`, or by `run.auto_trust_project =
+true` in the user or org-managed `stella.toml` (`settings.rs::project_trust`,
+`settings/merge.rs::trusted_scope_auto_trust_project`) — the persisted
+alternative to setting the env var on every launch. The env var always wins
+over the config default, in either direction, for one launch. See
 [R1](#r1--trust-is-an-env-var-not-a-decision-the-user-is-asked-to-make).
 
 ### B2 — Managed ceiling → everything below it
@@ -241,14 +246,32 @@ choice is legible rather than discovered.
 ### R1 — Trust is an env var, not a decision the user is asked to make
 
 `STELLA_TRUST_PROJECT=1` is process-wide and set before launch. There is no
-trust prompt and no persisted trust store. This differs from the
-"do you trust the authors of the files in this folder?" model users may expect
-from editors.
+trust prompt, and still no *per-repository* persisted trust store — this
+differs from the "do you trust the authors of the files in this folder?"
+model users may expect from editors, and that gap is not closed below.
 
-Consequence: trust is all-or-nothing per invocation, and a user who exports it
-in their shell profile silently trusts every repository thereafter. The
-mitigation today is that the *default* is untrusted and the drops are loud
-(warnings to stderr, with the repo-controlled provider id `escape_debug`'d).
+What changed: `run.auto_trust_project = true` in the user or org-managed
+`stella.toml` is now a **persisted, whole-machine** default, so an operator
+does not have to re-export the env var (or wrap the binary in a shell
+function) every launch to get the old behavior of "just trust it." It does
+not add per-repository granularity — turning it on still trusts every
+project this machine opens, exactly as exporting `STELLA_TRUST_PROJECT=1`
+from a shell profile always did — and it is deliberately **inert when a
+project's own file sets it**: `Settings::merge_captured_scopes` discards a
+project-scope `auto_trust_project` unconditionally, because that value would
+otherwise be the project voting itself trusted, which is the one thing a
+persisted trust store here must never allow. An explicit `STELLA_TRUST_PROJECT`
+env var still overrides the config default in either direction, so the
+one-off "trust this once" and "distrust this once" cases the env var served
+are unchanged.
+
+Consequence: trust is all-or-nothing per invocation, and a user who exports
+`STELLA_TRUST_PROJECT=1` from a shell profile, or sets `auto_trust_project =
+true` in their user-scope file, silently trusts every repository thereafter.
+The mitigation today is that the *default* is untrusted and the drops are
+loud (warnings to stderr, with the repo-controlled provider id
+`escape_debug`'d) — a project-scope `auto_trust_project` gets the identical
+loud-drop treatment.
 
 ### R2 — The extension surfaces execute code
 

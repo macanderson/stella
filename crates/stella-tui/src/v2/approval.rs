@@ -1,8 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The Command Deck's approval card (#4240): the yes/no a parked dispatch
-//! waits on.
+//! The approval card (#4240): the yes/no a parked dispatch waits on.
+//!
+//! ```text
+//! ╭ ◇ approval · the turn is stopped ───────────────────────────────╮
+//! │ bash  mutating                                                  │
+//! │   rm -rf build/                                                 │
+//! │                                                                 │
+//! │ gate command.started                                            │
+//! │ reason matched rule no-destructive-shell                        │
+//! │                                                                 │
+//! │ ▸ Allow this call, once                                         │
+//! │   Deny                                                          │
+//! │   Deny, and say why                                             │
+//! ╰───────────────────────── ↑↓ move · ⏎ choose · esc denies ───────╯
+//! ```
+//!
+//! The two field rows read the way a tool's arguments read in the transcript
+//! — key in [`token::MUTED`], value in [`token::TEXT`], no column padding —
+//! so an approval and the call it is about are the same table to a reader.
 //!
 //! # Why this is not the question overlay
 //!
@@ -17,7 +34,7 @@
 //!
 //! So this is a card of its own, in a file of its own. An approval is a
 //! yes/no over a call that is **already decided**; a question
-//! ([`crate::views::question`]) is a decision the model could not make. One
+//! ([`crate::v2::question`]) is a decision the model could not make. One
 //! fold with both jobs would serve neither, and their keys genuinely differ:
 //! a question wants a note editor and a review pane, an approval wants the
 //! shortest path to a defensible refusal.
@@ -44,19 +61,17 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Widget};
+use stella_tui_theme::{glyph, token};
 
 use stella_tools::registry::approval::{ApprovalRequest, ApprovalResponse};
 
-use crate::theme;
-use crate::views::cards;
+use crate::views::cards::truncate_cols;
 
 /// Matches the question overlay's width so the two mid-turn asks read as one
 /// system — a driver should not have to re-find the layout depending on
 /// which kind of card came up.
 const APPROVAL_CARD_W: u16 = 76;
-
-/// Width of the dimmed label column, as `v2::plan_card` uses.
-const LABEL_W: usize = 8;
 
 /// What owns the keyboard inside the card.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -146,7 +161,7 @@ impl ApprovalOverlay {
     /// Apply an inbound envelope, reporting whether it was one of ours.
     ///
     /// The card owns both directions of its own envelope contract, the shape
-    /// [`crate::views::question::QuestionOverlay::ingest`] establishes — and
+    /// [`crate::v2::question::QuestionOverlay::ingest`] establishes — and
     /// for the same reason: `deck_ui.rs` is a god file closed to growth
     /// (`scripts/file-size-baseline.txt`), so the fold there costs two lines.
     pub fn ingest(&mut self, inbound: &crate::envelope::Inbound) -> bool {
@@ -239,17 +254,27 @@ impl ApprovalOverlay {
 
 /// Paint the card over `area`. A no-op when nothing is parked.
 ///
-/// `accessible` spans the card across the frame instead of floating it
-/// (`cards::card_area` — not a link: it is `pub(crate)`, and this is a
-/// `pub fn`). A float clips at its right border, and the fields most likely
-/// to be long are `subject` and `reason` — the command line about to run and
-/// the rule that stopped it, which is to say the whole basis for the answer.
+/// `accessible` spans the card across the frame instead of floating it. A
+/// float clips at its right border, and the fields most likely to be long
+/// are `subject` and `reason` — the command line about to run and the rule
+/// that stopped it, which is to say the whole basis for the answer.
 pub fn render(overlay: &ApprovalOverlay, accessible: bool, area: Rect, buf: &mut Buffer) {
     let Some(request) = &overlay.request else {
         return;
     };
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
-    let inner_w = usize::from(APPROVAL_CARD_W) - 2;
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let dim = Style::new().fg(token::DIM);
+    let muted = Style::new().fg(token::MUTED);
+    let text = Style::new().fg(token::TEXT);
+
+    let width = if accessible {
+        area.width
+    } else {
+        area.width.min(APPROVAL_CARD_W)
+    };
+    let inner_w = usize::from(width).saturating_sub(2);
     let mut rows: Vec<Line<'static>> = Vec::new();
 
     // The headline: what would run, and whether running it changes anything.
@@ -262,10 +287,8 @@ pub fn render(overlay: &ApprovalOverlay, accessible: bool, area: Rect, buf: &mut
     rows.push(match request.parked.tool() {
         Some(tool) => Line::from(vec![
             Span::styled(
-                tool.to_string(),
-                Style::new()
-                    .fg(theme::TEXT_PRIMARY)
-                    .add_modifier(Modifier::BOLD),
+                format!(" {tool}"),
+                Style::new().fg(token::TEXT).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 if request.parked.read_only() {
@@ -273,56 +296,84 @@ pub fn render(overlay: &ApprovalOverlay, accessible: bool, area: Rect, buf: &mut
                 } else {
                     "  mutating"
                 },
-                dim,
+                muted,
             ),
         ]),
         None => Line::from(vec![
             Span::styled(
-                "this turn's completion",
-                Style::new()
-                    .fg(theme::TEXT_PRIMARY)
-                    .add_modifier(Modifier::BOLD),
+                " this turn's completion",
+                Style::new().fg(token::TEXT).add_modifier(Modifier::BOLD),
             ),
-            Span::styled("  held for approval", dim),
+            Span::styled("  held for approval", muted),
         ]),
     });
     if let Some(subject) = &request.subject {
         rows.push(Line::from(Span::styled(
-            format!("  {}", cards::truncate_cols(subject, inner_w - 2)),
-            Style::new().fg(theme::TEXT_PRIMARY),
+            format!("   {}", truncate_cols(subject, inner_w.saturating_sub(3))),
+            text,
         )));
     }
     rows.push(Line::from(""));
-    rows.push(labelled("gate", &request.gate, inner_w, accessible));
-    rows.push(labelled("reason", &request.reason, inner_w, accessible));
+    rows.push(field("gate", &request.gate, inner_w));
+    rows.push(field("reason", &request.reason, inner_w));
     rows.push(Line::from(""));
 
     if overlay.mode == ApprovalMode::Reason {
         rows.push(Line::from(Span::styled(
-            "  denying — say why (the model is told, verbatim):",
-            dim,
+            " denying — say why (the model is told, verbatim):",
+            muted,
         )));
         rows.push(editor_row(&overlay.editor, inner_w));
     } else {
         for (i, label) in CHOICES.iter().enumerate() {
+            let selected = i == overlay.row;
             rows.push(Line::from(vec![
-                cards::marker(i == overlay.row),
+                Span::styled(
+                    if selected { " ▸ " } else { "   " },
+                    Style::new().fg(token::GOLD),
+                ),
                 Span::styled(
                     (*label).to_string(),
-                    if i == overlay.row {
-                        theme::accent()
+                    if selected {
+                        Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD)
                     } else {
-                        dim
+                        muted
                     },
                 ),
             ]));
         }
     }
 
-    let height = u16::try_from(rows.len()).unwrap_or(u16::MAX);
-    let card = cards::card_area(area, height, APPROVAL_CARD_W, accessible);
-    let inner = cards::card_frame(card, "approval", Vec::new(), hints(overlay.mode), buf);
-    cards::render_body(rows, None, inner, buf);
+    let height = u16::try_from(rows.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(2)
+        .min(area.height);
+    let card = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    Clear.render(card, buf);
+    // The gate glyph in the lift gold is what "waiting on you" looks like
+    // everywhere on this deck — `v2::sessions` marks a `NeedsInput` session
+    // with the same pair.
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::new().fg(token::BORDER))
+        .title(Line::from(vec![
+            Span::styled(
+                format!(" {} ", glyph::GATE),
+                Style::new().fg(token::GOLD_BRIGHT),
+            ),
+            Span::styled("approval", text),
+            Span::styled(" · the turn is stopped ", muted),
+        ]))
+        .title_bottom(
+            Line::from(Span::styled(format!(" {} ", hints(overlay.mode)), dim)).right_aligned(),
+        );
+    Paragraph::new(rows).block(block).render(card, buf);
 }
 
 /// The right-aligned key hints for the mode that owns the keyboard.
@@ -333,24 +384,16 @@ fn hints(mode: ApprovalMode) -> &'static str {
     }
 }
 
-/// One labelled field: dim fixed-width label, then the value.
+/// One field of the request: the name muted, then the value.
 ///
-/// In accessible mode the column alignment goes away and the row reads as a
-/// labelled record — column alignment carries meaning only to an eye, which
-/// is `crate::v2::plan_card`'s rule and the deck's convention.
-fn labelled(label: &str, value: &str, inner_w: usize, accessible: bool) -> Line<'static> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
-    let room = inner_w.saturating_sub(LABEL_W + 2).max(8);
-    let value = cards::truncate_cols(value, room);
-    if accessible {
-        return Line::from(vec![
-            Span::styled(format!("· {label} "), dim),
-            Span::styled(value, Style::new().fg(theme::TEXT_PRIMARY)),
-        ]);
-    }
+/// The shape [`crate::v2::fields`] gives a tool's arguments, without going
+/// through JSON to reach it — these two fields are named members of a Rust
+/// struct, and the projection's row width is its own rather than the card's.
+fn field(label: &str, value: &str, inner_w: usize) -> Line<'static> {
+    let room = inner_w.saturating_sub(label.chars().count() + 3).max(8);
     Line::from(vec![
-        Span::styled(format!("{label:<LABEL_W$}"), dim),
-        Span::styled(value, Style::new().fg(theme::TEXT_PRIMARY)),
+        Span::styled(format!(" {label} "), Style::new().fg(token::MUTED)),
+        Span::styled(truncate_cols(value, room), Style::new().fg(token::TEXT)),
     ])
 }
 
@@ -365,9 +408,9 @@ fn editor_row(text: &str, inner_w: usize) -> Line<'static> {
         text.to_string()
     };
     Line::from(vec![
-        Span::raw("  "),
-        Span::styled(shown, Style::new().fg(theme::TEXT_PRIMARY)),
-        Span::styled("▏", theme::accent()),
+        Span::raw("   "),
+        Span::styled(shown, Style::new().fg(token::TEXT)),
+        Span::styled("▏", Style::new().fg(token::GOLD)),
     ])
 }
 
@@ -397,6 +440,20 @@ mod tests {
         let mut overlay = ApprovalOverlay::default();
         overlay.open(request());
         overlay
+    }
+
+    fn drawn(overlay: &ApprovalOverlay, w: u16, h: u16) -> String {
+        let area = Rect::new(0, 0, w, h);
+        let mut buf = Buffer::empty(area);
+        render(overlay, false, area, &mut buf);
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// **The witness for #4370.** The card answers the deck's one list
@@ -554,5 +611,42 @@ mod tests {
             !overlay.ingest(&crate::envelope::Inbound::ShowHelp),
             "an envelope that is not ours must fall through"
         );
+    }
+
+    /// Every field the generic `AskUser` card dropped survives the SPEC 5
+    /// frame: the tool, the mutating/read-only word, the subject, and both
+    /// labelled rows — all of them words, so a style-stripped golden can
+    /// pin them.
+    #[test]
+    fn the_card_states_the_call_the_gate_and_the_reason() {
+        let frame = drawn(&open(), 100, 24);
+        for needle in [
+            "bash",
+            "mutating",
+            "rm -rf build/",
+            "gate command.started",
+            "reason matched rule no-destructive-shell",
+            "▸ Deny",
+            "esc denies",
+        ] {
+            assert!(frame.contains(needle), "missing {needle:?}:\n{frame}");
+        }
+        assert!(
+            !frame.contains("▸ Allow"),
+            "the marker starts on deny:\n{frame}"
+        );
+    }
+
+    /// A card that cannot fit still draws inside its frame rather than
+    /// painting past it — the panel guard catches a panic, it does not
+    /// excuse one.
+    #[test]
+    fn the_card_fits_inside_any_frame() {
+        for (w, h) in [(1u16, 1u16), (4, 3), (40, 6), (100, 24), (200, 60)] {
+            let area = Rect::new(0, 0, w, h);
+            let mut buf = Buffer::empty(area);
+            render(&open(), false, area, &mut buf);
+            render(&open(), true, area, &mut buf);
+        }
     }
 }

@@ -587,6 +587,7 @@ origin = "user"
 force = "may"
 "#
         .to_string(),
+        contributed_by: None,
     };
     memory.set_record_registry(stella_core::records::registry::load(
         &[],
@@ -888,6 +889,7 @@ fn a_matched_record_evicted_by_the_budget_is_reported() {
     let record_file = stella_core::rules::RuleFile {
         path: ".stella/rules/ctx.acme.toml".to_string(),
         contents,
+        contributed_by: None,
     };
     memory.set_record_registry(stella_core::records::registry::load(
         &[],

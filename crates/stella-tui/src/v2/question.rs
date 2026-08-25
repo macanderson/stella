@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The Command Deck's `ask_question` overlay (#4220): the wizard a parked
-//! turn waits on.
+//! The deck's `ask_question` overlay (#4220): the wizard a parked turn waits
+//! on.
 //!
 //! # Why the deck needed its own
 //!
@@ -12,8 +12,8 @@
 //! do: it owns the terminal in raw mode, and a blocking stdin read behind its
 //! render loop would fight it for every keystroke. So the deck, the *default*
 //! interactive shell on a TTY, was the one interactive surface where every
-//! question resolved to the headless "no driver is attached" decline. Honest,
-//! and not the feature.
+//! question resolved to the same "no driver is attached" decline a run with
+//! nobody watching gets.
 //!
 //! This module is the deck's half. It is a **pure fold** like every other
 //! overlay here: [`QuestionOverlay::key`] takes a keystroke and returns what
@@ -21,6 +21,12 @@
 //! clock, or the filesystem. The host ([`crate::envelope::Inbound::QuestionAsked`]
 //! in, [`crate::envelope::WorkspaceInput::QuestionAnswered`] out) is the only
 //! thing that knows a tool call is waiting on the other side.
+//!
+//! It floats above the content area [`crate::v2::frame`] carves out, and
+//! draws its own border (`cards::card_frame` — not a link: it is
+//! `pub(crate)`) for the reason every floating card here does: a card with no
+//! frame of its own reads as content the deck appended to whatever is
+//! underneath it.
 //!
 //! # The flow matches the plain TTY's, key for key
 //!
@@ -40,7 +46,7 @@
 //! number); the *decisions* available do not, and neither does the
 //! [`QuestionOutcome`] that comes out.
 //!
-//! # Two things the card must say
+//! # What the card must say
 //!
 //! - **Who is asking.** [`QuestionRequest::asker`] names the sub-agent when a
 //!   delegated child raised the question. A driver answering a fanned-out
@@ -60,8 +66,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use stella_protocol::{Answer, FREE_TEXT_LABEL, Question, QuestionOutcome, QuestionRequest};
+use stella_tui_theme::token;
 
-use crate::theme;
 use crate::views::cards;
 
 /// The overlay is wider than the `/plan`-family cards: a question's options
@@ -529,6 +535,13 @@ pub fn render(overlay: &QuestionOverlay, accessible: bool, area: Rect, buf: &mut
     cards::render_body(body, None, inner, buf);
 }
 
+/// What the gold is spent on here: the answer the driver has chosen, and
+/// where the cursor is. Selection and focus are jobs the accent is reserved
+/// for; nothing else on this card qualifies, so nothing else takes it.
+fn gold() -> Style {
+    Style::new().fg(token::GOLD).add_modifier(Modifier::BOLD)
+}
+
 /// Who is asking, when a sub-agent is.
 ///
 /// `None` for a top-level turn — the driver's own agent needs no
@@ -538,7 +551,7 @@ fn asker_row(asker: Option<&str>) -> Option<Line<'static>> {
     let agent = asker?;
     Some(Line::from(Span::styled(
         format!("from the `{agent}` sub-agent"),
-        Style::new().fg(theme::TEXT_TERTIARY),
+        Style::new().fg(token::MUTED),
     )))
 }
 
@@ -556,7 +569,7 @@ fn hints(mode: QuestionMode) -> &'static str {
 /// The answering pane: the tab strip (when there is more than one question),
 /// the question, its options, the free-text row, and any attached note.
 fn question_body(overlay: &QuestionOverlay, request: &QuestionRequest) -> Vec<Line<'static>> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     let mut rows: Vec<Line<'static>> = Vec::new();
 
     // The tab strip earns its row only when there is something to move
@@ -574,7 +587,7 @@ fn question_body(overlay: &QuestionOverlay, request: &QuestionRequest) -> Vec<Li
             let mark = if answered { "●" } else { "○" };
             let label = format!("{mark} {}", question.header);
             spans.push(if i == overlay.focus {
-                Span::styled(label, theme::accent().add_modifier(Modifier::BOLD))
+                Span::styled(label, gold())
             } else {
                 Span::styled(label, dim)
             });
@@ -600,13 +613,13 @@ fn question_body(overlay: &QuestionOverlay, request: &QuestionRequest) -> Vec<Li
         Span::styled(position, dim),
         Span::styled(
             body.next().unwrap_or_default().to_string(),
-            Style::new().fg(theme::TEXT_PRIMARY),
+            Style::new().fg(token::TEXT),
         ),
     ]));
     for line in body {
         rows.push(Line::from(Span::styled(
             line.to_string(),
-            Style::new().fg(theme::TEXT_PRIMARY),
+            Style::new().fg(token::TEXT),
         )));
     }
     if question.multi_select {
@@ -629,9 +642,9 @@ fn question_body(overlay: &QuestionOverlay, request: &QuestionRequest) -> Vec<Li
             cards::marker(i == overlay.row && overlay.mode == QuestionMode::Answering),
             Span::styled(
                 if chosen { "[x] " } else { "[ ] " },
-                if chosen { theme::accent() } else { dim },
+                if chosen { gold() } else { dim },
             ),
-            Span::styled(option.label.clone(), Style::new().fg(theme::TEXT_PRIMARY)),
+            Span::styled(option.label.clone(), Style::new().fg(token::TEXT)),
         ];
         if !option.description.is_empty() {
             let used: usize = 4 + 4 + option.label.chars().count();
@@ -656,14 +669,14 @@ fn question_body(overlay: &QuestionOverlay, request: &QuestionRequest) -> Vec<Li
         cards::marker(overlay.row == free_row && overlay.mode == QuestionMode::Answering),
         Span::styled(
             if free_selected { "[x] " } else { "[ ] " },
-            if free_selected { theme::accent() } else { dim },
+            if free_selected { gold() } else { dim },
         ),
         Span::styled(FREE_TEXT_LABEL.to_string(), dim),
     ];
     if let Some(words) = &pick.free_text {
         spans.push(Span::styled(
             format!(" — {}", cards::truncate_cols(words, inner_w / 2)),
-            Style::new().fg(theme::TEXT_PRIMARY),
+            Style::new().fg(token::TEXT),
         ));
     }
     rows.push(Line::from(spans));
@@ -701,7 +714,7 @@ fn is_answered(pick: &Pick) -> bool {
 /// parks its real cursor in the composer, and because a style-blind golden
 /// can pin a `▏` where it cannot pin a cursor position.
 fn editor_row(label: &str, text: &str, inner_w: usize) -> Line<'static> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     let room = inner_w.saturating_sub(label.chars().count() + 8).max(8);
     // Show the tail, not the head: a person typing past the field's width
     // needs to see what they are typing now.
@@ -712,20 +725,18 @@ fn editor_row(label: &str, text: &str, inner_w: usize) -> Line<'static> {
     };
     Line::from(vec![
         Span::styled(format!("  {label}: "), dim),
-        Span::styled(shown, Style::new().fg(theme::TEXT_PRIMARY)),
-        Span::styled("▏", theme::accent()),
+        Span::styled(shown, Style::new().fg(token::TEXT)),
+        Span::styled("▏", gold()),
     ])
 }
 
 /// The review pane: everything that would be sent, then the three ways out.
 fn review_body(overlay: &QuestionOverlay) -> Vec<Line<'static>> {
-    let dim = Style::new().fg(theme::TEXT_TERTIARY);
+    let dim = Style::new().fg(token::MUTED);
     let inner_w = usize::from(QUESTION_CARD_W) - 2;
     let mut rows = vec![Line::from(Span::styled(
         "Review your answers",
-        Style::new()
-            .fg(theme::TEXT_PRIMARY)
-            .add_modifier(Modifier::BOLD),
+        Style::new().fg(token::TEXT).add_modifier(Modifier::BOLD),
     ))];
 
     for answer in overlay.answers() {
@@ -735,7 +746,7 @@ fn review_body(overlay: &QuestionOverlay) -> Vec<Line<'static>> {
                 "  • {}",
                 cards::truncate_cols(&answer.question, inner_w - 4)
             ),
-            Style::new().fg(theme::TEXT_PRIMARY),
+            Style::new().fg(token::TEXT),
         )));
         if answer.chosen.is_empty() {
             rows.push(Line::from(Span::styled("      → (no answer)", dim)));
@@ -743,7 +754,7 @@ fn review_body(overlay: &QuestionOverlay) -> Vec<Line<'static>> {
         for chosen in &answer.chosen {
             rows.push(Line::from(Span::styled(
                 format!("      → {}", cards::truncate_cols(chosen, inner_w - 8)),
-                theme::accent(),
+                gold(),
             )));
         }
         if let Some(note) = &answer.note {
@@ -768,11 +779,7 @@ fn review_body(overlay: &QuestionOverlay) -> Vec<Line<'static>> {
             cards::marker(i == overlay.review_row),
             Span::styled(
                 (*label).to_string(),
-                if i == overlay.review_row {
-                    theme::accent()
-                } else {
-                    dim
-                },
+                if i == overlay.review_row { gold() } else { dim },
             ),
         ]));
     }
@@ -859,7 +866,8 @@ mod tests {
     /// **The witness for #4220.** Select an option, attach a note, submit —
     /// and the `QuestionOutcome` that leaves the fold carries both. This is
     /// the whole feature: before it, every `ask_question` on the deck
-    /// resolved to the headless decline no matter what the driver did.
+    /// resolved to the "no driver is attached" decline no matter what the
+    /// driver did.
     #[test]
     fn select_then_note_then_submit_produces_the_answer_and_its_note() {
         let mut overlay = open(vec![question("Auth method", false)]);

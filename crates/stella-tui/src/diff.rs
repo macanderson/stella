@@ -133,7 +133,7 @@ pub fn footer_line(added: u32, removed: u32, width: usize) -> Line<'static> {
 /// patch has no other file boundary to orient on once `diff --git a/x b/x` is
 /// gone. It does not, because that reader does not exist: both viewer call
 /// sites hand this **one file's** diff, with that file's path already drawn a
-/// row away. `crates/stella-tui/src/views/files.rs` renders the selected
+/// row away. `crates/stella-tui/src/v2/files_tab.rs` renders the selected
 /// record's own `best_diff()` under a [`header_line`] carrying its path, and
 /// `crates/stella-tui/src/render.rs`'s approval card renders one hunk under a
 /// row naming `hunk.path`. A per-file boundary inside a rendering that holds

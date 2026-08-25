@@ -178,6 +178,47 @@ impl Settings {
         Ok((json_path, settings))
     }
 
+    /// The trusted scopes' own opinion on `run.auto_trust_project` —
+    /// `~/.stella/stella.toml` (or the settings.json it shadows) folded with
+    /// the org-managed file, and **only** those two. The project's own
+    /// `stella.toml` is never consulted here: this is the value
+    /// [`settings::project_trust`](super::project_trust) falls back to when no
+    /// `STELLA_TRUST_PROJECT` env var is set, and a project scope supplying
+    /// its own answer to "should this project be trusted" is precisely the
+    /// self-declaration the trust boundary exists to refuse.
+    ///
+    /// Re-read on every call, deliberately uncached: `Settings::load` itself
+    /// re-reads the user scope on every call with no memoization, and a
+    /// cached verdict here would be the one trust input that could go stale
+    /// relative to it — worse, a `static` cache is process-wide, so the first
+    /// unit test in a run to touch this (many already call the real
+    /// `Settings::load`, which reads the same user-scope file for unrelated
+    /// fields) would freeze the answer for every test that runs after it in
+    /// the same binary, regardless of what any later test's fixtures set up.
+    /// Two small file reads are cheap enough that avoiding them is not worth
+    /// that hazard.
+    ///
+    /// Fails closed. A benchmark's filesystem-isolation boundary
+    /// (`filesystem_settings_disabled`) skips the read entirely rather than
+    /// touching a host path the isolation promises not to consult, and a
+    /// scope that fails to parse here is treated as `false` — the real error
+    /// still surfaces once through `Settings::load`'s own parse of the same
+    /// file, so this is not a second silent failure mode, only a
+    /// conservative answer for a caller that has not run that path yet.
+    pub(crate) fn trusted_scope_auto_trust_project() -> bool {
+        if filesystem_settings_disabled() {
+            return false;
+        }
+        let mut notices = Vec::new();
+        let user = Self::load_user_scope(&mut notices).unwrap_or_default();
+        let managed = Self::load_managed_scope_dual(&mut notices)
+            .map(|(_, managed)| managed)
+            .unwrap_or_default();
+        Self::merge_snapshots(&[&user, &managed])
+            .auto_trust_project
+            .unwrap_or(false)
+    }
+
     /// Overlay one already-parsed scope without touching the filesystem.
     ///
     /// Every field this forgets is a key that parses in all three scopes and
@@ -314,6 +355,15 @@ impl Settings {
         if let Some(isolation) = scope.candidate_isolation {
             self.candidate_isolation = Some(isolation);
         }
+        // `run.auto_trust_project`, merged generically like every other `[run]`
+        // scalar above so the merged view stays inspectable — but this one is
+        // ALSO a trust grant, and `merge_captured_scopes` unconditionally
+        // overwrites it from the trusted-only snapshot immediately after
+        // calling this function, so whatever the project scope wrote here
+        // never survives past that point. See `Settings::auto_trust_project`.
+        if let Some(auto_trust) = scope.auto_trust_project {
+            self.auto_trust_project = Some(auto_trust);
+        }
         // Extra write directories (`[workspace] allowed_dirs`): whole-list
         // last-wins, and — the explicit-listing rule again — dropped entirely
         // if omitted here, which would leave `allowed_write_dirs()` empty no
@@ -353,6 +403,16 @@ impl Settings {
     ) -> Self {
         let trusted_only = Self::merge_snapshots(&[user, managed]);
         let mut merged = Self::merge_snapshots(&[user, managed, project]);
+        // `auto_trust_project` must never be honored from the project scope —
+        // it is itself a trust grant, and the whole point of the boundary is
+        // that a project file cannot vote on its own trust. `overlay_scope`
+        // merged it generically above (so the merged view stays inspectable),
+        // and this unconditionally overwrites whatever the project scope
+        // supplied with the trusted-only answer — not gated on `trust`, since
+        // `trust` was already derived from this same trusted-only value by
+        // `project_trust` before this function was ever called, and gating it
+        // on the quantity it produces would be circular.
+        merged.auto_trust_project = trusted_only.auto_trust_project;
         // Captured from the managed snapshot only: the ceiling is what the ORG
         // said, and no later fold can grow it or shrink it. `AuthorityPolicy`
         // reads it rather than re-deriving, so the two can never disagree.
@@ -567,6 +627,19 @@ impl Settings {
                  STELLA_TRUST_PROJECT=1 to let this repo run its context sources \
                  (a stdio source runs a command on your machine; an http one can \
                  send workspace content off it)",
+                project_path.display()
+            );
+        }
+
+        // Unconditional — unlike the two notices above, this one does not
+        // depend on `trust` at all. `run.auto_trust_project` IS a trust
+        // grant, so the project's own copy of it is discarded whether or not
+        // this launch happens to be trusted for some other reason.
+        if announce && project.auto_trust_project.is_some() {
+            eprintln!(
+                "  ! run.auto_trust_project in {} was IGNORED — a project cannot grant \
+                 itself trust. Set it in ~/.stella/stella.toml (or your org-managed file) \
+                 instead, or use STELLA_TRUST_PROJECT=1 for one launch",
                 project_path.display()
             );
         }

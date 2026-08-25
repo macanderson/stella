@@ -897,15 +897,7 @@ crates/stella-tui/src/v2/subagents.rs 1
 crates/stella-tui/src/v2/subagents/rows.rs 1
 crates/stella-tui/src/v2/transcript.rs 3
 crates/stella-tui/src/v2/transcript_source.rs 6
-crates/stella-tui/src/views/approval.rs 1
-crates/stella-tui/src/views/files.rs 2
-crates/stella-tui/src/views/mcp.rs 1
-crates/stella-tui/src/views/mcp/detail.rs 1
-crates/stella-tui/src/views/question.rs 5
 crates/stella-tui/src/views/seats.rs 1
-crates/stella-tui/src/views/session.rs 1
-crates/stella-tui/src/views/session/fold_backfill.rs 1
-crates/stella-tui/src/views/tools.rs 3
 crates/stella-tui/tests/accessible_layout.rs 2
 crates/stella-tui/tests/deck_pty_smoke.rs 2
 crates/stella-tui/tests/deck_render_snapshots.rs 1
@@ -931,10 +923,7 @@ docs/brand/prompts/stella-tui-prompt.md 3
 docs/brand/spinners/build_spinners.py 1
 docs/brand/wallpapers/build_wallpapers.py 2
 docs/demo/README.md 1
-docs/design/agent-loop-skills-survey.md 5
-docs/design/build-plan.md 11
 docs/design/pipeline-journey.md 8
-docs/design/zappy-comparison-2026-08.md 1
 docs/papers/README.md 2
 docs/papers/self-evolving-coding-agents-assessment.md 1
 docs/papers/stella-defensible-position.md 13
@@ -949,7 +938,6 @@ docs/prompts/triage.md 1
 docs/prompts/witness-author.md 1
 docs/prompts/worker.md 3
 docs/reference/diagnostics.md 3
-docs/spec/adaptive-context/adaptive-context-plan.md 4
 docs/spec/adaptive-context/adaptive-context.md 4
 docs/spec/adaptive-context/context-frame-spec.md 1
 docs/spec/adaptive-context/context-graph-protocol-build-prompt.md 3

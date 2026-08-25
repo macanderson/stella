@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
+
 //! Label-value rendering for the deck's grid views in accessible mode.
 //!
 //! A table is a compression scheme that only works on an eye. `$0.05` under a
@@ -16,11 +19,15 @@
 //! wrapped to two rows would silently break ↑/↓, so a long row is truncated
 //! with an ellipsis rather than wrapped, which is what the tables already did
 //! at their column boundaries.
+//!
+//! The module was `views::linear` until the ISSUES port moved it here. The
+//! name went with the move: a `linear` module sitting beside an issue tracker
+//! reads as the tracker of that name, and what this file does is linearise a
+//! table into one labelled record.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-
-use crate::theme;
+use stella_tui_theme::token;
 
 /// The separator between one labelled value and the next.
 ///
@@ -50,9 +57,9 @@ pub(crate) fn record_line(
         }
         spans.push(Span::styled(
             format!("{FIELD_SEP}{label} "),
-            Style::new().fg(theme::TEXT_TERTIARY),
+            Style::new().fg(token::MUTED),
         ));
-        spans.push(Span::styled(value.clone(), theme::body()));
+        spans.push(Span::styled(value.clone(), Style::new().fg(token::TEXT)));
     }
     Line::from(truncate_spans(spans, width))
 }
@@ -70,7 +77,7 @@ pub(crate) fn identity(
     vec![
         Span::styled(
             if selected { "> " } else { "  " },
-            Style::new().fg(theme::ACCENT),
+            Style::new().fg(token::GOLD),
         ),
         Span::styled(
             name.into(),
@@ -109,7 +116,7 @@ pub(crate) fn truncate_spans(spans: Vec<Span<'static>>, width: usize) -> Vec<Spa
         }
         break;
     }
-    out.push(Span::styled("…", Style::new().fg(theme::TEXT_TERTIARY)));
+    out.push(Span::styled("…", Style::new().fg(token::MUTED)));
     out
 }
 
@@ -124,7 +131,7 @@ mod tests {
     #[test]
     fn every_value_carries_its_own_label() {
         let line = record_line(
-            identity("lead", true, theme::ACCENT),
+            identity("lead", true, token::GOLD),
             &[
                 ("status", "running".into()),
                 ("cost", "$0.05".into()),
@@ -138,7 +145,7 @@ mod tests {
     #[test]
     fn an_absent_value_drops_its_label_instead_of_asking_a_question() {
         let line = record_line(
-            identity("lead", false, theme::ACCENT),
+            identity("lead", false, token::GOLD),
             &[("status", "running".into()), ("warmth", String::new())],
             200,
         );
@@ -150,7 +157,7 @@ mod tests {
         // Line-exact scroll (L-T4) is one visual row per record; a wrap would
         // silently desynchronise ↑/↓ from the list it is moving through.
         let line = record_line(
-            identity("lead", false, theme::ACCENT),
+            identity("lead", false, token::GOLD),
             &[("goal", "a".repeat(200))],
             20,
         );
