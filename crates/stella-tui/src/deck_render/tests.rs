@@ -272,7 +272,7 @@ fn composer_cursor_position_sits_right_after_the_prefix_on_an_empty_composer() {
     let area = Rect::new(0, 0, 40, 4);
     // Matches `empty_composer_is_a_single_accent_prompt_line_with_the_caret`,
     // which asserts the drawn reversed-cell caret sits at column 4.
-    assert_eq!(composer_cursor_position(&layout, area), Some((4, 0)));
+    assert_eq!(composer_cursor_position(&layout, area, PROMPT_PREFIX_W), Some((4, 0)));
 }
 
 #[test]
@@ -283,7 +283,7 @@ fn composer_cursor_position_offsets_by_the_composer_areas_origin() {
         cursor_col: 2,
     };
     let area = Rect::new(10, 20, 30, 3);
-    assert_eq!(composer_cursor_position(&layout, area), Some((16, 20)));
+    assert_eq!(composer_cursor_position(&layout, area, PROMPT_PREFIX_W), Some((16, 20)));
 }
 
 #[test]
@@ -300,7 +300,7 @@ fn composer_cursor_position_tracks_the_caret_through_the_scroll_window() {
     };
     let area = Rect::new(0, 0, 40, 4);
     // visible=4, first = cursor_row + 1 - visible = 5, row_in_view = 3.
-    assert_eq!(composer_cursor_position(&layout, area), Some((8, 3)));
+    assert_eq!(composer_cursor_position(&layout, area, PROMPT_PREFIX_W), Some((8, 3)));
 }
 
 #[test]
@@ -311,11 +311,11 @@ fn composer_cursor_position_is_none_for_a_degenerate_area() {
         cursor_col: 0,
     };
     assert_eq!(
-        composer_cursor_position(&layout, Rect::new(0, 0, 0, 4)),
+        composer_cursor_position(&layout, Rect::new(0, 0, 0, 4), PROMPT_PREFIX_W),
         None
     );
     assert_eq!(
-        composer_cursor_position(&layout, Rect::new(0, 0, 40, 0)),
+        composer_cursor_position(&layout, Rect::new(0, 0, 40, 0), PROMPT_PREFIX_W),
         None
     );
 }
@@ -367,6 +367,78 @@ fn render_deck_hides_the_hardware_cursor_under_a_modal_overlay() {
         !term.backend().cursor_visible(),
         "the help overlay owns the keyboard; the caret must not sit in the \
          composer underneath it"
+    );
+}
+
+/// **The witness for #4626's first half.** The AGENTS page owns the whole
+/// frame and returns before the deck's own caret rule, so it carried no
+/// hardware cursor at all — its composer is a real text input, and an IME
+/// candidate window had nothing to anchor to while typing a task. The caret
+/// tracks the page composer on the same terms the deck's does.
+#[test]
+fn render_deck_positions_the_cursor_in_the_agents_page_composer() {
+    let model = running_model_with_queue();
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.agents_page.open = true;
+    for c in "fix".chars() {
+        ui.agents_page.composer.insert_char(c);
+    }
+
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+
+    assert!(
+        term.backend().cursor_visible(),
+        "nothing owns the keyboard ahead of the page composer"
+    );
+    let text = buffer_text(term.backend().buffer());
+    let composer_row = text
+        .lines()
+        .position(|l| l.starts_with(" ❯ fix"))
+        .expect("the typed page composer row is on screen");
+    let pos = term.backend().cursor_position();
+    assert_eq!(
+        pos.y as usize, composer_row,
+        "the caret is on the row the page actually drew the draft on"
+    );
+    assert_eq!(
+        pos.x, 6,
+        "right after ' ❯ fix' — the page's 3-column prefix plus 3 chars, not \
+         the deck's 4-column one"
+    );
+}
+
+/// The page's caret follows the same precedence its key handler does: help,
+/// a parked ask, and the page's own scoped command menu each claim keys ahead
+/// of the composer, so none of them may leave a caret sitting under them.
+#[test]
+fn render_deck_hides_the_cursor_when_something_owns_the_agents_page_keyboard() {
+    let model = running_model_with_queue();
+
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.agents_page.open = true;
+    ui.help_open = true;
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    assert!(
+        !term.backend().cursor_visible(),
+        "help owns the keyboard over the page too"
+    );
+
+    // The scoped slash menu: `handle_key` gives it every key before the
+    // composer sees one, so the caret must not sit behind it either.
+    let mut ui = DeckUi::default();
+    ui.splash.skip();
+    ui.agents_page.open = true;
+    ui.slash_commands = vec![crate::composer::SlashCommand::new("/info", "model routing")];
+    ui.agents_page.composer.insert_char('/');
+    let mut term = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    term.draw(|f| render_deck(&model, &mut ui, f)).unwrap();
+    assert!(
+        !term.backend().cursor_visible(),
+        "the page's command menu owns the keyboard while it is up"
     );
 }
 

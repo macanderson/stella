@@ -73,6 +73,25 @@ pub const LEFT_DOUBLE_WINDOW: Duration = Duration::from_millis(1500);
 /// from here at all.
 pub const PAGE_COMMANDS: &[&str] = &["/model", "/info", "/models", "/theme", "/help"];
 
+/// The lane every queue-free command answers on — `command_side` addresses its
+/// [`crate::envelope::Inbound::ShellEvent`] replies here, whatever lane the
+/// deck happens to be focused on.
+const LEAD: &str = "lead";
+
+/// The page composer's prompt prefix, and its width in columns. Narrower than
+/// the deck's `>>> ` because the page's foot is indented by one, not four.
+const PAGE_PROMPT: &str = " ❯ ";
+const PAGE_PROMPT_W: usize = 3;
+
+/// The most composer rows the page's foot shows before it scrolls to keep the
+/// caret in view.
+const PAGE_COMPOSER_MAX_ROWS: usize = 3;
+
+/// The most reply rows the page shows. A tail, not the whole answer:
+/// `/models` prints a catalogue, and the page is a fleet view with a composer
+/// on it — the confirmation is what has to be readable here, not the archive.
+const REPLY_MAX_ROWS: usize = 6;
+
 /// The page's state: whether it is up, the selected row, its own composer
 /// (never the deck's — opening the page must not disturb a half-typed
 /// prompt), and the `←` chord latch.
@@ -90,10 +109,38 @@ pub struct AgentsPage {
     /// One footer line after a verb (a refused command, a dispatched task).
     /// Cleared by the next key.
     pub notice: Option<String>,
+    /// Where the lead's transcript stood when this page last sent a command,
+    /// or `None` before the first one.
+    ///
+    /// The reply pane renders what arrived *after* this mark, so it shows the
+    /// command's own answer and never replays the scrollback that was already
+    /// there — a plain "tail of the transcript" pane would show the last turn's
+    /// prose the moment the page opened. Replies ride
+    /// [`crate::envelope::Inbound::ShellEvent`] into the lead's transcript
+    /// (`command_side`), which is why the mark is taken against the lead rather
+    /// than the focused lane.
+    pub reply_mark: Option<ReplyMark>,
     /// When the first empty-prompt `←` on the SESSION tab armed the chord.
     /// Consumed by every key ([`crate::deck_ui::handle_deck_key`]'s take), so
     /// only two *consecutive* presses open the page.
     pub left_armed_at: Option<Instant>,
+}
+
+/// Where the lead's transcript stood when the page sent a command — the line
+/// the reply pane reads forward from.
+///
+/// Two numbers rather than an entry count, because consecutive `Text` events
+/// **coalesce**: [`crate::model::SessionModel`]'s fold appends to a trailing
+/// `Text` entry instead of pushing a new one, so a reply landing on the heels
+/// of assistant prose is that entry's tail, not an entry of its own. An index
+/// alone would show an empty pane in exactly the case the reply matters most.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReplyMark {
+    /// Transcript entries the lead was carrying.
+    pub entries: usize,
+    /// Bytes already in the trailing `Text` entry, or `0` when the transcript
+    /// ended on something else.
+    pub tail_bytes: usize,
 }
 
 /// One page row: a lane of this session, or a registry session.
@@ -189,6 +236,7 @@ pub fn open(ui: &mut DeckUi) -> DeckAction {
     ui.agents_page.menu_selected = 0;
     ui.agents_page.kill_armed = false;
     ui.agents_page.notice = None;
+    ui.agents_page.reply_mark = None;
     ui.agents_page.left_armed_at = None;
     DeckAction::Send(WorkspaceInput::SessionsRefresh)
 }
@@ -220,6 +268,14 @@ fn model_arg_matches(model: &WorkspaceModel, ui: &DeckUi) -> Vec<String> {
     )
 }
 
+/// Whether either page menu — the scoped slash list or `/model`'s argument
+/// list — is up. [`handle_key`] gives both first claim on every key, so this
+/// is also the answer to "does something own the keyboard ahead of the page
+/// composer", which is what the caret rule needs (`deck_render`).
+pub fn menu_open(model: &WorkspaceModel, ui: &DeckUi) -> bool {
+    !model_arg_matches(model, ui).is_empty() || !slash_matches(ui).is_empty()
+}
+
 /// The page's keys. Modal and full-frame: every key belongs to the page
 /// until Esc (or `q` from an empty composer) closes it.
 pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> DeckAction {
@@ -245,7 +301,7 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
     {
         return match outcome {
             SlashPopupOutcome::Handled => DeckAction::Handled,
-            SlashPopupOutcome::Submit(text) => submit(ui, text),
+            SlashPopupOutcome::Submit(text) => submit(model, ui, text),
         };
     }
     let slash = slash_matches(ui);
@@ -259,7 +315,7 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
     {
         return match outcome {
             SlashPopupOutcome::Handled => DeckAction::Handled,
-            SlashPopupOutcome::Submit(text) => submit(ui, text),
+            SlashPopupOutcome::Submit(text) => submit(model, ui, text),
         };
     }
 
@@ -268,7 +324,7 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
         match classify_enter(&key) {
             EnterAction::Submit => {
                 return match ui.agents_page.composer.take_submission() {
-                    Some(sub) => submit(ui, sub.text),
+                    Some(sub) => submit(model, ui, sub.text),
                     None => DeckAction::Handled,
                 };
             }
@@ -331,7 +387,7 @@ pub fn handle_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> Dec
 /// Route one submitted line: a scoped command leaves queue-free, an
 /// out-of-scope command is refused with a notice, and anything else starts a
 /// new agent lane on it.
-fn submit(ui: &mut DeckUi, text: String) -> DeckAction {
+fn submit(model: &WorkspaceModel, ui: &mut DeckUi, text: String) -> DeckAction {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return DeckAction::Handled;
@@ -344,7 +400,12 @@ fn submit(ui: &mut DeckUi, text: String) -> DeckAction {
             ));
             return DeckAction::Handled;
         }
-        ui.agents_page.notice = Some(format!("{head} sent — its reply prints in the transcript"));
+        // Mark the transcript here so the reply pane can show this command's
+        // answer and nothing that preceded it. `/help` is the one scoped
+        // command that answers by opening the help overlay rather than
+        // printing, so its pane simply stays empty.
+        ui.agents_page.reply_mark = Some(lead_mark(model));
+        ui.agents_page.notice = Some(format!("{head} sent"));
         return DeckAction::Send(WorkspaceInput::Command {
             text: trimmed.to_string(),
         });
@@ -481,47 +542,58 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         )));
     }
 
-    // Bottom chrome: notice, composer, hints — pinned to the frame's foot.
-    let c_layout = crate::composer::layout(&ui.agents_page.composer, inner_w.saturating_sub(3));
-    let composer_h = c_layout.rows.len().clamp(1, 3) as u16;
-    let foot_h = composer_h + 2;
-    let body_h = area.height.saturating_sub(foot_h);
+    // Bottom chrome: notice, the last command's reply, composer, hints —
+    // pinned to the frame's foot, measured once by [`foot`].
+    let f = foot(model, ui, area);
+    let body_h = area.height.saturating_sub(f.area.height);
     let body = Rect {
         height: body_h,
         ..area
     };
     Paragraph::new(lines.into_iter().take(body_h as usize).collect::<Vec<_>>()).render(body, buf);
 
-    let mut foot: Vec<Line<'static>> = Vec::new();
+    let mut rows_out: Vec<Line<'static>> = Vec::new();
     if let Some(notice) = &ui.agents_page.notice {
-        foot.push(Line::from(Span::styled(format!(" {notice}"), gold)));
+        rows_out.push(Line::from(Span::styled(format!(" {notice}"), gold)));
     } else {
-        foot.push(Line::default());
+        rows_out.push(Line::default());
     }
-    for (r, row) in c_layout.rows.iter().enumerate() {
-        let prefix = if r == 0 { " ❯ " } else { "   " };
+    // The reply pane: what the last page-submitted command printed, so
+    // picking a model never means closing the page to read the confirmation.
+    for (r, line) in f.reply.iter().enumerate() {
+        rows_out.push(Line::from(vec![
+            Span::styled(if r == 0 { " ↩ " } else { "   " }.to_string(), dim),
+            Span::styled(line.clone(), muted),
+        ]));
+    }
+    // Only the windowed composer rows are drawn, so the caret
+    // ([`composer_cursor`]) can never point at a row that is not on screen.
+    for (r, row) in f
+        .layout
+        .rows
+        .iter()
+        .enumerate()
+        .skip(f.first_row)
+        .take(f.composer_h as usize)
+    {
+        let prefix = if r == 0 { PAGE_PROMPT } else { "   " };
         if r == 0 && row.is_empty() && ui.agents_page.composer.is_blank() {
-            foot.push(Line::from(vec![
+            rows_out.push(Line::from(vec![
                 Span::styled(prefix.to_string(), gold),
                 Span::styled("describe a task for a new session".to_string(), dim),
             ]));
         } else {
-            foot.push(Line::from(vec![
+            rows_out.push(Line::from(vec![
                 Span::styled(prefix.to_string(), gold),
                 Span::styled(row.clone(), text),
             ]));
         }
     }
-    foot.push(Line::from(Span::styled(
+    rows_out.push(Line::from(Span::styled(
         "   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · n new session · ⌃x⌃x kill · r refresh · esc back",
         dim,
     )));
-    let foot_area = Rect {
-        y: area.y + body_h,
-        height: foot_h.min(area.height),
-        ..area
-    };
-    Paragraph::new(foot).render(foot_area, buf);
+    Paragraph::new(rows_out).render(f.area, buf);
 
     // The page's popups, anchored above the composer: the scoped slash menu,
     // or `/model`'s argument menu.
@@ -532,8 +604,151 @@ pub fn render(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut Buffer)
         arg
     };
     if !menu.is_empty() {
-        render_menu(ui, &menu, area, foot_area.y + 1, buf);
+        render_menu(ui, &menu, area, f.composer_y, buf);
     }
+}
+
+/// The page's bottom chrome, measured once: the composer's soft-wrap and
+/// caret, the rows of it that fit, the reply tail above it, and where the
+/// whole band sits.
+///
+/// [`render`] paints from this and [`composer_cursor`] measures from it, so
+/// the caret cannot land on a row the composer is not drawn on — the drift
+/// that made a second copy of this arithmetic the wrong answer (#4626).
+struct Foot {
+    /// The composer's wrapped rows and caret, at the page's text width.
+    layout: crate::composer::ComposerLayout,
+    /// The last command's reply, already truncated to the page's width.
+    reply: Vec<String>,
+    /// Composer rows actually on screen.
+    composer_h: u16,
+    /// First composer row of the visible window.
+    first_row: usize,
+    /// The whole bottom band.
+    area: Rect,
+    /// Screen row the composer's first visible row is drawn on.
+    composer_y: u16,
+}
+
+fn foot(model: &WorkspaceModel, ui: &DeckUi, area: Rect) -> Foot {
+    let inner_w = (area.width as usize).saturating_sub(2);
+    let layout = crate::composer::layout(
+        &ui.agents_page.composer,
+        inner_w.saturating_sub(PAGE_PROMPT_W),
+    );
+    let composer_h = layout.rows.len().clamp(1, PAGE_COMPOSER_MAX_ROWS) as u16;
+    let reply = reply_rows(model, ui, inner_w);
+    // notice + reply + composer + hints.
+    let height = composer_h + 2 + reply.len() as u16;
+    let body_h = area.height.saturating_sub(height);
+    let first_row = crate::deck_render::composer_scroll_first(layout.cursor_row, composer_h as usize);
+    let band = Rect {
+        y: area.y + body_h,
+        height: height.min(area.height),
+        ..area
+    };
+    Foot {
+        composer_y: band.y + 1 + reply.len() as u16,
+        layout,
+        reply,
+        composer_h,
+        first_row,
+        area: band,
+    }
+}
+
+/// Where the lead's transcript stands right now — the mark a page-submitted
+/// command takes so its reply can be told apart from the scrollback it lands
+/// on. A missing lead lane marks the origin, which reads the same way:
+/// everything that arrives after is the reply.
+fn lead_mark(model: &WorkspaceModel) -> ReplyMark {
+    use crate::model::TranscriptEntry;
+
+    let Some(lead) = model.index_of(LEAD).and_then(|i| model.agents.get(i)) else {
+        return ReplyMark::default();
+    };
+    let transcript = &lead.model.transcript;
+    ReplyMark {
+        entries: transcript.len(),
+        tail_bytes: match transcript.last() {
+            Some(TranscriptEntry::Text(body)) => body.len(),
+            _ => 0,
+        },
+    }
+}
+
+/// The tail of what the last page-submitted command printed, or empty before
+/// one was sent.
+///
+/// Read from the lead's transcript past [`AgentsPage::reply_mark`], because
+/// that is where `command_side` addresses its replies — never from the focused
+/// lane, which on this page is as likely to be a sub-agent.
+///
+/// Front-eviction can drop entries the mark counted, and `/clear` empties the
+/// transcript outright. Both leave the mark pointing past what is there, and
+/// both then render an empty pane: the answer is gone, and showing whatever
+/// now sits at that index would be a different turn's prose under a `↩`.
+fn reply_rows(model: &WorkspaceModel, ui: &DeckUi, width: usize) -> Vec<String> {
+    use crate::model::TranscriptEntry;
+
+    let Some(mark) = ui.agents_page.reply_mark else {
+        return Vec::new();
+    };
+    let Some(lead) = model.index_of(LEAD).and_then(|i| model.agents.get(i)) else {
+        return Vec::new();
+    };
+    let transcript = &lead.model.transcript;
+    let mut out: Vec<String> = Vec::new();
+
+    // The entry the mark landed *inside*: the reply was appended to it rather
+    // than pushed after it (see [`ReplyMark`]), so its tail is the answer.
+    // `tail_bytes` was that entry's length, and the fold only ever appends, so
+    // it is a char boundary — checked all the same, because a renderer must
+    // not be the thing that panics.
+    if let Some(i) = mark.entries.checked_sub(1)
+        && let Some(TranscriptEntry::Text(body)) = transcript.get(i)
+        && body.len() > mark.tail_bytes
+        && body.is_char_boundary(mark.tail_bytes)
+    {
+        push_reply_lines(&mut out, &body[mark.tail_bytes..], width);
+    }
+    for entry in transcript.iter().skip(mark.entries) {
+        if let TranscriptEntry::Text(body) = entry {
+            push_reply_lines(&mut out, body, width);
+        }
+    }
+
+    // Trailing blanks are the answer's punctuation, not content, and each one
+    // costs a row of a pane capped at [`REPLY_MAX_ROWS`].
+    while out.last().is_some_and(|line| line.is_empty()) {
+        out.pop();
+    }
+    out.split_off(out.len().saturating_sub(REPLY_MAX_ROWS))
+}
+
+/// Append `body`'s lines to the pane, each truncated to the page's width.
+fn push_reply_lines(out: &mut Vec<String>, body: &str, width: usize) {
+    out.extend(
+        body.lines()
+            .map(|line| cards::truncate_cols(line.trim_end(), width)),
+    );
+}
+
+/// Absolute screen cell of the page composer's caret, or `None` when the foot
+/// has no room to draw it. The deck positions the hardware cursor here while
+/// the page is up (`deck_render`) so IME candidate windows, screen readers and
+/// cursor-following panes have the same anchor they get on the main frame.
+pub fn composer_cursor(model: &WorkspaceModel, ui: &DeckUi, area: Rect) -> Option<(u16, u16)> {
+    let f = foot(model, ui, area);
+    if f.composer_y >= area.y.saturating_add(area.height) {
+        return None;
+    }
+    let composer = Rect {
+        y: f.composer_y,
+        height: f.composer_h,
+        ..f.area
+    };
+    crate::deck_render::composer_cursor_position(&f.layout, composer, PAGE_PROMPT_W)
 }
 
 /// A lane's head row: id, status, clock, model, spend.

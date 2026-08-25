@@ -286,3 +286,111 @@ fn the_model_menu_offers_this_providers_allowed_models_only() {
         vec!["zai/glm-5.2".to_string()]
     );
 }
+
+/// Render the page over an 80×24 frame and flatten it to text.
+fn page_text(model: &WorkspaceModel, ui: &DeckUi) -> String {
+    let area = ratatui::layout::Rect::new(0, 0, 80, 24);
+    let mut buf = ratatui::buffer::Buffer::empty(area);
+    crate::v2::agents_page::render(model, ui, area, &mut buf);
+    (0..area.height)
+        .map(|y| {
+            (0..area.width)
+                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One queue-free reply, exactly as `command_side` sends it: transcript-only,
+/// addressed to the lead whatever lane the deck is focused on.
+fn lead_says(model: &mut WorkspaceModel, text: &str) {
+    model.apply_inbound(&Inbound::ShellEvent {
+        agent: "lead".into(),
+        event: stella_protocol::AgentEvent::Text { text: text.into() },
+    });
+}
+
+/// **The witness for #4626's second half.** A page-submitted command used to
+/// answer into the transcript *behind* the page, and the page said only that
+/// its reply prints there — so picking a model meant closing the page to read
+/// the confirmation. The reply now lands in a page-local pane.
+#[test]
+fn a_page_submitted_commands_reply_is_readable_on_the_page() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = page_ui();
+    for c in "/info".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    assert_eq!(
+        handle_deck_key(key(KeyCode::Enter), &model, &mut ui),
+        DeckAction::Send(WorkspaceInput::Command {
+            text: "/info".into()
+        })
+    );
+    assert!(
+        ui.agents_page.reply_mark.is_some(),
+        "sending marks the transcript so the answer can be told from the \
+         scrollback it lands on"
+    );
+    assert!(
+        !page_text(&model, &ui).contains("prints in the transcript"),
+        "the page no longer sends the reader somewhere else to read it"
+    );
+
+    lead_says(&mut model, "worker · zai/glm-5.2");
+    let text = page_text(&model, &ui);
+    assert!(
+        text.contains("worker · zai/glm-5.2"),
+        "the reply is on the page:\n{text}"
+    );
+}
+
+/// The pane shows the command's own answer, never the scrollback it landed
+/// on — a plain transcript tail would print the last turn's prose the moment
+/// the page opened.
+#[test]
+fn the_reply_pane_shows_nothing_from_before_the_command() {
+    let mut model = model_with(&["lead"]);
+    lead_says(&mut model, "an earlier turn said this");
+    let mut ui = page_ui();
+    assert!(
+        !page_text(&model, &ui).contains("an earlier turn"),
+        "no command sent yet — the pane is not up at all"
+    );
+
+    for c in "/info".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    lead_says(&mut model, "the answer");
+
+    let text = page_text(&model, &ui);
+    assert!(text.contains("the answer"), "the reply is shown:\n{text}");
+    assert!(
+        !text.contains("an earlier turn"),
+        "…and only the reply:\n{text}"
+    );
+}
+
+/// A long answer is tailed, not paged: `/models` prints a catalogue, and the
+/// page is a fleet view with a composer on it. The confirmation at the end is
+/// what has to be readable here.
+#[test]
+fn a_long_reply_is_tailed_to_its_last_rows() {
+    let mut model = model_with(&["lead"]);
+    let mut ui = page_ui();
+    for c in "/models".chars() {
+        handle_deck_key(ch(c), &model, &mut ui);
+    }
+    handle_deck_key(key(KeyCode::Enter), &model, &mut ui);
+    let body: String = (0..20).map(|i| format!("model-{i:02}\n")).collect();
+    lead_says(&mut model, &body);
+
+    let text = page_text(&model, &ui);
+    assert!(text.contains("model-19"), "the tail is shown:\n{text}");
+    assert!(
+        !text.contains("model-00"),
+        "the head scrolled out rather than eating the page:\n{text}"
+    );
+}

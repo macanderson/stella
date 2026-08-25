@@ -74,6 +74,19 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
         if ui.help_open {
             guarded_overlay(buf, area, "help", |b| render_help(model, ui, area, b));
         }
+        // The page's composer is a real text input, so it earns the hardware
+        // caret on the same terms the deck's does below: suppressed under
+        // whatever owns the keyboard ahead of it — help, either parked ask,
+        // and the page's own slash / `/model` menu, which `handle_key` claims
+        // before the composer. The startup notice is excluded here too: it is
+        // non-modal, and a key still reaches the composer while it shows.
+        let overlay_owns_keyboard =
+            ui.help_open || parked::owns_keyboard(ui) || crate::v2::agents_page::menu_open(model, ui);
+        if !overlay_owns_keyboard
+            && let Some(pos) = crate::v2::agents_page::composer_cursor(model, ui, area)
+        {
+            frame.set_cursor_position(pos);
+        }
         return;
     }
 
@@ -140,7 +153,7 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
     guarded_band(buf, bands[5], "statline", |b| {
         crate::v2::status_bar::render_band(model, ui, bands[5], b)
     });
-    let composer_cursor = composer_cursor_position(&c_layout, bands[3]);
+    let composer_cursor = composer_cursor_position(&c_layout, bands[3], PROMPT_PREFIX_W);
 
     // Floating popups sit above the chrome: the slash menu anchors to the
     // composer; the queue editor centers over the content.
@@ -1026,8 +1039,9 @@ fn render_composer(layout: &ComposerLayout, area: Rect, buf: &mut Buffer) {
 /// The first visible composer row for a given viewport height: the scroll
 /// offset that keeps the caret's row always within the window. Split out of
 /// [`render_composer`] so [`composer_cursor_position`] computes the exact
-/// same windowing rather than a second copy that could drift from it.
-fn composer_scroll_first(cursor_row: usize, visible: usize) -> usize {
+/// same windowing rather than a second copy that could drift from it. The
+/// AGENTS page's foot scrolls its own composer through this too.
+pub(crate) fn composer_scroll_first(cursor_row: usize, visible: usize) -> usize {
     if cursor_row < visible {
         0
     } else {
@@ -1040,7 +1054,18 @@ fn composer_scroll_first(cursor_row: usize, visible: usize) -> usize {
 /// the hardware cursor whenever a frame never positions it — which starves
 /// CJK/IME candidate windows (they anchor to the terminal cursor, not to
 /// styled cells) and gives screen readers nothing to track (#935).
-fn composer_cursor_position(layout: &ComposerLayout, area: Rect) -> Option<(u16, u16)> {
+///
+/// `prefix_w` is the columns the caller reserves left of the text — the deck's
+/// own `>>> ` ([`PROMPT_PREFIX_W`]), or the AGENTS page's narrower ` ❯ `
+/// ([`crate::v2::agents_page`]). A parameter rather than a second copy of this
+/// arithmetic, because the two surfaces already share the windowing below and
+/// a caret computed from the wrong prefix is off by exactly one column — the
+/// kind of drift nobody notices until an IME anchors to it (#4626).
+pub(crate) fn composer_cursor_position(
+    layout: &ComposerLayout,
+    area: Rect,
+    prefix_w: usize,
+) -> Option<(u16, u16)> {
     if area.width == 0 || area.height == 0 {
         return None;
     }
@@ -1050,7 +1075,7 @@ fn composer_cursor_position(layout: &ComposerLayout, area: Rect) -> Option<(u16,
     let y = area.y.checked_add(u16::try_from(row_in_view).ok()?)?;
     let x = area
         .x
-        .checked_add(u16::try_from(PROMPT_PREFIX_W + layout.cursor_col).ok()?)?;
+        .checked_add(u16::try_from(prefix_w + layout.cursor_col).ok()?)?;
     Some((x, y))
 }
 
