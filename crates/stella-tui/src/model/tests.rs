@@ -556,6 +556,7 @@ fn file_change_keeps_latest_diff_and_counts_touches() {
         added: 1,
         removed: 0,
         diff: Some("+first".into()),
+        minimal: true,
     });
     model.apply(&AgentEvent::FileChange {
         path: "src/a.rs".into(),
@@ -563,6 +564,7 @@ fn file_change_keeps_latest_diff_and_counts_touches() {
         added: 1,
         removed: 0,
         diff: Some("+second".into()),
+        minimal: true,
     });
     assert_eq!(model.files.len(), 1);
     let f = &model.files[0];
@@ -581,6 +583,7 @@ fn reads_count_without_clobbering_mutation_state() {
         added: 0,
         removed: 0,
         diff: None,
+        minimal: true,
     });
     assert_eq!(model.files.len(), 1, "reads appear in the files panel");
     let f = &model.files[0];
@@ -596,6 +599,7 @@ fn reads_count_without_clobbering_mutation_state() {
         added: 1,
         removed: 0,
         diff: Some("+x".into()),
+        minimal: true,
     });
     model.apply(&AgentEvent::FileChange {
         path: "src/a.rs".into(),
@@ -603,6 +607,7 @@ fn reads_count_without_clobbering_mutation_state() {
         added: 0,
         removed: 0,
         diff: None,
+        minimal: true,
     });
     let f = &model.files[0];
     assert_eq!(
@@ -624,6 +629,7 @@ fn files_are_kept_in_first_touched_order() {
             added: 0,
             removed: 0,
             diff: None,
+            minimal: true,
         });
     }
     let order: Vec<&str> = model.files.iter().map(|f| f.path.as_str()).collect();
@@ -1215,6 +1221,7 @@ fn turn_boundary(model: &mut SessionModel, path: &str, diff: Option<&str>, adds:
         added: adds,
         removed: dels,
         diff: diff.map(Into::into),
+        minimal: true,
     });
 }
 

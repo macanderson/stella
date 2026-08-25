@@ -167,6 +167,7 @@ mod tests {
             added: 2,
             removed: 1,
             diff: None,
+            minimal: true,
         }
     }
 

@@ -751,6 +751,7 @@ impl SessionModel {
                 added,
                 removed,
                 diff,
+                ..
             } => {
                 self.turn_counters.touch(path);
                 self.touch_file(path, *kind, *added, *removed, diff);

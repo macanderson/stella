@@ -627,6 +627,7 @@ mod tests {
             added: 1,
             removed: 0,
             diff: Some("+hello".into()),
+            minimal: true,
         });
         recorder.observe(&AgentEvent::ToolResult {
             call_id: "call_1".into(),
@@ -683,6 +684,7 @@ mod tests {
                 added: 1,
                 removed: 0,
                 diff: Some("+hello".into()),
+                minimal: true,
             });
         }
         {
@@ -708,6 +710,7 @@ mod tests {
                 added: 1,
                 removed: 0,
                 diff: Some("+hello world".into()),
+                minimal: true,
             });
             recorder.observe(&AgentEvent::ToolResult {
                 call_id: "call_2".into(),

@@ -132,6 +132,7 @@ fn replay_of_the_same_log_yields_identical_models() {
             added: 1,
             removed: 1,
             diff: Some("@@\n-a\n+b".into()),
+            minimal: true,
         },
         AgentEvent::RunComplete {
             model: "glm".into(),

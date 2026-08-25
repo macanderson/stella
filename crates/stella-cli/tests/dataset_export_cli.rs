@@ -256,6 +256,7 @@ fn seeded_workspace() -> Seeded {
             added: 1,
             removed: 1,
             diff: Some("@@ -1 +1 @@\n-old\n+new\n".into()),
+            minimal: true,
         },
         AgentEvent::Verdict {
             passed: true,
@@ -314,6 +315,7 @@ fn seeded_workspace() -> Seeded {
                 added: 3,
                 removed: 0,
                 diff: None,
+                minimal: true,
             },
         )
         .expect("event");
@@ -334,6 +336,7 @@ fn seeded_workspace() -> Seeded {
             added: 2,
             removed: 0,
             diff: None,
+            minimal: true,
         },
         AgentEvent::Verdict {
             passed: false,
@@ -388,6 +391,7 @@ fn seeded_workspace() -> Seeded {
                 added: 1,
                 removed: 0,
                 diff: None,
+                minimal: true,
             },
         )
         .expect("event");
@@ -431,6 +435,7 @@ fn seeded_workspace() -> Seeded {
             added: 4,
             removed: 1,
             diff: None,
+            minimal: true,
         },
         AgentEvent::Verdict {
             passed: true,
@@ -521,6 +526,7 @@ fn seed_mismatching_execution(store: &Store, prompt: &str) -> i64 {
             added: 1,
             removed: 0,
             diff: None,
+            minimal: true,
         },
     ];
     for (seq, event) in events.iter().enumerate() {

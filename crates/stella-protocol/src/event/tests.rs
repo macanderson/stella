@@ -273,6 +273,7 @@ fn file_change_carries_the_delta_and_the_diff_on_the_single_event_path() {
         added: 12,
         removed: 3,
         diff: Some("@@ -1 +1 @@\n-old\n+new".into()),
+        minimal: false,
     };
     let json = serde_json::to_string(&event).unwrap();
     assert!(json.contains("\"type\":\"file_change\""), "{json}");
@@ -283,6 +284,7 @@ fn file_change_carries_the_delta_and_the_diff_on_the_single_event_path() {
             added,
             removed,
             diff,
+            minimal,
             ..
         } => {
             assert_eq!(kind, FileChangeKind::Modified);
@@ -293,6 +295,7 @@ fn file_change_carries_the_delta_and_the_diff_on_the_single_event_path() {
                  not have to recount the diff text"
             );
             assert!(diff.is_some());
+            assert!(!minimal, "the blunt-fallback flag survives the wire");
         }
         other => panic!("unexpected variant: {other:?}"),
     }
@@ -300,7 +303,9 @@ fn file_change_carries_the_delta_and_the_diff_on_the_single_event_path() {
 
 /// Journals written before the counts existed must still replay. They
 /// recorded no delta, so they come back as `0/0` — the honest answer for a
-/// stream that never measured one.
+/// stream that never measured one. `minimal` predates neither field and is
+/// absent too; it comes back `true` — #4696's own wire default, matching
+/// what a consumer already assumed of a patch-carrying event back then.
 #[test]
 fn a_file_change_without_counts_still_parses() {
     let old = r#"{"type":"file_change","path":"a.rs","kind":"modified","diff":null}"#;
@@ -309,10 +314,12 @@ fn a_file_change_without_counts_still_parses() {
             path,
             added,
             removed,
+            minimal,
             ..
         } => {
             assert_eq!(path, "a.rs");
             assert_eq!((added, removed), (0, 0));
+            assert!(minimal);
         }
         other => panic!("unexpected variant: {other:?}"),
     }

@@ -1232,6 +1232,7 @@ mod tests {
                 added: 0,
                 removed: 0,
                 diff: None,
+                minimal: true,
             },
             AgentEvent::ContextRecall {
                 frames: vec![ContextFrameRef {

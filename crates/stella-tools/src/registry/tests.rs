@@ -167,6 +167,7 @@ async fn a_file_tool_s_own_reading_is_published_without_a_measurer() {
         added,
         removed,
         diff,
+        minimal,
     }) = rx.try_recv()
     else {
         panic!("the write's own reading must reach the stream");
@@ -175,6 +176,7 @@ async fn a_file_tool_s_own_reading_is_published_without_a_measurer() {
     assert_eq!(kind, FileChangeKind::Created);
     assert_eq!((added, removed), (2, 0));
     assert!(diff.as_deref().is_some_and(|d| d.contains("+two")));
+    assert!(minimal, "two lines never trips the area cap");
 
     // An edit on the file the session just authored reads as a modification
     // of it, with both sides of the change on the wire.
@@ -226,10 +228,12 @@ async fn a_deletion_publishes_its_own_reading_as_an_all_red_diff() {
         added,
         removed,
         diff,
+        minimal,
     }) = rx.try_recv()
     else {
         panic!("the deletion's own reading must reach the stream");
     };
+    assert!(minimal, "three lines never trips the area cap");
     assert_eq!(path, "doomed.txt");
     assert_eq!(kind, FileChangeKind::Deleted);
     assert_eq!(

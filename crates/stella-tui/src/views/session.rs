@@ -748,6 +748,7 @@ mod tests {
             added: 1,
             removed: 0,
             diff: Some("@@ -1,1 +1,1 @@\n+first_diff_line".into()),
+            minimal: true,
         });
         let expanded = HashSet::new();
         let mut fold = SessionFold::default();
@@ -783,6 +784,7 @@ mod tests {
             added: 1,
             removed: 0,
             diff: Some("@@ -1,1 +1,1 @@\n+second_diff_line".into()),
+            minimal: true,
         });
         assert_eq!(model.transcript.len(), len_before, "no transcript append");
         fold.refresh(
@@ -824,6 +826,7 @@ mod tests {
                 added: 0,
                 removed: 0,
                 diff: Some(format!("@@ -1,1 +1,1 @@\n+evicting_edit_{i}")),
+                minimal: true,
             });
         }
         assert_eq!(model.transcript.len(), len_before, "still no append");

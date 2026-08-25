@@ -95,6 +95,7 @@ fn measured(agent: &str, path: &str, added: u32, removed: u32) -> Inbound {
             added,
             removed,
             diff: None,
+            minimal: true,
         },
     }
 }

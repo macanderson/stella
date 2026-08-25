@@ -1953,6 +1953,15 @@ export type AgentEvent = {
   added?: number;
   diff?: string | null;
   kind: FileChangeKind;
+  /**
+   * Whether `diff` is the minimal edit script, or the producer's diff
+   * tripped its area cap and fell back to a blunt replace-everything
+   * rendering (`stella_diff::LCS_AREA_CAP`). A transcript surface
+   * renders a banner over `false` so a degraded diff is never mistaken
+   * for a precise one (#4696). `true` for a work-tree measurement:
+   * git's own diff never takes this fallback.
+   */
+  minimal?: boolean;
   path: string;
   removed?: number;
   /**

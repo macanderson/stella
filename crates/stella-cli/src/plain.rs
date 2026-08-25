@@ -524,6 +524,7 @@ pub fn render_event(event: &AgentEvent) {
             added,
             removed,
             diff,
+            ..
         } => file_change_card(path, *kind, *added, *removed, diff.as_deref()),
         AgentEvent::Reasoning { delta } => reasoning_delta(delta),
         AgentEvent::BudgetTick {

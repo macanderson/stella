@@ -537,6 +537,7 @@ fn a_rewrite(adds: usize) -> AgentEvent {
         diff: Some(format!(
             "--- a/src/big.rs\n+++ b/src/big.rs\n@@ -0,0 +1,{adds} @@\n{body}"
         )),
+        minimal: true,
     }
 }
 
@@ -583,6 +584,7 @@ fn a_modified_line_pair_highlights_only_the_changed_token() {
              +\\setlength{\\parindent}{12pt}\n"
                 .to_string(),
         ),
+        minimal: true,
     };
     let out = render(&at(vec![event]), &no_prompts());
     assert!(
@@ -665,6 +667,7 @@ fn a_diff_that_parses_to_no_hunks_still_renders_as_readable_text() {
             added: 1,
             removed: 0,
             diff: Some("+just a bare line".into()),
+            minimal: true,
         }]),
         &no_prompts(),
     );

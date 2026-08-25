@@ -81,6 +81,7 @@ fn fold_one_call(model: &mut SessionModel, name: &str, path: &str) {
         added: 1,
         removed: 1,
         diff: Some(REAL_PATCH.into()),
+        minimal: true,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),
@@ -118,6 +119,7 @@ fn fold_batch(model: &mut SessionModel, paths: &[(&str, &str)]) {
             added: 1,
             removed: 1,
             diff: Some(patch_for("alpha", marker)),
+            minimal: true,
         });
     }
     model.apply(&AgentEvent::ToolResult {
@@ -154,6 +156,7 @@ fn fold_shell(model: &mut SessionModel, command: &str, paths: &[(&str, &str)]) {
             added: 1,
             removed: 1,
             diff: Some(patch_for("alpha", marker)),
+            minimal: true,
         });
     }
     model.apply(&AgentEvent::ToolResult {

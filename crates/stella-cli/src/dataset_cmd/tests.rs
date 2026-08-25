@@ -67,6 +67,7 @@ fn edit_events() -> Vec<AgentEvent> {
             added: 1,
             removed: 1,
             diff: Some("@@ -1 +1 @@\n-old\n+new\n".into()),
+            minimal: true,
         },
     ]
 }
@@ -84,6 +85,7 @@ fn one_pass_over_the_journal_recovers_the_whole_trajectory() {
         added: 0,
         removed: 0,
         diff: None,
+        minimal: true,
     });
     events.push(AgentEvent::Verdict {
         passed: true,
@@ -151,6 +153,7 @@ fn acceptance_needs_a_success_outcome_and_a_real_change() {
         added: 0,
         removed: 0,
         diff: None,
+        minimal: true,
     }]));
 
     assert!(is_accepted("completed", &with_change, false));

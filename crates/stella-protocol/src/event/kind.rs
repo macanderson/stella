@@ -776,6 +776,14 @@ pub enum AgentEvent {
         #[serde(default)]
         removed: u32,
         diff: Option<String>,
+        /// Whether `diff` is the minimal edit script, or the producer's diff
+        /// tripped its area cap and fell back to a blunt replace-everything
+        /// rendering (`stella_diff::LCS_AREA_CAP`). A transcript surface
+        /// renders a banner over `false` so a degraded diff is never mistaken
+        /// for a precise one (#4696). `true` for a work-tree measurement:
+        /// git's own diff never takes this fallback.
+        #[serde(default = "file_change_minimal_default")]
+        minimal: bool,
     },
     /// Context recall completed: which frames reached the prompt, from which
     /// providers, at what token cost. Every frame carries a human
