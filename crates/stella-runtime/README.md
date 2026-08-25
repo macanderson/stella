@@ -184,7 +184,7 @@ stream across the points — a child there is exactly as run-scoped as the round
 beside it, and a second row would split one run's spend in `stella stats`. The
 shared half is `RepublishingDriver`, which puts a door's stream back after every
 round it drives; what each door publishes is its own `PointStream`. `stella
-fleet` publishes the registry's event slot alone and deliberately not the
+fleet` publishes the registry's event slot alone and not the
 per-call work-tree measurement beside it: its worker rebinds
 `cfg.workspace_root` to its own worktree while the shared journal stays rooted
 at the lead's, so a measurer there would read the wrong tree (#3233).

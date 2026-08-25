@@ -10,6 +10,8 @@ use stella_fleet::CommitRecord;
 use stella_protocol::CompletionMessage;
 
 use super::*;
+// The width the truncation test asserts against, from the module that owns it.
+use super::render::SUMMARY_CHARS;
 
 /// The #803 cancellation seam, pinned from both directions: dropping the
 /// dispatch's abandon sender IS a stop (the claims are being released;
