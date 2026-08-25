@@ -72,7 +72,8 @@ pub struct Metrics {
     model_retries_total: AtomicU64,
     tool_calls_total: AtomicU64,
     /// Of `tool_calls_total`, how many a delegate made rather than the lead
-    /// (#4699) — the scrape surface for [`TurnTally::tool_calls_by_sub_agent`],
+    /// (#4699) — the scrape surface for
+    /// [`super::event::TurnTally::tool_calls_by_sub_agent`],
     /// which settles per turn and is otherwise unreadable by a poller. The
     /// lead's own share is `tool_calls_total - tool_calls_by_sub_agent_total`.
     tool_calls_by_sub_agent_total: AtomicU64,
