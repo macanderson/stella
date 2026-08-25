@@ -52,7 +52,38 @@
 //! [`collect_working_set`] re-collects paths and skill bodies embedded in a
 //! prior restoration message that falls inside the new span — an active
 //! skill's body chains across rounds for as long as its invocation is live,
-//! at the priority of the (old) message that carried it.
+//! at the priority of the (old) message that carried it. A skill section
+//! declares its own length so no body content can end it early; see the
+//! fence constants.
+//!
+//! # Only [`READ_TOOL`] enters the working set, and that is the decision
+//!
+//! #2838 asked whether content the model obtained some other way should be
+//! restored too. It should not, and the two candidates it named have come
+//! apart since it was filed.
+//!
+//! `read_symbol` is gone: it is in `stella_tools::catalog::RETIRED_TOOL_NAMES`,
+//! and the built-in surface now has exactly one read tool. Nothing needs
+//! deciding about replaying a symbol name as a path, because no call site can
+//! produce one.
+//!
+//! `bash cat` stays out on the argument that made replay safe in the first
+//! place. The engine half restores a file by *re-running the recorded call*,
+//! and refuses to unless the tool's schema declares `read_only` — that is the
+//! whole reason restoration costs no model call and opens no I/O surface the
+//! model could not already reach. `bash` is not `read_only`, and its input is a command line
+//! rather than a path, so restoring through it means either re-executing an
+//! arbitrary command at compaction time or re-sending the stale captured
+//! output. The first trades a safety property for a convenience; the second
+//! contradicts the freshness contract stated above. A third-party read tool
+//! reaching this crate through MCP has the same shape: `read_only` may hold,
+//! but nothing tells the engine which of its parameters is a path.
+//!
+//! What would change the answer is a *declared* path parameter — a tool
+//! schema that names which field addresses a file — at which point the
+//! constant below becomes a lookup over the schemas the model's own calls are
+//! built from, with no new list to maintain. That is a tool-contract change,
+//! not a restoration change, and is deliberately not started here.
 
 use std::collections::HashSet;
 
@@ -100,15 +131,33 @@ const FILE_CAP_MARKER: &str =
 
 /// Section fences. Parseable on the way back in ([`embedded_sections`]) so a
 /// restoration message summarized away in a *later* round re-contributes its
-/// paths and skill bodies. File content is line-numbered by the read tool, so
-/// a payload line cannot collide with a fence; a skill body containing a
-/// literal fence line would truncate its own chained copy — a bounded,
-/// self-inflicted edge documented rather than defended.
+/// paths and skill bodies.
+///
+/// A skill section declares its own length — `--- skill: slug (12 lines) ---`
+/// — and the parser consumes exactly that many lines without looking at them.
+/// The close fence below is there for the model and the human reader; nothing
+/// depends on finding it. Until #2838 the parser scanned for that literal, so
+/// a skill body containing a `--- end skill ---` line truncated its own
+/// chained copy in the next summarization round, and a body line spelled
+/// `--- file: x ---` contributed a path nothing had read. A length prefix
+/// closes both, because no body content can change how many lines the body
+/// has — the same reason a length-prefixed frame beats a sentinel-terminated
+/// one on the wire.
+///
+/// File sections keep the sentinel form and need nothing more: the read tool
+/// line-numbers its content, so a payload line starts with digits and a tab
+/// and cannot collide with a fence.
 const FILE_SECTION_OPEN: &str = "--- file: ";
 const FILE_SECTION_CLOSE: &str = "--- end file ---";
 const SKILL_SECTION_OPEN: &str = "--- skill: ";
 const SKILL_SECTION_CLOSE: &str = "--- end skill ---";
 const SECTION_HEADER_CLOSE: &str = " ---";
+/// Opens the ` (12 lines)` length declaration in a skill section header,
+/// between the slug and [`SECTION_HEADER_CLOSE`].
+const SKILL_LENGTH_OPEN: &str = " (";
+/// Closes it. Split from the digits so the two halves are matched by name
+/// rather than by a hand-written offset on both sides.
+const SKILL_LENGTH_CLOSE: &str = " lines)";
 
 /// One file read the summarized span contained: the path, and the most
 /// recent read call's exact input — replayed verbatim so a windowed read
@@ -397,8 +446,11 @@ pub fn render_restoration(
 
     for skill in skills {
         let section = format!(
-            "\n\n{SKILL_SECTION_OPEN}{}{SECTION_HEADER_CLOSE}\n{}\n{SKILL_SECTION_CLOSE}",
-            skill.slug, skill.content
+            "\n\n{SKILL_SECTION_OPEN}{}{SKILL_LENGTH_OPEN}{}{SKILL_LENGTH_CLOSE}\
+             {SECTION_HEADER_CLOSE}\n{}\n{SKILL_SECTION_CLOSE}",
+            skill.slug,
+            skill_body_lines(&skill.content),
+            skill.content
         );
         if fits(&body, &section, &worst_trailer, budget_tokens) {
             body.push_str(&section);
@@ -501,10 +553,44 @@ fn render_trailer(
     trailer
 }
 
+/// How many lines a skill body occupies once rendered into a section.
+///
+/// `split('\n')`, not `lines()`: an empty body still costs one (blank) line
+/// between the fences, and a body ending in a newline costs a trailing empty
+/// one. `lines()` reports 0 and drops the trailing empty respectively, and
+/// either disagreement would make the parser consume the close fence as
+/// content.
+fn skill_body_lines(content: &str) -> usize {
+    content.split('\n').count()
+}
+
+/// Split a skill header's `slug (12 lines)` payload. `None` when the length
+/// declaration is absent or unparseable, which is how a restoration message
+/// written before #2838 — a resumed session's transcript, say — still yields
+/// its slug instead of being dropped.
+fn split_skill_header(payload: &str) -> (&str, Option<usize>) {
+    let Some((slug, tail)) = payload.rsplit_once(SKILL_LENGTH_OPEN) else {
+        return (payload, None);
+    };
+    match tail
+        .strip_suffix(SKILL_LENGTH_CLOSE)
+        .and_then(|digits| digits.parse::<usize>().ok())
+    {
+        Some(count) => (slug, Some(count)),
+        None => (payload, None),
+    }
+}
+
 /// Parse the file paths and skill bodies embedded in a restoration message,
 /// so a later summarization round can re-contribute them
 /// ([`collect_working_set`]). Tolerant: an unterminated section contributes
 /// nothing past what its header names.
+///
+/// A skill body is taken by the line count its header declares and is never
+/// inspected, so nothing a skill can contain changes where the section ends
+/// (#2838). A header with no declared length falls back to scanning for the
+/// close fence — the pre-#2838 shape, kept so a transcript written by an
+/// older binary still parses.
 fn embedded_sections(content: &str) -> (Vec<String>, Vec<SkillBody>) {
     let mut paths = Vec::new();
     let mut skills = Vec::new();
@@ -515,15 +601,22 @@ fn embedded_sections(content: &str) -> (Vec<String>, Vec<SkillBody>) {
                 paths.push(path.to_string());
             }
         } else if let Some(rest) = line.strip_prefix(SKILL_SECTION_OPEN)
-            && let Some(slug) = rest.strip_suffix(SECTION_HEADER_CLOSE)
+            && let Some(payload) = rest.strip_suffix(SECTION_HEADER_CLOSE)
         {
-            let mut body_lines: Vec<&str> = Vec::new();
-            for body_line in lines.by_ref() {
-                if body_line == SKILL_SECTION_CLOSE {
-                    break;
+            let (slug, declared) = split_skill_header(payload);
+            let body_lines: Vec<&str> = match declared {
+                Some(count) => lines.by_ref().take(count).collect(),
+                None => {
+                    let mut collected: Vec<&str> = Vec::new();
+                    for body_line in lines.by_ref() {
+                        if body_line == SKILL_SECTION_CLOSE {
+                            break;
+                        }
+                        collected.push(body_line);
+                    }
+                    collected
                 }
-                body_lines.push(body_line);
-            }
+            };
             skills.push(SkillBody {
                 slug: slug.to_string(),
                 content: body_lines.join("\n"),
@@ -819,6 +912,83 @@ mod tests {
             collect_working_set(&span, &[], &[]).skills.is_empty(),
             "an ended invocation stops chaining"
         );
+    }
+
+    /// #2838's second limitation, as a witness. A skill that documents the
+    /// restoration format — or just happens to draw a horizontal rule the same
+    /// way — used to truncate its own chained copy at that line, because the
+    /// parser scanned for the literal close fence. The header now declares the
+    /// body's length and the body is never read as syntax.
+    #[test]
+    fn a_skill_body_containing_the_close_fence_chains_whole() {
+        let body = format!(
+            "Before the fence.\n{SKILL_SECTION_CLOSE}\nAfter the fence.\n{FILE_SECTION_OPEN}\
+             phantom.rs{SECTION_HEADER_CLOSE}\nLast line."
+        );
+        let skills = vec![SkillBody {
+            slug: "formats".into(),
+            content: render_invocation_message("formats", &body),
+        }];
+        let prior = render_restoration(&skills, &[], 100_000).expect("fits");
+
+        let span = vec![CompletionMessage::user(prior.message)];
+        let set = collect_working_set(&span, &[], &["formats".to_string()]);
+
+        assert_eq!(set.skills.len(), 1);
+        assert!(
+            set.skills[0].content.contains("After the fence."),
+            "the body must survive its own close fence: {}",
+            set.skills[0].content
+        );
+        assert!(
+            set.skills[0].content.contains("Last line."),
+            "and survive to its end: {}",
+            set.skills[0].content
+        );
+        assert!(
+            set.reads.is_empty(),
+            "a file header *inside* a skill body names nothing that was read: {:?}",
+            set.reads
+        );
+    }
+
+    /// The length declaration has to agree with the renderer for every body
+    /// shape, including the two `lines()` gets wrong — an empty body still
+    /// occupies a line between the fences, and a trailing newline occupies
+    /// another.
+    #[test]
+    fn a_skill_body_round_trips_whatever_its_line_shape() {
+        for body in ["", "\n", "one", "one\n", "one\ntwo", "\n\nleading blanks"] {
+            let skills = vec![SkillBody {
+                slug: "shape".into(),
+                content: body.to_string(),
+            }];
+            let prior = render_restoration(&skills, &[], 100_000).expect("fits");
+            let (paths, parsed) = embedded_sections(&prior.message);
+            assert!(paths.is_empty(), "no file sections were rendered");
+            assert_eq!(parsed.len(), 1, "body {body:?}");
+            assert_eq!(
+                parsed[0].content,
+                body.replace('\r', ""),
+                "body {body:?} did not round-trip"
+            );
+        }
+    }
+
+    /// A restoration message written before #2838 carries no length
+    /// declaration. It still parses, by the close fence, so a resumed session
+    /// does not lose its chained skills to the format change.
+    #[test]
+    fn a_header_without_a_declared_length_falls_back_to_the_close_fence() {
+        let legacy = format!(
+            "[working set restored]\n\n{SKILL_SECTION_OPEN}legacy{SECTION_HEADER_CLOSE}\n\
+             body line one\nbody line two\n{SKILL_SECTION_CLOSE}"
+        );
+        let (paths, skills) = embedded_sections(&legacy);
+        assert!(paths.is_empty());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].slug, "legacy");
+        assert_eq!(skills[0].content, "body line one\nbody line two");
     }
 
     #[test]
