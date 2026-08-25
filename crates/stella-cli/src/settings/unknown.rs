@@ -68,6 +68,7 @@ pub(super) const ROOT_FIELDS: &[&str] = &[
     "ignore_gitignore",
     "create_worktrees",
     "candidate_isolation",
+    "auto_trust_project",
     "allowed_dirs",
     "ui",
     "reward",
@@ -507,6 +508,7 @@ const RUN_FIELDS: &[&str] = &[
     "candidate_isolation",
     "create_worktrees",
     "ignore_gitignore",
+    "auto_trust_project",
 ];
 /// `[workspace]` — closed, like `[run]`: a mistyped `allowed_dir` grants
 /// nothing and looks exactly like a granted directory until a tool refuses a

@@ -818,6 +818,25 @@ mod tests {
         assert!(!route_cache_is_opt_in("bedrock", "zai.glm-4.7"));
     }
 
+    /// The floor is a measurement, and this is what stops a merge reverting it
+    /// in silence (#2495, #4572).
+    ///
+    /// Every behavioural test around it is written *relative* to the constant
+    /// — `MIN_CACHEABLE_PROMPT_TOKENS - 1` is under the floor whatever the
+    /// floor is — so moving the value leaves all of them passing. The
+    /// threshold is the whole content of the constant, which is why this one
+    /// restates the literal instead: there is no outcome to compute that does
+    /// not move with it.
+    #[test]
+    fn the_cacheable_floor_stays_at_the_value_the_census_confirmed() {
+        assert_eq!(
+            MIN_CACHEABLE_PROMPT_TOKENS, 1_024,
+            "Anthropic documents 1024 as the smallest prompt an opt-in cache \
+             stores, and 1303 calls in a real store agree: 1240 of the 1274 at \
+             or over it wrote, and none of the 29 under it wrote or read"
+        );
+    }
+
     #[test]
     fn a_session_under_the_cacheable_floor_cannot_witness_a_missing_marker() {
         // Nothing this small is stored by any opt-in cache, so zero traffic is

@@ -81,6 +81,15 @@ pub fn run_explain(root: &Path, needle: &str) -> Result<(), String> {
     // Authority — provenance, at commit level where it exists.
     println!("  {}", "Authority".bold());
     println!("    {}", entry.record.source);
+    // Read off the record rather than derived from the path above it (#3567):
+    // the two agree today, and only one of them is a fact the loader stamped.
+    if let Some(plugin) = entry.record.contributed_by.as_deref() {
+        println!(
+            "    {}",
+            format!("contributed by the `{plugin}` plugin — retract it with `stella plugin remove {plugin}`")
+                .dimmed()
+        );
+    }
     if let Some(provenance) = record.provenance.as_ref() {
         if let Some(uri) = provenance.source_uri.as_deref() {
             let lines = provenance

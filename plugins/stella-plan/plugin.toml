@@ -38,7 +38,7 @@
 #     under one `--pipeline` selection is not possible today (#3801).
 #   - no `read_file` / `search` capability. This plugin never opens the
 #     candidate workspace — the built-in planner's `repo_structure` argument
-#     has no wire representation (#3562 item 2) and a plugin-computed
+#     has no wire representation (#4728) and a plugin-computed
 #     approximation of it would be measuring a second change alongside the
 #     one this extraction is meant to isolate. See README "Known gaps".
 

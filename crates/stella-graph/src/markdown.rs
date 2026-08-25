@@ -77,7 +77,12 @@ const MAX_INDENT: usize = 3;
 /// unambiguous, and a reader seeing
 /// `Architecture › 8. Provider feature parity` knows immediately that it is a
 /// path through a document rather than part of one heading.
-pub(crate) const BREADCRUMB_SEPARATOR: &str = " › ";
+///
+/// Public because a consumer that wants to *recognise* a breadcrumb needs the
+/// same literal — `stella-tools`' exact-symbol rung admits a query carrying it
+/// (#4574), and `chunk_retrieval_witnesses` asserts on section names. Both had
+/// no import that could reach it and repeated the bytes instead.
+pub const BREADCRUMB_SEPARATOR: &str = " › ";
 
 /// Every headed section of `source`, in document order, as symbols the
 /// index stores exactly like any other.

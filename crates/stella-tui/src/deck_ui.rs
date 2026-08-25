@@ -44,7 +44,7 @@ use stella_tools::search::readiness::IndexReadiness;
 use crate::notice::NoticeState;
 use crate::scroll::ScrollState;
 use crate::splash::SplashState;
-use crate::views::mcp::{AuthStep, McpMode};
+use crate::v2::mcp_tab::{AuthStep, McpMode};
 
 /// How long a turn-stopping Esc stays armed for the double-Esc escalation: a
 /// second Esc inside this window (with no other key in between) is "full
@@ -621,7 +621,7 @@ pub struct DeckUi {
     /// search/auth sub-modes and their input buffers (the auth value is
     /// redacted in `Debug`). Out-of-band, driven by [`Inbound::McpServers`] /
     /// [`Inbound::McpSearchResults`].
-    pub mcp: crate::views::mcp::McpTabState,
+    pub mcp: crate::v2::mcp_tab::McpTabState,
     pub files_sel: usize,
     pub files_diff_open: bool,
     pub files_diff_scroll: ScrollState,
@@ -705,13 +705,13 @@ pub struct DeckUi {
     /// from scratch by [`ingest_inbound`] on each fresh `HunkReview`.
     pub hunk_marks: std::collections::HashMap<String, HunkMarks>,
     /// The Session tab's incremental transcript fold cache.
-    pub session_fold: crate::views::session::SessionFold,
+    pub session_fold: crate::v2::session::SessionFold,
     /// The Session tab's memoized fold plan: the whole-transcript turn walk
-    /// reruns only when its [`crate::views::session::FoldPlanKey`] moves,
+    /// reruns only when its [`crate::v2::session::FoldPlanKey`] moves,
     /// not on every frame of the ~30fps draw loop.
     pub session_plan: Option<(
-        crate::views::session::FoldPlanKey,
-        crate::views::session::FoldPlan,
+        crate::v2::session::FoldPlanKey,
+        crate::v2::session::FoldPlan,
     )>,
     /// The terminal's color depth, detected once at startup. Render-time-visible
     /// so the progress bar can emit a per-cell ember gradient on truecolor and a
@@ -807,23 +807,23 @@ pub struct DeckUi {
     /// `tools` — which of this session's tools are switched off — over a
     /// driver-owned snapshot ([`Inbound::ToolPolicy`]). Modal while open, and
     /// mutually exclusive with `engine`: one editor owns the tab's keyboard.
-    pub tools: crate::views::tools::ToolsOverlay,
+    pub tools: crate::v2::tools::ToolsOverlay,
     /// The `ask_question` overlay (#4220): the wizard a **parked turn** waits
     /// on. Modal ahead of everything but Ctrl-C while a question is up —
     /// nothing else in this struct holds a live tool call open, which is why
     /// it wins the keyboard over every other modal here.
-    pub question: crate::views::question::QuestionOverlay,
+    pub question: crate::v2::question::QuestionOverlay,
     /// The approval card (#4240): the yes/no a parked **dispatch** waits on.
     /// Outranks `question` for the keyboard — a call about to execute is a
     /// tighter gate than a decision being deliberated, and it carries the
     /// shorter of the two deadlines.
-    pub approval: crate::views::approval::ApprovalOverlay,
+    pub approval: crate::v2::approval::ApprovalOverlay,
     /// The `/model` picker: switch this session's model. Modal while open;
-    /// rows come live from `engine.state` (see [`crate::views::picker`]).
-    pub model_picker: crate::views::picker::ListPicker,
+    /// rows come live from `engine.state` (see [`crate::v2::picker`]).
+    pub model_picker: crate::v2::picker::ListPicker,
     /// The `/agent` picker: assume an installed agent this session. Modal
     /// while open; rows come live from `installed.entries`.
-    pub agent_picker: crate::views::picker::ListPicker,
+    pub agent_picker: crate::v2::picker::ListPicker,
 }
 
 impl Default for DeckUi {
@@ -855,7 +855,7 @@ impl Default for DeckUi {
             graph_picker_open: false,
             graph_picker_query: String::new(),
             graph_picker_sel: 0,
-            mcp: crate::views::mcp::McpTabState::default(),
+            mcp: crate::v2::mcp_tab::McpTabState::default(),
             files_sel: 0,
             files_diff_open: false,
             files_diff_scroll: ScrollState::default(),
@@ -882,7 +882,7 @@ impl Default for DeckUi {
             ask_answered: std::collections::HashSet::new(),
             hunk_answered: std::collections::HashSet::new(),
             hunk_marks: std::collections::HashMap::new(),
-            session_fold: crate::views::session::SessionFold::default(),
+            session_fold: crate::v2::session::SessionFold::default(),
             session_plan: None,
             color_mode: crate::theme::ColorMode::default(),
             no_anim: false,
@@ -908,11 +908,11 @@ impl Default for DeckUi {
             cards: cards::CardState::default(),
             pending_inputs: Vec::new(),
             engine: crate::v2::engine_panel::EngineOverlay::default(),
-            tools: crate::views::tools::ToolsOverlay::default(),
-            question: crate::views::question::QuestionOverlay::default(),
-            approval: crate::views::approval::ApprovalOverlay::default(),
-            model_picker: crate::views::picker::ListPicker::default(),
-            agent_picker: crate::views::picker::ListPicker::default(),
+            tools: crate::v2::tools::ToolsOverlay::default(),
+            question: crate::v2::question::QuestionOverlay::default(),
+            approval: crate::v2::approval::ApprovalOverlay::default(),
+            model_picker: crate::v2::picker::ListPicker::default(),
+            agent_picker: crate::v2::picker::ListPicker::default(),
         }
     }
 }
@@ -1332,7 +1332,7 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // in exactly the same way. Its ingest retires the unsaved edits the write
     // actually landed; the model fold never sees it.
     if let Inbound::ToolPolicy { state, status } = inbound {
-        crate::views::tools::ingest_policy(ui, state, status);
+        crate::v2::tools::ingest_policy(ui, state, status);
         return;
     }
     // The ISSUES tab's out-of-band replies, each lane seq-guarded: only the
@@ -1860,7 +1860,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // leaking one into the composer would be as bad here as there. Focusing
     // either panel unfocuses the other, so these two arms can never both fire.
     if ui.tab == DeckTab::Settings && ui.tools.focused {
-        return crate::views::tools::handle_tools_key(key, ui);
+        return crate::v2::tools::handle_tools_key(key, ui);
     }
 
     // The SESSIONS / INBOX / CONTEXT overlays are modal exactly like the

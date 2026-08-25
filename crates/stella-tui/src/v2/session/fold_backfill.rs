@@ -13,7 +13,7 @@
 //! which moves when a `FileChange` lands and drops the whole prefix.
 //!
 //! That is an argument, and this file is the evidence for it. It lives beside
-//! `views/session.rs` rather than inside it because that file stays under the
+//! `v2/session.rs` rather than inside it because that file stays under the
 //! 1500-line ratchet by growing sideways; being a *child* module is what
 //! lets it reach `SessionFold::refresh`, which is private to the parent.
 
@@ -59,8 +59,8 @@ fn text(fold: &SessionFold) -> String {
 ///
 /// The head settles the moment its `ToolResult` lands, which is one frame; the
 /// measurement arrives at the turn boundary, which is a later one. Between them
-/// the row is honestly silent — asserted here, not assumed, because a fold that
-/// showed `+1 -0` in the first frame would be reading something other than the
+/// the row states no size at all — asserted here, because a fold that showed
+/// `+1 -0` in the first frame would be reading something other than the
 /// emitter. After the boundary the *same* fold must state the change.
 ///
 /// Reusing one `SessionFold` across both frames is the whole point: a fresh one

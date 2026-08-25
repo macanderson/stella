@@ -258,3 +258,104 @@ fn the_scan_rung_sees_context_records_and_still_never_sees_private_state() {
         "crossing `.stella` to reach the records must not scan `.stella` itself: {paths:?}"
     );
 }
+
+/// A document whose headings nest, so its sections carry a real breadcrumb
+/// rather than a single level.
+const DOCUMENT: &str = "# Architecture\n\
+     \n\
+     Ports, not direct dependencies.\n\
+     \n\
+     ## 8. Provider feature parity\n\
+     \n\
+     Providers diverge in sneaky ways, and this is guarded on six axes.\n";
+
+/// A second document carrying the same words at top level, so answering with
+/// the nested section is a choice between two indexed files rather than the
+/// only row available.
+const DOCUMENT_DECOY: &str = "# Provider feature parity\n\
+     \n\
+     Providers diverge in sneaky ways.\n";
+
+/// Write and index the two documents. Returns the canonical root and an open
+/// graph; the caller shuts it down.
+fn indexed_documents(workspace: &std::path::Path) -> (std::path::PathBuf, CodeGraph) {
+    fs::write(workspace.join("NOTES.md"), DOCUMENT).expect("write the document");
+    fs::write(workspace.join("OTHER.md"), DOCUMENT_DECOY).expect("write the decoy");
+    let root = workspace.canonicalize().expect("canonicalize");
+    let graph = CodeGraph::open(&root, &root.join("codegraph.db")).expect("open");
+    graph.index_all().expect("index");
+    (root, graph)
+}
+
+/// **Witness for #4574.** A markdown section is reachable by the rung that
+/// answers with a fact.
+///
+/// Its name is a breadcrumb, and `is_bare_identifier` refused every one of
+/// those, so no section had reached this rung since #3103 put them in the
+/// index — every citation an agent wrote was a ranking. The decoy carries the
+/// same words at top level, so the answer distinguishes the nested section
+/// from a document merely about it.
+#[tokio::test]
+async fn the_exact_symbol_rung_reaches_a_nested_markdown_section() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_documents(workspace.path());
+
+    let breadcrumb = format!(
+        "Architecture{}8. Provider feature parity",
+        stella_graph::BREADCRUMB_SEPARATOR
+    );
+    let answer = dispatch(Some(&graph), &root, &breadcrumb, None).await;
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::ExactSymbol],
+        "note={:?}",
+        answer.note
+    );
+    assert_eq!(paths(&answer), vec!["NOTES.md"]);
+
+    graph.shutdown();
+}
+
+/// The citation form: `stella-graph` stores a section's name without the file
+/// path and says a citation composes the two, so the shape a reader actually
+/// writes must reach the same fact.
+#[tokio::test]
+async fn a_path_prefixed_citation_reaches_the_same_section() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_documents(workspace.path());
+
+    let separator = stella_graph::BREADCRUMB_SEPARATOR;
+    let citation = format!("NOTES.md{separator}Architecture{separator}8. Provider feature parity");
+    let answer = dispatch(Some(&graph), &root, &citation, None).await;
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::ExactSymbol],
+        "note={:?}",
+        answer.note
+    );
+    assert_eq!(paths(&answer), vec!["NOTES.md"]);
+
+    graph.shutdown();
+}
+
+/// The refusal half of #4574: a dotted table key is still a pattern, so it
+/// still falls through to the ranking rung rather than becoming a lookup.
+///
+/// Censused over 786 real queries, a dotted rule newly admits five terms and
+/// all five are a filename or a regex `.` — see `enrich::is_bare_identifier`.
+/// This is what fails if that decision is reversed without re-measuring.
+#[tokio::test]
+async fn a_dotted_table_key_is_still_answered_by_ranking_not_lookup() {
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let (root, graph) = indexed_records(workspace.path());
+
+    let answer = dispatch(Some(&graph), &root, "record.steering.applies_to", None).await;
+    assert_eq!(
+        answer.strategies,
+        vec![Strategy::GraphNames],
+        "note={:?}",
+        answer.note
+    );
+
+    graph.shutdown();
+}
