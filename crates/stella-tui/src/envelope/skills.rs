@@ -37,8 +37,19 @@ pub struct SkillRow {
     /// The pinned version's markdown body — carried so the tab can open the
     /// edit overlay with no extra round-trip.
     pub body: String,
-    /// Provenance label — `"workspace"`, `"user"`, `"installed"`, `"auto"`.
+    /// Provenance label — `"workspace"`, `"user"`, `"installed"`, `"auto"`,
+    /// `"plugin"`.
     pub origin: String,
+    /// The plugin package that ships this skill, by its manifest `name`, when
+    /// it is a contributed one; `None` for a skill the user wrote, installed,
+    /// or had written for them.
+    ///
+    /// A field beside [`Self::origin`] rather than a third [`SkillScope`]:
+    /// scope answers which tier a skill is *managed under*, and a contributed
+    /// skill is genuinely managed under its package's tier — it is enabled and
+    /// disabled by that tier's state file like any other row there. What has
+    /// no answer in the existing columns is *whose* it is, which is this.
+    pub contributed_by: Option<String>,
     /// Session/persistent enabled state (a disabled skill is excluded from
     /// recall injection; the file stays on disk).
     pub enabled: bool,

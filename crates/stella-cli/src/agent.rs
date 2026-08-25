@@ -296,6 +296,16 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
     // so its sessions are findable in every SESSIONS overlay and replayable
     // from their journals. No inbox notifications — the user is right here.
     let mut presence = SessionPresence::announce(cfg, "interactive session");
+    // Agent whistle: one tap for the whole interactive-mode session, not one per turn —
+    // a message whistled between turns still has somewhere to land, and
+    // `HeadlessSteerTap::drain_steering` reads empty when there is nothing
+    // queued, exactly as it does for a one-shot run. See `crate::whistle`'s
+    // module docs and `crate::agent::goal::run_raw_one_shot`, which wires
+    // the same tap the same way.
+    let whistle_tap: std::sync::Arc<crate::whistle::tap::HeadlessSteerTap> =
+        std::sync::Arc::default();
+    let _whistle_listener = crate::whistle::spawn_for_session(presence.id(), whistle_tap.clone());
+    let controls = stella_core::ports::TurnControls::none().with_steering(whistle_tap);
 
     loop {
         print!("{} ", ">".bright_cyan().bold());
@@ -584,6 +594,7 @@ pub async fn run_interactive(cfg: &Config, budget_limit: Option<f64>) -> Result<
             Some(presence.id()),
             recall,
             memory.as_mut(),
+            controls.clone(),
             Some(&mut friction),
         )
         .await;
@@ -654,7 +665,7 @@ pub(crate) async fn record_turn_episode<T, E>(
 }
 
 /// Cap on each MCP server's connect — the per-server bound
-/// `McpToolSet::connect` enforces. Deliberately short: a server that cannot
+/// `McpToolSet::connect` enforces. Short: a server that cannot
 /// even complete its handshake in 10s should not stall session start. Each
 /// later `tools/call` gets the much longer `stella_mcp::DEFAULT_CALL_TIMEOUT`
 /// instead (applied in [`connect_mcp_servers`]) — without that override the
@@ -662,16 +673,47 @@ pub(crate) async fn record_turn_episode<T, E>(
 /// tool call at 10s.
 const MCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// The parse of `.stella/mcp.toml`, split from the connect so a caller that
-/// owns a UI (the deck) can announce the slow part before awaiting it (#98).
+/// The parse of `.stella/mcp.toml` **and** of every installed package's own
+/// `mcp.toml`, split from the connect so a caller that owns a UI (the deck)
+/// can announce the slow part before awaiting it (#98).
+#[derive(Debug)]
 pub(crate) enum McpPlan {
-    /// No config file, or one naming zero servers — nothing to connect.
+    /// No config file, no package servers, and nothing to say about it.
     None,
-    /// The config exists but is unreadable/invalid: MCP is disabled this
-    /// session, and the reason must be surfaced exactly once.
+    /// No MCP this session, and a reason to surface exactly once.
+    ///
+    /// **A broken package cannot land here while any server would otherwise
+    /// start** (#4733). One third party's typo must not disable the servers a
+    /// user configured themselves, so a package that does not parse
+    /// contributes nothing and rides in [`Self::Servers`]'s notices. It is
+    /// only when nothing at all is left to connect that its reason becomes the
+    /// session's reason — disabling nothing needs no protecting.
     Invalid(String),
-    /// Servers to connect via [`connect_mcp_servers`].
-    Servers(Vec<McpServerConfig>),
+    /// Servers to connect via [`connect_mcp_servers`] — never empty — and how
+    /// the list was narrowed on the way: a package whose file did not parse, or
+    /// whose server was dropped because the user runs one under the same name.
+    Servers(Vec<McpServerConfig>, Vec<String>),
+}
+
+/// The server names the workspace's **own** `.stella/mcp.toml` defines —
+/// empty when there is no file, it does not parse, or the trust gate would
+/// refuse it anyway.
+///
+/// The collision rule's left-hand side, named once so
+/// [`load_mcp_plan`] and `tool_stack::contributed_server_principals` cannot
+/// disagree about whose server a name belongs to.
+pub(crate) fn own_mcp_server_names(workspace_root: &std::path::Path) -> Vec<String> {
+    if crate::settings::filesystem_settings_disabled()
+        || crate::enterprise_telemetry::process_free_authority_active()
+        || !crate::settings::project_code_execution_trusted()
+    {
+        return Vec::new();
+    }
+    std::fs::read_to_string(workspace_root.join(".stella").join("mcp.toml"))
+        .ok()
+        .and_then(|text| McpConfig::from_toml_str(&text).ok())
+        .map(|parsed| parsed.names().into_iter().map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
@@ -681,9 +723,6 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
         return McpPlan::None;
     }
     let path = cfg.workspace_root.join(".stella").join("mcp.toml");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return McpPlan::None;
-    };
     // Trust gate. A cloned repo's `.stella/mcp.toml` can name an arbitrary
     // stdio `command` (executed at session start — RCE on `git clone && stella`)
     // or an attacker-controlled http endpoint (egress + a would-be-whitelisted
@@ -691,27 +730,62 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
     // is gated by the same flag: untrusted, we do not connect and say why once.
     // (Project settings.json hooks/credential-routing are already gated in
     // settings.rs; this closes the parallel .stella/mcp.toml hole.)
-    if !crate::settings::project_code_execution_trusted() {
+    //
+    // It gates the packages too, and needs no second check to: a project-tier
+    // package does not reach the roster at all in an untrusted checkout, and a
+    // user-tier one is not gated, because nothing arrives there
+    // except through `stella plugin install`'s consent transaction
+    // (`plugin_cmd::roster::read_project_tier`). What the flag does decide here
+    // is the workspace's own file, below.
+    let own = std::fs::read_to_string(&path).ok();
+    if own.is_some() && !crate::settings::project_code_execution_trusted() {
         return McpPlan::Invalid(format!(
             "{} was NOT loaded — set STELLA_TRUST_PROJECT=1 to let this repo start its \
              MCP servers (they run commands / open connections on your machine)",
             path.display()
         ));
     }
-    let parsed = match McpConfig::from_toml_str(&text) {
-        Ok(parsed) => parsed,
-        Err(e) => {
-            return McpPlan::Invalid(format!(
-                "{} is invalid: {e} — MCP servers disabled this session",
-                path.display()
-            ));
+    let mut servers = Vec::new();
+    if let Some(text) = own {
+        match McpConfig::from_toml_str(&text) {
+            Ok(parsed) => servers = parsed.into_servers(),
+            Err(e) => {
+                return McpPlan::Invalid(format!(
+                    "{} is invalid: {e} — MCP servers disabled this session",
+                    path.display()
+                ));
+            }
         }
-    };
-    let servers = parsed.into_servers();
-    if servers.is_empty() {
-        McpPlan::None
-    } else {
-        McpPlan::Servers(servers)
+    }
+
+    // The packages', after the user's own, so the collision rule below reads
+    // in one direction: yours is already in the list, and a package's copy of
+    // that name is what gets dropped.
+    let mut notices = Vec::new();
+    for contributed in
+        crate::plugin_cmd::package::contributed_mcp_servers(&cfg.workspace_root, &mut notices)
+    {
+        for server in contributed.servers {
+            if servers.iter().any(|held| held.name == server.name) {
+                // Not cosmetic: two servers sharing a name produce colliding
+                // `mcp__<server>__<tool>` wire names, so the drop has to
+                // happen and the human has to be told whose copy went.
+                notices.push(format!(
+                    "the {} plugin ships an MCP server called `{}` and you already run one \
+                     under that name — yours is the one that started",
+                    contributed.plugin, server.name
+                ));
+                continue;
+            }
+            servers.push(server);
+        }
+    }
+
+    match (servers.is_empty(), notices.is_empty()) {
+        (true, true) => McpPlan::None,
+        // Nothing left to connect, so the packages' reasons are the session's.
+        (true, false) => McpPlan::Invalid(notices.join(" · ")),
+        _ => McpPlan::Servers(servers, notices),
     }
 }
 
@@ -767,7 +841,14 @@ pub(crate) async fn connect_mcp(
             }
             return Ok(None);
         }
-        McpPlan::Servers(servers) => servers,
+        McpPlan::Servers(servers, notices) => {
+            if print_diagnostics {
+                for notice in notices {
+                    eprintln!("  {} {notice}", "!".yellow());
+                }
+            }
+            servers
+        }
     };
     // A one-shot run has no interactive enable/disable, so no disabled set.
     let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root)?;
@@ -1080,6 +1161,14 @@ pub(crate) async fn run_turn(
     // same memory afterwards, and a reflection that cannot name its execution
     // files an id-less row (NULL `self_rating`).
     mut session_memory: Option<&mut SessionMemory>,
+    // This turn's boundary controls — the pause gate and steering tap, when
+    // its caller has one. Every raw door but the deck publishes
+    // `TurnControls::none()` (a non-interactive run has nobody to pause for and,
+    // until agent whistle, nowhere to steer from); `crate::agent::goal`'s
+    // one-shot doors now publish a `whistle::tap::HeadlessSteerTap` here
+    // instead, exactly the seam this field was already documented for on
+    // `wrapper_plugin::RawTurnDriver` (#3554).
+    controls: stella_core::ports::TurnControls,
     // Where this turn's friction ledger lands, for a caller that reflects
     // afterwards (#3946). An out-parameter rather than a second return value
     // because the wrapped door reaches this function through the wrapper
@@ -1144,6 +1233,12 @@ pub(crate) async fn run_turn(
         if let Some(requery) = &requery {
             engine = engine.with_requery(requery);
         }
+        if let Some(gate) = controls.gate.as_deref() {
+            engine = engine.with_gate(gate);
+        }
+        if let Some(steering) = controls.steering.as_deref() {
+            engine = engine.with_steering(steering);
+        }
         engine.run_turn_with_sender(messages, budget, &tx).await
     } else {
         // Customs, the operator's switches, and the authorization gate,
@@ -1168,6 +1263,12 @@ pub(crate) async fn run_turn(
         }
         if let Some(requery) = &requery {
             engine = engine.with_requery(requery);
+        }
+        if let Some(gate) = controls.gate.as_deref() {
+            engine = engine.with_gate(gate);
+        }
+        if let Some(steering) = controls.steering.as_deref() {
+            engine = engine.with_steering(steering);
         }
         engine.run_turn_with_sender(messages, budget, &tx).await
     };

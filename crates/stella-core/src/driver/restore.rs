@@ -31,6 +31,17 @@
 //! reloads — growing it back with restored content would spend headroom the
 //! tripped budget no longer has, for a turn that is already over.
 //!
+//! #2838 asked whether a resumed session should get its working set back, and
+//! the answer here is no — not "not yet". Restoration is a reaction to a
+//! splice, and the abort arm's splice is the last thing that happens to a
+//! dying turn: nothing reads the restored content before the process ends, so
+//! authoring it would cost tokens with no reader. A resumed session that
+//! wants its working set back wants it at *resume* time, off the checkpoint
+//! it actually reloads, where the budget is fresh and the files can be
+//! re-read against the state of the disk then rather than the state of the
+//! disk when the turn died. That is a checkpoint/resume feature and belongs
+//! to whatever builds it; it is not this arm withholding something.
+//!
 //! # When the summarizer's own request overflows
 //!
 //! The summarizer is a model call over the rendered span, so a span large

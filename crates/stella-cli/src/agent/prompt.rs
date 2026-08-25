@@ -126,6 +126,33 @@ macro_rules! measurement_discipline {
     };
 }
 
+/// The example-and-deliverable contract shared by both static prompts: what a
+/// task supplies about its own answer outranks what the worker derives about
+/// it. Born from two bench cells that were each one line from passing
+/// (#2670), and they fail in opposite directions, which is why one contract
+/// covers both.
+///
+/// `extract-elf` bare: Stella read a +0x400000 rebase out of the task's
+/// example output, applied it, then reasoned its way to "the example values
+/// are generic illustrations, not from this file" — and kept the offset the
+/// example was the only evidence for. It then "verified" 698 of 698 entries
+/// against its own rebased model, which is the self-confirming half: a
+/// re-derivation agreeing with itself proves the arithmetic and says nothing
+/// about the answer. Claude Code emitted the vaddr unchanged and passed.
+///
+/// `build-pov-ray` bare: two of three tests passed at SSIM 0.873, and the
+/// third failed on `file_id.diz not found` because the archive it built held
+/// `FILE_ID.DIZ`. Its own step 150 had printed the uppercase names. A
+/// filename-case check on the deliverable flips that cell.
+///
+/// One shared literal, embedded verbatim by both prompts, same as
+/// `tool_steering!` and for the same anti-drift reason (#450).
+macro_rules! example_discipline {
+    () => {
+        r#"An example output, a sample file, or a named deliverable that the task supplies is evidence about the answer, and it outranks anything you derive. When your result disagrees with the task's example, treat the disagreement as your defect until the task's own text or data shows the example is synthetic — your transform disagreeing with it is not that showing. Never keep a transform you derived from an example you then decided was illustrative: the derivation and the example stand or fall together. Check the deliverable against the words the task used — the filename and its case, the directory, the extension, the names inside an archive — before you call the work done. Verify against what the task states; recomputing your own answer a second way confirms your arithmetic and tells you nothing about whether it is the answer that was asked for."#
+    };
+}
+
 /// The verification-proportionality contract shared by both static prompts:
 /// re-verification is not free, and a check that mutates the system under test
 /// is not the same instrument as one that only reads it. Born from the same
@@ -319,6 +346,10 @@ pub(crate) const SYSTEM_PROMPT: &str = concat!(
     r#"
 
 "#,
+    example_discipline!(),
+    r#"
+
+"#,
     verification_proportionality!(),
     r#"
 
@@ -370,6 +401,10 @@ pub(crate) const PIPELINE_SYSTEM_PROMPT: &str = concat!(
 
 "#,
     measurement_discipline!(),
+    r#"
+
+"#,
+    example_discipline!(),
     r#"
 
 "#,

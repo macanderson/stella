@@ -1,0 +1,46 @@
+---
+title: stella whistle
+description: Broadcast steering guidance to every live non-interactive session on this machine, or a chosen few.
+---
+
+A message reaches a running [`run`](/docs/commands/run) or [`goal`](/docs/commands/goal) session — foreground or daemon-supervised alike — without switching to its window: "stop running the full workspace build, let CI handle the gate" lands in every one of them at once.
+
+## Synopsis
+
+```bash
+stella whistle "<message>"
+stella whistle "<message>" --session <id>
+stella whistle "<message>" --session <id> --session <id>
+```
+
+## How delivery works
+
+Each targeted session binds a small Unix domain socket beside its existing session sidecar when it starts, and already carries `stella-core`'s `TurnSteering` seam — the same one [`stella chat`](/docs/commands/chat)'s `>` steer and `stella-serve`'s `POST /v1/turns/{id}/steer` drive, one in-process, one over HTTP. `stella whistle` is a second process reaching that seam over the socket: it connects, sends the message, and waits for an acknowledgment.
+
+Delivery lands at the target's next safe step boundary — strictly between model calls, never mid-tool. The turn is never paused; it absorbs the guidance and keeps going, wrapped as `[whistle — steering from another session] <message>` so the model reads it as a priority directive rather than an ordinary trailing remark.
+
+## Targeting
+
+Omit `--session` and the broadcast reaches every session [`stella resume --list`](/docs/commands/resume) shows as live. Pass `--session <id>` (repeatable) to narrow it to specific sessions instead — an id that is not currently live, or never existed, is reported unreachable rather than silently dropped.
+
+```text
+$ stella whistle "stop running the full workspace build, let CI handle the gate"
+delivered    ses-1785956826121-25167  stella: migrate the config loader to serde
+unreachable  ses-1785956700004        stella: fix the flaky test (no listener — the session isn't currently reachable)
+```
+
+`stella whistle` exits non-zero when any targeted session could not be reached, after printing every session's outcome.
+
+## What is reachable today
+
+Foreground [`stella run`](/docs/commands/run), [`stella chat`](/docs/commands/chat)'s interactive-mode loop, and any wrapper-plugin-driven turn — daemon-supervised runs of the same are reachable too, since supervision launches the identical code path.
+
+Not reachable yet, each for a distinct structural reason rather than an oversight:
+
+- **Interactive mode's turn driver** binds its steering tap fresh per turn inside a file closed to growth under the file-size ratchet — tracked as a follow-up.
+- **`stella-serve`-hosted turns** are a separate binary with their own HTTP steer transport; reaching them needs a second delivery path in `stella whistle`, not a copy of the socket work.
+- **[`stella goal`](/docs/commands/goal)'s multi-round arc** drives a different call path than a one-shot run.
+
+## Platform support
+
+Unix only — `tokio::net::UnixListener` has no Windows counterpart, and stella ships no Windows binary yet. On a non-Unix build every session reports unreachable rather than the command silently doing nothing.

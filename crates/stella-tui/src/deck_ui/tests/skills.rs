@@ -25,6 +25,7 @@ fn a_row(name: &str, scope: SkillScope, enabled: bool) -> SkillRow {
         version: 1,
         latest: 1,
         removable: true,
+        contributed_by: None,
     }
 }
 

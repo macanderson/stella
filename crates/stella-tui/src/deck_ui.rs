@@ -2907,10 +2907,20 @@ fn handle_skills_installed_key(
                 return Some(DeckAction::Handled);
             };
             if !row.removable {
-                ui.skills.status = Some(format!(
-                    "{} can't be deleted here — press space to disable it",
-                    row.name
-                ));
+                // A contributed skill is retracted with its package or not at
+                // all, so the message names the command that can do it rather
+                // than leaving the user pressing a key that will never work.
+                ui.skills.status = Some(match &row.contributed_by {
+                    Some(plugin) => format!(
+                        "{} comes from the {plugin} plugin — press space to disable it, or \
+                         `stella plugin remove {plugin}` to take the whole package",
+                        row.name
+                    ),
+                    None => format!(
+                        "{} can't be deleted here — press space to disable it",
+                        row.name
+                    ),
+                });
                 return Some(DeckAction::Handled);
             }
             if was_armed {

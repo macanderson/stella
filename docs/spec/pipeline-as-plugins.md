@@ -1162,12 +1162,37 @@ A package is `.stella`-shaped and that is the whole format:
   tools/*.toml             the same manifests .stella/tools/*.toml holds
   skills/<slug>/SKILL.md   the same files .stella/skills/ holds
   rules/*.toml             the same records .stella/rules/ holds
+  mcp.toml                 the same servers .stella/mcp.toml holds
 ```
 
-Three surfaces, no fourth. Each directory is handed to the loader that already
-reads that surface as an additional source — a plugin's tool *is* a custom
-tool (`stella_tools::custom`), its skill *is* a skill (`stella_core::skills`),
-its record *is* a context record (`crate::context_records`).
+Four surfaces, no fifth — the fourth landed with #4733, and the file is a file
+rather than a directory because a server is a table entry and `.stella/mcp.toml`
+is the unit the loader already reads. Each is handed to the loader that already
+reads that surface as an additional source — a plugin's tool *is* a custom tool
+(`stella_tools::custom`), its skill *is* a skill (`stella_core::skills`), its
+record *is* a context record (`crate::context_records`), its servers *are* MCP
+servers (`stella_mcp`).
+
+**An MCP server was refused until it could be enumerated, and that is the whole
+story of why it is here now.** `[[configure]]` still refuses an `mcp` section,
+with the reason it always gave: "it names external tool servers whose tools join
+the agent's surface, so the effect of one line is a set of tools the consent
+document never listed." That reason was a design brief, not a permanent no. A
+`[[mcp]]` table names each server in the consent document and is reconciled
+against the package's own file, which is the enumeration the refusal was asking
+for. What it still cannot do is name the *tools* — those are the server's to
+choose when it connects — so the consent line says that rather than printing a
+list it cannot know, and the two servers-of-one-name case is resolved the way
+every other contributed surface resolves a collision: yours wins, and the drop
+is spoken. It has to be resolved, because two servers sharing a name produce
+colliding `mcp__<server>__<tool>` wire names.
+
+A contributed server's tool calls authorize as `Principal::Plugin`, like every
+other contribution. The mechanism differs because the names do: the gate's
+`tool_principals` map is keyed by exact tool name, which a script tool has
+before the session starts and a server's tools do not, so `GatedToolSet` also
+takes `(namespace prefix, principal)` pairs and consults them after the exact
+map misses.
 
 **Contributing to an existing surface beats a parallel one**, and the argument
 is not aesthetic. A parallel plane would be a second set of precedence rules, a

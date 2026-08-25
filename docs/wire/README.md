@@ -178,6 +178,17 @@ than counting `complete`.
 Structural invariants that span *several* events — legal stage ordering,
 `tool_start`/`tool_result` pairing, a single terminal `complete`, monotonic
 budget — cannot be expressed in JSON Schema at all, so a stream that validates
-against this schema line by line can still be an illegal stream. The validator
-that used to check them (`stella_pipeline::replay`) went with the crate #3865
-deleted from this workspace; nothing in this tree checks them today.
+against this schema line by line can still be an illegal stream.
+`stella_core::event_stream` is what checks them: `validate_stream` over a
+parsed stream, `conform_jsonl` over a recording. It replaces
+`stella_pipeline::replay`, which went with the crate #3865 deleted from this
+workspace and left the rules unchecked by anything until #4585.
+
+The terminator it holds to "exactly one, and last" is `run_complete`, not
+`complete`: the engine emits `turn_complete` per turn and a wrapped run emits
+several, so counting those would report a violation at every turn boundary
+rather than a defect. It lives in `stella-core` rather than beside the types
+here because it is a fold over a whole stream with a rank table and a
+violation vocabulary of its own — decision logic by `stella-protocol`'s own
+boundary rule, which admits a type plus a total helper over that type's data
+and sends everything that decides to `stella-core`.

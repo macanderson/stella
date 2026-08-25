@@ -188,7 +188,8 @@ pub const REFUSED_SECTIONS: &[(&str, &str)] = &[
         "mcp",
         "it names external tool servers whose tools join the agent's surface, so \
          the effect of one line is a set of tools the consent document never \
-         listed",
+         listed — ship them as `[[mcp]]` instead, where each server is named at \
+         install and checked against the package's own mcp.toml",
     ),
     (
         "meta",

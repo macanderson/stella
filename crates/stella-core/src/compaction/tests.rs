@@ -321,16 +321,24 @@ fn retention_is_idempotent_between_batches() {
 ///
 /// The two tests either side of this one pin the *behaviour* at half the
 /// budget and at a quarter, with the ratios hand-rolled — so a divisor of 3
-/// would leave both of them passing while suppressing 41.8% of the firings the
+/// would leave both of them passing while suppressing 42.2% of the firings the
 /// census counted. Naming the constant is the difference between "half is a
-/// sensible-looking trigger" and "half is the number 330 firings across 93
-/// journals produced".
+/// sensible-looking trigger" and "half is what 370 firings across 96 journals
+/// produced".
+///
+/// The value survived the census that priced it (#4452,
+/// `scripts/retention-census.py`) for a reason worth keeping in view: the
+/// census found *every* divisor a worse classifier of a profitable firing than
+/// no gate at all, so it disqualified the key rather than naming a better
+/// number for it. Moving this to 3 or 4 trades one unmeasured value for
+/// another; the measured replacement is a reclaim-ratio gate, #4753.
 #[test]
 fn the_retention_pressure_gate_stays_at_the_divisor_the_census_produced() {
     assert_eq!(
         RETENTION_TRIGGER_BUDGET_DIVISOR, 2,
-        "the trigger is half the budget until #4452's replay says otherwise; \
-         a divisor of 3 suppresses 41.8% of the measured firings and 4 suppresses 23.6%"
+        "the trigger is half the budget until #4753's reclaim-ratio gate replaces \
+         the key; a divisor of 3 suppresses 42.2% of the measured firings and 4 \
+         suppresses 23.8%, and neither classifies better than no gate at all"
     );
     // And the gate is actually derived from it, so the assertion above is not
     // pinning a constant nothing consults.

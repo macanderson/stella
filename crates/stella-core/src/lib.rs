@@ -22,6 +22,7 @@ pub mod driver;
 pub mod engine_markers;
 pub mod estimator;
 pub mod event_sender;
+pub mod event_stream;
 pub mod extensions;
 mod glob;
 pub mod goal;
