@@ -46,6 +46,10 @@ use crate::model::{FileState, ReadSize, TranscriptEntry};
 /// Always at least one row: a tool with no recognised verb still names itself,
 /// because a call that rendered nothing would be a call the reader cannot see
 /// happened.
+///
+/// `sub_agent_id` is the delegate that made the call, `None` for the lead's
+/// own — carried straight from `TranscriptEntry::ToolStart` so a fan-out call
+/// renders visibly apart from the lead's (#4699).
 #[must_use]
 pub fn head_rows(
     name: &str,
@@ -53,6 +57,7 @@ pub fn head_rows(
     input: &str,
     scope: Option<Touched>,
     read: Option<ReadSize>,
+    sub_agent_id: Option<&str>,
     width: usize,
 ) -> Vec<Line<'static>> {
     let kind = kind_for(name, scope, read);
@@ -60,6 +65,7 @@ pub fn head_rows(
     // The head is drawn the moment the call dispatches, so it is never
     // "collapsed" in the fold sense — there is no body under it yet.
     event.collapsed = Some(false);
+    event.sub_agent_id = sub_agent_id.map(str::to_string);
     event_rows(&event, width)
 }
 
@@ -403,7 +409,15 @@ mod tests {
     /// tools), and a missing row is the failure this guards against.
     #[test]
     fn an_unrecognised_tool_still_renders_a_head() {
-        let rows = head_rows("mcp__fs__read_file", None, "apps/page.tsx", None, None, 80);
+        let rows = head_rows(
+            "mcp__fs__read_file",
+            None,
+            "apps/page.tsx",
+            None,
+            None,
+            None,
+            80,
+        );
         assert_eq!(rows.len(), 1);
         let text = text_of(&rows[0]);
         // The tool's own name survives; the routing prefix does not. A reader
@@ -417,6 +431,22 @@ mod tests {
         assert!(text.contains("apps/page.tsx"), "{text}");
     }
 
+    /// The witness for #4699: a delegate's call renders visibly apart from
+    /// the lead's, and the lead's own renders no tag at all.
+    #[test]
+    fn a_delegates_head_names_the_delegate() {
+        let delegated = text_of_rows(&head_rows("bash", None, "ls", None, None, Some("d:1"), 80));
+        assert!(
+            delegated.contains("d:1"),
+            "the delegate's own call did not name it: {delegated}"
+        );
+        let lead = text_of_rows(&head_rows("bash", None, "ls", None, None, None, 80));
+        assert!(
+            !lead.contains("d:1"),
+            "the lead's own call must carry no delegate tag: {lead}"
+        );
+    }
+
     /// A file tool names its path, not its raw argument blob.
     #[test]
     fn a_file_tool_names_its_path() {
@@ -424,6 +454,7 @@ mod tests {
             "read_file",
             Some("src/main.rs"),
             "{\"path\":\"…\"}",
+            None,
             None,
             None,
             80,
@@ -453,7 +484,7 @@ mod tests {
             ("write_file", "src/new.rs"),
             ("delete_file", "src/old.rs"),
         ] {
-            let text = text_of_rows(&head_rows(tool, Some(path), "{}", None, None, 120));
+            let text = text_of_rows(&head_rows(tool, Some(path), "{}", None, None, None, 120));
             for zero in ["+0", "-0", "0 lines"] {
                 assert!(
                     !text.contains(zero),
@@ -475,6 +506,7 @@ mod tests {
             "{}",
             Some(one_file(42, 0)),
             None,
+            None,
             120,
         ));
         assert!(write.contains("new file"), "{write}");
@@ -484,6 +516,7 @@ mod tests {
             Some("src/old.rs"),
             "{}",
             Some(one_file(0, 17)),
+            None,
             None,
             120,
         ));
@@ -502,6 +535,7 @@ mod tests {
             "{}",
             None,
             None,
+            None,
             120,
         ));
         assert!(write.contains("new file"), "{write}");
@@ -509,6 +543,7 @@ mod tests {
             "delete_file",
             Some("src/old.rs"),
             "{}",
+            None,
             None,
             None,
             120,
@@ -577,7 +612,15 @@ mod tests {
         };
         let scope = measured_scope(call_id, &model.transcript[idx + 1..], &model.files);
         let read = read_size(call_id, &model.transcript[idx + 1..]);
-        text_of_rows(&head_rows(name, path.as_deref(), input, scope, read, 120))
+        text_of_rows(&head_rows(
+            name,
+            path.as_deref(),
+            input,
+            scope,
+            read,
+            None,
+            120,
+        ))
     }
 
     /// The witness for #4154: a head that used to be drawn once at dispatch and
@@ -732,6 +775,7 @@ mod tests {
             "{}",
             None,
             None,
+            None,
             120,
         ));
         let cut = spans
@@ -756,7 +800,15 @@ mod tests {
     /// from the presence of a separator.
     #[test]
     fn a_command_subject_stays_one_unemphasised_span() {
-        let spans = styled_spans(&head_rows("bash", None, "grep -r foo/ .", None, None, 120));
+        let spans = styled_spans(&head_rows(
+            "bash",
+            None,
+            "grep -r foo/ .",
+            None,
+            None,
+            None,
+            120,
+        ));
         let subject: Vec<_> = spans
             .iter()
             .filter(|(content, _)| content.contains("foo/"))
@@ -816,12 +868,14 @@ mod tests {
             ("delete_file", "src/old.rs"),
         ] {
             let declares_a_size = format!("{:?}", kind_for(tool, None, None)).contains("Extent");
-            let unmeasured = text_of_rows(&head_rows(tool, Some(path), "{}", None, None, 120));
+            let unmeasured =
+                text_of_rows(&head_rows(tool, Some(path), "{}", None, None, None, 120));
             let measured = text_of_rows(&head_rows(
                 tool,
                 Some(path),
                 "{}",
                 Some(one_file(7, 3)),
+                None,
                 None,
                 120,
             ));
@@ -854,7 +908,7 @@ mod tests {
     /// The glyph cell of a head row: the rail is span 0, the glyph span 1
     /// (`" x "`), which `head_row` composes in that order.
     fn head_glyph_of(name: &str) -> char {
-        let rows = head_rows(name, None, "{}", None, None, 120);
+        let rows = head_rows(name, None, "{}", None, None, None, 120);
         let row = rows
             .first()
             .expect("a head always renders at least one row");
@@ -913,7 +967,7 @@ mod tests {
             ("orchid", crate::theme::ORCHID),
         ];
         for (name, _) in CLASS_CASES {
-            let rows = head_rows(name, None, "{}", None, None, 120);
+            let rows = head_rows(name, None, "{}", None, None, None, 120);
             let row = rows
                 .first()
                 .expect("a head always renders at least one row");

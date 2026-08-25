@@ -71,7 +71,12 @@ impl TallyFold {
             AgentEvent::RetriesExhausted { attempts, .. } => {
                 tally.retries = tally.retries.saturating_add(attempts.saturating_sub(1));
             }
-            AgentEvent::ToolStart { .. } => tally.tool_calls = tally.tool_calls.saturating_add(1),
+            AgentEvent::ToolStart { sub_agent_id, .. } => {
+                tally.tool_calls = tally.tool_calls.saturating_add(1);
+                if sub_agent_id.is_some() {
+                    tally.tool_calls_by_sub_agent = tally.tool_calls_by_sub_agent.saturating_add(1);
+                }
+            }
             AgentEvent::ToolResult { output, .. } if output.is_error() => {
                 tally.tools_failed = tally.tools_failed.saturating_add(1);
             }
@@ -185,6 +190,33 @@ mod tests {
         assert_eq!(tally.tools_failed, 1, "only the error arm counts as failed");
         assert_eq!(tally.retries, 1);
         assert_eq!(tally.speculation_discarded, 1);
+    }
+
+    /// The witness for #4699: a delegate's calls are counted apart from the
+    /// lead's, so an operator can separate a turn's own tool traffic from its
+    /// fan-out's without re-deriving it from the raw stream.
+    #[test]
+    fn a_delegates_calls_are_counted_apart_from_the_leads() {
+        let mut fold = TallyFold::default();
+        fold.observe(&AgentEvent::ToolStart {
+            call: tool_call("lead"),
+            sub_agent_id: None,
+        });
+        fold.observe(&AgentEvent::ToolStart {
+            call: tool_call("child"),
+            sub_agent_id: Some("d:1".to_string()),
+        });
+        fold.observe(&AgentEvent::ToolStart {
+            call: tool_call("child2"),
+            sub_agent_id: Some("d:1".to_string()),
+        });
+
+        let tally = fold.finish();
+        assert_eq!(tally.tool_calls, 3, "every call counts toward the total");
+        assert_eq!(
+            tally.tool_calls_by_sub_agent, 2,
+            "only the delegate's own count toward the fan-out axis"
+        );
     }
 
     /// A doomed retry sequence reports once, for the whole run — so counting

@@ -786,3 +786,38 @@ fn a_delegates_calls_are_attributed_to_it_and_the_leads_read_null() {
     store.materialize_tool_calls(id).unwrap();
     assert_eq!(owners(&store), expected, "and so does the re-fold");
 }
+
+/// The bulk writer agrees with the live and repair folds: `ToolCallRow`
+/// carries `sub_agent_id` through, not just the event-stream path (#4699).
+#[test]
+fn the_bulk_writer_persists_sub_agent_id_too() {
+    let (store, id) = fixture();
+    store
+        .record_tool_calls(
+            id,
+            &[ToolCallRow {
+                call_id: "c1".into(),
+                name: "search".into(),
+                surface: "native".into(),
+                args_json: "{}".into(),
+                args_digest: "d".into(),
+                reason: String::new(),
+                state: ToolCallState::Ok,
+                error: String::new(),
+                error_class: None,
+                bytes_out: 0,
+                duration_ms: 1,
+                sub_agent_id: Some("search-1".into()),
+            }],
+        )
+        .unwrap();
+    let conn = store.lock();
+    let owner: Option<String> = conn
+        .query_row(
+            "SELECT sub_agent_id FROM tool_calls WHERE execution_id = ?1 AND call_id = 'c1'",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(owner.as_deref(), Some("search-1"));
+}

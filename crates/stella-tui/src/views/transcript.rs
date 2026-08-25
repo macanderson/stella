@@ -349,6 +349,10 @@ pub struct Event {
     pub body: Vec<Line<'static>>,
     /// A dim trailing line under the body (SPEC 6.3's footers).
     pub footer: Option<String>,
+    /// The delegate that made this call, rendered `↳ d:1` (#4699). `None` is
+    /// the lead's own call — the ordinary case, and drawn with no tag at all
+    /// rather than a "lead" label nobody needs on every other row.
+    pub sub_agent_id: Option<String>,
 }
 
 impl Event {
@@ -363,6 +367,7 @@ impl Event {
             collapsed: None,
             body: Vec::new(),
             footer: None,
+            sub_agent_id: None,
         }
     }
 
@@ -795,6 +800,15 @@ fn metrics(event: &Event) -> Vec<Span<'static>> {
         }
         spans.push(Span::styled(
             format!("→ task {task}"),
+            Style::new().fg(token::MUTED),
+        ));
+    }
+    if let Some(agent) = &event.sub_agent_id {
+        if !spans.is_empty() {
+            spans.push(Span::styled(" · ", dim));
+        }
+        spans.push(Span::styled(
+            format!("↳ {agent}"),
             Style::new().fg(token::MUTED),
         ));
     }

@@ -816,6 +816,78 @@ fn tool_result_summary_is_middle_out_truncated() {
     }
 }
 
+/// The witness for #4699: a delegate's call is folded onto both its
+/// `ToolStart` and its `ToolResult`, so a fan-out call is distinguishable
+/// from the lead's own once it lands on the transcript.
+#[test]
+fn a_delegates_call_carries_its_sub_agent_id_onto_start_and_result() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "c1".into(),
+            name: "bash".into(),
+            input: serde_json::json!({}),
+        },
+        sub_agent_id: Some("d:1".into()),
+    });
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "c1".into(),
+        output: ToolOutput::Ok {
+            content: "ok".into(),
+            data: None,
+        },
+        duration_ms: 3,
+        speculated: false,
+        // The result does not repeat it, on purpose — the same fallback the
+        // store's `project_tool_result` proves (`stella-store::tool_calls`):
+        // the announcement is authoritative, and a result from an older
+        // producer must not blank what the start already recorded.
+        sub_agent_id: None,
+    });
+    match &model.transcript[..] {
+        [
+            TranscriptEntry::ToolStart {
+                sub_agent_id: s, ..
+            },
+            TranscriptEntry::ToolResult {
+                sub_agent_id: r, ..
+            },
+        ] => {
+            assert_eq!(s.as_deref(), Some("d:1"), "the start lost its attribution");
+            assert_eq!(
+                r.as_deref(),
+                Some("d:1"),
+                "the result did not resolve the start's attribution"
+            );
+        }
+        other => panic!("expected a start/result pair, got {other:?}"),
+    }
+}
+
+/// The fallback half: a consumer that never folded the `ToolStart` (a
+/// `?after_seq` page, a truncated journal) still attributes the call from the
+/// result's own field.
+#[test]
+fn a_result_with_no_matching_start_still_attributes_from_its_own_field() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "orphan".into(),
+        output: ToolOutput::Ok {
+            content: "ok".into(),
+            data: None,
+        },
+        duration_ms: 3,
+        speculated: false,
+        sub_agent_id: Some("d:2".into()),
+    });
+    match model.transcript.last() {
+        Some(TranscriptEntry::ToolResult { sub_agent_id, .. }) => {
+            assert_eq!(sub_agent_id.as_deref(), Some("d:2"));
+        }
+        other => panic!("expected a tool result entry, got {other:?}"),
+    }
+}
+
 #[test]
 fn colourised_tool_output_folds_to_clean_text() {
     // A `cargo build` failure as a colour-detecting child process emits it.

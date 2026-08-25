@@ -195,7 +195,7 @@ pub(crate) fn spawn_renderer(
     prompt: Option<String>,
 ) -> tokio::task::JoinHandle<RendererOutcome> {
     tokio::spawn(async move {
-        let mut tool_names: HashMap<String, String> = HashMap::new();
+        let mut tool_names: HashMap<String, (String, Option<String>)> = HashMap::new();
         // Shared with every blocking persistence hop below, so the provider id
         // is not re-allocated once per persisted event.
         let provider_id: Arc<str> = provider_id.into();
@@ -353,28 +353,40 @@ pub(crate) fn spawn_renderer(
                 // frame restates every row, so a surface doing both prints the
                 // turn twice.
                 OutputFormat::Text if transcript.is_some() => {
-                    if let AgentEvent::ToolStart { call, .. } = &event {
-                        tool_names.insert(call.call_id.clone(), call.name.clone());
+                    if let AgentEvent::ToolStart { call, sub_agent_id } = &event {
+                        tool_names.insert(
+                            call.call_id.clone(),
+                            (call.name.clone(), sub_agent_id.clone()),
+                        );
                     }
                     if let Some(printer) = transcript.as_mut() {
                         printer.observe(&event);
                     }
                 }
                 OutputFormat::Text => match &event {
-                    AgentEvent::ToolStart { call, .. } => {
-                        tool_names.insert(call.call_id.clone(), call.name.clone());
-                        plain::tool_call_card(&call.name, &call.input, "running");
+                    AgentEvent::ToolStart { call, sub_agent_id } => {
+                        tool_names.insert(
+                            call.call_id.clone(),
+                            (call.name.clone(), sub_agent_id.clone()),
+                        );
+                        plain::tool_call_card(
+                            &call.name,
+                            &call.input,
+                            "running",
+                            sub_agent_id.as_deref(),
+                        );
                     }
                     AgentEvent::ToolResult {
                         call_id,
                         output,
                         duration_ms,
+                        sub_agent_id,
                         ..
                     } => {
-                        let name = tool_names
+                        let (name, started_agent) = tool_names
                             .get(call_id)
-                            .map(String::as_str)
-                            .unwrap_or("tool");
+                            .map(|(name, agent)| (name.as_str(), agent.as_deref()))
+                            .unwrap_or(("tool", None));
                         let content = match output {
                             ToolOutput::Ok { content, .. } => content.clone(),
                             ToolOutput::Error { message, .. } => message.clone(),
@@ -384,6 +396,11 @@ pub(crate) fn spawn_renderer(
                             &content,
                             output.is_error(),
                             Duration::from_millis(*duration_ms),
+                            // The announcement is authoritative, same
+                            // precedence as the store and the deck (#4699):
+                            // this result's own field is only the fallback
+                            // for a call whose start was never recorded.
+                            started_agent.or(sub_agent_id.as_deref()),
                         );
                     }
                     other => plain::render_event(other),

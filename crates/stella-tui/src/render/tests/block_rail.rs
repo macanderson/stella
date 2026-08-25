@@ -39,6 +39,7 @@ fn start(name: &str, input: &str, path: Option<&str>) -> TranscriptEntry {
         input: input.into(),
         raw: "{}".into(),
         path: path.map(str::to_owned),
+        sub_agent_id: None,
     }
 }
 
@@ -54,6 +55,7 @@ fn result(name: &str, ok: bool, body: &str) -> TranscriptEntry {
         speculated: false,
         diff: Vec::new(),
         read_size: None,
+        sub_agent_id: None,
     }
 }
 
@@ -259,6 +261,7 @@ fn call_with_args() -> TranscriptEntry {
         input: "src/lib.rs".into(),
         raw: r#"{"path":"src/lib.rs","old_string":"alpha","new_string":"bravo"}"#.into(),
         path: Some("src/lib.rs".into()),
+        sub_agent_id: None,
     }
 }
 
@@ -331,6 +334,7 @@ fn revealed_arguments_ride_the_heads_own_rail() {
             input: "src/lib.rs".into(),
             raw: r#"{"path":"src/lib.rs","limit":40}"#.into(),
             path: Some("src/lib.rs".into()),
+            sub_agent_id: None,
         };
         let mut lines = Vec::new();
         entry_lines(
@@ -378,6 +382,7 @@ fn an_unparseable_argument_object_is_still_shown() {
         input: "echo".into(),
         raw: r#"{"command":"echo hello","cwd":"/tm"#.into(),
         path: None,
+        sub_agent_id: None,
     };
     let rendered = render(&call, true);
     assert!(

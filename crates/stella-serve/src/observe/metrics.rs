@@ -561,6 +561,7 @@ mod tests {
                 retries: 2,
                 tool_calls: 5,
                 tools_failed: 1,
+                tool_calls_by_sub_agent: 2,
                 speculation_discarded: 4,
                 loop_detections: 1,
                 frames_dropped: 0,

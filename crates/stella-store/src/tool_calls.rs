@@ -176,6 +176,13 @@ pub struct ToolCallRow {
     pub error_class: Option<ErrorClass>,
     pub bytes_out: i64,
     pub duration_ms: i64,
+    /// Which sub-agent made this call — the `sub_agent_id` column. `None` is
+    /// the lead's own, which is the ordinary case (#4699). The live fold
+    /// (`project_tool_start`/`project_tool_result`) writes this from the
+    /// event stream; a caller that builds a row directly, as
+    /// [`Store::record_tool_calls`] does, must stamp it explicitly or the
+    /// column reverts to NULL.
+    pub sub_agent_id: Option<String>,
 }
 
 impl ToolCallRow {
@@ -705,8 +712,9 @@ impl Store {
             tx.execute(
                 "INSERT OR REPLACE INTO tool_calls \
                  (execution_id, seq, call_id, name, surface, args_json, args_digest, \
-                  reason, ok, state, error, error_class, bytes_out, duration_ms) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  reason, ok, state, error, error_class, bytes_out, duration_ms, \
+                  sub_agent_id) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     execution_id,
                     seq as i64,
@@ -722,6 +730,7 @@ impl Store {
                     class_token(row.error_class),
                     row.bytes_out,
                     row.duration_ms,
+                    row.sub_agent_id,
                 ],
             )?;
         }

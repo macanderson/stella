@@ -150,8 +150,10 @@ struct Fold<'a> {
     pending_reasoning: String,
     /// `call_id` → the index in `rows` of the tool row awaiting its result.
     open_tools: HashMap<String, usize>,
-    /// `call_id` → tool name, for a result whose call was never recorded.
-    tool_names: HashMap<String, String>,
+    /// `call_id` → (tool name, delegate id), for a result whose call was
+    /// never recorded, or whose own `ToolResult` did not repeat the
+    /// attribution its `ToolStart` already carried (#4699).
+    tool_names: HashMap<String, (String, Option<String>)>,
     redacted: bool,
     overflow: usize,
 }
@@ -299,17 +301,19 @@ impl<'a> Fold<'a> {
                 ));
             }
 
-            AgentEvent::ToolStart { call, .. } => {
+            AgentEvent::ToolStart { call, sub_agent_id } => {
                 let args = self.clean(&pretty(&call.input));
                 let name = self.clean(&call.name);
-                self.tool_names.insert(call.call_id.clone(), name.clone());
+                self.tool_names
+                    .insert(call.call_id.clone(), (name.clone(), sub_agent_id.clone()));
                 let index = self.rows.len();
                 let stamp = self.stamp();
+                let agent = agent_suffix(sub_agent_id.as_deref());
                 // The result arrives later in the stream and is patched into
                 // this row; until then it is honestly marked pending, because
                 // a killed run leaves calls that genuinely never returned.
                 self.row(format!(
-                    r#"<details class="ev tool" open><summary>{stamp}<span class="lbl">TOOL</span><b>{name}</b></summary><pre class="in">{args}</pre><pre class="out pending">(no result recorded — the run ended before this call returned)</pre></details>"#,
+                    r#"<details class="ev tool" open><summary>{stamp}<span class="lbl">TOOL</span><b>{name}{agent}</b></summary><pre class="in">{args}</pre><pre class="out pending">(no result recorded — the run ended before this call returned)</pre></details>"#,
                     name = escape(&name),
                     args = escape(&clip(&args)),
                 ));
@@ -322,8 +326,14 @@ impl<'a> Fold<'a> {
                 output,
                 duration_ms,
                 speculated,
-                ..
-            } => self.close_tool(call_id, output, *duration_ms, *speculated),
+                sub_agent_id,
+            } => self.close_tool(
+                call_id,
+                output,
+                *duration_ms,
+                *speculated,
+                sub_agent_id.as_deref(),
+            ),
 
             AgentEvent::FileChange {
                 path,
@@ -424,7 +434,18 @@ impl<'a> Fold<'a> {
     }
 
     /// Attach a result to the tool row its `call_id` opened.
-    fn close_tool(&mut self, call_id: &str, output: &ToolOutput, duration_ms: u64, spec: bool) {
+    ///
+    /// `sub_agent_id` is the result's own field — read only as the fallback
+    /// for a call whose `ToolStart` was never recorded, since the row the
+    /// common path patches already carries the announcement's badge (#4699).
+    fn close_tool(
+        &mut self,
+        call_id: &str,
+        output: &ToolOutput,
+        duration_ms: u64,
+        spec: bool,
+        sub_agent_id: Option<&str>,
+    ) {
         // The tag is the whole verdict — `ToolResult` has no `error` field and
         // never has, so branching on the enum is the only correct read.
         let failed = output.is_error();
@@ -433,11 +454,11 @@ impl<'a> Fold<'a> {
             ToolOutput::Error { message, .. } => message.clone(),
         };
         let body = self.clean(&body);
-        let name = self
+        let (name, started_agent) = self
             .tool_names
             .get(call_id)
             .cloned()
-            .unwrap_or_else(|| "tool".to_string());
+            .unwrap_or_else(|| ("tool".to_string(), None));
         let meta = format!(
             " · {:.2}s{}",
             duration_ms as f64 / 1000.0,
@@ -447,8 +468,9 @@ impl<'a> Fold<'a> {
         let Some(index) = self.open_tools.remove(call_id) else {
             // A result with no recorded call — an older stream, or a journal
             // read that began mid-turn. Render it rather than drop it.
+            let agent = agent_suffix(started_agent.as_deref().or(sub_agent_id));
             self.row(format!(
-                r#"<details class="ev tool{err} open"><summary>{t}<span class="lbl">TOOL</span><b>{name}</b><span class="meta">{meta}</span></summary><pre class="out{outerr}">{body}</pre></details>"#,
+                r#"<details class="ev tool{err} open"><summary>{t}<span class="lbl">TOOL</span><b>{name}{agent}</b><span class="meta">{meta}</span></summary><pre class="out{outerr}">{body}</pre></details>"#,
                 err = if failed { " err" } else { "" },
                 t = self.stamp(),
                 name = escape(&name),
@@ -634,6 +656,18 @@ fn clip(text: &str) -> String {
 /// one-line alias so every interpolation in this module reads the same.
 fn escape(raw: &str) -> String {
     super::escape_html(raw)
+}
+
+/// The ` · agent d:1` suffix a tool row's label carries when a delegate made
+/// the call — empty for the lead's own, which is the ordinary case (#4699).
+/// Escaped here rather than through [`Fold::clean`]: the id is an opaque
+/// handle the engine stamps, not model- or user-authored text, so it needs no
+/// redaction — only the same HTML-escaping every other interpolation gets.
+fn agent_suffix(sub_agent_id: Option<&str>) -> String {
+    match sub_agent_id {
+        Some(id) => format!(" · agent {}", escape(id)),
+        None => String::new(),
+    }
 }
 
 /// One file change's diff as the archive's `.dx` block: both line-number
