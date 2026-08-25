@@ -67,7 +67,7 @@ impl TerminalPrompt {
     ///
     /// The single "is a human present?" derivation (#3036), shared with
     /// `stella-cli`'s approval prompts without this crate depending on that
-    /// one (invariant 1). `interactive` here already plays
+    /// one — a dependency the ports rule forbids. `interactive` here already plays
     /// [`stella_tty::human_can_answer`]'s `interactive_output` role, so this
     /// only adds the check that was missing: a redirected stdout must decline
     /// exactly as a redirected stdin does, not just print a prompt nobody

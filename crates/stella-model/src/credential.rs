@@ -107,7 +107,7 @@ pub enum CredentialSource {
 /// cannot reach a copy someone else already made — a `String` that grew and
 /// reallocated, a page the OS swapped out, or a `HeaderValue` reqwest built
 /// from `reveal()`. Every copy this crate makes on purpose is wrapped in
-/// [`Zeroizing`] at its call site; the ones inside a third-party HTTP stack
+/// [`Zeroizing`](zeroize::Zeroizing) at its call site; the ones inside a third-party HTTP stack
 /// are out of our reach and are not claimed to be covered.
 #[derive(Clone)]
 pub struct ApiKey(String);
