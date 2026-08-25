@@ -70,6 +70,17 @@ use suppression::no_suppression;
 /// providers' frames still arrive.
 const RECALL_TIMEOUT_MS: u64 = 2_000;
 
+/// Per-provider timeout for the deck's GRAPH tab.
+///
+/// The same bound recall uses, and not a shorter one. A tab
+/// answering a keystroke invites a tighter budget, but the code-graph
+/// provider's first query in a session pays for opening SQLite *and* loading
+/// every tree-sitter grammar, and on a loaded machine that alone can outrun a
+/// sub-second budget. A timeout there is indistinguishable from an empty
+/// index at the frame layer, so being impatient does not cost a slow answer —
+/// it costs a wrong one.
+const GRAPH_TAB_TIMEOUT_MS: u64 = RECALL_TIMEOUT_MS;
+
 fn local_info(name: &str) -> ProviderInfo {
     ProviderInfo {
         name: name.to_string(),
@@ -336,6 +347,73 @@ pub fn session_host(
         caps: graph_capabilities(),
     }));
     host
+}
+
+/// A host carrying only the `code-graph` provider, for the deck's GRAPH tab.
+///
+/// The tab asks a structural question — "what is `run_turn` and what sits
+/// around it" — so it wants the code index and nothing else. The session host
+/// would also fan the query out to `workspace-memory`, which advertises
+/// `symbol` among its kinds ([`memory_capabilities`]) and would answer a
+/// symbol query with reflections and episodes: prose the tab has no node to
+/// draw for. Registering one provider is how the tab states which source it
+/// is asking, rather than filtering the fan-out afterwards by provider id.
+///
+/// The point of routing through a [`Host`] at all is that the tab stops
+/// naming `stella_graph` types: it sends a [`ContextQuery`] and reads
+/// [`ContextFrame`]s, so a graph-capable provider registered here later
+/// answers the `q` box with no change to the tab (#4335).
+///
+/// Separate from [`session_host`] rather than sharing it because the two have
+/// different lifetimes and different mutability: the session host is admitted
+/// once (`register_external_providers` needs `&mut`) and then borrowed by the
+/// running turn, while the tab answers keystrokes from two call sites, one of
+/// them off-thread. Built once per deck session and shared by `Arc`.
+pub fn graph_tab_host(workspace_root: PathBuf) -> Host {
+    let mut host = Host::with_timeout(std::time::Duration::from_millis(GRAPH_TAB_TIMEOUT_MS));
+    host.register(Box::new(GraphProvider {
+        workspace_root,
+        info: local_info("code-graph"),
+        caps: graph_capabilities(),
+    }));
+    host
+}
+
+/// Every frame a fan-out accepted, best-scoring first.
+///
+/// [`recall_via_host`] is the wrong entry point for the GRAPH tab: it packs
+/// the fan-out a second time against a prompt's token budget and reports
+/// what it dropped, because its caller is assembling a model's context. The
+/// tab has no prompt and no token budget — it draws every node the providers
+/// returned — so it takes the accepted frames and orders them itself.
+///
+/// The tie-break on `id` matters: the code-graph provider fuses its frames
+/// through a `HashMap`, so score alone leaves the node order of two equally
+/// scored symbols to hash iteration, and the deck's goldens would flake.
+///
+/// `None` when **no** provider answered at all — every leg timed out, was
+/// refused, or crashed. That is a different fact from an empty `Some`, and the
+/// protocol flattens the two: a provider that times out contributes no frames,
+/// exactly as one with nothing to say does. A caller that cannot tell them
+/// apart reports "nothing matched" for a query that was never actually asked,
+/// so the distinction is drawn here rather than left to each caller.
+pub async fn query_frames_via_host(host: &Host, query: &ContextQuery) -> Option<Vec<ContextFrame>> {
+    let fanout = host.query_all(query).await;
+    let answered = fanout
+        .outcomes
+        .iter()
+        .any(|outcome| matches!(outcome.result, ProviderResult::Frames(_)));
+    if !answered {
+        return None;
+    }
+    let mut frames: Vec<ContextFrame> = fanout.accepted_frames().cloned().collect();
+    frames.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    Some(frames)
 }
 
 /// What happened when the host was asked to admit an external provider.
