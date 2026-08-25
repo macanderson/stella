@@ -50,10 +50,16 @@
 //!
 //! # What it prints, and what to do with it
 //!
-//! Per query, every candidate above [`DEPTH`] ranks deep, labelled relevant or
-//! irrelevant against the answers below, with its cosine. Then, per query and
-//! over the whole set:
+//! Per query, the top [`DEPTH`] candidates, labelled relevant or irrelevant
+//! against the answers below, with their cosines. Then, per query and over the
+//! whole set:
 //!
+//! - **the recall rank** — where the best labelled answer sits in the
+//!   **whole** ranking, not in the printed window. It is first because it is
+//!   the one question a threshold cannot answer: a floor cannot rescue a
+//!   ranking that does not contain the answer, so whether the answer is in
+//!   there at all is prior to every other number here. Every other line below
+//!   is read off the window; this one is read off the corpus.
 //! - **the separation** — the lowest relevant score minus the highest
 //!   irrelevant one. Positive, and a floor between them drops the tail without
 //!   dropping an answer. Negative, and **no floor separates this corpus**: the
@@ -103,25 +109,54 @@
 //! embeddings.
 //!
 //! ```text
-//! embedder    voyage-code-3@1/1024/l2      chunks 28744      depth 40
-//! separation  n/a      | +0.0140 | -0.0439 | n/a
-//! boundary    n/a      | +0.0140 | +0.0001 | n/a       (5.36x and 0.11x mean)
-//! cut         40 vs 0  | 40 vs 1 | 40 vs 39| 40 vs 0
+//! embedder    voyage-code-3@1/1024/l2      chunks 28269      window 40
+//! rank         77      |    1    |   12    |   62      (of 28 269)
+//! separation  n/a      | +0.0140 | -0.0219 | n/a
+//! boundary    n/a      | +0.0140 | +0.0003 | n/a       (5.36x and 0.27x mean)
+//! cut         40 vs 0  | 40 vs 1 | 40 vs 12| 40 vs 0
 //! ```
 //!
-//! **Tightest separation -0.0439: the two distributions overlap, and no
-//! admission floor separates them.** On "why is the Rust toolchain pinned to
-//! an exact version" the labelled answer ranked 39th at 0.5978, under 38
-//! irrelevant chunks scoring 0.6006-0.6436. Two of the four queries returned
-//! no labelled answer in 40 candidates at all, which is a recall result and
-//! makes their separation unmeasurable rather than good.
+//! **Every labelled answer was retrieved.** The worst sat at rank 77 of
+//! 28 269 — the top 0.27% of the corpus — and the other three at 1, 12 and 62.
+//! Retrieval on this corpus is not the problem, and the ordering is not
+//! either.
+//!
+//! **Tightest separation -0.0219: the two distributions overlap, and no
+//! admission floor separates them.** That is the standing result and it did
+//! not change. What a floor cannot do here is drop the tail: irrelevant chunks
+//! score 0.60-0.64 while answers score 0.58-0.76, so the bands cross.
+//!
+//! ## What the first reading of this run got wrong (#4784)
+//!
+//! The run above is a re-measurement. The first one reported that two of the
+//! four queries "returned no labelled answer" and that a third ranked its
+//! answer 39th beneath 38 irrelevant chunks, and #4784 was opened against
+//! Stella's retrieval on the strength of it. Both readings were artifacts of
+//! this harness, and both are fixed here:
+//!
+//! - **`DEPTH` was the whole ranking, not a window onto it.** A query whose
+//!   answer sat at rank 62 or 77 produced `labelled_prefix == 0`, which the
+//!   old note printed as a recall result. Rankings are now taken over the
+//!   entire corpus — no extra embeddings, the vectors are already local — so
+//!   an answer below the printed window has a rank instead of an absence.
+//! - **`measure` reads the *deepest* labelled candidate, and the toolchain
+//!   query's label was `(path, None)`.** Every section of AGENTS.md counted as
+//!   an answer, so "39th at 0.5978" was `Code style and conventions`, an
+//!   incidental match — while `Essential commands`, the section that label's
+//!   own `basis` names, was 12th at 0.6217. The label is now pinned to that
+//!   section, and the deepest-relevant reading is kept for the floor (where it
+//!   is the correct conservative one) but printed beside the recall rank
+//!   rather than in place of it.
+//!
+//! Pinning the label moved the tightest separation from -0.0439 to -0.0219.
+//! It stayed negative, so nothing downstream of it changed.
 //!
 //! What was rewritten from it, and what deliberately was not:
 //!
 //! - `stella_embed`'s `MEASURED_FLOORS` now records the row, and
 //!   `voyage-code-3` declares `SimilarityPosture::Surface` (#2993).
 //! - `DEFAULT_MIN_BOUNDARY_GAP`'s doc carries the observed drops (0.0140 and
-//!   0.0001, both under its 0.05), which is why `relevant_prefix` never cuts
+//!   0.0003, both under its 0.05), which is why `relevant_prefix` never cuts
 //!   on this corpus and why `search` still prints its RANK CEILING note
 //!   (#4385).
 //! - **No constant's value moved.** Two usable frontiers, pointing opposite
@@ -130,8 +165,8 @@
 //!
 //! What #3096 still wants is the other three backends
 //! (`text-embedding-3-small`, `text-embedding-3-large`, a local
-//! `nomic-embed-text`) and a `QUERIES` table long enough that two of its rows
-//! being recall misses does not halve the sample.
+//! `nomic-embed-text`) and a `QUERIES` table long enough that one loose label
+//! cannot move the reported result by a quarter of its value.
 
 use std::path::{Path, PathBuf};
 
@@ -153,9 +188,17 @@ const NO_BACKEND: &str = "no embedding backend is configured: set VOYAGE_API_KEY
 /// shortcut rather than a measurement change.
 const INDEX_ENV: &str = "STELLA_CALIBRATION_INDEX";
 
-/// How deep each ranking is measured. Deep enough that the irrelevant tail is
-/// represented rather than clipped at the point the answers stop — a
-/// distribution measured only where the answers are cannot show a separation.
+/// How deep each ranking is **printed and measured for a boundary**. Deep
+/// enough that the irrelevant tail is represented rather than clipped at the
+/// point the answers stop — a distribution measured only where the answers are
+/// cannot show a separation.
+///
+/// It is not the depth recall is judged at, and #4784 is what that distinction
+/// cost. Every ranking is now taken over the **whole** corpus and this window
+/// is a slice of it, so an answer below the window has a printed rank instead
+/// of an absence. Before that, `labelled_prefix == 0` meant "not in the top
+/// 40" and was reported as "no labelled answer was retrieved" — for answers
+/// that sat at ranks 62 and 77 of 28 269.
 const DEPTH: usize = 40;
 
 /// A labelled query: the question, and the chunks whose retrieval is a
@@ -199,9 +242,12 @@ const QUERIES: &[Labelled] = &[
     },
     Labelled {
         query: "why is the Rust toolchain pinned to an exact version instead of tracking stable",
-        answers: &[("AGENTS.md", None)],
+        answers: &[("AGENTS.md", Some("AGENTS.md › Essential commands"))],
         basis: "the rationale appears in exactly one place in the tree — AGENTS.md's `## \
-                Essential commands`",
+                Essential commands`. Pinned to that section rather than to the file (#4784): a \
+                whole-file label admitted every other section of AGENTS.md as an answer, and \
+                since `measure` reads the *deepest* labelled candidate, the loosest incidental \
+                section was what the separation and the reported rank both described",
     },
     Labelled {
         query: "how does a provider declare which features it supports and how is that checked",
@@ -243,8 +289,19 @@ struct Candidate {
 
 /// The numbers a constant is read off, for one query's ranking.
 struct Measured {
-    /// Lowest relevant score minus highest irrelevant score. Negative means
-    /// no floor separates them.
+    /// Where the **best** labelled answer sits in the whole ranking, 1-based,
+    /// and what it scored. This is the recall reading, and it is separate from
+    /// every other field here because the rest of them describe the top
+    /// [`DEPTH`] window while this one describes the corpus (#4784).
+    best_rank: Option<usize>,
+    best_score: Option<f32>,
+    /// Lowest relevant score minus highest irrelevant score, within the
+    /// window. Negative means no floor separates them.
+    ///
+    /// "Lowest relevant" is the *deepest* labelled chunk, not the best one —
+    /// see [`measure`]. That is the right reading for a floor and the wrong
+    /// one for recall, so it is reported next to [`Self::best_rank`] and never
+    /// instead of it.
     separation: Option<f32>,
     /// The drop across the last relevant candidate's boundary, as a multiple
     /// of the ranking's mean gap.
@@ -259,11 +316,29 @@ struct Measured {
 
 /// Read the calibration numbers off a labelled ranking.
 ///
+/// `window` is the top [`DEPTH`] candidates, which every threshold number is
+/// read off. `full` is the whole ranking, which only recall is read off —
+/// [`Measured::best_rank`] comes from there so that an answer below the window
+/// is located rather than declared missing.
+///
 /// The boundary is measured at the *deepest relevant* candidate rather than
 /// at the first irrelevant one: a ranking that interleaves them has no clean
 /// frontier, and taking the deepest is the conservative reading — it is the
 /// cut that would have to be made to keep every answer.
-fn measure(candidates: &[Candidate]) -> Measured {
+///
+/// **That conservatism is about the floor and about nothing else.** With a
+/// whole-file label — `(path, None)` — the deepest relevant candidate is
+/// whichever chunk of that file happened to rank worst, so reading it as "the
+/// labelled answer's rank" describes the loosest incidental match. On
+/// 2026-08-24 that is exactly what happened: the toolchain query's deepest
+/// AGENTS.md chunk (`Code style and conventions`, 36th) was reported as the
+/// answer while the section the label's own `basis` names
+/// (`Essential commands`) sat 12th (#4784).
+fn measure(candidates: &[Candidate], full: &[Candidate]) -> Measured {
+    let best = full.iter().position(|c| c.relevant);
+    let best_rank = best.map(|index| index + 1);
+    let best_score = best.map(|index| full[index].score);
+
     let scored: Vec<Scored> = candidates
         .iter()
         .map(|c| Scored {
@@ -308,6 +383,8 @@ fn measure(candidates: &[Candidate]) -> Measured {
     let boundary_ratio = boundary_gap.filter(|_| mean > 0.0).map(|gap| gap / mean);
 
     Measured {
+        best_rank,
+        best_score,
         separation,
         boundary_ratio,
         boundary_gap,
@@ -362,14 +439,16 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
          rather than silently comparable"
     );
 
+    // `Surface` is a *result of this harness*, not a reason it cannot run.
+    // `voyage-code-3` earned that posture from the 2026-08-24 run below, and
+    // panicking on it made the measurement unrepeatable for the one model it
+    // had measured — while the ranking, the recall and the boundary gaps this
+    // file also prints are exactly what a `Surface` backend still needs
+    // measured (#4784). There is no floor to read off; there is everything
+    // else.
     let shipped_floor = match embedder.similarity_posture() {
-        SimilarityPosture::Semantic { admission_floor } => admission_floor,
-        SimilarityPosture::Surface => {
-            panic!(
-                "this backend declares `SimilarityPosture::Surface`, which certifies no \
-                 threshold at all — there is no floor to calibrate"
-            )
-        }
+        SimilarityPosture::Semantic { admission_floor } => Some(admission_floor),
+        SimilarityPosture::Surface => None,
     };
 
     println!("\n=== relevance calibration =========================================");
@@ -383,7 +462,11 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
         )
     );
     println!(
-        "shipped     floor {shipped_floor}, gap ratio {DEFAULT_RELEVANCE_GAP_RATIO}, min gap {DEFAULT_MIN_BOUNDARY_GAP}"
+        "shipped     floor {}, gap ratio {DEFAULT_RELEVANCE_GAP_RATIO}, min gap {DEFAULT_MIN_BOUNDARY_GAP}",
+        shipped_floor.map_or_else(
+            || "none (SimilarityPosture::Surface — scores order, admit nothing)".to_string(),
+            |floor| floor.to_string(),
+        )
     );
     println!("depth       {DEPTH} candidates per query\n");
 
@@ -398,8 +481,13 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
             .vector;
         // No floor: the tail below the shipped one is exactly what a floor
         // has to be chosen against, so it must be in the measurement.
+        //
+        // Ranked over the whole corpus rather than to `DEPTH`, which costs no
+        // embeddings — the vectors are already local and the scan is the same
+        // one `rank_chunks` performs for any limit. What it buys is that an
+        // answer outside the printed window has a rank (#4784).
         let mut candidates: Vec<Candidate> = graph
-            .rank_chunks_by_vector(&fingerprint, &query_vector, f32::NEG_INFINITY, DEPTH)
+            .rank_chunks_by_vector(&fingerprint, &query_vector, f32::NEG_INFINITY, chunks)
             .expect("rank chunks")
             .into_iter()
             .map(|chunk| Candidate {
@@ -416,10 +504,12 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
+        let window = &candidates[..candidates.len().min(DEPTH)];
+
         println!("--- {}", labelled.query);
         println!("    answers: {:?}", labelled.answers);
         println!("    basis:   {}", labelled.basis);
-        for (index, candidate) in candidates.iter().enumerate() {
+        for (index, candidate) in window.iter().enumerate() {
             println!(
                 "    {:>3}. {:.6}  {}  {}",
                 index + 1,
@@ -433,7 +523,7 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
             );
         }
 
-        let measured = measure(&candidates);
+        let measured = measure(window, &candidates);
         println!(
             "    separation {}   boundary {} ({}x mean)   cut: labels {} / shipped {}",
             show(measured.separation),
@@ -442,10 +532,24 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
             measured.labelled_prefix,
             measured.shipped_prefix,
         );
+        match measured.best_rank {
+            Some(rank) => println!(
+                "    RECALL: best labelled answer at rank {rank} of {chunks} ({:.3}% of the \
+                 corpus), score {}",
+                (rank as f64 / chunks as f64) * 100.0,
+                show(measured.best_score),
+            ),
+            None => println!(
+                "    RECALL: no chunk matching the labels exists anywhere in {chunks} ranked \
+                 candidates. That is a genuine miss — the label names something this index does \
+                 not contain, so check the label before the embedder."
+            ),
+        }
         if measured.labelled_prefix == 0 {
             println!(
-                "    NOTE: no labelled answer appeared in {DEPTH} candidates. That is a recall \
-                 result, and it makes this query's separation unmeasurable rather than bad."
+                "    NOTE: no labelled answer reached the printed top {DEPTH}, so this query \
+                 contributes no separation or boundary. Read its RECALL line for what was \
+                 retrieved — an answer below the window is ranked, not missing."
             );
         }
         println!();
@@ -459,6 +563,29 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
         .filter_map(|(_, m)| m.separation)
         .fold(f32::INFINITY, f32::min);
     println!("=== what these numbers say ========================================");
+    // Recall first, because it is the question a threshold cannot answer and
+    // the one #4784 was opened about: a floor cannot rescue a ranking that does
+    // not contain the answer, so whether it contains the answer is prior to
+    // every other number here.
+    let worst_rank = summary.iter().filter_map(|(_, m)| m.best_rank).max();
+    let missing = summary
+        .iter()
+        .filter(|(_, m)| m.best_rank.is_none())
+        .count();
+    match (worst_rank, missing) {
+        (Some(rank), 0) => println!(
+            "recall: every labelled answer was retrieved; the deepest sat at rank {rank} of \
+             {chunks} ({:.3}% of the corpus)",
+            (rank as f64 / chunks as f64) * 100.0,
+        ),
+        (_, n) if n > 0 => println!(
+            "recall: {n} of {} queries retrieved NO labelled answer anywhere in the corpus. Fix \
+             that before reading a threshold — it is a labelling or corpus result, not one a \
+             floor can act on",
+            summary.len(),
+        ),
+        _ => {}
+    }
     if tightest.is_finite() {
         println!("tightest separation across the set: {tightest:+.4}");
         if tightest > 0.0 {
@@ -484,7 +611,10 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
     }
     for (query, measured) in &summary {
         println!(
-            "  cut {} vs labels {}  ratio {}  gap {}   {query}",
+            "  rank {}  cut {} vs labels {}  ratio {}  gap {}   {query}",
+            measured
+                .best_rank
+                .map_or_else(|| "none".to_string(), |rank| rank.to_string()),
             measured.shipped_prefix,
             measured.labelled_prefix,
             show(measured.boundary_ratio),

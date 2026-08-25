@@ -106,12 +106,13 @@ pub fn top_k(query: &[f32], candidates: &[Candidate<'_>], floor: f32, limit: usi
 /// in `crates/stella-tools/tests/relevance_calibration.rs`, run against
 /// `voyage-code-3` over this repository, put the boundary at the true
 /// relevant/irrelevant frontier at **+5.36x** the mean gap on the one query
-/// with a clean frontier and **+0.11x** on the one whose answer ranked 39th;
-/// the other two returned no labelled answer in 40 candidates, so they have no
-/// frontier to measure. Two usable points, pointing opposite ways, is not
-/// enough to move a threshold — the ratio stays where it is, and this
-/// paragraph records that it has now been looked at rather than that it has
-/// been settled (#3096).
+/// with a clean frontier and **+0.27x** on the one whose answer ranked 12th;
+/// the other two answers ranked 62nd and 77th of 28 269, below the 40-wide
+/// window the boundary is read at, so they have no frontier to measure. That
+/// is a window, not a miss — both were retrieved (#4784). Two usable points,
+/// pointing opposite ways, is not enough to move a threshold — the ratio stays
+/// where it is, and this paragraph records that it has now been looked at
+/// rather than that it has been settled (#3096).
 pub const DEFAULT_RELEVANCE_GAP_RATIO: f32 = 2.5;
 
 /// The smallest drop in cosine that may be called a boundary at all.
@@ -139,7 +140,7 @@ pub const DEFAULT_RELEVANCE_GAP_RATIO: f32 = 2.5;
 ///
 /// The 2026-08-24 run of `crates/stella-tools/tests/relevance_calibration.rs`
 /// against `voyage-code-3` over this repository observed absolute boundary
-/// drops of **0.0140** and **0.0001** — both far under this 0.05. So on this
+/// drops of **0.0140** and **0.0003** — both far under this 0.05. So on this
 /// corpus the boundary never fires, [`relevant_prefix`] returns the whole
 /// list, and every ranking runs to its end. That is visible from outside as
 /// 200+ hit answers and as `search`'s RANK CEILING note still appearing on
@@ -147,7 +148,7 @@ pub const DEFAULT_RELEVANCE_GAP_RATIO: f32 = 2.5;
 /// kept everything it was given" (#4385).
 ///
 /// The number stays at 0.05 anyway, because the alternative is worse. Two
-/// usable frontiers — one of them a query whose answer ranked 39th — is a
+/// usable frontiers — one of them a query whose answer ranked 12th — is a
 /// sample to report, not one to tune a threshold against, and
 /// [`DEFAULT_MIN_BOUNDARY_GAP`]'s whole reason for existing is the #3089
 /// ranking where a 0.015 gap looked decisive and was noise. Retuning it to
