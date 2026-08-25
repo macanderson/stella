@@ -166,7 +166,17 @@ use candidates::ended_abnormally;
 /// own model calls reach the store rather than a sink (#3802). Its own file for
 /// `candidates.rs`'s reason: this one sits under the 1500-line ratchet.
 mod child_stream;
-use child_stream::{PluginChildStream, RepublishingDriver};
+use child_stream::PluginChildStream;
+/// The plugin, the dispatcher and the manifest every door's child-turn witness
+/// is built from. Shared rather than copied per door — see the module doc.
+#[cfg(test)]
+pub(crate) mod child_turn_fixture;
+// The two halves the other doors reuse (#4730). `stella goal --pipeline
+// <variant>` and `stella fleet` each publish a stream of their own — their own
+// run-scoped execution row, not a `plugin` row — and drive it through the same
+// decorator this door does, so the "put the stream back after every round" rule
+// has one statement rather than three.
+pub(crate) use child_stream::{PointStream, RepublishingDriver};
 /// What this host will do for an installed plugin, and the two assemblies of
 /// it a door picks between. Its own file for `candidates.rs`'s reason: this one
 /// sits under the 1500-line ratchet.

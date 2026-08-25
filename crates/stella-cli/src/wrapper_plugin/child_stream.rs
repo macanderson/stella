@@ -71,6 +71,57 @@ use crate::config::Config;
 /// reading the `pipeline_variant` column.
 pub(crate) const PLUGIN_EXECUTION_KIND: &str = "plugin";
 
+/// The channel a wrapper's between-rounds points meter their children into,
+/// and what its door owes the registry when it puts that channel back.
+///
+/// A trait because the three doors that drive a wrapper disagree on exactly
+/// two things, and on nothing else: **which row** the events land in, and
+/// **which debts** publishing pays.
+///
+/// - `stella run` opens a run-scoped `plugin` row of its own
+///   ([`PluginChildStream`]), because each of its rounds opens an execution row
+///   of its own and a between-rounds child belongs to neither.
+/// - `stella goal --pipeline <variant>` and `stella fleet` already run every
+///   round under **one** run-scoped row and one channel that outlives the
+///   dispatch, so a between-rounds child there is exactly as run-scoped as the
+///   rounds beside it. Each keeps its own row and re-publishes its own stream
+///   (#4730). A second row would split one run's spend across two rows and put
+///   a phantom `plugin` execution beside every wrapped run in `stella stats`.
+/// - `stella fleet` additionally pays only the registry-events half, because
+///   its worker rebinds `cfg.workspace_root` to its own worktree while the
+///   shared journal stays rooted at the lead's — see `turn_files`'
+///   `ENGINE_DRIVERS`, which records that door as `Blocked` on #3233.
+///
+/// What every door agrees on is [`RepublishingDriver`]: a round's own turn
+/// claims the registry slot on the way in and clears it on the way out, so the
+/// stream has to go back after every round or only the first `before_turn`
+/// would ever find one.
+pub(crate) trait PointStream {
+    /// Publish the channel the wrapper's next point will meter into.
+    ///
+    /// `cfg` is the workspace the publication is made against; a door whose
+    /// per-call measurement is blocked ignores it and says so at its impl.
+    fn publish(&self, registry: &ToolRegistry, cfg: &Config);
+}
+
+/// The run door's own stream, published with both halves of `turn_files`' seam.
+///
+/// Through [`crate::agent::persistence::attach_run_streams`] rather than
+/// `attach_events` beside it, for the reason `turn_files::open_turn_streams`
+/// exists: the registry's own events are the loud debt and the per-call
+/// work-tree measurement is the silent one, and a stream opened without the
+/// second renders every mutating row diffless rather than failing.
+impl PointStream for PluginChildStream {
+    fn publish(&self, registry: &ToolRegistry, cfg: &Config) {
+        crate::agent::persistence::attach_run_streams(
+            registry,
+            cfg,
+            &self.tx,
+            self.execution.as_ref(),
+        );
+    }
+}
+
 /// One wrapped run's between-rounds event stream, with the execution row its
 /// events are journalled against.
 pub(crate) struct PluginChildStream {
@@ -132,23 +183,6 @@ impl PluginChildStream {
         stream
     }
 
-    /// Re-publish the stream on `registry` after a round has cleared the slot.
-    ///
-    /// Through [`crate::agent::persistence::attach_run_streams`] rather than
-    /// `attach_events` beside it, for the reason
-    /// `turn_files::open_turn_streams` exists: the registry's own events are
-    /// the loud debt and the per-call work-tree measurement is the silent one,
-    /// and a stream opened without the second renders every mutating row
-    /// diffless rather than failing.
-    pub(crate) fn publish(&self, registry: &ToolRegistry, cfg: &Config) {
-        crate::agent::persistence::attach_run_streams(
-            registry,
-            cfg,
-            &self.tx,
-            self.execution.as_ref(),
-        );
-    }
-
     /// Close the stream, finish its execution row, and return what the renderer
     /// drained.
     ///
@@ -187,12 +221,14 @@ impl PluginChildStream {
 /// property is about *any* driver the dispatch is given: `crate::agent::goal`'s
 /// round driver and `crate::fleet_cmd`'s attempt driver each own a turn that
 /// clears the slot the same way, and a decorator states the rule once where the
-/// dispatch is assembled instead of once per door.
+/// dispatch is assembled instead of once per door. All three doors now drive
+/// through it (#4730); what each of them publishes is its own
+/// [`PointStream`] impl.
 pub(crate) struct RepublishingDriver<'a> {
     inner: &'a mut dyn TurnDriver,
     registry: &'a ToolRegistry,
     cfg: &'a Config,
-    stream: &'a PluginChildStream,
+    stream: &'a dyn PointStream,
 }
 
 impl<'a> RepublishingDriver<'a> {
@@ -202,7 +238,7 @@ impl<'a> RepublishingDriver<'a> {
         inner: &'a mut dyn TurnDriver,
         registry: &'a ToolRegistry,
         cfg: &'a Config,
-        stream: &'a PluginChildStream,
+        stream: &'a dyn PointStream,
     ) -> Self {
         Self {
             inner,

@@ -80,8 +80,12 @@ use async_trait::async_trait;
 use stella_plugin::TurnOutcome as WrapperTurnOutcome;
 use stella_runtime::wrapper::{DrivenTurn, RoundInput, TurnDriver, TurnPrelude};
 
+/// This door's half of the child-turn metering witness (#4730).
+#[cfg(test)]
+mod tests;
+
 use super::*;
-use crate::wrapper_plugin::BoundWrapper;
+use crate::wrapper_plugin::{BoundWrapper, PointStream, RepublishingDriver};
 
 /// One goal round's worker turn, wrapped so an installed plugin's
 /// `before_turn`/`after_turn` see it.
@@ -208,6 +212,38 @@ impl TurnDriver for GoalRoundDriver<'_, '_> {
     }
 }
 
+/// This goal run's own channel, held open across the dispatch's points so a
+/// plugin's `child_turn` meters into it rather than into a sink (#4730).
+///
+/// **This door's row, not a `plugin` row of its own.**
+/// [`run_goal_wrapped_turn`] opens ONE execution for the whole goal run and
+/// every round journals against it, so a child dispatched between two of those
+/// rounds is exactly as run-scoped as the rounds are, and lands joinable to
+/// them through the row they already share. `stella run`'s between-rounds
+/// stream ([`crate::wrapper_plugin::PointStream`]) opens a row of its own for
+/// the opposite reason — there each round opens one, so a between-rounds child
+/// belongs to neither. Opening a second row here would split one goal run's
+/// spend across two rows and put a phantom `plugin` execution beside every
+/// wrapped goal in `stella stats`.
+struct GoalPointStream<'r> {
+    /// A sender over the run's raw channel — the one the renderer above this
+    /// loop drains and [`persistence::close_event_stream`] takes down below it.
+    tx: stella_core::EventSender,
+    /// The run's one execution row, which is what makes a child's `StepUsage`
+    /// joinable to the rounds it was bought in service of.
+    execution: Option<&'r (Arc<Store>, i64)>,
+}
+
+impl PointStream for GoalPointStream<'_> {
+    fn publish(&self, registry: &ToolRegistry, cfg: &Config) {
+        // The registry's own events and the per-call work-tree measurement
+        // together, exactly as `GoalRoundDriver::run_turn` publishes its
+        // per-turn sender: this door's workspace is the one the measurer reads,
+        // so there is nothing here to withhold.
+        persistence::attach_run_streams(registry, cfg, &self.tx, self.execution);
+    }
+}
+
 /// One goal loop wrapped by an installed plugin (#3695, goal half): each
 /// round's WORKER turn is dispatched through `bound`, exactly as `stella run
 /// --pipeline <variant>` dispatches its one turn
@@ -327,6 +363,24 @@ pub(crate) async fn run_goal_wrapped_turn(
         budget_limit.is_some(),
     );
 
+    // The stream a plugin's own model calls meter into (#4730). Published
+    // before the first round, because `before_turn` runs before any turn has
+    // claimed the registry's slot and `SessionSubAgents::dispatch` reads that
+    // slot at dispatch time — finding it empty is what sent every `StepUsage` a
+    // child emitted to `EventSender::from_fn(|_| Ok(()))`, so the money was
+    // bounded and reported on stderr while `stella stats`, `stella usage
+    // report` and the Observatory each under-reported a real spend.
+    //
+    // Taken down by `close_event_stream` at the bottom of this function, which
+    // is not optional: while the stream is published the registry holds a live
+    // sender on the renderer's channel, and a completed run whose renderer never
+    // sees that channel close hangs (#960).
+    let points = GoalPointStream {
+        tx: stella_core::EventSender::new(tx.clone()),
+        execution: execution.as_ref(),
+    };
+    points.publish(registry, cfg);
+
     let mut last_report = None;
     let outcome: GoalOutcome = 'rounds: {
         for round in 1..=goal_config.max_rounds {
@@ -357,7 +411,17 @@ pub(crate) async fn run_goal_wrapped_turn(
                 // tree and not an isolated worktree.
                 candidate: Some(candidate.grant.clone()),
             };
-            let dispatched = bound.dispatch.run(input, &mut driver).await;
+            let dispatched = {
+                // The round's own turn replaces the registry's slot with its
+                // per-turn sender on the way in, so the run's stream goes back
+                // after every round — without it only the very first
+                // `before_turn` would ever find one, and every later point
+                // would meter into a round's dead fact tap instead of the run's
+                // channel (#4730).
+                let mut points_driver =
+                    RepublishingDriver::new(&mut driver, registry, cfg, &points);
+                bound.dispatch.run(input, &mut points_driver).await
+            };
             // Read out before the settlement below, because the driver holds
             // this round's borrow of `budget` until its last use.
             let driven = driver.driven;
@@ -496,6 +560,12 @@ pub(crate) async fn run_goal_wrapped_turn(
     // run's single terminator.
     let (GoalOutcome::Met { cost_usd, .. } | GoalOutcome::Unmet { cost_usd, .. }) = &outcome;
     persistence::emit_run_complete_on_raw(&tx, &cfg.model_id, *cost_usd);
+    // The plugin-point stream goes first, and it is not optional: it holds a
+    // sender over this run's channel, so a `points` still alive when the
+    // renderer is awaited below keeps that channel open and hangs a goal run
+    // whose work is finished (#960). Detaching the registry alone does not
+    // reach it — the clone lives on this binding, not in the slot.
+    drop(points);
     // The canonical teardown (#960): each round republished the registry's
     // streams onto its own sender, so those clones are detached before the
     // renderer is awaited or a completed goal run hangs on a channel that
