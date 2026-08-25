@@ -387,7 +387,7 @@ fn highlight_matches(lines: &mut [Line<'static>], query: &str) {
                 }
                 rebuilt.push(Span::styled(
                     text[r.clone()].to_string(),
-                    // `theme::MATCH_BG` deliberately, not a `token::*`: the
+                    // `theme::MATCH_BG` is not a `token::*`: the
                     // v2 token table has no amber and `token::GOLD` is
                     // already the selection marker's color, so reusing it
                     // here would make a search match unreadable as distinct
