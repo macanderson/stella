@@ -164,7 +164,7 @@ allocation that lifts it — `stella_core::turn_slots` partitions
 `turn_instance` by residue, so a plane counting only its own calls can never
 land where a door's rounds will, without either counter knowing the other's.
 One limit stands on every door that attaches the plane: the `verifier` tier is
-deliberately bound to no seat, so a plugin naming it is answered `Unavailable`
+bound to no seat, so a plugin naming it is answered `Unavailable`
 rather than having its call attributed to a role the host never made
 (`ChildTurns::with_seat` is how a driver that wants it owns the claim).
 
@@ -184,7 +184,7 @@ stream across the points — a child there is exactly as run-scoped as the round
 beside it, and a second row would split one run's spend in `stella stats`. The
 shared half is `RepublishingDriver`, which puts a door's stream back after every
 round it drives; what each door publishes is its own `PointStream`. `stella
-fleet` publishes the registry's event slot alone and deliberately not the
+fleet` publishes the registry's event slot alone and not the
 per-call work-tree measurement beside it: its worker rebinds
 `cfg.workspace_root` to its own worktree while the shared journal stays rooted
 at the lead's, so a measurer there would read the wrong tree (#3233).
@@ -211,8 +211,8 @@ the plugin is told about rather than a silence.
 (`stella_plugin::driver`) and the gate (`src/wrapper/driver_call.rs`): it
 spawns a driver, opens a session, relays every capability ask through the
 grant a human consented to, and reads back the `next` that ends it —
-`tests/driver_socket.rs` drives a `/bin/sh` driver through all of it. Two
-things are deliberately still absent. Every capability answers `unsupported`,
+`tests/driver_socket.rs` drives a `/bin/sh` driver through all of it. Every
+capability still answers `unsupported`,
 because `NoDriverCapabilities` is the only implementation and B1-B6 (#3599)
 are what give the verbs something to do; and nothing in `stella-cli` opens a
 driver session yet, so `plugins/stella-selfdriving`'s `[driver]` grant remains
