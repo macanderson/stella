@@ -331,15 +331,22 @@ pub fn load(user_files: &[RuleFile], project_files: &[RuleFile], facts: &Facts<'
     }
 }
 
-/// Parse one trust tier's files, stamping every record with the tier it was read
-/// out of.
+/// Parse one trust tier's files, stamping every record with the tier and the
+/// contributing plugin it was read out of.
+///
+/// Both stamps are the same fact in two axes — *which directory did this come
+/// from* — and both are applied here rather than in the loader for the same
+/// reason: `load_context_file` is handed a label and a string, and neither can
+/// establish a tier or a package.
 fn parse_tier(files: &[RuleFile], trust: Trust, diagnostics: &mut Vec<Diagnostic>) -> Vec<Parsed> {
     let mut parsed: Vec<Parsed> = Vec::new();
     for file in files {
+        let contributed_by = file.contributed_by.clone();
         if file.path.ends_with(".toml") {
             match load_context_file(&file.path, &file.contents) {
                 Ok(records) => parsed.extend(records.into_iter().map(|mut record| {
                     record.trust = trust;
+                    record.contributed_by = contributed_by.clone();
                     (record, None)
                 })),
                 Err(err) => diagnostics.push(Diagnostic {
@@ -350,7 +357,11 @@ fn parse_tier(files: &[RuleFile], trust: Trust, diagnostics: &mut Vec<Diagnostic
             continue;
         }
         match rule_from_file_checked(&file.path, &file.contents) {
-            Ok(rule) => parsed.push((record_from_markdown(&rule, trust), Some(rule))),
+            Ok(rule) => {
+                let mut record = record_from_markdown(&rule, trust);
+                record.contributed_by = contributed_by;
+                parsed.push((record, Some(rule)));
+            }
             // A file with no statement is not a rule and never was; saying so for
             // every README in a rules directory would be noise. The nesting and
             // missing-id refusals are real defects and get reported.
@@ -556,6 +567,9 @@ fn record_from_markdown(rule: &Rule, trust: Trust) -> LoadedRecord {
         set_id: "markdown".to_string(),
         source: rule.source.clone(),
         trust,
+        // Stamped by `parse_tier`, which is the caller that knows the
+        // directory. A `Rule` carries no more than a source label.
+        contributed_by: None,
         handle: String::new(),
         findings: Vec::new(),
     }

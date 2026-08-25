@@ -54,7 +54,7 @@ pub(crate) fn workspace_skills_dir(workspace_root: &Path) -> String {
 /// Every `*.md` file physically present in `dir`, as the exact path strings
 /// [`stella_core::skills::decide_auto_creation`] builds and compares against.
 ///
-/// Deliberately a directory read rather than a view of the loaded skill list:
+/// A directory read rather than a view of the loaded skill list, because
 /// a file can sit on disk and still be absent from [`load_workspace_skills_with_authority`]
 /// — disabled from the SKILLS tab, excluded by authority, or dropped by a load
 /// diagnostic — and the no-clobber guard has to see it anyway (#737). Paths are
@@ -128,18 +128,28 @@ pub(crate) fn load_workspace_skills_with_authority(
 ///
 /// Roster order decides plugin-versus-plugin, matching the tool surface.
 ///
-/// # Provenance is stamped here, never read off the file
+/// # The stamp is this function's, not the file's
 ///
-/// Passing the package's directory as `workspace_skills_dir` is what makes
-/// [`skills::load_skills_with_diagnostics`] read it at all, and it leaves
-/// every skill in `found` claiming [`skills::SkillOrigin::Workspace`] — a
-/// third party's skill reporting as the user's own (#4734). This is the one
-/// place that knows which package a file came from, so it is the place that
-/// says so: [`skills::Skill::contributed_by`] names the plugin and the origin
-/// becomes `Installed`. Both are overwritten unconditionally, including over
-/// an `origin: auto` frontmatter marker — that marker buys a selection
-/// tie-break ([`skills::select_skills`]), and a package must not be able to
-/// claim the boost reserved for what this workspace learned for itself.
+/// Every skill loaded here is stamped with the contributing plugin's name
+/// (#3567), because this is the one place that knows which package's directory
+/// was scanned. A skill's `origin:` frontmatter marker *can* set
+/// [`skills::SkillOrigin`] — so a package could otherwise declare itself the
+/// user's own — and `contributed_by` is not reachable that way.
+/// It is the same unforgeable-stamp rule
+/// `stella_tools::custom::CustomTool::contributed_by` follows for the tool
+/// surface, and the reason a caller no longer has to parse
+/// [`skills::Skill::source_path`] to answer "which plugin gave me this?".
+///
+/// The origin is stamped for the same reason and in the same breath (#4734).
+/// Passing the package's directory as `workspace_skills_dir` is what makes the
+/// loader read it at all, and it leaves every skill here claiming
+/// [`skills::SkillOrigin::Workspace`] — a third party's skill reporting as the
+/// user's own, because that origin is derived from which *configured*
+/// directory a path sits under and a package's is neither. `Installed` is
+/// written over whatever the file said, including an `origin: auto` marker: it
+/// buys a selection tie-break ([`skills::select_skills`]), and a package must
+/// not be able to claim the boost reserved for what this workspace learned for
+/// itself.
 fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills) {
     for contributed in crate::plugin_cmd::package::contributed_skill_dirs(workspace_root) {
         let found = skills::load_skills_with_diagnostics(
@@ -161,7 +171,7 @@ fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills
     }
 }
 
-/// Compatibility seam for callers that deliberately request the historical
+/// Compatibility seam for callers that ask for the historical
 /// user-plus-workspace skill view. Authority-aware session assembly uses
 /// [`load_workspace_skills_with_authority`] directly.
 #[cfg(test)]

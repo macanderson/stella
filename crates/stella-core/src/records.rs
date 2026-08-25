@@ -86,6 +86,21 @@ pub struct LoadedRecord {
     /// leaves this at [`Trust::Project`]; [`registry::load`] stamps the user tier,
     /// which is the one place that knows the difference.
     pub trust: Trust,
+    /// The plugin whose package contributed this record, when one did (#3567).
+    /// `None` is the workspace's or the user's own.
+    ///
+    /// Stamped from the directory the file was read out of, exactly like
+    /// [`Self::trust`] beside it and for the same reason: a package cannot name
+    /// itself something it is not. [`load_context_file`] leaves this `None`;
+    /// [`registry::load`] stamps it from the [`crate::rules::RuleFile`] it read,
+    /// which is the one place that knows the directory.
+    ///
+    /// Why a field and not a path prefix: `stella context explain` has to be
+    /// able to say "this record came from the `vera` plugin", and reaching that
+    /// answer by matching [`Self::source`] against a package directory puts an
+    /// attribution on string matching — the shape this crate already rejects
+    /// for the trust tier one line down.
+    pub contributed_by: Option<String>,
     /// The `^handle` the model cites this record by. Empty until
     /// [`assign_handles`] has seen the whole loaded set — a handle is only
     /// unambiguous relative to its neighbours.
@@ -352,6 +367,10 @@ fn resolve(mut record: Record, defaults: &Defaults, set_id: &str, source: &str) 
         // The lower tier, until a caller that actually knows the directory says
         // otherwise. See [`Trust`] on why the default is the restrictive one.
         trust: Trust::default(),
+        // Nobody's, until that same caller says whose. This function is handed a
+        // source label and a string of TOML, and neither can establish which
+        // package shipped the file.
+        contributed_by: None,
         handle: String::new(),
         findings,
     }

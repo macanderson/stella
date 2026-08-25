@@ -156,6 +156,11 @@ impl RuleSource for FsRuleSource {
                     out.push(RuleFile {
                         path: path.display().to_string(),
                         contents,
+                        // This port is handed directory paths and nothing
+                        // else. Whoever chose those directories stamps the
+                        // contributing plugin — see
+                        // `crate::context_records::plugin_first`.
+                        contributed_by: None,
                     });
                 }
             }
@@ -190,6 +195,9 @@ fn store_rule_files(workspace_root: &Path) -> Vec<RuleFile> {
         .map(|row| RuleFile {
             path: format!("store://rules/{}.md", row.rule_id),
             contents: row.contents,
+            // A promoted rule in the store is the workspace's own by the time
+            // it gets there; no package ships one.
+            contributed_by: None,
         })
         .collect()
 }

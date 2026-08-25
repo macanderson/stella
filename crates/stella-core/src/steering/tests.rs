@@ -213,6 +213,7 @@ origin = "user"
 force = "info"
 "#
         .to_string(),
+        contributed_by: None,
     };
     crate::records::registry::load(&[], &[file], &crate::records::Facts::default())
 }

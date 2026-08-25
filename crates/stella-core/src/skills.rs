@@ -107,15 +107,23 @@ pub struct Skill {
     pub source_path: String,
     /// Provenance — see [`SkillOrigin`].
     pub origin: SkillOrigin,
-    /// The plugin package that shipped this skill, by its manifest `name`, or
-    /// `None` for one the user wrote or installed themselves (#3380).
+    /// The plugin whose package contributed this skill, when one did (#3567).
+    /// `None` is the workspace's or the user's own.
     ///
-    /// [`SkillOrigin`] cannot carry this: it answers *which of the user's
-    /// directories* a skill lives under, and a package's `skills/` directory
-    /// is none of them. A skill parser reading a file has no way to know, so
-    /// this is stamped by whoever walked the package directory
-    /// (`stella-cli`'s `memory::skill_files`), and it is what every surface
-    /// that has to say whose skill is steering a turn reads.
+    /// Set by the loader that **chose** the directory, never from the file's
+    /// own frontmatter — the same rule
+    /// `stella_tools::custom::CustomTool::contributed_by` follows, and for the
+    /// same reason: a package cannot name itself something it is not. Note that
+    /// [`SkillOrigin`] *can* be set from frontmatter
+    /// ([`skill_from_file_with_origin`]), which is exactly why this is a
+    /// separate field and not another value of it.
+    ///
+    /// A field beside [`Self::origin`] rather than inside it because the two
+    /// answer different questions. `SkillOrigin` is a tier — a `Copy` value the
+    /// selection tie-break and the demotion gate do arithmetic on, and
+    /// `skill_manager::origin_label` renders as a `&'static str`. "Which third
+    /// party shipped this" is not a tier and does not belong in that
+    /// vocabulary; it belongs where the tool surface already keeps it.
     pub contributed_by: Option<String>,
 }
 
@@ -299,10 +307,9 @@ pub fn skill_from_file_with_origin(
         body: fm.body.trim().to_string(),
         source_path: path.to_string(),
         origin,
-        // A file cannot name the package that shipped it — a frontmatter key
-        // would be a claim the file makes about itself, which is the shape of
-        // provenance this repository refuses everywhere else
-        // (`CustomTool::contributed_by`). The walker stamps it.
+        // Nobody's, until the loader that chose the directory says whose. This
+        // function is handed a path and a string of markdown, and the file's own
+        // frontmatter is exactly what must not be able to answer it.
         contributed_by: None,
     })
 }

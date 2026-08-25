@@ -68,7 +68,12 @@ pub const GOLD_BLUE_PCT: u32 = 35;
 /// hue -- sits inside it.
 pub const GOLD_LIFT_HUE_TOLERANCE_DEG: f64 = 3.0;
 
-/// The token a lift is anchored to.
+/// The name, in [`ALL`], of the token a lift is anchored to.
+///
+/// `crate::clamp::satisfies` resolves the anchor through this name rather
+/// than naming [`GOLD`] itself, so renaming the anchored token is one edit
+/// in the source JSON and a failing lookup everywhere else, never a silent
+/// mismatch.
 pub const GOLD_LIFT_ANCHOR: &str = "gold";
 
 /// The green floor warm paper must clear, as a percentage of red.
@@ -199,3 +204,12 @@ pub const ALL: &[(&str, Color, Clamp)] = &[
 // The predicates that read this table are in `crate::clamp`, and the
 // tests that walk it live beside them. See this file's module doc for why
 // the algorithm is not generated.
+
+/// The colour [`GOLD_LIFT_ANCHOR`] names, or `None` if [`ALL`] has no
+/// such entry.
+#[must_use]
+pub fn lift_anchor() -> Option<Color> {
+    ALL.iter()
+        .find(|(name, _, _)| *name == GOLD_LIFT_ANCHOR)
+        .map(|(_, color, _)| *color)
+}
