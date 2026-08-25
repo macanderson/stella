@@ -123,6 +123,25 @@ fn main() {
         // `wrapper_decided_flip.rs` calls `run(None, ..)` — so neutering
         // this branch fails `without_the_grant_or_the_snapshot_the_verdict_is_undecided`
         // there. Checked by ablation, not assumed.
+        // Echoes back the stage it was asked at, labelled — what
+        // `wrapper_composition.rs` used `sed` for. Composition tests read
+        // those labels to prove each member saw its own declared stages and
+        // no others, so echoing a fixed string here would let a composition
+        // that dispatched the wrong stage pass.
+        "echo-stage" => {
+            let request = read_request();
+            let label = arg(&args, 1);
+            if request.contains("\"point\":\"before_turn\"") {
+                let stage = string_field(&request, "stage").unwrap_or_default();
+                emit(&format!(
+                    "{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\
+                     \"context\":[{{\"label\":\"{label}\",\
+                     \"text\":\"{label} contributed at {stage}\"}}]}}}}"
+                ));
+            } else {
+                emit(&measurements(&[]));
+            }
+        }
         "flip-if-granted" => {
             let request = read_request();
             let flip = if request.contains("\"root\"") && request.contains("\"program\":\"sh\"") {
