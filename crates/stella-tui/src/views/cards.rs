@@ -86,8 +86,11 @@ pub(crate) fn card_frame(
         .title(Line::from(title));
     if !hints.is_empty() {
         block = block.title_bottom(
-            Line::from(Span::styled(format!(" {hints} "), Style::new().fg(token::DIM)))
-                .alignment(Alignment::Right),
+            Line::from(Span::styled(
+                format!(" {hints} "),
+                Style::new().fg(token::DIM),
+            ))
+            .alignment(Alignment::Right),
         );
     }
     let inner = block.inner(area);
@@ -204,26 +207,24 @@ mod tests {
 
     /// `card_frame` draws the same chrome family as every hand-rolled v2
     /// overlay: a rounded border, and hints on the bottom rule rather than
-    /// the top title. Both halves fail against the old `Plain` border with
-    /// top-title hints this pins the port against regressing to.
+    /// the top title. This pins the port against regressing to the old
+    /// `Plain` border with top-title hints.
     #[test]
     fn card_frame_draws_the_shared_v2_chrome() {
         let area = Rect::new(0, 0, 30, 6);
         let mut buf = Buffer::empty(area);
-        card_frame(
-            area,
-            "plan",
-            Vec::new(),
-            "esc close",
-            &mut buf,
-        );
+        card_frame(area, "plan", Vec::new(), "esc close", &mut buf);
         assert_eq!(
             buf.cell((0, 0)).map(|c| c.symbol()),
             Some("╭"),
             "top-left corner is rounded"
         );
         let bottom_row: String = (0..area.width)
-            .map(|x| buf.cell((x, area.height - 1)).map(|c| c.symbol()).unwrap_or(" "))
+            .map(|x| {
+                buf.cell((x, area.height - 1))
+                    .map(|c| c.symbol())
+                    .unwrap_or(" ")
+            })
             .collect();
         assert!(
             bottom_row.contains("esc close"),
