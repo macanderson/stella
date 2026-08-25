@@ -46,7 +46,8 @@
 //! The registry holds an `EventSender` while the stream is published, and an
 //! `EventSender` is a live sender on the renderer's channel — a registry that
 //! keeps one past the end of the run leaves the renderer's `recv()` loop
-//! pending and hangs a *completed* `stella run` (#960). [`Self::close`] is what
+//! pending and hangs a *completed* `stella run` (#960).
+//! [`PluginChildStream::close`] is what
 //! actually ends it, and it is the reason this type hands its parts out rather
 //! than letting a caller assemble them.
 

@@ -241,7 +241,7 @@ async fn a_plugins_child_turn_meters_into_a_stream_rather_than_a_sink() {
     };
     assert!(report.faults.is_empty(), "{:?}", report.faults);
 
-    let drained = stream.close(&registry, 0.02).await;
+    let drained = stream.close(&registry, "completed", 0.04).await;
     assert_eq!(
         found_a_stream
             .lock()

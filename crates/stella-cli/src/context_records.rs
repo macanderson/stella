@@ -357,7 +357,7 @@ pub(crate) fn rule_files(root: &Path, include_user: bool, include_project: bool)
 /// # One read per package, so the name survives the read
 ///
 /// This used to flatten every contributed directory into the `Vec<String>` a
-/// [`RuleSource`](stella_core::rules::RuleSource) takes, which threw the
+/// [`stella_core::rules::RuleSource`] takes, which threw the
 /// plugin's name away at the boundary: downstream saw a path, and "which plugin
 /// gave me this?" was answerable only by matching that path against a package
 /// directory (#3567). Reading each package's directory on its own keeps the
