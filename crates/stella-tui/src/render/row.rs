@@ -18,18 +18,18 @@ use ratatui::text::{Line, Span};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::theme;
-use crate::v2::transcript::RAIL_W;
+use crate::views::transcript::RAIL_W;
 
 /// The cells every row of a **tool-call block** opens with, so a call's head,
 /// its result, its body and its inline diff read as one unbroken vertical.
 ///
-/// The glyph is [`crate::v2::transcript::rail_span`]'s and not a second copy of
+/// The glyph is [`crate::views::transcript::rail_span`]'s and not a second copy of
 /// it (`render::tests::block_rail` is what says so): the head of every
-/// call renders through the v2 event renderer (SPEC 6.2) while the result below
+/// call renders through the SPEC 6.2 head renderer while the result below
 /// it still renders here, and the two must agree on the column or the rail dies
 /// one row into the block — which is exactly what it did.
 ///
-/// The *metal* is shared too, as of #4127. It was not: a v2 head wore its
+/// The *metal* is shared too, as of #4127. It was not: a projected head wore its
 /// event's colour while the result under it receded to a fixed muted tone, so
 /// the rail changed colour one row into the block it exists to hold together.
 /// SPEC 6.2 makes the rail a property of the **event**, and a call and its
@@ -40,7 +40,7 @@ use crate::v2::transcript::RAIL_W;
 pub(crate) const RAIL: &str = " │";
 
 // The rail is two cells wide on both sides of the seam, or every column below
-// is arithmetic about a different glyph than the one v2 draws.
+// is arithmetic about a different glyph than the one the head draws.
 const _: () = assert!(RAIL_W == 2);
 
 /// Coalesce adjacent same-styled characters into spans for compact output.
@@ -77,7 +77,7 @@ pub(crate) const LEAD: usize = 2;
 ///
 /// Not the tool-block column: everything inside a call block indents to
 /// [`Rail::indent`] instead, which is [`RAIL`] plus a glyph cell. The two were
-/// one constant until the v2 head renderer moved the block's content column to
+/// one constant until the SPEC 6.2 head renderer moved the block's content column to
 /// 5 and left this one behind at 4, so a result's body sat one cell left of the
 /// call it belonged to.
 pub(crate) const BODY: usize = 4;
@@ -85,7 +85,7 @@ pub(crate) const BODY: usize = 4;
 /// Content column of every row in a tool-call block: [`RAIL`], a space, one
 /// glyph cell, a space.
 ///
-/// The v2 head renderer arrives at the same number from the other side
+/// The SPEC 6.2 head renderer arrives at the same number from the other side
 /// (`rail_span` + `" {glyph} "`), which is what makes a call and its result one
 /// block; `render::tests::block_rail` is what holds the two to it.
 pub(crate) const BLOCK_BODY: usize = RAIL_W + 3;
@@ -94,7 +94,7 @@ pub(crate) const BLOCK_BODY: usize = RAIL_W + 3;
 /// the rail in `metal`, then blanks out to [`BLOCK_BODY`].
 ///
 /// Takes the metal rather than a [`Rail`] because the head of a block is drawn
-/// by the v2 event renderer, whose rail wears its **event kind's** colour —
+/// by the SPEC 6.2 head renderer, whose rail wears its **event kind's** colour —
 /// silver-dim for a read, gold for a mutation — and not one of `Rail`'s three
 /// tones. A body row that hard-coded the result's muted tone would leave a
 /// `read_file`'s block with a muted head above a gold body: one block, two
@@ -112,11 +112,11 @@ pub(crate) fn block_margin(metal: Style) -> Vec<Span<'static>> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Rail {
     /// A tool result, in the metal of the **call** above it
-    /// ([`crate::v2::transcript_source::head_metal`]) — one event, one rail.
+    /// ([`crate::views::transcript_source::head_metal`]) — one event, one rail.
     ///
     /// The colour is carried rather than chosen in [`Rail::style`] for the
     /// reason [`block_margin`] already gives about body rows: the head is drawn
-    /// by the v2 event renderer and wears its event kind's metal, and this
+    /// by the SPEC 6.2 head renderer and wears its event kind's metal, and this
     /// function cannot see which tool ran. It applied to the result's own glyph
     /// row too, and did not reach it — so an `edit_file` block drew a gold rail
     /// for exactly one row and a fixed muted one for every row beneath (#4127).
@@ -145,7 +145,7 @@ impl Rail {
     /// The literal prefix this rail prints before a row's first line.
     ///
     /// A block rail is `RAIL` + space + glyph + space, which puts the glyph in
-    /// the same cell as the v2 head's and the content in the same column: a
+    /// the same cell as the projected head's and the content in the same column: a
     /// call, its result and its body then share one left edge instead of three.
     pub(crate) fn prefix(self) -> &'static str {
         match self {
@@ -348,14 +348,14 @@ pub(crate) fn push_row(
 /// Emit one body row of a tool-call block — a preview line, an expanded
 /// (ctrl+o) body line, the `⋯ N lines` affordance.
 ///
-/// Rides `margin` — [`Rail::continuation`] for a row under a v1 rail,
-/// [`block_margin`] for one under the v2-drawn head — so the row sits at the
+/// Rides `margin` — [`Rail::continuation`] for a row under a long-form rail,
+/// [`block_margin`] for one under the projected head — so the row sits at the
 /// block's content column and the rail runs unbroken past it.
 ///
 /// The margin is passed rather than derived because the three things a block
 /// body can hang from wear three different metals: a success recedes to muted,
 /// a failure stands in danger, and a call's own arguments take the event kind's
-/// colour from the v2 head above them. Deriving any one of those here would
+/// colour from the projected head above them. Deriving any one of those here would
 /// give one of the three a rail that changes colour halfway down.
 pub(crate) fn push_detail_line(
     margin: &[Span<'static>],

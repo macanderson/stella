@@ -429,7 +429,7 @@ mod tests {
     // ── Detail-line + diagnosis-row integration tests ───────────────────────
     //
     // The hit rate and the volumes are asserted against the formatter directly.
-    // The diagnosis is asserted through `crate::v2::status_bar`, which owns
+    // The diagnosis is asserted through `crate::views::status_bar`, which owns
     // the row under the status bar, so the formatter and the row reservation
     // cannot drift apart.
 
@@ -498,7 +498,7 @@ mod tests {
         // the status bar, and only when an agent has earned one.
         let area = Rect::new(0, 0, 200, 1);
         let mut buf = Buffer::empty(area);
-        crate::v2::status_bar::render_diagnosis(&m, &ui, area, &mut buf);
+        crate::views::status_bar::render_diagnosis(&m, &ui, area, &mut buf);
         let text = buffer_text(&buf);
         assert!(
             text.contains("cache opt-in never engaged"),
@@ -509,7 +509,7 @@ mod tests {
         let mut healthy = WorkspaceModel::new();
         healthy.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
         let mut buf = Buffer::empty(area);
-        crate::v2::status_bar::render_diagnosis(&healthy, &ui, area, &mut buf);
+        crate::views::status_bar::render_diagnosis(&healthy, &ui, area, &mut buf);
         assert!(!buffer_text(&buf).contains("engaged"));
     }
 }

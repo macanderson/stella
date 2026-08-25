@@ -4,8 +4,8 @@
 //! One call, one rail: the head, the result and every body row under them
 //! share a left edge.
 //!
-//! The head of a tool call renders through the v2 event renderer (SPEC 6.2) and
-//! its result renders through v1. That seam had no test across it, and the two
+//! The head of a tool call renders through the SPEC 6.2 head renderer and
+//! its result renders long-form. That seam had no test across it, and the two
 //! sides disagreed about every column: the head opened `" │ ● run …"` with its
 //! text at column 5, the result opened `"  ⎿ "` with its glyph at column 2 and
 //! its body at column 4. On screen the rail appeared for exactly one row, the
@@ -14,19 +14,19 @@
 
 use super::*;
 use crate::render::row::{RAIL, Rail};
-use crate::v2::transcript::rail_span;
+use crate::views::transcript::rail_span;
 use unicode_width::UnicodeWidthStr;
 
 const WIDTH: usize = 100;
 
-/// The rail every row of a block must open with, taken from the **v2** head
+/// The rail every row of a block must open with, taken from the **head**
 /// renderer rather than from `row::RAIL`.
 ///
 /// Deliberately the far side of the seam: these are geometry tests, and reading
 /// the expectation off the constant the geometry is built from would make them
 /// tautologies that pass whatever column the block actually lands in. Read off
-/// v2 they state the real requirement — *the half of the block v1 draws must
-/// match the half v2 draws* — and they fail on the old code for that reason
+/// the head they state the real requirement — *the half of the block the body
+/// renderer draws must match the half the head draws* — and they fail on the old code for that reason
 /// rather than for want of a symbol.
 fn expected_rail() -> String {
     rail_span(ratatui::style::Color::Reset).content.to_string()
@@ -211,7 +211,7 @@ fn a_wrapped_body_row_keeps_the_rail() {
     }
 }
 
-/// The v1 rail glyph and the v2 one are the same two cells.
+/// The body renderer's rail glyph and the head's are the same two cells.
 ///
 /// Named separately from the geometry tests because it is the *seam* that
 /// matters: the two renderers each own one half of a block, and a block only
@@ -286,7 +286,7 @@ fn render(entry: &TranscriptEntry, expanded: bool) -> Vec<String> {
 /// The witness. `ctrl+o` on a **call** row reveals the argument object it was
 /// dispatched with.
 ///
-/// The regression it pins: the v2 head router intercepted every `ToolStart` and
+/// The regression it pins: the SPEC 6 head router intercepted every `ToolStart` and
 /// returned before `entry_body` ran, so the `expanded` flag was never consulted
 /// for a call and the row rendered identically either way. Nothing caught it —
 /// a dead *match arm* is invisible to `dead-code-allows` and to
@@ -306,7 +306,7 @@ fn ctrl_o_on_a_call_reveals_its_arguments() {
         expanded.iter().any(|r| r.contains("old_string alpha")),
         "ctrl+o revealed nothing — the argument object is unreachable:\n{expanded:#?}"
     );
-    // One field per row (`v2::fields`), not the compact one-liner it arrived
+    // One field per row (`views::fields`), not the compact one-liner it arrived
     // as — three fields, three rows under the head.
     assert!(
         expanded.len() >= collapsed.len() + 3,

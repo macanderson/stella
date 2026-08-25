@@ -2,7 +2,7 @@
 //! editor — their shared view state and their modal key handlers. Split out
 //! of `deck_ui.rs` (already the crate's largest file) so the file-size guard
 //! holds; the rendering lives in
-//! `crate::v2::{plan_card, models_card, budget_card}` over the shared
+//! `crate::views::{plan_card, models_card, budget_card}` over the shared
 //! chrome in `crate::views::cards`.
 //!
 //! `/plan` is one card where there used to be three. `/tasks` showed a board

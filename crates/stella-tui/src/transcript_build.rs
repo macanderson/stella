@@ -466,7 +466,7 @@ fn note_kind(event: &AgentEvent) -> NoteKind {
 
 /// The one-line object a call's header states — the path for a file tool, the
 /// command for a shell, and the arguments' own headline for anything else
-/// (`crate::v2::fields::headline`): never the raw argument blob, which is the
+/// (`crate::views::fields::headline`): never the raw argument blob, which is the
 /// wire's shape and not a sentence.
 fn header_object(tool: &ToolKind, input: &serde_json::Value) -> String {
     for key in ["path", "command", "query", "pattern"] {
@@ -475,7 +475,7 @@ fn header_object(tool: &ToolKind, input: &serde_json::Value) -> String {
         }
     }
     let _ = tool;
-    crate::v2::fields::headline(input)
+    crate::views::fields::headline(input)
 }
 
 #[cfg(test)]

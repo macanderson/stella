@@ -22,7 +22,7 @@
 //! the overlay drew keybindings against a spec that called it "help, full
 //! metric detail"), and the AGENTS half left with the executions dashboard
 //! #4342 removed: that tab is now the installed-agents list
-//! ([`crate::v2::installed`]), which draws no per-lane numbers and no per-row
+//! ([`crate::views::installed`]), which draws no per-lane numbers and no per-row
 //! model column. So `?` is the surviving surface for all five, `metric_rows`
 //! below is where they render, and
 //! `the_help_overlay_carries_the_metrics_spec_5_sends_behind_it`

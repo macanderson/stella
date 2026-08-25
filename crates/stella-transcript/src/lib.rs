@@ -30,7 +30,7 @@
 //!
 //! Two frames draw the same information. [`grid`] draws a `╭─ … ─╮` / `│` /
 //! `╰──╯` box with [`digest::Chip`] right-aligned; `stella-tui`'s
-//! `v2::transcript` draws `design/tui-v2/SPEC.md` §6 — a full-width labelled
+//! `views::transcript` draws `design/tui-v2/SPEC.md` §6 — a full-width labelled
 //! rule, a run of railed event rows, a closing rule and a one-line receipt.
 //!
 //! **SPEC 6 is the frame this crate will draw** (settled 2026-08-22, owner's
@@ -50,7 +50,7 @@
 //! role → `stella_tui_theme::token` RGB at its own encode step, where the hue
 //! clamp still guards every token the mapping can produce.
 //!
-//! One hole has to close first. `v2::transcript`'s file-event fields are all
+//! One hole has to close first. `views::transcript`'s file-event fields are all
 //! `Option` because a head row renders before anything is measured, and a
 //! `+0 -0` beside a path is a louder claim than "not measured yet". [`model`]
 //! has no notion of an unmeasured row (the hole #4181 describes from the
