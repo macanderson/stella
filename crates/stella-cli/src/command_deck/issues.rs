@@ -14,7 +14,6 @@ use stella_protocol::issue::{Issue, IssueDraft, IssueKey, IssueLabel, IssueProvi
 use stella_tui::{EntityField, EntityHit, Inbound, IssueAction, IssueRow, WorkspaceInput};
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::{agent_entity_hits, local_assignee_hits, merge_assignee_hits};
 use crate::config::Config;
 use crate::issue_provider::GhIssueProvider;
 
@@ -312,11 +311,318 @@ pub(super) fn handle_issues_input(
     }
 }
 
+// ── Entity-hit assemblers (the ISSUES-tab create form's type-ahead) ────────
+
+/// Installed agents whose name or description contains `query`
+/// (case-insensitive; an empty query matches all) as "Agent" hits.
+fn agent_entity_hits(entries: &[stella_tui::InstalledAgentEntry], query: &str) -> Vec<EntityHit> {
+    let needle = query.trim().to_lowercase();
+    entries
+        .iter()
+        .filter(|e| {
+            needle.is_empty()
+                || e.name.to_lowercase().contains(&needle)
+                || e.description.to_lowercase().contains(&needle)
+        })
+        .map(|e| EntityHit {
+            kind: "Agent".to_string(),
+            label: e.name.clone(),
+            description: e.description.clone(),
+            insert: e.name.clone(),
+        })
+        .collect()
+}
+
+/// Cap on the content preview a memory hit carries.
+const MEMORY_PREVIEW_CHARS: usize = 60;
+
+/// One memory node as a type-ahead hit: a flattened content preview plus a
+/// provenance suffix (`· observed …`) and, when the memory has been cited, its
+/// citation stats.
+///
+/// Observation time is the only time a node has. It used to be followed by a
+/// `· valid from …` clause reading `NodeRow::valid_from`, which no node writer
+/// ever fills — so the clause restated the observation timestamp on every row
+/// it has ever rendered (#3136).
+fn memory_hit(
+    display_name: &str,
+    content: &str,
+    recorded_at: &str,
+    citations: Option<(i64, f64)>,
+) -> EntityHit {
+    let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    let preview: String = if flat.chars().count() > MEMORY_PREVIEW_CHARS {
+        let head: String = flat.chars().take(MEMORY_PREVIEW_CHARS - 1).collect();
+        format!("{head}…")
+    } else {
+        flat
+    };
+    let mut description = format!("{preview} · observed {recorded_at}");
+    if let Some((count, avg)) = citations {
+        description.push_str(&format!(" · cited {count}× avg {avg:.1}"));
+    }
+    EntityHit {
+        kind: "Memory".to_string(),
+        label: display_name.to_string(),
+        description,
+        insert: display_name.to_string(),
+    }
+}
+
+/// One code-graph definition frame as a type-ahead hit: the kind is the
+/// frame kind capitalized ("Symbol"), the label its human title (`fn foo`),
+/// the description its file location (the citation's parenthetical, else
+/// the frame uri), and the inserted text the bare symbol name — the title's
+/// last token.
+fn symbol_hit(frame: &contextgraph_types::ContextFrame) -> EntityHit {
+    let label = frame.title.clone();
+    let insert = label
+        .split_whitespace()
+        .last()
+        .unwrap_or(label.as_str())
+        .to_string();
+    let description = frame
+        .citation_label
+        .as_deref()
+        .and_then(|citation| {
+            let start = citation.rfind('(')?;
+            let end = citation.rfind(')')?;
+            (start + 1 < end).then(|| citation[start + 1..end].to_string())
+        })
+        .or_else(|| frame.uri.clone())
+        .unwrap_or_default();
+    EntityHit {
+        kind: format!("{:?}", frame.kind),
+        label,
+        description,
+        insert,
+    }
+}
+
+/// The local (non-tracker) assignee sources, read synchronously (call on
+/// the blocking pool): memories from `.stella/private/context.db` — with citation
+/// stats joined from `store.db` by `public_id` — and code-graph symbol
+/// definitions when an index exists. Read-only politeness (the `stella
+/// stats` discipline): a missing database reads as "no hits", never a
+/// write. Failures of one source never kill another.
+fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<EntityHit> {
+    let needle = query.trim().to_lowercase();
+    let mut hits = Vec::new();
+
+    // Memories: substring over display_name/content; empty query lists all.
+    let context_db = stella_store::existing_workspace_private_sqlite_path(root, "context.db")
+        .ok()
+        .flatten();
+    if let Some(context_db) = context_db
+        && let Ok(context) = stella_context::ContextStore::open(&context_db)
+        && let Ok(nodes) = context.memory_nodes()
+    {
+        let stats: std::collections::HashMap<String, (i64, f64)> = {
+            if stella_store::existing_workspace_private_sqlite_path(root, "store.db")
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                stella_store::Store::open(root)
+                    .and_then(|store| store.memory_citation_stats())
+                    .map(|rows| {
+                        rows.into_iter()
+                            .map(|s| (s.memory_id, (s.citations, s.avg_score)))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Default::default()
+            }
+        };
+        hits.extend(
+            nodes
+                .iter()
+                .filter(|n| {
+                    needle.is_empty()
+                        || n.display_name.to_lowercase().contains(&needle)
+                        || n.content.to_lowercase().contains(&needle)
+                })
+                .take(20)
+                .map(|n| {
+                    memory_hit(
+                        &n.display_name,
+                        &n.content,
+                        &n.recorded_at,
+                        stats.get(&n.public_id).copied(),
+                    )
+                }),
+        );
+    }
+
+    // Code-graph definitions of the queried name, when an index exists
+    // (definitions are an exact-name lookup, so an empty query has nothing
+    // to resolve).
+    if !needle.is_empty()
+        && let Ok(Some(db)) = crate::search_cmd::codegraph::graph_db_path(root)
+        && let Ok(graph) = stella_graph::CodeGraph::open(root, &db)
+        && let Ok(frames) = graph.definitions(query.trim())
+    {
+        hits.extend(frames.iter().map(symbol_hit));
+    }
+    hits
+}
+
+/// Merge the assignee sources in priority order — installed agents first,
+/// then local memories/symbols — capped at `cap`.
+fn merge_assignee_hits(
+    agents: Vec<EntityHit>,
+    local: Vec<EntityHit>,
+    cap: usize,
+) -> Vec<EntityHit> {
+    let mut merged = agents;
+    merged.extend(local);
+    merged.truncate(cap);
+    merged
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
     use stella_protocol::issue::{IssueClass, IssueError};
+    use stella_tui::AgentScope;
+
+    #[test]
+    fn agent_entity_hits_filter_by_name_or_description_case_insensitively() {
+        let entries = vec![
+            stella_tui::InstalledAgentEntry {
+                name: "reviewer".into(),
+                description: "Reviews diffs".into(),
+                tools: None,
+                scope: AgentScope::Project,
+                source_path: String::new(),
+                version: 1,
+                versions: vec![],
+                content: String::new(),
+            },
+            stella_tui::InstalledAgentEntry {
+                name: "planner".into(),
+                description: "Plans work".into(),
+                tools: None,
+                scope: AgentScope::User,
+                source_path: String::new(),
+                version: 1,
+                versions: vec![],
+                content: String::new(),
+            },
+        ];
+        let hits = agent_entity_hits(&entries, "REVIEW");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].kind, "Agent");
+        assert_eq!(hits[0].insert, "reviewer");
+        // Description text matches too; the empty query matches all.
+        assert_eq!(agent_entity_hits(&entries, "plans")[0].label, "planner");
+        assert_eq!(agent_entity_hits(&entries, "").len(), 2);
+    }
+
+    #[test]
+    fn memory_hits_carry_the_preview_provenance_and_citation_suffixes() {
+        let hit = memory_hit(
+            "naming-convention",
+            "Prefer kebab-case for  skill names\nand slugs.",
+            "2026-07-01T00:00:00Z",
+            Some((12, 0.9)),
+        );
+        assert_eq!(hit.kind, "Memory");
+        assert_eq!(hit.insert, "naming-convention");
+        assert_eq!(
+            hit.description,
+            "Prefer kebab-case for skill names and slugs. · observed \
+             2026-07-01T00:00:00Z · cited 12× avg 0.9"
+        );
+        // Observation time is the only time a node carries: no `valid from`
+        // clause restating it (#3136).
+        assert!(!hit.description.contains("valid from"));
+
+        // No citations → no suffix; a long content truncates char-safe with an
+        // ellipsis.
+        let long = "x".repeat(200);
+        let hit = memory_hit("m", &long, "2026-07-01", None);
+        assert!(
+            hit.description
+                .starts_with(&"x".repeat(MEMORY_PREVIEW_CHARS - 1))
+        );
+        assert!(hit.description.ends_with("… · observed 2026-07-01"));
+        assert!(!hit.description.contains("cited"));
+    }
+
+    #[test]
+    fn symbol_hits_take_the_bare_name_and_the_file_location() {
+        let frame = contextgraph_types::ContextFrame {
+            id: "code-graph:sym:src/lib.rs:12:issue_row".into(),
+            kind: contextgraph_types::FrameKind::Symbol,
+            title: "fn issue_row".into(),
+            content: Some("fn issue_row(...) { ... }".into()),
+            uri: Some("file:///repo/src/lib.rs".into()),
+            score: 0.9,
+            token_cost: 10,
+            content_digest: None,
+            representation: contextgraph_types::Representation::Full,
+            content_fidelity: None,
+            canonical_content_hash: None,
+            content_ref: None,
+            transform: None,
+            minimum_content_fidelity: None,
+            inline_content_requirement: None,
+            canonical_token_cost: None,
+            tokenizer_ref: None,
+
+            valid_from: None,
+            valid_to: None,
+            recorded_at: None,
+            provenance: vec![],
+            citation_label: Some("fn issue_row (src/lib.rs:12)".into()),
+            embedding: None,
+            relations: vec![],
+        };
+        let hit = symbol_hit(&frame);
+        assert_eq!(hit.kind, "Symbol");
+        assert_eq!(hit.label, "fn issue_row");
+        assert_eq!(hit.insert, "issue_row", "the bare name is what inserts");
+        assert_eq!(hit.description, "src/lib.rs:12");
+
+        // Without a citation label the frame's uri stands in.
+        let mut bare = frame;
+        bare.citation_label = None;
+        assert_eq!(symbol_hit(&bare).description, "file:///repo/src/lib.rs");
+    }
+
+    #[test]
+    fn merge_assignee_hits_orders_agents_then_local_and_caps() {
+        let person = |l: &str| EntityHit {
+            kind: "Person".into(),
+            label: l.into(),
+            description: String::new(),
+            insert: l.into(),
+        };
+        let agents: Vec<EntityHit> = (0..2).map(|i| person(&format!("a{i}"))).collect();
+        let local: Vec<EntityHit> = (0..3).map(|i| person(&format!("m{i}"))).collect();
+        let merged = merge_assignee_hits(agents, local, 4);
+        let labels: Vec<&str> = merged.iter().map(|h| h.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec!["a0", "a1", "m0", "m1"],
+            "agents first, then local — capped"
+        );
+    }
+
+    #[test]
+    fn local_assignee_hits_read_as_empty_on_a_bare_workspace() {
+        // Read-only politeness: no `.stella/` databases → no hits and, above
+        // all, no directories/files created as a side effect.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(local_assignee_hits(dir.path(), "anything").is_empty());
+        assert!(
+            !dir.path().join(".stella").exists(),
+            "a lookup must never create the workspace store"
+        );
+    }
 
     /// What the fake was asked for, so a test can assert on the exact call the
     /// port received rather than on a value the caller round-tripped.

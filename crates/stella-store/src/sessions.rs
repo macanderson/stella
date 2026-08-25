@@ -285,6 +285,18 @@ impl SessionRegistry {
         self.dir.join(Self::safe_id(id))
     }
 
+    /// This session's whistle control socket, inside its sidecar directory.
+    ///
+    /// A pure path — nothing here binds or connects it. The owning process
+    /// (`stella whistle`'s listener half) creates and removes the socket
+    /// file itself; a caller (`stella whistle`'s sender half) uses this same
+    /// path to find it. Colocated with the sidecar rather than a sibling
+    /// registry so the socket is deleted for free wherever the sidecar
+    /// already is ([`SessionRegistry::remove`]).
+    pub fn whistle_socket_path(&self, id: &str) -> PathBuf {
+        self.sidecar_dir(id).join("whistle.sock")
+    }
+
     /// Create `id`'s sidecar directory owner-only, and answer its path.
     ///
     /// Every other writer of a sidecar creates it on its first write. A

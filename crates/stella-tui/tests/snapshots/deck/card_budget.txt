@@ -32,11 +32,11 @@
 
 ☰  plan  5/7  ·  Workflows canvas
 
-⏸ plan  Refactor the automations store into a shared┌ budget  session spend cap ⏎ set · ⌫ edit · esc close ┐
+⏸ plan  Refactor the automations store into a shared╭ budget  session spend cap ───────────────────────────╮
                                                     │run     $0.05 of $7.50 ▰▱▱▱▱▱▱▱▱                      │
                                                     │new cap $                                             │
                                                     │the cap applies when the driver's budget stream folds │
-                                                    └──────────────────────────────────────────────────────┘
+                                                    ╰────────────────────────── ⏎ set · ⌫ edit · esc close ╯
 
 
 

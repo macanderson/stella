@@ -265,6 +265,28 @@ pub(crate) enum Command {
         cmd: DaemonCmd,
     },
 
+    /// Steer every live non-interactive session on this machine at once
+    ///
+    /// Broadcasts a message onto the steering queue of every currently-running
+    /// `stella run`/`stella goal` session (foreground or daemon-supervised
+    /// alike): "stop running the full workspace build, let CI handle the gate"
+    /// reaches every window without switching to any of them. Delivery lands
+    /// at each session's next safe step boundary — between model calls, never
+    /// mid-tool — the same seam `stella-serve`'s `POST /v1/turns/{id}/steer`
+    /// uses; the turn is never paused, it absorbs the guidance and keeps
+    /// going. Narrow to specific sessions with `--session <id>` (repeatable,
+    /// see `stella resume --list` for ids); omit it to reach every session
+    /// `stella resume --list` shows as live. Interactive mode and
+    /// `stella-serve`-hosted turns are not reachable yet.
+    Whistle {
+        /// The steering guidance to inject
+        message: String,
+
+        /// Target only this session id (repeatable). Default: every live session.
+        #[arg(long = "session")]
+        session: Vec<String>,
+    },
+
     /// Analyze this workspace: domain taxonomy and code graph
     ///
     /// Analyze this workspace: infer its domain taxonomy

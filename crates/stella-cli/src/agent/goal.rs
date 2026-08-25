@@ -271,6 +271,19 @@ pub(crate) async fn run_raw_one_shot(
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
     let mut presence = SessionPresence::announce(cfg, prompt);
+    // Agent whistle: this door runs in non-interactive mode (no deck, no
+    // `stella-serve`), so until now it had nowhere to steer from — `stella
+    // whistle` reaches it over this session's own control socket, into the
+    // same `TurnControls` seam `wrapper_plugin::RawTurnDriver` already
+    // carried for exactly this (its own doc comment named `run_raw_one_shot`
+    // as the non-interactive door that would one day publish something
+    // other than `none()` here).
+    // `_whistle_listener` is held for the run's duration — its `Drop` is
+    // what unbinds and removes the socket file.
+    let whistle_tap: std::sync::Arc<crate::whistle::tap::HeadlessSteerTap> =
+        std::sync::Arc::default();
+    let _whistle_listener = crate::whistle::spawn_for_session(presence.id(), whistle_tap.clone());
+    let controls = stella_core::ports::TurnControls::none().with_steering(whistle_tap);
     // This prompt's friction (#3946), read by the reflection further down.
     //
     // A `Vec` because the wrapped arm is genuinely several turns: an
@@ -325,13 +338,11 @@ pub(crate) async fn run_raw_one_shot(
                     recall,
                     memory: memory.as_mut(),
                     watch: &candidate.watch,
-                    // Real ones the day a controlled surface drives a wrapped
-                    // turn (#3554). This door is headless — it publishes no
-                    // pause gate and installs no steering tap, the same reason
-                    // its goal rounds pass `steering: None` — so there is
-                    // nothing here to honour, and `none()` is the honest
-                    // answer rather than a placeholder.
-                    controls: stella_core::ports::TurnControls::none(),
+                    // Agent whistle (see above): this non-interactive door now
+                    // publishes a real steering tap, still no pause gate —
+                    // whistle only ever steers, never pauses (see
+                    // `crate::whistle`'s module docs on scope).
+                    controls: controls.clone(),
                     results: Vec::new(),
                     friction: &mut friction,
                 },
@@ -357,6 +368,7 @@ pub(crate) async fn run_raw_one_shot(
                 Some(presence.id()),
                 recall,
                 memory.as_mut(),
+                controls.clone(),
                 Some(&mut turn),
             )
             .await

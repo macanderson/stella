@@ -26,7 +26,7 @@
  │ ⎿                                                                                                                                 +4 −1 · 18ms
  │     10 -  const items = []
  │     10 +  const items = useAutomations()
- │     11 +  const [q, setQ] = useState(""┌ question ───────────────────────────────────── ⏎ save note · esc discard ┐
+ │     11 +  const [q, setQ] = useState(""╭ question ────────────────────────────────────────────────────────────────╮
  │     12 +  const filtered = filter(items│from the `research-child` sub-agent                                       │
  │     13 +  const onNew = () => open()   │                                                                          │
                                           │Which auth should the new endpoint use?                                   │
@@ -36,7 +36,7 @@
                                           │  [ ] Type your own answer                                                │
                                           │                                                                          │
                                           │  note: only for the admin routes▏                                        │
-                                          └──────────────────────────────────────────────────────────────────────────┘
+                                          ╰─────────────────────────────────────────────── ⏎ save note · esc discard ╯
 
 
 

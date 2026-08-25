@@ -48,7 +48,7 @@ use super::Cli;
 const GROUPS: &[(&str, &[&str])] = &[
     (
         "Run the agent",
-        &["run", "chat", "goal", "resume", "daemon", "init"],
+        &["run", "chat", "goal", "resume", "daemon", "whistle", "init"],
     ),
     (
         "Run many at once",
