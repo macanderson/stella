@@ -100,7 +100,7 @@ fn rendered_skill_bytes_are_pinned() {
         score: 20.0,
     };
     assert_eq!(
-        render_skill_markdown(&candidate),
+        render_skill_markdown(&candidate, None),
         "---\n\
          name: prefer-updating-witness-test-assertions-e2010443\n\
          description: Learned from 2 observations.\n\

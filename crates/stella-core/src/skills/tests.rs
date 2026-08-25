@@ -741,7 +741,7 @@ fn rendered_markdown_round_trips_through_the_parser() {
     }];
     let candidates = mine_skill_candidates(obs, &[], &SkillMineConfig::default());
     let candidate = &candidates[0];
-    let markdown = render_skill_markdown(candidate);
+    let markdown = render_skill_markdown(candidate, None);
     let parsed = skill_from_file(&format!("{}.md", candidate.name), &markdown).unwrap();
     assert_eq!(parsed.name, candidate.name);
     assert_eq!(parsed.description, candidate.description);
@@ -750,6 +750,39 @@ fn rendered_markdown_round_trips_through_the_parser() {
     assert_eq!(parsed.origin, SkillOrigin::AutoCreated);
     assert!(parsed.body.contains("prefer tables"));
     assert!(parsed.body.contains("## Evidence"));
+}
+
+/// **The hop out of the ledger, on the skills side** (#2782): a skill written
+/// from a graded proposal says what kind of evidence promoted it.
+///
+/// The `## Evidence` section lists *what* was observed. The frontmatter line
+/// this pins says what that observation was worth — the difference between a
+/// skill mined from failing builds and one mined from the model's opinion of
+/// its own run, which the evidence list alone cannot show.
+#[test]
+fn a_skill_written_from_a_graded_proposal_records_the_grade() {
+    let candidate = a_candidate();
+
+    let graded = render_skill_markdown(
+        &candidate,
+        Some(stella_protocol::provenance::ProvenanceGrade::EnvironmentObservation),
+    );
+    assert!(
+        graded.contains("evidence_grade: environment_observation"),
+        "the skill dropped the grade it was promoted on:\n{graded}"
+    );
+
+    let ungraded = render_skill_markdown(&candidate, None);
+    assert!(
+        !ungraded.contains("evidence_grade"),
+        "a skill with no proposal behind it must claim no grade:\n{ungraded}"
+    );
+
+    // The added frontmatter key must not disturb the loader.
+    let parsed = skill_from_file(&format!("{}.md", candidate.name), &graded)
+        .expect("a graded skill still parses");
+    assert_eq!(parsed.name, candidate.name);
+    assert_eq!(parsed.origin, SkillOrigin::AutoCreated);
 }
 
 // ---- auto-creation decision ----
@@ -867,7 +900,7 @@ proptest::proptest! {
             evidence: vec![],
             score: 10.0,
         };
-        let markdown = render_skill_markdown(&candidate);
+        let markdown = render_skill_markdown(&candidate, None);
         let parsed = skill_from_file(&format!("{name}.md"), &markdown).unwrap();
         proptest::prop_assert_eq!(&parsed.name, &name);
         proptest::prop_assert_eq!(&parsed.description, description.trim());

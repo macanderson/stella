@@ -42,6 +42,7 @@ use stella_core::context_record::{
     RecordProposalStatus, confidence_from_score,
 };
 use stella_core::rules::{self, EvidenceSource, MineConfig, RawObservation, Rule, RuleCandidate};
+use stella_protocol::provenance::ProvenanceGrade;
 
 use super::proposals::record_proposal;
 
@@ -194,9 +195,16 @@ pub(crate) fn workspace_rules_dir(workspace_root: &Path) -> std::path::PathBuf {
 /// describes on the skills side — and the write itself is `create_new` inside
 /// [`crate::context_records::write_record`], because the exists checks here
 /// are advisory and racy.
+/// Publish a mined rule as a context record.
+///
+/// `evidence_grade` is the grade of the proposal being published (#2782). It
+/// is a parameter rather than something this function derives, because the
+/// evidence is two hops back: only the caller holding the proposal knows it,
+/// and a rule file that does not carry it cannot recover it later.
 pub(crate) fn write_rule(
     workspace_root: &Path,
     candidate: &RuleCandidate,
+    evidence_grade: Option<ProvenanceGrade>,
 ) -> Result<Option<std::path::PathBuf>, String> {
     let candidate = without_inferred_guard(candidate.clone());
     let set_id = crate::ingest_cmd::derive_set_id(workspace_root);
@@ -206,6 +214,7 @@ pub(crate) fn write_rule(
         &candidate.text,
         "observation",
         &format!("proposal:rule:{}", candidate.id),
+        evidence_grade,
     )?;
     if workspace_rules_dir(workspace_root)
         .join(format!("{}.md", candidate.id))

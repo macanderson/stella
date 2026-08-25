@@ -441,7 +441,9 @@ fn materialize_directive(
         guard: None,
         score: 0,
     };
-    match crate::memory::rules_mining::write_rule(workspace_root, &candidate) {
+    // The grade the proposal was folded to, carried onto the published record
+    // so the rule on disk still says what it stands on (#2782).
+    match crate::memory::rules_mining::write_rule(workspace_root, &candidate, proposal.provenance) {
         Ok(Some(path)) => println!("    {} wrote {}", "·".dimmed(), path.display()),
         Ok(None) => println!(
             "    {} a rule file for `{}` already exists — left untouched",
