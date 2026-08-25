@@ -528,6 +528,11 @@ pub struct TurnTally {
     pub retries: u32,
     pub tool_calls: u32,
     pub tools_failed: u32,
+    /// Of `tool_calls`, how many a delegate made rather than the lead
+    /// (`AgentEvent::ToolStart.sub_agent_id`, #4699) — the count that lets an
+    /// operator separate a turn's own tool traffic from its fan-out's.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub tool_calls_by_sub_agent: u32,
     /// Speculative work the engine discarded — `stella-core` already names it,
     /// so this server counts it rather than re-deriving it.
     pub speculation_discarded: u32,
@@ -581,15 +586,6 @@ pub struct TurnTally {
     /// this at zero is a hang.
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub parked_deadline_secs: u64,
-
-    /// Of [`Self::tool_calls`], how many a delegate child made rather than
-    /// the lead (`AgentEvent::ToolStart.sub_agent_id`, #4699) — the lead's
-    /// own share is `tool_calls - delegate_tool_calls`. This tally is a flat
-    /// operator wedge/health signal by design (no per-agent breakdown); this
-    /// is the minimal split that lets a host tell "the lead is stalled" from
-    /// "a delegate is stalled" without one.
-    #[serde(default, skip_serializing_if = "is_zero_u32")]
-    pub delegate_tool_calls: u32,
 }
 
 impl TurnTally {
@@ -953,6 +949,7 @@ mod tests {
                     retries: 1,
                     tool_calls: 3,
                     tools_failed: 1,
+                    tool_calls_by_sub_agent: 1,
                     speculation_discarded: 1,
                     loop_detections: 0,
                     frames_dropped: 0,
@@ -963,7 +960,6 @@ mod tests {
                     parked_spans_woken: 1,
                     parked_polls: 37,
                     parked_deadline_secs: 2400,
-                    delegate_tool_calls: 1,
                 },
             },
         ];

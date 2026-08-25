@@ -73,6 +73,9 @@ pub struct OwnChange {
     pub removed: u32,
     /// The unified diff, in the shape described in the module docs.
     pub diff: String,
+    /// Whether `diff` is the minimal edit script, or `stella_diff` tripped
+    /// `LCS_AREA_CAP` and fell back to replace-everything.
+    pub minimal: bool,
 }
 
 /// Whether the call created the path, changed one that was there, or removed
@@ -105,6 +108,7 @@ pub fn own_change(path: &str, before: Option<&str>, after: &str) -> OwnChange {
         // more than four billion lines is not a file this tool writes.
         added: u32::try_from(diff.added).unwrap_or(u32::MAX),
         removed: u32::try_from(diff.removed).unwrap_or(u32::MAX),
+        minimal: diff.minimal,
         diff: patch_text(path, kind, &diff),
     }
 }
@@ -125,6 +129,7 @@ pub fn own_delete(path: &str, before: &str) -> OwnChange {
         kind,
         added: u32::try_from(diff.added).unwrap_or(u32::MAX),
         removed: u32::try_from(diff.removed).unwrap_or(u32::MAX),
+        minimal: diff.minimal,
         diff: patch_text(path, kind, &diff),
     }
 }
@@ -205,6 +210,7 @@ pub fn file_change(change: OwnChange) -> stella_protocol::AgentEvent {
         added: change.added,
         removed: change.removed,
         diff: Some(change.diff),
+        minimal: change.minimal,
     }
 }
 
@@ -254,6 +260,7 @@ pub fn from_output(output: &ToolOutput) -> Vec<OwnChange> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use stella_protocol::AgentEvent;
 
     /// A created file is all-green, counted, and headed `/dev/null` on the old
     /// side — the git spelling every consumer keys "new file" on.
@@ -290,6 +297,28 @@ mod tests {
                 .starts_with("--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,7 +1,7 @@\n")
         );
         assert!(change.diff.contains("\n-d\n+D\n"), "{}", change.diff);
+        assert!(change.minimal, "seven lines never trips the area cap");
+    }
+
+    /// **The witness for #4696.** An edit large enough to trip
+    /// `stella_diff::LCS_AREA_CAP` reports `minimal: false` on the call's own
+    /// reading — the flag [`file_change`] must carry onto the wire event so a
+    /// transcript surface can tell a real rewrite from a degraded diff.
+    #[test]
+    fn a_blunt_fallback_edit_reports_itself_as_non_minimal() {
+        // 2001 * 2001 = 4,004,001, just over LCS_AREA_CAP (4,000,000) —
+        // mirrors `stella_diff`'s own witness for the fallback threshold.
+        let before: String = (0..2001).map(|i| format!("old-{i}\n")).collect();
+        let after: String = (0..2001).map(|i| format!("new-{i}\n")).collect();
+
+        let change = own_change("big.rs", Some(&before), &after);
+        assert!(!change.minimal, "the area cap must have tripped");
+
+        let event = file_change(change);
+        let AgentEvent::FileChange { minimal, .. } = event else {
+            panic!("file_change must produce a FileChange event");
+        };
+        assert!(!minimal, "the wire event must carry the same reading");
     }
 
     /// A deletion is all-red and headed `/dev/null` on the NEW side — the

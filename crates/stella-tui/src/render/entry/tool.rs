@@ -190,6 +190,7 @@ pub(super) fn result_body(
         duration_ms,
         speculated,
         diff: diff_ref,
+        sub_agent_id,
         ..
     } = entry
     else {
@@ -300,6 +301,12 @@ pub(super) fn result_body(
     // hint row below, one of them without the affordance. Now the count
     // is stated once, in the row that also says which key reveals it.
     metric.push(Span::styled(dur, dim));
+    // Which delegate's call this was — `None` is the lead's own, drawn with
+    // no tag, matching the head row above it (#4699).
+    if let Some(agent) = sub_agent_id {
+        metric.push(Span::styled(" · ".to_string(), dim));
+        metric.push(Span::styled(format!("↳ {agent}"), dim));
+    }
 
     if expanded {
         push_row(

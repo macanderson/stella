@@ -8,8 +8,30 @@ use std::path::Path;
 
 use stella_context::{ContextDelta, ContextStore, MemoryInput};
 use stella_core::context_record::{
-    ProposalRecord, ProposalScore, RecordProposalKind, RecordProposalStatus, confidence_from_score,
+    EvidencePool, ObservationRecord, ObservationSource, ProposalRecord, ProposalScore,
+    RecordProposalKind, RecordProposalStatus, confidence_from_score,
 };
+
+/// Three reflection lessons across three tasks — the evidence a mined
+/// knowledge proposal actually stands on, so the fixture grades the way the
+/// production path grades (#2782).
+fn supporting_observations() -> Vec<ObservationRecord> {
+    ["task-a", "task-b", "task-c"]
+        .into_iter()
+        .map(|task| {
+            ObservationRecord::new(
+                ObservationSource::ReflectionLesson,
+                format!("reflection:{task}"),
+                task,
+                "Prefer rg over grep.",
+                vec!["tooling".into()],
+                false,
+                "2026-07-26T12:00:00Z",
+            )
+            .expect("observation")
+        })
+        .collect()
+}
 
 use super::{LearningTally, tally};
 
@@ -59,7 +81,7 @@ fn propose(store: &ContextStore, candidate_id: &str) {
         "Prefer rg over grep",
         "Use ripgrep instead of grep in this repository.",
         vec!["tooling".into()],
-        vec!["obs_a".into(), "obs_b".into(), "obs_c".into()],
+        EvidencePool::from_observations(&supporting_observations()),
         score,
         confidence_from_score(&score).expect("confidence"),
         "2026-07-26T12:00:00Z",

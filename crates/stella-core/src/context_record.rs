@@ -65,6 +65,7 @@ pub mod hash;
 pub mod kind;
 pub mod lifecycle;
 pub mod outcome;
+pub mod provenance;
 pub mod representation;
 pub mod scope;
 pub mod selection_health;
@@ -94,6 +95,7 @@ pub use outcome::{
     CompletionAssessment, CompletionStatus, CorrectnessAssessment, CorrectnessStatus,
     OutcomeAssessment, OutcomeAssessmentLevel, OutcomeReason,
 };
+pub use provenance::{EvidencePool, observation_grade};
 pub use representation::{
     ContentFidelity, FrameContentSpec, InlineContentRequirement, MinimumContentFidelity,
     Representation, validate_directive_minimum_fidelity,

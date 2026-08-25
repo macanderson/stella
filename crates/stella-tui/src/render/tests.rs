@@ -408,6 +408,7 @@ fn the_receipt_reports_what_the_turn_measured() {
             added: 1,
             removed: 0,
             diff: None,
+            minimal: true,
         });
     }
     // memories ← ContextWrite's upserts

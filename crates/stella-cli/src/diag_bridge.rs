@@ -1302,6 +1302,7 @@ mod tests {
             added: 12,
             removed: 3,
             diff: Some("- old secret\n+ new secret".into()),
+            minimal: true,
         });
 
         let json = serde_json::to_string(&records.records()[0]).expect("serialize");

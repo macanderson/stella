@@ -295,6 +295,7 @@ mod tests {
             added,
             removed: 0,
             diff,
+            minimal: true,
         };
 
         model.apply(&mutate(Some("@@\n+first".into()), 1));
@@ -341,6 +342,7 @@ mod tests {
                 added: 1,
                 removed: 0,
                 diff: Some(format!("@@\n+edit_{i}")),
+                minimal: true,
             });
         }
         let file = model.files.iter().find(|f| f.path == "src/a.rs").unwrap();
@@ -371,6 +373,7 @@ mod tests {
             added: 1,
             removed: 0,
             diff: Some("@@\n+x".into()),
+            minimal: true,
         };
         model.apply(&change("src/first.rs".into()));
         for i in 0..300 {
@@ -404,6 +407,7 @@ mod tests {
                 added: 2,
                 removed: 1,
                 diff: Some("x".repeat(chunk)),
+                minimal: true,
             });
         }
         let file = model.files.iter().find(|f| f.path == "src/a.rs").unwrap();
@@ -442,6 +446,7 @@ mod tests {
             added: 1,
             removed: 0,
             diff: Some("@@\n+x".into()),
+            minimal: true,
         };
         for i in 0..MAX_TRACKED_FILES {
             model.apply(&change(format!("src/f{i}.rs")));
@@ -478,6 +483,7 @@ mod tests {
             added: 1,
             removed: 0,
             diff: Some("@@\n+x".into()),
+            minimal: true,
         };
         for i in 0..MAX_TRACKED_FILES {
             model.apply(&change(format!("src/f{i}.rs")));

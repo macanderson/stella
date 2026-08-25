@@ -935,6 +935,7 @@ fn fold_journal(events: &[stella_store::SessionEventRecord]) -> JournalFold {
                 added,
                 removed,
                 diff,
+                ..
             } if kind.is_mutation() => {
                 fold.changes.push(DatasetChange {
                     path: path.clone(),

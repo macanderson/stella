@@ -108,6 +108,7 @@ fn a_settled_head_states_its_size_once_the_turn_boundary_measures_it() {
         added: 1,
         removed: 0,
         diff: Some("@@ -1,1 +1,1 @@\n+measured".into()),
+        minimal: true,
     });
     refresh(&mut fold, &model);
     let after = text(&fold);

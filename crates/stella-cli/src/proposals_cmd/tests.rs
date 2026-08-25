@@ -8,8 +8,30 @@
 
 use super::*;
 use stella_core::context_record::{
-    ProposalScore, RecordProposalKind, RecordProposalStatus, confidence_from_score,
+    EvidencePool, ObservationRecord, ObservationSource, ProposalScore, RecordProposalKind,
+    RecordProposalStatus, confidence_from_score,
 };
+
+/// Reflection lessons across `tasks` distinct tasks — the evidence a mined
+/// knowledge proposal stands on, so the fixture grades the way the production
+/// path grades (#2782).
+fn supporting_observations(tasks: &[&str]) -> Vec<ObservationRecord> {
+    tasks
+        .iter()
+        .map(|task| {
+            ObservationRecord::new(
+                ObservationSource::ReflectionLesson,
+                format!("reflection:{task}"),
+                *task,
+                "Prefer rg over grep.",
+                vec!["tooling".into()],
+                false,
+                "2026-07-26T12:00:00Z",
+            )
+            .expect("observation")
+        })
+        .collect()
+}
 
 fn store() -> (tempfile::TempDir, ContextStore) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -31,7 +53,7 @@ fn seed_proposal(store: &ContextStore, candidate_id: &str) -> ProposalRecord {
         "Prefer rg over grep",
         "Use ripgrep instead of grep in this repository.",
         vec!["tooling".into()],
-        vec!["obs_a".into(), "obs_b".into(), "obs_c".into()],
+        EvidencePool::from_observations(&supporting_observations(&["task-a", "task-b", "task-c"])),
         score,
         confidence_from_score(&score).expect("confidence"),
         "2026-07-26T12:00:00Z",
@@ -272,7 +294,7 @@ fn list_shows_one_row_per_lineage() {
         "Prefer rg over grep",
         "Use ripgrep instead of grep in this repository.",
         vec!["tooling".into()],
-        vec!["obs_a".into()],
+        EvidencePool::from_observations(&supporting_observations(&["task-a"])),
         score,
         confidence_from_score(&score).expect("confidence"),
         "2026-07-27T12:00:00Z",

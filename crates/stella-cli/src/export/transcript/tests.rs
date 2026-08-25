@@ -216,6 +216,64 @@ fn a_tool_result_is_named_by_its_call_and_takes_its_verdict_from_the_tag() {
     );
 }
 
+/// The witness for #4699: a delegate's call is named apart from the lead's in
+/// the archive, and the lead's own carries no attribution at all.
+#[test]
+fn a_delegates_call_is_named_apart_from_the_leads() {
+    let out = render(
+        &at(vec![
+            AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "lead".into(),
+                    name: "bash".into(),
+                    input: serde_json::json!({"command": "git status"}),
+                },
+                sub_agent_id: None,
+            },
+            AgentEvent::ToolResult {
+                call_id: "lead".into(),
+                output: ToolOutput::Ok {
+                    content: "clean".into(),
+                    data: None,
+                },
+                duration_ms: 10,
+                speculated: false,
+                sub_agent_id: None,
+            },
+            AgentEvent::ToolStart {
+                call: ToolCall {
+                    call_id: "child".into(),
+                    name: "search".into(),
+                    input: serde_json::json!({"query": "retry"}),
+                },
+                sub_agent_id: Some("d:1".into()),
+            },
+            AgentEvent::ToolResult {
+                call_id: "child".into(),
+                output: ToolOutput::Ok {
+                    content: "retry.rs".into(),
+                    data: None,
+                },
+                duration_ms: 20,
+                speculated: false,
+                sub_agent_id: Some("d:1".into()),
+            },
+        ]),
+        &no_prompts(),
+    );
+
+    assert!(
+        out.body.contains("<b>search · agent d:1</b>"),
+        "the delegate's own call did not name it:\n{}",
+        out.body
+    );
+    assert!(
+        out.body.contains("<b>bash</b>"),
+        "the lead's own call must carry no delegate tag:\n{}",
+        out.body
+    );
+}
+
 #[test]
 fn a_call_that_never_returned_says_so_rather_than_looking_successful() {
     // A killed run leaves `tool_start` with no `tool_result`. The row must
@@ -537,6 +595,7 @@ fn a_rewrite(adds: usize) -> AgentEvent {
         diff: Some(format!(
             "--- a/src/big.rs\n+++ b/src/big.rs\n@@ -0,0 +1,{adds} @@\n{body}"
         )),
+        minimal: true,
     }
 }
 
@@ -583,6 +642,7 @@ fn a_modified_line_pair_highlights_only_the_changed_token() {
              +\\setlength{\\parindent}{12pt}\n"
                 .to_string(),
         ),
+        minimal: true,
     };
     let out = render(&at(vec![event]), &no_prompts());
     assert!(
@@ -665,6 +725,7 @@ fn a_diff_that_parses_to_no_hunks_still_renders_as_readable_text() {
             added: 1,
             removed: 0,
             diff: Some("+just a bare line".into()),
+            minimal: true,
         }]),
         &no_prompts(),
     );

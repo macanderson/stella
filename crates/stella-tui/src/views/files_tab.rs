@@ -510,6 +510,7 @@ mod tests {
                 added: 2,
                 removed: 0,
                 diff: Some("+one\n+two\n".into()),
+                minimal: true,
             },
         });
         m.apply_inbound(&Inbound::Event {
@@ -520,6 +521,7 @@ mod tests {
                 added: 2,
                 removed: 1,
                 diff: Some("@@ -1,2 +1,3 @@\n context\n-old\n+new\n+another\n".into()),
+                minimal: true,
             },
         });
         m
@@ -722,6 +724,7 @@ mod tests {
                 added: 5,
                 removed: 2,
                 diff: None,
+                minimal: true,
             },
         });
 
@@ -815,6 +818,7 @@ mod tests {
                 added: 1,
                 removed: 0,
                 diff: Some("@@ -1,0 +1,1 @@\n+kept\n".into()),
+                minimal: true,
             },
         });
         model.apply_inbound(&Inbound::SessionReset {
@@ -847,6 +851,7 @@ mod tests {
                 added: 0,
                 removed: 0,
                 diff: None,
+                minimal: true,
             },
         });
         let mut ui = DeckUi::default();
@@ -875,6 +880,7 @@ mod tests {
                     added: 0,
                     removed: 0,
                     diff: None,
+                    minimal: true,
                 },
             });
         }

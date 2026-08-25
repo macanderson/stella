@@ -37,7 +37,7 @@
  │   verify true
 
  │ ◌ search sub_agent_id                                                                                                                                   ↳ d:1
- │ ⎿ crates/stella-tui/src/model/entry.rs:105                                                                                                 9ms
+ │ ⎿ crates/stella-tui/src/model/entry.rs:105                                                                                         9ms · ↳ d:1
 
 
 >>>

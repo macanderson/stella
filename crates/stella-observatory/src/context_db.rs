@@ -296,6 +296,10 @@ fn proposal_rows(conn: &Connection) -> Result<Vec<Value>, DbError> {
                 "salient": proposal.score.salient,
                 "confidence": proposal.confidence.get(),
                 "supporting_observations": proposal.supporting_observations,
+                // #2782: a reviewer has to see "model critique" and "witness
+                // flip" as visibly different things, not as one confidence
+                // number that reads the same either way.
+                "provenance": proposal.provenance.map(|grade| grade.as_str()),
                 "observed_at": proposal.observed_at,
                 "events": lineage_events,
             })

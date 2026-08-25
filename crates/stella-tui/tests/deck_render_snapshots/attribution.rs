@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! A delegate child's tool call, badged on its head row (#4699).
+//! A delegate child's tool call, badged on both rows it draws (#4699).
 //!
 //! A submodule of `deck_render_snapshots` rather than more lines in it: the
 //! parent had already reached the 1500-line ceiling, so a new golden goes
@@ -18,7 +18,8 @@ use super::*;
 /// one surface where a reader could not tell who made a call, though the
 /// Observatory's `n` column already could (PR #4670). This golden is what
 /// closes that gap: the lead's own call carries no badge, and the delegate's
-/// carries `↳ d:1`.
+/// carries `↳ d:1` on its head row and again on its result row, so a reader
+/// scrolled past the head still knows who the output belongs to.
 #[test]
 fn deck_render_snapshots_pin_a_delegates_tool_call() {
     let mut model = fixture_model();

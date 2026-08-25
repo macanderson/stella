@@ -46,6 +46,10 @@ use crate::model::{FileState, ReadSize, TranscriptEntry};
 /// Always at least one row: a tool with no recognised verb still names itself,
 /// because a call that rendered nothing would be a call the reader cannot see
 /// happened.
+///
+/// `sub_agent_id` is the delegate that made the call, `None` for the lead's
+/// own — carried straight from `TranscriptEntry::ToolStart` so a fan-out call
+/// renders visibly apart from the lead's (#4699).
 #[must_use]
 pub fn head_rows(
     name: &str,
@@ -61,7 +65,7 @@ pub fn head_rows(
     // The head is drawn the moment the call dispatches, so it is never
     // "collapsed" in the fold sense — there is no body under it yet.
     event.collapsed = Some(false);
-    event.sub_agent = sub_agent_id.map(str::to_string);
+    event.sub_agent_id = sub_agent_id.map(str::to_string);
     event_rows(&event, width)
 }
 
@@ -427,28 +431,19 @@ mod tests {
         assert!(text.contains("apps/page.tsx"), "{text}");
     }
 
-    /// A delegate's call carries its `sub_agent_id` onto the head row (#4699):
-    /// the deck badges it the same way the Observatory's `n` column does,
-    /// rather than rendering it identically to the lead's own calls.
+    /// The witness for #4699: a delegate's call renders visibly apart from
+    /// the lead's, and the lead's own renders no tag at all.
     #[test]
-    fn a_delegates_call_is_badged_on_its_head_row() {
-        let lead = text_of_rows(&head_rows("read_file", None, "x", None, None, None, 80));
-        let delegate = text_of_rows(&head_rows(
-            "read_file",
-            None,
-            "x",
-            None,
-            None,
-            Some("d:1"),
-            80,
-        ));
+    fn a_delegates_head_names_the_delegate() {
+        let delegated = text_of_rows(&head_rows("bash", None, "ls", None, None, Some("d:1"), 80));
+        assert!(
+            delegated.contains("d:1"),
+            "the delegate's own call did not name it: {delegated}"
+        );
+        let lead = text_of_rows(&head_rows("bash", None, "ls", None, None, None, 80));
         assert!(
             !lead.contains("d:1"),
-            "the lead's own call must not carry a delegate badge: {lead}"
-        );
-        assert!(
-            delegate.contains("d:1"),
-            "a delegate's call is indistinguishable from the lead's: {delegate}"
+            "the lead's own call must carry no delegate tag: {lead}"
         );
     }
 
@@ -597,6 +592,7 @@ mod tests {
                 added: *added,
                 removed: *removed,
                 diff: Some(format!("@@ -1,1 +1,1 @@\n+{path}")),
+                minimal: true,
             });
         }
         model

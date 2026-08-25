@@ -145,8 +145,9 @@ impl RunBuilder {
                 added,
                 removed,
                 diff,
+                minimal,
                 ..
-            } => self.attach_file(path, *added, *removed, diff.as_deref()),
+            } => self.attach_file(path, *added, *removed, diff.as_deref(), *minimal),
             AgentEvent::TurnComplete { .. } => self.finish_turn(Status::Ok),
             AgentEvent::Error { .. } => {
                 self.note(event);
@@ -351,7 +352,14 @@ impl RunBuilder {
     }
 
     /// Hang a file change on the step that produced it.
-    fn attach_file(&mut self, path: &str, added: u32, removed: u32, diff: Option<&str>) {
+    fn attach_file(
+        &mut self,
+        path: &str,
+        added: u32,
+        removed: u32,
+        diff: Option<&str>,
+        minimal: bool,
+    ) {
         let status = if removed > 0 && added == 0 {
             FileStatus::Deleted
         } else if removed == 0 && added > 0 {
@@ -374,6 +382,7 @@ impl RunBuilder {
                 text: text.to_string(),
                 added: added as usize,
                 removed: removed as usize,
+                minimal,
             }),
         };
         if let Some(turn) = self.turn.as_mut()

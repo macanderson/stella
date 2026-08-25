@@ -35,6 +35,7 @@
 //! have no counterpart in the lifecycle types.
 
 use serde::{Deserialize, Serialize};
+use stella_protocol::provenance::ProvenanceGrade;
 
 use super::super::context_record::hash::{RecordHashError, record_hash};
 use super::super::context_record::kind::{
@@ -139,6 +140,17 @@ pub struct Provenance {
     /// The ingest run, when provenance is carried at the record level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ingest_run_id: Option<String>,
+    /// **How strong the evidence behind this record is** (#2782), carried from
+    /// the proposal it was published from so the grade survives the hop out of
+    /// the lifecycle ledger and into the published artifact.
+    ///
+    /// A record has to store it for the same reason a proposal does: once
+    /// published, the observations are no longer in reach, so a grade that is
+    /// not carried here cannot be recovered. `None` means a record written
+    /// before grading, or one ingested from a document rather than induced
+    /// from a run — absent, not weak.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_grade: Option<ProvenanceGrade>,
     /// When extraction happened (RFC-3339).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extracted_at: Option<String>,
@@ -168,6 +180,11 @@ impl Provenance {
                 .or_else(|| self.source_lines.clone()),
             repo: over.repo.clone().or_else(|| self.repo.clone()),
             commit: over.commit.clone().or_else(|| self.commit.clone()),
+            // A per-record grade wins over the file default, like every other
+            // field here. Overlay cannot *raise* a grade on its own: the value
+            // that wins was still derived from observations by an EvidencePool
+            // upstream, and this only chooses between two already-derived ones.
+            evidence_grade: over.evidence_grade.or(self.evidence_grade),
             ingest_run_id: over
                 .ingest_run_id
                 .clone()

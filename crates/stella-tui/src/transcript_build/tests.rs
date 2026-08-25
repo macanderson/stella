@@ -215,6 +215,7 @@ fn a_file_change_renders_at_the_files_own_line_numbers() {
         added: 2,
         removed: 1,
         diff: Some("@@ -3,2 +3,3 @@\n context\n-old line\n+new line\n+added line\n".to_string()),
+        minimal: true,
     });
     b.finish_turn(Status::Ok);
 
@@ -254,6 +255,7 @@ fn a_diffless_file_change_still_records_the_file() {
         added: 1,
         removed: 1,
         diff: None,
+        minimal: true,
     });
     b.finish_turn(Status::Ok);
 

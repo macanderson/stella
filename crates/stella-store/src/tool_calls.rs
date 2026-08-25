@@ -176,8 +176,12 @@ pub struct ToolCallRow {
     pub error_class: Option<ErrorClass>,
     pub bytes_out: i64,
     pub duration_ms: i64,
-    /// The delegate child that made this call, or `None` for the lead's own
-    /// (#4699) — the same column the live per-event fold already writes.
+    /// Which sub-agent made this call — the `sub_agent_id` column. `None` is
+    /// the lead's own, which is the ordinary case (#4699). The live fold
+    /// (`project_tool_start`/`project_tool_result`) writes this from the
+    /// event stream; a caller that builds a row directly, as
+    /// [`Store::record_tool_calls`] does, must stamp it explicitly or the
+    /// column reverts to NULL.
     pub sub_agent_id: Option<String>,
 }
 
@@ -694,17 +698,13 @@ pub(crate) fn refold_tool_calls(tx: &Connection, execution_id: i64) -> rusqlite:
 }
 
 impl Store {
-    /// Bulk-write a batch of already-folded [`ToolCallRow`]s in one
-    /// transaction. `seq` is the call's index in the batch; UNIQUE
-    /// (execution_id, seq) guards double-writes.
+    /// Record the normalized per-call `tool_calls` log for an execution.
+    /// `seq` is the call's index in the batch; UNIQUE (execution_id, seq)
+    /// guards double-writes. One transaction.
     ///
-    /// Distinct from the repair fold (`refold_tool_calls`, crate-private),
-    /// which owns its own `INSERT` against the raw event log and is guarded
-    /// for replay
-    /// against pre-v35 schemas; this is a standalone writer for a caller that
-    /// has already folded a batch, so it names `sub_agent_id` unconditionally.
-    /// The live path ([`Store::record_event`]) writes one row at a time
-    /// instead, inside the event's own transaction.
+    /// This is the bulk writer the repair fold uses. The live path
+    /// ([`Store::record_event`]) writes one row at a time instead, inside the
+    /// event's own transaction.
     pub fn record_tool_calls(&self, execution_id: i64, calls: &[ToolCallRow]) -> Result<()> {
         let mut conn = self.lock();
         let tx = conn.transaction()?;

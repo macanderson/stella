@@ -463,6 +463,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             added: 2,
             removed: 1,
             diff: Some("@@ -1 +1,2 @@\n-old\n+new\n+line\n".into()),
+            minimal: true,
         }),
         ev(AgentEvent::StepUsage {
             upstream_provider: None,

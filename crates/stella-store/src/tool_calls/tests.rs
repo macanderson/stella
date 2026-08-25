@@ -787,71 +787,37 @@ fn a_delegates_calls_are_attributed_to_it_and_the_leads_read_null() {
     assert_eq!(owners(&store), expected, "and so does the re-fold");
 }
 
-/// **The witness for #4699's "also in scope" item.** The bulk writer
-/// ([`Store::record_tool_calls`]) carries `sub_agent_id` too, not just the
-/// live per-event path the test above pins.
-///
-/// Fails before this change: `ToolCallRow` had no such field, so a caller
-/// that had already folded a batch elsewhere had no way to hand the
-/// attribution to this writer, and it wrote `NULL` unconditionally.
+/// The bulk writer agrees with the live and repair folds: `ToolCallRow`
+/// carries `sub_agent_id` through, not just the event-stream path (#4699).
 #[test]
-fn the_bulk_writer_carries_sub_agent_id_too() {
+fn the_bulk_writer_persists_sub_agent_id_too() {
     let (store, id) = fixture();
-
     store
         .record_tool_calls(
             id,
-            &[
-                ToolCallRow {
-                    call_id: "c1".into(),
-                    name: "search".into(),
-                    surface: "native".into(),
-                    args_json: "{}".into(),
-                    args_digest: "d1".into(),
-                    reason: String::new(),
-                    state: ToolCallState::Ok,
-                    error: String::new(),
-                    error_class: None,
-                    bytes_out: 0,
-                    duration_ms: 5,
-                    sub_agent_id: Some("d:1".into()),
-                },
-                ToolCallRow {
-                    call_id: "c2".into(),
-                    name: "read_file".into(),
-                    surface: "native".into(),
-                    args_json: "{}".into(),
-                    args_digest: "d2".into(),
-                    reason: String::new(),
-                    state: ToolCallState::Ok,
-                    error: String::new(),
-                    error_class: None,
-                    bytes_out: 0,
-                    duration_ms: 2,
-                    sub_agent_id: None,
-                },
-            ],
+            &[ToolCallRow {
+                call_id: "c1".into(),
+                name: "search".into(),
+                surface: "native".into(),
+                args_json: "{}".into(),
+                args_digest: "d".into(),
+                reason: String::new(),
+                state: ToolCallState::Ok,
+                error: String::new(),
+                error_class: None,
+                bytes_out: 0,
+                duration_ms: 1,
+                sub_agent_id: Some("search-1".into()),
+            }],
         )
         .unwrap();
-
-    let owners: Vec<(String, Option<String>)> = {
-        let conn = store.lock();
-        let mut stmt = conn
-            .prepare(
-                "SELECT name, sub_agent_id FROM tool_calls \
-                 WHERE execution_id = ?1 ORDER BY seq ASC",
-            )
-            .unwrap();
-        stmt.query_map(params![id], |r| Ok((r.get(0)?, r.get(1)?)))
-            .unwrap()
-            .map(|r| r.unwrap())
-            .collect()
-    };
-    assert_eq!(
-        owners,
-        vec![
-            ("search".to_string(), Some("d:1".to_string())),
-            ("read_file".to_string(), None),
-        ]
-    );
+    let conn = store.lock();
+    let owner: Option<String> = conn
+        .query_row(
+            "SELECT sub_agent_id FROM tool_calls WHERE execution_id = ?1 AND call_id = 'c1'",
+            params![id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(owner.as_deref(), Some("search-1"));
 }

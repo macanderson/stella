@@ -27,7 +27,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use contextgraph_types::{ContextFrame, ContextQuery};
 use notify::RecommendedWatcher;
@@ -48,7 +48,7 @@ use crate::watch;
 /// catch-up task and watcher can hold it independently of the public handle.
 pub(crate) struct Inner {
     pub(crate) root: PathBuf,
-    pub(crate) grammars: Grammars,
+    pub(crate) grammars: Arc<Grammars>,
     write_conn: Mutex<Connection>,
     read_conn: Mutex<Connection>,
     watcher: Mutex<Option<RecommendedWatcher>>,

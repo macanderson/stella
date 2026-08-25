@@ -1286,3 +1286,64 @@ fn session_hook_context_is_clamped_with_a_visible_marker() {
         "the clamp bounds the section, not the hook's appetite"
     );
 }
+
+/// **Witness for #4700.** A non-deck door (`stella run`, the plain
+/// non-interactive door) ends its turn through `run_turn`, and until now
+/// nothing on that path ever called `Store::record_task_board` — the
+/// mirror the deck's lead turn and `/clear` both make at their own turn
+/// ends. A non-interactive run that used the task board was replayable
+/// from the journal but invisible to a `tasks` query.
+#[test]
+fn a_non_deck_turn_mirrors_its_board_into_the_tasks_table() {
+    let root = tempfile::tempdir().expect("root");
+    let store = std::sync::Arc::new(Store::in_memory().expect("store"));
+    let execution_id = store
+        .begin_execution("run", "ship the parser", "anthropic", "claude")
+        .expect("execution");
+    let registry = ToolRegistry::new(root.path().to_path_buf());
+    registry
+        .task_board()
+        .lock()
+        .unwrap()
+        .create("ship the parser", None, None);
+
+    mirror_task_board(
+        Some(&(store.clone(), execution_id)),
+        Some("ses-nondeck"),
+        &registry,
+    );
+
+    let mirrored = store.list_session_tasks("ses-nondeck").expect("read back");
+    assert_eq!(
+        mirrored.len(),
+        1,
+        "the board's one task must land in `tasks`"
+    );
+    assert_eq!(mirrored[0].subject, "ship the parser");
+}
+
+/// An untouched board (no `task_*` call this turn) writes nothing — matching
+/// every sibling call site, which all guard on `!items.is_empty()` so a
+/// session that never used the board does not grow a phantom row.
+#[test]
+fn an_empty_board_writes_no_row() {
+    let root = tempfile::tempdir().expect("root");
+    let store = std::sync::Arc::new(Store::in_memory().expect("store"));
+    let execution_id = store
+        .begin_execution("run", "no board work", "anthropic", "claude")
+        .expect("execution");
+    let registry = ToolRegistry::new(root.path().to_path_buf());
+
+    mirror_task_board(
+        Some(&(store.clone(), execution_id)),
+        Some("ses-empty"),
+        &registry,
+    );
+
+    assert!(
+        store
+            .list_session_tasks("ses-empty")
+            .expect("read back")
+            .is_empty()
+    );
+}

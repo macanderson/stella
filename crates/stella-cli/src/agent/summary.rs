@@ -168,6 +168,7 @@ mod tests {
             added,
             removed,
             diff: None,
+            minimal: true,
         }
     }
 

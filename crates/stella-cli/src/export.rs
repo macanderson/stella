@@ -737,11 +737,6 @@ fn render_dashboard(
   .lbl {{ display: inline-block; min-width: 74px; color: var(--text-3);
          font-size: var(--fs-micro); letter-spacing: .14em; margin-right: var(--sp1); }}
   .meta {{ color: var(--text-2); font-size: var(--fs-micro); margin-left: 92px; }}
-  /* The delegate a tool call belongs to, when it is not the lead's own
-     (#4699) — kept beside the name rather than in `.meta`, which is a
-     result-time addition and would leave a delegate's call unmarked until
-     it returned. */
-  .agent {{ color: var(--text-3); font-size: var(--fs-micro); margin-left: var(--sp1); }}
   .ev.stage {{ background: transparent; border-left-color: var(--control-edge);
               margin: var(--sp2) 0 6px; padding-top: var(--sp1);
               border-top: 1px solid var(--hairline); }}
