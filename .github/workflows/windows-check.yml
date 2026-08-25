@@ -111,3 +111,4 @@ jobs:
           --test wrapper_transport_limits
           --test wrapper_dispatch
           --test host_owned_tamper
+          --test wrapper_claimed_evidence
