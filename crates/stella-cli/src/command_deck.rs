@@ -411,6 +411,13 @@ pub async fn run_deck_session(
     // screen; a memory-less session degrades silently here.
     let mut memory =
         SessionMemory::open_for_session(&cfg.workspace_root, false, &cfg.authority, &active_rules);
+    // The GRAPH tab's `q` box answers through the CGP host rather than by
+    // reaching into the code index itself (#4335). Built once and shared by
+    // `Arc` because both recv sites answer the tab and the mid-turn one hands
+    // the work to a spawned task, which needs an owned handle.
+    let graph_host = std::sync::Arc::new(crate::contextgraph::graph_tab_host(
+        cfg.workspace_root.clone(),
+    ));
     // Custom extensions: ⚡ commands/skills in the slash menu, custom agents
     // behind `/agents`. Reloaded after `/init`, which may adopt new ones.
     let mut custom = crate::extensions::CustomExtensions::load_with_authority(
@@ -1080,7 +1087,7 @@ pub async fn run_deck_session(
                         input @ (WorkspaceInput::FocusGraphFile { .. }
                         | WorkspaceInput::GraphQuery { .. }),
                     ) => {
-                        graph_input::answer(input, &cfg.workspace_root, &in_tx);
+                        graph_input::answer(input, &graph_host, &cfg.workspace_root, &in_tx).await;
                         continue 'session;
                     }
                     // SKILLS-tab ops work whether or not a turn is running — handled
@@ -1951,18 +1958,20 @@ pub async fn run_deck_session(
                             }));
                         }
                         // The Graph tab can re-root mid-turn (a user browsing
-                        // the graph while an agent works). The requery opens
-                        // SQLite + loads grammars, so run it on the blocking
-                        // pool rather than stalling this event pump; it sends
-                        // the fresh snapshot back when done.
+                        // the graph while an agent works). The requery reads
+                        // SQLite and loads grammars, so it runs as its own
+                        // task rather than stalling this event pump; it sends
+                        // the fresh snapshot back when done. `answer` decides
+                        // which half of that work needs the blocking pool.
                         Some(
                             input @ (WorkspaceInput::FocusGraphFile { .. }
                             | WorkspaceInput::GraphQuery { .. }),
                         ) => {
                             let tx = in_tx.clone();
                             let root = cfg.workspace_root.clone();
-                            tokio::task::spawn_blocking(move || {
-                                graph_input::answer(input, &root, &tx);
+                            let host = graph_host.clone();
+                            tokio::spawn(async move {
+                                graph_input::answer(input, &host, &root, &tx).await;
                             });
                         }
                         // The INSTALLED AGENTS pane stays live while a turn
