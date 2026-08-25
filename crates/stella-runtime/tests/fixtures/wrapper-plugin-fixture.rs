@@ -111,6 +111,30 @@ fn main() {
         }
         "dispatch-reference" => dispatch_reference(&read_request()),
         "dispatch-contributed" => dispatch_contributed(&read_request()),
+        // Claims a flip only when a candidate grant naming `sh` arrived, and
+        // says `unobservable` otherwise — so a host that withholds the grant
+        // gets an honest refusal rather than an assertion the plugin could
+        // not have made. The two-substring match is the `case` the shell
+        // script spelled out.
+        //
+        // `wrapper_claimed_evidence.rs` currently takes only the granted
+        // side: its `report()` always passes `candidate: Some(..)`. The
+        // ungranted arm is kept because it is the plugin's honest answer,
+        // and dropping it would leave a fixture that claims `achieved`
+        // whatever it was given — which is the dishonesty that file exists
+        // to catch. A test that withholds the grant would exercise it.
+        "flip-if-granted" => {
+            let request = read_request();
+            let flip = if request.contains("\"root\"") && request.contains("\"program\":\"sh\"") {
+                "achieved"
+            } else {
+                "unobservable"
+            };
+            emit(&format!(
+                "{{\"point\":\"after_turn\",\"body\":{{\"protocol_version\":1,\
+                 \"evidence\":{{\"flip\":\"{flip}\"}}}}}}"
+            ));
+        }
         "candidate-probe" => candidate_probe(&read_request()),
         "flood" => flood(arg(&args, 1).parse().unwrap_or(0), arg(&args, 2)),
         "trailing" => trailing(arg(&args, 1).parse().unwrap_or(0)),
