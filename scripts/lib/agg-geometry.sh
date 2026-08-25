@@ -53,7 +53,7 @@ agg_ladder_rungs() {
 # The ladder rungs that fit inside a master of WIDTHxHEIGHT — every rung at or
 # below it, widest first.
 #
-# Deliberately never upscales. A 6144-wide rung produced by stretching a 4K
+# It never upscales. A 6144-wide rung produced by stretching a 4K
 # master is a 4K master with a bigger filename, and shipping one as a 6K cut
 # would be the kind of flattering-but-false number this repository refuses.
 agg_ladder_for() {

@@ -71,7 +71,7 @@ pub(crate) fn graph_snapshot_focus(
 /// Answer a free-form query from the Graph tab's `q` box.
 ///
 /// `text` is resolved as a **symbol name** against the index's definitions.
-/// That is narrower than the CGP host's `ContextQuery`, and deliberately: the
+/// That is narrower than the CGP host's `ContextQuery`: the
 /// host assembles prose frames with snippets and provenance for a *model* to
 /// read, while this tab needs structure — a label, a kind, a file and a line
 /// per node — and rendering prose as a graph would be a worse answer than

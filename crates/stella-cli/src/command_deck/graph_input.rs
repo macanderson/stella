@@ -19,8 +19,8 @@ use crate::agent;
 ///
 /// Blocking: it opens SQLite and loads grammars. Silent on anything that is
 /// not a re-root, and silent when the index cannot answer — the deck then
-/// keeps the neighborhood it has, which is the honest thing to leave on
-/// screen when nothing was learned.
+/// keeps the neighborhood it has, which is what a reader should still be
+/// looking at when nothing was learned.
 pub(super) fn answer(
     input: WorkspaceInput,
     workspace_root: &std::path::Path,

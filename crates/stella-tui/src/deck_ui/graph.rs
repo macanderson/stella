@@ -8,7 +8,7 @@
 //! deck's key router is at its line ceiling and this cluster is the part of
 //! it that grew.
 //!
-//! Two modals, deliberately not one. The picker filters a list the deck
+//! Two modals rather than one. The picker filters a list the deck
 //! already holds ([`crate::graph::GraphSnapshot::files`]), so it is a selection and every
 //! keystroke narrows a visible set. The query box holds text the deck cannot
 //! resolve at all — `stella-tui` never sees the index — so it is an
