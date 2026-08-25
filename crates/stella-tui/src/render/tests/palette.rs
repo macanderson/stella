@@ -262,7 +262,7 @@ fn a_tool_name_is_hued_by_what_kind_of_call_it_was() {
             &mut out,
         );
         // SPEC 6.2 head order: 0 is the rail, 1 the kind glyph, 2 the object of
-        // the verb — the tool name, for a tool v2 has no verb for.
+        // the verb — the tool name, for a tool the projection has no verb for.
         out[0].spans[2].style.fg
     };
     for tool in [

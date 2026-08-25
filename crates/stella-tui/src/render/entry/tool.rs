@@ -27,8 +27,8 @@
 //!
 //! A child module reaches its parent's private items, so nothing widened.
 //!
-//! The call **head** is deliberately not here. It is v2's
-//! ([`crate::v2::transcript_source::head_rows`]) and is drawn by `entry`'s v2
+//! The call **head** is deliberately not here. It is the projection's
+//! ([`crate::views::transcript_source::head_rows`]) and is drawn by `entry`'s SPEC 6
 //! router; what this module owns is the block that hangs beneath a head, on the
 //! head's own rail.
 
@@ -96,7 +96,7 @@ fn push_body_line(
     };
     // The deck's single highlight site, and so where SPEC 6.4's "once when the
     // event arrives, never per frame" budget is counted. See
-    // [`crate::syntax::lex_count`], and `v2::session::fold` for what holds it.
+    // [`crate::syntax::lex_count`], and `views::session::fold` for what holds it.
     #[cfg(test)]
     syntax::lex_count::bump();
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -131,19 +131,19 @@ fn push_body_line(
 /// than clipped at the pane edge, since it is capped JSON and not some other
 /// format.
 ///
-/// `metal` comes from [`crate::v2::transcript_source::head_metal`] rather than
+/// `metal` comes from [`crate::views::transcript_source::head_metal`] rather than
 /// from a `Rail`, so these rows carry the same rail colour as the head they
 /// hang from: a `read_file`'s block is silver-dim end to end, a mutation's is
 /// gold end to end.
 pub(super) fn argument_rows(metal: Color, raw: &str, width: usize, out: &mut Vec<Line<'static>>) {
     let margin = block_margin(Style::new().fg(metal));
-    // Read as fields, never printed as JSON (`crate::v2::fields`). `raw` is
+    // Read as fields, never printed as JSON (`crate::views::fields`). `raw` is
     // capped to a char budget at fold time, so an over-budget argument may not
     // re-parse; it is then lexed and wrapped rather than clipped at the pane
     // edge, since it is capped JSON and not some other format.
     match serde_json::from_str::<serde_json::Value>(raw) {
         Ok(value) => {
-            for line in crate::v2::fields::rows(&value) {
+            for line in crate::views::fields::rows(&value) {
                 push_detail_spans(&margin, line.spans, width, out);
             }
         }
@@ -189,11 +189,11 @@ pub(super) fn result_body(
     let diff_ref = diff_ref.as_slice();
     let (name, full) = (name.as_str(), full.as_str());
     // One event, one metal (SPEC 6.2). The head above this row read the
-    // same table, so the block is one unbroken vertical instead of a v2
-    // rail over a v1 body. Failure is the one override — see
+    // same table, so the block is one unbroken vertical instead of a projected
+    // rail over a long-form body. Failure is the one override — see
     // [`Rail::Fail`].
     let rail = if ok {
-        Rail::Result(crate::v2::transcript_source::head_metal(name))
+        Rail::Result(crate::views::transcript_source::head_metal(name))
     } else {
         Rail::Fail
     };
@@ -219,11 +219,12 @@ pub(super) fn result_body(
     let full: &str = reindented.as_deref().unwrap_or(full);
     // A result that *is* a JSON document — a `get_state` read, an MCP
     // server's answer, a REST tool's body — is read as fields
-    // (`crate::v2::fields`), one per row, and never painted as JSON. The
+    // (`crate::views::fields`), one per row, and never painted as JSON. The
     // reindented text above still decides the line count the fold states,
     // so the deck and the export agree about how much there is (#3644);
     // only the rows drawn differ.
-    let table = crate::v2::fields::parse_document(full).map(|doc| crate::v2::fields::rows(&doc));
+    let table =
+        crate::views::fields::parse_document(full).map(|doc| crate::views::fields::rows(&doc));
     let total = table
         .as_ref()
         .map_or_else(|| full.lines().count(), Vec::len);

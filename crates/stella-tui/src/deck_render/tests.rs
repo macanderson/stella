@@ -96,7 +96,7 @@ fn full_deck_frame_grows_a_second_status_band_row_for_a_diagnosed_agent() {
     // The acceptance case: an opt-in provider (anthropic), 4 calls (past
     // MIN_TURNS=3), 0% hit rate, 0 cache writes — the marker never
     // engaged. `render_deck` must reserve the band's second row and
-    // `v2::status_bar::render_band` must fill it with the full-sentence
+    // `views::status_bar::render_band` must fill it with the full-sentence
     // hint, not a clipped fragment.
     let mut model = running_model_with_queue();
     for step in 1..=4usize {
@@ -272,7 +272,10 @@ fn composer_cursor_position_sits_right_after_the_prefix_on_an_empty_composer() {
     let area = Rect::new(0, 0, 40, 4);
     // Matches `empty_composer_is_a_single_accent_prompt_line_with_the_caret`,
     // which asserts the drawn reversed-cell caret sits at column 4.
-    assert_eq!(composer_cursor_position(&layout, area, PROMPT_PREFIX_W), Some((4, 0)));
+    assert_eq!(
+        composer_cursor_position(&layout, area, PROMPT_PREFIX_W),
+        Some((4, 0))
+    );
 }
 
 #[test]
@@ -283,7 +286,10 @@ fn composer_cursor_position_offsets_by_the_composer_areas_origin() {
         cursor_col: 2,
     };
     let area = Rect::new(10, 20, 30, 3);
-    assert_eq!(composer_cursor_position(&layout, area, PROMPT_PREFIX_W), Some((16, 20)));
+    assert_eq!(
+        composer_cursor_position(&layout, area, PROMPT_PREFIX_W),
+        Some((16, 20))
+    );
 }
 
 #[test]
@@ -300,7 +306,10 @@ fn composer_cursor_position_tracks_the_caret_through_the_scroll_window() {
     };
     let area = Rect::new(0, 0, 40, 4);
     // visible=4, first = cursor_row + 1 - visible = 5, row_in_view = 3.
-    assert_eq!(composer_cursor_position(&layout, area, PROMPT_PREFIX_W), Some((8, 3)));
+    assert_eq!(
+        composer_cursor_position(&layout, area, PROMPT_PREFIX_W),
+        Some((8, 3))
+    );
 }
 
 #[test]
@@ -442,7 +451,7 @@ fn render_deck_hides_the_cursor_when_something_owns_the_agents_page_keyboard() {
     );
 }
 
-// The queue editor's own paint is covered where it lives — `v2::queue`.
+// The queue editor's own paint is covered where it lives — `views::queue`.
 
 /// A `DeckUi` on the Graph tab with an `n`-file snapshot rooted on the
 /// middle file, its picker open.

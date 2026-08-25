@@ -123,7 +123,7 @@ SURFACES: list[Surface] = [
         note="`stella observe` -> the turn page embeds /api/transcript-html.",
     ),
     Surface(
-        ident="deck-v1",
+        ident="deck-body",
         path="crates/stella-tui/src/render/entry.rs",
         entry=GRID,
         shared=False,
@@ -134,12 +134,12 @@ SURFACES: list[Surface] = [
         "`tabs::expand` from the shared crate.",
     ),
     Surface(
-        ident="deck-v2",
-        path="crates/stella-tui/src/v2/transcript.rs",
+        ident="deck-spec6",
+        path="crates/stella-tui/src/views/transcript.rs",
         entry=GRID,
         shared=False,
         issue=4289,
-        note="The v2 deck's SPEC 6 frame. The design question is settled — "
+        note="The deck's SPEC 6 frame. The design question is settled — "
         "SPEC 6 is the one frame and `grid.rs` is changed to draw it, not the "
         "other way round (#4271, recorded in stella-transcript's charter). "
         "What is left is the migration, and its first step is a correctness "

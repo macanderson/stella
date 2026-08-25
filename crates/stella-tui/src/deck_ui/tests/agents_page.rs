@@ -267,7 +267,7 @@ fn the_model_menu_offers_this_providers_allowed_models_only() {
     let (model, mut ui) =
         ui_with_models(&["zai/glm-5.2", "zai/glm-5.1", "anthropic/claude-opus-5"]);
     ui.composer.load("/model ".to_string());
-    let offered = crate::v2::picker::typeahead_candidates(&model, &ui);
+    let offered = crate::views::picker::typeahead_candidates(&model, &ui);
     assert_eq!(
         offered,
         vec!["zai/glm-5.2".to_string(), "zai/glm-5.1".to_string()],
@@ -282,7 +282,7 @@ fn the_model_menu_offers_this_providers_allowed_models_only() {
     });
     ui.composer.load("/model ".to_string());
     assert_eq!(
-        crate::v2::picker::typeahead_candidates(&model, &ui),
+        crate::views::picker::typeahead_candidates(&model, &ui),
         vec!["zai/glm-5.2".to_string()]
     );
 }
@@ -291,7 +291,7 @@ fn the_model_menu_offers_this_providers_allowed_models_only() {
 fn page_text(model: &WorkspaceModel, ui: &DeckUi) -> String {
     let area = ratatui::layout::Rect::new(0, 0, 80, 24);
     let mut buf = ratatui::buffer::Buffer::empty(area);
-    crate::v2::agents_page::render(model, ui, area, &mut buf);
+    crate::views::agents_page::render(model, ui, area, &mut buf);
     (0..area.height)
         .map(|y| {
             (0..area.width)

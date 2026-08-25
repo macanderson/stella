@@ -69,7 +69,7 @@ pub fn human_is_present(interactive_output: bool) -> bool {
 /// the runtime, never listed by the asker.
 ///
 /// Re-exported rather than defined here: the Command Deck's question overlay
-/// ([`stella_tui::v2::question`]) draws the same row, and `stella-tui`
+/// ([`stella_tui::views::question`]) draws the same row, and `stella-tui`
 /// cannot depend on this crate — so the one copy lives in `stella-protocol`
 /// beside the question types both surfaces render.
 pub use stella_protocol::FREE_TEXT_LABEL;

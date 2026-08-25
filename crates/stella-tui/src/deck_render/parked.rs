@@ -27,12 +27,12 @@ use crate::deck_ui::DeckUi;
 pub(super) fn render(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     if ui.question.is_open() {
         super::guarded_overlay(buf, area, "question", |b| {
-            crate::v2::question::render(&ui.question, ui.accessible, area, b)
+            crate::views::question::render(&ui.question, ui.accessible, area, b)
         });
     }
     if ui.approval.is_open() {
         super::guarded_overlay(buf, area, "approval", |b| {
-            crate::v2::approval::render(&ui.approval, ui.accessible, area, b)
+            crate::views::approval::render(&ui.approval, ui.accessible, area, b)
         });
     }
 }

@@ -5,7 +5,7 @@
 //! per-tab scroll/selection, the splash, the out-of-band graph snapshot), and
 //! [`handle_deck_key`] is a pure function of `(key, model, &mut ui)` returning a
 //! [`DeckAction`]. All deck interaction logic lives here, unit-tested — with one
-//! delegation: the Engine tab's key map lives in [`crate::v2::engine_panel`], which
+//! delegation: the Engine tab's key map lives in [`crate::views::engine_panel`], which
 //! owns its own overlay state. Either way [`crate::deck_shell`] stays a
 //! near-logic-free event loop.
 //!
@@ -44,7 +44,7 @@ use stella_tools::search::readiness::IndexReadiness;
 use crate::notice::NoticeState;
 use crate::scroll::ScrollState;
 use crate::splash::SplashState;
-use crate::v2::mcp_tab::{AuthStep, McpMode};
+use crate::views::mcp_tab::{AuthStep, McpMode};
 
 /// How long a turn-stopping Esc stays armed for the double-Esc escalation: a
 /// second Esc inside this window (with no other key in between) is "full
@@ -567,7 +567,7 @@ pub struct DeckUi {
     pub tab: DeckTab,
     /// The SETTINGS tab's secondary nav: AGENTS | TOOLS. Which editor the tab
     /// renders full-width, and which one `e` focuses.
-    pub settings_pane: crate::v2::settings::SettingsPane,
+    pub settings_pane: crate::views::settings::SettingsPane,
     /// The INSTALLED AGENTS pane's state.
     pub installed: InstalledPanel,
     /// The SKILLS tab's view state (installed list, search, overlays).
@@ -621,7 +621,7 @@ pub struct DeckUi {
     /// search/auth sub-modes and their input buffers (the auth value is
     /// redacted in `Debug`). Out-of-band, driven by [`Inbound::McpServers`] /
     /// [`Inbound::McpSearchResults`].
-    pub mcp: crate::v2::mcp_tab::McpTabState,
+    pub mcp: crate::views::mcp_tab::McpTabState,
     pub files_sel: usize,
     pub files_diff_open: bool,
     pub files_diff_scroll: ScrollState,
@@ -705,13 +705,13 @@ pub struct DeckUi {
     /// from scratch by [`ingest_inbound`] on each fresh `HunkReview`.
     pub hunk_marks: std::collections::HashMap<String, HunkMarks>,
     /// The Session tab's incremental transcript fold cache.
-    pub session_fold: crate::v2::session::SessionFold,
+    pub session_fold: crate::views::session::SessionFold,
     /// The Session tab's memoized fold plan: the whole-transcript turn walk
-    /// reruns only when its [`crate::v2::session::FoldPlanKey`] moves,
+    /// reruns only when its [`crate::views::session::FoldPlanKey`] moves,
     /// not on every frame of the ~30fps draw loop.
     pub session_plan: Option<(
-        crate::v2::session::FoldPlanKey,
-        crate::v2::session::FoldPlan,
+        crate::views::session::FoldPlanKey,
+        crate::views::session::FoldPlan,
     )>,
     /// The terminal's color depth, detected once at startup. Render-time-visible
     /// so the progress bar can emit a per-cell ember gradient on truecolor and a
@@ -736,11 +736,11 @@ pub struct DeckUi {
     /// The SUB-AGENTS overlay (`ctrl-a`, `/subagents`): every dispatched
     /// lane with its purpose, its place in the task, and the stop / pause /
     /// resume / restart verbs. Modal while open.
-    pub subagents: crate::v2::subagents::SubagentsOverlay,
+    pub subagents: crate::views::subagents::SubagentsOverlay,
     /// The AGENTS page (`←` twice from an empty prompt on the Session tab):
     /// the full-frame fleet surface — lanes, sessions, and its own composer
     /// that starts a new agent lane. Modal while open.
-    pub agents_page: crate::v2::agents_page::AgentsPage,
+    pub agents_page: crate::views::agents_page::AgentsPage,
     /// Whether the SESSIONS overlay is open (`ctrl-e`, `/sessions`). Modal
     /// while open: ↑/↓ move, `⏎` open (replay), `a` archive, `x` delete,
     /// `r` refresh, Esc/`←` close.
@@ -802,35 +802,35 @@ pub struct DeckUi {
     /// The ENGINE panel (SETTINGS tab, `/model-*`): the editor for
     /// `settings.json` → `agent_engine_config`, over a driver-owned snapshot
     /// ([`Inbound::EngineConfig`]). Modal while open.
-    pub engine: crate::v2::engine_panel::EngineOverlay,
+    pub engine: crate::views::engine_panel::EngineOverlay,
     /// The TOOLS panel (SETTINGS tab): the editor for `settings.json` →
     /// `tools` — which of this session's tools are switched off — over a
     /// driver-owned snapshot ([`Inbound::ToolPolicy`]). Modal while open, and
     /// mutually exclusive with `engine`: one editor owns the tab's keyboard.
-    pub tools: crate::v2::tools::ToolsOverlay,
+    pub tools: crate::views::tools::ToolsOverlay,
     /// The `ask_question` overlay (#4220): the wizard a **parked turn** waits
     /// on. Modal ahead of everything but Ctrl-C while a question is up —
     /// nothing else in this struct holds a live tool call open, which is why
     /// it wins the keyboard over every other modal here.
-    pub question: crate::v2::question::QuestionOverlay,
+    pub question: crate::views::question::QuestionOverlay,
     /// The approval card (#4240): the yes/no a parked **dispatch** waits on.
     /// Outranks `question` for the keyboard — a call about to execute is a
     /// tighter gate than a decision being deliberated, and it carries the
     /// shorter of the two deadlines.
-    pub approval: crate::v2::approval::ApprovalOverlay,
+    pub approval: crate::views::approval::ApprovalOverlay,
     /// The `/model` picker: switch this session's model. Modal while open;
-    /// rows come live from `engine.state` (see [`crate::v2::picker`]).
-    pub model_picker: crate::v2::picker::ListPicker,
+    /// rows come live from `engine.state` (see [`crate::views::picker`]).
+    pub model_picker: crate::views::picker::ListPicker,
     /// The `/agent` picker: assume an installed agent this session. Modal
     /// while open; rows come live from `installed.entries`.
-    pub agent_picker: crate::v2::picker::ListPicker,
+    pub agent_picker: crate::views::picker::ListPicker,
 }
 
 impl Default for DeckUi {
     fn default() -> Self {
         Self {
             tab: DeckTab::Session,
-            settings_pane: crate::v2::settings::SettingsPane::default(),
+            settings_pane: crate::views::settings::SettingsPane::default(),
             installed: InstalledPanel::default(),
             skills: SkillsPanel::default(),
             issues: IssuesPanel::default(),
@@ -855,7 +855,7 @@ impl Default for DeckUi {
             graph_picker_open: false,
             graph_picker_query: String::new(),
             graph_picker_sel: 0,
-            mcp: crate::v2::mcp_tab::McpTabState::default(),
+            mcp: crate::views::mcp_tab::McpTabState::default(),
             files_sel: 0,
             files_diff_open: false,
             files_diff_scroll: ScrollState::default(),
@@ -882,14 +882,14 @@ impl Default for DeckUi {
             ask_answered: std::collections::HashSet::new(),
             hunk_answered: std::collections::HashSet::new(),
             hunk_marks: std::collections::HashMap::new(),
-            session_fold: crate::v2::session::SessionFold::default(),
+            session_fold: crate::views::session::SessionFold::default(),
             session_plan: None,
             color_mode: crate::theme::ColorMode::default(),
             no_anim: false,
             accessible: false,
             scrollback: crate::accessible::Scrollback::default(),
-            subagents: crate::v2::subagents::SubagentsOverlay::default(),
-            agents_page: crate::v2::agents_page::AgentsPage::default(),
+            subagents: crate::views::subagents::SubagentsOverlay::default(),
+            agents_page: crate::views::agents_page::AgentsPage::default(),
             sessions_open: false,
             sessions_show_all: false,
             sessions: Vec::new(),
@@ -907,12 +907,12 @@ impl Default for DeckUi {
             inbox_sel: 0,
             cards: cards::CardState::default(),
             pending_inputs: Vec::new(),
-            engine: crate::v2::engine_panel::EngineOverlay::default(),
-            tools: crate::v2::tools::ToolsOverlay::default(),
-            question: crate::v2::question::QuestionOverlay::default(),
-            approval: crate::v2::approval::ApprovalOverlay::default(),
-            model_picker: crate::v2::picker::ListPicker::default(),
-            agent_picker: crate::v2::picker::ListPicker::default(),
+            engine: crate::views::engine_panel::EngineOverlay::default(),
+            tools: crate::views::tools::ToolsOverlay::default(),
+            question: crate::views::question::QuestionOverlay::default(),
+            approval: crate::views::approval::ApprovalOverlay::default(),
+            model_picker: crate::views::picker::ListPicker::default(),
+            agent_picker: crate::views::picker::ListPicker::default(),
         }
     }
 }
@@ -1325,14 +1325,14 @@ fn ingest_inner(inbound: &Inbound, model: &mut WorkspaceModel, ui: &mut DeckUi) 
     // the ENGINE panel. Applied by the overlay's own ingest,
     // which guards unsaved local edits; the model fold never sees it.
     if let Inbound::EngineConfig { state, status } = inbound {
-        crate::v2::engine_panel::ingest_config(ui, state, status);
+        crate::views::engine_panel::ingest_config(ui, state, status);
         return;
     }
     // The tool-switch snapshot — the other half of the SETTINGS tab, out-of-band
     // in exactly the same way. Its ingest retires the unsaved edits the write
     // actually landed; the model fold never sees it.
     if let Inbound::ToolPolicy { state, status } = inbound {
-        crate::v2::tools::ingest_policy(ui, state, status);
+        crate::views::tools::ingest_policy(ui, state, status);
         return;
     }
     // The ISSUES tab's out-of-band replies, each lane seq-guarded: only the
@@ -1698,7 +1698,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // The AGENTS page (`←` twice) is full-frame and modal while open — only
     // quit, the splash, and help (all handled above) precede it.
     if ui.agents_page.open {
-        return crate::v2::agents_page::handle_key(key, model, ui);
+        return crate::views::agents_page::handle_key(key, model, ui);
     }
 
     // The INSTALLED AGENTS sub-modes (editor / create flow / version picker)
@@ -1826,10 +1826,10 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // Ctrl-A opens the SUB-AGENTS overlay from anywhere — the lanes the lead
     // dispatched, with their controls. Modal while open, like the queue.
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('a')) {
-        return crate::v2::subagents::open(ui);
+        return crate::views::subagents::open(ui);
     }
     if ui.subagents.open {
-        return crate::v2::subagents::handle_key(key, model, ui);
+        return crate::views::subagents::handle_key(key, model, ui);
     }
 
     // The queue editor is modal while open: the queue is a *list* the user
@@ -1853,14 +1853,14 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     // must never leak into the composer. Scoped to its own tab so a stale
     // focus flag can never trap the keyboard elsewhere.
     if ui.tab == DeckTab::Settings && ui.engine.focused {
-        return crate::v2::engine_panel::handle_engine_key(key, ui);
+        return crate::views::engine_panel::handle_engine_key(key, ui);
     }
     // The TOOLS panel is the SETTINGS tab's second editor and is modal on
     // exactly the same terms — its letter verbs are the engine panel's, so
     // leaking one into the composer would be as bad here as there. Focusing
     // either panel unfocuses the other, so these two arms can never both fire.
     if ui.tab == DeckTab::Settings && ui.tools.focused {
-        return crate::v2::tools::handle_tools_key(key, ui);
+        return crate::views::tools::handle_tools_key(key, ui);
     }
 
     // The SESSIONS / INBOX / CONTEXT overlays are modal exactly like the
@@ -1980,7 +1980,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
     }
 
     // `↓` from an empty composer opens the SUB-AGENTS overlay — `↑`'s mirror.
-    if let Some(action) = crate::v2::subagents::down_opens(key, model, ui) {
+    if let Some(action) = crate::views::subagents::down_opens(key, model, ui) {
         return action;
     }
 
@@ -2037,7 +2037,7 @@ fn handle_key_inner(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> D
         // `←` on the SESSION tab is the AGENTS-page chord: the first press
         // arms, the second (inside the window) opens the page. Everywhere
         // else the arrows keep stepping the tab strip.
-        if let Some(action) = crate::v2::agents_page::left_left(key, left_armed, ui) {
+        if let Some(action) = crate::views::agents_page::left_left(key, left_armed, ui) {
             return action;
         }
         if let Some(dir) = focus::Dir::of(key.code) {
@@ -3178,9 +3178,9 @@ pub(crate) fn focused_id(model: &WorkspaceModel, ui: &DeckUi) -> Option<AgentId>
 /// focused, that editor claims every key ahead of this handler (see
 /// `handle_deck_key`), so ←/→ can never move the nav mid-edit.
 /// The SETTINGS tab's browse-level keys, which live with the panes they are
-/// about — see [`crate::v2::settings::handle_key`].
+/// about — see [`crate::views::settings::handle_key`].
 fn handle_settings_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {
-    crate::v2::settings::handle_key(key, ui, composer_empty)
+    crate::views::settings::handle_key(key, ui, composer_empty)
 }
 
 fn handle_agents_key(key: KeyEvent, ui: &mut DeckUi, composer_empty: bool) -> Option<DeckAction> {

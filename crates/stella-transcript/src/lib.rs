@@ -34,7 +34,7 @@
 //!
 //! Two frames were drawing the same information. [`grid`] draws a
 //! `╭─ … ─╮` / `│` / `╰──╯` box with [`digest::Chip`] right-aligned;
-//! `stella-tui`'s `v2::transcript` draws `design/tui-v2/SPEC.md` §6 — a
+//! `stella-tui`'s `views::transcript` draws `design/tui-v2/SPEC.md` §6 — a
 //! full-width labelled rule, a run of railed event rows, a closing rule and a
 //! one-line receipt. Neither was wrong, and the deck's was written without
 //! reference to this crate at all.
@@ -70,7 +70,7 @@
 //!
 //! ### The gap this exposes, which is real and is not the frame
 //!
-//! `v2::transcript`'s file-event fields are all `Option` because a head row
+//! `views::transcript`'s file-event fields are all `Option` because a head row
 //! renders before anything is measured, and a `+0 -0` beside a path is a
 //! different and louder claim than "not measured yet". [`model`] has no
 //! equivalent notion of an unmeasured row. That is a genuine hole in the shared
