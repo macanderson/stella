@@ -557,6 +557,7 @@ mod tests {
                 added: *added,
                 removed: *removed,
                 diff: Some(format!("@@ -1,1 +1,1 @@\n+{path}")),
+                minimal: true,
             });
         }
         model

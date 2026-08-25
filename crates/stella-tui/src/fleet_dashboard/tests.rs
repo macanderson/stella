@@ -78,6 +78,7 @@ fn grid_shows_tasks_statuses_last_action_and_header_clocks() {
                 added: 2,
                 removed: 1,
                 diff: Some("@@\n+a\n+b\n-c\n".into()),
+                minimal: true,
             }),
         },
         Instant::now(),

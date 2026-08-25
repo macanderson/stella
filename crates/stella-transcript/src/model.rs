@@ -379,6 +379,17 @@ pub struct Patch {
     pub added: usize,
     /// Lines removed, as the producer counted them.
     pub removed: usize,
+    /// Whether `text` is the minimal edit script, or the producer's differ
+    /// tripped its area cap and fell back to a blunt replace-everything
+    /// rendering. `true` for a patch built before the producer carried this
+    /// (`AgentEvent::FileChange::minimal`'s own wire default) — the reading
+    /// every consumer already assumed of a patch back then.
+    #[serde(default = "default_minimal")]
+    pub minimal: bool,
+}
+
+fn default_minimal() -> bool {
+    true
 }
 
 /// The status dot on a file header bar.

@@ -29,6 +29,7 @@ fn a_producers_patch_is_drawn_at_the_files_own_line_numbers() {
                 .to_string(),
             added: 1,
             removed: 1,
+            minimal: true,
         }),
         ..fragment
     };
@@ -43,13 +44,33 @@ fn a_producers_patch_is_drawn_at_the_files_own_line_numbers() {
         vec![(Some(212), None), (None, Some(212))]
     );
     assert_eq!((diff.added, diff.removed), (1, 1));
-    assert!(
-        diff.minimal,
-        "nothing was compared, so nothing can have fallen back"
-    );
+    assert!(diff.minimal, "the producer reported an exact diff");
     // The pairing that gives a modified line its word spans survives the patch
     // path — it is the same row builder, reached with parsed hunks.
     assert!(diff.hunks[0].rows[0].spans.iter().any(|s| s.changed));
+}
+
+/// **The witness for #4696.** A producer's patch that tripped
+/// `LCS_AREA_CAP` carries `minimal: false` on the wire; the build must read
+/// that flag rather than assume every patch is exact.
+#[test]
+fn a_producers_blunt_fallback_patch_stays_marked_non_minimal() {
+    let change = FileChange {
+        path: "big.txt".to_string(),
+        before: String::new(),
+        after: String::new(),
+        status: FileStatus::Modified,
+        patch: Some(Patch {
+            text: "--- a/big.txt\n+++ b/big.txt\n@@ -1,1 +1,1 @@\n-old\n+new\n".to_string(),
+            added: 1,
+            removed: 1,
+            minimal: false,
+        }),
+    };
+    assert!(
+        !FileDiff::build(&change).minimal,
+        "the producer's own cap trip must survive onto the rendered diff"
+    );
 }
 
 #[test]

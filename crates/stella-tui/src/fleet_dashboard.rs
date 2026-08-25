@@ -437,6 +437,7 @@ impl FleetBoard {
                 added,
                 removed,
                 diff,
+                ..
             } if kind.is_mutation() => {
                 // Enrich the last action with the +A-B the recorder measured,
                 // and keep the diff for the focused task's detail pane.

@@ -353,6 +353,7 @@ fn step_usage_accumulates_tokens_and_file_change_fills_ledger() {
             added: 2,
             removed: 1,
             diff: Some("+one\n+two\n-gone\n".into()),
+            minimal: true,
         },
     ));
     let lead = &w.agents[0];
@@ -466,6 +467,7 @@ fn ledger_counts_reads_without_regressing_the_mutation_badge() {
                 added: 0,
                 removed: 0,
                 diff: None,
+                minimal: true,
             },
         )
     };
@@ -486,6 +488,7 @@ fn ledger_counts_reads_without_regressing_the_mutation_badge() {
             added: 1,
             removed: 0,
             diff: Some("+one\n".into()),
+            minimal: true,
         },
     ));
     w.apply_inbound(&read("src/a.rs"));

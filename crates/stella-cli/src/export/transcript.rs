@@ -331,6 +331,7 @@ impl<'a> Fold<'a> {
                 added,
                 removed,
                 diff,
+                ..
             } => {
                 let kind = wire_token(kind);
                 let path = self.clean(path);

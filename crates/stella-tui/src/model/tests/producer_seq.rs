@@ -62,6 +62,7 @@ fn fold_edit(model: &mut SessionModel, call_id: &str, path: &str, diff: &str, ad
         added,
         removed: 0,
         diff: Some(diff.into()),
+        minimal: true,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: call_id.into(),
@@ -268,6 +269,7 @@ fn a_bash_call_renders_the_change_it_measured() {
         added: 3,
         removed: 1,
         diff: Some("@@ sed did this @@\n".into()),
+        minimal: true,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),

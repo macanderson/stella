@@ -180,6 +180,15 @@ fn retries_exhausted_retryable_default() -> bool {
     true
 }
 
+/// `serde(default)` value for [`AgentEvent::FileChange::minimal`]: streams
+/// recorded before the field existed (#4696) replay as a precise diff, which
+/// is what every consumer already assumed of a patch-carrying event back then
+/// — the flag narrows that assumption for new streams, it does not retract it
+/// for old ones.
+fn file_change_minimal_default() -> bool {
+    true
+}
+
 mod kind;
 pub use kind::AgentEvent;
 
