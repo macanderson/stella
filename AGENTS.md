@@ -101,6 +101,8 @@ make gate                # = no-scratch + no-secrets + design-refs
                          #   + contrast (WCAG, down-only ratchet)
                          #   + transcript-surfaces
                          #   + prose (no content-free constructions added)
+                         #   + line-citations (prose cites code by symbol
+                         #     name; a pinned line number drifts silently)
                          #   + deck-fit-all-test (the deck enumeration)
                          #   + deck-paths (the decks' code-map citations)
                          #   + css-vars (every var() in a token sheet resolves)
@@ -825,7 +827,7 @@ a plan needs and the part that rarely changes:
 | `stella-core` | `src/driver/tests.rs`, `src/driver.rs`, `src/bus.rs` |
 | `stella-model` | `src/openai.rs`, `src/zai/tests.rs`, `src/anthropic/tests.rs` |
 | `stella-store` | `src/tests.rs`, `src/lib.rs`, `src/usage.rs` |
-| `stella-tui` | `src/deck_ui.rs`, `src/views/engine.rs` |
+| `stella-tui` | `src/deck_ui.rs` |
 
 The other twenty crates carry no god files — keep it that way. Each crate's
 README repeats its own list under "God files — do not add lines", so the

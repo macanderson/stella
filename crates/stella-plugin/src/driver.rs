@@ -105,7 +105,7 @@ pub enum DriverCall {
     BacklogClose,
     /// Bind an `execution_id` to an issue key, so spend is attributable.
     BacklogLink,
-    /// Run one unit of backlog through the staged pipeline.
+    /// Run one unit of backlog through the turn loop the host is driving.
     WorkStart,
     /// The in-flight unit: stage, spend, elapsed, checkpoint.
     WorkStatus,

@@ -2,12 +2,12 @@
 //! secondary nav (AGENTS | TOOLS | SEATS, switched with ←/→) exactly like the
 //! AGENTS tab:
 //!
-//! - **AGENTS** ([`crate::views::engine`]): the `agent_engine_config` editor —
+//! - **AGENTS** ([`crate::v2::engine_panel`]): the `agent_engine_config` editor —
 //!   the per-role model / prompt / sampling overrides plus the global routing
 //!   toggles.
-//! - **TOOLS** ([`crate::views::tools`]): which of this session's tools are
+//! - **TOOLS** ([`crate::v2::tools`]): which of this session's tools are
 //!   switched off.
-//! - **SEATS** ([`crate::views::seats`]): which model each **plugin-declared**
+//! - **SEATS** ([`crate::v2::seats`]): which model each **plugin-declared**
 //!   role runs on. Read-only for now; the editor arrives with the AGENTS
 //!   pane's persona tabs leaving (`doc:roleless-core` slice 5b).
 //!
@@ -119,9 +119,13 @@ pub fn render(_model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Bu
 
     let body = bands[1];
     match ui.settings_pane {
-        SettingsPane::Agents => crate::views::engine::render_panel(ui, body, buf),
-        SettingsPane::Tools => crate::views::tools::render_panel(ui, body, buf),
-        SettingsPane::Seats => crate::views::seats::render_panel(ui, body, buf),
+        SettingsPane::Agents => crate::v2::engine_panel::render(ui, body, buf),
+        SettingsPane::Tools => crate::v2::tools::render_panel(ui, body, buf),
+        SettingsPane::Seats => crate::v2::seats::render(
+            ui.engine.state.as_ref().map(|state| &state.seats[..]),
+            body,
+            buf,
+        ),
     }
 }
 
@@ -157,21 +161,20 @@ pub fn handle_key(
         }),
         // `e` edits what you are looking at — the one key every pane shares,
         // rather than a per-pane letter to remember. SEATS has no editor yet
-        // (`crate::views::seats`, slice 5b), so it claims the key and does
+        // (`crate::v2::seats`, slice 5b), so it claims the key and does
         // nothing rather than silently focusing a different pane's editor.
         KeyCode::Char('e') => Some(match ui.settings_pane {
-            SettingsPane::Agents => crate::views::engine::focus_panel(ui),
-            SettingsPane::Tools => crate::views::tools::focus_panel(ui),
+            SettingsPane::Agents => crate::v2::engine_panel::focus_panel(ui),
+            SettingsPane::Tools => crate::v2::tools::focus_panel(ui),
             SettingsPane::Seats => DeckAction::Handled,
         }),
-        KeyCode::Char('t') => Some(crate::views::tools::focus_panel(ui)),
+        KeyCode::Char('t') => Some(crate::v2::tools::focus_panel(ui)),
         _ => None,
     }
 }
 
 /// The secondary nav line: the two pane labels (UPPERCASE, like the deck's tab
-/// labels), active in the accent cyan, plus the switch hint — the same line
-/// [`crate::views::agents`] draws, so one nav is learned, not two.
+/// labels), active in the accent cyan, plus the switch hint.
 fn render_pane_nav(pane: SettingsPane, area: Rect, buf: &mut Buffer) {
     if area.height == 0 {
         return;

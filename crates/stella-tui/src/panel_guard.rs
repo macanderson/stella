@@ -30,7 +30,7 @@
 //! new view that adds a write outside classes 1–2 has to extend class 3 here.
 //!
 //! 1. **Measurements.** `ui.metrics.{session,trace,files_diff,help}_*`
-//!    (`views::session`, `views::traces`, `views::files`,
+//!    (`v2::session`, `v2::traces`, `v2::files_tab`,
 //!    `deck_render::render_help`). Plain `usize`s, recomputed from scratch
 //!    every frame and read only by the *next* keypress's scroll clamp. A
 //!    missed write leaves the previous frame's measurement, which the next
@@ -47,15 +47,15 @@
 //!
 //! 3. **Take-and-restore.** These are the only writes that could persist a
 //!    *torn* value, so they are enumerated rather than summarised:
-//!    - `ui.session_plan.take()` and its restore (`views::session::render`) —
+//!    - `ui.session_plan.take()` and its restore (`v2::session::render`) —
 //!      a pure memo of `FoldPlan::build` keyed on `FoldPlanKey`. A panic
 //!      between the take and the restore loses the memo; the next frame's key
 //!      lookup misses and rebuilds it. Cost: one whole-transcript walk.
-//!    - `ui.session_pending_scroll.take()` (`views::session::render`) — one
+//!    - `ui.session_pending_scroll.take()` (`v2::session::render`) — one
 //!      queued "scroll the selection into view" nudge. Losing it leaves the
 //!      selection highlighted but possibly off-screen until the next selection
 //!      move re-arms it. No state is inconsistent, one nudge is dropped.
-//!    - `SessionFold::refresh` (`views::session`) — an *incremental* cache,
+//!    - `SessionFold::refresh` (`v2::session`) — an *incremental* cache,
 //!      and the one place where a torn value used to survive the frame. It
 //!      committed its cache key **before** the fold loop, so a panic inside
 //!      `entry_lines` left `prefix` extended with no matching `entry_rows`

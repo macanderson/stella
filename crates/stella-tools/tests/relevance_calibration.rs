@@ -16,7 +16,8 @@
 //! # How to run it
 //!
 //! ```text
-//! VOYAGE_API_KEY=pa-… cargo test -p stella-tools \
+//! VOYAGE_API_KEY=pa-… STELLA_CALIBRATION_INDEX=/path/to/codegraph.db \
+//!     cargo test -p stella-tools \
 //!     --test relevance_calibration -- --ignored --nocapture
 //! ```
 //!
@@ -27,6 +28,25 @@
 //! configuration of its own. Run it once per backend: the floor is a
 //! per-`HttpEmbedder` field, so `voyage-code-3` and a local model may
 //! legitimately differ.
+//!
+//! ## `STELLA_CALIBRATION_INDEX` — what made this affordable to run
+//!
+//! Without it the harness builds an index into a temporary directory and
+//! embeds this whole repository first, which is the ~11M paid tokens the
+//! session that wrote this file declined to spend. With it, the harness ranks
+//! against an index that is **already filled under the same fingerprint** —
+//! the one a working checkout's `search::backfill` pass has been filling all
+//! along — and the run's entire cost is one query embedding per labelled
+//! query. Four, at the time of writing.
+//!
+//! It changes nothing about what is measured. The distribution is a property
+//! of the embedder and the corpus, and the corpus is the same rows either way;
+//! what the flag removes is the re-embedding of rows that already exist. The
+//! harness prints the chunk count it ranked over, so a thin index cannot be
+//! mistaken for a full one, and it still refuses to report a distribution over
+//! zero rows. Point it at a **copy** of a live session's database rather than
+//! the live file: it opens the graph for writing (`CodeGraph::open`), and a
+//! session's own indexer is already writing to that one.
 //!
 //! # What it prints, and what to do with it
 //!
@@ -75,17 +95,43 @@
 //! (`tests/chunk_retrieval_witnesses.rs`) carries the same two halves and its
 //! module doc argues them at length.
 //!
-//! # Status
+//! # Status — run 2026-08-24 against `voyage-code-3`
 //!
-//! **Written, and unrun.** No distribution has been observed and **no
-//! constant has been changed** — every number in the three doc comments is
-//! still the provisional one. Not for want of a key: the session that wrote
-//! this had a usable `pa-` one in its environment and did not spend it,
-//! because a cold pass over this repository is ~11M tokens against a paid API
-//! and that is a maintainer's call to make deliberately, not a side effect of
-//! writing the harness. #3096 is not closed by this file's existence; it is
-//! closed by one run of it with a real key and the three doc comments
-//! rewritten from what it printed.
+//! What made it affordable was `STELLA_CALIBRATION_INDEX` above: the ~11M
+//! paid tokens the previous session declined to spend were the *re-embedding*,
+//! and an index this workspace had already filled made the run cost four query
+//! embeddings.
+//!
+//! ```text
+//! embedder    voyage-code-3@1/1024/l2      chunks 28744      depth 40
+//! separation  n/a      | +0.0140 | -0.0439 | n/a
+//! boundary    n/a      | +0.0140 | +0.0001 | n/a       (5.36x and 0.11x mean)
+//! cut         40 vs 0  | 40 vs 1 | 40 vs 39| 40 vs 0
+//! ```
+//!
+//! **Tightest separation -0.0439: the two distributions overlap, and no
+//! admission floor separates them.** On "why is the Rust toolchain pinned to
+//! an exact version" the labelled answer ranked 39th at 0.5978, under 38
+//! irrelevant chunks scoring 0.6006-0.6436. Two of the four queries returned
+//! no labelled answer in 40 candidates at all, which is a recall result and
+//! makes their separation unmeasurable rather than good.
+//!
+//! What was rewritten from it, and what deliberately was not:
+//!
+//! - `stella_embed`'s `MEASURED_FLOORS` now records the row, and
+//!   `voyage-code-3` declares `SimilarityPosture::Surface` (#2993).
+//! - `DEFAULT_MIN_BOUNDARY_GAP`'s doc carries the observed drops (0.0140 and
+//!   0.0001, both under its 0.05), which is why `relevant_prefix` never cuts
+//!   on this corpus and why `search` still prints its RANK CEILING note
+//!   (#4385).
+//! - **No constant's value moved.** Two usable frontiers, pointing opposite
+//!   ways, is a sample to report and not one to tune a threshold against —
+//!   which is what the section above says this harness exists to avoid.
+//!
+//! What #3096 still wants is the other three backends
+//! (`text-embedding-3-small`, `text-embedding-3-large`, a local
+//! `nomic-embed-text`) and a `QUERIES` table long enough that two of its rows
+//! being recall misses does not halve the sample.
 
 use std::path::{Path, PathBuf};
 
@@ -101,6 +147,11 @@ use stella_tools::search::backfill::backfill_opened;
 const NO_BACKEND: &str = "no embedding backend is configured: set VOYAGE_API_KEY (a `pa-` key; an \
                           `al-` Atlas key gets HTTP 403 from api.voyageai.com), or OPENAI_API_KEY, \
                           or STELLA_EMBED_URL together with STELLA_EMBED_MODEL";
+
+/// An already-filled `codegraph.db` to rank against, instead of building and
+/// embedding one. See this file's module doc for why that is a measurement
+/// shortcut rather than a measurement change.
+const INDEX_ENV: &str = "STELLA_CALIBRATION_INDEX";
 
 /// How deep each ranking is measured. Deep enough that the irrelevant tail is
 /// represented rather than clipped at the point the answers stop — a
@@ -285,18 +336,30 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
     let embedder = embedder.as_ref();
 
     let root = workspace_root();
-    let db = tempfile::tempdir().expect("tempdir for the index");
-    let graph = CodeGraph::open(&root, &db.path().join("codegraph.db")).expect("open the index");
+    let scratch = tempfile::tempdir().expect("tempdir for the index");
+    let prefilled = std::env::var_os(INDEX_ENV).map(PathBuf::from);
+    let db_path = prefilled
+        .clone()
+        .unwrap_or_else(|| scratch.path().join("codegraph.db"));
+    let graph = CodeGraph::open(&root, &db_path).expect("open the index");
     graph.index_all().expect("index this workspace");
 
     let fingerprint = embedder.fingerprint().id();
-    backfill_opened(&graph, embedder, &mut |_| {}).await;
+    // A prefilled index is taken as given: re-running the backfill over it
+    // would re-embed nothing (every row is already stored under this
+    // fingerprint) but would still walk the whole pending scan, and the point
+    // of the flag is that this run buys no embeddings it does not need.
+    if prefilled.is_none() {
+        backfill_opened(&graph, embedder, &mut |_| {}).await;
+    }
     let chunks = graph
         .embedded_chunk_count(&fingerprint)
         .expect("chunk count");
     assert!(
         chunks > 0,
-        "no chunk vectors were stored, so there is no distribution to measure"
+        "no chunk vectors are stored under {fingerprint}, so there is no distribution to \
+         measure — a {INDEX_ENV} index filled by a different embedder is invisible to this one \
+         rather than silently comparable"
     );
 
     let shipped_floor = match embedder.similarity_posture() {
@@ -312,6 +375,13 @@ async fn print_the_relevant_and_irrelevant_score_distributions() {
     println!("\n=== relevance calibration =========================================");
     println!("embedder    {fingerprint}");
     println!("chunks      {chunks}");
+    println!(
+        "index       {}",
+        prefilled.as_ref().map_or_else(
+            || "built and embedded for this run".to_string(),
+            |path| format!("prefilled, {} ({INDEX_ENV})", path.display()),
+        )
+    );
     println!(
         "shipped     floor {shipped_floor}, gap ratio {DEFAULT_RELEVANCE_GAP_RATIO}, min gap {DEFAULT_MIN_BOUNDARY_GAP}"
     );

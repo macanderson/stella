@@ -37,6 +37,8 @@ ALLOW=(
   # `make prose-update`. Its paths are an index, not a citation -- nothing in
   # it asks a reader to go and read the document.
   "scripts/prose-baseline.txt"
+  # The same shape, written by `make line-citations-update`.
+  "scripts/line-citations-baseline.txt"
 )
 
 is_allowed() {

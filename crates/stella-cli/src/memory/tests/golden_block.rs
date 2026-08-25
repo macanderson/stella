@@ -47,6 +47,7 @@ origin = "user"
 force = "may"
 "#
         .to_string(),
+        contributed_by: None,
     };
     memory.set_record_registry(stella_core::records::registry::load(
         &[],

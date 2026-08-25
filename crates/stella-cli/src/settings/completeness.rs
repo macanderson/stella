@@ -94,6 +94,7 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
         ignore_gitignore,
         create_worktrees,
         candidate_isolation,
+        auto_trust_project,
         allowed_dirs,
         ui,
         reward,
@@ -130,6 +131,17 @@ fn settings_ledger(s: &Settings) -> Vec<Field> {
             "candidate_isolation",
             Posture::Merged,
             candidate_isolation != &d.candidate_isolation,
+        ),
+        // `Merged` like every `[run]` scalar above: `overlay_scope` must
+        // carry it so the merged view is inspectable. The stricter half —
+        // that a PROJECT scope's value never survives into what
+        // `project_trust` reads — is `merge_captured_scopes`'s job, not
+        // `overlay_scope`'s, and is covered by
+        // `settings::tests::auto_trust_project` rather than this ledger.
+        keyed(
+            "auto_trust_project",
+            Posture::Merged,
+            auto_trust_project != &d.auto_trust_project,
         ),
         keyed(
             "allowed_dirs",
@@ -304,6 +316,7 @@ const EVERY_KEY: &str = r#"{
   "ignore_gitignore": "off",
   "create_worktrees": "always",
   "candidate_isolation": "copy-tree",
+  "auto_trust_project": true,
   "allowed_dirs": ["/srv/shared"],
   "ui": { "theme": "stella-light" },
   "reward": { "deterministic_weight": 2.0 },

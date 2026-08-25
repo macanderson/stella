@@ -112,20 +112,21 @@ The pipeline half of this page — `VERIFIER_INSTRUCTIONS`, `verifier_prompt`,
 `verifier_stage.rs`, the `agents.verifier.prompt` override for a raw verdict
 call, the diff-last D5 framing and the 5,000-token `DiffScope::Budgeted` render —
 was deleted in #2584. `VERIFIER_DIFF_BUDGET_TOKENS` and `bounded_worker_diff`
-still exist in `crates/stella-pipeline/src/verify/diff_render.rs` but have no
-production caller (tracked separately); their presence is not evidence that a
-pipeline verdict call happens.
+outlived it in `stella-pipeline`, with no production caller, until that crate
+itself was deleted in #3865. Nothing in this tree issues a pipeline verdict
+call.
 
-Two pieces of that machinery *did* survive, and neither is a review:
+Two pieces of that machinery outlived #2584 and left with #3865. Neither was a
+review, and both are recorded here because a verification plugin ports the
+shape (`doc:pipeline-as-plugins` §8):
 
-- **`verifier_waiver_stands`** (`crates/stella-pipeline/src/pipeline.rs`) still
-  decides whether triage's `VERIFIER: no` may stand — but "buying the verifier"
-  no longer means buying a model call, only whether the ladder may waive the
-  question. See `doc:witness-protocol` §7.1.
-- **`evidence_demand_prompt`** (`crates/stella-pipeline/src/verify.rs`) still
-  spends one revision asking for corroboration when nothing deterministic backs
-  the turn. It is a fixed template over the tracked command, issued to the
-  worker, making no claim about the change.
+- **`verifier_waiver_stands`** decided whether triage's `VERIFIER: no` could
+  stand. "Buying the verifier" had already stopped meaning a model call by
+  then; it meant only whether the ladder could waive the question. See
+  `doc:witness-protocol` §7.1.
+- **`evidence_demand_prompt`** spent one revision asking for corroboration
+  when nothing deterministic backed the turn. A fixed template over the
+  tracked command, issued to the worker, making no claim about the change.
 
 On the wire, `LadderRung` keeps `model_judge`, `model_verdict`, and
 `heuristic_fallback` as read-only aliases of `unverified` so historical streams

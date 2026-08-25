@@ -288,6 +288,10 @@ macro_rules! diag {
 /// A per-crate facet enum (§5.1) implements this to turn itself into a record's
 /// worth of fields, so the crate that owns the vocabulary owns the rendering
 /// too and nobody edits a shared enum.
+///
+/// No production crate implements it yet — `stella-cli`'s `diag_bridge`
+/// builds [`Record::new`] by hand. #4754 decides whether it gets an
+/// implementer or goes.
 pub trait Facet {
     /// This event's stable diagnostic code (§11).
     fn code(&self) -> &'static str;

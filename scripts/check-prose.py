@@ -25,10 +25,17 @@ the same bar as a `.md` file. Fenced blocks and backticked spans are skipped
 it, and has to be able to spell it.
 
 The baseline (`scripts/prose-baseline.txt`) is a **down-only ratchet**, the
-same shape as `scripts/typed-errors-baseline.txt`: a file may shrink its
-count, never grow it, and a file absent from the baseline must be at zero.
-`--update` refuses to raise a count and refuses to add a file, so the only
-way past a failure is to delete the prose.
+same shape as `scripts/typed-errors-baseline.txt`, kept per (file, pattern):
+a pair may shrink its count, never grow it, and a pair absent from the
+baseline must be at zero. `--update` refuses to raise a count and refuses to
+add a pair, so the only way past a failure is to delete the prose. Per
+pattern rather than per file so a file cannot pay for new prose of one kind
+by deleting prose of another.
+
+Adding a pattern is the one case a count legitimately goes up, and
+`--adopt=<name>` is the only door: it records that pattern's pre-existing
+hits and refuses to touch any other pattern's numbers, or to run twice for
+one pattern.
 
 The ratchet is legitimate here for the one reason a ratchet ever is: the rule
 predates the guard. The baseline records debt that already existed; it grants
@@ -36,12 +43,16 @@ no new permission.
 
 Usage:
 
-    ./scripts/check-prose.py [--update] [--bootstrap] [--report] [ROOT]
+    ./scripts/check-prose.py [--update] [--adopt=NAME] [--report] [ROOT]
 
-    --update     rewrite the baseline downward only (`make prose-update`)
-    --bootstrap  create the baseline from the current tree; one-time, and
-                 refuses to run when the baseline already exists
-    --report     print every offending line, grouped by file; changes nothing
+    --update      rewrite the baseline downward only (`make prose-update`)
+    --adopt=NAME  record the pre-existing debt of a pattern added to PATTERNS
+                  after the baseline was written, and nothing else. Once per
+                  pattern: a pattern already in the baseline is refused
+                  (`make prose-adopt PATTERN=NAME`)
+    --bootstrap   create the baseline from the current tree; one-time, and
+                  refuses to run when the baseline already exists
+    --report      print every offending line, grouped by file; changes nothing
 """
 
 from __future__ import annotations
@@ -133,16 +144,41 @@ PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
         re.compile(r"\b[Ii]nvariants?\b|\b[Vv]ariants?\b"),
         "say option (for variant) or rule (for invariant)",
     ),
+    (
+        "filler-adverb",
+        # "deliberately" sounds like it is carrying a reason and never is.
+        # Either the reason follows, in which case the word adds nothing to
+        # it, or no reason follows, in which case the word stands in for one.
+        # #4392's audit found it 2,500 times across 1,100 files, which is what
+        # a word means when it means nothing.
+        re.compile(r"\b[Dd]eliberate(?:ly)?\b"),
+        "delete it; state the reason, or state nothing",
+    ),
+    (
+        "bare-issue-citation",
+        # An issue number is not an explanation. A reader outside the tracker
+        # cannot follow it, and a reader inside it should not have to in order
+        # to understand the line they are looking at. Narrow on purpose: this
+        # matches only a sentence whose entire content is the citation, never
+        # a number appended to a sentence that says something.
+        re.compile(r"(?:^|[.;:!?]\s+)[Ss]ee #\d+\.?\s*$"),
+        "say what the issue decided; keep the number beside it",
+    ),
 ]
 
 HEADER = """\
 # Down-only ratchet for the no-content-free-prose rule (CLAUDE.md, "Prose is
-# code you cannot compile").
+# code you cannot compile"; the full rules are docs/prose-guidelines.md).
 #
-# Each line is `<path> <count>` -- the number of banned constructions still in
-# that file. A file may shrink its count; it may never grow it, and a file
-# absent from this list must be at zero. Regenerate with `make prose-update`,
-# which refuses to raise a number or add a file.
+# Each line is `<path> <pattern> <count>` -- how many of that one banned
+# construction are still in that file. A (file, pattern) pair may shrink its
+# count; it may never grow it, and a pair absent from this list must be at
+# zero. Regenerate with `make prose-update`, which refuses to raise a number or
+# add a pair.
+#
+# Per pattern rather than per file so a file cannot pay for new prose of one
+# kind by deleting prose of another -- the two are unrelated edits and a single
+# total lets them net out.
 #
 # This file is meant to reach empty. Do not add a line here to turn the gate
 # green -- delete the prose instead. See ./scripts/check-prose.py --report for
@@ -207,46 +243,61 @@ def scan(root: Path, path: str) -> list[tuple[int, str, str, str]]:
     return hits
 
 
-def counts(root: Path) -> tuple[dict[str, int], dict[str, list]]:
-    per_file: dict[str, int] = {}
+def counts(root: Path) -> tuple[dict[tuple[str, str], int], dict[str, list]]:
+    """Per-(file, pattern) counts, and every hit grouped by file."""
+    per_pair: dict[tuple[str, str], int] = {}
     detail: dict[str, list] = {}
     for path in tracked_files(root):
         hits = scan(root, path)
         if hits:
-            per_file[path] = len(hits)
             detail[path] = hits
-    return per_file, detail
+            for _, name, _, _ in hits:
+                per_pair[(path, name)] = per_pair.get((path, name), 0) + 1
+    return per_pair, detail
 
 
-def read_baseline(path: Path) -> dict[str, int]:
+def read_baseline(path: Path) -> dict[tuple[str, str], int]:
     if not path.exists():
         return {}
-    baseline: dict[str, int] = {}
+    baseline: dict[tuple[str, str], int] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        name, _, num = line.rpartition(" ")
-        baseline[name] = int(num)
+        fields = line.split()
+        if len(fields) != 3:
+            raise SystemExit(
+                f"check-prose: {path} line {line!r} is not "
+                "`<path> <pattern> <count>`. Regenerate it with "
+                "`make prose-update`."
+            )
+        file_path, pattern, num = fields
+        baseline[(file_path, pattern)] = int(num)
     return baseline
 
 
-def write_baseline(path: Path, data: dict[str, int]) -> None:
-    body = "".join(f"{p} {n}\n" for p, n in sorted(data.items()) if n > 0)
+def write_baseline(path: Path, data: dict[tuple[str, str], int]) -> None:
+    body = "".join(
+        f"{file_path} {pattern} {n}\n"
+        for (file_path, pattern), n in sorted(data.items())
+        if n > 0
+    )
     path.write_text(HEADER + body, encoding="utf-8")
 
 
 def main() -> int:
     argv = [a for a in sys.argv[1:] if not a.startswith("--")]
-    flags = {a for a in sys.argv[1:] if a.startswith("--")}
+    flags = [a for a in sys.argv[1:] if a.startswith("--")]
+    flagset = {a.split("=", 1)[0] for a in flags}
     root = Path(argv[0]) if argv else Path(__file__).resolve().parent.parent
     root = root.resolve()
 
-    per_file, detail = counts(root)
+    per_pair, detail = counts(root)
+    files = {path for path, _ in per_pair}
     baseline_path = root / BASELINE
 
-    if "--report" in flags:
-        total = sum(per_file.values())
+    if "--report" in flagset:
+        total = sum(per_pair.values())
         by_pattern: Counter[str] = Counter()
         for hits in detail.values():
             for _, name, _, _ in hits:
@@ -255,82 +306,143 @@ def main() -> int:
             print(f"\n{path}")
             for lineno, name, text, remedy in detail[path]:
                 print(f"  {lineno:>5}  [{name}] {text!r} -- {remedy}")
-        print(f"\n{total} construction(s) in {len(per_file)} file(s)")
+        print(f"\n{total} construction(s) in {len(files)} file(s)")
         for name, n in by_pattern.most_common():
             print(f"  {n:>5}  {name}")
         return 0
 
-    if "--bootstrap" in flags:
+    if "--bootstrap" in flagset:
         if baseline_path.exists():
             print(
                 "check-prose: refusing to bootstrap -- "
-                f"{BASELINE} already exists. Use --update, which only ever "
-                "lowers a count.",
+                f"{BASELINE} already exists. Use --adopt=<pattern> to record "
+                "the debt of a newly added pattern, or --update, which only "
+                "ever lowers a count.",
                 file=sys.stderr,
             )
             return 1
-        write_baseline(baseline_path, per_file)
+        write_baseline(baseline_path, per_pair)
         print(
             f"check-prose: wrote {BASELINE} with "
-            f"{sum(per_file.values())} construction(s) in {len(per_file)} file(s)."
+            f"{sum(per_pair.values())} construction(s) in {len(files)} file(s)."
         )
         return 0
 
     baseline = read_baseline(baseline_path)
 
-    if "--update" in flags:
-        # A file absent from the baseline is held to zero, so `.get(path, 0)`
+    # `--adopt=<pattern>[,<pattern>]` records the debt of a pattern added to
+    # PATTERNS after the baseline was written, and touches no other pattern's
+    # numbers. This is the one legitimate way a count in this file goes up, and
+    # it is legitimate for the reason --bootstrap was: the prose predates the
+    # check, so the entries record debt that already existed rather than
+    # granting permission to write more. A pattern that already appears in the
+    # baseline has been adopted, and is refused.
+    adopt = next((a for a in flags if a.startswith("--adopt")), None)
+    if adopt is not None:
+        _, _, raw = adopt.partition("=")
+        wanted = [name.strip() for name in raw.split(",") if name.strip()]
+        known = {name for name, _, _ in PATTERNS}
+        if not wanted:
+            print(
+                "check-prose: --adopt needs a pattern name: "
+                f"--adopt={sorted(known)[0]}",
+                file=sys.stderr,
+            )
+            return 2
+        unknown = [name for name in wanted if name not in known]
+        if unknown:
+            print(
+                f"check-prose: no such pattern(s): {', '.join(unknown)}. "
+                f"Known: {', '.join(sorted(known))}.",
+                file=sys.stderr,
+            )
+            return 2
+        already = [
+            name for name in wanted if any(p == name for _, p in baseline)
+        ]
+        if already:
+            print(
+                "check-prose: refusing to adopt -- these pattern(s) already "
+                f"have baseline entries: {', '.join(already)}. Adoption is "
+                "once per pattern; use --update, which only lowers a count.",
+                file=sys.stderr,
+            )
+            return 1
+        merged = dict(baseline)
+        added = 0
+        for (path, pattern), n in per_pair.items():
+            if pattern in wanted:
+                merged[(path, pattern)] = n
+                added += n
+        write_baseline(baseline_path, merged)
+        print(
+            f"check-prose: adopted {', '.join(wanted)} -- "
+            f"{added} pre-existing construction(s) recorded. "
+            "Every one of them is debt; take it down."
+        )
+        return 0
+
+    if "--update" in flagset:
+        # A pair absent from the baseline is held to zero, so `.get(pair, 0)`
         # is what makes --update refuse to grandfather a first-time offender.
-        merged = {p: min(n, baseline.get(p, 0)) for p, n in per_file.items()}
+        merged = {p: min(n, baseline.get(p, 0)) for p, n in per_pair.items()}
         raised = {
-            p: (baseline.get(p, 0), n) for p, n in per_file.items() if n > baseline.get(p, 0)
+            p: (baseline.get(p, 0), n)
+            for p, n in per_pair.items()
+            if n > baseline.get(p, 0)
         }
         if raised:
             print(
                 "check-prose: refusing to update -- these files gained prose:",
                 file=sys.stderr,
             )
-            for p, (was, now) in sorted(raised.items()):
-                print(f"  {p}: {was} -> {now}", file=sys.stderr)
+            for (path, pattern), (was, now) in sorted(raised.items()):
+                print(f"  {path} [{pattern}]: {was} -> {now}", file=sys.stderr)
             print(
                 "\nDelete the constructions instead. "
                 "`./scripts/check-prose.py --report` names every line.",
                 file=sys.stderr,
             )
             return 1
-        # Files that reached zero drop out entirely; the ratchet retightens.
-        for p in baseline:
-            if p not in per_file:
-                merged.pop(p, None)
+        # Pairs that reached zero drop out entirely; the ratchet retightens.
+        for pair in baseline:
+            if pair not in per_pair:
+                merged.pop(pair, None)
         write_baseline(baseline_path, merged)
         print(f"check-prose: {BASELINE} retightened to {sum(merged.values())}.")
         return 0
 
     failures = []
-    for path in sorted(set(per_file) | set(baseline)):
-        now = per_file.get(path, 0)
-        allowed = baseline.get(path, 0)
+    for pair in sorted(set(per_pair) | set(baseline)):
+        now = per_pair.get(pair, 0)
+        allowed = baseline.get(pair, 0)
         if now > allowed:
-            failures.append((path, allowed, now))
+            failures.append((pair, allowed, now))
 
     if failures:
         print("check-prose: FAIL -- content-free prose added.\n", file=sys.stderr)
-        for path, allowed, now in failures:
-            print(f"  {path}: {allowed} allowed, {now} found", file=sys.stderr)
+        for (path, pattern), allowed, now in failures:
+            print(
+                f"  {path} [{pattern}]: {allowed} allowed, {now} found",
+                file=sys.stderr,
+            )
             for lineno, name, text, remedy in detail.get(path, []):
+                if name != pattern:
+                    continue
                 print(f"      {lineno}: [{name}] {text!r} -- {remedy}", file=sys.stderr)
         print(
             "\nThese constructions announce writing instead of doing it; "
             "deleting one costs the reader nothing.\n"
-            "Fix the prose. Do not add a baseline entry.",
+            "Fix the prose. Do not add a baseline entry. "
+            "docs/prose-guidelines.md is the full rule.",
             file=sys.stderr,
         )
         return 1
 
-    total = sum(per_file.values())
+    total = sum(per_pair.values())
     print(
         f"check-prose: OK -- {total} grandfathered construction(s) "
-        f"in {len(per_file)} file(s), none added."
+        f"in {len(files)} file(s), none added."
     )
     return 0
 

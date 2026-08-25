@@ -8,8 +8,9 @@
 # handful of throwaway git trees, the same posture as
 # `make typed-errors-test`.
 #
-# The guard's promise is one sentence: a file may shrink its count, never grow
-# it, and a file absent from the baseline must be at zero. P2 is the witness
+# The guard's promise is one sentence: a (file, pattern) pair may shrink its
+# count, never grow it, and a pair absent from the baseline must be at zero. P2
+# is the witness
 # for that promise -- it is the case that fails before the guard exists and
 # passes after. P5 covers the half a ratchet usually gets wrong, which is the
 # writer rather than the checker: a `--update` that grandfathers a first-time
@@ -63,14 +64,14 @@ doc() {
   (cd "$1" && git add -A) >/dev/null 2>&1
 }
 
-# $1 = root, then `path count` pairs.
+# $1 = root, then `path pattern count` triples.
 baseline() {
   root="$1"
   shift
   printf '# test baseline\n' >"$root/scripts/prose-baseline.txt"
-  while [ $# -gt 1 ]; do
-    printf '%s %s\n' "$1" "$2" >>"$root/scripts/prose-baseline.txt"
-    shift 2
+  while [ $# -gt 2 ]; do
+    printf '%s %s %s\n' "$1" "$2" "$3" >>"$root/scripts/prose-baseline.txt"
+    shift 3
   done
 }
 
@@ -110,6 +111,15 @@ expect_absent() {
   fi
 }
 
+# $1 = case name, $2 = root, $3 = a line that must be in the baseline.
+expect_line() {
+  if grep -qx "$3" "$2/scripts/prose-baseline.txt" 2>/dev/null; then
+    ok "$1"
+  else
+    no "$1" "the baseline has no line \"$3\""
+  fi
+}
+
 # ── P1: clean prose passes ───────────────────────────────────────────────────
 r="$(new_root p1)"
 doc "$r" docs/a.md <<'EOF'
@@ -131,7 +141,7 @@ r="$(new_root p3)"
 doc "$r" docs/a.md <<'EOF'
 Two things follow from that.
 EOF
-baseline "$r" docs/a.md 1
+baseline "$r" docs/a.md enumerative-announcement 1
 expect_pass "P3 grandfathered count passes" "$r"
 
 # ── P4: growing past the baseline fails ──────────────────────────────────────
@@ -140,7 +150,7 @@ doc "$r" docs/a.md <<'EOF'
 Two things follow from that.
 Both halves matter here.
 EOF
-baseline "$r" docs/a.md 1
+baseline "$r" docs/a.md enumerative-announcement 1
 expect_fail "P4 growth past baseline fails" "$r"
 
 # ── P5: --update refuses to grandfather a first-time offender ────────────────
@@ -159,7 +169,7 @@ r="$(new_root p6)"
 doc "$r" docs/a.md <<'EOF'
 The order is required, not stylistic.
 EOF
-baseline "$r" docs/a.md 3
+baseline "$r" docs/a.md empty-epigram 3
 if python3 "$SCRIPT" --update "$r" >/dev/null 2>&1; then
   ok "P6 --update accepts a shrink"
 else
@@ -200,6 +210,63 @@ The honest number is the one the TUI shows for each enum variant.
 EOF
 baseline "$r"
 expect_fail "P9 banned vocabulary fails" "$r"
+
+# ── P10: one file cannot trade one pattern's fix for another's growth ────────
+# The witness for the per-pattern baseline. Under a single per-file total this
+# tree passes: one construction was deleted and one was added, so the count is
+# unchanged. Per pattern it fails, because `empty-epigram` grew from zero.
+r="$(new_root p10)"
+doc "$r" docs/a.md <<'EOF'
+The order is required, not decoration.
+EOF
+baseline "$r" docs/a.md enumerative-announcement 1
+expect_fail "P10 a swap between patterns fails" "$r"
+
+# ── P11: --adopt records one pattern's debt and nothing else ─────────────────
+# Adding a pattern to PATTERNS is the one case a count in the baseline
+# legitimately goes up: the prose predates the check. --adopt is that door, and
+# it must not touch any other pattern's number on the way through.
+r="$(new_root p11)"
+doc "$r" docs/a.md <<'EOF'
+Two things follow from that.
+The order is deliberately required.
+EOF
+baseline "$r" docs/a.md enumerative-announcement 5
+if python3 "$SCRIPT" --adopt=filler-adverb "$r" >/dev/null 2>&1; then
+  ok "P11 --adopt accepts a new pattern"
+else
+  no "P11 --adopt accepts a new pattern" "--adopt exited non-zero"
+fi
+expect_line "P11 --adopt records the new pattern" "$r" "docs/a.md filler-adverb 1"
+expect_line "P11 --adopt leaves other patterns alone" "$r" \
+  "docs/a.md enumerative-announcement 5"
+
+# ── P12: --adopt refuses a pattern already in the baseline ──────────────────
+# Once per pattern. A second adoption would be a raise wearing the name of the
+# one legitimate exception.
+r="$(new_root p12)"
+doc "$r" docs/a.md <<'EOF'
+The order is deliberately required, and deliberately documented.
+EOF
+baseline "$r" docs/a.md filler-adverb 1
+if python3 "$SCRIPT" --adopt=filler-adverb "$r" >/dev/null 2>&1; then
+  no "P12 --adopt refuses a second adoption" "--adopt exited 0"
+else
+  ok "P12 --adopt refuses a second adoption"
+fi
+expect_line "P12 --adopt wrote nothing" "$r" "docs/a.md filler-adverb 1"
+
+# ── P13: --adopt rejects a name that is not a pattern ────────────────────────
+r="$(new_root p13)"
+doc "$r" docs/a.md <<'EOF'
+The store keys every child table off `executions.id`.
+EOF
+baseline "$r"
+if python3 "$SCRIPT" --adopt=no-such-pattern "$r" >/dev/null 2>&1; then
+  no "P13 --adopt rejects an unknown pattern" "--adopt exited 0"
+else
+  ok "P13 --adopt rejects an unknown pattern"
+fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

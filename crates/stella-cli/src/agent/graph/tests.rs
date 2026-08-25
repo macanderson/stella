@@ -107,7 +107,9 @@ async fn init_embeds_the_index_without_any_semantic_query_being_issued() {
         "concept-2",
         None,
         2,
-        0.25,
+        // Only the fingerprint is wanted here, and the posture does not
+        // enter it: no operator floor.
+        None,
     )
     .fingerprint()
     .id();
@@ -299,7 +301,9 @@ async fn init_embeds_every_chunk_without_any_semantic_query_being_issued() {
         "concept-2",
         None,
         2,
-        0.25,
+        // Only the fingerprint is wanted here, and the posture does not
+        // enter it: no operator floor.
+        None,
     )
     .fingerprint()
     .id();

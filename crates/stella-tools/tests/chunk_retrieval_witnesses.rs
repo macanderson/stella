@@ -122,11 +122,9 @@ const NO_BACKEND: &str = "no embedding backend is configured: set VOYAGE_API_KEY
 const SPREAD_DEPTH: usize = 10;
 
 /// The separator `stella_graph`'s markdown sections join their breadcrumb
-/// with. Its `markdown` module is private and `BREADCRUMB_SEPARATOR` inside it
-/// is `pub(crate)`, so no import can reach it and this is the one place the
-/// literal is repeated; a drift shows up as a failed section assertion naming
-/// the breadcrumb it actually got.
-const BREADCRUMB: &str = " \u{203a} ";
+/// with. Re-exported since #4574, when the exact-symbol rung needed to
+/// recognise one; this file used to carry the only repeated copy of the bytes.
+const BREADCRUMB: &str = stella_graph::BREADCRUMB_SEPARATOR;
 
 /// This repository's root — the corpus. Derived from the crate manifest so it
 /// is right whatever the working directory is, and checked, because indexing
