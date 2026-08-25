@@ -1,10 +1,17 @@
 ---
 id: step-grading-and-productive-ratio
 title: "Step grading and the agent productive step ratio"
-status: proposed
+status: living
 ---
 
 # Step grading and the agent productive step ratio
+
+**Built so far:** §3's three tables — `step_grades`, `turn_grades`,
+`execution_grades` — are in `bench/telemetry_store/schema.sql`, which cites
+this document as their contract. Nothing writes them: §4–§9 (ingestion, the
+deterministic classifiers, the judge fallback, the aggregation formulas and
+the join report) have no implementation, so every column is empty today.
+Tracked as #4751.
 
 ## 0. Summary
 

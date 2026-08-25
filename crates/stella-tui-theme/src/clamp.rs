@@ -103,7 +103,7 @@ pub fn satisfies(color: Color, clamp: token::Clamp) -> bool {
     };
     match clamp {
         token::Clamp::RestingGold => is_resting_gold(r, g, b),
-        token::Clamp::GoldLift => match channels(token::GOLD) {
+        token::Clamp::GoldLift => match token::lift_anchor().and_then(channels) {
             Some(anchor) => is_lift_of((r, g, b), anchor),
             None => false,
         },

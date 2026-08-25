@@ -531,7 +531,7 @@ Every result exposes manifest-ready metadata keys:
 | Variable | Effect |
 |---|---|
 | `--model` (Harbor) | Required literal `provider/model_id`. Repeated models are allowed only when all use one provider roster. |
-| `STELLA_SPEND_LIMIT` | Per-task USD target. Development defaults to `5.0`; the claim launcher requires the exact frozen value `0.17`. |
+| `STELLA_SPEND_LIMIT` | Refused. A trial runs under no per-trial spend cap, because a ceiling only one side carries stops that agent where the work finishes and the score reads it as the other agent being better (#2411). A non-empty value is refused rather than ignored, by both `_configured_budget` and the secure launcher. Bound spend at the provider key instead, which fails a run visibly instead of truncating a trial into a loss. |
 | `STELLA_BASE_URL` | Base-URL override for non-claim provider experiments. Claim-eligible OpenRouter runs reject anything except `https://openrouter.ai/api/v1`. |
 | `STELLA_BINARY` | Development may locate a binary automatically; the claim launcher requires a canonical absolute executable path to an ELF64 little-endian x86_64 artifact. |
 | `STELLA_SOURCE_COMMIT` | Development-only runs may omit it. The claim launcher requires an exact lowercase 40-hex value and verifies that it is the unique commit embedded by `STELLA_BUILD_GIT_SHA`. |

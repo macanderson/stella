@@ -54,7 +54,7 @@ pub(crate) fn workspace_skills_dir(workspace_root: &Path) -> String {
 /// Every `*.md` file physically present in `dir`, as the exact path strings
 /// [`stella_core::skills::decide_auto_creation`] builds and compares against.
 ///
-/// Deliberately a directory read rather than a view of the loaded skill list:
+/// A directory read rather than a view of the loaded skill list, because
 /// a file can sit on disk and still be absent from [`load_workspace_skills_with_authority`]
 /// — disabled from the SKILLS tab, excluded by authority, or dropped by a load
 /// diagnostic — and the no-clobber guard has to see it anyway (#737). Paths are
@@ -134,7 +134,7 @@ pub(crate) fn load_workspace_skills_with_authority(
 /// (#3567), because this is the one place that knows which package's directory
 /// was scanned. A skill's `origin:` frontmatter marker *can* set
 /// [`skills::SkillOrigin`] — so a package could otherwise declare itself the
-/// user's own — and `contributed_by` is deliberately not reachable that way.
+/// user's own — and `contributed_by` is not reachable that way.
 /// It is the same unforgeable-stamp rule
 /// `stella_tools::custom::CustomTool::contributed_by` follows for the tool
 /// surface, and the reason a caller no longer has to parse
@@ -159,7 +159,7 @@ fn append_plugin_skills(workspace_root: &Path, loaded: &mut skills::LoadedSkills
     }
 }
 
-/// Compatibility seam for callers that deliberately request the historical
+/// Compatibility seam for callers that ask for the historical
 /// user-plus-workspace skill view. Authority-aware session assembly uses
 /// [`load_workspace_skills_with_authority`] directly.
 #[cfg(test)]
