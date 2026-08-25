@@ -238,51 +238,69 @@ fn description_variant_note(name: &str) -> Option<String> {
 /// The JSON Schema for [`ToolOutput`], derived from the type's own serde
 /// encoding rather than transcribed beside it.
 ///
-/// The tag (`ok`/`error`) and the payload field names (`content`/`message`)
-/// are read out of what the two variants actually serialize to, so a
-/// `#[serde(rename)]` on either arm changes these pages and the gate says so.
-/// This is the whole of what is declared about a tool result: the envelope.
-/// What rides *inside* `ok.content` is a per-tool text convention with no
-/// schema anywhere behind it — which is why the observed example is the only
-/// evidence of its shape, and why it is labelled observed rather than
-/// specified.
+/// The tag (`ok`/`error`) and every payload field name are read out of what the
+/// two variants actually serialize to, so a `#[serde(rename)]` on either arm
+/// changes these pages and the gate says so. This is the whole of what is
+/// declared about a tool result: the envelope. What rides *inside*
+/// `ok.content` is a per-tool text convention, and what rides inside `ok.data`
+/// a per-tool structure, with no schema anywhere behind either — which is why
+/// the observed example is the only evidence of their shape, and why it is
+/// labelled observed rather than specified.
+///
+/// **Each arm is read off two serializations, not one** (#4641). A single
+/// sample cannot separate the fields a result *may* carry from the ones it
+/// *must*, because both of the optional fields — `ok.data` (#3285) and
+/// `error.class` (#3145) — are `skip_serializing_if = "Option::is_none"` and
+/// vanish from a `None` sample entirely. Deriving from that sample alone left
+/// `data` out of every page while `additionalProperties: false` sat under it,
+/// so these pages did not merely omit the structured half of a result: they
+/// forbade it, for the whole time `read_file` was sending one.
 fn output_schema() -> Value {
-    fn arm(value: &Value) -> (String, String) {
-        let object = value
-            .as_object()
-            .expect("ToolOutput serializes to an object");
-        let (tag, payload) = object
+    /// One arm of the `oneOf`: `full` names every property, `minimal` names
+    /// the required subset.
+    fn arm(full: &Value, minimal: &Value) -> Value {
+        let payload = |value: &Value| {
+            let (tag, payload) = value
+                .as_object()
+                .expect("ToolOutput serializes to an object")
+                .iter()
+                .next()
+                .expect("an externally tagged enum has exactly one key");
+            let fields = payload
+                .as_object()
+                .expect("both arms carry a struct payload")
+                .clone();
+            (tag.clone(), fields)
+        };
+        let (tag, fields) = payload(full);
+        let (minimal_tag, required) = payload(minimal);
+        assert_eq!(
+            tag, minimal_tag,
+            "the two samples must serialize the same arm"
+        );
+
+        let properties: serde_json::Map<String, Value> = fields
             .iter()
-            .next()
-            .expect("an externally tagged enum has exactly one key");
-        let field = payload
-            .as_object()
-            .expect("both arms carry a struct payload")
-            .keys()
-            .next()
-            .expect("both arms carry exactly one field")
-            .clone();
-        (tag.clone(), field)
-    }
+            .map(|(field, sample)| {
+                let schema = match sample {
+                    // `content`, `message` and an error `class` token all
+                    // serialize as strings, and that is the entire constraint
+                    // the envelope places on them.
+                    Value::String(_) => json!({ "type": "string" }),
+                    // `ok.data` is an `Option<serde_json::Value>`: the envelope
+                    // declares that a tool MAY answer with a structured half
+                    // and nothing at all about its shape. A `"type"` here would
+                    // be a constraint nobody declared — the same manufactured
+                    // source of truth this page refuses for `ok.content`.
+                    _ => json!({
+                        "$comment": "per-tool structure, undeclared by the envelope; \
+                                     the observed example below is its only evidence"
+                    }),
+                };
+                (field.clone(), schema)
+            })
+            .collect();
 
-    let ok = serde_json::to_value(ToolOutput::Ok {
-        content: String::new(),
-        data: None,
-    })
-    .expect("ToolOutput is Serialize");
-    // Deliberately the unclassified constructor (#3167): `arm()` below reads
-    // the payload's ONE field by taking `.keys().next()` on a `Value::Object`,
-    // which sorts alphabetically (this workspace does not enable
-    // serde_json's `preserve_order`). A classified error's `class` key sorts
-    // before `message`, so `arm()` would report the wrong field name for the
-    // documented schema. Keep the pre-#3145 shape here; see
-    // `scripts/check-tool-error-class.py`'s `TEST_ONLY_FILES`.
-    let error =
-        serde_json::to_value(ToolOutput::error(String::new())).expect("ToolOutput is Serialize");
-    let (ok_tag, ok_field) = arm(&ok);
-    let (error_tag, error_field) = arm(&error);
-
-    let variant = |tag: &str, field: &str| {
         json!({
             "type": "object",
             "required": [tag],
@@ -290,18 +308,40 @@ fn output_schema() -> Value {
             "properties": {
                 tag: {
                     "type": "object",
-                    "required": [field],
+                    "required": required.keys().collect::<Vec<_>>(),
                     "additionalProperties": false,
-                    "properties": { field: { "type": "string" } }
+                    "properties": properties
                 }
             }
         })
-    };
+    }
+
+    // The full samples fill both optional fields, so the property set is every
+    // key the arm can serialize. The minimal ones are the migration
+    // constructors a tool with nothing extra to say uses, so their key sets are
+    // exactly what a result must carry.
+    let ok_full = serde_json::to_value(ToolOutput::ok_with_data(String::new(), json!({})))
+        .expect("ToolOutput is Serialize");
+    let ok_min =
+        serde_json::to_value(ToolOutput::ok(String::new())).expect("ToolOutput is Serialize");
+    // The unclassified constructor is the minimal `Error` sample by
+    // construction (#3167) — see `scripts/check-tool-error-class.py`'s
+    // `TEST_ONLY_FILES`, which exempts this file for exactly this line.
+    let error_min =
+        serde_json::to_value(ToolOutput::error(String::new())).expect("ToolOutput is Serialize");
+    let error_full = serde_json::to_value(ToolOutput::Error {
+        message: String::new(),
+        class: Some(stella_protocol::ErrorClass::Internal),
+    })
+    .expect("ToolOutput is Serialize");
 
     json!({
         "$comment": "stella_protocol::ToolOutput — the envelope every tool answers in. \
                      The envelope is declared; the payload inside is not.",
-        "oneOf": [variant(&ok_tag, &ok_field), variant(&error_tag, &error_field)]
+        "oneOf": [
+            arm(&ok_full, &ok_min),
+            arm(&error_full, &error_min),
+        ]
     })
 }
 
@@ -755,8 +795,9 @@ fn render_tool(entry: &ToolEntry, schema: &ToolSchema, fixture: &Fixture) -> Str
          # The JSON Schema the model is handed for this tool's arguments, verbatim.\n\
          input_schema = {input_schema}\n\
          \n\
-         # The envelope every tool answers in. Declared; what rides inside\n\
-         # `ok.content` is a per-tool text convention with no schema behind it.\n\
+         # The envelope every tool answers in, optional members included.\n\
+         # Declared; what rides inside `ok.content` and `ok.data` is a per-tool\n\
+         # convention with no schema behind it.\n\
          output_schema = {output_schema}\n\
          \n\
          {example_rule}\n\
@@ -849,9 +890,11 @@ fn render_index(entries: &[&ToolEntry], fixture: &Fixture) -> String {
          would manufacture a source of truth nobody reviewed:\n\n\
          - **`output_schema` is the envelope only.** Every tool answers in \
            `ToolOutput { ok | error }`, which is declared and is what the field \
-           holds; the shape of the text inside `ok.content` is a per-tool \
-           convention with nothing behind it, so the observed example is its only \
-           evidence.\n\n",
+           holds — including the two optional members a result may carry, \
+           `ok.data` and `error.class`. What the envelope does not declare is \
+           what rides *inside* those: the text in `ok.content` and the structure \
+           in `ok.data` are per-tool conventions with nothing behind them, so the \
+           observed example is their only evidence.\n\n",
     );
     out.push_str(&format!(
         "**Examples are observed, not written.** They come from {source}, \
@@ -1041,6 +1084,105 @@ fn generated_pages_parse_and_carry_every_promised_field() {
         serde_json::from_str::<Value>(schema)
             .unwrap_or_else(|e| panic!("{name}'s input_schema is not JSON: {e}"));
     }
+}
+
+/// **The witness for #4641.** The documented envelope declares every field a
+/// real result can carry, and requires only the ones a result must.
+///
+/// Not "documents `data`": the assertion is set equality against what
+/// [`ToolOutput`] actually serializes, so the *next* optional field added to
+/// either arm fails here too rather than repeating the silence. That silence
+/// was not an omission — `additionalProperties: false` sits under these
+/// properties, so a schema without `data` says a `read_file` result (#4297,
+/// #4631) is invalid, which is a stronger and more wrong claim than saying
+/// nothing.
+#[test]
+fn the_output_envelope_declares_every_field_a_result_can_carry() {
+    let schema = output_schema();
+    let arms = schema["oneOf"]
+        .as_array()
+        .expect("the envelope is a oneOf of its two arms")
+        .clone();
+
+    /// The tag and field names one `ToolOutput` puts on the wire.
+    fn sent(output: &ToolOutput) -> (String, BTreeSet<String>) {
+        let value = serde_json::to_value(output).expect("ToolOutput is Serialize");
+        let (tag, payload) = value
+            .as_object()
+            .expect("ToolOutput serializes to an object")
+            .iter()
+            .next()
+            .expect("an externally tagged enum has exactly one key");
+        (
+            tag.clone(),
+            payload
+                .as_object()
+                .expect("both arms carry a struct payload")
+                .keys()
+                .cloned()
+                .collect(),
+        )
+    }
+
+    let mut checked = 0;
+    for (full, minimal) in [
+        // The `ok` arm as `read_file` fills it since #4631, against the arm a
+        // tool with no structured half sends.
+        (
+            ToolOutput::ok_with_data(
+                "     1\tfn main() {}".to_string(),
+                json!({ "lines_shown": 1, "lines_total": 1 }),
+            ),
+            ToolOutput::ok("     1\tfn main() {}"),
+        ),
+        (
+            ToolOutput::Error {
+                message: "no such file".into(),
+                class: Some(stella_protocol::ErrorClass::NotFound),
+            },
+            ToolOutput::error("no such file"),
+        ),
+    ] {
+        let (tag, can_carry) = sent(&full);
+        let (minimal_tag, must_carry) = sent(&minimal);
+        assert_eq!(tag, minimal_tag, "the pair must be one arm");
+
+        let documented = arms
+            .iter()
+            .find_map(|arm| arm.get("properties")?.get(&tag))
+            .unwrap_or_else(|| panic!("the envelope declares no `{tag}` arm"));
+        let properties: BTreeSet<String> = documented["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("`{tag}`'s properties are not an object"))
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            properties, can_carry,
+            "`{tag}` documents a different field set than a result carries — and \
+             `additionalProperties: false` below turns the difference into a \
+             refusal, not an omission"
+        );
+        let required: BTreeSet<String> = documented["required"]
+            .as_array()
+            .unwrap_or_else(|| panic!("`{tag}` declares no required list"))
+            .iter()
+            .map(|v| v.as_str().expect("a required entry is a name").to_owned())
+            .collect();
+        assert_eq!(
+            required, must_carry,
+            "`{tag}` requires a field an ordinary result omits, so the migration \
+             constructors' own output would not validate"
+        );
+        assert_eq!(
+            documented["additionalProperties"],
+            json!(false),
+            "`{tag}` stopped being closed, which is what made the field set \
+             worth asserting"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 2, "both arms of the envelope are covered");
 }
 
 /// A renamed tool's page reports the census row recorded under its then-name.
