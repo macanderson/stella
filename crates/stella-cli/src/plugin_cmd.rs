@@ -459,6 +459,7 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
             ("tools", &inventory.tools),
             ("skills", &inventory.skills),
             ("records", &inventory.records),
+            ("MCP servers", &inventory.mcp),
         ] {
             if !named.is_empty() {
                 println!("  ships {label}: {}", named.join(", "));

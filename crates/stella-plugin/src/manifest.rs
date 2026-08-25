@@ -48,7 +48,8 @@ use crate::error::ManifestError;
 use crate::host_call::HostCall;
 use crate::oracle::{Oracle, OracleProcess, OracleProcessSource};
 use crate::package::{
-    RecordContribution, SkillContribution, ToolContribution, validate_contributions,
+    McpContribution, RecordContribution, SkillContribution, ToolContribution,
+    validate_contributions,
 };
 use crate::runtime::Runtime;
 use crate::wire::WrapperPoint;
@@ -453,6 +454,21 @@ pub struct PluginManifest {
     /// [`crate::RecordEnforcement`] for the governance argument.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub records: Vec<RecordContribution>,
+    /// The MCP servers this package ships (#4733) — the `[[mcp]]` table.
+    ///
+    /// Gated on **no** participation grade, for [`Self::capabilities`]'
+    /// reason: the ladder governs a plugin's say in the turn, and a
+    /// `none`-grade bundle that starts a server on this machine is reaching
+    /// further into the world than an `observer` that only watches.
+    ///
+    /// Declaring the servers by name is what makes this consentable at all.
+    /// `[[configure]]` still refuses an `mcp` section (`crate::configure`'s
+    /// `REFUSED_SECTIONS`) because *that* channel writes lines into the user's
+    /// own file with no enumeration; this one names each server in the consent
+    /// document and is reconciled against the package's `mcp.toml`, which is
+    /// the property that refusal was asking for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp: Vec<McpContribution>,
     /// The configuration this package sets for as long as it is installed
     /// (#3999) — the `[[configure]]` table.
     ///

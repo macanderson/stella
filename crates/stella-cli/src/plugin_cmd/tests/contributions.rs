@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! A plugin is a package: the tools, skills and records it ships (#3380), and
-//! what happens to each when the package is installed, drifts, or is removed.
+//! A plugin is a package: the tools, skills, records and MCP servers it ships
+//! (#3380, #4733), and what happens to each when the package is installed,
+//! drifts, or is removed.
 //!
 //! Split out of `tests.rs` when that file crossed the 1500-line ceiling
 //! (#4440). The fixtures it shares with the parent reach here through
@@ -466,6 +467,126 @@ fn an_untrusted_projects_contributed_tool_never_loads() {
             .collect::<Vec<_>>(),
         vec!["vera_review".to_string()],
         "the same bytes load once the operator trusts the workspace"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// Write an `mcp.toml` shipping one server into a package source tree, and
+/// declare it, so the package still reconciles.
+fn ships_a_server(source: &Path, plugin: &str, server: &str) {
+    std::fs::write(
+        source.join(package::MCP_FILE),
+        format!(
+            "[servers.{server}]\ntransport = \"stdio\"\ncmd = \"/bin/echo\"\nargs = []\n"
+        ),
+    )
+    .expect("mcp.toml");
+    let manifest_path = source.join(roster::MANIFEST_FILE);
+    let existing = std::fs::read_to_string(&manifest_path).expect("manifest");
+    std::fs::write(
+        &manifest_path,
+        format!(
+            "{existing}\n[[mcp]]\nserver = \"{server}\"\n\
+             description = \"the {plugin} vendor integration\"\n"
+        ),
+    )
+    .expect("declared server");
+}
+
+/// **The MCP witness** (#4733). A package may ship an MCP server: it merges
+/// into the session's plan behind the roster's own trust gate, its calls
+/// authorize as the plugin rather than as the human, and it leaves with
+/// `stella plugin remove`.
+///
+/// The untrusted half is asserted first and in the same test, because "the
+/// servers merged" and "they merged *only* because the operator trusts this
+/// checkout" are the two halves of the same claim — a server is a command run
+/// on the machine, so the gate is the point.
+#[test]
+fn a_plugins_mcp_server_merges_behind_the_trust_gate_and_runs_as_the_plugin() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-mcp");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+
+    let planted = stella_home::resolve_project_plugins_dir(&root).join("vera");
+    plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
+    ships_a_package(&planted, "vera");
+    ships_a_server(&planted, "vera", "acme");
+
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe {
+        std::env::remove_var("STELLA_TRUST_PROJECT");
+        std::env::remove_var("STELLA_PROJECT_HOOKS");
+    }
+    let mut notices = Vec::new();
+    assert!(
+        package::contributed_mcp_servers(&root, &mut notices).is_empty(),
+        "an untrusted checkout starts none of a package's servers"
+    );
+
+    // SAFETY: as above.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+    let mut notices = Vec::new();
+    let contributed = package::contributed_mcp_servers(&root, &mut notices);
+    assert_eq!(contributed.len(), 1, "the same bytes load once trusted");
+    assert_eq!(contributed[0].plugin, "vera");
+    assert_eq!(
+        contributed[0]
+            .servers
+            .iter()
+            .map(|server| server.name.clone())
+            .collect::<Vec<_>>(),
+        vec!["acme".to_string()],
+    );
+
+    // It reaches the session's plan, which is what "a plugin may ship an MCP
+    // server" actually means — the workspace here has no mcp.toml of its own,
+    // the case `load_mcp_plan` used to answer `None` before reading a package.
+    let provider = crate::config::PROVIDERS
+        .first()
+        .expect("the provider table is never empty")
+        .clone();
+    let model_id = provider.default_model.to_string();
+    let mut cfg = crate::config::Config::for_tests(provider, model_id);
+    cfg.workspace_root = root.clone();
+    match crate::agent::load_mcp_plan(&cfg) {
+        crate::agent::McpPlan::Servers(servers, _) => assert!(
+            servers.iter().any(|server| server.name == "acme"),
+            "a package's server joins the session plan: {servers:?}"
+        ),
+        other => panic!("expected the package's server in the plan, got {other:?}"),
+    }
+
+    // And its calls are the plugin's, not the human's — the same authority
+    // property `a_plugins_tool_installs_runs_as_the_plugin_and_retracts_with_it`
+    // pins for a script tool, one surface over.
+    let stack = crate::agent::tool_stack::session_stack_with_gate(
+        &EmptyBase,
+        Vec::new(),
+        root.clone(),
+        stella_tools::policy::ToolPolicy::allow_all(),
+        crate::agent::tool_stack::session_gate(&root),
+        stella_core::ports::Principal::User,
+    );
+    assert_eq!(
+        stack.principal_of("mcp__acme__deploy"),
+        stella_core::ports::Principal::Plugin("vera".into()),
+        "a contributed server's tools authorize as the package that shipped it"
+    );
+    assert_eq!(
+        stack.principal_of("read_file"),
+        stella_core::ports::Principal::User,
+        "and nothing else moved — a built-in is still the human's call"
+    );
+
+    remove(&root, "vera").expect("remove must succeed");
+    let mut notices = Vec::new();
+    assert!(
+        package::contributed_mcp_servers(&root, &mut notices).is_empty(),
+        "and the server leaves with the package"
     );
 
     let _ = std::fs::remove_dir_all(&root);

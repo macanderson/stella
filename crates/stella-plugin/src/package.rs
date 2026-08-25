@@ -4,17 +4,18 @@
 //! The rest of this crate answers "what say does this plugin have in the turn
 //! loop?". This module answers the other question a human installing one has:
 //! **what arrives on my machine besides a process?** A package may carry
-//! script tools, skills and context records, and each of those is a real power
-//! — a tool most of all, because it is executable code entering the agent's
-//! tool surface that the model may call on its own initiative for the rest of
-//! the session.
+//! script tools, skills, context records and MCP servers, and each of those is
+//! a real power — a tool most of all, because it is executable code entering
+//! the agent's tool surface that the model may call on its own initiative for
+//! the rest of the session, and a server for the same reason one step removed:
+//! it decides its own tool list when it connects.
 //!
 //! # Declared here, discovered by the host, and the two must agree
 //!
 //! The loader half (#3380) discovers contributions **by directory
 //! convention**: `<plugin_dir>/tools/*.toml`, `<plugin_dir>/skills/<slug>/
-//! SKILL.md`, `<plugin_dir>/rules/*.toml`, each handed to the loader that
-//! already reads that surface. That gives one property worth keeping —
+//! SKILL.md`, `<plugin_dir>/rules/*.toml`, `<plugin_dir>/mcp.toml`, each
+//! handed to the loader that already reads that surface. That gives one property worth keeping —
 //! provenance cannot be forged, because a tool's contributing plugin is
 //! stamped from the directory that was read and never from anything inside the
 //! file — and one that cost a consent defect: this crate is pure, so
@@ -38,7 +39,8 @@
 //!
 //! A contribution is declared by the identity its own surface knows it by: a
 //! tool by the name the model calls (`stella_tools::custom`'s `name`), a skill
-//! by its slug, a record by its lineage id. No entry carries a path, so the
+//! by its slug, a record by its lineage id, an MCP server by its `[servers]`
+//! key. No entry carries a path, so the
 //! `${plugin_dir}` placeholder [`crate::Runtime`] and
 //! [`OracleCommand`](crate::OracleCommand) use does not arise — and where a
 //! path genuinely does (a tool's argv), it stays in the tool manifest the host
@@ -94,6 +96,37 @@ pub struct SkillContribution {
     /// identity `stella_core::skills` knows it by.
     pub slug: String,
     /// What the skill teaches, in the author's words.
+    pub description: String,
+}
+
+/// One MCP server a package ships — an entry in `<plugin_dir>/mcp.toml`, the
+/// format `.stella/mcp.toml` holds.
+///
+/// **The sharpest contribution in the package, and the one that was refused
+/// until it could be enumerated.** A server's tools enter the registry as
+/// `mcp__<server>__<tool>`, so installing one hands the model a set of calls
+/// whose membership the server decides *at connect time* — and
+/// [`crate::configure`] refused an `mcp` section for exactly that reason: "the
+/// effect of one line is a set of tools the consent document never listed".
+///
+/// Declaring the server by name is what answers that. It does not make the
+/// tool list knowable in advance — nothing can, short of connecting — so the
+/// consent text says what is true: this package starts this named server, and
+/// the tools it adds are whatever it advertises. That is a real disclosure
+/// (a human can look the server up, and sees it named at install and in
+/// `stella plugin list`) rather than a false precision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpContribution {
+    /// The server name — the key under `[servers]` in the shipped `mcp.toml`,
+    /// and the `<server>` half of every `mcp__<server>__<tool>` the model
+    /// sees. Declared rather than derived, on this module's "names, never
+    /// paths" rule, and checked against the host's own read of the file.
+    pub server: String,
+    /// What the server is for, in the author's words — the same one-line
+    /// disclosure every other contribution carries, and required for
+    /// [`ToolContribution::description`]'s reason: "this package installs an
+    /// MCP server called `acme`" is not something a human can consent to.
     pub description: String,
 }
 
@@ -160,7 +193,7 @@ impl std::fmt::Display for RecordEnforcement {
     }
 }
 
-/// Which of the three surfaces a contribution enters.
+/// Which of the four surfaces a contribution enters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ContributionKind {
     /// A script tool the model may call.
@@ -169,6 +202,8 @@ pub enum ContributionKind {
     Skill,
     /// A context record that steers turns.
     Record,
+    /// An MCP server whose tools join the agent's surface.
+    Mcp,
 }
 
 impl ContributionKind {
@@ -182,6 +217,10 @@ impl ContributionKind {
             ContributionKind::Tool => "tools",
             ContributionKind::Skill => "skills",
             ContributionKind::Record => "rules",
+            // A file, not a directory — the one kind a package ships as a
+            // single `mcp.toml`, because that is the unit `.stella/mcp.toml`
+            // is and a server is a table entry rather than a file.
+            ContributionKind::Mcp => "mcp.toml",
         }
     }
 
@@ -192,6 +231,7 @@ impl ContributionKind {
             ContributionKind::Tool => "[[tools]]",
             ContributionKind::Skill => "[[skills]]",
             ContributionKind::Record => "[[records]]",
+            ContributionKind::Mcp => "[[mcp]]",
         }
     }
 }
@@ -202,6 +242,7 @@ impl std::fmt::Display for ContributionKind {
             ContributionKind::Tool => "tool",
             ContributionKind::Skill => "skill",
             ContributionKind::Record => "record",
+            ContributionKind::Mcp => "MCP server",
         })
     }
 }
@@ -223,6 +264,8 @@ pub struct PackageListing {
     pub skills: Vec<String>,
     /// Record lineage ids found under `rules/`.
     pub records: Vec<String>,
+    /// MCP server names found in `mcp.toml` — the `[servers]` keys.
+    pub mcp: Vec<String>,
 }
 
 impl PackageListing {
@@ -239,6 +282,7 @@ impl PackageListing {
             ContributionKind::Tool => &self.tools,
             ContributionKind::Skill => &self.skills,
             ContributionKind::Record => &self.records,
+            ContributionKind::Mcp => &self.mcp,
         }
     }
 }
@@ -358,6 +402,10 @@ impl PluginManifest {
                     .map(|record| record.lineage.clone())
                     .collect(),
             ),
+            (
+                ContributionKind::Mcp,
+                self.mcp.iter().map(|mcp| mcp.server.clone()).collect(),
+            ),
         ];
 
         let kinds: Vec<KindMismatch> = declared
@@ -471,6 +519,28 @@ pub(crate) fn validate_contributions(manifest: &PluginManifest) -> Result<(), Ma
         }
     }
 
+    let mut servers = HashSet::with_capacity(manifest.mcp.len());
+    for mcp in &manifest.mcp {
+        let server = mcp.server.trim();
+        if server.is_empty() {
+            return Err(ManifestError::EmptyContributionName {
+                kind: ContributionKind::Mcp,
+            });
+        }
+        if mcp.description.trim().is_empty() {
+            return Err(ManifestError::EmptyContributionDescription {
+                kind: ContributionKind::Mcp,
+                name: mcp.server.clone(),
+            });
+        }
+        if !servers.insert(server) {
+            return Err(ManifestError::DuplicateContribution {
+                kind: ContributionKind::Mcp,
+                name: mcp.server.clone(),
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -492,6 +562,7 @@ mod tests {
             tools: vec!["lint_fix".into()],
             skills: vec!["house-style".into()],
             records: vec!["ctx.vera.no-force-push".into()],
+            mcp: Vec::new(),
         }
     }
 

@@ -718,7 +718,7 @@ fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
 /// and the directory can no longer contain a contribution the document does
 /// not name.
 ///
-/// # The three are not levelled, because the powers are not the same
+/// # The four are not levelled, because the powers are not the same
 ///
 /// A **tool** is executable code the model may call on its own initiative,
 /// running as the plugin rather than as the user — the loudest line here, and
@@ -727,8 +727,16 @@ fn capability_grant(manifest: &PluginManifest) -> Vec<String> {
 /// this section does not summarise: it steers *every* future turn it matches,
 /// without ever appearing in a transcript as an action, which is a different
 /// shape of power from a tool rather than a smaller amount of the same one.
+/// An **MCP server** is the one whose line has to admit a limit: it is a
+/// process or an endpoint this package starts, and the tools it adds are
+/// whatever it advertises when it connects, so the document names the server
+/// and says that rather than printing a tool list it cannot know.
 fn package_contributions(manifest: &PluginManifest) -> Vec<String> {
-    if manifest.tools.is_empty() && manifest.skills.is_empty() && manifest.records.is_empty() {
+    if manifest.tools.is_empty()
+        && manifest.skills.is_empty()
+        && manifest.records.is_empty()
+        && manifest.mcp.is_empty()
+    {
         return Vec::new();
     }
     let name = one_line(&manifest.name);
@@ -783,6 +791,29 @@ fn package_contributions(manifest: &PluginManifest) -> Vec<String> {
             "      They steer and nothing more: a record a plugin ships can never deny a \
              tool call. That authority comes only from a promotion you record in this \
              repository's own ledger."
+                .into(),
+        );
+    }
+
+    if !manifest.mcp.is_empty() {
+        lines.push(format!(
+            "  - {}, started on your machine while this package is installed. Its tools \
+             join the surface the model may call, named `mcp__<server>__<tool>` — and \
+             which tools those are is decided by the server when it connects, so this \
+             list names the servers and cannot name their tools:",
+            count(manifest.mcp.len(), "MCP server")
+        ));
+        for mcp in &manifest.mcp {
+            lines.push(format!(
+                "      `{}` — {}",
+                one_line(&mcp.server),
+                one_line(&mcp.description)
+            ));
+        }
+        lines.push(
+            "      A server you already run under the same name keeps yours: the \
+             package's copy is dropped and the collision is reported, so installing \
+             this can never re-point a server of your own."
                 .into(),
         );
     }

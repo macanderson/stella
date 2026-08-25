@@ -164,6 +164,25 @@ pub struct GatedToolSet<'a> {
     /// caller identity inside a type that crosses the serve wire as a
     /// description of a capability.
     tool_principals: HashMap<String, Principal>,
+    /// The same answer for whole *families* of tool names — each entry a name
+    /// prefix and the principal every tool beneath it authorizes as (#4733).
+    ///
+    /// [`Self::tool_principals`] is keyed by exact name, which is right for a
+    /// script tool: the package ships the file, so the host knows the name
+    /// before the session starts. A contributed **MCP server** is the case
+    /// that cannot work that way — its tools are whatever the server
+    /// advertises when it connects, so there is no name to key on when this
+    /// map is built. What *is* known at that moment is the namespace: every
+    /// one of that server's tools is called `mcp__<server>__…`, and the
+    /// caller supplies that prefix (`stella_mcp::namespace_prefix`, where the
+    /// encoding lives) paired with the plugin that shipped the server.
+    ///
+    /// A `Vec` rather than a map because the lookup is a scan by construction
+    /// — it is a prefix test, not an equality one — and the list is the
+    /// number of contributed servers, which is single digits or zero.
+    /// Consulted only after [`Self::tool_principals`] misses, so an exact
+    /// entry always wins over a family one.
+    prefix_principals: Vec<(String, Principal)>,
 }
 
 impl<'a> GatedToolSet<'a> {
@@ -188,6 +207,7 @@ impl<'a> GatedToolSet<'a> {
             bus: None,
             contracts,
             tool_principals: HashMap::new(),
+            prefix_principals: Vec::new(),
         }
     }
 
@@ -228,11 +248,39 @@ impl<'a> GatedToolSet<'a> {
         self
     }
 
+    /// Declare which *namespaces* are a plugin's, and as whom every tool
+    /// inside one must be authorized — the `prefix_principals` field argues
+    /// the rule, and a contributed MCP server is the case it exists for.
+    ///
+    /// This type stays free of MCP vocabulary on purpose: it is handed
+    /// prefixes, and what a prefix means belongs to whoever built it.
+    #[must_use]
+    pub fn with_prefix_principals(mut self, prefix_principals: Vec<(String, Principal)>) -> Self {
+        self.prefix_principals = prefix_principals;
+        self
+    }
+
     /// The caller the gate is asked about for `name`: the plugin that
     /// contributed the tool, or — for everything the user wrote themselves
     /// and every built-in — this stack's own principal.
+    /// Who a call to `name` would be authorized as — the question
+    /// [`Self::principal_for`] answers, exposed so a host can assert the
+    /// answer instead of inferring it from a gate's behaviour.
+    #[must_use]
+    pub fn principal_of(&self, name: &str) -> Principal {
+        self.principal_for(name).clone()
+    }
+
     fn principal_for(&self, name: &str) -> &Principal {
-        self.tool_principals.get(name).unwrap_or(&self.principal)
+        // Exact first, then the namespace families, then this stack's own
+        // caller — so a tool named outright is never overridden by a prefix
+        // that happens to cover it.
+        self.tool_principals.get(name).unwrap_or_else(|| {
+            self.prefix_principals
+                .iter()
+                .find(|(prefix, _)| name.starts_with(prefix.as_str()))
+                .map_or(&self.principal, |(_, principal)| principal)
+        })
     }
 
     /// Emit one evaluation's full account onto the attached bus, if any:
@@ -283,6 +331,7 @@ impl<'a> GatedToolSet<'a> {
             bus: None,
             contracts,
             tool_principals: HashMap::new(),
+            prefix_principals: Vec::new(),
         }
     }
 
@@ -328,6 +377,7 @@ impl GatedToolSet<'static> {
             bus: None,
             contracts,
             tool_principals: HashMap::new(),
+            prefix_principals: Vec::new(),
         }
     }
 }

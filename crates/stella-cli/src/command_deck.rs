@@ -2514,7 +2514,7 @@ fn spawn_mcp_connect(
     release_splash: impl FnOnce() + Send + 'static,
 ) -> bool {
     let plan = agent::load_mcp_plan(&cfg);
-    let configured = matches!(plan, agent::McpPlan::Servers(_));
+    let configured = matches!(&plan, agent::McpPlan::Servers(servers, _) if !servers.is_empty());
     tokio::spawn(async move {
         match plan {
             agent::McpPlan::None => {}
@@ -2525,7 +2525,20 @@ fn spawn_mcp_connect(
                     status: AgentStatus::WaitingInput,
                 });
             }
-            agent::McpPlan::Servers(servers) => {
+            agent::McpPlan::Servers(servers, notices) => {
+                // Whose server was dropped, and whose package's file did not
+                // parse — said before the connect, so the report below is read
+                // against the list a human knows was narrowed.
+                for notice in notices {
+                    let _ = chrome_tx.send(system_notice(notice));
+                }
+                if servers.is_empty() {
+                    let _ = in_tx.send(Inbound::Status {
+                        agent: LEAD.to_string(),
+                        status: AgentStatus::WaitingInput,
+                    });
+                    return;
+                }
                 let _ = chrome_tx.send(system_notice(format!(
                     "connecting {} MCP server(s)…",
                     servers.len()

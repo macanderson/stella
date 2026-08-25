@@ -120,9 +120,52 @@ pub(crate) fn session_stack_with_gate<'a>(
     // come from one source, so a plugin's tool cannot reach the surface
     // without its principal reaching the gate (#3380).
     let contributed = contributed_principals(&custom_tools, &principal);
+    // The same rule for a contributed MCP server, one step removed: its tool
+    // names are the server's to choose at connect time, so the namespace is
+    // what can be declared here rather than the names (#4733).
+    let namespaces = contributed_server_principals(&workspace_root);
     let customs = CustomToolSet::new(base, custom_tools, workspace_root);
     let permitted = PolicyToolSet::new_boxed(Box::new(customs), policy);
-    GatedToolSet::new_boxed(Box::new(permitted), gate, principal).with_tool_principals(contributed)
+    GatedToolSet::new_boxed(Box::new(permitted), gate, principal)
+        .with_tool_principals(contributed)
+        .with_prefix_principals(namespaces)
+}
+
+/// The principal each plugin-contributed **MCP server's** tools authorize as,
+/// as `(namespace prefix, principal)` pairs — empty for a session with no
+/// package shipping one.
+///
+/// Keyed by namespace rather than by tool name because there is no tool name
+/// to key on: a server advertises its tools when it connects, which is after
+/// this map is built and after the gate is assembled. Every one of them is
+/// called `mcp__<server>__…` though, and the server is declared, so the
+/// prefix is exactly as knowable as a script tool's name is.
+///
+/// The trust gate is the roster's, as everywhere else here: a project-tier
+/// package does not reach `contributed_mcp_servers` at all in an untrusted
+/// checkout.
+fn contributed_server_principals(workspace_root: &std::path::Path) -> Vec<(String, Principal)> {
+    // A notice here would have no one to say it to — this is the authorization
+    // map, not session start — and `load_mcp_plan` reports the same package's
+    // broken file where a human is listening.
+    let mut ignored = Vec::new();
+    // The user's own names, so the collision rule reads the same here as in
+    // `load_mcp_plan`: yours wins, and the package's copy is the one dropped.
+    // Skipping it matters more here than there — a prefix left in this list
+    // for a name the user's own server actually answers would authorize *your*
+    // server's calls as somebody's plugin.
+    let taken = crate::agent::own_mcp_server_names(workspace_root);
+    crate::plugin_cmd::package::contributed_mcp_servers(workspace_root, &mut ignored)
+        .into_iter()
+        .flat_map(|contributed| {
+            let plugin = contributed.plugin;
+            contributed.servers.into_iter().map(move |server| {
+                (server.name, Principal::Plugin(plugin.clone()))
+            })
+        })
+        .filter(|(server, _)| !taken.iter().any(|held| held == server))
+        .map(|(server, plugin)| (stella_mcp::namespace_prefix(&server), plugin))
+        .collect()
 }
 
 /// The principal each plugin-contributed tool authorizes as, keyed by tool

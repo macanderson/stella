@@ -762,16 +762,47 @@ pub(crate) fn graph_snapshot_focus(
 /// tool call at 10s.
 const MCP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// The parse of `.stella/mcp.toml`, split from the connect so a caller that
-/// owns a UI (the deck) can announce the slow part before awaiting it (#98).
+/// The parse of `.stella/mcp.toml` **and** of every installed package's own
+/// `mcp.toml`, split from the connect so a caller that owns a UI (the deck)
+/// can announce the slow part before awaiting it (#98).
+#[derive(Debug)]
 pub(crate) enum McpPlan {
-    /// No config file, or one naming zero servers — nothing to connect.
+    /// No config file, no package servers, or nothing but empty ones.
     None,
-    /// The config exists but is unreadable/invalid: MCP is disabled this
-    /// session, and the reason must be surfaced exactly once.
+    /// The **workspace's own** config exists but is unreadable/invalid: MCP is
+    /// disabled this session, and the reason must be surfaced exactly once.
+    ///
+    /// A *package's* broken file never lands here. One third party's typo must
+    /// not be able to disable the servers a user configured themselves, so a
+    /// package that does not parse contributes nothing and is reported in
+    /// [`Self::Servers`]'s notices instead (#4733).
     Invalid(String),
-    /// Servers to connect via [`connect_mcp_servers`].
-    Servers(Vec<McpServerConfig>),
+    /// Servers to connect via [`connect_mcp_servers`], and anything worth
+    /// saying about how the list was assembled — a package whose file did not
+    /// parse, or whose server was dropped because the user runs one under the
+    /// same name.
+    Servers(Vec<McpServerConfig>, Vec<String>),
+}
+
+/// The server names the workspace's **own** `.stella/mcp.toml` defines —
+/// empty when there is no file, it does not parse, or the trust gate would
+/// refuse it anyway.
+///
+/// The collision rule's left-hand side, named once so
+/// [`load_mcp_plan`] and `tool_stack::contributed_server_principals` cannot
+/// disagree about whose server a name belongs to.
+pub(crate) fn own_mcp_server_names(workspace_root: &std::path::Path) -> Vec<String> {
+    if crate::settings::filesystem_settings_disabled()
+        || crate::enterprise_telemetry::process_free_authority_active()
+        || !crate::settings::project_code_execution_trusted()
+    {
+        return Vec::new();
+    }
+    std::fs::read_to_string(workspace_root.join(".stella").join("mcp.toml"))
+        .ok()
+        .and_then(|text| McpConfig::from_toml_str(&text).ok())
+        .map(|parsed| parsed.names().into_iter().map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
@@ -781,9 +812,6 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
         return McpPlan::None;
     }
     let path = cfg.workspace_root.join(".stella").join("mcp.toml");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return McpPlan::None;
-    };
     // Trust gate. A cloned repo's `.stella/mcp.toml` can name an arbitrary
     // stdio `command` (executed at session start — RCE on `git clone && stella`)
     // or an attacker-controlled http endpoint (egress + a would-be-whitelisted
@@ -791,27 +819,64 @@ pub(crate) fn load_mcp_plan(cfg: &Config) -> McpPlan {
     // is gated by the same flag: untrusted, we do not connect and say why once.
     // (Project settings.json hooks/credential-routing are already gated in
     // settings.rs; this closes the parallel .stella/mcp.toml hole.)
-    if !crate::settings::project_code_execution_trusted() {
+    //
+    // It gates the packages too, and needs no second check to: a project-tier
+    // package does not reach the roster at all in an untrusted checkout, and a
+    // user-tier one deliberately is not gated because nothing arrives there
+    // except through `stella plugin install`'s consent transaction
+    // (`plugin_cmd::roster::read_project_tier`). What the flag does decide here
+    // is the workspace's own file, below.
+    let own = std::fs::read_to_string(&path).ok();
+    if own.is_some() && !crate::settings::project_code_execution_trusted() {
         return McpPlan::Invalid(format!(
             "{} was NOT loaded — set STELLA_TRUST_PROJECT=1 to let this repo start its \
              MCP servers (they run commands / open connections on your machine)",
             path.display()
         ));
     }
-    let parsed = match McpConfig::from_toml_str(&text) {
-        Ok(parsed) => parsed,
-        Err(e) => {
-            return McpPlan::Invalid(format!(
-                "{} is invalid: {e} — MCP servers disabled this session",
-                path.display()
-            ));
+    let mut servers = Vec::new();
+    if let Some(text) = own {
+        match McpConfig::from_toml_str(&text) {
+            Ok(parsed) => servers = parsed.into_servers(),
+            Err(e) => {
+                return McpPlan::Invalid(format!(
+                    "{} is invalid: {e} — MCP servers disabled this session",
+                    path.display()
+                ));
+            }
         }
-    };
-    let servers = parsed.into_servers();
-    if servers.is_empty() {
+    }
+
+    // The packages', after the user's own, so the collision rule below reads
+    // in one direction: yours is already in the list, and a package's copy of
+    // that name is what gets dropped.
+    let mut notices = Vec::new();
+    for contributed in
+        crate::plugin_cmd::package::contributed_mcp_servers(&cfg.workspace_root, &mut notices)
+    {
+        for server in contributed.servers {
+            if servers.iter().any(|held| held.name == server.name) {
+                // Not cosmetic: two servers sharing a name produce colliding
+                // `mcp__<server>__<tool>` wire names, so the drop has to
+                // happen and the human has to be told whose copy went.
+                notices.push(format!(
+                    "the {} plugin ships an MCP server called `{}` and you already run one \
+                     under that name — yours is the one that started",
+                    contributed.plugin, server.name
+                ));
+                continue;
+            }
+            servers.push(server);
+        }
+    }
+
+    if servers.is_empty() && notices.is_empty() {
         McpPlan::None
+    } else if servers.is_empty() {
+        // Nothing to connect, but something a human has to hear.
+        McpPlan::Servers(Vec::new(), notices)
     } else {
-        McpPlan::Servers(servers)
+        McpPlan::Servers(servers, notices)
     }
 }
 
@@ -867,7 +932,17 @@ pub(crate) async fn connect_mcp(
             }
             return Ok(None);
         }
-        McpPlan::Servers(servers) => servers,
+        McpPlan::Servers(servers, notices) => {
+            if print_diagnostics {
+                for notice in notices {
+                    eprintln!("  {} {notice}", "!".yellow());
+                }
+            }
+            if servers.is_empty() {
+                return Ok(None);
+            }
+            servers
+        }
     };
     // A one-shot run has no interactive enable/disable, so no disabled set.
     let auth = crate::mcp_cmd::oauth_manager(&cfg.workspace_root)?;

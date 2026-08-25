@@ -114,7 +114,7 @@ pub use stdio::StdioTransport;
 pub use suppress::{AUTH_PROBE_TTL, AuthProbeCache, ConnectGate};
 pub use toolset::{
     DEFAULT_CALL_TIMEOUT, DisabledServers, MAX_SERVER_SCHEMA_BYTES, McpToolSet, ServerIdentity,
-    WireNameCollision, list_resources_tool_name, login_required_tool_name, read_resource_tool_name,
-    split_wire_name, wire_name,
+    WireNameCollision, list_resources_tool_name, login_required_tool_name, namespace_prefix,
+    read_resource_tool_name, split_wire_name, wire_name,
 };
 pub use transport::Transport;

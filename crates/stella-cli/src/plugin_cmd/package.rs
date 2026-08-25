@@ -7,11 +7,12 @@
 //! A plugin's manifest declares a say in the turn: hook points, wrapper
 //! points, an oracle, a process. That is the whole of `plugin.toml` and it
 //! was never the whole of a package. The three surfaces a workspace already
-//! steers itself with — script tools, skills, and context records — had no
-//! way to arrive with a plugin, so "install the review plugin" could deliver
-//! an arbiter that holds a turn open but not the `lint_fix` tool it wants to
-//! call, the skill that explains the house style, or the record that steers
-//! toward it. This module makes a package able to carry all three.
+//! steers itself with — script tools, skills, context records, and MCP
+//! servers — had no way to arrive with a plugin, so "install the review
+//! plugin" could deliver an arbiter that holds a turn open but not the
+//! `lint_fix` tool it wants to call, the skill that explains the house style,
+//! the record that steers toward it, or the vendor server its whole
+//! integration is. This module makes a package able to carry all four.
 //!
 //! # A package is `.stella`-shaped, and that is the whole format
 //!
@@ -21,6 +22,7 @@
 //!   tools/*.toml         the same manifests `.stella/tools/*.toml` holds
 //!   skills/<slug>/SKILL.md   the same files `.stella/skills/` holds
 //!   rules/*.toml         the same records `.stella/rules/` holds
+//!   mcp.toml             the same servers `.stella/mcp.toml` holds
 //! ```
 //!
 //! There is deliberately no second format and no second loader: each
@@ -28,15 +30,17 @@
 //! additional source. A plugin's tool is a custom tool
 //! ([`stella_tools::custom`]); its skill is a skill
 //! (`stella_core::skills`); its record is a context record
-//! (`crate::context_records`). A parallel plane would be a second set of
-//! precedence rules, a second set of diagnostics, and a second thing to
-//! remember to gate.
+//! (`crate::context_records`); its MCP servers are MCP servers
+//! (`stella_mcp`). A parallel plane would be a second set of precedence
+//! rules, a second set of diagnostics, and a second thing to remember to
+//! gate.
 //!
 //! # Derived, never copied — which is what makes retraction total
 //!
-//! Nothing here writes into `.stella/tools`, `.stella/skills` or
-//! `.stella/rules`. The contributions are **recomputed from the installed
-//! packages on every load**, exactly as [`super::roster`] recomputes hook
+//! Nothing here writes into `.stella/tools`, `.stella/skills`,
+//! `.stella/rules` or `.stella/mcp.toml`. The contributions are **recomputed
+//! from the installed packages on every load**, exactly as
+//! [`super::roster`] recomputes hook
 //! routes, and for exactly the reason its module docs give: a loader that
 //! copied a plugin's entries into the user's own directories would have to
 //! find and delete precisely those entries at uninstall, and there is no
@@ -45,8 +49,9 @@
 //! matchers, where the result was a removed plugin whose process still ran
 //! on every `PreToolUse`.
 //!
-//! So `stella plugin remove` does nothing about tools, skills or records —
-//! and that is the guarantee, not a gap. The package directory is gone, so
+//! So `stella plugin remove` does nothing about tools, skills, records or
+//! servers — and that is the guarantee, not a gap. The package directory is
+//! gone, so
 //! the next load derives nothing from it. There is nothing to clean up and
 //! therefore nothing to forget to clean up.
 //!
@@ -57,7 +62,8 @@
 //!   ([`stella_tools::custom::CustomTool::contributed_by`]) and it is what
 //!   [`stella_tools::custom::CustomTool::principal`] turns into
 //!   `Principal::Plugin`. For skills and records it is the source path,
-//!   which lies inside the package.
+//!   which lies inside the package. For an MCP server it is the package's own
+//!   `mcp.toml`, the file the entry was read from.
 //! - **Consent.** [`stella_plugin::consent_text`] names every contribution,
 //!   because the manifest declares them (#3565). This module's job is the
 //!   other side of that: [`Inventory::listing`] hands the host's own read of
@@ -105,6 +111,13 @@ pub(crate) const SKILLS_DIR: &str = "skills";
 /// (`.stella/rules`, `~/.stella/rules`), and a package author copying their
 /// workspace's directory across should not have to rename it.
 pub(crate) const RECORDS_DIR: &str = "rules";
+/// `<plugin_dir>/mcp.toml` — MCP servers, the format `.stella/mcp.toml` holds.
+///
+/// A file rather than a directory, unlike the other three: a server is a table
+/// entry, and `.stella/mcp.toml` is the unit the loader already reads, so a
+/// package author copying their workspace's file across should not have to
+/// explode it into one file per server.
+pub(crate) const MCP_FILE: &str = "mcp.toml";
 
 /// One plugin's contributed directory of a single kind, ready to hand to the
 /// loader that owns that surface.
@@ -238,6 +251,54 @@ pub(crate) fn contributed_record_dirs(workspace_root: &Path) -> Vec<ContributedD
     dirs_of(&session_roster(workspace_root), RECORDS_DIR)
 }
 
+/// One installed package's MCP servers, already parsed, with the plugin that
+/// ships them.
+pub(crate) struct ContributedServers {
+    /// The contributing plugin's manifest `name`.
+    pub(crate) plugin: String,
+    /// Its servers, in the file's own (sorted) order.
+    pub(crate) servers: Vec<stella_mcp::McpServerConfig>,
+}
+
+/// The MCP servers installed plugins contribute, in roster order (#4733).
+///
+/// Reads each reconciling package's own `mcp.toml`. A package whose file does
+/// not parse contributes nothing and is named in `notices` — one broken
+/// package must not be able to disable the workspace's own servers, which is
+/// what a single [`crate::agent::McpPlan::Invalid`] across two sources would
+/// have done.
+pub(crate) fn contributed_mcp_servers(
+    workspace_root: &Path,
+    notices: &mut Vec<String>,
+) -> Vec<ContributedServers> {
+    let mut out = Vec::new();
+    for contributed in dirs_of(&session_roster(workspace_root), MCP_FILE) {
+        // `dirs_of` joins a name onto the package root; for this kind the name
+        // is a file, so `dir` is the `mcp.toml` itself.
+        let file = &contributed.dir;
+        let Ok(text) = std::fs::read_to_string(file) else {
+            continue;
+        };
+        match stella_mcp::McpConfig::from_toml_str(&text) {
+            Ok(parsed) => {
+                let servers = parsed.into_servers();
+                if !servers.is_empty() {
+                    out.push(ContributedServers {
+                        plugin: contributed.plugin,
+                        servers,
+                    });
+                }
+            }
+            Err(e) => notices.push(format!(
+                "the {} plugin's mcp.toml is invalid: {e} — its servers are not started, \
+                 and nothing else about this session is affected",
+                contributed.plugin
+            )),
+        }
+    }
+    out
+}
+
 /// What one package ships, named as each surface names it — the host's read,
 /// and the thing a manifest's declaration is reconciled against.
 ///
@@ -259,6 +320,10 @@ pub(crate) struct Inventory {
     pub(crate) tools: Vec<String>,
     /// Skill slugs (the `<slug>/SKILL.md` directory names), sorted.
     pub(crate) skills: Vec<String>,
+    /// MCP server names — the `[servers]` keys of the shipped `mcp.toml`, and
+    /// the `<server>` half of every `mcp__<server>__<tool>` the model sees.
+    /// Sorted.
+    pub(crate) mcp: Vec<String>,
     /// Context-record lineage ids — the identity the registry merges on and
     /// the promotion ledger names — sorted and deduplicated. One rules file is
     /// a record *set* and may declare several, so the stem is not the identity
@@ -276,6 +341,7 @@ impl Inventory {
             tools: tool_names(&dir.join(TOOLS_DIR)),
             skills: skill_slugs(&dir.join(SKILLS_DIR)),
             records: record_lineages(&dir.join(RECORDS_DIR)),
+            mcp: mcp_servers(&dir.join(MCP_FILE)),
         }
     }
 
@@ -293,6 +359,7 @@ impl Inventory {
             tools: self.tools.clone(),
             skills: self.skills.clone(),
             records: self.records.clone(),
+            mcp: self.mcp.clone(),
         }
     }
 }
@@ -365,6 +432,26 @@ fn toml_files(dir: &Path) -> Vec<(PathBuf, String)> {
             Some((path, stem))
         })
         .collect()
+}
+
+/// The server names one contributed `mcp.toml` declares — sorted, or empty
+/// when the file is absent or does not parse.
+///
+/// A file that does not parse reads as empty for [`Inventory::of_package`]'s
+/// reason: a package that cannot be described must not be the thing that stops
+/// an install from being *refused*. It is refused anyway, because a manifest
+/// declaring `[[mcp]]` entries then reconciles against nothing and
+/// `reconcile` reports them as unshipped — which names the real problem
+/// instead of a parse error nobody asked about.
+fn mcp_servers(file: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return Vec::new();
+    };
+    let Ok(parsed) = stella_mcp::McpConfig::from_toml_str(&text) else {
+        return Vec::new();
+    };
+    // `McpConfig::servers` is a `BTreeMap`, so this is already sorted.
+    parsed.names().into_iter().map(str::to_string).collect()
 }
 
 /// The skill slugs one contributed `skills/` directory holds — a `<slug>`
