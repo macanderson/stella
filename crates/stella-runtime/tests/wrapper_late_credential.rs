@@ -37,10 +37,10 @@
 //! argument from call order rather than a property — which is the exact thing
 //! #3512 existed to stop relying on.
 //!
-//! `cfg(unix)` for `wrapper_socket.rs`'s reason and tracked in the same place
-//! (#3497): the child that answers is a `/bin/sh` script.
-
-#![cfg(unix)]
+//! The child that answers is `wrapper-plugin-fixture` rather than a
+//! `/bin/sh` script, so this file runs on Windows too (#4697). Its
+//! `two-env-probe` mode reports which named variables reached the child,
+//! which is the question these tests ask.
 
 use stella_plugin::{AfterTurnRequest, DriveRequest, PROTOCOL_VERSION, TurnOutcome};
 use stella_runtime::wrapper::{
@@ -66,11 +66,7 @@ fn declared_env() -> Vec<(String, String)> {
 /// The child is the oracle for `wrapper_env_refusal.rs`'s reason: inspecting
 /// the transport's own field would only prove the constructor agrees with
 /// itself.
-const PROBE: &str = r#"
-cat >/dev/null
-printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"not-attempted","measurements":{"late":%s,"mode":%s}}}}\n' \
-  "${STELLA_TEST_CORP_AUTH:+1}0" "${PLUGIN_MODE:+1}0"
-"#;
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
 
 fn after() -> AfterTurnRequest {
     AfterTurnRequest {
@@ -91,7 +87,12 @@ fn after() -> AfterTurnRequest {
 
 fn wrapper() -> SubprocessWrapper {
     SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), PROBE.into()],
+        vec![
+            FIXTURE.to_string(),
+            "two-env-probe".into(),
+            "STELLA_TEST_CORP_AUTH".into(),
+            "PLUGIN_MODE".into(),
+        ],
         declared_env(),
         DEFAULT_WRAPPER_TIMEOUT,
     )
@@ -133,7 +134,7 @@ async fn a_credential_registered_after_declare_never_reaches_the_child() {
     // is filtered at declare time and would prove nothing about this.
     let held = wrapper();
     let held_driver = SubprocessDriver::declare(
-        vec!["/bin/sh".into(), "-c".into(), "true".into()],
+        vec![FIXTURE.to_string(), "drain-emit".into(), String::new()],
         declared_env(),
         DEFAULT_WRAPPER_TIMEOUT,
     )
@@ -179,7 +180,12 @@ async fn a_credential_registered_after_declare_never_reaches_the_child() {
     // as it always was, and its report says so — the two mechanisms answer the
     // same question at different moments and must not disagree.
     let admitted = SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), PROBE.into()],
+        vec![
+            FIXTURE.to_string(),
+            "two-env-probe".into(),
+            "STELLA_TEST_CORP_AUTH".into(),
+            "PLUGIN_MODE".into(),
+        ],
         declared_env(),
         DEFAULT_WRAPPER_TIMEOUT,
     )

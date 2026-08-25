@@ -128,6 +128,25 @@ fn main() {
         // those labels to prove each member saw its own declared stages and
         // no others, so echoing a fixed string here would let a composition
         // that dispatched the wrong stage pass.
+        // Reports which of two named variables reached the child, as `10`
+        // for present and `0` for absent — the `${VAR:+1}0` idiom the shell
+        // probe used. `wrapper_late_credential.rs` reads both back: one
+        // granted late, one never granted, so a mode that answered a
+        // constant could not tell a delivered credential from a leaked one.
+        "two-env-probe" => {
+            let _ = read_request();
+            let present = |name: &str| {
+                if std::env::var_os(name).is_some() {
+                    "10"
+                } else {
+                    "0"
+                }
+            };
+            emit(&measurements(&[
+                ("late", present(arg(&args, 1))),
+                ("mode", present(arg(&args, 2))),
+            ]));
+        }
         "echo-stage" => {
             let request = read_request();
             let label = arg(&args, 1);

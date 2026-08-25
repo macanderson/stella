@@ -114,3 +114,4 @@ jobs:
           --test wrapper_claimed_evidence
           --test wrapper_decided_flip
           --test wrapper_composition
+          --test wrapper_late_credential
