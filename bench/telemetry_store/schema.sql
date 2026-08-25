@@ -155,7 +155,10 @@ CREATE TABLE IF NOT EXISTS artifacts (
 
 CREATE INDEX IF NOT EXISTS artifacts_trial_idx ON artifacts(trial_id);
 
--- Step/turn/execution grading (docs/designs/step-grading-and-productive-ratio.md).
+-- Step/turn/execution grading (doc:step-grading-and-productive-ratio). Cited by
+-- id, not path: check-doc-links.py does not scan `.sql`, so a path written here
+-- is never validated and never healed across a move -- as happened when the
+-- document left docs/designs/ for docs/spec/.
 -- A second pass over the tables above, run after ingest rather than during
 -- it: nothing here is raw fact `events`/`tool_calls`/`verifier_tests` don't
 -- already hold, and every `*_grades` row must be reproducible by re-running

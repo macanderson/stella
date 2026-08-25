@@ -106,6 +106,7 @@ pub(super) fn loaded_from(mut record: Record) -> LoadedRecord {
         set_id: "acme.web".to_string(),
         source: ".stella/rules/acme.web.toml".to_string(),
         trust: super::Trust::Project,
+        contributed_by: None,
         handle: String::new(),
         findings: Vec::new(),
     }
@@ -563,6 +564,7 @@ applies_to = { paths = [".git/*"], keywords = ["fsck", "reflog"] }
         let files = [crate::rules::RuleFile {
             path: ".stella/rules/tb.rescue.toml".to_string(),
             contents: corpus.to_string(),
+            contributed_by: None,
         }];
         let facts = Facts {
             verdicts: BTreeMap::new(),
@@ -783,6 +785,7 @@ expect = "present"
         let files = [crate::rules::RuleFile {
             path: ".stella/rules/tb.rescue.toml".to_string(),
             contents: AGED_RECORD.to_string(),
+            contributed_by: None,
         }];
         let lineage = "ctx.tb.rescue.head-symref".to_string();
         let mut verdicts = BTreeMap::new();

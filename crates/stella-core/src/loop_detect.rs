@@ -86,6 +86,10 @@ mod sweep;
 /// Real stuck signatures observed so far are periods 2 and 3 (the
 /// read → failing edit → failing test grind); 4 adds headroom without
 /// scanning for long "cycles" that are really just varied work.
+///
+/// Deliberately carries no `MEASURED:` marker (#4572). What was observed is 2
+/// and 3; 4 is the headroom chosen over that, so a marker would credit the
+/// observation with a number it did not produce.
 const MAX_CYCLE_PERIOD: usize = 4;
 
 /// One tool call paired with the output it produced — the unit the

@@ -17,14 +17,14 @@
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
-│                                                 ┌ new skill (LLM-assisted) ────────────────────────────────┐                                                 │
+│                                                                                                                                                              │
+│                                                 ╭ new skill (LLM-assisted) ────────────────────────────────╮                                                 │
 │                                                 │Describe the skill you want (the agent will search the    │                                                 │
 │                                                 │registry, rank matches, and assemble one skill):          │                                                 │
 │                                                 │                                                          │                                                 │
 │                                                 │> review a terraform plan for destructive changes▌        │                                                 │
 │                                                 │                                                          │                                                 │
-│                                                 │⏎ continue · esc cancel                                   │                                                 │
-│                                                 └──────────────────────────────────────────────────────────┘                                                 │
+│                                                 ╰───────────────────────────────── ⏎ continue · esc cancel ╯                                                 │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │

@@ -119,8 +119,8 @@
 //! wrappers this door does accept, a round's dispatch always drives exactly
 //! one internal turn, at the round's own `turn_instance`; and the goal
 //! round's own execution row (opened once, before the loop, exactly like
-//! [`RawTurnDriver`]'s door opens one) records `bound`'s variant id for the
-//! whole run, honest because every round under that row really was
+//! [`RawTurnDriver`]'s door opens one) records the id `bound` resolved for the
+//! whole run, which is true of it because every round under that row really was
 //! dispatched through it.
 //!
 //! The goal door serves `child_turn` too, through [`round_driver_host`]
@@ -162,6 +162,11 @@ use crate::{OutputFormat, config::Config};
 /// What becomes of a run's candidate workspaces when it ends.
 mod candidates;
 use candidates::ended_abnormally;
+/// The event stream a wrapped run holds open between its rounds, so a plugin's
+/// own model calls reach the store rather than a sink (#3802). Its own file for
+/// `candidates.rs`'s reason: this one sits under the 1500-line ratchet.
+mod child_stream;
+use child_stream::{PluginChildStream, RepublishingDriver};
 /// What this host will do for an installed plugin, and the two assemblies of
 /// it a door picks between. Its own file for `candidates.rs`'s reason: this one
 /// sits under the 1500-line ratchet.
@@ -1188,19 +1193,58 @@ pub(crate) async fn run_wrapped(
         // for why that is the shared work tree and not an isolated worktree.
         candidate,
     };
-    // Copied out of the driver before it is borrowed mutably — both are shared
-    // handles, so this costs nothing and keeps the publication above the
-    // dispatch rather than inside a round.
+    // Copied out of the driver before it is borrowed mutably — all of them are
+    // shared handles or `Copy`, so this costs nothing and keeps the publication
+    // above the dispatch rather than inside a round.
     let registry = driver.registry;
+    let cfg = driver.cfg;
     let controls = driver.controls.clone();
-    let report =
-        dispatch_under_turn_controls(&bound.dispatch, input, registry, controls, &mut driver).await;
+    // The stream a plugin's own model calls meter into, opened before the first
+    // point can run (#3802). Points run *between* the rounds, so without it the
+    // dispatcher finds the registry's slot empty and every `StepUsage` a child
+    // emits goes to a sink — bounded money that reaches no durable record. See
+    // `child_stream` for which execution row it opens and why.
+    let stream = PluginChildStream::open(
+        registry,
+        cfg,
+        driver.store,
+        format,
+        driver.prompt,
+        driver.session,
+        driver.variant,
+    );
+    let report = {
+        // The decorator re-publishes the stream after every round, because a
+        // round's own turn claims the slot on the way in and clears it on the
+        // way out.
+        let mut rounds = RepublishingDriver::new(&mut driver, registry, cfg, &stream);
+        dispatch_under_turn_controls(&bound.dispatch, input, registry, controls, &mut rounds).await
+    };
     // Whatever a plugin's last point spent has no turn left to fold it in, so
     // this driver folds it (#3576). See `settle_plugin_child_spend`.
     settle_plugin_child_spend(driver.registry, &mut *driver.budget);
+    // Closing is not optional: while the stream is published the registry holds
+    // a live sender on the renderer's channel, and a completed run whose
+    // renderer never sees the channel close hangs (#960). The row's cost is
+    // every model call this host bought on the plugin's behalf — child turns and
+    // the candidate fan-outs beside them, which ride the same dispatcher between
+    // the same rounds.
+    let plugin_spend: f64 = bound
+        .child_spends()
+        .iter()
+        .map(|spend| spend.cost_usd)
+        .chain(bound.fanout_spends().iter().map(|spend| spend.cost_usd))
+        .sum();
     // Before the pop, so the whole run is judged rather than every round but
     // its last.
     let aborted = report.is_err() || ended_abnormally(&driver.results);
+    stream
+        .close(
+            registry,
+            if aborted { "aborted" } else { "completed" },
+            plugin_spend,
+        )
+        .await;
     let last = driver.results.pop();
     // A run that ended before anything scored its candidates keeps their work
     // as patches, because the sweep below deletes checkouts and branches

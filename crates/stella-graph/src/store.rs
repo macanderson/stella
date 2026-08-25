@@ -59,6 +59,8 @@ use crate::storage::{self, FieldEntry, RelationEntry};
 use crate::symbol::SymbolKind;
 use crate::walk::walk_indexable;
 
+pub(crate) mod image_check;
+
 /// The on-disk schema version stamped in `PRAGMA user_version`. Bump it in
 /// the same commit as a **reshape** — an altered or backfilled column,
 /// anything the `IF NOT EXISTS` guard would silently skip on an existing
@@ -393,13 +395,19 @@ pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
                 ),
                 None => eprintln!("code-graph store was corrupt — rebuilding from scratch"),
             }
-            open_migrated(db_path)
+            let conn = open_migrated(db_path)?;
+            // The image behind this connection is one this process just made
+            // from nothing, so it is intact by construction and a later open
+            // has nothing to re-walk.
+            image_check::remember_intact(db_path);
+            Ok(conn)
         }
         Err(error) => Err(error),
     }
 }
 
-/// [`open_migrated`] plus a structural `PRAGMA quick_check` over the image.
+/// [`open_migrated`] plus a structural `PRAGMA quick_check` over the image —
+/// **once per unchanged image**, not once per open.
 ///
 /// Migration alone proved too weak a probe for damage. The 2026-08-08 field
 /// corruption — rowid-out-of-order data pages under an intact schema page —
@@ -407,12 +415,25 @@ pub(crate) fn open(db_path: &Path) -> Result<Connection, GraphError> {
 /// catch-up scan, whose error the mount path discards; the graph sat dead
 /// for four days, sessions re-creating the WAL sidecars and writing nothing,
 /// with no notice and no rebuild. `quick_check` walks every page, which is
-/// exactly what makes its "ok" trustworthy; it stops at the first fault, and
-/// the writer's open pays it once, ahead of a tree walk that dwarfs it.
+/// exactly what makes its "ok" trustworthy, and it stops at the first fault.
+///
+/// It was originally priced as something "the writer's open pays once, ahead
+/// of a tree walk that dwarfs it". The read path does not open once —
+/// `search::engine::report_with` opens the graph on **every `search` call** —
+/// and the catch-up walk it was priced against costs 78-97 ms warm against a
+/// full page walk of a 180 MB image. One recorded session paid it sixty-one
+/// times (#4385). [`image_check`] carries the key the memo uses — the image's
+/// own `(length, mtime)`, so a store damaged between two opens is still
+/// caught — and what it gives up in exchange.
 fn open_verified(db_path: &Path) -> Result<Connection, GraphError> {
     let conn = open_migrated(db_path)?;
+    if image_check::already_walked(db_path) {
+        return Ok(conn);
+    }
+    image_check::count_walk();
     let verdict: String = conn.query_row("PRAGMA quick_check(1)", [], |row| row.get(0))?;
     if verdict == "ok" {
+        image_check::remember_intact(db_path);
         return Ok(conn);
     }
     drop(conn);
@@ -423,7 +444,8 @@ fn open_verified(db_path: &Path) -> Result<Connection, GraphError> {
 }
 
 /// The unmolested open-and-migrate [`open`] retries after a quarantine — a
-/// store this process just created from nothing has no pages to re-verify.
+/// store this process just created from nothing has no pages to re-verify,
+/// which is also why the retry path records it as intact.
 fn open_migrated(db_path: &Path) -> Result<Connection, GraphError> {
     let conn = open_read(db_path)?;
     conn.execute_batch(MIGRATION)?;
@@ -490,21 +512,20 @@ pub(crate) fn index_tree_with_progress(
     // The Rust crate layout is lazy per pass: the first Rust file pays the
     // manifest scan, a pass with none never does (#443).
     let rust_layout = std::cell::OnceCell::new();
+    let pass = Pass {
+        root,
+        grammars,
+        manifest: manifest.as_ref(),
+        generated_filter: &generated_filter,
+        rust_layout: &rust_layout,
+        indexed_at: now_unix(),
+    };
     let tx = conn.transaction()?;
 
     let mut current: HashSet<String> = HashSet::with_capacity(files.len());
     for abs in &files {
         current.insert(rel_path(root, abs));
-        index_one(
-            &tx,
-            root,
-            grammars,
-            manifest.as_ref(),
-            &generated_filter,
-            &rust_layout,
-            abs,
-            &mut stats,
-        )?;
+        index_one(&tx, &pass, abs, &mut stats)?;
         progress(&stats);
     }
     stats.files_pruned += prune_missing(&tx, &current)?;
@@ -526,22 +547,21 @@ pub(crate) fn apply_changes(
     let manifest = StorageManifest::load(root).ok().flatten();
     let generated_filter = GeneratedFilter::load(root);
     let rust_layout = std::cell::OnceCell::new();
+    let pass = Pass {
+        root,
+        grammars,
+        manifest: manifest.as_ref(),
+        generated_filter: &generated_filter,
+        rust_layout: &rust_layout,
+        indexed_at: now_unix(),
+    };
     let tx = conn.transaction()?;
     for abs in changed {
         if abs.is_file() {
             if Language::from_path(abs).is_none() && !storage::indexes_without_language(abs) {
                 continue;
             }
-            index_one(
-                &tx,
-                root,
-                grammars,
-                manifest.as_ref(),
-                &generated_filter,
-                &rust_layout,
-                abs,
-                &mut stats,
-            )?;
+            index_one(&tx, &pass, abs, &mut stats)?;
         } else {
             // A vanished path may have been a file OR a directory, and the
             // event does not say which. A removed directory has no extension
@@ -561,20 +581,47 @@ pub(crate) fn apply_changes(
     Ok(stats)
 }
 
+/// Everything one index pass settles before it visits its first file.
+///
+/// `indexed_at` is why this is a struct rather than a longer argument list. It
+/// is read **once per pass**, so every file a pass touches carries the same
+/// stamp, and [`crate::vectors::pending`]'s `(indexed_at DESC, path ASC)`
+/// ordering therefore falls through to `path` for everything one pass wrote.
+/// Reading the clock once per *file* instead splits a pass that straddles a
+/// second boundary into two timestamp groups, and the resulting order depends
+/// on where the walk happened to be when the second ticked — a race two
+/// `stella-graph` tests hit under the parallel runner (#4643).
+///
+/// Every field is a shared borrow or a scalar, so the whole thing is `Copy` and
+/// the per-file body destructures it without a clone.
+#[derive(Clone, Copy)]
+struct Pass<'a> {
+    root: &'a Path,
+    grammars: &'a Grammars,
+    manifest: Option<&'a StorageManifest>,
+    generated_filter: &'a GeneratedFilter,
+    rust_layout: &'a std::cell::OnceCell<crate::rust_resolve::RustLayout>,
+    /// The stamp every file this pass writes gets, in Unix seconds.
+    indexed_at: i64,
+}
+
 /// Index one file into an open transaction. Every failure mode here
 /// (unreadable, non-UTF-8, unparseable) is recorded in `stats` and skipped —
 /// never propagated — so one bad file cannot abort the batch (L-L1).
-#[allow(clippy::too_many_arguments)] // two call sites, both index passes
 fn index_one(
     tx: &Transaction,
-    root: &Path,
-    grammars: &Grammars,
-    manifest: Option<&StorageManifest>,
-    generated_filter: &GeneratedFilter,
-    rust_layout: &std::cell::OnceCell<crate::rust_resolve::RustLayout>,
+    pass: &Pass<'_>,
     abs: &Path,
     stats: &mut IndexStats,
 ) -> Result<(), GraphError> {
+    let Pass {
+        root,
+        grammars,
+        manifest,
+        generated_filter,
+        rust_layout,
+        indexed_at,
+    } = *pass;
     stats.files_seen += 1;
     let rel = rel_path(root, abs);
 
@@ -644,7 +691,7 @@ fn index_one(
         // Storage-DSL files no grammar claims (`.prisma`): no symbols or
         // imports, but the storage adapter still indexes them (spec §4a).
         if storage::indexes_without_language(abs) {
-            let file_id = upsert_file(tx, &rel, "prisma", &sha, mtime_ns(abs))?;
+            let file_id = upsert_file(tx, &rel, "prisma", &sha, mtime_ns(abs), indexed_at)?;
             tx.execute(
                 "DELETE FROM code_graph_storage_objects WHERE file_id = ?1",
                 params![file_id],
@@ -666,7 +713,7 @@ fn index_one(
     stats.files_parsed += 1;
 
     let edges = import::resolve(parsed.imports, root, abs, rust_layout);
-    let file_id = upsert_file(tx, &rel, lang.tag(), &sha, mtime_ns(abs))?;
+    let file_id = upsert_file(tx, &rel, lang.tag(), &sha, mtime_ns(abs), indexed_at)?;
     tx.execute(
         "DELETE FROM code_graph_symbols WHERE file_id = ?1",
         params![file_id],
@@ -970,12 +1017,16 @@ pub(crate) fn storage_rows(conn: &Connection) -> Result<Vec<RelationEntry>, Grap
 }
 
 /// Upsert a file row keyed by its unique path, returning the (stable) row id.
+///
+/// `indexed_at` comes from the caller's [`Pass`] rather than from the clock
+/// here, so it is one value for every file the pass writes (#4643).
 fn upsert_file(
     tx: &Transaction,
     rel: &str,
     lang: &str,
     sha: &str,
     mtime_ns: i64,
+    indexed_at: i64,
 ) -> Result<i64, GraphError> {
     let id = tx.query_row(
         "INSERT INTO code_graph_files(path, language, content_sha256, mtime_ns, indexed_at) \
@@ -986,7 +1037,7 @@ fn upsert_file(
            mtime_ns = excluded.mtime_ns, \
            indexed_at = excluded.indexed_at \
          RETURNING id",
-        params![rel, lang, sha, mtime_ns, now_unix()],
+        params![rel, lang, sha, mtime_ns, indexed_at],
         |row| row.get(0),
     )?;
     Ok(id)

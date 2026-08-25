@@ -88,6 +88,7 @@ use crate::{agent, rules};
 mod add_dir;
 mod authoring;
 mod driver_support;
+mod command_side;
 mod dropped_turn;
 pub(crate) mod forwarder;
 mod init_cmd;
@@ -613,6 +614,10 @@ pub async fn run_deck_session(
     // statline's MODEL cell can name nothing until a role has already served.
     let pins = model_cmd::configured_role_pins(cfg);
     let _ = in_tx.send(Inbound::ConfiguredRoles(pins));
+    // The model vocabulary the SETTINGS tab, the `/model` picker and the
+    // `/model` argument menu all read, before the first keystroke — without
+    // it each of those surfaces opens empty and has to ask.
+    let _ = in_tx.send(engine_config_inbound(cfg, None));
     // Custom definitions that failed to load are reported in the startup
     // dialog — stdout belongs to the alternate screen, and a
     // silently-missing /command is otherwise undiagnosable. Session chrome:
@@ -987,6 +992,31 @@ pub async fn run_deck_session(
                     }) => {
                         dispatch.release();
                         text
+                    }
+                    // A queue-free command (`command_side`): runs NOW, and
+                    // an argument-carrying text it declines becomes the next
+                    // prompt — the route it had before the flag existed.
+                    Some(WorkspaceInput::Command { text }) => {
+                        if command_side::run(text.trim(), cfg, &in_tx, &session_record.id) {
+                            continue 'session;
+                        }
+                        dispatch.release();
+                        text
+                    }
+                    // The agents page's new-task prompt: a lane, never the
+                    // lead's next turn — that is this message's whole meaning.
+                    Some(WorkspaceInput::SpawnLane { text }) => {
+                        subsession::spawn_lane_or_notice(
+                            text,
+                            &mut subs,
+                            cfg,
+                            budget_limit,
+                            &session_record.id,
+                            &workspace_name,
+                            &in_tx,
+                            &sup_tx,
+                        );
+                        continue 'session;
                     }
                     // A steer at a worker, or one whose lead turn ended
                     // before this recv read it — see `steer::steer_idle`.
@@ -1768,6 +1798,28 @@ pub async fn run_deck_session(
                                 }
                             }
                         }
+                        // A queue-free command runs beside the turn — the
+                        // whole point of the route (`command_side`); a text
+                        // it declines waits its turn as it always did.
+                        Some(WorkspaceInput::Command { text }) => {
+                            if !command_side::run(text.trim(), cfg, &in_tx, &session_record.id) {
+                                queue.push_back(text);
+                            }
+                        }
+                        // The agents page's new-task prompt: a lane now,
+                        // exactly as at idle — the lead's turn is untouched.
+                        Some(WorkspaceInput::SpawnLane { text }) => {
+                            subsession::spawn_lane_or_notice(
+                                text,
+                                &mut subs,
+                                cfg,
+                                budget_limit,
+                                &session_record.id,
+                                &workspace_name,
+                                &in_tx,
+                                &sup_tx,
+                            );
+                        }
                         // Esc with something to say — see `steer`.
                         Some(WorkspaceInput::Steer { agent, texts }) if agent == LEAD =>
                             steer::steer_lead(&steering, &mut queue, texts),
@@ -2466,6 +2518,1132 @@ pub(crate) fn prompt_line(prompt: &str, max_chars: usize) -> String {
     }
     let head: String = flat.chars().take(max_chars.saturating_sub(1)).collect();
     format!("{head}…")
+}
+
+/// Service a session-registry / inbox verb from the deck. Returns `true` if
+/// `input` was one (so the caller skips its own dispatch). All of these are
+/// cheap local file ops, serviced identically idle or mid-turn.
+// Every argument is a distinct handle the verbs need (registry, store, config,
+// budget, the two identities, the channel) — bundling them into a struct would
+// move the same list one hop away from the one call site.
+#[allow(clippy::too_many_arguments)]
+fn service_registry_action(
+    input: &WorkspaceInput,
+    scope: &sessions_view::SessionScope<'_>,
+    in_tx: &mpsc::UnboundedSender<Inbound>,
+) -> bool {
+    let sessions_view::SessionScope { registry, mine, .. } = *scope;
+    match input {
+        WorkspaceInput::SessionsRefresh => {
+            let _ = in_tx.send(scope.snapshot());
+            // The rows without a description get one, off the pump.
+            sessions_view::describe_sessions(scope, in_tx.clone());
+        }
+        WorkspaceInput::SessionOpen { id } => {
+            spawn_session_replay(id.clone(), registry.list(), in_tx.clone());
+        }
+        WorkspaceInput::SessionArchive { id } => {
+            let _ = registry.set_status(id, stella_store::SessionStatus::Archived);
+            let _ = in_tx.send(scope.snapshot());
+        }
+        WorkspaceInput::SessionDelete { id } => {
+            // The deck refuses to delete its own record UI-side too; this is
+            // the belt-and-suspenders check.
+            if id != mine {
+                let _ = registry.remove(id);
+            }
+            let _ = in_tx.send(scope.snapshot());
+        }
+        WorkspaceInput::NotificationRead { id } => {
+            let store = stella_store::NotificationStore::open_default();
+            let _ = store.mark_read(id);
+            let _ = in_tx.send(notifications_inbound(&store));
+        }
+        WorkspaceInput::NotificationsReadAll => {
+            let store = stella_store::NotificationStore::open_default();
+            let _ = store.mark_all_read();
+            let _ = in_tx.send(notifications_inbound(&store));
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// The inbox snapshot for the deck (badge + overlay), newest first.
+fn notifications_inbound(store: &stella_store::NotificationStore) -> Inbound {
+    let items = store
+        .list()
+        .into_iter()
+        .map(|n| stella_tui::NotificationInfo {
+            id: n.id,
+            title: n.title,
+            body: n.body,
+            source: n.source,
+            created_ms: n.created_at_ms,
+            read: n.read,
+            session_id: n.session_id,
+        })
+        .collect();
+    Inbound::Notifications(items)
+}
+
+/// Service one supervisor message: dispatch or park a `task_assign` spawn,
+/// and on a worker's end free its slot, close the delegation loop (a task
+/// worker succeeding completes its board task), meter the worker's spend
+/// toward the session budget, nudge the PR monitor, then drain whatever the
+/// freed slot can take — parked spawns first, then the prompt backlog.
+#[allow(clippy::too_many_arguments)]
+fn handle_supervisor_msg(
+    msg: SupervisorMsg,
+    subs: &mut SubSessions,
+    pending_controls: &mut worker_control::Pending,
+    pending_spawns: &mut VecDeque<subsession::QueuedSpawn>,
+    queue: &mut crate::session_persist::DurableQueue,
+    dispatch_held: bool,
+    registry: &ToolRegistry,
+    store: &Option<Arc<Store>>,
+    session_id: &str,
+    workspace_name: &str,
+    cfg: &Config,
+    budget_limit: Option<f64>,
+    unmetered_spend: &mut f64,
+    pr_nudge: &Arc<tokio::sync::Notify>,
+    in_tx: &UnboundedSender<Inbound>,
+    sup_tx: &UnboundedSender<SupervisorMsg>,
+) {
+    match msg {
+        SupervisorMsg::SpawnTask(queued) => {
+            // A task's lane is its identity: a second worker on a live lane
+            // would share (and corrupt) its channels, so a re-assign of an
+            // in-flight task is reported instead of spawned.
+            if subs.is_live(&subsession::task_lane(&queued.request.task_id)) {
+                let _ = in_tx.send(Inbound::Event {
+                    agent: LEAD.to_string(),
+                    event: AgentEvent::Text {
+                        text: format!(
+                            "note: task #{} already has a live worker — the duplicate \
+                             task_assign was not dispatched",
+                            queued.request.task_id
+                        ),
+                    },
+                });
+            } else if subs.has_slot() {
+                subsession::spawn_task_worker(
+                    &queued,
+                    subs,
+                    cfg,
+                    budget_limit,
+                    session_id,
+                    workspace_name,
+                    in_tx,
+                    sup_tx,
+                );
+            } else {
+                pending_spawns.push_back(queued);
+            }
+        }
+        SupervisorMsg::Ended {
+            lane,
+            generation,
+            execution_id,
+            cost_usd,
+            end,
+        } => {
+            // Only the generation that ended frees the lane — a late Ended
+            // from a replaced worker must not steal its replacement's slot
+            // (or, below, respawn the lane a second time).
+            let freed = subs.ended(&lane, generation);
+            // A Delete accepted while this worker was live takes the row
+            // down now — and outranks a Restart armed earlier: the later
+            // intent won at `worker_control::service`.
+            let deleted =
+                freed && worker_control::finish_delete(&lane, pending_controls, subs, in_tx);
+            // A Restart that arrived while this worker was live respawns it
+            // now — restart takes the freed slot ahead of parked spawns.
+            if freed && !deleted && pending_controls.restarts.remove(&lane) {
+                let _ = subsession::respawn(
+                    &lane,
+                    subs,
+                    cfg,
+                    budget_limit,
+                    session_id,
+                    workspace_name,
+                    in_tx,
+                    sup_tx,
+                );
+            }
+            // Worker spend reaches the session's parent budget guard (the
+            // L-E9 discipline). The guard is mutably borrowed by any in-
+            // flight lead turn, so the driver accumulates here and meters at
+            // the loop top, the next safe boundary — budget aborts happen at
+            // boundaries only, never mid-flight.
+            *unmetered_spend += cost_usd;
+            // A worker may have just pushed a branch / opened a PR — observe
+            // now, not at the next 45s tick.
+            pr_nudge.notify_one();
+            // The delegation loop closes against the task board — unless the
+            // worker predates a `/clear`, in which case there is no longer a
+            // board of its to close (#1692).
+            session_clear::settle_worker_task(
+                &lane,
+                generation,
+                &end,
+                subs,
+                registry,
+                session_clear::BoardMirror::of(store.as_ref(), session_id, execution_id),
+                in_tx,
+            );
+            while subs.has_slot()
+                && let Some(queued) = pending_spawns.pop_front()
+            {
+                // A parked duplicate of a task whose worker is (still) live
+                // is dropped for the same reason as at arrival.
+                if subs.is_live(&subsession::task_lane(&queued.request.task_id)) {
+                    continue;
+                }
+                subsession::spawn_task_worker(
+                    &queued,
+                    subs,
+                    cfg,
+                    budget_limit,
+                    session_id,
+                    workspace_name,
+                    in_tx,
+                    sup_tx,
+                );
+            }
+            subsession::drain_queue(
+                queue,
+                subs,
+                dispatch_held,
+                cfg,
+                budget_limit,
+                session_id,
+                workspace_name,
+                in_tx,
+                sup_tx,
+            );
+        }
+    }
+}
+
+/// Open a session in a replay lane ([`WorkspaceInput::SessionOpen`]): load
+/// its persisted journal from the session's own workspace store (linked via
+/// `executions.session_id`, store schema v8) and stream it through the
+/// deck's ordinary fold. Replay IS the fold — a session dead for 12 hours
+/// reconstructs to exactly the state it reached, through the same rendering
+/// path a live session uses. Heavy reads run on the blocking pool.
+fn spawn_session_replay(
+    id: String,
+    records: Vec<stella_store::SessionRecord>,
+    in_tx: mpsc::UnboundedSender<Inbound>,
+) {
+    tokio::task::spawn_blocking(move || {
+        let Some(record) = records.into_iter().find(|r| r.id == id) else {
+            let _ = in_tx.send(Inbound::Event {
+                agent: LEAD.to_string(),
+                event: AgentEvent::Text {
+                    text: format!("session {id} is no longer in the registry"),
+                },
+            });
+            return;
+        };
+        // The prefix is the journal tee's filter key
+        // (`session_persist::REPLAY_LANE_PREFIX`): everything on this lane
+        // rides the ordinary inbound channel but must never be journaled as
+        // the CURRENT session's history.
+        let lane = format!("{}{id}", crate::session_persist::REPLAY_LANE_PREFIX);
+        let meta = AgentMeta::new(lane.clone(), format!("replay — {}", record.title), now_ms())
+            .with_role("replay");
+        let _ = in_tx.send(Inbound::Register(meta));
+        let lane_text = |text: String| Inbound::Event {
+            agent: lane.clone(),
+            event: AgentEvent::Text { text },
+        };
+        let Some(store) = agent::open_store(std::path::Path::new(&record.workspace)) else {
+            let _ = in_tx.send(lane_text(format!(
+                "no store found at {} — nothing to replay",
+                record.workspace
+            )));
+            let _ = in_tx.send(Inbound::Status {
+                agent: lane,
+                status: AgentStatus::Failed,
+            });
+            return;
+        };
+        match store.session_events(&id) {
+            Ok(journal) => {
+                if journal.events.is_empty() {
+                    let _ = in_tx.send(lane_text(
+                        "no persisted events for this session (it predates session-linked \
+                         journals, store schema v8)"
+                            .to_string(),
+                    ));
+                }
+                for rec in journal.events {
+                    let _ = in_tx.send(Inbound::Event {
+                        agent: lane.clone(),
+                        event: rec.event,
+                    });
+                }
+                if journal.skipped > 0 {
+                    let _ = in_tx.send(lane_text(format!(
+                        "{} event(s) could not be decoded and were skipped",
+                        journal.skipped
+                    )));
+                }
+                let _ = in_tx.send(Inbound::Status {
+                    agent: lane,
+                    status: match record.status {
+                        stella_store::SessionStatus::Error => AgentStatus::Failed,
+                        _ => AgentStatus::Done,
+                    },
+                });
+            }
+            Err(e) => {
+                let _ = in_tx.send(lane_text(format!(
+                    "failed to read the session journal: {e}"
+                )));
+                let _ = in_tx.send(Inbound::Status {
+                    agent: lane,
+                    status: AgentStatus::Failed,
+                });
+            }
+        }
+    });
+}
+
+/// How often the PR monitor re-reads `gh` (live reconcile, L-V3 — nothing
+/// renders from cache; every push is a fresh observation).
+const PR_POLL_MS: u64 = 45_000;
+
+/// One reconciled PR observation, as compared for change detection.
+#[derive(PartialEq, Clone)]
+struct PrObservation {
+    url: String,
+    number: Option<u64>,
+    status: PrStatus,
+    ci: Option<CiStatus>,
+}
+
+/// Poll `gh` for the workspace's current-branch PR and its checks. On every
+/// change: a `Pr` event on the lead lane (the deck folds it into the
+/// footer's PR cell and the transcript), a store mirror row, and — when CI
+/// flips to failing — a persist-until-read inbox notification linked to
+/// this session. No PR (or no `gh`) is quietly nothing: the cell stays
+/// hidden rather than wrong.
+fn spawn_pr_monitor(
+    root: PathBuf,
+    session_id: Arc<std::sync::Mutex<String>>,
+    store: Option<Arc<Store>>,
+    workspace_name: String,
+    nudge: Arc<tokio::sync::Notify>,
+    in_tx: mpsc::UnboundedSender<Inbound>,
+) {
+    tokio::spawn(async move {
+        let mut last: Option<PrObservation> = None;
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(PR_POLL_MS));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            // The tick paces routine reconciles; a nudge (turn settled,
+            // worker ended) skips straight to one.
+            tokio::select! {
+                _ = tick.tick() => {}
+                _ = nudge.notified() => {}
+            }
+            if in_tx.is_closed() {
+                break;
+            }
+            let Some(observed) = observe_pr(&root).await else {
+                continue;
+            };
+            if last.as_ref() == Some(&observed) {
+                continue;
+            }
+            let ci_flipped_to_failing = observed.ci == Some(CiStatus::Failing)
+                && last
+                    .as_ref()
+                    .is_none_or(|l| l.ci != Some(CiStatus::Failing));
+            last = Some(observed.clone());
+            // Resolved per observation: an in-deck session switch re-keys
+            // which session this PR activity belongs to.
+            let session_id = session_id.lock().unwrap_or_else(|p| p.into_inner()).clone();
+            let _ = in_tx.send(Inbound::Event {
+                agent: LEAD.to_string(),
+                event: AgentEvent::Pr {
+                    url: observed.url.clone(),
+                    status: observed.status,
+                    number: observed.number,
+                    ci: observed.ci,
+                },
+            });
+            if let Some(store) = &store {
+                let _ = store.upsert_pull_request(
+                    Some(&session_id),
+                    &observed.url,
+                    observed.number,
+                    pr_status_token(observed.status),
+                    observed.ci.map(ci_status_token),
+                    now_ms(),
+                );
+            }
+            if ci_flipped_to_failing {
+                let number = observed
+                    .number
+                    .map(|n| format!("#{n}"))
+                    .unwrap_or_else(|| observed.url.clone());
+                let _ = stella_store::NotificationStore::open_default().push(
+                    &stella_store::Notification::new(
+                        format!("{workspace_name}: CI failing on PR {number}"),
+                        observed.url.clone(),
+                        session_id.clone(),
+                    )
+                    .with_session_id(session_id.clone()),
+                );
+            }
+        }
+    });
+}
+
+/// Poll the machine-wide notification store and push a fresh snapshot when
+/// it changes — other sessions produce into the same store, so the badge
+/// must not wait for a local action. Exits with the deck (send fails once
+/// the inbound channel closes).
+fn spawn_notification_poller(in_tx: mpsc::UnboundedSender<Inbound>) {
+    tokio::spawn(async move {
+        let store = stella_store::NotificationStore::open_default();
+        let mut fingerprint: Vec<(String, bool)> = Vec::new();
+        let mut first = true;
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(NOTIFY_POLL_MS));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            if in_tx.is_closed() {
+                break;
+            }
+            let list = store.list();
+            let next: Vec<(String, bool)> = list.iter().map(|n| (n.id.clone(), n.read)).collect();
+            // The first pass always pushes (the badge must show pre-existing
+            // unread messages); afterwards only changes do.
+            if first || next != fingerprint {
+                first = false;
+                fingerprint = next;
+                if in_tx.send(notifications_inbound(&store)).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+}
+
+// ── ISSUES tab: tracker-backed operations ───────────────────────────────────
+
+/// Installed agents whose name or description contains `query`
+/// (case-insensitive; an empty query matches all) as "Agent" hits.
+pub(super) fn agent_entity_hits(
+    entries: &[stella_tui::InstalledAgentEntry],
+    query: &str,
+) -> Vec<EntityHit> {
+    let needle = query.trim().to_lowercase();
+    entries
+        .iter()
+        .filter(|e| {
+            needle.is_empty()
+                || e.name.to_lowercase().contains(&needle)
+                || e.description.to_lowercase().contains(&needle)
+        })
+        .map(|e| EntityHit {
+            kind: "Agent".to_string(),
+            label: e.name.clone(),
+            description: e.description.clone(),
+            insert: e.name.clone(),
+        })
+        .collect()
+}
+
+/// Cap on the content preview a memory hit carries.
+const MEMORY_PREVIEW_CHARS: usize = 60;
+
+/// One memory node as a type-ahead hit: a flattened content preview plus a
+/// provenance suffix (`· observed …`) and, when the memory has been cited, its
+/// citation stats.
+///
+/// Observation time is the only time a node has. It used to be followed by a
+/// `· valid from …` clause reading `NodeRow::valid_from`, which no node writer
+/// ever fills — so the clause restated the observation timestamp on every row
+/// it has ever rendered (#3136).
+fn memory_hit(
+    display_name: &str,
+    content: &str,
+    recorded_at: &str,
+    citations: Option<(i64, f64)>,
+) -> EntityHit {
+    let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    let preview: String = if flat.chars().count() > MEMORY_PREVIEW_CHARS {
+        let head: String = flat.chars().take(MEMORY_PREVIEW_CHARS - 1).collect();
+        format!("{head}…")
+    } else {
+        flat
+    };
+    let mut description = format!("{preview} · observed {recorded_at}");
+    if let Some((count, avg)) = citations {
+        description.push_str(&format!(" · cited {count}× avg {avg:.1}"));
+    }
+    EntityHit {
+        kind: "Memory".to_string(),
+        label: display_name.to_string(),
+        description,
+        insert: display_name.to_string(),
+    }
+}
+
+/// One code-graph definition frame as a type-ahead hit: the kind is the
+/// frame kind capitalized ("Symbol"), the label its human title (`fn foo`),
+/// the description its file location (the citation's parenthetical, else
+/// the frame uri), and the inserted text the bare symbol name — the title's
+/// last token.
+fn symbol_hit(frame: &contextgraph_types::ContextFrame) -> EntityHit {
+    let label = frame.title.clone();
+    let insert = label
+        .split_whitespace()
+        .last()
+        .unwrap_or(label.as_str())
+        .to_string();
+    let description = frame
+        .citation_label
+        .as_deref()
+        .and_then(|citation| {
+            let start = citation.rfind('(')?;
+            let end = citation.rfind(')')?;
+            (start + 1 < end).then(|| citation[start + 1..end].to_string())
+        })
+        .or_else(|| frame.uri.clone())
+        .unwrap_or_default();
+    EntityHit {
+        kind: format!("{:?}", frame.kind),
+        label,
+        description,
+        insert,
+    }
+}
+
+/// The local (non-tracker) assignee sources, read synchronously (call on
+/// the blocking pool): memories from `.stella/private/context.db` — with citation
+/// stats joined from `store.db` by `public_id` — and code-graph symbol
+/// definitions when an index exists. Read-only politeness (the `stella
+/// stats` discipline): a missing database reads as "no hits", never a
+/// write. Failures of one source never kill another.
+pub(super) fn local_assignee_hits(root: &std::path::Path, query: &str) -> Vec<EntityHit> {
+    let needle = query.trim().to_lowercase();
+    let mut hits = Vec::new();
+
+    // Memories: substring over display_name/content; empty query lists all.
+    let context_db = stella_store::existing_workspace_private_sqlite_path(root, "context.db")
+        .ok()
+        .flatten();
+    if let Some(context_db) = context_db
+        && let Ok(context) = stella_context::ContextStore::open(&context_db)
+        && let Ok(nodes) = context.memory_nodes()
+    {
+        let stats: std::collections::HashMap<String, (i64, f64)> = {
+            if stella_store::existing_workspace_private_sqlite_path(root, "store.db")
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                stella_store::Store::open(root)
+                    .and_then(|store| store.memory_citation_stats())
+                    .map(|rows| {
+                        rows.into_iter()
+                            .map(|s| (s.memory_id, (s.citations, s.avg_score)))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Default::default()
+            }
+        };
+        hits.extend(
+            nodes
+                .iter()
+                .filter(|n| {
+                    needle.is_empty()
+                        || n.display_name.to_lowercase().contains(&needle)
+                        || n.content.to_lowercase().contains(&needle)
+                })
+                .take(20)
+                .map(|n| {
+                    memory_hit(
+                        &n.display_name,
+                        &n.content,
+                        &n.recorded_at,
+                        stats.get(&n.public_id).copied(),
+                    )
+                }),
+        );
+    }
+
+    // Code-graph definitions of the queried name, when an index exists
+    // (definitions are an exact-name lookup, so an empty query has nothing
+    // to resolve).
+    if !needle.is_empty()
+        && let Ok(Some(db)) = crate::search_cmd::codegraph::graph_db_path(root)
+        && let Ok(graph) = stella_graph::CodeGraph::open(root, &db)
+        && let Ok(frames) = graph.definitions(query.trim())
+    {
+        hits.extend(frames.iter().map(symbol_hit));
+    }
+    hits
+}
+
+/// Merge the assignee sources in priority order — installed agents first,
+/// then local memories/symbols — capped at `cap`.
+pub(super) fn merge_assignee_hits(
+    agents: Vec<EntityHit>,
+    local: Vec<EntityHit>,
+    cap: usize,
+) -> Vec<EntityHit> {
+    let mut merged = agents;
+    merged.extend(local);
+    merged.truncate(cap);
+    merged
+}
+
+/// The disposition of a would-be slash command.
+enum DeckCommand {
+    /// Not a command — run the model turn as usual.
+    Prompt,
+    /// A custom command/skill invocation — run the model turn with this
+    /// expanded prompt instead of the raw `/name args` input.
+    Expanded(String),
+    /// Handled as a command; skip the model turn.
+    Handled,
+    /// `/init` finished successfully; skip the turn AND refresh the session's
+    /// derived state (memory domains, Graph tab, custom extensions) which the
+    /// new taxonomy/index changed.
+    InitCompleted,
+    /// `/model <provider/slug>` typed in full: skip the turn and apply the
+    /// session-only model switch. Carried back to the driver loop rather
+    /// than applied in `run_deck_command`, because the switch moves state
+    /// only the loop owns (the provider handle, the prompt plane, the lead's
+    /// registered meta) — see `session_override`.
+    SessionModel(String),
+}
+
+// The deck's productized vocabulary (`DECK_BUILTINS`) and the
+// reserved-name guard (`deck_reserved`) live in `skills`, beside the
+// slash-menu builder that consumes them (the god-file rule).
+
+/// An argument-carrying form of `/info` (né `/models` — the old head still
+/// parses) — handled model-free: when the configured model itself is
+/// broken, `/info refresh` is how the user digs out, and routing it into a
+/// model turn fails on the very error being fixed. Parsed conservatively —
+/// a single recognized token (plus `refresh --force`); anything
+/// sentence-like stays a prompt, matching the "`/init do the thing` is a
+/// model prompt" rule.
+enum ModelsCommand {
+    /// `/info refresh [--force]` — re-sync the catalog, no model call.
+    Refresh { force: bool },
+    /// `/info list` — the same listing the bare `/info` prints.
+    List,
+    /// `/info <typo>` — one unrecognized token: a mistyped subcommand,
+    /// answered with usage instead of a wasted model call.
+    Usage(String),
+}
+
+/// Parse `trimmed` as a [`ModelsCommand`]; `None` leaves it on the normal
+/// path (custom expansion, then prompt).
+fn parse_models_command(trimmed: &str) -> Option<ModelsCommand> {
+    let (head, rest) = trimmed.split_once(char::is_whitespace)?;
+    let rest = rest.trim();
+    if !matches!(head, "/info" | "/models") || rest.is_empty() {
+        return None;
+    }
+    let mut words = rest.split_whitespace();
+    match (words.next(), words.next(), words.next()) {
+        (Some("refresh"), None, None) => Some(ModelsCommand::Refresh { force: false }),
+        (Some("refresh"), Some("--force"), None) => Some(ModelsCommand::Refresh { force: true }),
+        (Some("list"), None, None) => Some(ModelsCommand::List),
+        (Some(word), None, None) => Some(ModelsCommand::Usage(word.to_string())),
+        // A sentence after `/models` stays a prompt.
+        _ => None,
+    }
+}
+
+// ── Agent-engine config (the SETTINGS tab's config panel) ─────────────────────
+
+/// Build an [`Inbound::EngineConfig`] snapshot: the freshly merged
+/// `agent_engine_config` from the settings scope chain, plus the picker
+/// vocabularies — every provider whose credential currently resolves, and
+/// the catalog's `provider/slug` list as the model-picker fallback when
+/// `allowed_models` is empty. The model list is scoped to those same
+/// credentialed providers (plus the session's active one): a model you
+/// have no key for is not an option, and offering it anyway was exactly
+/// the "selectable but unusable" bug. Re-reading the chain (rather than
+/// caching) keeps the overlay honest about hand edits and about what a
+/// save at one scope means under the others.
+fn engine_config_inbound(cfg: &Config, status: Option<String>) -> Inbound {
+    let engine = crate::settings::Settings::load(&cfg.workspace_root)
+        .ok()
+        .and_then(|s| s.agent_engine_config)
+        .unwrap_or_default();
+    let providers: Vec<String> = crate::config::discover_configured_providers()
+        .into_iter()
+        .map(|p| p.config.id.to_string())
+        .collect();
+    // The session's provider is always usable — its credential resolved at
+    // startup (possibly interactively, which discovery never does).
+    let mut usable: std::collections::HashSet<&str> =
+        providers.iter().map(String::as_str).collect();
+    usable.insert(cfg.provider.id);
+    let catalog = stella_model::catalog::Catalog::current();
+    let mut catalog_models: Vec<String> = Vec::new();
+    let mut model_efforts: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    for entry in catalog
+        .entries()
+        .iter()
+        .filter(|entry| usable.contains(entry.provider.as_str()))
+    {
+        let spec = format!("{}/{}", entry.provider, entry.id);
+        let levels = crate::engine_config::effort_levels(
+            &entry.provider,
+            crate::config::PROVIDERS
+                .iter()
+                .find(|p| p.id == entry.provider)
+                .map(|p| p.dialect)
+                .unwrap_or(crate::config::Dialect::OpenaiCompatible),
+            entry.supports_reasoning,
+        );
+        model_efforts.insert(spec.clone(), levels.iter().map(|s| s.to_string()).collect());
+        catalog_models.push(spec);
+    }
+    // `allowed_models` specs are picker entries too — give each its effort
+    // vocabulary so the effort row is model-aware under a restriction.
+    for raw in engine.allowed_models() {
+        if model_efforts.contains_key(raw) {
+            continue;
+        }
+        if let Some(spec) = crate::engine_config::parse_model_spec(raw, &|id| usable.contains(id)) {
+            let levels = crate::engine_config::effort_levels_for_spec(&spec.provider, &spec.model);
+            model_efforts.insert(raw.clone(), levels.iter().map(|s| s.to_string()).collect());
+        }
+    }
+    let roles = crate::config_wiring::deck_rows(cfg, &providers);
+    // What is installed, not what core knows: the seat list is the union of the
+    // roles installed plugins declare, so a session with none shows the default
+    // model and nothing else (`doc:roleless-core` §8.4).
+    let declared = crate::agent::seats::installed_seats(&cfg.workspace_root);
+    Inbound::EngineConfig {
+        state: crate::engine_config::state_from_settings(
+            &engine,
+            providers,
+            catalog_models,
+            model_efforts,
+            roles,
+            &declared,
+        ),
+        status,
+    }
+}
+
+// ── Tool switches (the SETTINGS tab's TOOLS panel) ─────────────────────────
+
+/// Build an [`Inbound::ToolPolicy`] from the session's live tool surface and
+/// the settings scope chain.
+///
+/// `names` is enumerated at the call site because only the driver loop holds
+/// the assembled stack: MCP tools appear the moment the background connect
+/// lands, and custom tools come from the workspace's manifests. The scope
+/// chain is re-read every time (cheap local files) so the panel attributes a
+/// switch to the file that carries it *now*, not when the session started.
+///
+/// The effective posture is re-derived from disk rather than read off
+/// [`Config::tool_policy`], which was resolved once at session start: a save
+/// has to be visible in the very next snapshot, and the panel is a *settings*
+/// editor — it shows what the files say. (The running session keeps the stack
+/// it resolved; the status line says so.)
+///
+/// A scope-read failure is reported as the panel's status rather than dropped:
+/// an editor that silently showed "nothing is off" over an unreadable managed
+/// file would misstate the posture in the most dangerous direction.
+fn tool_policy_inbound(cfg: &Config, names: &[String], status: Option<String>) -> Inbound {
+    let root = &cfg.workspace_root;
+    let mut notes: Vec<String> = status.into_iter().collect();
+    let mut note_failure = |e: String| notes.push(format!("settings unreadable: {e}"));
+
+    let effective = match crate::settings::Settings::load(root) {
+        Ok(settings) => settings.tool_policy(),
+        Err(e) => {
+            note_failure(e);
+            cfg.tool_policy.clone()
+        }
+    };
+    let scopes = match crate::settings::Settings::load_tool_scopes(root) {
+        Ok(scopes) => scopes,
+        Err(e) => {
+            note_failure(e);
+            crate::settings::ToolScopePolicies::default()
+        }
+    };
+    Inbound::ToolPolicy {
+        state: crate::tool_switches::tool_policy_state(names, &effective, &scopes),
+        status: (!notes.is_empty()).then(|| notes.join(" · ")),
+    }
+}
+
+// ── Installed-agents manager (the AGENTS tab's INSTALLED AGENTS pane) ───────
+
+/// Handle one synchronous installed-agents op (refresh / save / pin) —
+/// pure filesystem work, answered with a fresh [`Inbound::AgentsList`].
+/// Called from BOTH the idle and the in-turn recv sites, so the manager
+/// works whether or not a turn is running. Returns `true` when the input
+/// was one of the manager's; anything else is left to the caller's arms.
+fn handle_agents_input(
+    input: &WorkspaceInput,
+    cfg: &Config,
+    in_tx: &UnboundedSender<Inbound>,
+) -> bool {
+    let root = &cfg.workspace_root;
+    match input {
+        WorkspaceInput::AgentsRefresh => {
+            let _ = in_tx.send(agents_list_inbound(root, None));
+            true
+        }
+        WorkspaceInput::AgentSave {
+            name,
+            scope,
+            content,
+        } => {
+            let status = authoring::save_agent(root, name, *scope, content);
+            let _ = in_tx.send(agents_list_inbound(root, Some(status)));
+            true
+        }
+        WorkspaceInput::AgentPin {
+            name,
+            scope,
+            version,
+        } => {
+            let status = authoring::pin_agent(root, name, *scope, *version);
+            let _ = in_tx.send(agents_list_inbound(root, Some(status)));
+            true
+        }
+        WorkspaceInput::AgentDelete { name, scope } => {
+            let status = authoring::delete_agent(root, name, *scope);
+            let _ = in_tx.send(agents_list_inbound(root, Some(status)));
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Handle a session-level slash command. Output goes into the lead agent's
+/// transcript as `Text` events — the deck renders exclusively from events, so
+/// printing to stdout (which the alternate screen owns) is never an option.
+///
+/// Vocabulary: `/help`, `/clear`, `/info`, `/model`, `/init`, `/agents`.
+/// `/files`, `/diff`, `/graph` are deck-local (tab switches) and
+/// consumed TUI-side; an unknown bare `/command` gets a hint rather than a
+/// wasted model call. Every productized command is no-argument, so the
+/// *whole* trimmed input is matched — `/init do the thing` is a model prompt,
+/// not a silent reindex that discards the rest. Custom commands/skills (⚡)
+/// DO take arguments: `/fix-bug issue-42` expands the `fix-bug` template
+/// with `issue-42`.
+#[allow(clippy::too_many_arguments)]
+async fn run_deck_command(
+    prompt: &str,
+    in_tx: &UnboundedSender<Inbound>,
+    messages: &mut Vec<CompletionMessage>,
+    system_prompt: &str,
+    provider: &dyn Provider,
+    registry: &ToolRegistry,
+    cfg: &mut Config,
+    custom: &crate::extensions::CustomExtensions,
+    budget_limit: Option<f64>,
+    // This deck's session registry id — what scopes `/export` to the session
+    // the user is actually in (#2558).
+    session_id: &str,
+    // The deck's question channel, so `/init`'s first-session conversion
+    // offer raises a card instead of a TTY prompt through the render.
+    ask_io: &dyn AskUserIo,
+) -> DeckCommand {
+    let trimmed = prompt.trim();
+    if !trimmed.starts_with('/') {
+        return DeckCommand::Prompt;
+    }
+    let say = |text: String| {
+        let _ = in_tx.send(Inbound::Event {
+            agent: LEAD.to_string(),
+            event: AgentEvent::Text { text },
+        });
+    };
+    // The queue-free commands live in `command_side`, shared with the two
+    // `WorkspaceInput::Command` arms so a mid-turn `/export` and a queued
+    // one from an old journal run the same code. Asked first: whatever it
+    // recognizes never reaches the arms below.
+    if command_side::run(trimmed, cfg, in_tx, session_id) {
+        return DeckCommand::Handled;
+    }
+    match trimmed {
+        "/clear" => {
+            // Reset the driver's own LLM history…
+            messages.clear();
+            messages.push(CompletionMessage::system(system_prompt.to_string()));
+            // …and the deck's session view: blank the transcript (including the
+            // `/clear` echo the paired PromptStarted just pushed), zero the cost
+            // stat, and return the progress bar to idle. No `say()` — that would
+            // re-populate the transcript we are clearing.
+            let _ = in_tx.send(Inbound::SessionReset {
+                agent: LEAD.to_string(),
+            });
+        }
+        // Bare `/model` is normally consumed deck-side (it opens the session
+        // model picker); a queued or replayed one lands here and gets the
+        // textual summary instead of silence. Deliberately NOT queue-free
+        // (`command_side`): `/model <spec>` below switches the running
+        // session, so the whole command stays on the turn-coupled path
+        // rather than having its bare form answer from a different place.
+        "/model" => {
+            say(model_cmd::current_summary(cfg));
+        }
+        "/init" => {
+            // The splash replay, the narrator, and the question channel all
+            // live in `init_cmd` — this file is closed to growth.
+            match init_cmd::run(
+                provider,
+                &cfg.workspace_root,
+                &cfg.model_id,
+                budget_limit,
+                ask_io,
+                in_tx,
+                LEAD,
+            )
+            .await
+            {
+                Ok(()) => return DeckCommand::InitCompleted,
+                Err(e) => say(format!("init failed: {e}")),
+            }
+        }
+        "/reload" => say(settings_io::reload_command(cfg, in_tx)),
+        // Deck-local commands (tab switches, `/agents` opening the Agents
+        // tab, the transcript-page overlays) are normally consumed TUI-side,
+        // but a queued one reaches here — accept it as handled (a no-op)
+        // rather than calling it "unknown".
+        "/files" | "/diff" | "/graph" | "/agents" | "/agent" | "/skills" | "/mcp"
+        | "/mcp-search" | "/settings" | "/sessions" | "/subagents" | "/context" | "/inspect"
+        | "/inbox" => {}
+        _ => {
+            if let Some(reply) = add_dir::handle(trimmed, cfg, registry) {
+                say(reply);
+                return DeckCommand::Handled;
+            }
+            // `/model <provider/slug>` — switch THIS session's model (the
+            // typed twin of the picker); `/model default <provider/slug>` —
+            // persist the default for future sessions. Validation + the
+            // settings write live in `model_cmd` (parity with the SETTINGS
+            // tab); handled before the whitespace check below, which would
+            // otherwise mistake `/model x` for a prompt.
+            if let Some(command) = model_cmd::parse_model_command(trimmed) {
+                match command {
+                    model_cmd::ModelCommand::Usage => say(
+                        "usage: `/model <provider/slug>` switches this session's model \
+                         (e.g. `/model zai/glm-5.2`); `/model default <provider/slug>` \
+                         persists the default for new sessions; `/model` alone opens \
+                         the picker."
+                            .to_string(),
+                    ),
+                    model_cmd::ModelCommand::Override(id) => {
+                        return DeckCommand::SessionModel(id);
+                    }
+                    model_cmd::ModelCommand::Default(id) => {
+                        match model_cmd::set_default_model(cfg, &id) {
+                            Ok(msg) => {
+                                say(msg);
+                                // Refresh an open SETTINGS tab with the merged view.
+                                let _ = in_tx.send(engine_config_inbound(cfg, None));
+                            }
+                            Err(msg) => say(msg),
+                        }
+                    }
+                }
+                return DeckCommand::Handled;
+            }
+            // `/profile [name]` — retune every role at once. Claimed here,
+            // above the whitespace check below, which would otherwise bill
+            // `/profile ultra` as a model prompt.
+            if let Some(reply) = profile_cmd::handle(cfg, trimmed) {
+                say(reply.message);
+                if reply.settings_changed {
+                    // Refresh an open SETTINGS tab with the merged view.
+                    let _ = in_tx.send(engine_config_inbound(cfg, None));
+                }
+                return DeckCommand::Handled;
+            }
+            // A custom command/skill/agent (⚡): expand its template —
+            // arguments and all — into the prompt the model turn runs.
+            // Reserved names never reach a custom definition (`/init do the
+            // thing` stays a model prompt even if a custom `init` exists).
+            // An AGENT invocation additionally records a usage-telemetry
+            // row (agent, pinned version, task) on the registry's ledger.
+            if let Some(expanded) = custom.expand(trimmed, &skills::deck_reserved()) {
+                authoring::record_agent_invocation(trimmed, custom, registry);
+                return DeckCommand::Expanded(expanded);
+            }
+            // A bare unknown /word is a typo'd command, not a prompt — say so
+            // instead of spending a model call. Anything with arguments (e.g.
+            // `/src/main.rs explain`) falls through and stays a prompt.
+            if trimmed.contains(char::is_whitespace) {
+                return DeckCommand::Prompt;
+            }
+            say(format!(
+                "unknown command `{trimmed}` — try /help, /clear, /info, /model, /agent, /theme, /init, /agents, /export, /donate, /files, /diff, /graph"
+            ));
+        }
+    }
+    DeckCommand::Handled
+}
+
+/// One engine turn for the lead agent: the deck-mode analogue of
+/// `agent::run_turn` — same engine, same tool stack, same persistence —
+/// with the stdout renderer replaced by [`spawn_forwarder`].
+#[allow(clippy::too_many_arguments)]
+async fn run_lead_turn(
+    provider: &dyn Provider,
+    base_tools: &dyn ToolExecutor,
+    custom_tools: &[CustomTool],
+    registry: &ToolRegistry,
+    messages: &mut Vec<CompletionMessage>,
+    budget: &mut BudgetGuard,
+    calibration: &CalibrationMap,
+    cfg: &Config,
+    execution: Option<(Arc<Store>, i64)>,
+    in_tx: &UnboundedSender<Inbound>,
+    sup_tx: &UnboundedSender<SupervisorMsg>,
+    claim_holder: &str,
+    steering: &Arc<subsession::SteeringTap>,
+    // Owned by the driver loop, so its input arms can flip it mid-turn (#1219).
+    pause: &lead_control::LeadPause,
+    // Phase 2 (#713): this turn's `ContextRecall` and the opening block's
+    // re-query seed (#4498), carried in because recall precedes this channel.
+    recall: crate::memory::OpeningRecall,
+    session_memory: Option<&SessionMemory>, // #3243 Phase 3: behind the re-query
+    friction: &mut TurnFriction,            // #3962: filled from the lane's own stream
+) -> Result<(), crate::failure::CliFailure> {
+    budget.begin_turn();
+    let (tx, rx) = mpsc::unbounded_channel::<AgentEvent>();
+    let requery = crate::memory::requery_for_turn(
+        session_memory,
+        messages,
+        tx.clone().into(),
+        recall.produced,
+    );
+    let forwarder = spawn_forwarder(
+        rx,
+        execution.clone(),
+        crate::cache_insight::InsightScope::from_config(cfg),
+        in_tx.clone(),
+        LEAD.to_string(),
+        Some(registry.task_board()),
+    );
+    // First event of the turn: what recall put in front of the model.
+    if let Some(event) = recall.event {
+        let _ = tx.send(event);
+    }
+
+    // Claim-on-first-write over the shared tree (crate::claims): wraps the
+    // base executor, so a refused write surfaces as the tool's own error.
+    // Released after the turn settles, cancel included.
+    let claims = ClaimTap::new(
+        base_tools,
+        execution.as_ref().map(|(store, _)| store.clone()),
+        claim_holder,
+    );
+    // Registry-born events (task board, sub-agent lifecycle) and this turn's
+    // per-call work-tree measurement both ride this turn's channel.
+    crate::turn_files::open_turn_streams_raw(registry, cfg, &tx, execution.as_ref());
+    // ...and this turn's stop AND pause reach the sub-agents it dispatches
+    // (`lead_control::turn_controls`). The guard takes them down on return.
+    let _controls = registry.attach_turn_controls(lead_control::turn_controls(steering, pause));
+
+    // Same structural drop-order rule as `agent::run_turn`: every tx clone
+    // lives in this scope so dropping `tx` after it closes the channel.
+    let outcome = {
+        // Customs, the operator's switches, and the authorization gate
+        // (#3283) — the deck's lead turn acts as the human at the keyboard.
+        let permitted = agent::tool_stack::session_stack(
+            &claims,
+            custom_tools.to_vec(),
+            cfg,
+            Principal::User,
+            registry.hook_bus(),
+        );
+        // Both read before the engine borrows `messages` mutably: the plan
+        // gate's setup (`task_tap::plan_gate`, #4594/#4611) and this turn's
+        // id, which every lane it spawns records (#4628).
+        let plan = PlanSetup::for_turn(messages, cfg);
+        let turn = execution.as_ref().map(|(_, id)| *id);
+        let tap = TaskTap::new(&permitted, tx.clone(), registry, Some(sup_tx), plan, turn);
+        let hook_runner = HostHookRunner;
+        let mut engine =
+            Engine::with_sleeper(provider, &tap, agent::engine_config_for(cfg), &TokioSleeper)
+                .with_calibration(calibration)
+                .with_steering(steering.as_ref())
+                .with_gate(pause.turn_gate());
+        if let Some(hooks) = &cfg.hooks {
+            engine = engine.with_hooks(hooks, &hook_runner);
+        }
+        if let Some(requery) = &requery {
+            engine = engine.with_requery(requery); // #3243 Phase 3
+        }
+        engine.run_turn(messages, budget, &tx).await
+    };
+    crate::turn_files::close_turn_boundary_raw(cfg, registry, &tx, execution.as_ref(), &outcome);
+    // The model is done and the deck already painted "done". Everything below is
+    // bookkeeping that can take real time (the forwarder persists every event of the
+    // turn) while the driver's `select!` still reads input — so latch the flag that
+    // tells its prompt arm what arrives is the next turn, not a sidecar request.
+    steering.mark_settling();
+    // The re-query adapter holds an `EventSender` clone of this turn's channel
+    // (#3366 telemetry), so it is one of the sender clones `close_turn_stream`
+    // requires gone; otherwise the forwarder's `recv()` stays pending forever
+    // and the turn future wedges after the deck painted the turn done (#2290).
+    drop(requery);
+    let ended = close_turn_stream(registry, tx, forwarder).await;
+    let persistence_complete = ended.persistence_complete;
+    *friction = ended.friction; // this turn's reflection evidence (#3962)
+    claims.release_all();
+
+    if let Some((store, id)) = &execution {
+        let (outcome_label, cost) = match &outcome {
+            TurnOutcome::Completed { cost_usd, .. } => ("completed", *cost_usd),
+            TurnOutcome::Aborted { cost_usd, .. } => ("aborted", *cost_usd),
+        };
+        if !agent::record_execution_end(
+            store,
+            *id,
+            registry,
+            outcome_label,
+            cost,
+            persistence_complete,
+        ) {
+            forwarder::warn_audit_record_incomplete(in_tx, LEAD, persistence_complete);
+            // That warning lands AFTER the turn's Complete event, and the
+            // deck's status fold maps a retryable Error back to Running — so
+            // without this re-assert a finished turn would show as running
+            // forever. Restate the turn's terminal status explicitly.
+            let _ = in_tx.send(Inbound::Status {
+                agent: LEAD.to_string(),
+                status: match &outcome {
+                    TurnOutcome::Completed { .. } => AgentStatus::Done,
+                    TurnOutcome::Aborted { .. } => AgentStatus::Failed,
+                },
+            });
+        }
+    }
+
+    // The abort's typed kind rides through (#1862): the session-exit writer
+    // reads it off the same projection as every other terminal writer.
+    agent::outcome::turn_outcome_result(&outcome)
 }
 
 mod mid_turn_ask;

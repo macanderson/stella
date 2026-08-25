@@ -452,6 +452,20 @@ fn write_chunks(
 /// SQLite and hands them over, the invariant-2 split [`super::rank`] already
 /// makes.
 ///
+/// # What the scan costs, measured
+///
+/// [`super::stored`] argues brute force is free at *file* scale, and it is:
+/// 1 585 rows is 6.5 MB. This rung is the same scan over a corpus twenty
+/// times larger, and the cost does not carry over. On this repository's own
+/// index — 28 813 chunk rows at 1 024 `f32` — the blobs are **118 MB read and
+/// decoded on every call**, measured on 2026-08-24 at 220-296 ms warm and one
+/// of the two largest terms in a `search` call's wall clock (#4385). It is
+/// still the shipped answer, because an ANN structure is a second index to
+/// keep correct and the cheaper term went first (#4385 removed a full 180 MB
+/// page walk from the same call). What this paragraph is for is that the
+/// number is now written down where the next person to weigh that trade will
+/// find it, instead of being inherited from a corpus twenty times smaller.
+///
 /// Candidates are keyed `path#line#name` rather than by rowid: the key is
 /// `top_k`'s tie-break, so it has to be both unique per chunk and *stable
 /// across rebuilds of the database*, which a rowid is not.

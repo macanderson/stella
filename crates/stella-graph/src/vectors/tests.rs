@@ -68,7 +68,7 @@ fn every_indexed_file_is_pending_until_it_is_embedded() {
     assert_eq!(
         first.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
         vec!["a.rs", "b.rs"],
-        "one index pass stamps both files in the same second, so the path \
+        "one index pass writes one `indexed_at` for both files, so the path \
          tiebreak decides the order and a capped pass stays deterministic"
     );
     assert!(
@@ -204,7 +204,7 @@ fn a_run_of_unreadable_files_does_not_consume_the_window() {
 
 /// The step-over preserves the scan's ordering, so the resume contract below
 /// still holds when unreadable files are interleaved with readable ones. One
-/// index pass stamps every file in the same second, so the order under test
+/// index pass stamps every file with one `indexed_at`, so the order under test
 /// here is the `path` tiebreak.
 #[test]
 fn stepping_over_an_unreadable_file_preserves_the_scan_ordering() {
@@ -498,7 +498,7 @@ fn a_capped_pass_embeds_the_most_recently_changed_file_first() {
 /// The cursor resumes across the whole `(indexed_at, path)` tuple rather than
 /// re-serving or skipping rows. Files sharing one timestamp are the case a
 /// timestamp-only cursor gets wrong, and `stella init` stamps an entire tree
-/// within one second — so this is the common shape, not a corner.
+/// with one value — so this is the common shape, not a corner.
 #[test]
 fn a_pass_walks_every_pending_file_exactly_once_within_one_timestamp() {
     let (ws, conn) = indexed_workspace(&[

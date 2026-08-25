@@ -5,40 +5,40 @@
 
  SESSION AGENTS TRACES GRAPH FILES SKILLS MCP ISSUES   SETTINGS                                                                                         stella*
   AGENTS  │  TOOLS  │  SEATS   ←/→
-┌ agents · modified ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│  GLOBAL   default                                                                                                                                            │
-│                                                                                                                                                              │
-│  waiting for the engine config snapshot — r to reload                                                                                                        │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│                                                                                                                                                              │
-│ e edit agents config                                                                                                                                         │
-└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+   GLOBAL   default                                                                                                                                    modified
+
+  waiting for the engine config snapshot — r to reload
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ e edit agents config
  ▶ sub:ci  running · quiet 0:00 · starting: no model call yet
 >>>
  ⏎ queue · ↓ 2 sub-agents · ! shell · / commands

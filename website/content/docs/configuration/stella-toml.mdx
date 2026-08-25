@@ -159,12 +159,22 @@ page is a complete reference on its own; see the linked section for the full exp
     Same name as JSON, and the one toggle here that defaults **on**. See
     [The probe's gitignore filter](/docs/configuration/settings#the-probes-gitignore-filter).
   </OptionCard>
+  <OptionCard name="run.auto_trust_project" defaultValue="false">
+    `true` trusts every project this machine opens by default — the config-file
+    alternative to typing `STELLA_TRUST_PROJECT=1` on every launch. **Honored only
+    from the user or org-managed file.** Set in a project's own `stella.toml` it
+    still parses, but is discarded before it can affect anything and a stderr
+    notice says so: a project cannot vote on its own trust. An explicit
+    `STELLA_TRUST_PROJECT` env var always overrides this, either direction, for
+    one launch. See [The project trust boundary](/docs/configuration/settings#the-project-trust-boundary).
+  </OptionCard>
 </CardGrid>
 
 ```toml title="stella.toml"
 [run]
 create_worktrees = "ask"
 ignore_gitignore = "on"
+auto_trust_project = false
 ```
 
 `run.recap` and `run.trace_capture` were **retired** in #3870: both renderers read the

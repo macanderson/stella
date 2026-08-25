@@ -163,14 +163,20 @@ there was answered `Unavailable`. `ChildTurns::in_turn_lane` is the
 allocation that lifts it — `stella_core::turn_slots` partitions
 `turn_instance` by residue, so a plane counting only its own calls can never
 land where a door's rounds will, without either counter knowing the other's.
-Two more limits stand on every door that attaches the plane: the `verifier`
-tier is deliberately bound to no seat, so a plugin naming it is answered
-`Unavailable` rather than having its call attributed to a role the host never
-made (`ChildTurns::with_seat` is how a driver that wants it owns the claim);
-and a plugin's points run *between* the parent's turns, where the tool
-registry's event sender is a sink — so the child's `step_usage` reaches the
-run's report and the session's budget guard, but not the store's receipt
-(#3802).
+One limit stands on every door that attaches the plane: the `verifier` tier is
+deliberately bound to no seat, so a plugin naming it is answered `Unavailable`
+rather than having its call attributed to a role the host never made
+(`ChildTurns::with_seat` is how a driver that wants it owns the claim).
+
+A plugin's points run *between* the parent's turns, where the tool registry's
+event sender used to be a sink — so a child's `step_usage` reached the run's
+report and the session's budget guard, and never the store. `stella run
+--pipeline <variant>` closed that (#3802): `crates/stella-cli/src/wrapper_plugin/child_stream.rs`
+holds one run-scoped execution row and its event stream open for the span of
+the dispatch, re-published after each round, so the plugin's own model calls
+land in `executions` and `step_usage` beside the rounds they bracket. The two
+round-driving doors above still meter their plugin's children into a sink
+(#4730); `stella run` is the door #3802's definition of done named.
 
 **The candidate-fanout plane, and where its substrate comes from.**
 `candidate_fanout` and `adopt_candidate` (#3844) are the capability

@@ -225,6 +225,23 @@ pub struct Settings {
     /// key rather than anything detected.
     #[serde(default)]
     pub candidate_isolation: Option<CandidateIsolation>,
+    /// Whether this machine trusts a project it opens by default —
+    /// `stella.toml`'s `run.auto_trust_project`, the config-file alternative
+    /// to typing `STELLA_TRUST_PROJECT=1` on every launch. `false` (absent)
+    /// changes nothing.
+    ///
+    /// **Read only from the user/managed scopes.** [`Settings::overlay_scope`]
+    /// merges this field generically, like `create_worktrees`, so a project
+    /// scope's value round-trips through the merged view for inspection — but
+    /// [`Settings::merge_captured_scopes`] unconditionally overwrites it from
+    /// the trusted-only snapshot before [`project_trust`] ever reads it, so a
+    /// project's own declaration can never take effect. See
+    /// `toml_config::RunSection::auto_trust_project` for why: this key is
+    /// itself a trust grant, and the project scope is the one file that must
+    /// never be able to grant it. An explicit `STELLA_TRUST_PROJECT` env var
+    /// always overrides this, in either direction, for one launch.
+    #[serde(default)]
+    pub auto_trust_project: Option<bool>,
     /// Directories OUTSIDE the workspace root that write tools may touch
     /// (`stella.toml`'s `[workspace] allowed_dirs`). Relative entries resolve
     /// against the project root at the read site
@@ -1043,6 +1060,16 @@ fn truthy_flag(value: &std::ffi::OsStr) -> bool {
     })
 }
 
+/// Like [`env_flag`], but distinguishes "not set" from "set to a falsy
+/// value" — `None` when the variable is absent at all, `Some(truthy_flag(v))`
+/// otherwise. [`project_trust`] needs the distinction: `auto_trust_project`
+/// supplies a *default*, and an env var present at all — including an
+/// explicit `STELLA_TRUST_PROJECT=0` — must override that default rather
+/// than being read as "absent, fall through", in either direction.
+fn env_override(name: &str) -> Option<bool> {
+    std::env::var_os(name).map(|v| truthy_flag(&v))
+}
+
 /// Whether the trusted launcher enabled the benchmark's filesystem-isolation
 /// boundary. Settings/config use it to disable filesystem configuration and
 /// credentials; session assembly also uses it to exclude Stella-specific
@@ -1051,12 +1078,34 @@ pub(crate) fn filesystem_settings_disabled() -> bool {
     crate::paths::filesystem_settings_disabled()
 }
 
-fn project_trust() -> ProjectTrust {
-    let all = env_flag("STELLA_TRUST_PROJECT");
+/// The pure decision behind [`project_trust`], split out exactly like
+/// [`truthy_flag`] is from [`env_flag`]: the three raw inputs are gathered
+/// once by the caller (two real env vars and a file read) so what is actually
+/// tested here needs neither.
+///
+/// `trust_project_env` is `None` when `STELLA_TRUST_PROJECT` is unset at all,
+/// in which case `config_auto_trust` — sourced only from the user/managed
+/// scopes, never the project's own file — supplies the default. Any value the
+/// env var carries, truthy or explicitly falsy, overrides that default for
+/// this one launch.
+fn resolve_project_trust(
+    trust_project_env: Option<bool>,
+    project_hooks_env: bool,
+    config_auto_trust: bool,
+) -> ProjectTrust {
+    let all = trust_project_env.unwrap_or(config_auto_trust);
     ProjectTrust {
-        hooks: all || env_flag("STELLA_PROJECT_HOOKS"),
+        hooks: all || project_hooks_env,
         credentials: all,
     }
+}
+
+fn project_trust() -> ProjectTrust {
+    resolve_project_trust(
+        env_override("STELLA_TRUST_PROJECT"),
+        env_flag("STELLA_PROJECT_HOOKS"),
+        Settings::trusted_scope_auto_trust_project(),
+    )
 }
 
 /// Whether this process trusts the current project to run code it configures.
@@ -1080,8 +1129,13 @@ fn project_trust() -> ProjectTrust {
 /// loader will refuse to read the tier back, and "installed and inert" must
 /// not look like "installed and running" (`plugin_cmd::install`).
 ///
-/// Opened by `STELLA_TRUST_PROJECT=1`, or by the legacy hooks-only
-/// `STELLA_PROJECT_HOOKS=1`.
+/// Opened by `STELLA_TRUST_PROJECT=1`, by the legacy hooks-only
+/// `STELLA_PROJECT_HOOKS=1`, or by `run.auto_trust_project = true` in the
+/// user or org-managed `stella.toml` — never the project's own, which
+/// `Settings::merge_captured_scopes` enforces by discarding that scope's
+/// value before it ever reaches [`project_trust`]. An explicit
+/// `STELLA_TRUST_PROJECT` env var overrides the config default in either
+/// direction for one launch; see [`resolve_project_trust`].
 ///
 /// **Not this gate:** credential routing (`base_url`, `api_key`,
 /// `api_key_env`, `mcp.registry_url`), project custom tools and project system

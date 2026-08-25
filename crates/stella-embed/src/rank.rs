@@ -102,11 +102,16 @@ pub fn top_k(query: &[f32], candidates: &[Candidate<'_>], floor: f32, limit: usi
 /// `DEFAULT_ADMISSION_FLOOR` is the cautionary case, sitting at 0.25 while
 /// `voyage-code-3` scores unrelated files at 0.604, dropping nothing.
 ///
-/// What would confirm or retune it is a distribution:
-/// `crates/stella-tools/tests/relevance_calibration.rs` prints the boundary
-/// gap at each labelled query's true relevant/irrelevant frontier as a
-/// multiple of that ranking's mean gap, which is exactly the quantity this
-/// constant is compared against (#3096).
+/// Measured once and not yet retuned. On 2026-08-24 the four labelled queries
+/// in `crates/stella-tools/tests/relevance_calibration.rs`, run against
+/// `voyage-code-3` over this repository, put the boundary at the true
+/// relevant/irrelevant frontier at **+5.36x** the mean gap on the one query
+/// with a clean frontier and **+0.11x** on the one whose answer ranked 39th;
+/// the other two returned no labelled answer in 40 candidates, so they have no
+/// frontier to measure. Two usable points, pointing opposite ways, is not
+/// enough to move a threshold — the ratio stays where it is, and this
+/// paragraph records that it has now been looked at rather than that it has
+/// been settled (#3096).
 pub const DEFAULT_RELEVANCE_GAP_RATIO: f32 = 2.5;
 
 /// The smallest drop in cosine that may be called a boundary at all.
@@ -128,9 +133,27 @@ pub const DEFAULT_RELEVANCE_GAP_RATIO: f32 = 2.5;
 /// an absolute *floor*: gaps between scores are much more comparable across
 /// models than the scores themselves, which is exactly why
 /// `DEFAULT_ADMISSION_FLOOR` sits at 0.25 while a real backend scores
-/// unrelated files at 0.604. It still wants measuring per model, against the
-/// absolute boundary drops
-/// `crates/stella-tools/tests/relevance_calibration.rs` prints (#3096).
+/// unrelated files at 0.604.
+///
+/// # What the measurement found, and why the number did not move
+///
+/// The 2026-08-24 run of `crates/stella-tools/tests/relevance_calibration.rs`
+/// against `voyage-code-3` over this repository observed absolute boundary
+/// drops of **0.0140** and **0.0001** — both far under this 0.05. So on this
+/// corpus the boundary never fires, [`relevant_prefix`] returns the whole
+/// list, and every ranking runs to its end. That is visible from outside as
+/// 200+ hit answers and as `search`'s RANK CEILING note still appearing on
+/// nearly every query, since the note's condition is precisely "the boundary
+/// kept everything it was given" (#4385).
+///
+/// The number stays at 0.05 anyway, because the alternative is worse. Two
+/// usable frontiers — one of them a query whose answer ranked 39th — is a
+/// sample to report, not one to tune a threshold against, and
+/// [`DEFAULT_MIN_BOUNDARY_GAP`]'s whole reason for existing is the #3089
+/// ranking where a 0.015 gap looked decisive and was noise. Retuning it to
+/// admit 0.014 would re-open exactly that failure on the strength of one
+/// query. What settles it is more labelled queries, which is
+/// `relevance_calibration.rs`'s `QUERIES` table (#3096).
 pub const DEFAULT_MIN_BOUNDARY_GAP: f32 = 0.05;
 
 /// How many of a ranked list are relevant — the answer to "where does this

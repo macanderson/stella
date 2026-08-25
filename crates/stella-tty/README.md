@@ -62,7 +62,7 @@ it crosses.
 - `stella-cli`: `crates/stella-cli/src/interactive.rs::human_can_answer` is a
   thin wrapper (same public path, same doc, same signature — nothing else in
   the crate needed to change) so every existing call site and doc-link keeps
-  working. `daemon/approval.rs` calls this crate directly for the daemon
-  console's stderr-rendered prompt.
+  working. Nothing under `src/daemon/` reaches this crate directly; the
+  daemon console prompts through that same wrapper.
 - `stella-model`: `crates/stella-model/src/credential.rs`'s interactive
   credential prompt.

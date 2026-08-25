@@ -1325,6 +1325,108 @@ fn deck_render_snapshots_state_a_failing_pr_on_the_issues_tab() {
 /// (stop · pause/resume · restart · focus) that #4334 lost with the AGENTS
 /// dashboard.
 #[test]
+fn deck_render_snapshots_pin_the_agents_page() {
+    let mut model = fixture_model();
+    let mut meta = stella_tui::AgentMeta::new("req:1", "fix the parser panic", 0)
+        .with_role("subagent")
+        .with_purpose("Fix the parser panic on empty input.");
+    meta.model = Some("glm-5.2".into());
+    model.apply_inbound(&Inbound::Register(meta));
+    let mut ui = ui_for(DeckTab::Session);
+    ui.agents_page.open = true;
+    ui.sessions = vec![stella_tui::envelope::SessionInfo {
+        id: "s-1".into(),
+        title: "stella: wire the dedup digest".into(),
+        summary: "Wired a dedup digest into the finding store.".into(),
+        description: None,
+        workspace: "/w/stella".into(),
+        phase: stella_tui::envelope::SessionPhase::Complete,
+        started_ms: 0,
+        updated_ms: 0,
+        mine: false,
+        resumable: true,
+        turns: 14,
+        spend_micros: 450_000,
+        model: Some("glm-5.2".into()),
+    }];
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        frame.contains("describe a task for a new session"),
+        "the page's own composer placeholder is its point:\n{frame}"
+    );
+    assert_golden(
+        "page_agents",
+        "the full-frame AGENTS page: counts, working lanes, resumable sessions, and the new-task prompt",
+        W,
+        H,
+        &frame,
+    );
+}
+
+/// The AGENTS page mid-conversation: a task half-typed into its composer and
+/// the answer to the command before it standing in the page's own reply pane
+/// (#4626).
+///
+/// A second golden rather than a change to the one above, because the two pin
+/// different claims and folding them together would lose one. `page_agents` is
+/// the page at rest — blank composer, nothing asked — and it is *unchanged* by
+/// #4626, which is itself worth pinning: the caret and the reply pane must cost
+/// the resting page no rows. This one is the page with both features engaged,
+/// so the `REPLY` heading, the quoted transcript row and the typed composer are
+/// all in a frame a reviewer can read.
+#[test]
+fn deck_render_snapshots_pin_the_agents_page_reply_pane() {
+    let mut model = fixture_model();
+    model.apply_inbound(&Inbound::ShellEvent {
+        agent: fixture_lead(&model),
+        event: AgentEvent::Text {
+            text: "worker · zai/glm-5.2 · effort high".into(),
+        },
+    });
+    let mut ui = ui_for(DeckTab::Session);
+    ui.agents_page.open = true;
+    // The mark the page sets when it sends a command: everything after it is
+    // the answer. One short of the end, so exactly the reply above is quoted.
+    ui.agents_page.reply_from = Some(
+        model.agents[ui.focused]
+            .model
+            .transcript
+            .len()
+            .saturating_sub(1),
+    );
+    ui.agents_page.notice = Some("/model sent".to_string());
+    for c in "rewrite the parser".chars() {
+        ui.agents_page.composer.insert_char(c);
+    }
+    let frame = render_frame(&model, &mut ui, W, H);
+    assert!(
+        frame.contains("worker · zai/glm-5.2"),
+        "the reply pane must quote the session's own answer:\n{frame}"
+    );
+    assert!(
+        frame.contains("rewrite the parser"),
+        "…above the composer that is still being typed into:\n{frame}"
+    );
+    assert_golden(
+        "page_agents_reply",
+        "the AGENTS page with a command's reply quoted in its own pane and a task half-typed",
+        W,
+        H,
+        &frame,
+    );
+}
+
+/// The lead lane's id in the demo fixture — the session a page-submitted
+/// command is answered in.
+fn fixture_lead(model: &WorkspaceModel) -> String {
+    model
+        .agents
+        .first()
+        .map(|a| a.meta.id.clone())
+        .expect("the demo fixture registers at least one lane")
+}
+
+#[test]
 fn deck_render_snapshots_pin_the_subagents_overlay() {
     let mut model = fixture_model();
     // The driver supplies a purpose and a pinned effort with the lane's

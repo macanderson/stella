@@ -6,6 +6,7 @@
 //! and only grandfathers files that predate the guard. `use super::*` resolves
 //! to `crate::settings` exactly as it did inline, so this is a pure move.
 
+mod auto_trust_project;
 mod private_state;
 mod toml;
 mod trust;
