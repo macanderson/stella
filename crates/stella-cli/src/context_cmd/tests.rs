@@ -619,6 +619,39 @@ fn explain_reproduces_a_kept_records_rule_and_provenance() {
     explain::run_explain(root.path(), "ctx.acme.web.pkg-manager").expect("explain by lineage");
 }
 
+/// #2782 — `stella context explain` distinguishes a rule Stella inferred from
+/// its own reflection from one it derived from a failing build.
+///
+/// The surrounding provenance lines say *where* a record came from. This one
+/// says what that source was worth, which is the question a reviewer deciding
+/// whether to trust an induced rule is actually asking.
+#[test]
+fn explain_names_the_grade_of_the_evidence_behind_a_record() {
+    use stella_protocol::provenance::ProvenanceGrade;
+
+    let critique = explain::evidence_line(Some(ProvenanceGrade::ModelCritique))
+        .expect("a graded record renders a line");
+    assert!(critique.contains("model_critique"), "{critique}");
+    assert!(
+        critique.contains("judgement"),
+        "the line must say what the grade means, not only name it: {critique}"
+    );
+
+    let proof = explain::evidence_line(Some(ProvenanceGrade::DeterministicProof))
+        .expect("a graded record renders a line");
+    assert!(proof.contains("deterministic_proof"), "{proof}");
+    assert_ne!(
+        critique, proof,
+        "the two grades must be visibly different where a human decides"
+    );
+
+    assert_eq!(
+        explain::evidence_line(None),
+        None,
+        "a record ingested from a document carries no grade and must claim none"
+    );
+}
+
 #[test]
 fn explain_on_an_unknown_rule_lists_what_is_loaded() {
     let root = workspace();
