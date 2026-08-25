@@ -61,6 +61,39 @@ down from, and at that size the raster behind each grid is ~9800 px wide, so
 `--supersample` is read against the output frame and set just above the
 film's peak zoom rather than left at 2.5.
 
+### Output sizes — both pipelines in one place
+
+The two pipelines take the same shape of request and reach it differently,
+which is worth knowing before you ask either one for a 6K cut:
+
+| | `render-deck-film.py` (the deck film) | `record-demo.sh` (a live run) |
+|---|---|---|
+| Ask for a size | `--size 6144x3456` | `--size 3840x2160` |
+| How it rasterises | frames directly, via `Rasteriser` | through `agg`, which writes GIF |
+| Largest master | 6144x3456 | **3840x2160** — see below |
+| The ladder | scaled down from the master by hand | `--ladder` |
+
+The ceiling on the live-run path is the GIF. `agg` emits nothing else, so
+every pixel of the master goes through a lossless-palette GIF before ffmpeg
+sees it; at 4K that intermediate is already hundreds of megabytes and at
+6144x3456 it is multiple gigabytes. So `record-demo.sh --size` clamps at 4K
+and says so on the way past, and the 6K rung stays the deck film's. Removing
+that ceiling means rasterising frames directly the way stage 2 already does
+(the geometry it would need is in `scripts/lib/agg-geometry.sh`), not raising
+the number.
+
+`--ladder` encodes 6144x3456, 3840x2160, 1920x1080, 1280x720, 854x480 and
+640x360 — H.264 High, yuv420p, faststart, one level per rung that admits 60
+fps — and emits only the rungs at or below the master it actually has. It
+never upscales: a 6K file made by stretching a 4K master is a 4K master with
+a bigger filename.
+
+A cell grid rarely divides a ladder rung evenly, so `--size` derives the
+largest `agg --font-size` that fits inside the request and ffmpeg pads the
+master out to the exact size. The arithmetic behind that (measured against
+agg 1.9.0) lives in `scripts/lib/agg-geometry.sh` and is checked by
+`make record-demo-size-test`.
+
 `--release` is not a suggestion: the driver rebuilds the session model from
 scratch for every one of the 4,122 frames — which is what makes frame *n*
 depend on nothing but *n* — and a debug build spends about twenty minutes on
