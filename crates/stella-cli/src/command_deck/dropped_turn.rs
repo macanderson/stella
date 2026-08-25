@@ -23,7 +23,7 @@
 //! the deck's own running total stops under-reporting the turn the user just
 //! stopped.
 //!
-//! Not fixed here, and #2807's second half: nothing awaits the forwarder drain
+//! Not fixed here, and tracked as #4853: nothing awaits the forwarder drain
 //! before the row closes, so a `StepUsage` can still be priced after
 //! `record_execution_end` has run. The read-back heals whatever landed by the
 //! time it runs and no more. Draining first must not reintroduce the #2290

@@ -1127,14 +1127,14 @@ async fn run_worker(
     // private board is scaffolding for this one run, and the session's
     // `tasks` rows have exactly one writer: the driver, whose `/clear` seal
     // this thread cannot consult (#1708 — see `closeout`'s module docs).
-    closeout::close_worker_execution(
+    let settled_cost = closeout::close_worker_execution(
         execution.as_ref(),
         &registry,
         label,
         cost,
         persistence_complete,
     );
-    (execution_id, cost, end)
+    (execution_id, settled_cost, end)
 }
 
 /// Drain the driver's prompt backlog into free worker slots, oldest first.
