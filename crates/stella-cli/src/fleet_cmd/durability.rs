@@ -57,7 +57,7 @@
 //! invocation mints a new `run_id`, so its keys are new and it starts clean.
 //! Making a run resumable across invocations means giving a run a stable
 //! identity a later process can name, which is a fleet-ledger question and not
-//! this module's — the alternative, dropping `run_id` from the key, would let
+//! this module's (#4802) — the alternative, dropping `run_id` from the key, would let
 //! two concurrent runs over one workspace write each other's resume points,
 //! which is the hazard above wearing a different hat.
 
