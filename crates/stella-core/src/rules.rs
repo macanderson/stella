@@ -126,12 +126,26 @@ impl Rule {
 
 /// One markdown file's raw content, already read from disk by a
 /// [`RuleSource`] implementation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RuleFile {
     /// The file's path (or any opaque source label the implementation
     /// wants to carry through into [`Rule::source`]).
     pub path: String,
     pub contents: String,
+    /// The plugin whose package shipped the directory this file was read out
+    /// of, when one did (#3567). `None` is the workspace's or the user's own.
+    ///
+    /// Set by the caller that **chose** the directory, never from anything the
+    /// file says about itself — the same rule
+    /// [`crate::records::LoadedRecord::trust`] is stamped under, and the same
+    /// one `stella_tools::custom::CustomTool::contributed_by` follows for the
+    /// tool surface: a package cannot name itself something it is not.
+    ///
+    /// It exists so a caller can answer "which plugin gave me this?" as a
+    /// field. The answer was recoverable before only by matching
+    /// [`Self::path`] against a package directory, which is the shape this
+    /// repository treats as a defect wherever else it appears.
+    pub contributed_by: Option<String>,
 }
 
 /// The filesystem discovery port for rule files.

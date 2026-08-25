@@ -9,10 +9,17 @@ status: superseded
 
 > **Superseded — the canonical Context PR specification is
 > [`docs/spec/adaptive-context/context-pr.md`](context-pr.md)**, which consolidates this draft and
-> wins wherever the two disagree. This document is kept because the ADRs under
-> [`../../adr/`](../../adr/README.md) cite it by line as the source of vocabulary they
-> ratified or rejected (0007 on enforcement levels, 0008 on the `.yaml` rule
-> surface, 0009 on the enum freeze) — do not implement from it.
+> wins wherever the two disagree. This document is kept because three ADRs under
+> [`../../adr/`](../../adr/README.md) name it as the source of vocabulary they
+> ratified or rejected — 0007 on enforcement levels, 0008 on the `.yaml` rule
+> surface, and 0011 on the TOML record surface that replaced 0008's — so
+> deleting it would leave three ratified decisions arguing with nothing. Do not
+> implement from it.
+>
+> They name it by bare filename rather than by its `doc:` id, because citing a
+> superseded document by id fails `make doc-links`, which answers with the
+> successor instead. That is also why `make doc-report` lists this document as
+> uncited: the orphan report counts only id and repo-rooted-path citations.
 
 **Status:** Superseded draft — see `docs/spec/adaptive-context/context-pr.md`  
 **Owner:** Stella Platform  
