@@ -112,3 +112,4 @@ jobs:
           --test wrapper_dispatch
           --test host_owned_tamper
           --test wrapper_claimed_evidence
+          --test wrapper_decided_flip

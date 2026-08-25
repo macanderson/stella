@@ -117,12 +117,12 @@ fn main() {
         // not have made. The two-substring match is the `case` the shell
         // script spelled out.
         //
-        // `wrapper_claimed_evidence.rs` currently takes only the granted
-        // side: its `report()` always passes `candidate: Some(..)`. The
-        // ungranted arm is kept because it is the plugin's honest answer,
-        // and dropping it would leave a fixture that claims `achieved`
-        // whatever it was given — which is the dishonesty that file exists
-        // to catch. A test that withholds the grant would exercise it.
+        // Both arms are load-bearing, from different files.
+        // `wrapper_claimed_evidence.rs` takes only the granted side (its
+        // `report()` always passes `candidate: Some(..)`), while
+        // `wrapper_decided_flip.rs` calls `run(None, ..)` — so neutering
+        // this branch fails `without_the_grant_or_the_snapshot_the_verdict_is_undecided`
+        // there. Checked by ablation, not assumed.
         "flip-if-granted" => {
             let request = read_request();
             let flip = if request.contains("\"root\"") && request.contains("\"program\":\"sh\"") {
