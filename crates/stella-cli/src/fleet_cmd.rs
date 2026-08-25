@@ -77,6 +77,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::config::Config;
 use crate::runtime::{SystemClock, TokioSleeper, WallClock};
+// The trait is in scope for `AttemptPointStream::publish` below — a fleet
+// attempt publishes its own channel across the dispatch's points (#4730).
+use crate::wrapper_plugin::PointStream;
 use crate::{agent, plain, rules};
 
 /// Cap on the per-task summary line so the report table stays a table.
@@ -340,7 +343,7 @@ pub async fn run_fleet(
     // tasks already fail the run below.
     let mut red_branches: Vec<String> = Vec::new();
     if watch {
-        let targets = watch_targets(&report);
+        let targets = branch_watch::watch_targets(&report);
         if targets.is_empty() {
             println!(
                 "  {}\n",
@@ -357,8 +360,8 @@ pub async fn run_fleet(
                 config.max_total_ms / 60_000,
             );
             for (task_id, branch) in &targets {
-                let watched = watch_branch(&monitor, task_id, branch).await;
-                render_watch_line(&watched);
+                let watched = branch_watch::watch_branch(&monitor, task_id, branch).await;
+                branch_watch::render_watch_line(&watched);
                 if !watched.is_green() {
                     red_branches.push(watched.branch);
                 }
@@ -411,110 +414,6 @@ fn load_plan(prompts: &[String], plan_file: Option<&Path>) -> Result<Plan, Strin
             })
             .collect(),
     ))
-}
-
-/// One fleet branch's post-fanout verdict: the capped CI watch outcome plus
-/// the branch's reconciled PR status. `pr` is `None` when the branch has no
-/// PR yet — branches are left for review, so that is a normal state, not an
-/// error.
-struct BranchWatch {
-    task_id: TaskId,
-    branch: String,
-    ci: Result<CiWatchOutcome, MonitorError>,
-    pr: Option<PrStatus>,
-}
-
-impl BranchWatch {
-    /// Green iff CI completed with a passing overall conclusion — a timeout,
-    /// a monitor error, and a failing conclusion are all red.
-    fn is_green(&self) -> bool {
-        matches!(
-            &self.ci,
-            Ok(CiWatchOutcome::Completed { conclusion, .. }) if !conclusion.is_failure()
-        )
-    }
-}
-
-/// The branches worth watching after the fan-out: every successful task that
-/// landed commits, keyed by the branch its commits actually record (correct
-/// for isolated worktrees and shared-tree tasks alike), deduped so a branch
-/// shared by several tasks is watched once.
-fn watch_targets(report: &FleetRunReport) -> Vec<(TaskId, String)> {
-    let mut seen = HashSet::new();
-    report
-        .handles
-        .iter()
-        .filter(|h| h.outcome.success)
-        .filter_map(|h| {
-            let branch = h.outcome.commits.last()?.branch.clone();
-            seen.insert(branch.clone())
-                .then(|| (h.task_id.clone(), branch))
-        })
-        .collect()
-}
-
-/// Watch one fleet branch: its CI to completion (the monitor's capped
-/// deferred wait, L-E4), then a live PR-status reconcile — `gh pr view`
-/// resolves a branch name to its PR.
-async fn watch_branch<H: GhCli>(monitor: &Monitor<H>, task_id: &str, branch: &str) -> BranchWatch {
-    let ci = monitor.watch_ci(branch).await;
-    let pr = monitor.pr_status(branch).await.ok();
-    BranchWatch {
-        task_id: task_id.to_string(),
-        branch: branch.to_string(),
-        ci,
-        pr,
-    }
-}
-
-/// One report line per watched branch: verdict mark, CI outcome, PR status.
-fn render_watch_line(watch: &BranchWatch) {
-    let mark = if watch.is_green() {
-        "✓".green()
-    } else {
-        "✗".red()
-    };
-    let ci = match &watch.ci {
-        Ok(CiWatchOutcome::Completed {
-            conclusion,
-            summary,
-        }) => {
-            let verdict = if conclusion.is_failure() {
-                "red"
-            } else {
-                "green"
-            };
-            format!("CI {verdict} — {summary}")
-        }
-        Ok(CiWatchOutcome::TimedOut {
-            reason,
-            last_observed,
-            waited_ms,
-        }) => {
-            let reason = match reason {
-                TimeoutReason::CumulativeCap => "cumulative cap",
-                TimeoutReason::Stalled => "stalled",
-                TimeoutReason::NoRunsStarted => "no CI runs started",
-            };
-            format!(
-                "CI watch timed out ({reason}) after {}m — last: {last_observed}",
-                waited_ms / 60_000
-            )
-        }
-        Err(e) => format!("CI watch failed: {e}"),
-    };
-    let pr = match watch.pr {
-        Some(PrStatus::Draft) => "PR draft",
-        Some(PrStatus::Open) => "PR open",
-        Some(PrStatus::Merged) => "PR merged",
-        Some(PrStatus::Closed) => "PR closed",
-        None => "no PR",
-    };
-    println!(
-        "  {mark} {} {} — {ci} · {pr}",
-        watch.task_id.bold(),
-        watch.branch.bright_magenta()
-    );
 }
 
 /// The engine-backed [`FleetWorker`]: one turn per task — the raw
@@ -1216,13 +1115,34 @@ async fn run_task(
                 Some(wrapper) => {
                     let input = wrapper.round_input(&task.prompt, budget_limit.is_some());
                     let mut driver = wrapper.driver(&engine, &mut messages, &mut budget, &tx);
+                    // The stream a plugin's own model calls meter into (#4730).
+                    // Published before the dispatch, because `before_turn` runs
+                    // before any turn exists and `SessionSubAgents::dispatch`
+                    // reads the registry's slot at dispatch time — this lane
+                    // attached nothing to that slot at all, so every `StepUsage`
+                    // a child emitted went to a sink and this attempt's real
+                    // spend reached no durable record.
+                    let points = wrapped::AttemptPointStream::new(&tx);
+                    points.publish(&registry, &cfg);
                     // The dispatch's own report is carried out of the race
                     // rather than settled inside it: `settle` consumes the
                     // driver for its last round's outcome, and the racing
                     // future still borrows it until the `select!` scope ends.
-                    let dispatched = tokio::select! {
-                        report = wrapper.dispatch(input, &mut driver) => Some(report),
-                        _ = stop_wait => None,
+                    let dispatched = {
+                        // Wrapped so the attempt's stream goes back after every
+                        // round: a round's own turn is what clears the slot, so
+                        // without this only the first `before_turn` would find a
+                        // stream.
+                        let mut points_driver = crate::wrapper_plugin::RepublishingDriver::new(
+                            &mut driver,
+                            &registry,
+                            &cfg,
+                            &points,
+                        );
+                        tokio::select! {
+                            report = wrapper.dispatch(input, &mut points_driver) => Some(report),
+                            _ = stop_wait => None,
+                        }
                     };
                     let raced = match dispatched {
                         Some(report) => Raced::Outcome(wrapper.settle(
@@ -1237,6 +1157,21 @@ async fn run_task(
                     // left to fold it in (#3882) — see
                     // `wrapper_plugin::settle_plugin_child_spend`.
                     crate::wrapper_plugin::settle_plugin_child_spend(&*registry, &mut budget);
+                    // And the stream comes down with the dispatch that opened
+                    // it. Not optional and not deferrable to the `drop(tx)`
+                    // below: that drops this lane's own sender while the
+                    // registry still holds the clone published above, so the
+                    // renderer awaited a few lines further on would wait on a
+                    // channel that never closes and hang a finished attempt
+                    // (#960).
+                    points.detach(&registry);
+                    // And the binding itself, which holds a sender over this
+                    // lane's channel. It would fall out of scope here anyway;
+                    // said out loud because the `drop(tx)` and `renderer.await`
+                    // this protects are two hundred lines below, where nothing
+                    // would connect a hung attempt back to a stream opened up
+                    // here (#960).
+                    drop(points);
                     raced
                 }
                 // A fleet worker owns its run (#3379) — no pipeline above it,
@@ -1490,6 +1425,7 @@ fn render_report(plan: &Plan, report: &FleetRunReport, ledger_path: &Path) {
     );
 }
 
+mod branch_watch;
 mod durability;
 mod wrapped;
 

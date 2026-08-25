@@ -164,7 +164,7 @@ allocation that lifts it — `stella_core::turn_slots` partitions
 `turn_instance` by residue, so a plane counting only its own calls can never
 land where a door's rounds will, without either counter knowing the other's.
 One limit stands on every door that attaches the plane: the `verifier` tier is
-deliberately bound to no seat, so a plugin naming it is answered `Unavailable`
+bound to no seat, so a plugin naming it is answered `Unavailable`
 rather than having its call attributed to a role the host never made
 (`ChildTurns::with_seat` is how a driver that wants it owns the claim).
 
@@ -174,9 +174,20 @@ report and the session's budget guard, and never the store. `stella run
 --pipeline <variant>` closed that (#3802): `crates/stella-cli/src/wrapper_plugin/child_stream.rs`
 holds one run-scoped execution row and its event stream open for the span of
 the dispatch, re-published after each round, so the plugin's own model calls
-land in `executions` and `step_usage` beside the rounds they bracket. The two
-round-driving doors above still meter their plugin's children into a sink
-(#4730); `stella run` is the door #3802's definition of done named.
+land in `executions` and `step_usage` beside the rounds they bracket. All three
+doors close it now (#4730), and the two round-driving ones close it
+differently rather than by copying: `stella run` opens a `plugin` execution row
+of its own because each of its rounds opens a row, so a between-rounds child
+belongs to neither, while `stella goal --pipeline <variant>` and `stella fleet`
+already run every round under **one** row and simply re-publish *that* row's
+stream across the points — a child there is exactly as run-scoped as the rounds
+beside it, and a second row would split one run's spend in `stella stats`. The
+shared half is `RepublishingDriver`, which puts a door's stream back after every
+round it drives; what each door publishes is its own `PointStream`. `stella
+fleet` publishes the registry's event slot alone and not the
+per-call work-tree measurement beside it: its worker rebinds
+`cfg.workspace_root` to its own worktree while the shared journal stays rooted
+at the lead's, so a measurer there would read the wrong tree (#3233).
 
 **The candidate-fanout plane, and where its substrate comes from.**
 `candidate_fanout` and `adopt_candidate` (#3844) are the capability
@@ -200,8 +211,8 @@ the plugin is told about rather than a silence.
 (`stella_plugin::driver`) and the gate (`src/wrapper/driver_call.rs`): it
 spawns a driver, opens a session, relays every capability ask through the
 grant a human consented to, and reads back the `next` that ends it —
-`tests/driver_socket.rs` drives a `/bin/sh` driver through all of it. Two
-things are deliberately still absent. Every capability answers `unsupported`,
+`tests/driver_socket.rs` drives a `/bin/sh` driver through all of it. Every
+capability still answers `unsupported`,
 because `NoDriverCapabilities` is the only implementation and B1-B6 (#3599)
 are what give the verbs something to do; and nothing in `stella-cli` opens a
 driver session yet, so `plugins/stella-selfdriving`'s `[driver]` grant remains

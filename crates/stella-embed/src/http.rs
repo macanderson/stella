@@ -98,14 +98,18 @@ const DEFAULT_ADMISSION_FLOOR: f32 = 0.25;
 /// measurement found.
 ///
 /// MEASURED: 2026-08-24, `voyage-code-3@1/1024/l2` over this repository's own
-/// index (28 744 chunks), four labelled queries from
-/// `crates/stella-tools/tests/relevance_calibration.rs`, 40 candidates deep
-/// each. Tightest separation across the set **-0.0439**: on "why is the Rust
-/// toolchain pinned to an exact version" the labelled answer ranked 39th, at
-/// 0.5978, under 38 irrelevant chunks scoring 0.6006-0.6436. The widest
-/// positive separation was +0.0140. Two of the four queries returned no
-/// labelled answer in 40 candidates at all, which makes their separation
-/// unmeasurable rather than good.
+/// index (28 269 chunks), four labelled queries from
+/// `crates/stella-tools/tests/relevance_calibration.rs`, each ranked over the
+/// whole corpus and read at a 40-candidate window. Tightest separation across
+/// the set **-0.0219**: on "why is the Rust toolchain pinned to an exact
+/// version" the labelled answer ranked 12th at 0.6217, under 11 irrelevant
+/// chunks topping out at 0.6436. The widest positive separation was +0.0140.
+///
+/// **Recall is not the problem, and an earlier reading of this table said it
+/// was** (#4784): every labelled answer is retrieved, the worst at rank 77 of
+/// 28 269. The overlap is in the *scores*, not the ordering — irrelevant
+/// chunks sit at 0.60-0.64 and answers at 0.58-0.76, so the bands cross and no
+/// single cut has both of them on the right side.
 ///
 /// `Some(floor)` is a floor a measurement put between the two distributions.
 /// `None` is the other outcome, and the one this table currently records: the

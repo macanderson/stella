@@ -716,9 +716,11 @@ mod tests {
     /// `subsession.rs` and `fleet_cmd.rs` run on a `Config::clone` sharing one
     /// `SessionDurability` cell, so a per-call measurement there would read a
     /// journal another lane is also snapshotting. They join this list once
-    /// #3233 gives a lane its own durability, and `subsession.rs:882` is the
-    /// live `attach_events` call the widened `raw` check below would fail on
-    /// today.
+    /// #3233 gives a lane its own durability. Two live `attach_events` calls
+    /// are what the widened `raw` check below would fail on today:
+    /// `subsession.rs`, and `fleet_cmd/wrapped.rs`'s `AttemptPointStream`,
+    /// which publishes an attempt's channel across a wrapper's points (#4730)
+    /// with the measurer withheld for exactly the reason above.
     const STREAM_OWNERS: &[(&str, &str)] = &[
         // The raw engine turn, which reaches the seam through
         // `persistence::attach_run_streams`.
