@@ -21,7 +21,7 @@
 
  │ ⊙ apps/app/automations/page.tsx
  │ ⎿ 312 lines                                                                                                                               42ms
-                                          ┌ question ────────────────────── ↑↓ move · ⏎ choose · ⇥ back · esc cancel ┐
+                                          ╭ question ────────────────────────────────────────────────────────────────╮
  │ ● edit apps/app/automations/page.tsx +4│from the `research-child` sub-agent                                       │
  │ ⎿                                      │                                                                          │               +4 −1 · 18ms
  │     10 -  const items = []             │Review your answers                                                       │
@@ -36,7 +36,7 @@
                                           │▸ Submit answers                                                          │
                                           │  Chat about this instead                                                 │
                                           │  Cancel — no answer                                                      │
-                                          └──────────────────────────────────────────────────────────────────────────┘
+                                          ╰──────────────────────────────── ↑↓ move · ⏎ choose · ⇥ back · esc cancel ╯
 
 
 
