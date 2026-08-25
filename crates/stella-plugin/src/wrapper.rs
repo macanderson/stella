@@ -70,10 +70,11 @@ use crate::error::ManifestError;
 #[serde(deny_unknown_fields)]
 pub struct Wrapper {
     /// The variant id — `"staged-v1"` in #3381's sketch, `"classic"` for the
-    /// order that ships today. Non-empty, and written to the execution row
-    /// **only when this manifest was the thing that ran**: a default or
-    /// fallback path writes the default's id, never a blank, because a
-    /// missing measurement must not render as a negative one.
+    /// built-in staged order, which no longer ships: #3865 deleted it and
+    /// `stella run --pipeline classic` is refused. Non-empty, and written to
+    /// the execution row **only when this manifest was the thing that ran**:
+    /// a default or fallback path writes the default's id, never a blank,
+    /// because a missing measurement must not render as a negative one.
     pub id: String,
     /// The stages, in execution order. Non-empty, no duplicates.
     #[serde(default)]

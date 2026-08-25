@@ -1,0 +1,48 @@
+# Down-only ratchet for the cite-by-name rule (docs/prose-guidelines.md, "A
+# number that will be wrong next month").
+#
+# Each line is `<path> <count>` -- how many line-pinned citations that file
+# still has. A file may shrink its count; it may never grow it, and a file
+# absent from this list must be at zero. Regenerate with
+# `make line-citations-update`, which refuses to raise a number or add a file.
+#
+# This file is meant to reach empty. Do not add a line here to turn the gate
+# green -- cite the symbol instead of the line.
+crates/stella-cli/src/memory/recall.rs 1
+crates/stella-cli/src/self_driving_cmd/deliver.rs 1
+crates/stella-cli/src/turn_files.rs 1
+crates/stella-core/README.md 4
+crates/stella-fleet/README.md 1
+crates/stella-graph/README.md 1
+crates/stella-graph/src/frames.rs 1
+crates/stella-graph/src/symbol.rs 1
+crates/stella-plugin/src/host_call.rs 1
+crates/stella-runtime/src/wrapper/host_call.rs 1
+crates/stella-tui/README.md 1
+crates/stella-tui/src/graph.rs 1
+crates/stella-tui/src/render/entry/recall.rs 4
+docs/adr/0003-bitemporal-semantics.md 2
+docs/adr/0006-contextframe-vs-compiledcontextframe.md 1
+docs/adr/0007-immutable-promotion-history.md 1
+docs/adr/0009-enum-freeze-resolutions.md 6
+docs/adr/0013-session-artifact-boundary.md 38
+docs/design/agent-loop-skills-survey.md 40
+docs/prose-guidelines.md 1
+docs/spec/adaptive-context/context-record-examples/07-agent-projection.md 5
+docs/spec/adaptive-context/context-record-examples/README.md 2
+docs/spec/backlog-self-driving.md 5
+docs/spec/file-budget.md 7
+docs/spec/pipeline-as-plugins.md 36
+docs/spec/plugin-completion-plan.md 4
+docs/spec/plugin-marketplace.md 3
+docs/spec/plugin-transport-spike.md 17
+docs/spec/semantic-resolution-bridge.md 32
+docs/spec/serve-observability.md 14
+docs/spec/serve-surface.md 3
+docs/spec/session-telemetry-receipts-spec.md 2
+docs/spec/threat-model.md 3
+docs/spec/trace-replay-learning-harness.md 28
+docs/spec/turn-lane-assembly.md 23
+docs/spec/turn-loop-wrappers.md 5
+docs/spec/wrapper-socket.md 2
+scripts/self-driving/commands/self-driving/tickets.md 2

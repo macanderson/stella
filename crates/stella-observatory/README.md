@@ -33,50 +33,49 @@ this page is where a user sees whether they are running one.
 ## Where it sits
 
 Nearly a leaf. [`Cargo.toml`](Cargo.toml) lists `rusqlite`, `serde_json`,
-`sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and four
+`sha2`, `thiserror`, `tokio` (the `net` feature only), `toml` — and these
 `stella-*` dependencies: [`stella-home`](../stella-home), which has no
 dependencies of its own; [`stella-autonomy`](../stella-autonomy), a leaf crate
 with no workspace-crate dependencies, for the self-driving fold and its signal
 thresholds; [`stella-diff`](../stella-diff), another zero-dependency leaf, for
-the unified differ; and [`stella-core`](../stella-core), for
-`context_record`'s types alone. Everything heavier is excluded deliberately:
-`stella_store::Store::open` creates `.stella/` and runs schema migrations, and
-an observer that migrates what it observes is not an observer.
+the unified differ; [`stella-transcript`](../stella-transcript), a near-leaf
+over `stella-diff`, for the `/transcript` page; and
+[`stella-core`](../stella-core), for `context_record`'s types alone.
+Everything heavier is excluded: `stella_store::Store::open` creates `.stella/`
+and runs schema migrations, and an observer that migrates what it observes is
+not an observer.
 
 **The rule is about the write path, not about the dependency count.** This
 crate re-reads artifacts instead of linking the crates that produce them, which
 is why it opens `store.db` with `rusqlite` rather than linking `stella-store`.
-`stella-home`, `stella-autonomy` and `stella-diff` are all the opposite shape
-and none of them opens anything: `stella-home` is path arithmetic over
-environment variables, and `stella-autonomy` is pure decision logic over owned
-data (no I/O) with the clock passed in as a parameter.
+The `stella-*` dependencies it does take are all the opposite shape and none of
+them opens anything: `stella-home` is path arithmetic over environment
+variables, `stella-autonomy` is decision logic over owned data (no I/O) with
+the clock passed in as a parameter, and `stella-diff` and `stella-transcript`
+are pure renderers over borrowed text.
 
-The price used to be four acknowledged copies. `global::data_dir` was one of
-them — a hand-synced mirror of `../stella-store/src/usage.rs` with a comment
-asking readers to keep it equal — and is now shared through `stella-home`
-instead (#1139). `src/self_driving.rs` was another: a private `fold_runs` and
-`self_improvement`, written when the only other implementation was shell, and
-the two had already drifted — the dashboard and `stella self-driving metrics`
-disagreed about whether the loop was NOISY for every odd cycle count, because
-one tested `2 * new < n` and the other `new < n / 2` in integer arithmetic
-(#1613). Both now come from `stella-autonomy` — a leaf crate rather than
-`stella-core` itself, because this crate must not link `stella-core`'s engine
-machinery, and because `stella-cli`'s self-driving verbs need the identical
-fold (`doc:pipeline-as-plugins` §10, D1). The unified differ took the same
-exit before ever becoming a copy: `/api/execution-context-diff` links
-`stella-diff`, the zero-dependency leaf crate the CLI's `inspect::diff` was
-extracted into (#1511). Three copies remain: `project_id_for`
-([`src/global.rs`](src/global.rs)) still mirrors the store's,
-`sessions::pid_alive` ([`src/sessions.rs`](src/sessions.rs)) mirrors
-`stella_store::sessions::pid_alive` (one `kill(pid, 0)` probe, including the
-pid_t-overflow-reads-as-dead rule), and
-[`src/sent_context.rs`](src/sent_context.rs) re-implements the receipt
-reconstruction `stella_store::Store::reconstruct_call` performs (#1475). The
-last is the largest of the four and the only one with a *byte-level* coupling
-— it rebuilds a `tool_call` block's preimage in `stella_protocol::ToolCall`'s
-field order — so `tests/schema_conformance.rs` seeds its digests from that
-crate's own serializer: a reordered field fails the suite instead of raising an
-integrity alarm on a user's dashboard. `tests/journal_era.rs` covers the other
+The price is a small set of acknowledged copies. Two of them are gone:
+`global::data_dir` is shared through `stella-home` now (#1139), and
+`src/self_driving.rs`'s private fold comes from `stella-autonomy` (#1613, after
+the dashboard and `stella self-driving metrics` disagreed about whether the
+loop was NOISY for every odd cycle count — one tested `2 * new < n`, the other
+`new < n / 2` in integer arithmetic). The unified differ took the same exit
+before ever becoming a copy: `/api/execution-context-diff` links `stella-diff`
+(#1511).
+
+These remain:
+
+- `project_id_for` ([`src/global.rs`](src/global.rs)) mirrors the store's.
+- `sessions::pid_alive` ([`src/sessions.rs`](src/sessions.rs)) mirrors
+  `stella_store::sessions::pid_alive` — one `kill(pid, 0)` probe, including the
+  pid_t-overflow-reads-as-dead rule.
+- [`src/sent_context.rs`](src/sent_context.rs) re-implements the receipt
+  reconstruction `stella_store::Store::reconstruct_call` performs (#1475). It
+  is the largest of the three and the only one with a *byte-level* coupling —
+  it rebuilds a `tool_call` block's preimage in `stella_protocol::ToolCall`'s
+  field order — so `tests/schema_conformance.rs` seeds its digests from that
+  crate's own serializer: a reordered field fails the suite instead of raising
+  an integrity alarm on a user's dashboard. `tests/journal_era.rs` covers the other
 half of that alarm — which of the two things a digest mismatch means depends on
 the journal's era, read from `executions.journal_era` (#1981).
 
