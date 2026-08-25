@@ -23,7 +23,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Widget};
-use stella_tui_theme::glyph;
+use stella_tui_theme::{glyph, token};
 
 use std::collections::{HashMap, HashSet};
 
@@ -33,6 +33,14 @@ use crate::model::TranscriptEntry;
 use crate::render::render_ask_user;
 use crate::theme;
 use crate::transcript_nav::TurnDigest;
+
+/// The caret in front of the selected transcript row — the same glyph
+/// `crate::views::cards`'s module doc states the convention for: a marker
+/// plus a background tint together, because the golden suite strips style
+/// and a tint alone would be invisible to it. A transcript row reserves no
+/// gutter for it, so it shifts the row's own two leftmost cells rather than
+/// filling a column kept empty for it.
+const SELECT_MARKER: &str = "▸ ";
 
 // The incremental transcript fold. Split out in #4127, which took this file
 // under the god-file limit it had been grandfathered against — the fold reads
@@ -269,12 +277,25 @@ pub fn render(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, buf: &mut Buf
     let window = ui.session_scroll.window(total, height);
     let mut visible = ui.session_fold.window_lines(window.clone());
     if let Some(sel) = ui.session_selected {
-        // A quiet background lift on the selected entry's rows.
+        // Selection is a marker glyph plus the background tint, together
+        // (see `SELECT_MARKER`'s doc). The tint is `token::HL`, the value
+        // `theme::SELECT_BG` already aliased, reached the way the rest of
+        // v2 reaches it. `rows_of` ascends, so the caret lands on the
+        // entry's first row actually on screen — scrolling the entry's head
+        // out of the window moves the caret down it rather than losing it.
+        let mut caret_placed = false;
         for r in ui.session_fold.rows_of(sel) {
             if window.contains(&r)
                 && let Some(line) = visible.get_mut(r - window.start)
             {
-                line.style = line.style.bg(theme::SELECT_BG);
+                line.style = line.style.bg(token::HL);
+                if !caret_placed {
+                    caret_placed = true;
+                    line.spans.insert(
+                        0,
+                        Span::styled(SELECT_MARKER, Style::new().fg(token::GOLD)),
+                    );
+                }
             }
         }
     }
@@ -366,6 +387,12 @@ fn highlight_matches(lines: &mut [Line<'static>], query: &str) {
                 }
                 rebuilt.push(Span::styled(
                     text[r.clone()].to_string(),
+                    // `theme::MATCH_BG` is not a `token::*`: the
+                    // v2 token table has no amber and `token::GOLD` is
+                    // already the selection marker's color, so reusing it
+                    // here would make a search match unreadable as distinct
+                    // from a selected row. A declared gap, the same shape
+                    // `theme::WARN`'s doc states for its own missing token.
                     span.style.bg(theme::MATCH_BG).add_modifier(Modifier::BOLD),
                 ));
                 at = r.end;
@@ -892,6 +919,45 @@ mod tests {
             text.contains("first-message"),
             "selected entry still visible under streaming:\n{text}"
         );
+    }
+
+    /// Selection is a marker glyph plus a background tint, together — the
+    /// golden suite strips style, so a tint on its own is invisible to it
+    /// (`crate::views::cards`'s convention). Both assertions are style-aware
+    /// on purpose: a caret with no tint and a tint with no caret are two
+    /// different defects, and one combined check would report either as
+    /// the other.
+    #[test]
+    fn a_selected_entry_carries_both_a_marker_and_a_tint() {
+        let mut model = WorkspaceModel::new();
+        model.apply_inbound(&Inbound::Register(AgentMeta::new("lead", "goal", 0)));
+        model.apply_inbound(&Inbound::Event {
+            agent: "lead".into(),
+            event: AgentEvent::Text {
+                text: "first-message".into(),
+            },
+        });
+        let mut ui = DeckUi {
+            session_selected: Some(0),
+            session_pending_scroll: Some(0),
+            ..DeckUi::default()
+        };
+        let area = Rect::new(0, 0, 60, 12);
+        let mut buf = Buffer::empty(area);
+        render(&model, &mut ui, area, &mut buf);
+
+        let text = buffer_text(&buf);
+        assert!(text.contains('▸'), "selected row carries the marker:\n{text}");
+
+        let marker_row = text
+            .lines()
+            .position(|line| line.contains('▸'))
+            .expect("marker row");
+        let tinted = (0..area.width).any(|x| {
+            buf.cell((x, marker_row as u16))
+                .is_some_and(|c| c.style().bg == Some(token::HL))
+        });
+        assert!(tinted, "selected row carries the background tint");
     }
 
     /// A settled turn of `tools` calls against `path`, `failures` of them
