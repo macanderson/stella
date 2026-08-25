@@ -553,6 +553,9 @@ fn file_change(change: JournalChange) -> AgentEvent {
         added: change.added,
         removed: change.removed,
         diff: change.diff,
+        // `git diff-tree -p` computed this, not `stella_diff::unified_diff` —
+        // there is no area cap to trip.
+        minimal: true,
     }
 }
 
@@ -1026,6 +1029,7 @@ mod tests {
             added,
             removed,
             diff,
+            minimal,
         }) = rx.try_recv()
         else {
             panic!("the call's own reading must be published when nothing was measured");
@@ -1037,6 +1041,7 @@ mod tests {
             diff.as_deref().is_some_and(|d| d.contains("+- one")),
             "the diff rides the event: {diff:?}"
         );
+        assert!(minimal, "two lines never trips the area cap");
         assert!(rx.try_recv().is_err(), "one change, one event");
     }
 

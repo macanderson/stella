@@ -47,6 +47,17 @@ name: windows-check
 # running it would report a green that means "nothing ran". A target list makes
 # what is covered on Windows a thing a reader can count.
 #
+# The third step is the same shape for the three spawn sites `wrapper-plugin-
+# fixture` does not cover — `bash`, a custom script tool, a hook — each armed
+# with the same guard and each backing onto the compile blocker two
+# paragraphs up: `--test group_kill_witnesses` links only the compiled
+# `stella-tools` library, not its `--lib` test binary, so it runs here without
+# waiting on that binary's Windows compile (#4698). Only the custom-tool
+# witness runs unconditionally here today — the other two are `ignore`d on
+# Windows, where plain `bash` resolves to Windows' own WSL launcher stub
+# rather than a shell (#4861), a separate defect this step's green does not
+# claim is fixed.
+#
 # Its own file rather than a job in ci.yml for the reason wire-schema.yml has
 # one: ci.yml's required job is what every PR waits on, and a Windows runner is
 # minutes of wall clock that a diff touching neither crate has no use for.
@@ -111,3 +122,13 @@ jobs:
           --test wrapper_transport_limits
           --test wrapper_dispatch
           --test host_owned_tamper
+
+      - name: the group-kill guard at the bash/custom-tool/hook spawn sites, on Windows (#4698)
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        run: >-
+          cargo test -p stella-tools --test group_kill_witnesses
+          --test wrapper_claimed_evidence
+          --test wrapper_decided_flip
+          --test wrapper_composition
+          --test wrapper_late_credential
+          --test wrapper_declared_witness

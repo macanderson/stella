@@ -40,6 +40,8 @@
 //! parity" means for hosts dropping Stella into their own applications — is
 //! `docs/spec/engine-embedding.md`.
 
+pub mod evolution;
+
 /// How one capability ships on one surface.
 #[derive(Debug)]
 pub enum SurfacePosture {

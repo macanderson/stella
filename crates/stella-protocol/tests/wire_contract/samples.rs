@@ -1076,6 +1076,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 added: 4,
                 removed: 1,
                 diff: Some("+ a\n- b".into()),
+                minimal: true,
             },
             AgentEvent::FileChange {
                 path: "src/main.rs".into(),
@@ -1083,6 +1084,7 @@ pub(crate) fn sample_events() -> Vec<AgentEvent> {
                 added: 0,
                 removed: 0,
                 diff: None,
+                minimal: false,
             },
         ]
     }));

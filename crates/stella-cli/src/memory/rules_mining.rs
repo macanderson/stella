@@ -38,10 +38,11 @@ use std::path::Path;
 
 use stella_context::ContextStore;
 use stella_core::context_record::{
-    ObservationRecord, ProposalRecord, ProposalScore, RecordProposalKind, RecordProposalStatus,
-    confidence_from_score,
+    EvidencePool, ObservationRecord, ProposalRecord, ProposalScore, RecordProposalKind,
+    RecordProposalStatus, confidence_from_score,
 };
 use stella_core::rules::{self, EvidenceSource, MineConfig, RawObservation, Rule, RuleCandidate};
+use stella_protocol::provenance::ProvenanceGrade;
 
 use super::proposals::record_proposal;
 
@@ -116,14 +117,17 @@ pub(crate) fn induce_rule_proposals(
         // Resolve the miner's evidence back to the observations behind it, so
         // the proposal carries distinct TASKS rather than raw occurrences.
         let mut tasks: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-        let mut supporting: Vec<String> = Vec::new();
+        // The observations themselves, not just their ids: the proposal's
+        // evidence grade is folded from them, and a grade cannot be folded
+        // from an id (#2782).
+        let mut supporting: Vec<&ObservationRecord> = Vec::new();
         for evidence in &candidate.evidence {
             if let Some(observation) = observations.iter().find(|o| {
                 o.source_ref == evidence.reference
                     && o.text.chars().take(160).collect::<String>() == evidence.snippet
             }) {
                 tasks.insert(observation.task_id.as_str());
-                supporting.push(observation.record_id.clone());
+                supporting.push(observation);
             }
         }
 
@@ -148,7 +152,7 @@ pub(crate) fn induce_rule_proposals(
             &candidate.description,
             &candidate.text,
             Vec::new(),
-            supporting,
+            EvidencePool::from_observations(supporting),
             score,
             confidence,
             stella_context::format_rfc3339(
@@ -191,9 +195,16 @@ pub(crate) fn workspace_rules_dir(workspace_root: &Path) -> std::path::PathBuf {
 /// describes on the skills side — and the write itself is `create_new` inside
 /// [`crate::context_records::write_record`], because the exists checks here
 /// are advisory and racy.
+/// Publish a mined rule as a context record.
+///
+/// `evidence_grade` is the grade of the proposal being published (#2782). It
+/// is a parameter rather than something this function derives, because the
+/// evidence is two hops back: only the caller holding the proposal knows it,
+/// and a rule file that does not carry it cannot recover it later.
 pub(crate) fn write_rule(
     workspace_root: &Path,
     candidate: &RuleCandidate,
+    evidence_grade: Option<ProvenanceGrade>,
 ) -> Result<Option<std::path::PathBuf>, String> {
     let candidate = without_inferred_guard(candidate.clone());
     let set_id = crate::ingest_cmd::derive_set_id(workspace_root);
@@ -203,6 +214,7 @@ pub(crate) fn write_rule(
         &candidate.text,
         "observation",
         &format!("proposal:rule:{}", candidate.id),
+        evidence_grade,
     )?;
     if workspace_rules_dir(workspace_root)
         .join(format!("{}.md", candidate.id))

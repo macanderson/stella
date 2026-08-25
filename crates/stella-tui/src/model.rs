@@ -502,7 +502,7 @@ impl SessionModel {
                 // both: they answer to the same entry, and two reverse scans
                 // could only differ by finding different `ToolStart`s for one
                 // call id, which would be worse than either answer.
-                let (name, path) = self
+                let (name, path, started_sub_agent_id) = self
                     .transcript
                     .iter()
                     .rev()
@@ -511,11 +511,19 @@ impl SessionModel {
                             call_id: cid,
                             name,
                             path,
+                            sub_agent_id,
                             ..
-                        } if cid == call_id => Some((name.clone(), path.clone())),
+                        } if cid == call_id => {
+                            Some((name.clone(), path.clone(), sub_agent_id.clone()))
+                        }
                         _ => None,
                     })
-                    .unwrap_or_else(|| ("tool".to_string(), None));
+                    .unwrap_or_else(|| ("tool".to_string(), None, None));
+                // The announcement is where the row learns whose call it was
+                // (same precedence as the store's `project_tool_result`,
+                // `stella-store::tool_calls`); this result's own field is only
+                // the fallback for a consumer that never saw the start.
+                let sub_agent_id = started_sub_agent_id.or_else(|| sub_agent_id.clone());
                 // Read before `name` is moved into the transcript row below;
                 // consumed after it, where the rest of the pending-card latches
                 // are retired. See there for why this is the refusal (#4612).
@@ -758,6 +766,7 @@ impl SessionModel {
                 added,
                 removed,
                 diff,
+                ..
             } => {
                 self.turn_counters.touch(path);
                 self.touch_file(path, *kind, *added, *removed, diff);

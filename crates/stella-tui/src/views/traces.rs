@@ -339,6 +339,7 @@ mod tests {
                 added: 1,
                 removed: 1,
                 diff: Some("+one\n-two\n".into()),
+                minimal: true,
             },
         ));
         model

@@ -610,3 +610,25 @@ fn a_failed_edit_still_shows_why() {
         "a failure must still say why:\n{text}"
     );
 }
+
+/// The witness for #4699: a delegate's result row names the delegate, and
+/// the lead's own carries no tag — the deck must not render a fan-out call as
+/// though it were the lead's.
+#[test]
+fn a_delegates_result_row_names_the_delegate() {
+    let mut delegated = tool_result("bash", true, None, "ok");
+    if let TranscriptEntry::ToolResult { sub_agent_id, .. } = &mut delegated {
+        *sub_agent_id = Some("d:1".into());
+    }
+    let text = text_of(&collapsed(&delegated));
+    assert!(
+        text.contains("d:1"),
+        "the delegate's own result did not name it:\n{text}"
+    );
+    let lead = tool_result("bash", true, None, "ok");
+    let lead_text = text_of(&collapsed(&lead));
+    assert!(
+        !lead_text.contains("d:1"),
+        "the lead's own result must carry no delegate tag:\n{lead_text}"
+    );
+}

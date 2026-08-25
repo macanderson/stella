@@ -21,7 +21,9 @@ use stella_core::{
 use stella_mcp::{McpConfig, McpServerConfig, McpToolSet};
 use stella_model::credential::ApiKey;
 use stella_model::provider::Provider;
-use stella_protocol::{AgentEvent, CompletionMessage, ModelRef, Role, ToolOutput, UNKNOWN_MODEL};
+use stella_protocol::{
+    AgentEvent, CompletionMessage, ModelRef, Role, TaskItem, ToolOutput, UNKNOWN_MODEL,
+};
 use stella_store::{ContextBlockRow, ManifestBlockRow, StepManifestRow, Store, TelemetryRow};
 use stella_tools::ToolRegistry;
 use stella_tools::custom::{self, CustomTool};
@@ -1281,6 +1283,7 @@ pub(crate) async fn run_turn(
     // tree is measured rather than inferred from tool inputs, and for the deck
     // defect that made the two one call.
     crate::turn_files::close_turn_boundary(cfg, registry, &tx, execution.as_ref(), &outcome);
+    mirror_task_board(execution.as_ref(), session, registry);
     // The re-query adapter holds an `EventSender` clone of this run's channel
     // (#3366 telemetry), so it must be released here too — otherwise it keeps
     // the channel open and the renderer's `recv()` loop never ends (#2290).
@@ -1338,6 +1341,37 @@ pub(crate) async fn run_turn(
         TurnOutcome::Aborted { reason, kind, .. } => Err(CliFailure::from_abort(reason, kind)),
         completed => Ok(completed),
     }
+}
+
+/// Mirror this turn's final task board into the store's `tasks` table — the
+/// same write the deck's lead turn makes at its own turn end
+/// (`command_deck`) and `/clear` makes at its own boundary
+/// (`command_deck::session_clear`). #4613 put `TaskUpdate` on the turn stream
+/// and in `events` for every door; this raw one-shot / non-interactive door
+/// (`run_turn`) was the one left with no write site of its own, so a
+/// non-interactive `stella run` that used the task board was replayable
+/// from the journal but invisible to a `tasks` query (#4700).
+///
+/// Silent and best-effort like every sibling call site: no open store, or a
+/// board nobody touched, leaves nothing to mirror.
+fn mirror_task_board(
+    execution: Option<&(Arc<Store>, i64)>,
+    session: Option<&str>,
+    registry: &ToolRegistry,
+) {
+    let Some((store, id)) = execution else {
+        return;
+    };
+    let items: Vec<TaskItem> = registry
+        .task_board()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .items()
+        .to_vec();
+    if items.is_empty() {
+        return;
+    }
+    let _ = store.record_task_board(*id, session, &items, crate::command_deck::now_ms());
 }
 
 fn print_help() {

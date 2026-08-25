@@ -231,8 +231,26 @@ pub fn tool_call_card(
     );
 }
 
+/// The ` [d:1]` tag a delegate's card carries — empty for the lead's own,
+/// which is the ordinary case and prints no tag at all (#4699).
+fn agent_tag(sub_agent_id: Option<&str>) -> String {
+    match sub_agent_id {
+        Some(id) => format!(" {}", format!("[{id}]").dimmed()),
+        None => String::new(),
+    }
+}
+
 /// Print a tool result summary.
-pub fn tool_result_card(_name: &str, output: &str, is_error: bool, duration: Duration) {
+///
+/// `sub_agent_id` is the delegate that made the call — see
+/// [`tool_call_card`].
+pub fn tool_result_card(
+    _name: &str,
+    output: &str,
+    is_error: bool,
+    duration: Duration,
+    sub_agent_id: Option<&str>,
+) {
     let icon = if is_error { "✗".red() } else { "✓".green() };
     let label = if is_error {
         "error".red()
@@ -242,9 +260,10 @@ pub fn tool_result_card(_name: &str, output: &str, is_error: bool, duration: Dur
     let preview = output.lines().next().unwrap_or("(empty)");
     let preview = truncate_with_ellipsis(preview, 77);
     println!(
-        "    {} {} in {:.0}ms — {}",
+        "    {} {}{} in {:.0}ms — {}",
         icon,
         label,
+        agent_tag(sub_agent_id),
         duration.as_secs_f64() * 1000.0,
         preview.dimmed()
     );
@@ -536,6 +555,7 @@ pub fn render_event(event: &AgentEvent) {
             added,
             removed,
             diff,
+            ..
         } => file_change_card(path, *kind, *added, *removed, diff.as_deref()),
         AgentEvent::Reasoning { delta } => reasoning_delta(delta),
         AgentEvent::BudgetTick {
@@ -702,6 +722,14 @@ mod tests {
     // Strips ANSI so assertions pin visible text regardless of whether
     // `colored` detects a tty in the test harness.
     use stella_tui::strip_ansi;
+
+    /// The witness for #4699: a delegate's card carries a tag the lead's own
+    /// does not.
+    #[test]
+    fn agent_tag_names_a_delegate_and_stays_empty_for_the_lead() {
+        assert_eq!(strip_ansi(&agent_tag(Some("d:1"))), " [d:1]");
+        assert_eq!(agent_tag(None), "", "the lead's own call carries no tag");
+    }
 
     #[test]
     fn styled_event_line_composes_glyph_body_detail_with_single_spaces() {

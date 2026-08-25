@@ -462,6 +462,10 @@ fn measured_patch(row: &Value) -> Option<(String, Patch)> {
             text: text.to_string(),
             added: usize::try_from(row["added"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX),
             removed: usize::try_from(row["removed"].as_u64().unwrap_or(0)).unwrap_or(usize::MAX),
+            // Absent on a row recorded before #4696 — the flag's own wire
+            // default, matching what every consumer already assumed of a
+            // patch back then.
+            minimal: row["minimal"].as_bool().unwrap_or(true),
         },
     ))
 }
@@ -661,6 +665,33 @@ mod tests {
         let run = build_run(&execution(), &edit_journal(Some("paper/main.tex")));
         let call = run.turns[0].steps[0].call.as_ref().unwrap();
         assert!(call.files[0].patch.is_some());
+    }
+
+    /// **The witness for #4696.** A `file_change` row whose producer tripped
+    /// `LCS_AREA_CAP` carries `"minimal": false`; the rendered diff must say
+    /// so rather than default to a precise one.
+    #[test]
+    fn a_blunt_fallback_row_renders_a_non_minimal_diff() {
+        let mut journal = vec![json!({
+            "type": "tool_start", "ts": 0, "call_id": "c1", "name": "edit_file",
+            "body": "{\"path\":\"main.tex\",\"old_string\":\"{15pt}\",\"new_string\":\"{12pt}\"}",
+        })];
+        journal.push(json!({
+            "type": "file_change", "ts": 20, "path": "main.tex", "kind": "modified",
+            "added": 1, "removed": 1, "minimal": false,
+            "diff": "--- a/main.tex\n+++ b/main.tex\n@@ -1,1 +1,1 @@\n-{15pt}\n+{12pt}\n",
+        }));
+        journal.push(json!({
+            "type": "tool_result", "ts": 30, "call_id": "c1",
+            "ok": true, "duration_ms": 30, "body": "edited main.tex",
+        }));
+        let run = build_run(&execution(), &journal);
+        let call = run.turns[0].steps[0].call.as_ref().unwrap();
+        let diff = stella_transcript::file_diff::FileDiff::build(&call.files[0]);
+        assert!(
+            !diff.minimal,
+            "the producer's cap trip must survive onto the rendered diff"
+        );
     }
 
     /// One `edit_file` call, optionally measured. `measured` is the path the

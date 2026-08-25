@@ -105,14 +105,13 @@ pub struct FileDiff {
     /// The hunks.
     pub hunks: Vec<RenderHunk>,
     /// Whether the underlying edit script is the minimal one. `false` means
-    /// this build compared the two sides, tripped [`stella_diff::LCS_AREA_CAP`]
-    /// and fell back to replace-everything; surfaces say so rather than
-    /// presenting a blunt diff as a precise answer.
+    /// the differ tripped [`stella_diff::LCS_AREA_CAP`] and fell back to
+    /// replace-everything; surfaces say so rather than presenting a blunt
+    /// diff as a precise answer.
     ///
-    /// A build from [`FileChange::patch`] compares nothing, so it can never
-    /// have fallen back and is always `true`. Whether the *producer's* differ
-    /// fell back is not on the wire — a declared gap, tracked in #3577's
-    /// follow-up rather than guessed at here.
+    /// A build from [`FileChange::patch`] carries the producer's own reading
+    /// ([`crate::model::Patch::minimal`], #4696); a build that compares the
+    /// two sides in-process reads it straight off [`stella_diff::Diff`].
     pub minimal: bool,
 }
 
@@ -135,7 +134,7 @@ impl FileDiff {
                     .iter()
                     .map(render_hunk)
                     .collect(),
-                minimal: true,
+                minimal: patch.minimal,
             };
         }
         let diff = stella_diff::unified_diff(&change.before, &change.after, CONTEXT);

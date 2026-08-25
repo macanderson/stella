@@ -41,20 +41,31 @@ use crate::agent;
 /// Close out a worker's execution row: agent and MCP usage, and the outcome
 /// label ([`agent::record_execution_end`]) — best-effort, exactly as the
 /// worker's closeout always was (the inbox notification and the lane's own
-/// events are the user-facing signal).
+/// events are the user-facing signal). Returns the settled cost the caller
+/// should report — see below.
 ///
 /// The signature is the contract (#1708): no session id comes in, so the
 /// closeout **cannot** address the session-keyed `tasks` rows at all. See
 /// the module docs for why that absence is deliberate.
+///
+/// # Why this reads the row back
+///
+/// `cost_usd` is the caller's own aggregate, and on a stopped worker (#2807)
+/// that aggregate is a prefix: the turn future was dropped mid-race while
+/// other roles were still settling receipts the caller's budget guard never
+/// saw. `record_execution_end` floors the row at `MAX(cost_usd, receipts)`
+/// and never below it, so the row is always at least as tight as what was
+/// passed in — reading it back and handing that to the caller is strictly
+/// safe, not just for the stopped case.
 pub(crate) fn close_worker_execution(
     execution: Option<&(Arc<Store>, i64)>,
     registry: &ToolRegistry,
     outcome_label: &str,
     cost_usd: f64,
     persistence_complete: bool,
-) {
+) -> f64 {
     let Some((store, id)) = execution else {
-        return;
+        return cost_usd;
     };
     let _ = agent::record_execution_end(
         store,
@@ -64,6 +75,11 @@ pub(crate) fn close_worker_execution(
         cost_usd,
         persistence_complete,
     );
+    store
+        .execution_summary(*id)
+        .ok()
+        .flatten()
+        .map_or(cost_usd, |summary| summary.cost_usd)
 }
 
 #[cfg(test)]
@@ -186,6 +202,64 @@ mod tests {
             store.count("tasks").expect("count"),
             0,
             "and no session-less stray survives either"
+        );
+    }
+
+    /// **Witness (#2807).** A stopped worker's turn future is dropped
+    /// mid-cancel while other roles are still settling receipts — so the
+    /// cost `run_worker` computes locally is a prefix, the same shape #2570
+    /// found in the lead driver. The closeout must report what the receipts
+    /// actually prove, not that prefix, because this return value is what
+    /// reaches `SupervisorMsg::Ended` and the session's own spend total.
+    #[test]
+    fn a_stopped_workers_settled_cost_is_read_back_from_its_receipts() {
+        let root = tempfile::tempdir().expect("root");
+        let store = Arc::new(Store::in_memory().expect("store"));
+        let worker_exec = store
+            .begin_execution("deck-sub", "delegated work", "zai", "glm-5.2")
+            .expect("worker execution");
+        for (step, cost) in [(1u64, 0.5), (2, 4.0)] {
+            store
+                .record_telemetry(
+                    worker_exec,
+                    &stella_store::TelemetryRow {
+                        step,
+                        provider: "zai".into(),
+                        call_role: "worker".into(),
+                        model: "glm-5.2".into(),
+                        input_tokens: 1_000,
+                        estimated_input_tokens: 900,
+                        output_tokens: 100,
+                        cache_read_tokens: 0,
+                        cache_miss_tokens: 1_000,
+                        cache_write_tokens: 0,
+                        cost_usd: cost,
+                        duration_ms: 500,
+                        retries: 0,
+                        tool_calls: 1,
+                        usage_complete: true,
+                        sub_agent_id: None,
+                    },
+                )
+                .expect("receipt");
+        }
+        let registry = ToolRegistry::new(root.path().to_path_buf());
+
+        // 0.5: the prefix `run_worker`'s own budget guard held at the instant
+        // the race dropped the turn future, before the $4.00 witness receipt
+        // landed — exactly execution 99's shape in #2570, one level down.
+        let settled = close_worker_execution(
+            Some(&(store.clone(), worker_exec)),
+            &registry,
+            "cancelled",
+            0.5,
+            false,
+        );
+
+        assert!(
+            (settled - 4.5).abs() < 1e-9,
+            "must report the $4.50 the receipts prove, not the $0.50 prefix \
+             the caller's budget guard held at the moment of the drop: {settled}"
         );
     }
 }

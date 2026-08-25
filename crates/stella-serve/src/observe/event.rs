@@ -528,6 +528,11 @@ pub struct TurnTally {
     pub retries: u32,
     pub tool_calls: u32,
     pub tools_failed: u32,
+    /// Of `tool_calls`, how many a delegate made rather than the lead
+    /// (`AgentEvent::ToolStart.sub_agent_id`, #4699) — the count that lets an
+    /// operator separate a turn's own tool traffic from its fan-out's.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub tool_calls_by_sub_agent: u32,
     /// Speculative work the engine discarded — `stella-core` already names it,
     /// so this server counts it rather than re-deriving it.
     pub speculation_discarded: u32,
@@ -953,6 +958,7 @@ mod tests {
                     retries: 1,
                     tool_calls: 3,
                     tools_failed: 1,
+                    tool_calls_by_sub_agent: 1,
                     speculation_discarded: 1,
                     loop_detections: 0,
                     frames_dropped: 0,

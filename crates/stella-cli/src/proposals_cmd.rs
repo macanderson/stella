@@ -271,6 +271,22 @@ fn list(store: &ContextStore, all: bool, limit: usize) -> Result<(), String> {
             proposal.score.occurrences,
             proposal.confidence.get()
         );
+        // The grade, beside the count rather than folded into it (#2782). A
+        // confidence of 90 reads the same whether it came from a passing test
+        // or from three agreeing opinions; this line is what tells them apart.
+        match proposal.provenance {
+            Some(grade) => println!(
+                "  {} {} — {}",
+                "evidence:".dimmed(),
+                grade.as_str().bold(),
+                grade.describe().dimmed()
+            ),
+            None => println!(
+                "  {} {}",
+                "evidence:".dimmed(),
+                "not recorded (written before evidence grading)".dimmed()
+            ),
+        }
         for observation in &proposal.supporting_observations {
             println!("    {} {observation}", "·".dimmed());
         }
@@ -425,7 +441,9 @@ fn materialize_directive(
         guard: None,
         score: 0,
     };
-    match crate::memory::rules_mining::write_rule(workspace_root, &candidate) {
+    // The grade the proposal was folded to, carried onto the published record
+    // so the rule on disk still says what it stands on (#2782).
+    match crate::memory::rules_mining::write_rule(workspace_root, &candidate, proposal.provenance) {
         Ok(Some(path)) => println!("    {} wrote {}", "·".dimmed(), path.display()),
         Ok(None) => println!(
             "    {} a rule file for `{}` already exists — left untouched",

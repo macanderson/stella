@@ -31,11 +31,10 @@
 //! the level every host has in common — §6 wants the same plugin decided under
 //! `stella-serve` and an embedded host too.
 //!
-//! `cfg(unix)` for `wrapper_socket.rs`'s reason and tracked in the same place:
-//! the plugin is a `/bin/sh` script, so this file proves nothing on Windows
-//! until #3497 replaces it with a portable in-tree plugin.
-
-#![cfg(unix)]
+//! The plugin is `wrapper-plugin-fixture`, the portable in-tree plugin #3497
+//! added, so this file runs on Windows too (#4697). It shares
+//! `wrapper_claimed_evidence.rs`'s `flip-if-granted` mode: the two files ask
+//! the same question of the same plugin behaviour from opposite sides.
 
 use std::sync::Arc;
 
@@ -82,14 +81,7 @@ name = "verify"
 /// It answers from the request rather than from ambient state, which is the
 /// property the grant exists to make possible: `root` and `test` are the only
 /// things it needs, and both arrived in the message.
-const OBSERVES_THE_FLIP: &str = r#"
-request=$(cat)
-case "$request" in
-  *'"root"'*'"program":"sh"'*) flip=achieved ;;
-  *) flip=unobservable ;;
-esac
-printf '%s\n' "{\"point\":\"after_turn\",\"body\":{\"protocol_version\":1,\"evidence\":{\"flip\":\"$flip\"}}}"
-"#;
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
 
 fn manifest() -> PluginManifest {
     PluginManifest::from_toml_str(MANIFEST).expect("the manifest loads")
@@ -97,7 +89,7 @@ fn manifest() -> PluginManifest {
 
 fn dispatch() -> WrapperDispatch {
     let admitted = SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), OBSERVES_THE_FLIP.into()],
+        vec![FIXTURE.to_string(), "flip-if-granted".into()],
         Vec::new(),
         DEFAULT_WRAPPER_TIMEOUT,
     )

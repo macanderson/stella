@@ -575,6 +575,37 @@ Append; do not renumber. `scripts/check-invariants.sh` enforces both halves.
    totality (by the compiler) plus issue citation and posture coherence (by
    test) — enough to make a PR author answer "what reads this?" before the
    merge.
+11. **Every way Stella changes itself is declared.** Stella evolves through
+   several object classes — framework, memory, skill, tool, workflow, model —
+   and each one used to answer "when may this change, on what evidence,
+   published by whom, and how is it undone?" in a different file or nowhere.
+   The ledger is
+   `crates/stella-parity/src/evolution.rs`: one row per surface, declaring a
+   posture, a timing, an impact class, a rollback artifact, and — for a live
+   posture — the witness test proving the surface can actually be changed.
+   `EvolutionSurface` and its rows are generated from one macro table, so a
+   surface with no row does not compile.
+
+   The `evidence` and `authority` columns are **not stored**. A row declares
+   what a wrong change to it can break (`ImpactClass`), and the required
+   provenance grade and publication authority are read out of
+   `crates/stella-protocol/src/provenance.rs`. One policy, read in two places,
+   with no second copy to drift (#2780, #2782).
+
+   That policy is the other half of this rule, and it says that
+   **aggregation never promotes evidence**. N model critiques agreeing remain a
+   model critique; only re-deriving a claim against a stronger source moves it.
+   A prompt hint may be trialled from a mined trajectory, and a blocking guard
+   or an executable tool needs deterministic proof plus a person — because
+   those two break a teammate's session, and blast radius is what the grade
+   rations. #2569/#2570 is why vote-counting is not an alternative: ablating
+   the verifier turned every run into a PASS and the count never noticed.
+
+   What it does **not** prove: that a live path actually asks the gate before
+   publishing. The ledger declares the terms and the policy can answer them;
+   wiring `authorises` into each publication path is tracked separately, and
+   the rows say plainly where today's evidence falls short of what they
+   require.
 ---
 
 ## The definition of done: witness tests

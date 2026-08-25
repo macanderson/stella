@@ -314,6 +314,11 @@ fn promote_in(workspace_root: &std::path::Path, id: &str) -> Result<(), String> 
         &candidate.text,
         "memory",
         &format!("memory:{}", node.public_id),
+        // A memory reaches this bar by accumulating positive citations, and a
+        // citation is a model's judgement that a memory helped. Counting them
+        // is aggregation, which never promotes a grade (#2782) — so however
+        // long the streak, the evidence behind this rule is model critique.
+        Some(stella_protocol::provenance::ProvenanceGrade::ModelCritique),
     )?;
     // A rule this memory promoted under the retired markdown surface still
     // steers; publishing a TOML copy beside it would double-inject the lesson.
@@ -1027,6 +1032,7 @@ mod tests {
             &candidate.text,
             "memory",
             &format!("memory:{}", node.public_id),
+            Some(stella_protocol::provenance::ProvenanceGrade::ModelCritique),
         )
         .expect("a publishable record");
         assert_eq!(record.lineage_id, "ctx.acme.web.never-edit-generated-files");

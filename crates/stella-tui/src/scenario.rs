@@ -354,6 +354,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 added: crate::diff::count_diff_lines(PAGE_DIFF).0,
                 removed: crate::diff::count_diff_lines(PAGE_DIFF).1,
                 diff: Some(PAGE_DIFF.into()),
+                minimal: true,
             },
         ),
         ev(
@@ -480,6 +481,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 added: crate::diff::count_diff_lines(TRIGGERS_DIFF).0,
                 removed: crate::diff::count_diff_lines(TRIGGERS_DIFF).1,
                 diff: Some(TRIGGERS_DIFF.into()),
+                minimal: true,
             },
         ),
         ev(

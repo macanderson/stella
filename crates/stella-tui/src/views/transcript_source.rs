@@ -46,6 +46,10 @@ use crate::model::{FileState, ReadSize, TranscriptEntry};
 /// Always at least one row: a tool with no recognised verb still names itself,
 /// because a call that rendered nothing would be a call the reader cannot see
 /// happened.
+///
+/// `sub_agent_id` is the delegate that made the call, `None` for the lead's
+/// own — carried straight from `TranscriptEntry::ToolStart` so a fan-out call
+/// renders visibly apart from the lead's (#4699).
 #[must_use]
 pub fn head_rows(
     name: &str,
@@ -597,6 +601,7 @@ mod tests {
                 added: *added,
                 removed: *removed,
                 diff: Some(format!("@@ -1,1 +1,1 @@\n+{path}")),
+                minimal: true,
             });
         }
         model

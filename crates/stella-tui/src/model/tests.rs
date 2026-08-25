@@ -556,6 +556,7 @@ fn file_change_keeps_latest_diff_and_counts_touches() {
         added: 1,
         removed: 0,
         diff: Some("+first".into()),
+        minimal: true,
     });
     model.apply(&AgentEvent::FileChange {
         path: "src/a.rs".into(),
@@ -563,6 +564,7 @@ fn file_change_keeps_latest_diff_and_counts_touches() {
         added: 1,
         removed: 0,
         diff: Some("+second".into()),
+        minimal: true,
     });
     assert_eq!(model.files.len(), 1);
     let f = &model.files[0];
@@ -581,6 +583,7 @@ fn reads_count_without_clobbering_mutation_state() {
         added: 0,
         removed: 0,
         diff: None,
+        minimal: true,
     });
     assert_eq!(model.files.len(), 1, "reads appear in the files panel");
     let f = &model.files[0];
@@ -596,6 +599,7 @@ fn reads_count_without_clobbering_mutation_state() {
         added: 1,
         removed: 0,
         diff: Some("+x".into()),
+        minimal: true,
     });
     model.apply(&AgentEvent::FileChange {
         path: "src/a.rs".into(),
@@ -603,6 +607,7 @@ fn reads_count_without_clobbering_mutation_state() {
         added: 0,
         removed: 0,
         diff: None,
+        minimal: true,
     });
     let f = &model.files[0];
     assert_eq!(
@@ -624,6 +629,7 @@ fn files_are_kept_in_first_touched_order() {
             added: 0,
             removed: 0,
             diff: None,
+            minimal: true,
         });
     }
     let order: Vec<&str> = model.files.iter().map(|f| f.path.as_str()).collect();
@@ -811,6 +817,78 @@ fn tool_result_summary_is_middle_out_truncated() {
             assert!(summary.ends_with("TAIL"), "kept tail: {summary}");
             assert!(summary.contains("..."), "elided middle: {summary}");
             assert!(summary.chars().count() <= SUMMARY_BUDGET);
+        }
+        other => panic!("expected a tool result entry, got {other:?}"),
+    }
+}
+
+/// The witness for #4699: a delegate's call is folded onto both its
+/// `ToolStart` and its `ToolResult`, so a fan-out call is distinguishable
+/// from the lead's own once it lands on the transcript.
+#[test]
+fn a_delegates_call_carries_its_sub_agent_id_onto_start_and_result() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::ToolStart {
+        call: ToolCall {
+            call_id: "c1".into(),
+            name: "bash".into(),
+            input: serde_json::json!({}),
+        },
+        sub_agent_id: Some("d:1".into()),
+    });
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "c1".into(),
+        output: ToolOutput::Ok {
+            content: "ok".into(),
+            data: None,
+        },
+        duration_ms: 3,
+        speculated: false,
+        // The result does not repeat it, on purpose — the same fallback the
+        // store's `project_tool_result` proves (`stella-store::tool_calls`):
+        // the announcement is authoritative, and a result from an older
+        // producer must not blank what the start already recorded.
+        sub_agent_id: None,
+    });
+    match &model.transcript[..] {
+        [
+            TranscriptEntry::ToolStart {
+                sub_agent_id: s, ..
+            },
+            TranscriptEntry::ToolResult {
+                sub_agent_id: r, ..
+            },
+        ] => {
+            assert_eq!(s.as_deref(), Some("d:1"), "the start lost its attribution");
+            assert_eq!(
+                r.as_deref(),
+                Some("d:1"),
+                "the result did not resolve the start's attribution"
+            );
+        }
+        other => panic!("expected a start/result pair, got {other:?}"),
+    }
+}
+
+/// The fallback half: a consumer that never folded the `ToolStart` (a
+/// `?after_seq` page, a truncated journal) still attributes the call from the
+/// result's own field.
+#[test]
+fn a_result_with_no_matching_start_still_attributes_from_its_own_field() {
+    let mut model = SessionModel::new();
+    model.apply(&AgentEvent::ToolResult {
+        call_id: "orphan".into(),
+        output: ToolOutput::Ok {
+            content: "ok".into(),
+            data: None,
+        },
+        duration_ms: 3,
+        speculated: false,
+        sub_agent_id: Some("d:2".into()),
+    });
+    match model.transcript.last() {
+        Some(TranscriptEntry::ToolResult { sub_agent_id, .. }) => {
+            assert_eq!(sub_agent_id.as_deref(), Some("d:2"));
         }
         other => panic!("expected a tool result entry, got {other:?}"),
     }
@@ -1215,6 +1293,7 @@ fn turn_boundary(model: &mut SessionModel, path: &str, diff: Option<&str>, adds:
         added: adds,
         removed: dels,
         diff: diff.map(Into::into),
+        minimal: true,
     });
 }
 

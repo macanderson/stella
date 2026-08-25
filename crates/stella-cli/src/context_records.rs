@@ -805,6 +805,7 @@ pub(crate) fn inferred_rule_record(
     statement: &str,
     source_kind: &str,
     source_uri: &str,
+    evidence_grade: Option<stella_protocol::provenance::ProvenanceGrade>,
 ) -> Result<stella_core::ingest::record::Record, String> {
     use stella_core::context_record::{Origin, RecordStatus};
     use stella_core::ingest::record as rec;
@@ -844,6 +845,10 @@ pub(crate) fn inferred_rule_record(
         provenance: Some(rec::Provenance {
             source_kind: Some(source_kind.to_string()),
             source_uri: Some(source_uri.to_string()),
+            // Carried from the proposal being published (#2782). Once this
+            // record is on disk the observations behind it are out of reach,
+            // so a grade not carried here is unrecoverable.
+            evidence_grade,
             ..Default::default()
         }),
         steering: Some(rec::Steering {

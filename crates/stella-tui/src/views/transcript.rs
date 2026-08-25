@@ -353,6 +353,10 @@ pub struct Event {
     pub body: Vec<Line<'static>>,
     /// A dim trailing line under the body (SPEC 6.3's footers).
     pub footer: Option<String>,
+    /// The delegate that made this call, rendered `↳ d:1` (#4699). `None` is
+    /// the lead's own call — the ordinary case, and drawn with no tag at all
+    /// rather than a "lead" label nobody needs on every other row.
+    pub sub_agent_id: Option<String>,
 }
 
 impl Event {
@@ -368,6 +372,7 @@ impl Event {
             collapsed: None,
             body: Vec::new(),
             footer: None,
+            sub_agent_id: None,
         }
     }
 

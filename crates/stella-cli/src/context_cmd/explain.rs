@@ -112,6 +112,9 @@ pub fn run_explain(root: &Path, needle: &str) -> Result<(), String> {
         if let Some(run) = provenance.ingest_run_id.as_deref() {
             println!("    {}", format!("ingest run {run}").dimmed());
         }
+        if let Some(line) = evidence_line(provenance.evidence_grade) {
+            println!("    {}", line.dimmed());
+        }
     }
     if let Some(id) = record.record_id.as_deref() {
         println!("    {}", format!("record {id}").dimmed());
@@ -234,6 +237,20 @@ pub fn run_explain(root: &Path, needle: &str) -> Result<(), String> {
 /// The `selected` → `rendered` → `cited` funnel is recorded by the session that
 /// rendered the record; a workspace that has not run a session since the record was
 /// published has nothing to report, which is different from a record nobody used.
+/// The evidence line for a record's provenance grade (#2782), or [`None`] when
+/// the record carries no grade.
+///
+/// Absent is the common case and says nothing rather than implying weakness: a
+/// grade is stamped on records Stella *induced* from a run, and most records
+/// are ingested from a document instead. Extracted from the rendering so the
+/// wording can be asserted — `run_explain` prints to stdout, so a test of what
+/// it renders has nowhere else to look.
+pub(super) fn evidence_line(
+    grade: Option<stella_protocol::provenance::ProvenanceGrade>,
+) -> Option<String> {
+    grade.map(|grade| format!("evidence: {} — {}", grade.as_str(), grade.describe()))
+}
+
 fn efficacy_line(root: &Path, handle: &str) -> String {
     let ledger = root.join(".stella/private/context.db");
     if !ledger.exists() {

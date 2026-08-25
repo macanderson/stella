@@ -50,8 +50,8 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 use stella_context::{ContextDelta, ContextStore, EpisodeInput, LedgerAppend};
 use stella_core::context_record::{
-    Confidence, ObservationRecord, PromotionAction, PromotionActor, PromotionEventRecord,
-    ProposalRecord, ProposalScore, RecordProposalKind, RecordProposalStatus,
+    Confidence, EvidencePool, ObservationRecord, PromotionAction, PromotionActor,
+    PromotionEventRecord, ProposalRecord, ProposalScore, RecordProposalKind, RecordProposalStatus,
     lifecycle::ObservationSource,
 };
 use stella_observatory::respond;
@@ -802,7 +802,7 @@ fn real_context_workspace() -> (tempfile::TempDir, String, String) {
         "Grep before you guess",
         "Search the tree before assuming a symbol's location.",
         Vec::new(),
-        vec![observation.record_id.clone()],
+        EvidencePool::from_observations(std::slice::from_ref(&observation)),
         ProposalScore {
             occurrences: 4,
             distinct_tasks: 3,
