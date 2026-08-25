@@ -265,7 +265,7 @@ pub(crate) enum Command {
         cmd: DaemonCmd,
     },
 
-    /// Steer every live headless session on this machine at once
+    /// Steer every live non-interactive session on this machine at once
     ///
     /// Broadcasts a message onto the steering queue of every currently-running
     /// `stella run`/`stella goal` session (foreground or daemon-supervised
@@ -276,7 +276,7 @@ pub(crate) enum Command {
     /// uses; the turn is never paused, it absorbs the guidance and keeps
     /// going. Narrow to specific sessions with `--session <id>` (repeatable,
     /// see `stella resume --list` for ids); omit it to reach every session
-    /// `stella resume --list` shows as live. The interactive Command Deck and
+    /// `stella resume --list` shows as live. Interactive mode and
     /// `stella-serve`-hosted turns are not reachable yet.
     Whistle {
         /// The steering guidance to inject

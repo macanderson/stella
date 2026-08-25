@@ -1,5 +1,5 @@
-//! Agent whistle: a cross-process broadcast that steers every live headless
-//! session on this machine at once.
+//! Agent whistle: a cross-process broadcast that steers every live
+//! non-interactive session on this machine at once.
 //!
 //! `stella-core`'s `TurnSteering` port already lets one process inject text
 //! into a running turn at its next safe boundary (`stella-tui`'s `>` and
@@ -18,7 +18,7 @@
 //! Windows section). `stella whistle` on a non-Unix build reports the gap
 //! rather than silently doing nothing.
 //!
-//! Deliberately not reachable yet: the interactive Command Deck (TUI). Its
+//! Not reachable yet: interactive mode. Its
 //! steering tap is minted fresh per turn inside `command_deck.rs`, a file
 //! closed to growth under the file-size ratchet (AGENTS.md "God files"), so
 //! wiring a listener into it needs either a small `file-size-update` or the
@@ -40,7 +40,7 @@ pub(crate) mod wire;
 /// reached this way simply is not whistleable, never a reason to fail the
 /// run it belongs to.
 ///
-/// The one call this crate's headless doors need: they hold neither
+/// The one call this crate's non-interactive doors need: they hold neither
 /// `stella_store::SessionRegistry` nor a platform check of their own, and
 /// shouldn't have to just to publish one control socket.
 #[cfg(unix)]

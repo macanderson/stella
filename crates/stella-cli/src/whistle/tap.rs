@@ -4,7 +4,7 @@
 //!
 //! A separately named trait rather than reusing `TurnSteering` itself,
 //! because that port only exposes the *drain* half (what the engine reads
-//! at a step boundary) — it deliberately offers no push method, so nothing
+//! at a step boundary) — it offers no push method, so nothing
 //! outside a turn's own host can inject through it by accident. This trait
 //! is that host-side push, and it is `stella-cli`-internal: `stella-core`
 //! never learns whistle exists.
@@ -19,7 +19,7 @@ pub(crate) trait Whistleable: Send + Sync {
     fn push(&self, text: String);
 }
 
-/// A minimal steering tap for a headless (non-deck) session: `stella run`
+/// A minimal steering tap for a non-interactive (non-deck) session: `stella run`
 /// and `stella goal`, foreground or daemon-supervised alike — see
 /// `crate::agent::run_turn`'s `controls` parameter.
 ///
@@ -58,7 +58,7 @@ impl stella_core::ports::TurnSteering for HeadlessSteerTap {
     fn soft_stop_requested(&self) -> bool {
         // Whistle never sets this (see the module docs on scope) — it
         // stays wired only because the port requires it, and reading
-        // `false` forever is the honest answer for a tap nothing latches.
+        // `false` forever is correct for a tap nothing latches.
         self.soft_stop.load(Ordering::SeqCst)
     }
 }

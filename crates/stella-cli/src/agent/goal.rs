@@ -271,12 +271,13 @@ pub(crate) async fn run_raw_one_shot(
     // Machine-wide presence: findable in the deck's SESSIONS overlay and
     // replayable from its journal after this process exits.
     let mut presence = SessionPresence::announce(cfg, prompt);
-    // Agent whistle: this door is headless (no deck, no `stella-serve`), so
-    // until now it had nowhere to steer from — `stella whistle` reaches it
-    // over this session's own control socket, into the same `TurnControls`
-    // seam `wrapper_plugin::RawTurnDriver` already carried for exactly this
-    // (its own doc comment named `run_raw_one_shot` as the headless door
-    // that would one day publish something other than `none()` here).
+    // Agent whistle: this door runs in non-interactive mode (no deck, no
+    // `stella-serve`), so until now it had nowhere to steer from — `stella
+    // whistle` reaches it over this session's own control socket, into the
+    // same `TurnControls` seam `wrapper_plugin::RawTurnDriver` already
+    // carried for exactly this (its own doc comment named `run_raw_one_shot`
+    // as the non-interactive door that would one day publish something
+    // other than `none()` here).
     // `_whistle_listener` is held for the run's duration — its `Drop` is
     // what unbinds and removes the socket file.
     let whistle_tap: std::sync::Arc<crate::whistle::tap::HeadlessSteerTap> =
@@ -337,7 +338,7 @@ pub(crate) async fn run_raw_one_shot(
                     recall,
                     memory: memory.as_mut(),
                     watch: &candidate.watch,
-                    // Agent whistle (see above): this headless door now
+                    // Agent whistle (see above): this non-interactive door now
                     // publishes a real steering tap, still no pause gate —
                     // whistle only ever steers, never pauses (see
                     // `crate::whistle`'s module docs on scope).

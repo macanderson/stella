@@ -947,8 +947,8 @@ fn run(cli: Cli, loaded_env: &env_files::Loaded) -> Result<(), failure::CliFailu
         Some(Command::Whistle { message, session }) => {
             // A local broadcast over each target session's own control
             // socket — the local registry and a handful of Unix sockets, no
-            // provider needed. Deliberately before provider resolution, for
-            // the same reason `Command::Daemon` is: an operator reaching for
+            // provider needed. This runs before provider resolution for the
+            // same reason `Command::Daemon` does: an operator reaching for
             // this is trying to redirect work that is already running,
             // whatever this invocation's own model config looks like.
             return signals::block_on_interruptible(rt()?, whistle::cmd::run(message, session))

@@ -1,5 +1,5 @@
-//! `stella whistle` — broadcast steering guidance to every live headless
-//! session on this machine, or a chosen few.
+//! `stella whistle` — broadcast steering guidance to every live
+//! non-interactive session on this machine, or a chosen few.
 //!
 //! Discovery reuses `stella_store::SessionRegistry::list` exactly as `stella
 //! resume --list` and the deck's SESSIONS overlay do (pid/lock-checked
