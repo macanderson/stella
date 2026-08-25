@@ -28,7 +28,7 @@
  │     10 +  const items = useAutomations()
  │     11 +  const [q, setQ] = useState("")
  │     12 +  const filtered = filter(items, q)
- │     13 +  const onNew = () => open()   ┌ question ──── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ┐
+ │     13 +  const onNew = () => open()   ╭ question ────────────────────────────────────────────────────────────────╮
                                           │from the `research-child` sub-agent                                       │
 ☰  plan  5/7  ·  Workflows canvas         │                                                                          │
                                           │Which auth should the new endpoint use?                                   │
@@ -36,7 +36,7 @@
                                           │▸ [ ] Session cookie — Matches the rest of the app                        │
                                           │  [ ] Bearer token                                                        │
                                           │  [ ] Type your own answer                                                │
-                                          └──────────────────────────────────────────────────────────────────────────┘
+                                          ╰────────────── ↑↓ move · ⏎ pick · ⇥ next · n note · r review · esc cancel ╯
 
 
 

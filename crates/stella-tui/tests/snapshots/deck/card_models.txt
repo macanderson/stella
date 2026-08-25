@@ -19,7 +19,7 @@
 
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
- │ ⊙ apps/app/automations/page.tsx          ┌ models  resolved routing ───────────────────────────────── esc close ┐
+ │ ⊙ apps/app/automations/page.tsx          ╭ models  resolved routing ────────────────────────────────────────────╮
  │ ⎿ 312 lines                              │session   glm-5.2                                                     │                         42ms
                                             │auto      model off · effort on · thinking off                        │
  │ ● edit apps/app/automations/page.tsx +4 -│                                                                      │
@@ -36,7 +36,7 @@
                                             │verify    anthropic/claude-opus-5                         unassigned  │
                                             │          high  (effort_auto replaced "max") · thinking on            │
                                             │          from pipeline_verifier_model                                │
-                                            └──────────────────────────────────────────────────────────────────────┘
+                                            ╰─────────────────────────────────────────────────────────── esc close ╯
 
 
 
