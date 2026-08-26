@@ -636,10 +636,15 @@ stage, a flip oracle, a terminal verify ladder — is exactly what
 verification plugin, rather than reinventing.** Host-run verification is no
 longer something Stella ships in-tree: `stella run --pipeline classic` is
 refused outright (`crates/stella-cli/src/wrapper_plugin.rs`'s
-`PipelineChoice::resolve`), and `--test-command`/`--keep-witness`/
-`--require-verified` are refused unconditionally on every remaining
-resolution, naming `stella plugin install` — an installed verification
-plugin — as the remedy rather than a flag this repository ships. When such a
+`PipelineChoice::resolve`), and the three verification flags split two ways
+in the same file's `reject_verification_flags_without_pipeline`:
+`--keep-witness` and `--require-verified` are refused on every resolution,
+because what they asked for was host-run machinery that no longer exists
+here; `--test-command` is refused on the raw default and **passed through**
+under `--pipeline <variant>`, where it hands the bound plugin's own
+`[oracle]` a command to check against. Each refusal names `stella plugin
+install` — an installed verification plugin — as the remedy rather than a
+flag this repository ships. When such a
 plugin is installed, `stella run --pipeline <plugin-id>` hands it the turn;
 the plugin's own `[oracle]` runs the check and reports its evidence, which
 Stella evaluates against the plugin's declared verdict rule and does not
