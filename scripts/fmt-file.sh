@@ -39,7 +39,7 @@
 #       agent harness surfaces the message as feedback, and so a shell caller
 #       sees a distinct nonzero code.
 #
-# Deliberately NOT run: `cargo fmt`, `cargo check`, `cargo clippy`. Those are
+# NOT run: `cargo fmt`, `cargo check`, `cargo clippy`. Those are
 # workspace-scoped and take seconds to minutes; on a per-edit hook they would
 # make every edit feel broken. `make gate` remains the thing that must pass.
 #
@@ -101,7 +101,7 @@ rel="${abs_file#"$canon_root"/}"
 # check-file-size.sh judges `git ls-files '*.rs'` — tracked files only. A
 # gitignored scratch file will never be tracked (check-no-scratch.sh enforces
 # that), so warning about one would be pure noise. An untracked-but-committable
-# file IS checked here, deliberately: it is going to be added, and hearing about
+# file IS checked here: it is going to be added, and hearing about
 # the limit at creation beats hearing about it at push.
 if git check-ignore -q "$abs_file" 2>/dev/null; then
   exit 0

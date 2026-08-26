@@ -68,7 +68,7 @@ import json, re, subprocess, sys
 allow = set(sys.argv[1:])
 
 # The authority on what a citation looks like is check-doc-links.py's
-# CITE_ID_RE; kept in the same shape here deliberately.
+# CITE_ID_RE; kept in the same shape here.
 CITE_ID_RE = re.compile(r"\bdoc:([a-z0-9][a-z0-9/-]*[a-z0-9])")
 
 try:

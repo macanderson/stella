@@ -201,7 +201,7 @@ else
   no "D1 the git pathspec matches at every depth, not just the top level" "$seen"
 fi
 
-# An untracked deck sitting in a tracked tree is deliberately not measured: CI
+# An untracked deck sitting in a tracked tree is not measured: CI
 # measures what it checked out. Pinning it stops a later "just use find
 # everywhere" simplification from quietly changing what the job covers.
 : >"$D/pass-untracked.html"

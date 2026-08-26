@@ -174,7 +174,7 @@ want "M6 a marker not on a const or static is flagged" \
 
 r="$(new_root unmarked)"
 write "$r" src/pipeline.rs <<'EOF'
-/// A judgement, not a measurement, and deliberately unmarked.
+/// A judgement, not a measurement, and unmarked.
 const RETRY_LIMIT: u64 = 3;
 EOF
 want "M7 an unmarked constant is not the guard's business" \

@@ -77,7 +77,7 @@ EOF
 
 The five headings are not decoration. **Problem** (not a task description),
 **Where** (paths and lines, never "somewhere in the driver"), **Reproduce**
-(a command and what it prints today), **Constraints** (the gates and invariants
+(a command and what it prints today), **Constraints** (the gates and rules
 you already discovered so the next agent does not rediscover them), **Done when**
 (the witness test that would prove it).
 
@@ -118,4 +118,4 @@ swallow the finding.
 
 Every PR the cycle opened lists the issues it filed. That is what makes the
 residue of an autonomous cycle auditable by a human afterwards — the PR says both
-what it fixed and what it deliberately did not.
+what it fixed and what it did not.

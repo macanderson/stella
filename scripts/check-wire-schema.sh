@@ -21,7 +21,7 @@
 # the failure landing on the author's machine rather than on a consumer parsing
 # a stream that no longer matches its types.
 #
-# What it deliberately does NOT do is judge whether the change is *allowed*.
+# What it does NOT do is judge whether the change is *allowed*.
 # The wire contract is additive-only, but "additive" is a review question; this
 # script's job is to make sure the diff is on the screen when that question is
 # asked. A regeneration is one command, named in the failure below.
@@ -141,7 +141,7 @@ fi
 #
 #     #[cfg_attr(feature = "schema", schemars(description = "..."))]
 #
-# This is deliberately a check on the SHAPE of the words, not their quality —
+# This is a check on the SHAPE of the words, not their quality —
 # it can only tell that a Rust path escaped, which is the one failure that is
 # mechanically decidable. Note it is not a ratchet: the count reached zero in
 # #3461 and the only acceptable number afterwards is zero.

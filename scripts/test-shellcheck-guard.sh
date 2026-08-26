@@ -139,7 +139,7 @@ want "B1 a missing shellcheck fails rather than skipping" \
 want "B2 the notice says the tool is unavailable, not that a script is dirty" \
   expect-fail "$C" "shellcheck: UNAVAILABLE"
 
-# Deliberately NOT the bare word "install": the lint invocation itself names
+# NOT the bare word "install": the lint invocation itself names
 # `install.sh`, so a substring that loose passes against the pre-fix recipe's
 # own echoed command line. Pin the actual remedy instead.
 want "B3 the notice names how to install it" \

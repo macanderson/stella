@@ -54,7 +54,7 @@
 #      `.parent()` or `".."`. Any crate matching that shape is re-checked
 #      whenever the diff touches anything outside every crate directory.
 #
-# Escape edges (2 and 3) add the *reading* crate, and deliberately do not drag
+# Escape edges (2 and 3) add the *reading* crate, and do not drag
 # in its reverse dependents: a stale `README.md` can fail `stella-tools`'s own
 # doc test, but it cannot change the code that `stella-tools`'s dependents
 # compile against.

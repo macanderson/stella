@@ -9,8 +9,8 @@
 #
 # ── What is under test ───────────────────────────────────────────────────────
 #
-# scripts/check-no-scratch.sh enforces one invariant: an ignored path must not
-# be tracked. That is deliberately general — it catches every future scratch
+# scripts/check-no-scratch.sh enforces one rule: an ignored path must not
+# be tracked. That is general — it catches every future scratch
 # directory the moment someone ignores it — and it is also the whole property,
 # so a scratch path this repository does not ignore is invisible to it.
 #

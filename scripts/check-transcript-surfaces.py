@@ -31,7 +31,7 @@ the same shape `stella-model`'s provider-parity matrix and
 An `OWN` row is not permission. It is a debt with an address on it. The
 `Done when` of each cited issue is written as "…and this row reads SHARED".
 
-── Deliberately not checked ─────────────────────────────────────────────────
+── Not checked ──────────────────────────────────────────────
 
 Whether the *output* of two SHARED surfaces actually looks the same. That is a
 rendering property and belongs in a test that renders one fixture through both

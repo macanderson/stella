@@ -70,7 +70,7 @@ cat > "$tmp/clean.json" <<'JSON'
 JSON
 expect "distinct claims pass" 0 "2 issue(s) claimed, none more than once" "$tmp/clean.json" --strict
 
-# ── `Refs` is deliberately not a claim ────────────────────────────────────
+# ── `Refs` is not a claim ────────────────────────────────────
 # Two PRs advancing one issue from different directions is normal, and the
 # repo's own convention says `Refs` does not close. Treating it as a duplicate
 # would make the guard cry wolf on every epic.

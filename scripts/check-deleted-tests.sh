@@ -47,11 +47,11 @@
 # ── It asks for an acknowledgement; it does not forbid deletion ──────────────
 #
 # A removed test is not automatically wrong. Tests are legitimately renamed,
-# merged into a table-driven case, or deliberately dropped with the feature
+# merged into a table-driven case, or dropped with the feature
 # they covered. So a removal fails the guard only while it is UNNAMED: writing
 # the test's name in the PR description (or in a commit message) passes it.
 #
-# That is the entire mechanism, and it is deliberately weak. The goal is not to
+# That is the entire mechanism, and it is weak. The goal is not to
 # adjudicate whether a deletion was correct — a script cannot — but to convert
 # an invisible deletion into a sentence a reviewer reads.
 #
@@ -67,7 +67,7 @@
 # Measured rather than assumed: at the time of writing the tree carries 6927
 # test attributes over 6867 distinct names, of which 51 (0.74%) are used more
 # than once. Nearly all of those are the per-adapter provider suites, where the
-# same contract is deliberately asserted against each vendor under one name
+# same contract is asserted against each vendor under one name
 # (`complete_maps_401_to_auth_error` and its siblings appear once per adapter).
 #
 # So the masked case is real but narrow, and it is narrow *because* of this
@@ -92,7 +92,7 @@
 # such a fixture is edited, and that lands in the acknowledge path, which is the
 # benign direction.
 #
-# ── Deliberately NOT in `make gate` ──────────────────────────────────────────
+# ── NOT in `make gate` ──────────────────────────────────────────
 #
 # This is inherently a two-branch question, so there is nothing for it to
 # compare on a local `make gate` run — it lives in CI, on the merge result.

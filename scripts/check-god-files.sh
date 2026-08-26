@@ -21,7 +21,7 @@
 # The baseline is the tiebreaker. It is generated, gate-enforced, and the only
 # copy that can stay correct.
 #
-# ── Deliberately not checked ─────────────────────────────────────────────────
+# ── Not checked ──────────────────────────────────────────────
 #
 # The numeric ceilings. AGENTS.md names *which* files are closed to growth and
 # deliberately does not repeat a single number — the baseline stays the only
@@ -106,7 +106,7 @@ all_crates="$(
 
 # Membership over the newline-delimited crate list, in pure shell.
 #
-# Deliberately NOT `printf ... | grep -qx`: under `set -o pipefail` that is a
+# NOT `printf ... | grep -qx`: under `set -o pipefail` that is a
 # race, not a test — `grep -q` exits the moment it matches, `printf` then dies
 # of SIGPIPE, and pipefail reports the pipeline as failed, so a crate that IS
 # present intermittently reads as absent. That race is #1815: it made this

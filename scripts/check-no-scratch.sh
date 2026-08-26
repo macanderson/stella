@@ -9,7 +9,7 @@
 # paths it is tracking, so a scratch directory committed once stays committed
 # and silently accumulates, and `git add -f` re-adds it with no warning.
 #
-# The invariant is deliberately general rather than a second copy of the
+# The rule is general rather than a second copy of the
 # scratch path list: **if a path is ignored, it must not be tracked.** That
 # catches every future scratch directory the moment someone ignores it, with no
 # pattern list here to drift out of sync with .gitignore.

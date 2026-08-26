@@ -20,7 +20,7 @@ declaration home for the properties it reads, so an undeclared reference in one
 is a dangling token by construction. A component stylesheet is a different
 question -- its ``var()`` calls resolve against whatever cascade the page
 assembles -- and answering it needs a resolution set spanning files plus the
-page's own import order. That is deliberately not attempted here: a guard that
+page's own import order. That is not attempted here: a guard that
 guesses at the cascade would produce false failures on the files it is least
 able to reason about, and a guard that cries wolf gets deleted rather than
 fixed.

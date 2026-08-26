@@ -24,7 +24,7 @@
 # that this repository cannot read meets its error immediately, rather than at
 # whichever later push happens to run the suites.
 #
-# What it deliberately does NOT do: run the suites. They take minutes and need
+# What it does NOT do: run the suites. They take minutes and need
 # uv; `bench-test` is not a gate step for exactly that reason (#2847 weighed it
 # and left it out), and .githooks/pre-push runs it only for a push that touches
 # the bench tooling.

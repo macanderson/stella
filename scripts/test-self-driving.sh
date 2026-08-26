@@ -4,7 +4,7 @@
 # Everything here runs against a throwaway $SELF_DRIVING_STATE_DIR: no network, no
 # `gh`, no writes outside the temp tree.
 #
-# A `make gate` step since #1753. It was deliberately excluded before that, on
+# A `make gate` step since #1753. It was excluded before that, on
 # the same reasoning as `impacted-test` and `dev-env-test` — and the cost of
 # the exclusion was three cases sitting red on `main` with nobody watching,
 # testing a `plan` that silently skipped the batch clamp. Hermetic and under a

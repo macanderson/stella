@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Guard: a library crate's public API does not return `Result<_, String>`.
 
-Invariant #5 (AGENTS.md § "Architecture: ports, not concretions") says library
+AGENTS.md #5 (AGENTS.md § "Architecture: ports, not direct dependencies") says library
 code returns typed, named errors and never a bare `String`. Nothing checked it,
 and it had drifted far enough that the rule and the tree disagreed outright:
 
@@ -22,7 +22,7 @@ Two scoping decisions, both deliberate:
     such reached a number five times too large. "Library crate" is the literal
     thing: a crate exposing `src/lib.rs`.
 
-  * **`pub` only.** The hazard invariant #5 names is a *caller* that cannot
+  * **`pub` only.** The hazard AGENTS.md #5 names is a *caller* that cannot
     branch without parsing prose, and only the public surface has callers
     outside the crate. Internal helpers whose strings get wrapped at the
     boundary are tracked separately (#2392).
@@ -191,7 +191,7 @@ def read_baseline(path: Path) -> dict[str, int]:
 
 
 HEADER = """\
-# Down-only ratchet for AGENTS.md invariant #5: a library crate's public API
+# Down-only ratchet for AGENTS.md #5: a library crate's public API
 # returns typed, named errors, never a bare `String`.
 #
 # Each line is `<crate> <count>` -- the number of `pub fn`s in that crate still
@@ -247,7 +247,7 @@ def main() -> int:
                 print(f"check-typed-errors: {note}", file=sys.stderr)
             print(
                 "check-typed-errors: the ratchet only tightens -- type the new "
-                "signatures instead (AGENTS.md invariant #5).",
+                "signatures instead (AGENTS.md #5).",
                 file=sys.stderr,
             )
             return 1
@@ -285,7 +285,7 @@ def main() -> int:
     if status:
         report.append("")
         report.append(
-            "Invariant #5: a library crate's public API returns typed, named "
+            "AGENTS.md #5: a library crate's public API returns typed, named "
             "errors. Give the failure an enum (thiserror) whose variants a "
             "caller can match on -- see crates/stella-tools/src/input.rs or "
             "crates/stella-runtime/src/error.rs for the shape."

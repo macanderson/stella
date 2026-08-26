@@ -30,7 +30,7 @@
 #      it needs no API key: stella is BYOK and the release workflow holds no
 #      provider credentials.
 #
-# Deliberately a smoke gate, not a second CI run: macOS runners are the
+# A smoke gate, not a second CI run: macOS runners are the
 # expensive ones and a full suite per release is not a cost this repo should
 # carry. Two invocations.
 #

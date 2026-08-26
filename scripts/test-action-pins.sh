@@ -15,7 +15,7 @@
 # workflows and no composite actions at all — are what stop the widening from
 # being satisfied by a guard that simply fails more often.
 #
-# Deliberately not a `make gate` step, matching scripts/test-file-size.sh: the
+# Not a `make gate` step, matching scripts/test-file-size.sh: the
 # gate runs the guard, and this runs the guard's own directions.
 #
 # bash 3.2 compatible.

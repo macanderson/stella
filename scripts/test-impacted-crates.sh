@@ -74,7 +74,7 @@ want_empty() { # want_empty <name> <changed-path>...
 #   reader                    include_str!s ../README.md and base's source
 #   rt                        climbs out of CARGO_MANIFEST_DIR at run time
 #
-# `reader` and `rt` deliberately depend on nothing: it must be the escape scans
+# `reader` and `rt` depend on nothing: it must be the escape scans
 # that pull them in, not a dependency edge standing in for them.
 
 mkcrate() { # mkcrate <dir> <name> [manifest-tail]

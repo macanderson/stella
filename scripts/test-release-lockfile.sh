@@ -20,7 +20,7 @@
 #      `cargo metadata --locked`.
 #   2. The sync REFUSES to hand back a tree whose lock does not resolve. That is
 #      the durable half, and it is the half that was missing: nothing in the
-#      release path asserted the invariant CI checks, so the failure was only
+#      release path asserted the rule CI checks, so the failure was only
 #      ever discovered from a red `main`.
 #
 # Claim 2 needs a world where the relock silently does nothing — otherwise the
@@ -76,7 +76,7 @@ STUB
 # Build a minimal, network-free workspace at $1 whose members are at version
 # $2, write a matching lock, and add the homebrew formula sync-versions.sh
 # rewrites. Every member named after the first is created on disk and listed in
-# `members` but deliberately left OUT of the lock, which is the state a
+# `members` but left OUT of the lock, which is the state a
 # freshly-merged new crate leaves behind.
 make_workspace() {
   dir="$1"

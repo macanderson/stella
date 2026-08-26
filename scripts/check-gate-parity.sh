@@ -37,10 +37,10 @@
 #      three checks above are about prose; this one is about whether anything
 #      server-side fires at all.
 #
-# What it deliberately does NOT check: the spelled-out step total — that check
-# existed and was removed; see "The count is deliberately NOT checked any
+# What it does NOT check: the spelled-out step total — that check
+# existed and was removed; see "The count is NOT checked any
 # more" below (#1883) — and the prose *around* the lists. Whether
-# "ci.yml's required job runs everything except invariants and doc-links" is
+# "ci.yml's required job runs everything except rules and doc-links" is
 # still true is a claim about which workflow runs a step, not about whether one
 # does, and pretending a grep could settle it would be worse than leaving it to
 # review.

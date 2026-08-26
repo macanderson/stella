@@ -23,7 +23,7 @@
 # issue open the whole time. The detector was never the problem: the signal
 # had no consumer at the one place a decision was still being made.
 #
-# That is invariant #10's shape — "every emitted signal names its consumer" —
+# That is AGENTS.md #10's shape — "every emitted signal names its consumer" —
 # pointed at CI instead of at `AgentEvent`. This file is the consumer.
 #
 # ## Why piling on is the expensive part, not just untidy
@@ -52,7 +52,7 @@
 # a human labelling a PR "this is the fix" is a statement someone made on
 # purpose and a reviewer can audit afterwards.
 #
-# ## Fail-open, deliberately, and said out loud
+# ## Fail-open,, and said out loud
 #
 # If the tracker cannot be reached, this reports the failure loudly and
 # **passes**. It is the second line of defence — the canary's issue is the

@@ -108,7 +108,7 @@ if ! printf '%s' "$prs" | jq -e 'type == "array"' >/dev/null 2>&1; then
 fi
 
 # Extract (issue, pr) pairs. Only the three closing keywords count; `Refs #N`
-# is deliberately ignored because advancing an issue from two directions is
+# is ignored because advancing an issue from two directions is
 # normal and is not this defect.
 #
 # `ascii_downcase` on the whole body first, so `CLOSES`, `Closes` and `closes`

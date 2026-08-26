@@ -13,7 +13,7 @@
 #
 # "Did the author notice something and not file it" is not mechanically
 # decidable. Its most common residue is: a marker with no issue beside it. That
-# is what this checks, and the scope is deliberately narrow — a marker naming an
+# is what this checks, and the scope is narrow — a marker naming an
 # issue is *tracked work*, which is fine; a marker naming nothing is a thing
 # left behind with no handoff.
 #

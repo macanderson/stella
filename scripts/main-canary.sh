@@ -47,14 +47,14 @@
 # Exactly one issue is kept open at a time, found by label. A red `main` that
 # stays red across ten merges is one issue with ten comments, not ten issues.
 #
-# ── What it deliberately does NOT do ─────────────────────────────────────────
+# ── What it does NOT do ─────────────────────────────────────────
 #
 # It does not open a fix PR. It could — the remediation for a lock skew is one
 # regenerated file, and two humans hand-wrote that same commit on 2026-08-16.
 # But a bot with push access, opening branches against a protected `main` under
 # an auto-merge policy, is a much larger authority decision than "tell someone
 # accurately, fast". The issue body carries the exact commands instead. If that
-# tradeoff should change, change it deliberately, not by extending this script.
+# tradeoff should change, change it, not by extending this script.
 #
 # Usage:
 #   scripts/main-canary.sh                      # check only; exit 1 if main is red
@@ -155,7 +155,7 @@ checks=(
   # The other shared cell this file's header already names, and the one
   # AGENTS.md calls the single biggest cause of a red `main` (#3447). It earns
   # its row on the rule above rather than on thoroughness: the pre-merge guard
-  # is deliberately base-relative (#2004, #2397) and fails a PR only for growth
+  # is base-relative (#2004, #2397) and fails a PR only for growth
   # past what it inherited, so drift already sitting on `main` is invisible to
   # every branch in flight — by design, which is precisely what makes it
   # unfixable before a merge. On 2026-08-17 `command_deck.rs` sat 4 lines over
