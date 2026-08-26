@@ -955,3 +955,77 @@ fn removing_a_package_names_the_mcp_servers_it_took_away() {
 
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// **The tier-lookup witness** (#4905). A contributed skill is routed to its
+/// package's install tier by [`stella_core::skills::Skill::contributed_by`],
+/// the field the loader stamps — not by matching its `source_path` against the
+/// package directory.
+///
+/// The two agree for a skill loaded straight out of `<plugin_dir>/skills`,
+/// which is why the path match survived. They stop agreeing the moment the
+/// directory is resolved rather than joined — a symlinked tier, a
+/// canonicalised package root — and the skill then matches neither tier's
+/// disable list, so a skill the user switched off in the SKILLS tab silently
+/// comes back on. The `source_path` here is that case: outside the package
+/// directory and outside both scope roots.
+#[test]
+fn a_contributed_skills_tier_is_read_off_contributed_by_not_off_its_path() {
+    let _env = crate::test_env::lock();
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
+    let root = temp_root("package-skill-tier-lookup");
+    let _paths = crate::paths::test_user_home(root.join("home"));
+    // SAFETY: the env lock is held for the whole mutate-read-restore window.
+    unsafe { std::env::set_var("STELLA_TRUST_PROJECT", "1") };
+
+    let source = package(&root, "vera");
+    ships_a_package(&source, "vera");
+    install(
+        &root,
+        &source,
+        PluginScope::Project,
+        true,
+        &Settings::default(),
+    )
+    .expect("install must succeed");
+
+    // The package is installed at the project tier, so that is the tier whose
+    // state file governs its skills — and the tab writes into it by name.
+    crate::skill_manager::set_enabled(stella_tui::SkillScope::Project, "house-style", false, &root)
+        .expect("disable must succeed");
+
+    let elsewhere = |name: &str| stella_core::skills::Skill {
+        name: name.to_string(),
+        description: "how this shop writes code".to_string(),
+        domains: Vec::new(),
+        body: "PACKAGE_SKILL_MARKER".to_string(),
+        // Neither under a scope root nor under the package directory: the
+        // case a path prefix cannot see.
+        source_path: root
+            .join("somewhere-else")
+            .join("SKILL.md")
+            .display()
+            .to_string(),
+        origin: stella_core::skills::SkillOrigin::Contributed,
+        contributed_by: Some("vera".to_string()),
+    };
+
+    let mut skills = vec![elsewhere("house-style")];
+    crate::skill_manager::retain_enabled(&mut skills, &root);
+    assert!(
+        skills.is_empty(),
+        "a disabled contributed skill is dropped however its path reads: {skills:?}"
+    );
+
+    // The other direction, so the assertion above cannot pass by dropping
+    // everything: the same skill under the same package, not switched off.
+    let mut still_on = vec![elsewhere("other-style")];
+    crate::skill_manager::retain_enabled(&mut still_on, &root);
+    assert_eq!(
+        still_on.len(),
+        1,
+        "and one that was never disabled still loads"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
