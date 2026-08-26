@@ -92,12 +92,82 @@ fn long_turn(count: usize, size: usize) -> Vec<CompletionMessage> {
     messages
 }
 
-/// A budget this conversation is over half of and still under: pass 0's own
-/// trigger is met, the budget passes' is not (#4381). Derived from the
-/// transcript rather than written as a literal, so a change to the estimator
-/// moves both sides of the comparison together.
-fn retention_pressure_budget(messages: &[CompletionMessage]) -> u64 {
+/// A budget the conversation fits inside, so the budget passes stay silent
+/// and any report a test sees came from pass 0. Derived from the transcript
+/// rather than written as a literal, so a change to the estimator moves both
+/// sides of the comparison together.
+///
+/// Two thirds of the budget also puts the conversation past the half-budget
+/// gate pass 0 used to carry (#4381), which #4753 replaced — so a test using
+/// this budget and asserting *silence* is asserting the new gate held where
+/// the old one would have opened.
+fn budget_the_transcript_fits_under(messages: &[CompletionMessage]) -> u64 {
     estimate_conversation_tokens(messages) * 3 / 2
+}
+
+/// A transcript whose recent, protected window carries far more bytes than
+/// the ageable batch behind it: `stale` results of `stale_size` bytes past
+/// the horizon, then `recent` of `recent_size` that the horizon protects.
+/// Used with `keep_recent_steps: recent`, the batch clears the reclaim floor
+/// while being a thin slice of what the rewrite would invalidate.
+fn top_heavy_turn(
+    stale: usize,
+    stale_size: usize,
+    recent: usize,
+    recent_size: usize,
+) -> Vec<CompletionMessage> {
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("do things"),
+    ];
+    for i in 0..stale + recent {
+        let id = format!("c{i}");
+        let size = if i < stale { stale_size } else { recent_size };
+        messages.push(assistant_with_call(&id));
+        messages.push(tool_msg(
+            &id,
+            format!("STEP{i}-HEAD\n{}\nSTEP{i}-TAIL", "x".repeat(size)),
+        ));
+    }
+    messages
+}
+
+/// What pass 0's gate will price a fixture at: the reclaimable batch past the
+/// horizon in tokens, over what the conversation is left carrying once that
+/// batch is aged. Recomputed from the transcript so a test can report where a
+/// fixture actually sits instead of asserting a byte size somebody guessed.
+fn reclaim_ratio(messages: &[CompletionMessage], keep_recent_steps: usize) -> f64 {
+    let tool_positions: Vec<usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == MessageRole::Tool)
+        .map(|(idx, _)| idx)
+        .collect();
+    let keep = keep_recent_steps.max(1);
+    let stale = &tool_positions[..tool_positions.len().saturating_sub(keep)];
+    let reclaimable: usize = stale
+        .iter()
+        .map(|&idx| {
+            messages[idx]
+                .tool_results
+                .iter()
+                .map(|result| {
+                    let payload = match &result.output {
+                        ToolOutput::Ok { content, .. } => content,
+                        ToolOutput::Error { message, .. } => message,
+                    };
+                    if payload.len() > AGE_THRESHOLD_CHARS {
+                        payload.len().saturating_sub(AGE_RETAINED_CHARS)
+                    } else {
+                        0
+                    }
+                })
+                .sum::<usize>()
+        })
+        .sum();
+    let reclaimable_tokens = estimate_tokens_for_bytes(reclaimable as u64);
+    let after = estimate_conversation_tokens(messages).saturating_sub(reclaimable_tokens);
+    reclaimable_tokens as f64 / after.max(1) as f64
 }
 
 #[test]
@@ -106,9 +176,10 @@ fn retention_ages_results_past_the_horizon_before_the_budget_passes_engage() {
     // long turn re-sent every old tool output verbatim on every step
     // until the transcript crossed ~100k tokens. Pass 0 must age results
     // older than the horizon while the budget passes are still silent —
-    // which since #4381 means "past half the budget", not "at any size".
+    // which since #4753 means "once the batch is worth a real share of the
+    // transcript", not "at any size".
     let mut messages = long_turn(12, 5_000);
-    let budget = retention_pressure_budget(&messages);
+    let budget = budget_the_transcript_fits_under(&messages);
     let (_, report) = compact_measured(
         &mut messages,
         budget,
@@ -149,7 +220,7 @@ fn retention_reports_the_block_identity_the_manifest_cited() {
     // §6.2 for pass 0: the aged block is named by its PRE-mutation id.
     let mut messages = long_turn(6, 5_000);
     let expected = tool_result_block_id(&messages[3].tool_results[0].output);
-    let budget = retention_pressure_budget(&messages);
+    let budget = budget_the_transcript_fits_under(&messages);
     let (_, report) = compact_measured(
         &mut messages,
         budget,
@@ -173,7 +244,7 @@ fn every_in_place_rewrite_journals_its_replacement_bytes() {
     // distinct outputs here, so 8 distinct replacement records must ride the
     // report — each one the record OF THE CURRENT (post-rewrite) output.
     let mut messages = long_turn(12, 5_000);
-    let budget = retention_pressure_budget(&messages);
+    let budget = budget_the_transcript_fits_under(&messages);
     let (_, report) = compact_measured(
         &mut messages,
         budget,
@@ -230,7 +301,7 @@ fn retention_waits_for_a_batch_before_touching_the_prefix() {
     // Horizon leaves 3 stale results reclaiming ~10 KB: below the floor.
     // The budget is one retention pressure would clear, so the
     // reclaim floor is the only thing that can be holding the pass back.
-    let budget = retention_pressure_budget(&messages);
+    let budget = budget_the_transcript_fits_under(&messages);
     let (_, report) = compact_measured(
         &mut messages,
         budget,
@@ -252,7 +323,7 @@ fn retention_fires_on_reclaimable_bytes_before_any_count_floor() {
     // reclaim pays for the prefix rewrite — a count gate (the original
     // four-result floor) held them verbatim for the rest of the turn.
     let mut messages = long_turn(4, 100_000);
-    let budget = retention_pressure_budget(&messages);
+    let budget = budget_the_transcript_fits_under(&messages);
     let (_, report) = compact_measured(
         &mut messages,
         budget,
@@ -271,7 +342,7 @@ fn retention_skips_a_trickle_of_barely_ageable_results() {
     // cache-invalidating prefix rewrite for under 4 KB back. The bytes
     // gate must leave the transcript byte-stable instead.
     let mut messages = long_turn(12, 2_100);
-    let budget = retention_pressure_budget(&messages);
+    let budget = budget_the_transcript_fits_under(&messages);
     let (_, report) = compact_measured(
         &mut messages,
         budget,
@@ -291,125 +362,135 @@ fn retention_is_idempotent_between_batches() {
     // immediately following pass finds no candidates and mutates nothing
     // — the prefix stays byte-stable until a NEW batch accumulates.
     //
-    // Driven through the pass itself rather than `compact_measured`, and the
-    // budget is pinned so both calls are past the #4381 pressure gate
-    // (`current_tokens > budget_tokens / 2` holds for any non-empty
-    // transcript at a budget of 2). Aging this batch reclaims most of the
-    // transcript, so a realistic budget would put the second call under the
-    // pressure gate and its silence would prove nothing about the reclaim
-    // floor this test is about.
+    // Driven through the pass itself rather than `compact_measured`, so the
+    // second call is measured against the transcript the first one left
+    // rather than against a budget comparison that would end the turn first.
     let mut messages = long_turn(12, 5_000);
     let policy = RetentionPolicy {
         keep_recent_steps: 4,
     };
-    let pinned_past_the_pressure_gate = 2u64;
     let tokens = estimate_conversation_tokens(&messages);
-    let (aged, _, _, _) =
-        age_stale_tool_results(&mut messages, policy, tokens, pinned_past_the_pressure_gate);
+    let (aged, _, _, _) = age_stale_tool_results(&mut messages, policy, tokens);
     assert_eq!(aged, 8, "the first batch must fire");
     let snapshot: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
     let tokens = estimate_conversation_tokens(&messages);
-    let (again, _, _, _) =
-        age_stale_tool_results(&mut messages, policy, tokens, pinned_past_the_pressure_gate);
+    let (again, _, _, _) = age_stale_tool_results(&mut messages, policy, tokens);
     assert_eq!(again, 0, "second pass must be a no-op");
     let after: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
     assert_eq!(snapshot, after, "no bytes may move between batches");
 }
 
-/// The pressure gate's divisor is a measurement, and this is what stops a
-/// merge reverting it in silence (#2495).
+/// The gate's threshold is a measurement, and this is what stops a merge
+/// reverting it in silence (#2495).
 ///
-/// The two tests either side of this one pin the *behaviour* at half the
-/// budget and at a quarter, with the ratios hand-rolled — so a divisor of 3
-/// would leave both of them passing while suppressing 42.2% of the firings the
-/// census counted. Naming the constant is the difference between "half is a
-/// sensible-looking trigger" and "half is what 370 firings across 96 journals
-/// produced".
-///
-/// The value survived the census that priced it (#4452,
-/// `scripts/retention-census.py`) for a reason worth keeping in view: the
-/// census found *every* divisor a worse classifier of a profitable firing than
-/// no gate at all, so it disqualified the key rather than naming a better
-/// number for it. Moving this to 3 or 4 trades one unmeasured value for
-/// another; the measured replacement is a reclaim-ratio gate, #4753.
+/// The literal is the anti-revert half. The behavioural half searches for the
+/// bulk at which the pass stops firing and asserts the fixture's measured
+/// ratio there is fifteen percent — so the constant is pinned against the two
+/// thresholds either side of it in the census (0.10 and 0.25), not merely
+/// named. Both were live candidates: 0.10 recalls more (0.93 against 0.76) and
+/// 0.25 is more precise (0.77 against 0.60), and 0.15 is the minimum of the
+/// net column between them.
 #[test]
-fn the_retention_pressure_gate_stays_at_the_divisor_the_census_produced() {
+fn the_retention_reclaim_gate_stays_at_the_threshold_the_census_produced() {
     assert_eq!(
-        RETENTION_TRIGGER_BUDGET_DIVISOR, 2,
-        "the trigger is half the budget until #4753's reclaim-ratio gate replaces \
-         the key; a divisor of 3 suppresses 42.2% of the measured firings and 4 \
-         suppresses 23.8%, and neither classifies better than no gate at all"
+        RETENTION_TRIGGER_RECLAIM_PERCENT, 15,
+        "fifteen percent is the minimum of the census's net column (#4753); 10 \
+         admits 74 more firings for 1.1 M fewer tokens saved and 25 admits 73 \
+         fewer for 248 K fewer"
     );
-    // And the gate is actually derived from it, so the assertion above is not
-    // pinning a constant nothing consults.
-    let mut messages = long_turn(12, 5_000);
-    let tokens = estimate_conversation_tokens(&messages);
+    let keep = 4;
     let policy = Some(RetentionPolicy {
-        keep_recent_steps: 4,
+        keep_recent_steps: keep,
     });
-    let at_the_gate = tokens * RETENTION_TRIGGER_BUDGET_DIVISOR;
-    let (_, report) = compact_measured(&mut messages.clone(), at_the_gate, policy);
+    // A fixture whose ageable batch is fixed and whose protected bulk grows:
+    // the ratio falls monotonically with `recent_size`, so the pass fires
+    // below some bulk and is silent above it.
+    let fixture = |recent_size: usize| top_heavy_turn(4, 6_000, keep, recent_size);
+    let fires = |recent_size: usize| {
+        let mut messages = fixture(recent_size);
+        let budget = u64::MAX;
+        compact_measured(&mut messages, budget, policy).1.is_some()
+    };
     assert!(
-        report.is_none(),
-        "exactly at the gate the transcript must not move: {report:?}"
+        fires(2_100),
+        "a thin protected window must leave the gate open"
     );
-    let (_, report) = compact_measured(&mut messages, at_the_gate - 1, policy);
+    assert!(!fires(600_000), "a vast protected window must close it");
+    let (mut open, mut shut) = (2_100usize, 600_000usize);
+    while shut - open > 1 {
+        let mid = open + (shut - open) / 2;
+        if fires(mid) { open = mid } else { shut = mid }
+    }
+    let ratio = reclaim_ratio(&fixture(shut), keep);
     assert!(
-        report.is_some(),
-        "one token past the gate retention must engage"
+        (0.145..0.155).contains(&ratio),
+        "the pass must stop firing as the reclaim ratio crosses \
+         {RETENTION_TRIGGER_RECLAIM_PERCENT}%, and it stopped at {ratio:.4}"
     );
 }
 
-/// **Witness (#4381).** The measured shape: a conversation at a quarter of its
-/// budget with well over [`RETENTION_MIN_RECLAIM_CHARS`] reclaimable past the
-/// horizon. Pass 0 used to rewrite mid-history there on an absolute trigger,
-/// which cost a near-total prompt-cache miss on the next call — 137 K tokens
-/// re-billed across five firings to save 4–8 K per call, against 90–97% hit
-/// rates on the steps between them. Below the pressure gate the transcript
-/// must not move a byte.
+/// **Witness (#4753).** The shape the census says the old budget-fraction gate
+/// was suppressing: a large ageable batch early in a long turn, at a quarter
+/// of the budget. Profitable firings sat at a median 0.266 of budget with a
+/// median 90 further worker calls to amortize the rewrite over, and a gate at
+/// half the budget admitted none of them. Keyed on what the batch is worth,
+/// this ages.
 #[test]
-fn retention_does_not_fire_at_a_quarter_of_the_budget() {
+fn retention_ages_a_large_batch_early_in_a_long_turn() {
     let mut messages = long_turn(12, 5_000);
     let budget = estimate_conversation_tokens(&messages) * 4;
+    let keep = 4;
+    assert!(
+        reclaim_ratio(&messages, keep) >= 0.15,
+        "fixture must clear the reclaim gate"
+    );
+    let (_, report) = compact_measured(
+        &mut messages,
+        budget,
+        Some(RetentionPolicy {
+            keep_recent_steps: keep,
+        }),
+    );
+    let report = report.expect("a quarter into the budget is where the batch is worth most");
+    assert_eq!(report.aged, 8, "{report:?}");
+}
+
+/// **Witness (#4753), the other direction.** A batch well past the reclaim
+/// floor that is still a thin slice of what the rewrite would invalidate: the
+/// old gate saw only that the conversation was two thirds of the way into its
+/// budget and fired, re-billing a 200 K-token protected window uncached to
+/// take back 17 KB. This is the firing class the census priced at precision
+/// 0.13, and the transcript must not move a byte.
+#[test]
+fn retention_does_not_fire_when_the_batch_is_a_thin_slice_of_the_transcript() {
+    let keep = 4;
+    let mut messages = top_heavy_turn(4, 6_000, keep, 200_000);
+    let budget = budget_the_transcript_fits_under(&messages);
+    let ratio = reclaim_ratio(&messages, keep);
+    assert!(
+        ratio < 0.15,
+        "fixture must sit under the gate, sits at {ratio}"
+    );
     let before: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
     let (_, report) = compact_measured(
         &mut messages,
         budget,
         Some(RetentionPolicy {
-            keep_recent_steps: 4,
+            keep_recent_steps: keep,
         }),
     );
     assert!(
         report.is_none(),
-        "a conversation at 25% of budget must keep its cache prefix: {report:?}"
+        "a thin batch must not buy a prefix rewrite: {report:?}"
     );
     let after: Vec<String> = messages.iter().map(|m| format!("{m:?}")).collect();
-    assert_eq!(before, after, "no bytes may move below the pressure gate");
-}
-
-/// The other side of the same gate: the identical transcript, the identical
-/// reclaimable batch, a budget it is over half of — and the pass fires. Two
-/// tests rather than one because the pair is what shows the gate reads the
-/// budget and nothing else changed between them.
-#[test]
-fn retention_fires_once_the_conversation_passes_half_its_budget() {
-    let mut messages = long_turn(12, 5_000);
-    let budget = retention_pressure_budget(&messages);
-    let (_, report) = compact_measured(
-        &mut messages,
-        budget,
-        Some(RetentionPolicy {
-            keep_recent_steps: 4,
-        }),
-    );
-    let report = report.expect("past half the budget the batch must age");
-    assert_eq!(report.aged, 8, "{report:?}");
+    assert_eq!(before, after, "no bytes may move below the reclaim gate");
 }
 
 #[test]
 fn retention_never_touches_the_newest_tool_message_even_at_horizon_zero() {
     let mut messages = long_turn(6, 5_000);
-    let budget = retention_pressure_budget(&messages);
+    let budget = budget_the_transcript_fits_under(&messages);
     let (_, _) = compact_measured(
         &mut messages,
         budget,
@@ -432,7 +513,7 @@ fn small_recent_and_already_aged_results_are_not_retention_candidates() {
     // long turn of small outputs never triggers the batch — and never
     // churns the cache prefix.
     let mut messages = long_turn(20, 100);
-    let budget = retention_pressure_budget(&messages);
+    let budget = budget_the_transcript_fits_under(&messages);
     let (_, report) = compact_measured(
         &mut messages,
         budget,

@@ -619,8 +619,8 @@ fn a_result_aged_by_the_retention_pass_is_digested() {
         ("c2", "src/mid.rs"),
         ("c3", "src/new.rs"),
     ]);
-    // Past half the budget, so pass 0 fires (#4381), but under the budget
-    // itself, so only the age-based pass can.
+    // Under the budget, so only the age-based pass can fire; the batch is
+    // most of this transcript, so it clears pass 0's reclaim gate (#4753).
     let budget = crate::estimator::estimate_conversation_tokens(&messages) * 3 / 2;
     compact_and_digest(
         &mut messages,

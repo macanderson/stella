@@ -12,11 +12,12 @@
 //!    An old tool output has usually been consumed within a few steps; past
 //!    the horizon its head and tail carry the framing and the errors, and the
 //!    stub says how to get the rest back. Aging fires only once at least
-//!    `RETENTION_MIN_RECLAIM_CHARS` are reclaimable **and** the conversation
-//!    is at least `RETENTION_TRIGGER_BUDGET_DIVISOR`-th of the way into its
-//!    budget, so the prompt-cache prefix is mutated only when the rewrite
-//!    buys real bytes in a conversation big enough to need them (the same
-//!    discipline as the budget hysteresis below — AGENTS.md #7, #372, #4381).
+//!    `RETENTION_MIN_RECLAIM_CHARS` are reclaimable **and** the batch would
+//!    remove at least `RETENTION_TRIGGER_RECLAIM_PERCENT` of what the
+//!    conversation would be left holding, so the prompt-cache prefix is
+//!    mutated only when the rewrite takes back a real share of the
+//!    transcript it invalidates (the same discipline as the budget
+//!    hysteresis below — AGENTS.md #7, #372, #4381, #4753).
 //!
 //! The budget passes:
 //!
@@ -43,6 +44,8 @@
 //! The system message and the latest user message are never touched.
 
 use stella_protocol::{CompactionRewrite, CompletionMessage, MessageRole, ToolOutput};
+
+use stella_protocol::tokens::estimate_tokens_for_bytes;
 
 use crate::estimator::{estimate_conversation_tokens, estimate_message_tokens};
 use crate::receipts::{tool_result_block_id, tool_result_rewrite};
@@ -273,73 +276,65 @@ pub(crate) fn elide_truncated_partial(content: &str) -> Option<String> {
 /// hysteresis — AGENTS.md #7).
 const RETENTION_MIN_RECLAIM_CHARS: usize = 12_000;
 
-/// How far into its budget a conversation must be before the retention pass
-/// is allowed to rewrite anything: `budget_tokens / this`, i.e. half.
+/// The share of the surviving conversation a retention batch must take back
+/// before it is allowed to rewrite anything: `reclaimed * 100 >= after * this`,
+/// i.e. fifteen percent.
 ///
 /// The reclaim floor above prices the rewrite in *bytes reclaimed* and stops
 /// there, which prices only one side of the trade. The other side is the
 /// prompt-cache miss the rewrite causes, and that scales with the whole
 /// conversation behind the rewrite point — so the same 12 KB batch is a good
-/// trade near the ceiling and a bad one in a conversation using a quarter of
-/// its window. Measured (#4381, execution 242 of session
-/// `ses-1787465453163-60967`): a 163 014-token budget, context never above
-/// 42 K, five pass-0 firings saving 4–8 K tokens each and re-billing 137 K at
-/// the miss rate, with 90–97% cache hits on every step between them.
+/// trade against a 40 K-token transcript and a bad one against a 400 K one.
 ///
-/// Half, because that is the widest band that still leaves pass 0 the job
-/// #1285 gave it. The budget passes trigger at the full budget and reclaim to
-/// seven-eighths of it, so gating retention anywhere near them would make it
-/// a duplicate of pass 3; gating it at half leaves the entire 50–100% band —
-/// which is where a long turn's standing context actually accumulates — for
-/// retention to shape, and charges nothing at all to a turn that never gets
-/// there. A conversation below half its budget has room for the bytes it is
-/// carrying, and paying a full prefix invalidation to take some of them back
-/// buys nothing it needs yet.
+/// This gate used to ask how far into its budget the conversation was
+/// (`budget_tokens / 2`, #4381). The census that priced it says that key
+/// selects the wrong firings — not that it was set to the wrong number
+/// (#4452, `scripts/retention-census.py` over the session journals of
+/// binaries that had no gate at all, so the counterfactual is askable). A
+/// firing re-bills the whole surviving prefix uncached — the miss is
+/// measured, a median cached fraction of 0.487 on the call before a firing
+/// and 0.196 on the call after — and buys back `reclaimed` tokens at the
+/// cache-read price on every later call of the turn, so its net in
+/// uncached-equivalent tokens is `after − r·before − r·reclaimed·(N−1)` for
+/// `N` further worker calls and a cache read priced at `r`. Summed over 370
+/// pure pass-0 firings at `r = 0.10`, the gate at half cost **+5.63 M**
+/// tokens against **+2.92 M** for no gate at all; at `r = 0.25` it saved
+/// 3.04 M where no gate saved 24.6 M; at `r = 0.50`, 17.5 M against 70.6 M.
+/// At every price it was the worse of the two.
 ///
-/// **That is an argument, and the census that answered it says the argument
-/// picked the wrong quantity to gate on** (#4452,
-/// `scripts/retention-census.py` over 96 session journals from binaries with
-/// no gate, so the counterfactual is askable). Of 370 pure pass-0 firings the
-/// conversation sat at a median 0.370 of its budget, so half suppresses 258 of
-/// them — 69.7%, forgoing 1.76 M of the 2.77 M tokens the pass reclaimed. A
-/// divisor of 3 suppresses 42.2%, 4 suppresses 23.8%.
+/// It lost because budget fraction is *anti-correlated* with the trade.
+/// Profitable firings sat at a median 0.266 of budget and unprofitable ones at
+/// 0.425, because what decides a firing is how far the turn runs past it — a
+/// median 90 further worker calls where it profits against 26 where it does
+/// not — and a turn is furthest from its ceiling early, which is exactly the
+/// band half suppressed. It admitted 112 firings of which 15 profited:
+/// precision 0.13 against a 0.32 base rate, so it selected worse than
+/// admitting everything.
 ///
-/// Priced, the picture reverses and then indicts the key. A firing re-bills
-/// the whole surviving prefix uncached (the measured miss is real: the cached
-/// fraction is a median 0.487 on the call before a firing and 0.196 on the
-/// call after) and buys back `reclaimed` tokens at the cache-read price on
-/// every later call of the turn, so its net in uncached-equivalent tokens is
-/// `after − r·before − r·reclaimed·(N−1)` for `N` further worker calls and a
-/// cache read priced at `r`. Summed over the same 370 firings, at `r = 0.10`
-/// the gate at half costs **+5.63 M** tokens against **+2.92 M** for no gate
-/// at all; at `r = 0.25` it saves 3.04 M where no gate saves 24.6 M, and at
-/// `r = 0.50`, 17.5 M against 70.6 M. At every price the gate at half is the
-/// worse of the two.
+/// The reclaim ratio `reclaimed / after` is the other term of that break-even
+/// expression, and unlike the remaining call count it is known at firing time.
+/// Over the same corpus at `r = 0.10`:
 ///
-/// It loses because budget fraction is *anti-correlated* with the trade.
-/// Profitable firings sit at a median 0.266 of budget and unprofitable ones at
-/// 0.425, because what actually decides a firing is how far the turn runs past
-/// it — a median 90 further worker calls where it profits against 26 where it
-/// does not — and a turn is furthest from its ceiling early, which is exactly
-/// the band half suppresses. At `r = 0.10` the gate admits 112 firings of
-/// which 15 profit: precision 0.13 against a 0.32 base rate, so it selects
-/// worse than admitting everything.
+/// | gate | admits | profitable | precision | recall | net |
+/// |---|---|---|---|---|---|
+/// | none | 370 | 120 | 0.32 | 1.00 | +2 923 748 |
+/// | budget fraction >= 1/2 | 112 | 15 | 0.13 | 0.12 | +5 634 585 |
+/// | ratio >= 0.05 | 317 | 119 | 0.38 | 0.99 | −1 473 917 |
+/// | ratio >= 0.10 | 226 | 112 | 0.50 | 0.93 | −4 701 610 |
+/// | ratio >= 0.15 | 152 | 91 | 0.60 | 0.76 | **−5 609 242** |
+/// | ratio >= 0.25 | 79 | 61 | 0.77 | 0.51 | −5 361 572 |
 ///
-/// The divisor stays at 2 anyway, because the census disqualifies the key and
-/// names no replacement value for it: every divisor is a worse classifier than
-/// no gate, so moving to 3 or 4 would trade one unmeasured number for another.
-/// What the census does name is the gate to build instead — the reclaim ratio
-/// `reclaimed / after`, which is the other term of the break-even expression
-/// and, unlike the remaining call count, is known at firing time. A gate at
-/// `ratio >= 0.15` admits 152 firings at precision 0.60 and turns the same
-/// corpus from +5.63 M into **−5.61 M**. That is #4753, and it is a new gate
-/// with its own witness rather than a new value for this one.
+/// Fifteen percent is the minimum of the net column. It fires 40 times more
+/// than the budget gate did over this corpus and 218 times less than no gate,
+/// and the net already prices every one of those invalidations — a threshold
+/// that fired less (0.25) gave back 248 K tokens of the saving.
 ///
-/// MEASURED: 370 pure pass-0 retention firings across 96 session journals,
-/// 2026-08-24 (#4452, `scripts/retention-census.py`). The census is why the
-/// divisor is still 2 rather than 3 or 4, so a merge that changed it would be
-/// discarding the measurement, not disagreeing with it.
-const RETENTION_TRIGGER_BUDGET_DIVISOR: u64 = 2;
+/// MEASURED: 370 pure pass-0 retention firings across 95 session journals,
+/// re-run 2026-08-26 and unchanged from the 2026-08-24 census (#4452, #4753,
+/// `scripts/retention-census.py`). Every number above is a cell of that
+/// output, so a merge that moved this constant would be discarding the
+/// measurement rather than disagreeing with it.
+const RETENTION_TRIGGER_RECLAIM_PERCENT: u64 = 15;
 
 /// The bytes one aged payload retains: both kept ends plus the elision
 /// marker. What aging reclaims from a payload is its length minus this.
@@ -350,15 +345,17 @@ const AGE_RETAINED_CHARS: usize = 2 * AGE_KEEP_CHARS + AGE_ELISION_MARKER.len();
 ///
 /// Results in older Tool messages are middle-out aged (`age_content`) once
 /// two conditions hold together: at least `RETENTION_MIN_RECLAIM_CHARS` of
-/// them are reclaimable, and the conversation already occupies at least
-/// `budget_tokens / RETENTION_TRIGGER_BUDGET_DIVISOR`.
+/// them are reclaimable, and that batch is worth at least
+/// `RETENTION_TRIGGER_RECLAIM_PERCENT` of what the conversation would be left
+/// carrying.
 ///
-/// The second condition is what relates this pass to the budget without
-/// making it one of the budget passes. They fire *at* the ceiling and reclaim
-/// down from it; this one starts working at half the budget, so it still
-/// shapes the standing context from the middle of a long turn — the whole
-/// point of #1285 — while a conversation nowhere near its ceiling keeps a
-/// byte-stable prefix and its prompt-cache hits (#4381).
+/// The second condition is what keeps this pass off the prompt-cache prefix
+/// of a conversation the rewrite would not visibly shrink. It reads no budget
+/// at all, so the pass is free of the budget passes rather than a smaller
+/// version of them: they fire *at* the ceiling and reclaim down from it,
+/// while this one shapes the standing context from wherever in a long turn
+/// the batch has accumulated — the point of #1285, and the band #4753's
+/// census found the old budget-fraction gate was suppressing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RetentionPolicy {
     /// Tool messages within this distance of the newest one are never touched
@@ -368,9 +365,9 @@ pub struct RetentionPolicy {
 }
 
 /// Pass 0: age every large tool result older than the policy's horizon,
-/// gated on [`RETENTION_MIN_RECLAIM_CHARS`] and on the conversation having
-/// reached [`RETENTION_TRIGGER_BUDGET_DIVISOR`]-th of `budget_tokens`.
-/// Returns `(aged, aged_blocks,
+/// gated on [`RETENTION_MIN_RECLAIM_CHARS`] and on the batch clearing
+/// [`RETENTION_TRIGGER_RECLAIM_PERCENT`] of the conversation it would leave
+/// behind. Returns `(aged, aged_blocks,
 /// rewrites, tokens_saved)`; block ids are captured before mutation so the
 /// report cites the identity the previous step's manifest recorded (§6.2),
 /// and each rewrite's replacement record is captured right after it (#1667) —
@@ -384,14 +381,7 @@ fn age_stale_tool_results(
     messages: &mut [CompletionMessage],
     policy: RetentionPolicy,
     current_tokens: u64,
-    budget_tokens: u64,
 ) -> (usize, Vec<String>, Vec<CompactionRewrite>, u64) {
-    // The budget precondition, before the transcript is walked at all: this
-    // runs on every step, and a conversation with room to spare must cost
-    // nothing here beyond the comparison.
-    if current_tokens <= budget_tokens / RETENTION_TRIGGER_BUDGET_DIVISOR {
-        return (0, Vec::new(), Vec::new(), 0);
-    }
     let tool_positions: Vec<usize> = messages
         .iter()
         .enumerate()
@@ -428,6 +418,22 @@ fn age_stale_tool_results(
         })
         .sum();
     if reclaimable < RETENTION_MIN_RECLAIM_CHARS {
+        return (0, Vec::new(), Vec::new(), 0);
+    }
+    // The reclaim-ratio gate (#4753). `reclaimable` is the batch priced in
+    // bytes and every ageable payload is plain text, so the shared byte
+    // heuristic converts it to the same units `current_tokens` is in; the
+    // per-message diffs below then measure what was actually saved, and the
+    // two agree to within the estimator's rounding. `after` is what the
+    // conversation would carry once the batch is gone, which is the
+    // denominator the census priced — a batch that takes back a tenth of a
+    // 400 K transcript is the same bytes and a far worse trade than one that
+    // takes back a tenth of a 40 K one.
+    let reclaimable_tokens = estimate_tokens_for_bytes(reclaimable as u64);
+    let after = current_tokens.saturating_sub(reclaimable_tokens);
+    if reclaimable_tokens.saturating_mul(100)
+        < after.saturating_mul(RETENTION_TRIGGER_RECLAIM_PERCENT)
+    {
         return (0, Vec::new(), Vec::new(), 0);
     }
     let mut aged = 0usize;
@@ -508,13 +514,13 @@ pub fn compact_measured(
     retention: Option<RetentionPolicy>,
 ) -> (u64, Option<CompactionReport>) {
     let before_tokens = estimate_conversation_tokens(messages);
-    // Pass 0: age-based retention, before the budget comparison and on its own
-    // (lower) trigger. Its savings feed the comparison, so a retention pass
-    // that shrinks the transcript under budget also spares it the budget
-    // passes' deeper rewrites this step.
+    // Pass 0: age-based retention, before the budget comparison and on a
+    // trigger that reads no budget at all. Its savings feed the comparison, so
+    // a retention pass that shrinks the transcript under budget also spares it
+    // the budget passes' deeper rewrites this step.
     let (retention_aged, retention_aged_blocks, retention_rewrites, retention_saved) =
         match retention {
-            Some(policy) => age_stale_tool_results(messages, policy, before_tokens, budget_tokens),
+            Some(policy) => age_stale_tool_results(messages, policy, before_tokens),
             None => (0, Vec::new(), Vec::new(), 0),
         };
     let current_tokens = before_tokens.saturating_sub(retention_saved);

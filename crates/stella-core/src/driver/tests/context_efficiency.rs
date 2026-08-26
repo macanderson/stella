@@ -42,11 +42,11 @@ async fn a_long_turn_ages_old_tool_results_far_below_the_compaction_budget() {
     // results MID-TURN, report them in a `Compaction` event, and leave the
     // recent horizon verbatim.
     //
-    // The budget is 20k rather than the default 150k because #4381 gave pass 0
-    // a pressure gate: it fires past half the budget, not at any size. 20k
-    // puts this turn over that half while still leaving it comfortably under
-    // the budget itself, so the aging below is the retention pass's and the
-    // `evicted == 0` assertion still says the budget passes never ran.
+    // The budget is 20k rather than the default 150k so the turn stays
+    // comfortably under it: the aging below is then the retention pass's, and
+    // the `evicted == 0` assertion still says the budget passes never ran.
+    // Pass 0's own gate reads no budget since #4753 — it asks whether the
+    // batch is worth a real share of the transcript, which here it is.
     let mut script: Vec<Result<CompletionResultAlias, ProviderError>> = (0..13)
         .map(|i| Ok(tool_call_result(&format!("c{i}"), "bash")))
         .collect();
