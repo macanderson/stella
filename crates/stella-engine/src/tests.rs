@@ -163,7 +163,7 @@ fn event_type(event: &AgentEvent) -> String {
 }
 
 /// Context receipts are the one thing a resumed turn re-emits, because the
-/// block registry is a per-turn memo a `Checkpoint` deliberately does not
+/// block registry is a per-turn memo a `Checkpoint` does not
 /// carry (see `stella_core::step`). Compared separately, never mixed in.
 fn is_receipt(event: &AgentEvent) -> bool {
     matches!(

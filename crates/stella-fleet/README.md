@@ -14,7 +14,7 @@ budgets uncounted in the TS era, so a caller gets claims, ledger rows, lineage
 and budget metering or it does not get a worker. Everything external is a port
 trait (`FleetWorker`, `GitCli`, `GhCli`, `Sleeper`, plus `stella_core::Clock`)
 so every test runs against fakes; `git`/`gh` are shelled out to through
-`tokio::process` rather than linking libgit2 (a deliberately-avoided heavy
+`tokio::process` rather than linking libgit2 (an avoided heavy
 native build); and there is no `unwrap`/`panic` outside tests.
 
 ## Direction — many turns, still one loop
@@ -31,7 +31,7 @@ its own adjudication.
 
 Two practical consequences. `executions.kind = 'fleet'` is a *door*, and which
 wrapper ran belongs in `pipeline_variant` (#3388) — so a fleet run comparing two
-verification designs groups by the variant, not by the door. And the one-seam rule
+verification designs groups by which wrapper ran, not by the door. And the one-seam rule
 below is exactly the rule the wrapper contract adopts for child turns: a worker is
 handed a bounded, budget-carved turn through one API, never a hand-rolled engine
 of its own.
@@ -42,7 +42,7 @@ Depends on `stella-protocol` (`AgentEvent`, `PrStatus`, `CiStatus`),
 `stella-core` (`BudgetGuard`, `Clock`), `stella-store` (the `file_locks` table
 that backs task claims) and `stella-tools` (`subprocess_env` scrubbing for the
 `git`/`gh` subprocesses). `stella-cli` is the only crate that depends on it,
-and this crate builds no binary of its own. It deliberately does **not** depend
+and this crate builds no binary of its own. It does **not** depend
 on `stella-model`: prompt-cache pricing and TTL *policy* stay on that side of
 the boundary, and only the scheduling *heuristic* lives here
 ([`src/cache_schedule.rs:1`](src/cache_schedule.rs)).
@@ -69,7 +69,7 @@ The model-call/tool loop itself stays in [`stella-core`](../stella-core), and th
 real worker, plan parsing and `--spend-limit` split stay in
 `crates/stella-cli/src/fleet_cmd.rs`.
 
-General persistence does not land here either. The ledger deliberately mirrors
+General persistence does not land here either. The ledger mirrors
 [`stella-store`](../stella-store)'s conventions — embedded SQLite under
 `.stella/private/`, WAL, numbered `user_version` migrations — but `fleet.db` is its
 own database on purpose, not a schema inside `store.db`: the fan-out's authoritative
@@ -83,7 +83,7 @@ stay across the `stella-model`/CLI boundary, as *Where it sits* explains.
 
 Resist splitting a new crate rather than extending this one. A new crate is
 justified only when the functionality sits behind a port and would drag heavy new
-dependencies into a crate that is deliberately light (this crate shells out to
+dependencies into a crate that is light (this crate shells out to
 `git`/`gh` precisely to avoid linking libgit2), when it needs a dependency direction
 the current graph forbids (two crates that must not know each other needing a shared
 home — how `stella-home` earns its row), or when it is a genuinely separate
@@ -152,7 +152,7 @@ same thing. Note `task` is doubly loaded too: a fleet `TaskId` is a unit of
 work in a run, while a `tasks` row in `stella-store` is the agent's own
 task-board snapshot.
 
-**Two claims, two different questions.** A *file* claim (`file_locks`) asks
+A *file* claim (`file_locks`) asks
 "may I write this path?"; a **dispatch claim** ([`ledger/lease.rs`](src/ledger/lease.rs),
 #1136) asks "is another session already doing this work?". Only the second one
 stops two sessions duplicating an entire run, which is what actually happened:

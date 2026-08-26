@@ -498,7 +498,7 @@ impl fmt::Debug for HttpEmbedder {
 /// trusting.
 ///
 /// Only the delta-seconds form of `Retry-After` is read. The HTTP-date form
-/// is legal and is deliberately ignored: honouring it means trusting the
+/// is legal and is ignored: honouring it means trusting the
 /// caller's clock to agree with the server's, and a skewed clock turns a
 /// two-second pause into a two-hour one. Falling back to the local backoff
 /// schedule is wrong by at most a few seconds; trusting a bad date is wrong
@@ -545,7 +545,7 @@ impl Embedder for HttpEmbedder {
         // asked, so retrying one only delays an error the caller has to read
         // anyway; a 429 or a 5xx is a condition that clears.
         //
-        // A transport error is deliberately *not* retried here. It is not a
+        // A transport error is *not* retried here. It is not a
         // backend instruction, it has no `Retry-After` to honour, and the
         // request may well have been received and billed — re-sending it is
         // a decision about the user's money, not a courtesy, and belongs to

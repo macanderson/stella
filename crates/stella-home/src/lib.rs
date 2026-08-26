@@ -15,7 +15,7 @@
 //! # Why this is its own crate
 //!
 //! It used to be two implementations. `stella_store::usage::data_dir` was
-//! canonical and `stella_observatory::global::data_dir` was a deliberate copy,
+//! canonical and `stella_observatory::global::data_dir` was a copy,
 //! because the observatory must not link `stella-store` — `Store::open` runs
 //! migrations, migrations are writes, and an observer must never mutate what
 //! it observes. The copy carried a comment asking future readers to keep the
@@ -32,10 +32,10 @@
 //! since concurrent `getenv`/`setenv` is undefined behaviour on POSIX and the
 //! process environment is the one piece of global state a test cannot own.
 
-// Invariant #5: library code never panics on runtime data. This crate is at
+// AGENTS.md #5: library code never panics on runtime data. This crate is at
 // zero production `unwrap`/`expect`, and this keeps it there — `make lint` runs
 // clippy with `-D warnings`, so a new one fails the gate instead of arriving
-// unremarked. `not(test)` scopes the lint exactly as the invariant does: the
+// unremarked. `not(test)` scopes the lint exactly as the rule does: the
 // rule is about runtime data, and `unwrap` in a test is fine.
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]
 
@@ -121,7 +121,7 @@ pub fn resolve_stella_home(
 /// notifications, enterprise spool, catalog): `$STELLA_DATA_DIR`, else
 /// [`stella_home`], else the current directory.
 ///
-/// The current-directory fallback is deliberate and required: a machine
+/// The current-directory fallback is required: a machine
 /// with no discoverable home must still get a usable path rather than a
 /// panic, because every caller of this is on a best-effort telemetry or
 /// registry path that has no business failing a turn.
@@ -287,7 +287,7 @@ pub fn resolve_project_plugins_dir(workspace_root: &std::path::Path) -> PathBuf 
 
 /// Roots earlier builds wrote this state to, newest first.
 ///
-/// The `fullauto` spelling is deliberate and must never be renamed with the
+/// The `fullauto` spelling must never be renamed with the
 /// rest of the loop (#1757): these name bytes already on users' disks, not a
 /// concept. Rewriting them points the migration at a directory that has never
 /// existed, and losing the seen-set re-files every finding ever triaged.

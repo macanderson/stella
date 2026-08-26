@@ -114,7 +114,7 @@
 //! # What earns a re-export: the closure rule
 //!
 //! This is the crate's whole editorial policy, and it is stated here and in
-//! `README.md` in the same words deliberately — the two used to disagree, one
+//! `README.md` in the same words — the two used to disagree, one
 //! saying a re-export is earned only when a host "genuinely cannot drive a
 //! turn without it" and the other stating a strictly wider per-port closure,
 //! which left `Engine::with_requery` reachable through the facade and
@@ -144,7 +144,7 @@
 //!
 //! ## The hook plane is the wrong layer, by design
 //!
-//! Two of [`Engine`]'s builder methods are deliberately **not** closed over:
+//! Two of [`Engine`]'s builder methods are **not** closed over:
 //!
 //! - **[`Engine::with_hooks`]** (`stella_core::hooks::{Hooks, HookRunner}`)
 //!   and **`Engine::with_bus`** (`stella_core::bus::HookBus`). Their closure
@@ -192,7 +192,7 @@
 // [`StepOutcome::Aborted`] and [`TurnOutcome::Aborted`] carry it, and its own
 // doc calls it "the half of `reason` a consumer may branch on" — so a host
 // that cannot name it is left matching on the prose of `reason` to tell a
-// deliberate stop from a failure, which is invariant 5's defect wearing a
+// `DeliberateStop` from a failure, which is AGENTS.md #5's defect wearing a
 // facade (#3715).
 pub use stella_core::step::{
     AbortKind, BudgetSnapshot, CANCELLED_REASON, CHECKPOINT_VERSION, CancelToken, Checkpoint,
@@ -247,7 +247,7 @@ pub use stella_core::receipts::RECALL_MARKER;
 pub use stella_core::retry::{RetryPolicy, Sleeper};
 pub use stella_core::steering::TurnSignal;
 // Obligation 1 of the closure rule (stated in full in this module's docs, and
-// deliberately not restated here — a rule written twice is a rule that
+// not restated here — a rule written twice is a rule that
 // drifts). `Provider` alone was not enough — `complete_ref` takes a
 // `CompletionRequestRef` and returns a `CompletionResult`, whose `usage` and
 // `finish_reason` are a `CompletionUsage` and a `FinishReason`, and

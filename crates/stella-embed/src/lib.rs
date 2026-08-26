@@ -4,8 +4,8 @@
 //! `stella-embed` — **the embedding seam**, extracted so more than one plane
 //! can share it.
 //!
-//! Two consumers now need to turn text into a vector and compare vectors
-//! honestly: `stella-context` (the retrieval plane, which has owned this code
+//! Two consumers now need to turn text into a vector and compare vectors:
+//! `stella-context` (the retrieval plane, which has owned this code
 //! since it existed) and `stella-graph` (the code graph, which needs semantic
 //! file lookup so `stella search` and CGP recall can answer a question the
 //! asker can only phrase in English). Neither may depend on the other — `stella-graph` owns
@@ -27,11 +27,11 @@
 //!   an incremental re-embed rather than a silently mixed vector space.
 //! - [`SimilarityPosture`] — what a score from this backend is allowed to
 //!   *mean*. The declared-posture pattern from `stella-model`'s provider
-//!   parity matrix (invariant 8), pointed at the one seam where an embedder's
-//!   honesty matters.
-//! - [`rank`] — pure, deterministic cosine ranking. No I/O, no allocation of a
-//!   database handle, nothing to mock: invariant 2's half of this crate, and
-//!   the half that is property-tested.
+//!   parity matrix (AGENTS.md #8), pointed at the one seam where an
+//!   embedder's score has to mean something.
+//! - [`rank`] — pure, deterministic cosine ranking. No I/O, no allocation of
+//!   a database handle, nothing to mock: the no-I/O half of this crate
+//!   (AGENTS.md #2), and the half that is property-tested.
 //! - [`HashEmbedder`] — the offline, pure-Rust, zero-download fallback. It is
 //!   a *lexical* projection and says so ([`SimilarityPosture::Surface`]).
 // `HttpEmbedder` is named below without a link on purpose: the item is

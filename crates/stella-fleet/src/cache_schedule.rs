@@ -12,7 +12,7 @@
 //! Pure over passed-in state, exactly like [`crate::plan`]: warmth is computed
 //! upstream (`stella_model::CacheWarmth`, from each session's last provider call
 //! and the provider TTL) and handed in as `warmth_secs`. No clock read, no I/O
-//! — every ordering property is table-checkable. `stella-fleet` deliberately
+//! — every ordering property is table-checkable. `stella-fleet`
 //! does not depend on `stella-model`, keeping the pricing/TTL *policy* on one
 //! side of the crate boundary and the scheduling *heuristic* on the other.
 

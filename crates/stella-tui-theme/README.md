@@ -1,6 +1,6 @@
 # stella-tui-theme
 
-The stella TUI v2 palette, glyph vocabulary, wordmark, and degradation map —
+The stella interactive-mode v2 palette, glyph vocabulary, wordmark, and degradation map —
 one crate so there is one answer.
 
 ```rust
@@ -27,7 +27,7 @@ The palette is not a convention here; it is a set of assertions.
   broken the design, not fixed a test.
 - **Role totality.** `token::ALL` pairs every token with a `token::Clamp`, and
   the tag picks the predicate through `clamp::satisfies`. Adding a token means
-  declaring what kind of colour it is — and a warm hex has no honest
+  declaring what kind of colour it is — and a warm hex has no
   declaration to pick. That is the whole anti-drift mechanism; the individual
   assertions only cover today's set.
 - **Fallback totality.** `fallback::ansi16` answers for every token, proven by
@@ -97,7 +97,7 @@ crosses.
 ## Relationship to `stella-tui::palette`
 
 The v1 deck's palette (`crates/stella-tui/src/palette.rs`, "Phosphor Gold on
-Ink") is a deliberately **warm-neutral** system: gold `#FFB81A`, warm paper
+Ink") is a **warm-neutral** system: gold `#FFB81A`, warm paper
 text, and a stated rule of "no cool grays anywhere on the dark side". The v2
 spec inverts exactly that — a cooler gold and a blue-tipped neutral ramp — so
 the two cannot be one table, and this crate does not try to be a superset of
@@ -108,10 +108,10 @@ scoped to v2 render code for the same reason.
 That paragraph described a tree in which `stella-tui::palette`, the brand kit
 and this crate each carried their own gold, and the sentence held them apart by
 naming all three. They agree now: v5.0 put the kit, the site, the Observatory
-and both TUI palettes on one gold, generated from
+and both interactive-mode palettes on one gold, generated from
 `design/tokens/stella-tokens.json` by `scripts/gen-tokens.py` and checked by
 `make tokens`. So there is no longer a divergence to name — the values are one
-value. The v2 spec's scope is still the TUI; what changed is that the palette
+value. The v2 spec's scope is still interactive mode; what changed is that the palette
 above it is shared rather than parallel.
 
 ## What is generated and what is not

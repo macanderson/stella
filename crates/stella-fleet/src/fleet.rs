@@ -25,7 +25,7 @@
 //! user, driven by the `stella fleet` live dashboard's `[p]`/`[r]`/`[x]`
 //! keys through `stella_tui::FleetControl` and the control pump in
 //! `stella-cli/src/fleet_cmd.rs` (#645). Surfacing fleet tasks as deck lanes
-//! remains a separate follow-up. Restart is deliberately not a fleet verb —
+//! remains a separate follow-up. Restart is not a fleet verb —
 //! [`Fleet::dispatch`] is re-runnable, so a restart is the caller
 //! re-dispatching the same [`Task`]; the fleet keeps no respawn state.
 //!
@@ -339,7 +339,7 @@ pub struct TaskHandle {
     /// stalled past `DISPATCH_LEASE_TTL` and a rival session reclaimed the
     /// task — or the ledger became unreadable. The same "attempt succeeded
     /// but something durable failed" seam as `ledger_error`: the worker was
-    /// deliberately left to finish (never killed mid-flight), so the outcome
+    /// left to finish (never killed mid-flight), so the outcome
     /// above is real work, but a rival may have run the same task in
     /// parallel, and this run is the one that can report the overlap instead
     /// of leaving it to whoever inspects the ledger's bumped fence (#1677).
@@ -691,7 +691,7 @@ where
     ///
     /// **A lost lease does not stop the worker.** If this attempt is
     /// superseded anyway — stalled past its TTL, or a clock that jumped — the
-    /// honest options are to kill a worker mid-flight (which this codebase
+    /// options are to kill a worker mid-flight (which this codebase
     /// refuses to do anywhere else: budget aborts wait for a safe boundary,
     /// and a timeout asks the worker to stop rather than dropping it) or to
     /// finish the work that is already paid for. It finishes. The row is not
@@ -788,7 +788,7 @@ where
         //    verbs address exactly the tasks with a live worker. The map is
         //    keyed by task id alone, which is total within a plan —
         //    `run_plan` never has two live attempts of one id. An ad-hoc
-        //    caller dispatching a still-live id concurrently gets the honest
+        //    caller dispatching a still-live id concurrently gets the
         //    limit of that key: the second registration displaces the first,
         //    and whichever attempt settles first deregisters the other's
         //    control lines, leaving a live worker unaddressable by
@@ -824,7 +824,7 @@ where
                             // abandon seam a cancelled dispatch takes (#803):
                             // the CLI worker's abandon channel closes with it
                             // and its detached thread stops at ITS next await.
-                            // The synthesized result is honest about what was
+                            // The synthesized result says what was
                             // lost — spend and commits were never observed.
                             Err(_) => WorkerOutcome {
                                 cost_usd: 0.0,
@@ -872,7 +872,7 @@ where
         // propagating a disk/`SQLITE_BUSY` error here converted a COMPLETED
         // worker into a dispatch failure, which dropped its result, skipped
         // its dependents, and left the attempts row permanently open anyway.
-        // The same honesty argument as the spend ordering: losing the durable
+        // The same argument as the spend ordering: losing the durable
         // row is bad, and losing the run's real outcome with it is worse. The
         // failure is carried on the handle, never swallowed.
         let ledger_error = {
@@ -1175,7 +1175,7 @@ where
     /// `false` when no live worker is registered under `id`; a stale pause
     /// is a no-op, never an error — the deck sub-session semantics.
     ///
-    /// Restart is deliberately NOT a fleet verb: [`dispatch`](Self::dispatch)
+    /// Restart is NOT a fleet verb: [`dispatch`](Self::dispatch)
     /// is already re-runnable, so a restart is the caller re-dispatching the
     /// same [`Task`] — the fleet keeps no respawn state.
     pub fn pause_task(&self, id: &TaskId) -> bool {

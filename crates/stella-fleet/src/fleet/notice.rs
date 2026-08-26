@@ -27,7 +27,7 @@ pub fn handle_notices(handle: &TaskHandle) -> Vec<String> {
         ));
     }
     if let Some(loss) = &handle.lease_loss {
-        // The worker was deliberately left to finish (never killed
+        // The worker was left to finish (never killed
         // mid-flight), so the result above is real work — but a rival may
         // have produced the same work in parallel, and this line is the one
         // place that overlap reaches a human.

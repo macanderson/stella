@@ -21,7 +21,7 @@
 //! # Beginning and end, never just the beginning
 //!
 //! The policy that shipped before this module took whole hunks from the front
-//! until the budget ran out. That is honest about what it shows and silent
+//! until the budget ran out. That is accurate about what it shows and silent
 //! about the shape of what it hides: a long edit rendered as its first twenty
 //! lines reads as an edit that starts here and trails off, when the reader's
 //! actual question — did this rewrite land where I think it did — is usually
@@ -32,16 +32,16 @@
 //! Two levels, because a diff has two natural units:
 //!
 //! - **Whole hunks**, taken alternately from the front and the back while
-//!   they fit. A hunk is the smallest unit that is honest on its own: a cut
-//!   inside one lands routinely between a `-` line and the `+` line that
-//!   replaces it, leaving a change that reads as a pure deletion.
+//!   they fit. A hunk is the smallest unit that reads correctly on its own:
+//!   a cut inside one lands routinely between a `-` line and the `+` line
+//!   that replaces it, leaving a change that reads as a pure deletion.
 //! - **A line window**, when no whole hunk fits at all — one enormous hunk,
 //!   which is exactly the created-file shape above. Half the budget from the
 //!   top, the rest from the bottom.
 //!
 //! Either way there is **at most one elision**, so a caller has exactly one
 //! place to draw the marker and exactly one number to put in it. That is a
-//! guaranteed property of [`Plan`], not a coincidence of the inputs — see
+//! guaranteed property of [`Plan`] — see
 //! [`Plan::fold_before`].
 
 use core::ops::Range;
@@ -246,9 +246,9 @@ pub fn plan(hunk_starts: &[usize], total: usize, cap: usize) -> Plan {
 /// consumer. The caller draws its `⋯ n lines` marker between the pieces; the
 /// returned count is what to put in it.
 ///
-/// One consequence worth naming: splitting a hunk replaces one header row
-/// with two, so the rendering can exceed `cap` by one row per split. The
-/// alternative — dropping a header — would be a diff that does not say where
+/// Splitting a hunk replaces one header row with two, so the rendering can
+/// exceed `cap` by one row per split. The alternative — dropping a header —
+/// would be a diff that does not say where
 /// it is.
 #[must_use]
 pub fn elide(hunks: &[Hunk], cap: usize) -> Elided {
@@ -294,8 +294,8 @@ pub fn elide(hunks: &[Hunk], cap: usize) -> Elided {
                     out.push(reheader(done));
                 }
                 // The plan hides one contiguous run, so this fires once — at
-                // the boundary the caller draws its marker on. Deliberately
-                // NOT gated on having shown something first: a view that kept
+                // the boundary the caller draws its marker on. It is NOT
+                // gated on having shown something first: a view that kept
                 // only a tail hides its leading run, and the marker belongs in
                 // front of the surviving hunk (`out.len()` is 0 there), not
                 // after it.
@@ -448,7 +448,7 @@ mod tests {
     fn whole_hunks_are_kept_rather_than_sliced_mid_change() {
         // Two three-line hunks under a four-line budget. Slicing would show
         // the second hunk's `-` line without the `+` that replaces it — a
-        // change that reads as a pure deletion. One whole hunk is the honest
+        // change that reads as a pure deletion. One whole hunk is the
         // answer, and the other is reported as hidden.
         let plan = plan(&[0, 3], 6, 4);
         assert_eq!(spans(&plan), vec![(0, 3)]);

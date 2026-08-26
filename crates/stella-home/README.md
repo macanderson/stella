@@ -95,7 +95,7 @@ it crosses.
 ## Why it is a crate and not a module
 
 There were two implementations. `stella_store::usage::data_dir` was canonical;
-`stella_observatory::global::data_dir` was a deliberate copy carrying a comment
+`stella_observatory::global::data_dir` was a copy carrying a comment
 asking future readers to keep it in sync by hand. The copy existed because the
 observatory must **not** link [`stella-store`](../stella-store): `Store::open`
 runs migrations, migrations are writes, and an observer must never mutate what

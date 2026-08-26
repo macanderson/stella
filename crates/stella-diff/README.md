@@ -19,7 +19,7 @@ Four modules, each a different verb over that one shape:
 Zero dependencies by default, zero I/O, no types from any other stella crate:
 two `&str` documents in, a [`Diff`] out. That emptiness is the point. The differ began
 life inside `stella-cli` (`stella inspect --diff`), and the Observatory —
-which deliberately links almost no workspace crate, because an observer must
+which links almost no workspace crate, because an observer must
 not pull in the machinery it observes — would have had to take a fourth
 acknowledged copy to render "what changed between two model calls" (#1511).
 A leaf crate is the `stella-home` precedent (#1139): shared by linking,
@@ -48,7 +48,7 @@ was extracted to end.
   Inputs whose DP table would exceed `LCS_AREA_CAP` cells degrade to a
   correct-but-blunt replace-everything script, flagged `minimal: false` —
   surfaces are expected to say so rather than present it as precise.
-- **Empty hunk list = byte-identical** — the honest "no change" answer, not
+- **Empty hunk list = byte-identical** — the "no change" answer, not
   an error.
 - **A parsed diff round-trips**: what `unified_diff` renders, [`parse::hunks`]
   reads back to the same hunks. There is a test for it, because the two halves

@@ -5,7 +5,7 @@ feature shipping on one of Stella's surfaces and silently not the other.
 Stella is one engine behind two customer-facing surfaces: the CLI
 (`stella-cli`, the community tool) and the API (`stella-serve`, the embeddable
 sidecar). Nothing used to enforce that a capability landing on one surface
-landed on — or was *deliberately declared absent from* — the other, and the
+landed on — or was *declared absent from* — the other, and the
 two drifted exactly the way per-provider features drifted before
 `stella-model/src/provider_parity.rs`: when this matrix was written, the API
 could set precisely one of `EngineConfig`'s ~15 tuning knobs, the goal loop
@@ -43,7 +43,7 @@ three instruments the provider matrix proved out:
 
 **The law for new features:** adding an engine capability, an API route, or an
 agent-facing CLI behavior means updating this matrix in the same PR.
-`Deferred` is an honest and expected answer — the point is that a human wrote
+`Deferred` is an expected answer — the point is that a human wrote
 the answer down where a test can keep it true, not that every feature ships
 everywhere at once. The embedding story the matrix serves is
 [`docs/spec/engine-embedding.md`](../../docs/spec/engine-embedding.md).
@@ -51,7 +51,7 @@ everywhere at once. The embedding story the matrix serves is
 ## Boundary — does this change belong here?
 
 One file, one job: `src/lib.rs` holds the posture types, the matrix rows, and
-the tests (inline `mod tests`) that keep the rows honest. A change belongs
+the tests (inline `mod tests`) that keep the rows true. A change belongs
 here when it is a matrix decision — a new row, a posture change, a witness
 name, a composition-seam entry, lowering `UNWITNESSED_BASELINE` after writing
 a missing witness. The capability *itself* never lives here: its engine home

@@ -38,7 +38,7 @@ pub enum EmbedError {
 
     /// A concrete backend (a hosted API, a local inference server) failed.
     /// Unused by the hashing default; carried so a transport error keeps its
-    /// own variant instead of being flattened into a message.
+    /// own error case instead of being flattened into a message.
     #[error("embedding backend error: {0}")]
     Backend(String),
 }
@@ -88,7 +88,7 @@ pub struct Embedding {
 /// What a similarity score from this embedder is allowed to *mean* — the
 /// declared-posture pattern from `stella-model`'s provider parity matrix
 /// (`CachePosture`/`ReasoningPosture`), applied to the one seam where an
-/// embedder's honesty matters: recall admission.
+/// a score has to mean something: recall admission.
 ///
 /// Every consumer may use scores from either posture to **order** candidates.
 /// Only a `Semantic` posture lets a score **admit** one: retrieval's evidence
@@ -148,9 +148,9 @@ pub trait Embedder: Send + Sync {
     async fn embed(&self, texts: &[String]) -> Result<Vec<Embedding>, EmbedError>;
 
     /// Whether this backend's similarity scores may admit a recall candidate
-    /// on their own, and at what floor. Deliberately without a default: an
+    /// on their own, and at what floor. No default: an
     /// implementor must look at this question, exactly as a provider must
-    /// declare its row on every parity axis (invariant 8).
+    /// declare its row on every parity axis (AGENTS.md #8).
     fn similarity_posture(&self) -> SimilarityPosture;
 }
 

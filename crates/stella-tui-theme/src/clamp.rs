@@ -18,7 +18,7 @@
 //! hue and its lift cannot be met by any palette, which is why an earlier pass
 //! here recorded an exception instead — a second ceiling reverse-engineered
 //! from the one value it had to admit. A bound derived from the value it must
-//! admit is not an invariant; it is a rationalization, and it can say no to
+//! admit is not a rule; it is a rationalization, and it can say no to
 //! nothing in principle.
 //!
 //! The fix is to state each clause where it is coherent, because the two
@@ -190,12 +190,12 @@ pub fn hue_distance(a: f64, b: f64) -> f64 {
 
 /// Is `lift` the same gold as `base`, brighter?
 ///
-/// Three things, all required: both are in the gold role, their hues agree to
-/// within [`LIFT_HUE_TOLERANCE_DEG`], and the lift is strictly lighter. That
-/// last clause is what makes it a *lift* rather than merely a neighbour — two
+/// Both are in the gold role, their hues agree to within
+/// [`LIFT_HUE_TOLERANCE_DEG`], and the lift is strictly lighter. That last
+/// clause is what makes it a *lift* rather than merely a neighbour — two
 /// tokens at the same lightness are two golds, and this palette authors one.
 ///
-/// Deliberately anchored to `base` rather than expressed as a looser channel
+/// Anchored to `base` rather than expressed as a looser channel
 /// ceiling. An anchor is the stronger constraint and the more durable one: a
 /// recolour of the authored gold either carries its lift along or fails here,
 /// where a ceiling would silently keep admitting a lift of a gold that no

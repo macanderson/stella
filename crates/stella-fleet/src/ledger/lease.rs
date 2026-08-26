@@ -44,7 +44,7 @@
 //!   extending a lease it no longer holds. Its release is fenced too, so it
 //!   cannot delete the rival's row on the way out. It learns it lost within
 //!   one heartbeat; what it does then is the caller's policy (`crate::fleet`
-//!   deliberately does not kill a worker mid-flight — see
+//!   does not kill a worker mid-flight — see
 //!   `Fleet::dispatch`).
 //!
 //! The one thing a lease cannot promise: between the moment a lease expires
@@ -269,7 +269,7 @@ impl Ledger {
     /// The claim row for one key, live or expired — `None` when the key has
     /// never been claimed or was released.
     ///
-    /// Expired rows are returned deliberately: "who last held this, and when
+    /// Expired rows are returned: "who last held this, and when
     /// did it lapse" is exactly what a human deciding what to hand out next
     /// wants to see. Use [`DispatchClaim::is_live_at`] to judge it.
     pub fn dispatch_claim(&self, claim_key: &str) -> Result<Option<DispatchClaim>, LedgerError> {

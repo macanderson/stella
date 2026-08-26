@@ -137,7 +137,7 @@ impl Ledger {
     ///
     /// Scans every column in `RUN_REFERENCES`. `FRESH_SCHEMA` constrains four
     /// of them (`commits.run_id` is denormalized and unconstrained on every
-    /// file); existing files were deliberately left unconstrained because
+    /// file); existing files were left unconstrained because
     /// retrofitting them can only be done by deleting this history (#617
     /// item 5). Reporting is therefore the whole remedy: nothing reads a row
     /// by orphaned run today, so the rows are inert, but an operator should
@@ -173,7 +173,7 @@ impl Ledger {
     /// legacy migration ladder.
     ///
     /// Read from `sqlite_master` rather than tracked in `user_version`, because
-    /// version alone cannot answer it: both variants are v2.
+    /// version alone cannot answer it: both shapes are v2.
     pub fn enforces_run_references(&self) -> Result<bool, LedgerError> {
         let ddl: Option<String> = self
             .conn
@@ -468,7 +468,7 @@ impl Ledger {
     /// shared-prefix half of the warmth signal (issue #1222): within one run
     /// every worker shares the same byte-stable workspace prefix, so a task
     /// with no history of its own inherits the prefix's last touch. Uniform
-    /// across a ready set of first-time tasks, which makes it an honest
+    /// across a ready set of first-time tasks, which makes it a
     /// no-op reorder there; it only separates tasks once per-task history
     /// exists. Same timestamp caveat as
     /// [`last_attempt_finish_ms`](Self::last_attempt_finish_ms).
@@ -501,7 +501,7 @@ const SCHEMA_VERSION: i64 = 3;
 /// **Downgrades are not guarded**, matching `stella-context`'s documented
 /// behavior: a file stamped by a newer binary takes the early return and is
 /// opened as-is. Rejecting it is arguably right, but it turns `open` into an
-/// error for anyone who downgrades and belongs in a deliberate change with a
+/// error for anyone who downgrades and belongs in a planned change with a
 /// migration story, not here.
 ///
 /// **The version is read inside an IMMEDIATE transaction**, so two processes
@@ -600,7 +600,7 @@ const RUN_REFERENCES: [(&str, &str); 5] = [
 /// **Consequence a future migration author must know:** `SCHEMA_VERSION` no
 /// longer determines shape by itself. Two files can both be at v2 — one with
 /// these constraints and one without. A step that rebuilds any of these four
-/// tables has to reproduce the right variant, or read the existing DDL from
+/// tables has to reproduce the right shape, or read the existing DDL from
 /// `sqlite_master` rather than assuming. The alternative was worse: silently
 /// deleting history, or leaving new databases unconstrained forever.
 const FRESH_SCHEMA: &str = "\

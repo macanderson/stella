@@ -8,7 +8,7 @@
 //! Detection is split the way `stella-home` splits its resolvers: [`truecolor`]
 //! is pure over the value a caller read, and [`detect_truecolor`] is the
 //! one-line wrapper that reads it. That is what lets the mapping be tested
-//! without a fake environment, and it is the half that matters — a fallback
+//! without a fake environment — a fallback
 //! map nobody can exercise is a fallback map nobody knows is wrong.
 
 use ratatui::style::Color;
@@ -75,7 +75,7 @@ pub fn ansi16(color: Color) -> Color {
         token::PAPER | token::PAPER_PANEL => Color::White,
         token::PAPER_BORDER => Color::Gray,
         // Not a palette token — a caller's own colour, or one this crate does
-        // not own. Passing it through is the honest answer: this function
+        // not own. Passing it through is the answer: this function
         // narrows the palette, it does not police what else reaches a cell.
         other => other,
     }

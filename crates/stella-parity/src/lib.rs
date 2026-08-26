@@ -7,7 +7,7 @@
 //! Stella is one engine behind (today) two customer-facing surfaces: the CLI
 //! (`stella-cli`, the community tool) and the API (`stella-serve`, the
 //! embeddable sidecar). Nothing used to enforce that a capability landing on
-//! one surface landed on — or was *deliberately declared absent from* — the
+//! one surface landed on — or was *declared absent from* — the
 //! other, and the two drifted exactly the way per-provider features drifted
 //! before `stella-model/src/provider_parity.rs`: at the time this matrix was
 //! written, the API could set precisely ONE of `EngineConfig`'s ~15 tuning
@@ -32,7 +32,7 @@
 //!
 //! **The law for new features:** adding an engine capability, an API route,
 //! or an agent-facing CLI behavior means updating this matrix in the same
-//! PR. `Deferred` is an honest and expected answer — the point is that a
+//! PR. `Deferred` is an expected answer — the point is that a
 //! human wrote the answer down where a test can keep it true, not that every
 //! feature ships everywhere at once.
 //!
@@ -67,7 +67,7 @@ pub enum SurfacePosture {
         /// What a witness for this wiring would pin.
         missing: &'static str,
     },
-    /// Not on this surface yet, deliberately and visibly — the surface-level
+    /// Not on this surface yet, and recorded as absent — the surface-level
     /// sibling of `stella-store`'s declared-gap `DRAIN_FORMATS`. `waiting_on`
     /// names the decision or dependency, so a reviewer can tell a parked
     /// feature from a forgotten one.
@@ -167,7 +167,7 @@ pub static CAPABILITIES: &[Capability] = &[
         //
         // The reference implementations (`MemoryCheckpointStore`,
         // `FileCheckpointStore`) are library types an embedder may choose.
-        // Deliberately NOT exposed as a flag on the `stella-serve` binary:
+        // NOT exposed as a flag on the `stella-serve` binary:
         // that would be the server choosing, which is the act ADR 0013 lists
         // under "what this does not commit us to", and it is one line to add
         // once that ADR is ratified.
@@ -332,7 +332,7 @@ pub static CAPABILITIES: &[Capability] = &[
         id: "session.persistent",
         engine_home: "caller-owned message history and budget across turns (the engine borrows, never owns)",
         engine_entries: &[],
-        // Two stores, deliberately not converged, and split by instant rather
+        // Two stores, not converged, and split by instant rather
         // than by content: the sidecar (journal.jsonl / history.json /
         // queue.json) is canonical for the session and for the conversation
         // BETWEEN turns; the workspace's git-backed work journal is canonical
@@ -377,7 +377,7 @@ pub static CAPABILITIES: &[Capability] = &[
                         visibly, on a version it cannot read",
             witness: "an_interrupted_turn_resumes_at_the_step_boundary_not_the_turn_boundary",
         },
-        // Deliberately phrased to AGREE with `turn.checkpoint` above rather
+        // Phrased to AGREE with `turn.checkpoint` above rather
         // than restate it differently. #1198 closed the two things this row
         // used to name — serve had no store, and `SessionSpec` had no identity
         // to key one on — so the gap is no longer the seam, the writing, the
@@ -415,7 +415,7 @@ pub static CAPABILITIES: &[Capability] = &[
             witness: "distinct_families_route_a_cross_family_verifier",
         },
         // Shipped in #1297 as the mode flag this row named as its second
-        // acceptable shape, deliberately not as a `/v1/goals` resource:
+        // acceptable shape, not as a `/v1/goals` resource:
         // every transport concern a goal run has — streaming its progress,
         // stopping it, keeping the work already done — is a turn concern that
         // already exists and is already witnessed. A parallel resource would
@@ -459,7 +459,7 @@ pub static CAPABILITIES: &[Capability] = &[
         cli: SurfacePosture::ShippedUnwitnessed {
             mechanism: "workspace hooks wired via with_session_hook_context on every driver \
                         path. SessionStart firing is a HOST obligation (#2674): the engine \
-                        deliberately has no method for it — a host fires hooks::run_hooks once \
+                        has no method for it — a host fires hooks::run_hooks once \
                         while it assembles the system prompt, before any Engine exists, and \
                         owns surfacing the diagnostics the no-I/O engine cannot print",
             missing: "a CLI-side test pinning that a configured workspace hook actually fires \
@@ -469,7 +469,7 @@ pub static CAPABILITIES: &[Capability] = &[
             mechanism: "operator-installed ServeExtensions on a per-turn HookBus (#1298): \
                         turn/step/model boundaries observable, tool.call.requested \
                         interceptable before the reverse request leaves. Shell hooks stay \
-                        deliberately unreachable server-side (a host must not be able to make \
+                        unreachable server-side (a host must not be able to make \
                         the sidecar spawn shells) and NO route registers an extension — the \
                         bearer token authenticates a host, which is not the operator",
             witness: "operator_hooks_fire_across_a_served_turn",
@@ -509,7 +509,7 @@ pub static CAPABILITIES: &[Capability] = &[
         api: SurfacePosture::Shipped {
             mechanism: "a process-lifetime CalibrationMap per provider_id, fed by every \
                         committed step and read at GET /v1/calibration (#1298). Samples are \
-                        not persisted — serve deliberately has no store — so a redeployed \
+                        not persisted — serve has no store — so a redeployed \
                         sidecar re-converges, which is why the report carries `samples`",
             witness: "the_drift_report_is_readable_through_the_api",
         },
@@ -578,7 +578,7 @@ pub static CAPABILITIES: &[Capability] = &[
             witness: "a_settings_entry_hides_and_refuses_a_tool_in_the_real_stack",
         },
         api: SurfacePosture::NotApplicable {
-            reason: "deliberate bring-your-own-tools posture: serve remotes every tool call to \
+            reason: "bring-your-own-tools posture: serve remotes every tool call to \
                      the host (STELLA_SERVE_TOOLS=remote is the only mode) so the sidecar never \
                      executes host-supplied work itself. A server-side tool mode would be a new \
                      capability row, not a change to this one",
@@ -1008,7 +1008,7 @@ mod tests {
     /// matrix decision fails here, in the adding PR.
     ///
     /// The sweep reads source text for four-space-indented `pub fn` /
-    /// `pub async fn` lines — `impl` items — which deliberately skips
+    /// `pub async fn` lines — `impl` items — which skips
     /// `pub(crate)` internals and module-level free functions.
     ///
     /// It is scoped to `impl … Engine…` blocks, which is what makes the
@@ -1102,7 +1102,7 @@ mod tests {
     /// system prompt — before any Engine exists (the pipeline and fleet
     /// paths never construct one; `Pipeline::run` builds its own, per
     /// stage) — and must surface the hook diagnostics the no-I/O engine
-    /// cannot print (#373), while the serve host deliberately keeps shell
+    /// cannot print (#373), while the serve host keeps shell
     /// hooks unreachable. Two owners of one obligation is the drift the
     /// consolidated turn loop exists to end, so the dead engine copy was
     /// deleted; this pins both halves so a second owner cannot grow back

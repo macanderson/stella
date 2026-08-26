@@ -107,8 +107,8 @@ async fn a_dry_run_mutates_nothing() {
 
 #[tokio::test]
 async fn an_unanswerable_merge_base_keeps_the_branch() {
-    // git exits non-zero for its own reasons (a broken ref, say) — not the
-    // honest "no". The branch must survive either way.
+    // git exits non-zero for its own reasons (a broken ref, say) — not a real
+    // "no". The branch must survive either way.
     let gc = scripted(|args| match arg(args, 0) {
         "worktree" if arg(args, 1) == "list" => GitOutput::ok(MIXED_LISTING),
         "merge-base" => GitOutput::failed(128, "fatal: Not a valid object name"),

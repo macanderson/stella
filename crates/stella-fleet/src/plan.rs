@@ -148,7 +148,7 @@ impl Task {
     }
 
     /// Opt this task into a dedicated git worktree (builder style) — the
-    /// deliberate exception for divergent work (see [`Isolation::Isolated`]).
+    /// one exception for divergent work (see [`Isolation::Isolated`]).
     #[must_use]
     pub fn isolated(mut self) -> Self {
         self.isolation = Isolation::Isolated;
@@ -663,7 +663,7 @@ mod tests {
             prop_assert_eq!(done.len(), plan.tasks.len());
         }
 
-        /// A deliberately-injected 2-cycle between the first two tasks (each
+        /// An injected 2-cycle between the first two tasks (each
         /// depends on the other) — guaranteed cyclic on top of any acyclic
         /// forward edges — is always detected.
         #[test]

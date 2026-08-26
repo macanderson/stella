@@ -241,10 +241,10 @@ fn completed_text(outcome: TurnOutcome) -> String {
         TurnOutcome::Completed { text, .. } => text,
         TurnOutcome::Aborted { reason, kind, .. } => {
             // `AbortKind` is matched, not merely named: a host that cannot
-            // tell a deliberate stop from a failure is parsing `reason`'s
+            // tell a `DeliberateStop` from a failure is parsing `reason`'s
             // prose, which is what re-exporting it prevents (#3715).
             let sort = match kind {
-                AbortKind::DeliberateStop => "a deliberate stop",
+                AbortKind::DeliberateStop => "an intentional stop",
                 AbortKind::Failure => "a failure",
             };
             panic!("a turn assembled entirely through the facade should run: {reason} ({sort})")
@@ -388,7 +388,7 @@ mod hook_plane {
 ///
 /// The rule says a host names nothing but `stella_engine::` paths to fill
 /// every builder argument, and `Engine::with_hooks` / `Engine::with_bus` are
-/// the two arguments it deliberately cannot fill (`src/lib.rs`, "The hook
+/// the two arguments it cannot fill (`src/lib.rs`, "The hook
 /// plane is the wrong layer, by design"). A declaration in prose is a
 /// reviewer's note; this module is the guard.
 mod the_exclusion_is_enforced {
