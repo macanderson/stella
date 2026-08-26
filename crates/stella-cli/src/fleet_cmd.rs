@@ -87,7 +87,12 @@ const SUMMARY_CHARS: usize = 96;
 
 /// Run a fleet: build/load the plan, dispatch it wave by wave, report —
 /// then, with `watch`, hold the fleet PR/CI monitor on the branches.
-#[allow(clippy::too_many_arguments)] // composition-root wiring; one caller
+#[expect(
+    clippy::too_many_arguments,
+    reason = "every parameter is one `stella fleet` flag, taken from clap and passed straight \
+              through by the single caller in `main`; a struct here would be a second copy of \
+              the subcommand's own field list, free to drift from it one flag at a time"
+)]
 pub async fn run_fleet(
     cfg: &Config,
     prompts: &[String],
@@ -836,7 +841,13 @@ fn same_tree(attempt_root: &Path, invocation_root: &Path) -> bool {
 /// (`--pipeline classic`); that driver has been removed from this build
 /// (#3865), so the raw loop is what a wrapper wraps and what an unwrapped
 /// attempt runs.
-#[allow(clippy::too_many_arguments)] // one caller (EngineWorker::run); composition wiring
+#[expect(
+    clippy::too_many_arguments,
+    reason = "`controls` and `spend` are already the bundles; what is left is one attempt's own \
+              values plus a `oneshot::Receiver` that must be moved in, and `EngineWorker::run` \
+              is the only caller — a further struct would be built and destructured in the same \
+              two functions"
+)]
 async fn run_task(
     cfg: &Config,
     budget_limit: Option<f64>,

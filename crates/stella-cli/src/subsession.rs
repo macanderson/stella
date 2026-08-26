@@ -707,7 +707,13 @@ where
 // A worker genuinely needs every one of these (identity, budget, session
 // link, both channels, stop signal) — bundling them into a struct would just
 // move the field list one hop away from the one call shape.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the worker task's owned half of a lane: `LaneCtx`'s borrows cannot cross the \
+              `tokio::spawn` boundary, so this takes the owned session id, workspace name and \
+              cloned senders, plus the receiving ends of the stop and pause channels whose \
+              senders `SubSessions` keeps"
+)]
 pub(crate) fn spawn(
     cfg: &Config,
     spec: SubSessionSpec,
@@ -900,7 +906,12 @@ fn initial_messages(
 /// the driver's stop signal (the same clean drop-at-await cancel the lead
 /// uses) and steered through `tap` at each step boundary. Returns
 /// `(execution_id, cost_usd, end)`.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "`spawn`'s body, one `async move` away: it receives the same owned lane values plus \
+              the two channel receivers, and folding them into a struct would only rename the \
+              capture list `spawn` already assembles"
+)]
 async fn run_worker(
     cfg: &Config,
     spec: &SubSessionSpec,
@@ -1137,22 +1148,36 @@ async fn run_worker(
     (execution_id, settled_cost, end)
 }
 
+/// What every lane entry point needs and none of them owns: which session
+/// this deck is, the workspace it sits in, the spend ceiling a worker
+/// inherits, and the two channels a worker reports on.
+///
+/// The five functions below took these as six positional parameters each,
+/// which is the whole reason their argument counts were what they were —
+/// `respawn` carried nine to do one thing with three. `Copy`, because they
+/// nest (`drain_queue` → `spawn_prompt_lane` → `spawn`) and a bundle that has
+/// to be re-borrowed at every hop is a worse trade than the six parameters it
+/// replaces.
+#[derive(Clone, Copy)]
+pub(crate) struct LaneCtx<'a> {
+    pub(crate) cfg: &'a Config,
+    pub(crate) budget_limit: Option<f64>,
+    pub(crate) session_id: &'a str,
+    pub(crate) workspace_name: &'a str,
+    pub(crate) in_tx: &'a UnboundedSender<Inbound>,
+    pub(crate) sup_tx: &'a UnboundedSender<SupervisorMsg>,
+}
+
 /// Drain the driver's prompt backlog into free worker slots, oldest first.
 /// Stops at a slash command (those belong to the lead's dispatcher — letting
 /// a later prompt jump it would also desync the deck's FIFO queue view) and
 /// while dispatch is held. Sends the `PromptStarted` front-pop for every
 /// prompt it takes, exactly like lead dispatch does.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn drain_queue(
     queue: &mut crate::session_persist::DurableQueue,
     subs: &mut SubSessions,
     dispatch_held: bool,
-    cfg: &Config,
-    budget_limit: Option<f64>,
-    session_id: &str,
-    workspace_name: &str,
-    in_tx: &UnboundedSender<Inbound>,
-    sup_tx: &UnboundedSender<SupervisorMsg>,
+    ctx: LaneCtx<'_>,
 ) {
     while !dispatch_held
         && subs.has_slot()
@@ -1163,16 +1188,7 @@ pub(crate) fn drain_queue(
         let Some(text) = queue.pop_front() else {
             break;
         };
-        spawn_prompt_lane(
-            text,
-            subs,
-            cfg,
-            budget_limit,
-            session_id,
-            workspace_name,
-            in_tx,
-            sup_tx,
-        );
+        spawn_prompt_lane(text, subs, ctx);
     }
 }
 
@@ -1180,19 +1196,9 @@ pub(crate) fn drain_queue(
 /// agents page's "describe a task for a new session"
 /// (`WorkspaceInput::SpawnLane`). The caller has already checked
 /// [`SubSessions::has_slot`]. Returns the lane id it started.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_prompt_lane(
-    text: String,
-    subs: &mut SubSessions,
-    cfg: &Config,
-    budget_limit: Option<f64>,
-    session_id: &str,
-    workspace_name: &str,
-    in_tx: &UnboundedSender<Inbound>,
-    sup_tx: &UnboundedSender<SupervisorMsg>,
-) -> String {
+pub(crate) fn spawn_prompt_lane(text: String, subs: &mut SubSessions, ctx: LaneCtx<'_>) -> String {
     let lane = subs.next_req_lane();
-    let _ = in_tx.send(Inbound::PromptStarted {
+    let _ = ctx.in_tx.send(Inbound::PromptStarted {
         agent: lane.clone(),
         text: text.clone(),
     });
@@ -1203,14 +1209,12 @@ pub(crate) fn spawn_prompt_lane(
     // reach it. `ShellEvent` is the transcript-only channel (no status
     // flip, no counters, no second trace row), which is exactly right for
     // a notice about a lane other than the one it prints on.
-    let _ = in_tx.send(Inbound::ShellEvent {
+    let _ = ctx.in_tx.send(Inbound::ShellEvent {
         agent: LEAD.to_string(),
         event: AgentEvent::Text {
             text: spawn_notice(&lane, &text),
         },
     });
-    let (stop_tx, stop_rx) = oneshot::channel();
-    let (pause_tx, pause_rx) = watch::channel(false);
     let spec = SubSessionSpec {
         lane: lane.clone(),
         title: prompt_line(&text, 48),
@@ -1224,21 +1228,33 @@ pub(crate) fn spawn_prompt_lane(
         // `SpawnLane` are each a person's own words, never a delegation.
         dispatched_by: None,
     };
-    let (generation, tap) = subs.started(&lane, stop_tx, pause_tx, spec.clone());
+    launch(subs, &lane, spec, ctx);
+    lane
+}
+
+/// Register a lane with [`SubSessions`] and start its worker task.
+///
+/// The three spawning entry points differ only in the spec they build; this is
+/// the rest of it, stated once — including the stop and pause channels, whose
+/// sending halves [`SubSessions::started`] keeps and whose receiving halves
+/// [`spawn`] takes, so neither end outlives the lane.
+fn launch(subs: &mut SubSessions, lane: &str, spec: SubSessionSpec, ctx: LaneCtx<'_>) {
+    let (stop_tx, stop_rx) = oneshot::channel();
+    let (pause_tx, pause_rx) = watch::channel(false);
+    let (generation, tap) = subs.started(lane, stop_tx, pause_tx, spec.clone());
     spawn(
-        cfg,
+        ctx.cfg,
         spec,
         generation,
-        budget_limit,
-        session_id.to_string(),
-        workspace_name.to_string(),
-        in_tx.clone(),
-        sup_tx.clone(),
+        ctx.budget_limit,
+        ctx.session_id.to_string(),
+        ctx.workspace_name.to_string(),
+        ctx.in_tx.clone(),
+        ctx.sup_tx.clone(),
         stop_rx,
         pause_rx,
         tap,
     );
-    lane
 }
 
 /// The lead-transcript notice a spawn prints: that the prompt started, which
@@ -1263,31 +1279,12 @@ pub(crate) fn spawn_notice(lane: &str, prompt: &str) -> String {
 /// new session": start a lane on `text` when a worker slot is free, and say
 /// so on the lead transcript when none is, quoting the task so the words
 /// survive the refusal (the page's composer already cleared on submit).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_lane_or_notice(
-    text: String,
-    subs: &mut SubSessions,
-    cfg: &Config,
-    budget_limit: Option<f64>,
-    session_id: &str,
-    workspace_name: &str,
-    in_tx: &UnboundedSender<Inbound>,
-    sup_tx: &UnboundedSender<SupervisorMsg>,
-) {
+pub(crate) fn spawn_lane_or_notice(text: String, subs: &mut SubSessions, ctx: LaneCtx<'_>) {
     if subs.has_slot() {
-        spawn_prompt_lane(
-            text,
-            subs,
-            cfg,
-            budget_limit,
-            session_id,
-            workspace_name,
-            in_tx,
-            sup_tx,
-        );
+        spawn_prompt_lane(text, subs, ctx);
         return;
     }
-    let _ = in_tx.send(Inbound::ShellEvent {
+    let _ = ctx.in_tx.send(Inbound::ShellEvent {
         agent: LEAD.to_string(),
         event: AgentEvent::Text {
             text: format!(
@@ -1300,39 +1297,14 @@ pub(crate) fn spawn_lane_or_notice(
 
 /// Respawn an ended lane from its retained spec — the Restart verb. `false`
 /// when the lane has no retained spec or is still live (stop it first).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn respawn(
-    lane: &str,
-    subs: &mut SubSessions,
-    cfg: &Config,
-    budget_limit: Option<f64>,
-    session_id: &str,
-    workspace_name: &str,
-    in_tx: &UnboundedSender<Inbound>,
-    sup_tx: &UnboundedSender<SupervisorMsg>,
-) -> bool {
+pub(crate) fn respawn(lane: &str, subs: &mut SubSessions, ctx: LaneCtx<'_>) -> bool {
     if subs.is_live(lane) {
         return false;
     }
     let Some(spec) = subs.spec(lane) else {
         return false;
     };
-    let (stop_tx, stop_rx) = oneshot::channel();
-    let (pause_tx, pause_rx) = watch::channel(false);
-    let (generation, tap) = subs.started(lane, stop_tx, pause_tx, spec.clone());
-    spawn(
-        cfg,
-        spec,
-        generation,
-        budget_limit,
-        session_id.to_string(),
-        workspace_name.to_string(),
-        in_tx.clone(),
-        sup_tx.clone(),
-        stop_rx,
-        pause_rx,
-        tap,
-    );
+    launch(subs, lane, spec, ctx);
     true
 }
 
@@ -1344,21 +1316,9 @@ pub(crate) fn task_lane(task_id: &str) -> String {
 
 /// Dispatch one `task_assign` spawn request (or park it if no slot is free —
 /// the caller owns the pending queue).
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_task_worker(
-    queued: &QueuedSpawn,
-    subs: &mut SubSessions,
-    cfg: &Config,
-    budget_limit: Option<f64>,
-    session_id: &str,
-    workspace_name: &str,
-    in_tx: &UnboundedSender<Inbound>,
-    sup_tx: &UnboundedSender<SupervisorMsg>,
-) {
+pub(crate) fn spawn_task_worker(queued: &QueuedSpawn, subs: &mut SubSessions, ctx: LaneCtx<'_>) {
     let req = &queued.request;
     let lane = task_lane(&req.task_id);
-    let (stop_tx, stop_rx) = oneshot::channel();
-    let (pause_tx, pause_rx) = watch::channel(false);
     let spec = SubSessionSpec {
         lane: lane.clone(),
         title: format!("task #{}: {}", req.task_id, prompt_line(&req.subject, 40)),
@@ -1371,20 +1331,7 @@ pub(crate) fn spawn_task_worker(
         ),
         dispatched_by: queued.dispatched_by,
     };
-    let (generation, tap) = subs.started(&lane, stop_tx, pause_tx, spec.clone());
-    spawn(
-        cfg,
-        spec,
-        generation,
-        budget_limit,
-        session_id.to_string(),
-        workspace_name.to_string(),
-        in_tx.clone(),
-        sup_tx.clone(),
-        stop_rx,
-        pause_rx,
-        tap,
-    );
+    launch(subs, &lane, spec, ctx);
 }
 
 /// How long Quit waits for stopped workers to settle before abandoning

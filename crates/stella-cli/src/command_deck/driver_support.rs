@@ -112,10 +112,6 @@ pub(super) fn spawn_mcp_connect(
 /// Service a session-registry / inbox verb from the deck. Returns `true` if
 /// `input` was one (so the caller skips its own dispatch). All of these are
 /// cheap local file ops, serviced identically idle or mid-turn.
-// Every argument is a distinct handle the verbs need (registry, store, config,
-// budget, the two identities, the channel) — bundling them into a struct would
-// move the same list one hop away from the one call site.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn service_registry_action(
     input: &WorkspaceInput,
     scope: &sessions_view::SessionScope<'_>,
@@ -181,7 +177,15 @@ pub(super) fn notifications_inbound(store: &stella_store::NotificationStore) -> 
 /// worker succeeding completes its board task), meter the worker's spend
 /// toward the session budget, nudge the PR monitor, then drain whatever the
 /// freed slot can take — parked spawns first, then the prompt backlog.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the six lane-spawning values are already bundled as `LaneCtx`; what \
+              is left is this arm of the driver loop's own `&mut` state — the \
+              lane table, two pending queues, the durable prompt queue and the \
+              unmetered-spend accumulator — each borrowed mutably from a \
+              different local, so a second bundle would be a struct of `&mut` \
+              borrows the caller cannot form while the loop holds them"
+)]
 pub(super) fn handle_supervisor_msg(
     msg: SupervisorMsg,
     subs: &mut SubSessions,
@@ -191,15 +195,11 @@ pub(super) fn handle_supervisor_msg(
     dispatch_held: bool,
     registry: &ToolRegistry,
     store: &Option<Arc<Store>>,
-    session_id: &str,
-    workspace_name: &str,
-    cfg: &Config,
-    budget_limit: Option<f64>,
     unmetered_spend: &mut f64,
     pr_nudge: &Arc<tokio::sync::Notify>,
-    in_tx: &UnboundedSender<Inbound>,
-    sup_tx: &UnboundedSender<SupervisorMsg>,
+    ctx: subsession::LaneCtx<'_>,
 ) {
+    let (session_id, in_tx) = (ctx.session_id, ctx.in_tx);
     match msg {
         SupervisorMsg::SpawnTask(queued) => {
             // A task's lane is its identity: a second worker on a live lane
@@ -217,16 +217,7 @@ pub(super) fn handle_supervisor_msg(
                     },
                 });
             } else if subs.has_slot() {
-                subsession::spawn_task_worker(
-                    &queued,
-                    subs,
-                    cfg,
-                    budget_limit,
-                    session_id,
-                    workspace_name,
-                    in_tx,
-                    sup_tx,
-                );
+                subsession::spawn_task_worker(&queued, subs, ctx);
             } else {
                 pending_spawns.push_back(queued);
             }
@@ -250,16 +241,7 @@ pub(super) fn handle_supervisor_msg(
             // A Restart that arrived while this worker was live respawns it
             // now — restart takes the freed slot ahead of parked spawns.
             if freed && !deleted && pending_controls.restarts.remove(&lane) {
-                let _ = subsession::respawn(
-                    &lane,
-                    subs,
-                    cfg,
-                    budget_limit,
-                    session_id,
-                    workspace_name,
-                    in_tx,
-                    sup_tx,
-                );
+                let _ = subsession::respawn(&lane, subs, ctx);
             }
             // Worker spend reaches the session's parent budget guard (the
             // L-E9 discipline). The guard is mutably borrowed by any in-
@@ -290,28 +272,9 @@ pub(super) fn handle_supervisor_msg(
                 if subs.is_live(&subsession::task_lane(&queued.request.task_id)) {
                     continue;
                 }
-                subsession::spawn_task_worker(
-                    &queued,
-                    subs,
-                    cfg,
-                    budget_limit,
-                    session_id,
-                    workspace_name,
-                    in_tx,
-                    sup_tx,
-                );
+                subsession::spawn_task_worker(&queued, subs, ctx);
             }
-            subsession::drain_queue(
-                queue,
-                subs,
-                dispatch_held,
-                cfg,
-                budget_limit,
-                session_id,
-                workspace_name,
-                in_tx,
-                sup_tx,
-            );
+            subsession::drain_queue(queue, subs, dispatch_held, ctx);
         }
     }
 }

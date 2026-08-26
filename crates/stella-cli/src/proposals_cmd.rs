@@ -369,7 +369,6 @@ fn decide(
 /// auto-activation below the confidence bar precisely so a person decides, and
 /// a "keep" that recorded an event without writing the rule would be a decision
 /// with no effect.
-#[allow(clippy::too_many_arguments)]
 fn decide_in(
     store: &ContextStore,
     workspace_root: Option<&std::path::Path>,

@@ -1132,7 +1132,14 @@ pub(crate) fn open_store(workspace_root: &std::path::Path) -> Option<Arc<Store>>
 /// is open. `registry` is the concrete tool registry (its ledgers close the
 /// execution's audit record); `base_tools` is the same registry as the
 /// engine's executor, possibly MCP-wrapped.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the engine's own turn entry point, and the one the other three follow; `messages`, \
+              `budget`, `session_memory` and the friction out-parameter are four `&mut` borrows \
+              of separate caller locals held for the turn, so the bundle is a struct of disjoint \
+              mutable borrows and is worth doing across all four entry points at once rather \
+              than here alone (#4916)"
+)]
 pub(crate) async fn run_turn(
     provider: &dyn Provider,
     base_tools: &dyn ToolExecutor,

@@ -811,7 +811,13 @@ pub(super) fn announce_withheld_steering(tx: &mpsc::UnboundedSender<AgentEvent>,
 /// worker provider itself, identical to before: no second provider is built
 /// and no extra cost is incurred. Text-mode rendering only — goal and
 /// monitor never take `--output-format`.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one of the crate's four turn entry points, which share their first eight \
+              parameters; `messages` and `budget` are `&mut` borrows of separate caller locals \
+              held for the turn, so the bundle is a struct of disjoint mutable borrows and is \
+              worth doing across all four at once rather than here alone (#4916)"
+)]
 pub(crate) async fn run_goal_turn(
     provider: &dyn Provider,
     base_tools: &dyn ToolExecutor,

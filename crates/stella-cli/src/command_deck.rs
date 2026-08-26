@@ -953,14 +953,16 @@ pub async fn run_deck_session(
                             dispatch.held(),
                             &registry,
                             &store,
-                            &session_record.id,
-                            &workspace_name,
-                            cfg,
-                            budget_limit,
                             &mut unmetered_spend,
                             &pr_nudge,
-                            &in_tx,
-                            &sup_tx,
+                            subsession::LaneCtx {
+                                cfg,
+                                budget_limit,
+                                session_id: &session_record.id,
+                                workspace_name: &workspace_name,
+                                in_tx: &in_tx,
+                                sup_tx: &sup_tx,
+                            },
                         );
                         continue 'session;
                     }
@@ -977,12 +979,14 @@ pub async fn run_deck_session(
                             control,
                             &mut subs,
                             &mut pending_controls,
-                            cfg,
-                            budget_limit,
-                            &session_record.id,
-                            &workspace_name,
-                            &in_tx,
-                            &sup_tx,
+                            subsession::LaneCtx {
+                                cfg,
+                                budget_limit,
+                                session_id: &session_record.id,
+                                workspace_name: &workspace_name,
+                                in_tx: &in_tx,
+                                sup_tx: &sup_tx,
+                            },
                         );
                         continue 'session;
                     }
@@ -1017,12 +1021,14 @@ pub async fn run_deck_session(
                         subsession::spawn_lane_or_notice(
                             text,
                             &mut subs,
-                            cfg,
-                            budget_limit,
-                            &session_record.id,
-                            &workspace_name,
-                            &in_tx,
-                            &sup_tx,
+                            subsession::LaneCtx {
+                                cfg,
+                                budget_limit,
+                                session_id: &session_record.id,
+                                workspace_name: &workspace_name,
+                                in_tx: &in_tx,
+                                sup_tx: &sup_tx,
+                            },
                         );
                         continue 'session;
                     }
@@ -1749,14 +1755,16 @@ pub async fn run_deck_session(
                             dispatch.held(),
                             &registry,
                             &store,
-                            &session_record.id,
-                            &workspace_name,
-                            cfg,
-                            budget_limit,
                             &mut unmetered_spend,
                             &pr_nudge,
-                            &in_tx,
-                            &sup_tx,
+                            subsession::LaneCtx {
+                                cfg,
+                                budget_limit,
+                                session_id: &session_record.id,
+                                workspace_name: &workspace_name,
+                                in_tx: &in_tx,
+                                sup_tx: &sup_tx,
+                            },
                         );
                     }
                     input = sub_rx.recv() => match input {
@@ -1794,12 +1802,14 @@ pub async fn run_deck_session(
                                         &mut queue,
                                         &mut subs,
                                         dispatch.held(),
-                                        cfg,
-                                        budget_limit,
-                                        &session_record.id,
-                                        &workspace_name,
-                                        &in_tx,
-                                        &sup_tx,
+                                        subsession::LaneCtx {
+                                            cfg,
+                                            budget_limit,
+                                            session_id: &session_record.id,
+                                            workspace_name: &workspace_name,
+                                            in_tx: &in_tx,
+                                            sup_tx: &sup_tx,
+                                        },
                                     );
                                 }
                             }
@@ -1818,12 +1828,14 @@ pub async fn run_deck_session(
                             subsession::spawn_lane_or_notice(
                                 text,
                                 &mut subs,
-                                cfg,
-                                budget_limit,
-                                &session_record.id,
-                                &workspace_name,
-                                &in_tx,
-                                &sup_tx,
+                                subsession::LaneCtx {
+                                    cfg,
+                                    budget_limit,
+                                    session_id: &session_record.id,
+                                    workspace_name: &workspace_name,
+                                    in_tx: &in_tx,
+                                    sup_tx: &sup_tx,
+                                },
                             );
                         }
                         // Esc with something to say — see `steer`.
@@ -1907,12 +1919,14 @@ pub async fn run_deck_session(
                                 control,
                                 &mut subs,
                                 &mut pending_controls,
-                                cfg,
-                                budget_limit,
-                                &session_record.id,
-                                &workspace_name,
-                                &in_tx,
-                                &sup_tx,
+                                subsession::LaneCtx {
+                                    cfg,
+                                    budget_limit,
+                                    session_id: &session_record.id,
+                                    workspace_name: &workspace_name,
+                                    in_tx: &in_tx,
+                                    sup_tx: &sup_tx,
+                                },
                             );
                         }
                         // Double-Esc: cancel AND park dispatch — the
