@@ -169,7 +169,7 @@ pub(super) fn argument_rows(metal: Color, raw: &str, width: usize, out: &mut Vec
 /// left). The carrier is on the entry, and the row could show it; the
 /// count is already stated one row above, because a long-form `ToolStart` head routes
 /// through `views::transcript_source::head_rows` and resolves the number off this
-/// very result (`super::v2_rows`). Restating it would put the same measurement
+/// very result (`super::projected_rows`). Restating it would put the same measurement
 /// in two cells of one block — the defect the metric column below already had
 /// once, when its size chip duplicated the count on the reveal hint under it.
 /// One count, in the row that also carries the affordance for what it counts.
