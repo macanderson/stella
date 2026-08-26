@@ -83,7 +83,7 @@ pub use retrieval::{
     DropReason, DroppedFrame, RECALL_TIER_PROVENANCE_KIND, RecallResult, RecallScope, RecallTier,
     RecallTuning, SELECTION_PROVENANCE_KIND, SelectionReason, is_lexical_fallback,
 };
-pub use store::ledger::{AppendOutcome, LedgerAppend, LedgerRecord};
+pub use store::ledger::{AppendOutcome, LedgerAppend, LedgerRecord, peek_records_of_kind};
 pub use store::{
     CompactionWatermark, ContextCompactPolicy, ContextCompactReport, ContextStore,
     MemoryLineageStats, MemoryRevision, NodeInput, NodeKind, NodeRow,

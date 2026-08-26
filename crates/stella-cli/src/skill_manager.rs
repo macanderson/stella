@@ -188,6 +188,10 @@ fn latest_version(entry_path: &Path) -> u32 {
 /// is steering me?", and one that loads, is selectable, and is absent from the
 /// list makes that answer wrong (#4734).
 pub fn enumerate(workspace_root: &Path) -> Vec<SkillRow> {
+    // Read once for the whole enumeration, not per row: the peek opens
+    // `context.db` read-only itself (#4871), and a workspace's ledger does not
+    // change between one row and the next in the same call.
+    let grades = crate::memory::proposals::peek_grade_by_candidate(workspace_root);
     let mut rows = Vec::new();
     for scope in [SkillScope::Project, SkillScope::User] {
         let Some(root) = scope_root(scope, workspace_root) else {
@@ -199,6 +203,7 @@ pub fn enumerate(workspace_root: &Path) -> Vec<SkillRow> {
             let name = entry.skill.name.clone();
             let latest = latest_version(&entry.entry_path).max(1);
             let version = state.pins.get(&name).copied().unwrap_or(latest).min(latest);
+            let evidence_grade = grades.get(&name).map(|g| g.as_str().to_string());
             rows.push(SkillRow {
                 scope,
                 enabled: !disabled.contains(&name),
@@ -206,6 +211,7 @@ pub fn enumerate(workspace_root: &Path) -> Vec<SkillRow> {
                 description: entry.skill.description,
                 body: entry.skill.body,
                 origin: origin_label(entry.skill.origin).to_string(),
+                evidence_grade,
                 version,
                 latest,
                 // Everything under a managed scope dir is deletable — uninstall
@@ -261,6 +267,10 @@ fn contributed_rows(workspace_root: &Path, own: &[SkillRow]) -> Vec<SkillRow> {
                 description: skill.description,
                 body: skill.body,
                 origin: origin_label(skill.origin).to_string(),
+                // A contributed skill was never mined in this workspace's own
+                // loop, so there is no proposal here for it to be graded
+                // against.
+                evidence_grade: None,
                 version: 1,
                 latest: 1,
                 removable: false,
@@ -696,6 +706,95 @@ mod tests {
                 && r.origin == "user")
         );
         assert!(rows.iter().all(|r| r.enabled), "all enabled by default");
+    }
+
+    /// A learned (`origin: auto`) row names the grade of the evidence that
+    /// promoted it, joined out of `context.db`'s proposal ledger by candidate
+    /// id (#4871) — the SKILLS tab's own half of what `stella proposals`
+    /// already shows before a skill exists. A hand-authored skill was never a
+    /// candidate and carries none.
+    #[test]
+    fn enumerate_names_the_evidence_grade_of_a_learned_skill() {
+        use stella_context::{ContextStore, LedgerAppend};
+        use stella_core::context_record::{
+            ContextRecordKind, EvidencePool, LIFECYCLE_SCHEMA_VERSION, ObservationRecord,
+            ObservationSource, ProposalRecord, ProposalScore, RecordProposalKind,
+            RecordProposalStatus, confidence_from_score,
+        };
+
+        let (td, _home, _lock) = scratch();
+        let ws = td.path().join("ws");
+        let skills_dir = ws.join(".stella/skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(
+            skills_dir.join("money-is-minor-units-a1b2c3d4.md"),
+            "---\nname: money-is-minor-units-a1b2c3d4\ndescription: d\norigin: auto\n---\nbody",
+        )
+        .unwrap();
+        write_skill(&skills_dir, "hand-written", "not mined");
+
+        let private = ws.join(".stella/private");
+        std::fs::create_dir_all(&private).unwrap();
+        let store = ContextStore::open(private.join("context.db")).unwrap();
+        let observation = ObservationRecord::new(
+            ObservationSource::ToolOutcome,
+            "tool:cargo_test#1",
+            "turn:1",
+            "money amounts must be stored as minor units",
+            Vec::new(),
+            false,
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+        let score = ProposalScore {
+            occurrences: 3,
+            distinct_tasks: 3,
+            salient: false,
+            rank: 30.0,
+        };
+        let confidence = confidence_from_score(&score).unwrap();
+        let proposal = ProposalRecord::new(
+            RecordProposalKind::Knowledge,
+            RecordProposalStatus::Eligible,
+            "money-is-minor-units-a1b2c3d4",
+            "money is minor units",
+            "money amounts must be stored as minor units",
+            Vec::new(),
+            EvidencePool::from_observations([&observation]),
+            score,
+            confidence,
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+        let body = serde_json::to_string(&proposal).unwrap();
+        store
+            .append_record(LedgerAppend {
+                record_id: &proposal.record_id,
+                lineage_id: &proposal.lineage_id,
+                record_kind: ContextRecordKind::RecordProposal.as_str(),
+                record_hash: &proposal.record_hash,
+                schema_version: LIFECYCLE_SCHEMA_VERSION,
+                body: &body,
+                observed_at: &proposal.observed_at,
+                supersedes: None,
+            })
+            .unwrap();
+        drop(store);
+
+        let rows = enumerate(&ws);
+        let learned = rows
+            .iter()
+            .find(|r| r.name == "money-is-minor-units-a1b2c3d4")
+            .expect("learned row present");
+        assert_eq!(
+            learned.evidence_grade.as_deref(),
+            Some("environment_observation")
+        );
+        let authored = rows
+            .iter()
+            .find(|r| r.name == "hand-written")
+            .expect("hand-written row present");
+        assert_eq!(authored.evidence_grade, None);
     }
 
     #[test]

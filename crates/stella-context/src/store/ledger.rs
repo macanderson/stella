@@ -268,6 +268,33 @@ pub(crate) fn records_of_kind_newest_in_append_order(
     Ok(out)
 }
 
+/// Read-only, no-migration peek at the newest `limit` records of one kind, in
+/// append order — [`crate::ContextStore::open`] without the write.
+///
+/// `ContextStore::open` creates the file if absent, replays every migration,
+/// and registers an embedder fingerprint, on every call: right for a session,
+/// wrong for a passive listing that reruns this on every refresh (the SKILLS
+/// tab reading proposal grades back onto their skills, #4871 — mirrors
+/// `stella_store::rules_peek`'s identical reasoning for `store.db`). This
+/// opens its own `SQLITE_OPEN_READ_ONLY` connection and answers an empty list
+/// for any failure — a missing file, a schema that predates this table, a
+/// lock held by a writer — because the only sensible fallback for "cannot
+/// peek" is "nothing to show", never an error the caller has to route around.
+pub fn peek_records_of_kind(
+    db_path: &std::path::Path,
+    record_kind: &str,
+    limit: usize,
+) -> Vec<LedgerRecord> {
+    let Ok(conn) = Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    ) else {
+        return Vec::new();
+    };
+    let _ = conn.busy_timeout(std::time::Duration::from_millis(2_000));
+    records_of_kind_newest_in_append_order(&conn, record_kind, limit).unwrap_or_default()
+}
+
 /// Every revision in one lineage, oldest first — the audit trail for a single
 /// logical record.
 pub(crate) fn records_for_lineage(
@@ -372,6 +399,34 @@ mod tests {
         assert_eq!(read.lineage_id, "obs_1");
         assert!(read.supersedes.is_none());
         assert!(!read.recorded_at.is_empty(), "recorded_at is stamped");
+    }
+
+    /// The read-only peek sees exactly what a real session wrote through
+    /// `ContextStore::open` — it is a second door onto the same table, not a
+    /// different one (#4871).
+    #[test]
+    fn peek_reads_back_what_a_real_store_appended() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("context.db");
+        {
+            let store = ContextStore::open(&db_path).expect("open");
+            store
+                .append_record(append("obs_1", r#"{"a":1}"#, "sha256:aa"))
+                .expect("append");
+        }
+        let peeked = peek_records_of_kind(&db_path, "observation", 10);
+        assert_eq!(peeked.len(), 1);
+        assert_eq!(peeked[0].body, r#"{"a":1}"#);
+    }
+
+    /// The whole point: a passive listing (the SKILLS tab, #4871) must not
+    /// create the ledger `ContextStore::open` would create for it.
+    #[test]
+    fn peek_creates_no_file_for_a_workspace_with_no_ledger() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("context.db");
+        assert!(peek_records_of_kind(&db_path, "observation", 10).is_empty());
+        assert!(!db_path.exists(), "peeking must not create the ledger file");
     }
 
     #[test]

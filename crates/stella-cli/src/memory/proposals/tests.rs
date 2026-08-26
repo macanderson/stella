@@ -224,3 +224,95 @@ fn new_evidence_appends_a_revision_rather_than_replacing() {
     let tasks: Vec<u32> = stored.iter().map(|p| p.score.distinct_tasks).collect();
     assert!(tasks.contains(&3) && tasks.contains(&4));
 }
+
+// ---- #4871: a published skill's evidence grade is distinguishable ----
+
+/// A skill mined from a tool's exit status is not the same kind of evidence
+/// as one mined from the model's own reflection, and the SKILLS tab must be
+/// able to tell them apart (#4871). This is the witness: before
+/// `peek_grade_by_candidate` existed, nothing downstream of a written
+/// `SKILL.md` could answer "was this observed or opined" at all — the
+/// byte-identity guarantee holds the file's own bytes silent on it. Here two
+/// candidates are mined from evidence of each kind, and the
+/// grades read back out of the ledger must differ exactly as the sources did.
+#[test]
+fn peek_grade_by_candidate_distinguishes_environment_observation_from_model_critique() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let workspace_root = dir.path();
+    let private = workspace_root.join(".stella").join("private");
+    std::fs::create_dir_all(&private).expect("private dir");
+    let store = ContextStore::open(private.join("context.db")).expect("open");
+
+    const BUILD_LESSON: &str = "The build fails when the config schema omits a required migration.";
+    const OPINION_LESSON: &str =
+        "Prefer updating witness-test assertions to match the live renderer output.";
+
+    let mut observations: Vec<ObservationRecord> = [100, 200, 300]
+        .into_iter()
+        .map(|t| {
+            ObservationRecord::new(
+                ObservationSource::ToolOutcome,
+                format!("tool:cargo_test#{t}"),
+                format!("turn:{t}"),
+                BUILD_LESSON,
+                vec!["testing".into()],
+                false,
+                stella_context::format_rfc3339(t as i64),
+            )
+            .expect("observation")
+        })
+        .collect();
+    observations.extend(
+        [400, 500, 600]
+            .into_iter()
+            .map(|t| observation(OPINION_LESSON, t)),
+    );
+
+    let induced = induce_proposals(&store, &observations, &[], &SkillMineConfig::default());
+    assert_eq!(induced.len(), 2, "one proposal per distinct lesson cluster");
+    let candidate_named = |body: &str| {
+        induced
+            .iter()
+            .find(|i| i.candidate.body == body)
+            .unwrap_or_else(|| panic!("no candidate for {body:?}"))
+            .candidate
+            .name
+            .clone()
+    };
+    let build_candidate = candidate_named(BUILD_LESSON);
+    let opinion_candidate = candidate_named(OPINION_LESSON);
+    drop(store);
+
+    let grades = peek_grade_by_candidate(workspace_root);
+    assert_eq!(
+        grades.get(&build_candidate).map(|g| g.as_str()),
+        Some("environment_observation")
+    );
+    assert_eq!(
+        grades.get(&opinion_candidate).map(|g| g.as_str()),
+        Some("model_critique")
+    );
+    assert_ne!(
+        grades.get(&build_candidate),
+        grades.get(&opinion_candidate),
+        "a skill promoted from a passing/failing build must read differently \
+         from one promoted from the model's own opinion about a run"
+    );
+}
+
+/// A workspace that has never run the typed loop (the shipped default) has no
+/// `context.db` at all — this must answer empty rather than create one, the
+/// same "no creation" bargain `stella_store::rules_peek` documents.
+#[test]
+fn peek_grade_by_candidate_creates_nothing_for_a_workspace_with_no_ledger() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let workspace_root = dir.path();
+    std::fs::create_dir_all(workspace_root.join(".stella")).expect("bare .stella");
+
+    let grades = peek_grade_by_candidate(workspace_root);
+    assert!(grades.is_empty());
+    assert!(
+        !workspace_root.join(".stella").join("private").exists(),
+        "a grade lookup must not create the private state directory"
+    );
+}
