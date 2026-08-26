@@ -48,12 +48,41 @@
 //! those are, and on this path it knows exactly one thing about the witness:
 //! the test invocation the user gave it. So the watch covers **the files that
 //! invocation names** — `sh tests/witness_flip.sh`, `pytest
-//! tests/test_regression.py` — resolved through the same fence every other
-//! plugin-supplied path crosses ([`stella_plugin::resolve_in_root`]),
-//! snapshotted before the turn with the same no-follow identity
-//! (`crate::agent::tools::fs_artifact_identity`) and compared with the same
-//! comparator (`stella_plugin::witness_identity_matches`) the staged
-//! pipeline itself used.
+//! tests/test_regression.py` — snapshotted before the turn with the same
+//! no-follow identity (`crate::agent::tools::fs_artifact_identity`) and
+//! compared with the same comparator (`stella_plugin::witness_identity_matches`)
+//! the staged pipeline itself used.
+//!
+//! # The watch holds the tree open, and why that is the security half (#3483)
+//!
+//! [`TamperWatch`] keeps a **directory descriptor** for the granted root, not
+//! its path, for the length of the turn. Everything a comparison needs — the
+//! walk to the artifact, the open, the re-check that the name still means the
+//! same file — happens off that descriptor.
+//!
+//! Holding a path instead is not a smaller version of the same thing, it is a
+//! different claim. A path is re-resolved on every observation, and the party
+//! the watch exists to catch is running inside that tree with a shell. It can
+//! rename the root aside and stand a pristine copy in its place, and the
+//! after-turn observation then reads the copy, matches the pin, and reports
+//! `Clean` — the watch vouching for a witness in a directory the turn never
+//! touched. A descriptor cannot be re-pointed by renaming anything, so the
+//! comparison is about the tree that actually ran.
+//!
+//! Below the root the same discipline continues:
+//! `stella_tools::rootfd::RootHandle::open_entry` walks component by component
+//! with `O_NOFOLLOW`, so an interior directory swapped for a symlink is refused
+//! by the kernel rather than followed, and it hands back the descriptor
+//! together with the location the walk reached — one resolution, used, instead
+//! of a checked path somebody re-opens. A path the walk refuses is left out of
+//! the watch entirely.
+//!
+//! What still crosses first is the pure layer, [`stella_plugin::fence_lexical`]:
+//! text that is absolute, traverses, or carries a NUL or a backslash could
+//! never name an inside path and is refused without a syscall. `RootHandle`
+//! would *rebase* an absolute path that happens to lie under the root (#2058,
+//! right for a model naming its own workspace file), and a plugin-declared
+//! artifact is not owed that latitude.
 //!
 //! What the invocation cannot say, the plugin can. An invocation that names no
 //! path — `cargo test --test flip`, whose artifact is `tests/flip.rs` by
@@ -71,12 +100,13 @@
 //! — exactly as before. Deriving the path from the runner's convention stays
 //! rejected: that is the host guessing at a witness rather than watching one.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use stella_plugin::{
-    ArtifactIdentity, CandidateGrant, TamperFinding, host_tree_grant, parse_test_invocation,
-    resolve_in_root, test_plan, witness_identity_matches,
+    ArtifactIdentity, CandidateGrant, TamperFinding, fence_lexical, host_tree_grant,
+    parse_test_invocation, test_plan, witness_identity_matches,
 };
+use stella_tools::rootfd::RootHandle;
 
 /// The grant a wrapper plugin receives, and the artifacts the host will vouch
 /// for.
@@ -107,25 +137,41 @@ pub(crate) struct GrantedCandidate {
 /// and never across an await.
 #[derive(Debug)]
 pub(crate) struct TamperWatch {
-    root: PathBuf,
+    /// The granted tree, held open for the length of the turn. See this
+    /// module's docs for why this is a descriptor and not a path.
+    root: RootHandle,
     pinned: std::sync::Mutex<Vec<(String, ArtifactIdentity)>>,
 }
 
 impl TamperWatch {
-    /// Pin the identity of every artifact in `paths` that exists inside `root`.
+    /// Open `root` and pin the identity of every artifact in `paths` that
+    /// exists inside it.
     ///
     /// A path the fence refuses, or one whose identity cannot be observed
     /// without following a link, is left out of the watch entirely rather than
     /// recorded as absent: this is a baseline of things that *were there*, and
     /// an entry meaning "nothing was here" would make a file the worker
     /// legitimately created read as a change to a witness.
-    pub(crate) fn pin(root: &Path, paths: &[String]) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// A message naming the root, when the filesystem will not open it as a
+    /// directory. There is no watch without a tree to watch, and carrying on
+    /// with one that vouches for nothing would be `NotChecked` on every run
+    /// with no way to tell it from an invocation that names no artifact.
+    pub(crate) fn pin(root: &Path, paths: &[String]) -> Result<Self, String> {
+        let root = RootHandle::open(root).map_err(|error| {
+            format!(
+                "the workspace root `{}` cannot be watched: {error}",
+                root.display()
+            )
+        })?;
         let watch = Self {
-            root: root.to_path_buf(),
+            root,
             pinned: std::sync::Mutex::new(Vec::new()),
         };
         watch.pin_declared(paths);
-        watch
+        Ok(watch)
     }
 
     /// Add the artifacts a wrapper plugin declared for the round about to run,
@@ -158,7 +204,7 @@ impl TamperWatch {
             if pinned.iter().any(|(seen, _): &(String, _)| seen == path) {
                 continue;
             }
-            let Some(identity) = observe(&self.root, path) else {
+            let Some(identity) = self.observe(path) else {
                 continue;
             };
             pinned.push((path.clone(), identity));
@@ -193,7 +239,7 @@ impl TamperWatch {
             return TamperFinding::NotChecked;
         }
         for (path, expected) in pinned.iter() {
-            let current = observe(&self.root, path);
+            let current = self.observe(path);
             if !witness_identity_matches(expected, current.as_ref()) {
                 return TamperFinding::Tampered {
                     artifact: path.clone(),
@@ -202,18 +248,19 @@ impl TamperWatch {
         }
         TamperFinding::Clean
     }
-}
 
-/// One artifact's no-follow identity, or `None` when it cannot be established
-/// inside `root`.
-fn observe(root: &Path, path: &str) -> Option<ArtifactIdentity> {
-    let root_text = root.to_str()?;
-    // The fence before the filesystem, every time: the argv came from a user's
-    // `--test-command` and the parser's own `validate_local_args` already
-    // refuses absolute and `..` arguments, but a second reader of the same text
-    // must not be the place that stops checking.
-    resolve_in_root(root_text, path).ok()?;
-    crate::agent::tools::fs_artifact_identity(root, path)
+    /// One artifact's no-follow identity, or `None` when it cannot be
+    /// established inside the granted tree.
+    fn observe(&self, path: &str) -> Option<ArtifactIdentity> {
+        // The pure layer before the filesystem, every time: the argv came from
+        // a user's `--test-command` and the parser's own `validate_local_args`
+        // already refuses absolute and `..` arguments, but a second reader of
+        // the same text must not be the place that stops checking. It also
+        // withholds the absolute-path latitude the confined walk grants a
+        // model naming its own workspace file — see this module's docs.
+        fence_lexical(path).ok()?;
+        crate::agent::tools::fs_artifact_identity(&self.root, path)
+    }
 }
 
 /// Mint the grant for the shared work tree, and pin whatever witness artifacts
@@ -259,14 +306,15 @@ pub(crate) fn grant_shared_tree(
     let grant = host_tree_grant(root_text, plan)
         .map_err(|denial| format!("no candidate grant could be minted: {denial}"))?;
 
-    // Pinned against the *canonical* root the grant carries, so the host
-    // fences and observes in the same directory it told the plugin about.
+    // Opened from the *canonical* root the grant carries, so the host watches
+    // the same directory it told the plugin about — and holds it open, so the
+    // two cannot come apart while the turn runs.
     let watch = TamperWatch::pin(
         Path::new(&grant.root),
         &invocation
             .map(|parsed| named_artifacts(&parsed.args))
             .unwrap_or_default(),
-    );
+    )?;
     Ok(GrantedCandidate { grant, watch })
 }
 
@@ -415,7 +463,8 @@ mod tests {
                 "/etc/passwd".to_string(),
                 "tests/witness_flip.sh".to_string(),
             ],
-        );
+        )
+        .expect("the root opens");
         assert_eq!(
             watch.pinned_count(),
             1,
@@ -510,5 +559,47 @@ mod tests {
             "round 2's declaration must not re-baseline round 1's rewrite"
         );
         assert_eq!(granted.watch.pinned_count(), 1, "and does not double-pin");
+    }
+
+    /// **Witness (#3483).** The watch vouches for the tree the turn ran in, not
+    /// for whatever the root path names when the question is asked.
+    ///
+    /// The party this watch exists to catch runs inside that tree with a shell.
+    /// Here it rewrites the witness and then renames the whole workspace aside,
+    /// standing a byte-identical pristine copy at the granted path. A watch
+    /// that re-resolves the root on every observation reads the copy, matches
+    /// the pin exactly, and reports `Clean` — crediting a flip in a directory
+    /// the turn never touched. Holding the root open makes the path irrelevant:
+    /// a descriptor keeps naming the directory it was opened on.
+    #[cfg(unix)]
+    #[test]
+    fn a_root_renamed_after_the_grant_cannot_launder_a_rewritten_witness() {
+        let outer = tempfile::tempdir().expect("a temp parent");
+        let root = outer.path().join("workspace");
+        std::fs::create_dir_all(root.join("tests")).expect("tests dir");
+        std::fs::write(root.join("tests/witness_flip.sh"), "#!/bin/sh\nexit 1\n")
+            .expect("the witness");
+
+        let granted =
+            grant_shared_tree(&root, Some("sh tests/witness_flip.sh")).expect("the grant mints");
+        assert_eq!(granted.watch.finding(), TamperFinding::Clean);
+
+        // The worker rewrites the witness in the tree the turn is running in…
+        std::fs::write(root.join("tests/witness_flip.sh"), "#!/bin/sh\nexit 0\n")
+            .expect("the rewrite");
+        // …then hides it: the granted path is re-pointed at a pristine copy.
+        let aside = outer.path().join("workspace-aside");
+        std::fs::rename(&root, &aside).expect("the workspace is moved aside");
+        std::fs::create_dir_all(root.join("tests")).expect("the decoy tree");
+        std::fs::write(root.join("tests/witness_flip.sh"), "#!/bin/sh\nexit 1\n")
+            .expect("the decoy witness, byte for byte the pinned one");
+
+        assert_eq!(
+            granted.watch.finding(),
+            TamperFinding::Tampered {
+                artifact: "tests/witness_flip.sh".to_string(),
+            },
+            "the watch answers about the granted tree, not about the granted path"
+        );
     }
 }

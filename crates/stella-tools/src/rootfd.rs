@@ -19,6 +19,13 @@
 //! used — there is no second resolution to race, and no string that a rename
 //! can re-point after we have looked at it.
 //!
+//! [`RootHandle::open_entry`] is that walk for a caller which also has to
+//! *say* where it landed — an integrity check that pinned an artifact by path
+//! and has to notice that the artifact has since moved. It returns the
+//! descriptor and the walk's own record of the location as one value, so the
+//! location is not a second answer that a `canonicalize` produced later and
+//! could disagree with (#3483).
+//!
 //! # What confines the walk
 //!
 //! Not a `starts_with` comparison. Three properties, in this order:
@@ -156,6 +163,42 @@ impl EntryStat {
     }
 }
 
+/// An entry opened through a confined walk, together with the location that
+/// walk actually landed on and the descriptor of the directory holding it.
+///
+/// The three travel as one value because separating them is the defect this
+/// module exists to remove: a caller that receives a path and re-opens it, or
+/// re-canonicalises it to learn where it landed, has performed a second
+/// resolution of a name that anything on the machine may have re-pointed in
+/// between (#3483).
+pub struct ConfinedEntry {
+    /// The open file. The leaf is opened `O_NOFOLLOW`, so this is the entry
+    /// the name refers to and never what a symlink at that name points at.
+    pub file: std::fs::File,
+    resolved: String,
+    #[cfg(unix)]
+    parent: std::os::fd::OwnedFd,
+    #[cfg(unix)]
+    name: std::ffi::CString,
+    #[cfg(not(unix))]
+    full: PathBuf,
+}
+
+impl ConfinedEntry {
+    /// Where the walk landed, root-relative and `/`-separated, after every
+    /// symlink on the way was expanded.
+    ///
+    /// This differs from the name the caller asked about exactly when the
+    /// lookup was aliased — a symlinked parent directory, say — which is what
+    /// lets a caller pinning an artifact by path notice that the artifact has
+    /// since moved. It comes from the same walk that opened
+    /// [`file`](Self::file), so it is not a second answer that could disagree
+    /// with the first.
+    pub fn resolved(&self) -> &str {
+        &self.resolved
+    }
+}
+
 /// A file opened for writing through a confined walk, plus the two facts the
 /// durable-write sequence needs and cannot recover afterwards: whether this
 /// open *created* the entry, and which directory holds it.
@@ -200,6 +243,18 @@ pub struct RootHandle {
     /// an absolute symlink has to be translated into a root-relative walk. It
     /// is never re-opened by name.
     canon_root: PathBuf,
+}
+
+impl std::fmt::Debug for RootHandle {
+    /// The root as it was named when the descriptor was opened. A handle
+    /// outlives that name — the directory it holds can be renamed underneath
+    /// it, which is the whole point — so this is where the walk *started*, not
+    /// a path anything may resolve now.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RootHandle")
+            .field("opened_at", &self.canon_root)
+            .finish()
+    }
 }
 
 impl RootHandle {
@@ -280,6 +335,20 @@ enum Step {
     Parent,
 }
 
+/// What a confined walk arrived at: the directory descriptor that holds the
+/// final name, that name, and every name the walk actually traversed.
+///
+/// `walked` ends with the leaf and is what [`ConfinedEntry::resolved`] is built
+/// from. It is the walk's own record — a symlink that was expanded contributes
+/// its *target's* components, not its own — so it says where the descriptor
+/// came from without anybody re-resolving a string to find out.
+#[cfg(unix)]
+struct Leaf {
+    parent: OwnedFd,
+    name: CString,
+    walked: Vec<OsString>,
+}
+
 #[cfg(unix)]
 impl RootHandle {
     /// Open `root` and hold it. One `canonicalize` and one `open` for the
@@ -306,10 +375,37 @@ impl RootHandle {
 
     /// Open `rel` for reading.
     pub fn open_read(&self, rel: &str) -> Result<std::fs::File, RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false, true)?;
+        let leaf = self.resolve_leaf(rel, false, true)?;
         let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
-        let fd = openat(parent.as_fd(), &name, flags, 0).map_err(RootError::Io)?;
+        let fd = openat(leaf.parent.as_fd(), &leaf.name, flags, 0).map_err(RootError::Io)?;
         Ok(std::fs::File::from(fd))
+    }
+
+    /// Open the **entry** `rel` names, without expanding a symlink at the leaf,
+    /// and hand back the descriptor together with where the walk landed.
+    ///
+    /// [`open_read`](Self::open_read) answers "what does `rel` name"; this
+    /// answers "what is *at* `rel`", which is the question an integrity check is
+    /// asking. A symlink at the leaf is refused by `O_NOFOLLOW` rather than
+    /// followed, exactly as a `read` would refuse it, so an artifact that was
+    /// replaced by a link to its old contents cannot be vouched for.
+    ///
+    /// The caller gets no path back, which is the point (#3483): the only
+    /// resolution of `rel` is the walk that produced this descriptor, so there
+    /// is no name left for anything to re-point between the check and the use.
+    /// [`ConfinedEntry::resolved`] reports where that walk went; it is a record
+    /// of the walk, not an invitation to open it again.
+    pub fn open_entry(&self, rel: &str) -> Result<ConfinedEntry, RootError> {
+        let leaf = self.resolve_leaf(rel, false, false)?;
+        let resolved = walked_display(&leaf.walked, rel)?;
+        let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        let fd = openat(leaf.parent.as_fd(), &leaf.name, flags, 0).map_err(RootError::Io)?;
+        Ok(ConfinedEntry {
+            file: std::fs::File::from(fd),
+            resolved,
+            parent: leaf.parent,
+            name: leaf.name,
+        })
     }
 
     /// Open `rel` for writing, creating it if absent, and — when
@@ -317,7 +413,7 @@ impl RootHandle {
     /// walk*, so each one is created relative to the descriptor above it
     /// rather than by a `create_dir_all` that re-resolves the whole prefix.
     pub fn open_write(&self, rel: &str, create_parents: bool) -> Result<WriteTarget, RootError> {
-        let (parent, name) = self.resolve_leaf(rel, create_parents, true)?;
+        let Leaf { parent, name, .. } = self.resolve_leaf(rel, create_parents, true)?;
         let flags = libc::O_WRONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
         // `O_EXCL` first: it makes the kernel answer "did this open create the
         // file", which decides whether the directory entry needs its own
@@ -349,8 +445,8 @@ impl RootHandle {
     /// — so this answers "what does `rel` name", the question a read or a write
     /// is asking.
     pub fn stat(&self, rel: &str) -> Result<EntryStat, RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false, true)?;
-        fstatat(parent.as_fd(), &name).map_err(RootError::Io)
+        let leaf = self.resolve_leaf(rel, false, true)?;
+        fstatat(leaf.parent.as_fd(), &leaf.name).map_err(RootError::Io)
     }
 
     /// `lstat` the leaf **itself**, without expanding a symlink there — the
@@ -361,15 +457,15 @@ impl RootHandle {
     /// classifying through an expanded leaf reports a link as its target, and a
     /// dangling link as missing.
     pub fn symlink_stat(&self, rel: &str) -> Result<EntryStat, RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false, false)?;
-        fstatat(parent.as_fd(), &name).map_err(RootError::Io)
+        let leaf = self.resolve_leaf(rel, false, false)?;
+        fstatat(leaf.parent.as_fd(), &leaf.name).map_err(RootError::Io)
     }
 
     /// Where the symlink at `rel` points, verbatim — the stored target, not a
     /// resolution of it. Errors if the leaf is not a symlink.
     pub fn read_link(&self, rel: &str) -> Result<std::path::PathBuf, RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false, false)?;
-        readlinkat(parent.as_fd(), &name)
+        let leaf = self.resolve_leaf(rel, false, false)?;
+        readlinkat(leaf.parent.as_fd(), &leaf.name)
             .map(std::path::PathBuf::from)
             .map_err(RootError::Io)
     }
@@ -382,7 +478,7 @@ impl RootHandle {
     /// (#940, #1230). `unlinkat` then never follows either, so the leaf also
     /// cannot be swapped into a link between the walk and the removal.
     pub fn remove_file(&self, rel: &str) -> Result<(), RootError> {
-        let (parent, name) = self.resolve_leaf(rel, false, false)?;
+        let Leaf { parent, name, .. } = self.resolve_leaf(rel, false, false)?;
         // SAFETY: `parent` is an open directory descriptor and `name` is a
         // NUL-terminated C string that outlives the call.
         let rc = unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) };
@@ -442,7 +538,7 @@ impl RootHandle {
         rel: &str,
         create_dirs: bool,
         follow_leaf: bool,
-    ) -> Result<(OwnedFd, CString), RootError> {
+    ) -> Result<Leaf, RootError> {
         let mut queue: std::collections::VecDeque<Step> = std::collections::VecDeque::new();
         splice(&mut queue, self.entry_path(rel), rel)?;
 
@@ -450,6 +546,11 @@ impl RootHandle {
         // a directory renamed out of the tree under us still answers `..`,
         // and would answer with its new parent.
         let mut stack: Vec<OwnedFd> = vec![self.dir.try_clone().map_err(RootError::Io)?];
+        // `prefix[i]` names `stack[i + 1]`; the root has no name. Kept in step
+        // with the descriptors — `..` pops both, an absolute symlink target
+        // clears both — so the walk can say where it went without a second
+        // resolution being asked the same question.
+        let mut prefix: Vec<OsString> = Vec::new();
         let mut expansions = 0usize;
 
         loop {
@@ -466,6 +567,7 @@ impl RootHandle {
                         )));
                     }
                     stack.pop();
+                    prefix.pop();
                     continue;
                 }
                 Step::Name(name) => name,
@@ -478,21 +580,38 @@ impl RootHandle {
                 // name stands as written — no `readlinkat`, nothing expanded.
                 if !follow_leaf {
                     let parent = stack.pop().expect("the root is never popped");
-                    return Ok((parent, cname));
+                    prefix.push(name);
+                    return Ok(Leaf {
+                        parent,
+                        name: cname,
+                        walked: prefix,
+                    });
                 }
                 // The leaf. `readlinkat` asks "is this a symlink" without
                 // opening anything, which is the whole point: opening it is
                 // exactly what must not happen until we know where it goes.
                 match readlinkat(here, &cname) {
                     Ok(target) => {
-                        self.expand(&mut queue, &mut stack, &mut expansions, &target, rel)?;
+                        self.expand(
+                            &mut queue,
+                            &mut stack,
+                            &mut prefix,
+                            &mut expansions,
+                            &target,
+                            rel,
+                        )?;
                         continue;
                     }
                     // Not a symlink (`EINVAL`), or not there at all (`ENOENT`,
                     // the ordinary create case). Either way this is the name.
                     Err(_) => {
                         let parent = stack.pop().expect("the root is never popped");
-                        return Ok((parent, cname));
+                        prefix.push(name);
+                        return Ok(Leaf {
+                            parent,
+                            name: cname,
+                            walked: prefix,
+                        });
                     }
                 }
             }
@@ -521,7 +640,14 @@ impl RootHandle {
                     // (`ELOOP` on Linux and macOS, `EMLINK` on some BSDs).
                     match readlinkat(here, &cname) {
                         Ok(target) => {
-                            self.expand(&mut queue, &mut stack, &mut expansions, &target, rel)?;
+                            self.expand(
+                                &mut queue,
+                                &mut stack,
+                                &mut prefix,
+                                &mut expansions,
+                                &target,
+                                rel,
+                            )?;
                             continue;
                         }
                         Err(_) => return Err(RootError::Io(error)),
@@ -529,6 +655,7 @@ impl RootHandle {
                 }
             };
             stack.push(opened);
+            prefix.push(name);
         }
     }
 
@@ -549,6 +676,7 @@ impl RootHandle {
         &self,
         queue: &mut std::collections::VecDeque<Step>,
         stack: &mut Vec<OwnedFd>,
+        prefix: &mut Vec<OsString>,
         expansions: &mut usize,
         target: &OsStr,
         rel: &str,
@@ -575,6 +703,7 @@ impl RootHandle {
             )));
         };
         stack.truncate(1);
+        prefix.clear();
         splice_front(queue, inside, rel)
     }
 }
@@ -624,6 +753,66 @@ fn steps_of(path: &Path, rel: &str) -> Result<Vec<Step>, RootError> {
         }
     }
     Ok(steps)
+}
+
+/// Render a walk's traversed names as one root-relative, `/`-separated string.
+///
+/// A component this host cannot spell as UTF-8 is an error rather than a lossy
+/// rendering: the string is compared for equality against a pinned location, so
+/// a replacement character would let two different names read as the same one.
+#[cfg(unix)]
+fn walked_display(walked: &[OsString], rel: &str) -> Result<String, RootError> {
+    let mut out = String::new();
+    for name in walked {
+        let Some(text) = name.to_str() else {
+            return Err(RootError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("`{rel}` resolves through a name that is not valid UTF-8"),
+            )));
+        };
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(text);
+    }
+    Ok(out)
+}
+
+#[cfg(unix)]
+impl ConfinedEntry {
+    /// Whether the name this entry was opened by still names this same file.
+    ///
+    /// Asked through the directory descriptor the walk already holds, so it is
+    /// not a second resolution of the caller's path — it is the same directory,
+    /// answering about the same name. A caller that reads the file's bytes
+    /// brackets the read with this: an entry renamed out from under the open
+    /// descriptor is one whose bytes are no longer what that name means, and an
+    /// integrity claim about it would be false.
+    pub fn still_named(&self) -> bool {
+        let (Ok(opened), Ok(current)) = (
+            fstat(self.file.as_fd()),
+            fstatat_raw(self.parent.as_fd(), &self.name),
+        ) else {
+            return false;
+        };
+        entry_kind(&current) == EntryKind::File && same_file(&current, &opened)
+    }
+}
+
+/// Whether two stats taken on this host describe the same file.
+///
+/// Both sides are the platform's own `libc::stat`, so the identity fields
+/// compare at their native width — which is what makes this portable where a
+/// comparison against a fixed-width integer is not (`dev_t` is signed on macOS
+/// and unsigned on Linux, so no single cast compiles clean on both; see
+/// `scripts/check-stat-portability.sh`).
+#[cfg(unix)]
+fn same_file(a: &libc::stat, b: &libc::stat) -> bool {
+    // A dirfd-relative `fstatat` against an `fstat` of the descriptor it
+    // opened. `MetadataExt` cannot express the former, and both sides being the
+    // same platform struct is what keeps the comparison uncast:
+    // stat-portability: ok — two raw `libc::stat`s, compared at native width.
+    a.st_dev == b.st_dev && a.st_ino == b.st_ino
 }
 
 #[cfg(unix)]
@@ -683,6 +872,31 @@ fn readlinkat(dir: BorrowedFd<'_>, name: &CStr) -> io::Result<OsString> {
 
 #[cfg(unix)]
 fn fstatat(dir: BorrowedFd<'_>, name: &CStr) -> io::Result<EntryStat> {
+    let raw = fstatat_raw(dir, name)?;
+    Ok(EntryStat {
+        kind: entry_kind(&raw),
+        len: raw.st_size.max(0) as u64,
+    })
+}
+
+/// `fstat` on an already-open descriptor, as a `libc::stat` — the shape
+/// [`same_file`] compares against an `fstatat` result without casting either.
+#[cfg(unix)]
+fn fstat(file: BorrowedFd<'_>) -> io::Result<libc::stat> {
+    // SAFETY: `libc::stat` is a plain C struct with no invalid bit patterns;
+    // `fstat` fills it or fails without reading it.
+    let mut raw: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: `file` is an open descriptor for the duration of the borrow and
+    // `raw` is a valid writable `struct stat`.
+    let rc = unsafe { libc::fstat(file.as_raw_fd(), &mut raw) };
+    if rc < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(raw)
+}
+
+#[cfg(unix)]
+fn fstatat_raw(dir: BorrowedFd<'_>, name: &CStr) -> io::Result<libc::stat> {
     // SAFETY: `libc::stat` is a plain C struct with no invalid bit patterns;
     // `fstatat` fills it or fails without reading it.
     let mut raw: libc::stat = unsafe { std::mem::zeroed() };
@@ -698,16 +912,17 @@ fn fstatat(dir: BorrowedFd<'_>, name: &CStr) -> io::Result<EntryStat> {
     if rc < 0 {
         return Err(io::Error::last_os_error());
     }
-    let kind = match raw.st_mode & libc::S_IFMT {
+    Ok(raw)
+}
+
+#[cfg(unix)]
+fn entry_kind(raw: &libc::stat) -> EntryKind {
+    match raw.st_mode & libc::S_IFMT {
         libc::S_IFREG => EntryKind::File,
         libc::S_IFDIR => EntryKind::Dir,
         libc::S_IFLNK => EntryKind::Symlink,
         _ => EntryKind::Other,
-    };
-    Ok(EntryStat {
-        kind,
-        len: raw.st_size.max(0) as u64,
-    })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -724,6 +939,50 @@ impl RootHandle {
     pub fn open_read(&self, rel: &str) -> Result<std::fs::File, RootError> {
         let full = self.resolve_leaf(rel, false)?;
         std::fs::File::open(full).map_err(RootError::Io)
+    }
+
+    /// Off Unix there is no `openat`, so the entry is opened by the string the
+    /// resolver produced and `resolved` is recovered by canonicalising it —
+    /// two resolutions, which is the window #3483 closes only on Unix. The
+    /// leaf is still opened without following a reparse point, and a location
+    /// that will not canonicalise inside the root is still refused, so the
+    /// answer is never *wrong*; it is merely established later than it should
+    /// be. Same concession the module header already makes for every other
+    /// method here.
+    pub fn open_entry(&self, rel: &str) -> Result<ConfinedEntry, RootError> {
+        let full = self.resolve_leaf(rel, false)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt as _;
+            // FILE_FLAG_OPEN_REPARSE_POINT: open the link itself rather than
+            // what it points at, so the leaf is the entry the name refers to.
+            options.custom_flags(0x0020_0000);
+        }
+        let file = options.open(&full).map_err(RootError::Io)?;
+        let canon = full.canonicalize().map_err(RootError::Io)?;
+        let inside = canon.strip_prefix(&self.canon_root).map_err(|_| {
+            RootError::escapes(format!("`{rel}` resolves outside the workspace root"))
+        })?;
+        let mut resolved = String::new();
+        for component in inside.components() {
+            let Some(text) = component.as_os_str().to_str() else {
+                return Err(RootError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("`{rel}` resolves through a name that is not valid UTF-8"),
+                )));
+            };
+            if !resolved.is_empty() {
+                resolved.push('/');
+            }
+            resolved.push_str(text);
+        }
+        Ok(ConfinedEntry {
+            file,
+            resolved,
+            full,
+        })
     }
 
     pub fn open_write(&self, rel: &str, create_parents: bool) -> Result<WriteTarget, RootError> {
@@ -802,6 +1061,15 @@ impl RootHandle {
             std::fs::create_dir_all(parent).map_err(RootError::Io)?;
         }
         Ok(full)
+    }
+}
+
+#[cfg(not(unix))]
+impl ConfinedEntry {
+    /// Off Unix this re-stats the entry by path rather than through a held
+    /// directory descriptor, so it narrows the window instead of removing it.
+    pub fn still_named(&self) -> bool {
+        std::fs::symlink_metadata(&self.full).is_ok_and(|meta| meta.file_type().is_file())
     }
 }
 
@@ -988,6 +1256,72 @@ mod tests {
         assert!(handle.stat("notes").expect("stat dir").is_dir());
         handle.remove_file("notes/today.md").expect("unlink");
         assert!(handle.stat("notes/today.md").is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The walk's own record of where it landed, for a lookup that was aliased
+    /// through a symlinked parent directory. A caller pinning `tests/w.sh` and
+    /// re-observing it after the artifact moved to `moved/w.sh` learns that it
+    /// moved — and learns it from the walk that opened the file, not from a
+    /// second `canonicalize` of the same string.
+    #[test]
+    fn an_entry_reports_the_location_its_own_walk_reached() {
+        let root = scratch("entry-aliased");
+        std::fs::create_dir(root.join("moved")).unwrap();
+        std::fs::write(root.join("moved/w.sh"), b"exit 1\n").unwrap();
+        std::os::unix::fs::symlink(root.join("moved"), root.join("tests")).unwrap();
+        let handle = RootHandle::open(&root).expect("open root");
+
+        let entry = handle.open_entry("tests/w.sh").expect("the alias opens");
+        assert_eq!(entry.resolved(), "moved/w.sh");
+        assert!(entry.still_named());
+
+        // A relative link target is spliced and walked the same way.
+        std::fs::remove_file(root.join("tests")).unwrap();
+        std::os::unix::fs::symlink("moved", root.join("tests")).unwrap();
+        assert_eq!(
+            handle
+                .open_entry("tests/w.sh")
+                .expect("relative alias")
+                .resolved(),
+            "moved/w.sh"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// `open_entry` opens the entry, never what a link at that name points at:
+    /// an artifact replaced by a symlink to its own former contents is not an
+    /// artifact that is unchanged.
+    #[test]
+    fn an_entry_refuses_a_symlink_at_the_leaf() {
+        let root = scratch("entry-leaf-link");
+        std::fs::write(root.join("real.sh"), b"exit 1\n").unwrap();
+        std::os::unix::fs::symlink("real.sh", root.join("w.sh")).unwrap();
+        let handle = RootHandle::open(&root).expect("open root");
+
+        assert!(handle.open_entry("w.sh").is_err(), "O_NOFOLLOW at the leaf");
+        assert!(handle.open_entry("real.sh").is_ok());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The bracket a caller reading the bytes needs: the name this descriptor
+    /// was opened by must still mean this file. Asked through the directory
+    /// descriptor the walk holds, so it is not a fresh resolution of the path.
+    #[test]
+    fn an_entry_renamed_out_from_under_its_descriptor_is_no_longer_named() {
+        let root = scratch("entry-renamed");
+        std::fs::write(root.join("w.sh"), b"exit 1\n").unwrap();
+        let handle = RootHandle::open(&root).expect("open root");
+
+        let entry = handle.open_entry("w.sh").expect("opens");
+        assert!(entry.still_named());
+
+        std::fs::rename(root.join("w.sh"), root.join("original.sh")).unwrap();
+        std::fs::write(root.join("w.sh"), b"exit 0\n").unwrap();
+        assert!(
+            !entry.still_named(),
+            "the name now means a different file, so this descriptor is not it"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
