@@ -91,6 +91,16 @@ pub(crate) const TABLES: [&str; 21] = [
 ///   by `accounted_call::complete_standalone`. NULL means "this row is a
 ///   turn", which is likewise a fact and not a gap.
 ///
+/// # `outcome` and `delivery` — two facts, not one label
+///
+/// `outcome` says how the run **ended**; `delivery` says whether it **shipped**
+/// anything. They are independent: a completed run can deliver nothing, and a
+/// cancelled one can have merged a pull request before the cancel landed
+/// (#2808). NULL `delivery` is "nothing observed this run's delivery", which is
+/// most rows and is not the same answer as `'none'`. See
+/// `crate::telemetry::delivery` for the tokens and `migrations::delivered_runs`
+/// for why there is no default and no backfill.
+///
 /// Those role rows carry `kind = 'system'`, the one value that is not a door.
 /// It exists because `kind` is `NOT NULL` and so cannot spell "no door" as
 /// NULL; since the column has never had an unrecorded state, the sentinel
@@ -114,7 +124,8 @@ pub(crate) const EXECUTIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS executions (
        journal_era INTEGER NOT NULL DEFAULT 0,
        pipeline_variant TEXT,
        role TEXT,
-       parent_execution_id INTEGER
+       parent_execution_id INTEGER,
+       delivery TEXT
      );
      CREATE INDEX IF NOT EXISTS executions_by_session
        ON executions(session_id, id);

@@ -5,6 +5,12 @@ use rusqlite::params;
 
 use crate::{Result, Store, sqlite_i64};
 
+/// Whether a run shipped anything — the other half of what `executions` says
+/// about a finished run, apart from how it ended (#2808).
+mod delivery;
+
+pub use delivery::Delivery;
+
 #[cfg(test)]
 pub(crate) mod fixtures;
 

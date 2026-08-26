@@ -225,7 +225,7 @@ pub use sessions::{SessionRecord, SessionRegistry, SessionStatus, SupervisorInfo
 /// in [`task_board`] speaks in these, and a caller should not have to name
 /// `stella-protocol` to call one.
 pub use stella_protocol::TaskItem;
-pub use telemetry::{SourceTelemetryRow, TelemetryRow};
+pub use telemetry::{Delivery, SourceTelemetryRow, TelemetryRow};
 pub use tool_calls::{ToolCallRow, ToolCallState};
 
 /// FNV-1a/64 hex — a stable, dependency-free digest for prompt hashes and

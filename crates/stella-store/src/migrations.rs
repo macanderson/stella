@@ -51,6 +51,7 @@ mod abandoned_state;
 mod additive_tables;
 mod agent_use_kind;
 mod call_identity;
+mod delivered_runs;
 mod dispatched_executions;
 mod error_class;
 mod execution_plane;
@@ -104,7 +105,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 37] = [
+pub(crate) const MIGRATIONS: [Migration; 38] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -305,6 +306,14 @@ pub(crate) const MIGRATIONS: [Migration; 37] = [
     // joined to the receipt of the call that produced it (#4924). NULL is
     // "this row cannot say", never 0. See the module's own doc.
     telemetry_call_identity::migrate_v36_to_v37,
+    // v37 → v38: `executions` grows `delivery` — whether the run shipped
+    // anything, recorded apart from how it ended, because a cancelled run can
+    // have merged a pull request before the cancel landed (#2808). Additive,
+    // column-guarded ADD COLUMN, nullable with no default and no backfill:
+    // NULL is "nothing observed this run's delivery", never "shipped
+    // nothing" — the whole point is that those two are different answers.
+    // See the module's own doc.
+    delivered_runs::migrate_v37_to_v38,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -357,7 +366,8 @@ pub(crate) const MIGRATIONS: [Migration; 37] = [
     //   v35 → v36: CLAIMED above by `executions.parent_execution_id` (#4628).
     //   v36 → v37: CLAIMED above by `telemetry.stream_seq` + the receipt join
     //              columns (#4924).
-    // Nothing is reserved now: take v37 → v38 and add your own line here.
+    //   v37 → v38: CLAIMED above by `executions.delivery` (#2808).
+    // Nothing is reserved now: take v38 → v39 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

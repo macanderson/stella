@@ -1266,6 +1266,12 @@ async fn run_task(
     }
 
     let spent = budget.session_spent_usd();
+    // Read the attempt's commits BEFORE closing its execution row, so the row
+    // records what the attempt shipped as well as how it ended (#2808). This
+    // door is the one that owes no attribution guess: the execution and the
+    // commit set belong to the same attempt, measured against its own
+    // `start_sha`. `for_attempt` drains the observer, so it stays called once.
+    let commits = crate::fleet_commits::for_attempt(&committed, root, &start_sha, task).await;
     let _ = finalize_fleet_execution(
         &execution,
         &registry,
@@ -1273,8 +1279,8 @@ async fn run_task(
         spent,
         rendered.persistence_complete,
         force_incomplete,
+        crate::fleet_commits::delivery_of(&commits),
     );
-    let commits = crate::fleet_commits::for_attempt(&committed, root, &start_sha, task).await;
     Ok(WorkerOutcome {
         cost_usd: spent,
         commits,
@@ -1283,6 +1289,11 @@ async fn run_task(
     })
 }
 
+/// Close the attempt's execution row: how it ended, and what it shipped.
+///
+/// `delivery` is written whatever the outcome, because the two are independent
+/// — an attempt can error or be stopped after landing commits, which is the
+/// case that used to be recorded as having delivered nothing (#2808).
 fn finalize_fleet_execution(
     execution: &crate::fleet_spend::ExecutionHandle,
     registry: &ToolRegistry,
@@ -1290,10 +1301,12 @@ fn finalize_fleet_execution(
     cost_usd: f64,
     persistence_complete: bool,
     force_incomplete: bool,
+    delivery: stella_store::Delivery,
 ) -> bool {
     let Some((store, execution_id)) = execution else {
         return false;
     };
+    let _ = store.record_delivery(*execution_id, delivery);
     agent::record_execution_end(
         store,
         *execution_id,

@@ -193,6 +193,22 @@ pub(crate) async fn for_attempt(
     }
 }
 
+/// What an attempt shipped, from the commits [`for_attempt`] found (#2808).
+///
+/// The distinction this records is between *observed and empty* and *not
+/// observed at all*, so it is only ever called where the commits are known:
+/// this door reads them against the attempt's own `start_sha`, so an empty set
+/// is a measurement rather than a silence. A worker whose thread died never
+/// reaches here: `crate::fleet_spend::unreported_outcome` closes that row from
+/// the dispatch side, saw no commits, and leaves the column NULL.
+pub(crate) fn delivery_of(commits: &[CommitRecord]) -> stella_store::Delivery {
+    if commits.is_empty() {
+        stella_store::Delivery::Nothing
+    } else {
+        stella_store::Delivery::Commits
+    }
+}
+
 /// The commits `root` gained between `from` and its current `HEAD`, oldest
 /// first, as ledger-ready records.
 ///
