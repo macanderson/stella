@@ -27,9 +27,14 @@ fn serve(root: std::path::PathBuf) -> std::net::SocketAddr {
             .build()
             .expect("runtime");
         rt.block_on(async {
-            stella_observatory::serve(root, 0, |addr| {
-                let _ = tx.send(addr);
-            })
+            stella_observatory::serve(
+                root,
+                0,
+                std::sync::Arc::new(stella_observatory::NoPluginSkills),
+                |addr| {
+                    let _ = tx.send(addr);
+                },
+            )
             .await
         })
         .expect("serve");

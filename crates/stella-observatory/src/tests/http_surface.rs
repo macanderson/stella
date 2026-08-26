@@ -146,9 +146,14 @@ async fn serves_over_a_real_socket() {
     let root = ws.path().to_path_buf();
     let (tx, rx) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
-        let _ = serve(root, 0, move |addr| {
-            let _ = tx.send(addr);
-        })
+        let _ = serve(
+            root,
+            0,
+            std::sync::Arc::new(crate::NoPluginSkills),
+            move |addr| {
+                let _ = tx.send(addr);
+            },
+        )
         .await;
     });
     let addr = rx.await.unwrap();
@@ -238,9 +243,14 @@ async fn unterminated_request_head_is_refused_not_routed() {
     let root = ws.path().to_path_buf();
     let (tx, rx) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
-        let _ = serve(root, 0, move |addr| {
-            let _ = tx.send(addr);
-        })
+        let _ = serve(
+            root,
+            0,
+            std::sync::Arc::new(crate::NoPluginSkills),
+            move |addr| {
+                let _ = tx.send(addr);
+            },
+        )
         .await;
     });
     let addr = rx.await.unwrap();

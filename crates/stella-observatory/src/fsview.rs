@@ -172,6 +172,10 @@ fn skill_entry(
         "scope": scope,
         "learned": learned,
         "evidence_grade": evidence_grade,
+        // Null here and overwritten by [`skills`] for a row read out of a
+        // plugin's package, so the page never has to tell an absent field from
+        // a null one.
+        "contributed_by": Value::Null,
         "path": path.display().to_string(),
         "modified_unix": mtime_unix(path),
     }))
@@ -278,9 +282,107 @@ fn skill_evidence_grades(workspace_root: &Path) -> HashMap<String, &'static str>
         .collect()
 }
 
-/// Every skill visible to this workspace: project `.stella/skills` plus the
-/// user-scope skills dir, with learned (self-extracted) skills flagged.
-pub fn skills(workspace_root: &Path) -> Value {
+/// The tier an installed plugin sits at, which is also the tier its
+/// contributed skills are governed by (`stella_cli::skill_manager`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginTier {
+    /// `<workspace>/.stella/plugins` — the tier behind the project trust gate.
+    Project,
+    /// `~/.stella/plugins` — the operator's own machine-scope tier.
+    User,
+}
+
+impl PluginTier {
+    /// The scope label the skills view already uses for the user's own rows.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Project => "project",
+            Self::User => "user",
+        }
+    }
+}
+
+/// One installed plugin's `skills/` directory, as the host that resolved the
+/// roster reports it.
+#[derive(Debug, Clone)]
+pub struct ContributedSkills {
+    /// The contributing plugin's manifest `name`.
+    pub plugin: String,
+    /// The tier its package is installed at.
+    pub tier: PluginTier,
+    /// `<plugin_dir>/skills`. It need not exist; an absent directory is an
+    /// empty one, the same as every other root this module scans.
+    pub dir: PathBuf,
+}
+
+/// The port a host implements to say which plugin-contributed skills a session
+/// started in this workspace would load (#4917).
+///
+/// # Why a port and not a directory scan
+///
+/// A plugin's skills live under `<plugin_dir>/skills` and are contributed *by
+/// derivation* — nothing is ever copied into the user's own `.stella/`, which
+/// is the property that makes `stella plugin remove` total
+/// (`stella_cli::plugin_cmd::roster`). So the dashboard cannot find them by
+/// widening the roots it walks: it would have to resolve the roster itself,
+/// and with it the project-tier trust gate (#3509), the `plugins.<name> =
+/// "off"` retraction, the install receipt, and the reconcile-on-every-load
+/// check. Every one of those is a security answer, and a second implementation
+/// of a security answer is a second answer — the shape this area exists to
+/// avoid.
+///
+/// So the host that already computes that answer hands it over instead —
+/// ports, not direct dependencies (AGENTS.md rule 1). `stella observe`
+/// implements this over
+/// `plugin_cmd::package::contributed_skill_dirs`, the same call the session's
+/// own skill load makes, so the dashboard and the loader cannot disagree about
+/// what is in force — including about a workspace nobody has trusted, where
+/// both answer nothing.
+///
+/// The port is asked per request rather than once at startup, so a package
+/// installed while the dashboard is open shows up on the next refresh.
+///
+/// **The observer's environment is the observer's.** `STELLA_TRUST_PROJECT`
+/// is read from the process asking, so a `stella observe` launched without it
+/// reports the project tier empty while an agent session launched with it
+/// loads those skills. That is the same authority answering in two
+/// environments rather than two authorities, and what the dashboard reports is
+/// what a session started *here* would load.
+pub trait PluginSkills: Send + Sync {
+    /// The contributed skills directories in force for `workspace_root`.
+    fn contributed_skill_dirs(&self, workspace_root: &Path) -> Vec<ContributedSkills>;
+}
+
+/// The answer for a caller with no roster to report — every unit test that
+/// drives [`crate::respond`], and any host that does not implement the port.
+pub struct NoPluginSkills;
+
+impl PluginSkills for NoPluginSkills {
+    fn contributed_skill_dirs(&self, _workspace_root: &Path) -> Vec<ContributedSkills> {
+        Vec::new()
+    }
+}
+
+/// Every skill visible to this workspace: project `.stella/skills`, the
+/// user-scope skills dir, and every installed plugin's contributed skills,
+/// with learned (self-extracted) skills flagged.
+///
+/// Contributed rows are appended last and answer three columns differently
+/// from a skill under a scope root, matching `stella_cli::skill_manager`'s
+/// `contributed_rows` one surface over:
+///
+/// - **`contributed_by` names the plugin**, and is `null` for the user's own.
+/// - **`learned` is false.** A package's `SKILL.md` may carry the miner's
+///   `origin: auto` marker, but it was mined in whatever workspace its author
+///   ran, not in this one — counted as learned it would inflate the "learned
+///   skills" tile with somebody else's loop.
+/// - **`evidence_grade` is null.** The ledger it joins against is this
+///   workspace's own, and a contributed skill was never a candidate in it.
+///
+/// A contributed skill whose name is already taken by one of the user's is
+/// omitted, matching the recall loader: it never reaches the prompt, so
+/// listing it would show a steer that is not in force.
+pub fn skills(workspace_root: &Path, plugins: &dyn PluginSkills) -> Value {
     let grades = skill_evidence_grades(workspace_root);
     let mut rows = Vec::new();
     scan_skills_dir(
@@ -291,6 +393,27 @@ pub fn skills(workspace_root: &Path) -> Value {
     );
     if let Some(user) = user_config_dir() {
         scan_skills_dir(&user.join("skills"), "user", &grades, &mut rows);
+    }
+    for contributed in plugins.contributed_skill_dirs(workspace_root) {
+        let mut found = Vec::new();
+        scan_skills_dir(
+            &contributed.dir,
+            contributed.tier.as_str(),
+            &HashMap::new(),
+            &mut found,
+        );
+        for mut row in found {
+            let name = row["name"].as_str().unwrap_or_default().to_string();
+            if rows
+                .iter()
+                .any(|seen| seen["name"].as_str() == Some(name.as_str()))
+            {
+                continue;
+            }
+            row["contributed_by"] = json!(contributed.plugin);
+            row["learned"] = json!(false);
+            rows.push(row);
+        }
     }
     rows.sort_by(|a, b| {
         let key = |v: &Value| {
@@ -451,6 +574,14 @@ const RESERVED_RULE_FILENAMES: &[&str] = &["governance.toml"];
 /// the panel under-report what actually steers the session, which for a
 /// workspace whose whole steering policy is published as TOML records meant an
 /// empty panel beside two enforced rules.
+///
+/// **A plugin's contributed records are not here**, and the same asymmetry
+/// [`skills`] closed is still open for them: a package's `rules/` steers the
+/// session (`stella context explain` prints `contributed by the \`vera\`
+/// plugin`) and this panel scans one directory. It is a second port of the
+/// [`PluginSkills`] shape, not a second design, and #4974 carries it — kept
+/// separate so the skills half ships against one test rather than two panels
+/// against none.
 pub fn rules_files(workspace_root: &Path) -> Value {
     let dir = workspace_root.join(".stella/rules");
     let mut rows = markdown_cards(&dir, 400);
@@ -1013,7 +1144,7 @@ tags       = ["testing", "pins"]
             .unwrap();
         drop(store);
 
-        let rows = skills(workspace_root);
+        let rows = skills(workspace_root, &NoPluginSkills);
         let rows = rows.as_array().expect("skills returns an array");
         let find = |name: &str| {
             rows.iter()
@@ -1120,5 +1251,143 @@ tags       = ["testing", "pins"]
         );
         assert!(!s.contains("ghp_nested"), "nested tables under env");
         assert!(s.contains("glm-5.2"), "ordinary lists are untouched");
+    }
+
+    /// A fake roster, so the skills view can be tested without this crate
+    /// linking the one that resolves rosters (which it may not).
+    struct FakeRoster(Vec<ContributedSkills>);
+
+    impl PluginSkills for FakeRoster {
+        fn contributed_skill_dirs(&self, _workspace_root: &Path) -> Vec<ContributedSkills> {
+            self.0.clone()
+        }
+    }
+
+    /// Write a `<dir>/<slug>/SKILL.md`, the layout a package ships.
+    fn plant_skill(dir: &Path, slug: &str, description: &str, body: &str) {
+        let entry = dir.join(slug);
+        std::fs::create_dir_all(&entry).unwrap();
+        std::fs::write(
+            entry.join("SKILL.md"),
+            format!("---\nname: {slug}\ndescription: {description}\n---\n\n{body}\n"),
+        )
+        .unwrap();
+    }
+
+    /// **The parity witness** (#4917). A plugin's skill is listed in the
+    /// dashboard's skills view and names the package that shipped it.
+    ///
+    /// #3567 gave a contributed skill an attribution field and put it on
+    /// screen in the SKILLS tab; this view scanned exactly two roots —
+    /// `<workspace>/.stella/skills` and `<user_config>/skills` — and a
+    /// package's skills live under `<plugin_dir>/skills` and are never copied
+    /// into either. So a user who installed a package for its skills saw them
+    /// in the deck and could not find them in the dashboard, which reads as
+    /// the complete list.
+    #[test]
+    fn a_plugins_skill_is_listed_and_names_the_plugin() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let own = root.join(".stella/skills");
+        std::fs::create_dir_all(&own).unwrap();
+        plant_skill(&own, "our-own", "the workspace's own", "OWN_BODY");
+
+        let package = root.join(".stella/plugins/vera/skills");
+        std::fs::create_dir_all(&package).unwrap();
+        plant_skill(
+            &package,
+            "house-style",
+            "how this shop writes code",
+            "PKG_BODY",
+        );
+
+        // Named rather than counted: the user-scope root this view also scans
+        // is the developer's real `~/.stella/skills`, and this crate has no
+        // env lock to move it.
+        let named = |rows: &Value, name: &str| -> Vec<Value> {
+            rows.as_array()
+                .expect("skills returns an array")
+                .iter()
+                .filter(|row| row["name"] == name)
+                .cloned()
+                .collect()
+        };
+        let empty = skills(root, &NoPluginSkills);
+        assert!(
+            named(&empty, "house-style").is_empty(),
+            "anti-vacuity — the package's skill is absent before the roster is asked"
+        );
+        assert_eq!(
+            named(&empty, "our-own").len(),
+            1,
+            "and the workspace's own is there either way"
+        );
+
+        let listed = skills(
+            root,
+            &FakeRoster(vec![ContributedSkills {
+                plugin: "vera".to_string(),
+                tier: PluginTier::Project,
+                dir: package.clone(),
+            }]),
+        );
+        let found = named(&listed, "house-style");
+        let row = found
+            .first()
+            .unwrap_or_else(|| panic!("the package's skill is listed: {listed:#?}"));
+        assert_eq!(row["contributed_by"], "vera", "and names the package");
+        assert_eq!(
+            row["scope"], "project",
+            "at the tier its package is installed at, which is the tier whose \
+             state file governs it"
+        );
+        assert_eq!(
+            row["learned"], false,
+            "a package's skill was not mined by this workspace's loop, whatever \
+             its frontmatter says — counted as learned it would inflate the tile"
+        );
+        assert!(
+            row["evidence_grade"].is_null(),
+            "no proposal here to grade it"
+        );
+        assert!(
+            named(&listed, "our-own")[0]["contributed_by"].is_null(),
+            "and the user's own row names nobody"
+        );
+    }
+
+    /// **The precedence witness.** A package may not silently take over a name
+    /// the user wrote: the recall loader drops the plugin's same-named skill
+    /// before it reaches the prompt, so listing it would show a steer that is
+    /// not in force.
+    #[test]
+    fn a_plugins_skill_never_displaces_one_the_user_wrote_in_the_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let own = root.join(".stella/skills");
+        std::fs::create_dir_all(&own).unwrap();
+        plant_skill(&own, "house-style", "the user's own wording", "OWN_BODY");
+
+        let package = root.join(".stella/plugins/vera/skills");
+        std::fs::create_dir_all(&package).unwrap();
+        plant_skill(&package, "house-style", "the package's wording", "PKG_BODY");
+
+        let listed = skills(
+            root,
+            &FakeRoster(vec![ContributedSkills {
+                plugin: "vera".to_string(),
+                tier: PluginTier::Project,
+                dir: package,
+            }]),
+        );
+        let rows: Vec<&Value> = listed
+            .as_array()
+            .expect("skills returns an array")
+            .iter()
+            .filter(|row| row["name"] == "house-style")
+            .collect();
+        assert_eq!(rows.len(), 1, "one row for one name: {rows:#?}");
+        assert_eq!(rows[0]["description"], "the user's own wording");
+        assert!(rows[0]["contributed_by"].is_null());
     }
 }

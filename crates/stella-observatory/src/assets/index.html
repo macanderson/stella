@@ -3165,6 +3165,7 @@ function renderSkills(rows) {
     tile("Skills", fmtInt(rows.length), "visible to this workspace") +
     tile("Project scope", fmtInt(rows.filter(r => r.scope === "project").length), ".stella/skills") +
     tile("User scope", fmtInt(rows.filter(r => r.scope === "user").length), "~/.stella/skills") +
+    tile("From plugins", fmtInt(rows.filter(r => r.contributed_by).length), "shipped by an installed package") +
     tile("Learned", fmtInt(learned.length), "auto-extracted by stella", true);
   if (!rows.length) {
     $("skills-table").innerHTML =
@@ -3173,13 +3174,17 @@ function renderSkills(rows) {
     return;
   }
   $("skills-table").innerHTML = `<table><thead><tr>
-    <th scope="col">skill</th><th scope="col">scope</th><th scope="col">description</th>
+    <th scope="col">skill</th><th scope="col">scope</th><th scope="col">via</th>
+    <th scope="col">description</th>
     <th scope="col" class="num">uses</th><th scope="col" class="num">updated</th></tr></thead><tbody>` +
     rows.map(r => {
       const u = uses.get(r.name);
       return `<tr>
       <td class="main">${r.learned ? `<span class="badge accent" title="auto-extracted from stella's own reflections">◆ learned</span> ` : ""}${esc(r.name)}</td>
       <td><span class="badge dim">${esc(r.scope)}</span></td>
+      <td>${r.contributed_by
+        ? `<span class="badge dim" title="shipped by an installed plugin — read from its package, never copied into your .stella/">${esc(r.contributed_by)}</span>`
+        : `<span style="color:var(--text-3)">—</span>`}</td>
       <td class="wrap-txt" style="max-width:520px;color:var(--text-2)">${esc(r.description || "—")}</td>
       <td class="num">${u ? fmtInt(u.uses) + "×" : "—"}</td>
       <td class="num">${agoUnix(r.modified_unix)}</td></tr>`;

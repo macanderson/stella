@@ -71,6 +71,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 pub use db::{DbError, Observatory};
+/// The port a host implements to report a workspace's plugin-contributed
+/// skills, and the shapes it answers with (#4917).
+pub use fsview::{ContributedSkills, NoPluginSkills, PluginSkills, PluginTier};
 
 /// The dashboard page, embedded so the binary is self-contained.
 const INDEX_HTML: &str = include_str!("assets/index.html");
@@ -258,6 +261,18 @@ fn route_of(path: &str) -> &str {
 /// mean buffering an endless one.
 #[must_use]
 pub fn respond(workspace_root: &Path, path: &str) -> Response {
+    respond_with(workspace_root, path, &NoPluginSkills)
+}
+
+/// [`respond`], with the host's answer for which plugin-contributed skills a
+/// session started here would load ([`PluginSkills`], #4917).
+///
+/// Split from [`respond`] rather than added to it because only the one route
+/// that lists skills consults it: every other route is still a pure function
+/// of (workspace, path), and the dozens of unit tests that drive [`respond`]
+/// should not have to name a roster to ask about executions.
+#[must_use]
+pub fn respond_with(workspace_root: &Path, path: &str, plugins: &dyn PluginSkills) -> Response {
     let (route, query) = match path.split_once('?') {
         Some((r, q)) => (r, Some(q)),
         None => (path, None),
@@ -535,7 +550,7 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
             ))
         }
         "/api/codegraph" => Ok(codegraph::snapshot(root)),
-        "/api/skills" => Ok(fsview::skills(root)),
+        "/api/skills" => Ok(fsview::skills(root, plugins)),
         "/api/mcp-servers" => Ok(fsview::mcp_servers(root)),
         "/api/config" => Ok(fsview::config(root)),
         "/api/memories" => Ok(fsview::memories(root)),
@@ -650,9 +665,15 @@ fn percent_decode(value: &str) -> String {
 /// Bind the observatory on `127.0.0.1:port` and serve until the process
 /// exits. `port` 0 picks a free port. Calls `on_ready` once with the bound
 /// address (the CLI prints the URL from it).
+///
+/// `plugins` answers which plugin-contributed skills a session started in this
+/// workspace would load — see [`PluginSkills`] for why the host is
+/// asked rather than the filesystem walked. [`NoPluginSkills`] is the
+/// answer for a host with no roster.
 pub async fn serve(
     workspace_root: PathBuf,
     port: u16,
+    plugins: Arc<dyn PluginSkills>,
     on_ready: impl FnOnce(SocketAddr),
 ) -> Result<(), ServeError> {
     let listener = TcpListener::bind(("127.0.0.1", port))
@@ -698,10 +719,11 @@ pub async fn serve(
             .await
             .expect("connection semaphore is never closed");
         let root = workspace_root.clone();
+        let plugins = Arc::clone(&plugins);
         tokio::spawn(async move {
             // Per-connection errors (bad request line, client hangup) only
             // affect that connection; the accept loop keeps serving.
-            let _ = handle(stream, &root).await;
+            let _ = handle(stream, &root, plugins).await;
             drop(permit);
         });
     }
@@ -748,7 +770,11 @@ fn host_is_local(head: &str) -> bool {
 /// because a ten-second cap on a healthy stream would sever it on a timer.
 /// What the timeout is actually for is a peer that opens a socket and says
 /// nothing; that hazard ends when the head arrives.
-async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result<()> {
+async fn handle(
+    mut stream: TcpStream,
+    workspace_root: &Path,
+    plugins: Arc<dyn PluginSkills>,
+) -> std::io::Result<()> {
     let head = match tokio::time::timeout(READ_TIMEOUT, read_head(&mut stream)).await {
         Ok(result) => result?,
         // The peer never finished its head. Dropping the connection is the whole
@@ -756,7 +782,7 @@ async fn handle(mut stream: TcpStream, workspace_root: &Path) -> std::io::Result
         // request head in ten seconds is not waiting for a status code.
         Err(_elapsed) => return Ok(()),
     };
-    respond_to_head(stream, workspace_root, head).await
+    respond_to_head(stream, workspace_root, head, plugins).await
 }
 
 /// One request head, and whether its terminator arrived inside the cap.
@@ -799,6 +825,7 @@ async fn respond_to_head(
     mut stream: TcpStream,
     workspace_root: &Path,
     head: RequestHead,
+    plugins: Arc<dyn PluginSkills>,
 ) -> std::io::Result<()> {
     let RequestHead {
         text: head,
@@ -844,7 +871,7 @@ async fn respond_to_head(
         // be on the blocking pool at once.
         let root = workspace_root.to_path_buf();
         let route = path.to_string();
-        tokio::task::spawn_blocking(move || respond(&root, &route))
+        tokio::task::spawn_blocking(move || respond_with(&root, &route, plugins.as_ref()))
             .await
             .unwrap_or_else(|_| {
                 Response::error("500 Internal Server Error", "dashboard query failed")
