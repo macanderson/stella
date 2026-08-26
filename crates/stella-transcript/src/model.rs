@@ -159,7 +159,7 @@ impl Status {
 
 /// Which tool a call invoked, as far as *rendering* is concerned.
 ///
-/// Deliberately not the tool registry's enumeration: the registry's job is to
+/// Not the tool registry's enumeration: the registry's job is to
 /// dispatch, this one's is to pick a color, a monogram and a body renderer. A
 /// tool this crate has never heard of is [`ToolKind::Other`] and renders as a
 /// plain command + output, which is the correct degradation — an MCP server's
@@ -418,7 +418,7 @@ impl FileStatus {
 
 /// One tool invocation and its result, as a single node.
 ///
-/// The invariant this type exists to enforce: **the invocation string lives
+/// The rule this type exists to enforce: **the invocation string lives
 /// here once**. `header_object` is what the call header prints; `extra_args`
 /// is everything the header did not say. There is no third field a renderer
 /// could reach for, which is why "no command string appears more than once per
@@ -521,7 +521,7 @@ impl Step {
 /// What class of thing a [`Note`] records — the sole input to its glyph and
 /// colour.
 ///
-/// Deliberately a *visual* taxonomy rather than a mirror of the engine's event
+/// A *visual* taxonomy rather than a mirror of the engine's event
 /// enum, for the same reason [`ToolKind`] is: the engine has some thirty event
 /// kinds and gains more every release, and a renderer that must grow an arm per
 /// event is a renderer that silently drops the ones it has not heard of yet.
@@ -618,7 +618,7 @@ pub struct Note {
     /// HTML renderer emits an inspect control carrying the coordinates; the
     /// grid renderer ignores it (a terminal has no prompt inspector to open).
     /// `serde(default)` so a transcript recorded before anchors existed still
-    /// deserializes (invariant #4).
+    /// deserializes (AGENTS.md #4).
     #[serde(default)]
     pub inspect: Option<CallAnchor>,
 }
@@ -645,7 +645,7 @@ pub struct Turn {
     pub prose: Vec<Prose>,
     /// Non-call rows — recall, compaction, verdicts, delegation — interleaved
     /// with steps by `before_step`. `serde(default)` so a transcript recorded
-    /// before notes existed still deserializes (invariant #4).
+    /// before notes existed still deserializes (AGENTS.md #4).
     #[serde(default)]
     pub notes: Vec<Note>,
     /// The model iterations.

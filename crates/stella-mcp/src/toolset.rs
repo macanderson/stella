@@ -452,7 +452,7 @@ impl McpToolSet {
 
     /// Servers skipped before connect — or refused with an HTTP 401 —
     /// because they require authentication (#2687), as `(name, reason)`.
-    /// Deliberately not folded into [`McpToolSet::failed_servers`]: callers
+    /// Not folded into [`McpToolSet::failed_servers`]: callers
     /// render that as "server unavailable", and the actionable state here is
     /// "run `stella mcp login <name>`". Each advertises one synthetic
     /// [`login_required_tool_name`] tool in place of its real ones.
@@ -738,7 +738,7 @@ impl McpToolSet {
     /// Servers whose advertised tools were trimmed to fit
     /// [`MAX_SERVER_SCHEMA_BYTES`], as `(server, tools dropped)`.
     ///
-    /// Deliberately separate from [`Self::over_advertising_servers`], which
+    /// Separate from [`Self::over_advertising_servers`], which
     /// reports the per-tool COUNT cap applied at ingest. These are two
     /// different walls and a reader needs to know which one it hit: 300 tools
     /// trips the first, twelve verbose ones trip this. Empty for every server
@@ -924,7 +924,7 @@ impl ToolExecutor for McpToolSet {
     /// every name this set answers is a [`wire_name`], synthetic ones
     /// included, so a future synthetic family is covered the day it is added.
     ///
-    /// A plain (native) name is deliberately NOT gated here — it falls
+    /// A plain (native) name is NOT gated here — it falls
     /// through to an executor that gates it itself, and gating twice would
     /// ask a human twice for one call.
     async fn execute(&self, name: &str, input: &Value) -> ToolOutput {
@@ -976,7 +976,7 @@ impl ToolExecutor for McpToolSet {
 
     /// Forwarded from the native layer, which owns the local session's
     /// state. An external MCP server's own long-running state is not
-    /// reported here and deliberately so: the end-of-turn assertion (#2764)
+    /// reported here and so: the end-of-turn assertion (#2764)
     /// names things this session started and answers for, and a remote
     /// server's children are not among them.
     fn live_services(&self) -> Vec<stella_core::LiveService> {

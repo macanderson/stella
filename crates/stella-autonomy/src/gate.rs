@@ -31,7 +31,7 @@
 //! So [`stuck_on_base`] asks a question with no text matching in it: **has this
 //! check failed on every one of the last N base commits?** If it has, the loop
 //! stops letting it block, says so out loud, and gets on with the work. That
-//! is deliberately a statement about the base's history and not about this
+//! is a statement about the base's history and not about this
 //! pull request — a check red only here is this branch's problem and still
 //! blocks.
 //!

@@ -10,7 +10,7 @@
 //! dedup set rests on, and the folds that turn the ledger into evidence.
 //!
 //! No I/O: every function here is synchronous over owned data — the same
-//! discipline invariant 2 requires of `stella-core`, kept here by choice
+//! discipline AGENTS.md #2 requires of `stella-core`, kept here by choice
 //! because it is what makes this crate property-testable and safe to share.
 //! The probes that read the machine, the files that hold the state, and the
 //! processes that run tools all live in `stella-cli` (`self_driving_cmd`), which
@@ -834,7 +834,7 @@ impl QueueIssue {
 
 /// Filter to defects and rank them. `bug` and `triage` both count: an
 /// untriaged issue is a defect nobody has classified yet, not a non-defect.
-/// Feature work is deliberately excluded — this loop closes defects, and
+/// Feature work is excluded — this loop closes defects, and
 /// mixing the two makes the batch unreviewable.
 ///
 /// Issues carrying `ESCALATION_LABEL` are dropped: the loop already attempted

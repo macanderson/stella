@@ -10,9 +10,9 @@
 //! its stderr. Every one of those is a `String` that looks like diagnostics and
 //! is really content.
 //!
-//! Invariant 5 already solved this without anyone noticing: **every library
+//! AGENTS.md #5 already solved this without anyone noticing: **every library
 //! error in this workspace is a typed enum**. So an error can be recorded as
-//! *which variant it was*, plus fields explicitly marked safe — and the
+//! *which case it was*, plus fields explicitly marked safe — and the
 //! `Display` string is simply never produced.
 //!
 //! ```
@@ -41,7 +41,7 @@
 //! ```
 //!
 //! In a codebase where errors were `String`s this would be a large piece of
-//! work. Here invariant 5 paid for it years ago, and the macro is mostly
+//! work. Here AGENTS.md #5 paid for it years ago, and the macro is mostly
 //! bookkeeping.
 //!
 //! ## What the shape buys
@@ -68,21 +68,21 @@ pub fn error_field(code: &'static str, fields: Vec<(StaticStr, FieldValue)>) -> 
     FieldValue::Map(entries)
 }
 
-/// Make a typed error [`Loggable`](crate::Loggable) by naming its variants and
+/// Make a typed error [`Loggable`](crate::Loggable) by naming its cases and
 /// the fields of each that are safe to record.
 ///
-/// Every variant must be listed — the generated `match` is exhaustive, so
-/// adding a variant to the error is a compile error here until someone decides
-/// what it records as. That is the point: a new error variant should not
+/// Every case must be listed — the generated `match` is exhaustive, so
+/// adding a case to the error is a compile error here until someone decides
+/// what it records as. That is the point: a new error case should not
 /// silently become invisible in the logs, and it should not silently start
 /// leaking either.
 ///
-/// Three variant forms:
+/// Three forms:
 ///
 /// | Form | Records |
 /// |---|---|
 /// | `Variant { a, b } => "code"` | `{"code":"code","a":…,"b":…}` — the named bindings must be [`Loggable`](crate::Loggable) |
-/// | `Variant { .. } => "code"` | `{"code":"code"}` — the variant name alone |
+/// | `Variant { .. } => "code"` | `{"code":"code"}` — the case name alone |
 /// | `Variant(binding) => "code" { k = expr }` | `{"code":"code","k":…}` — for newtypes and computed fields |
 ///
 /// The third form is where an `io::Error` becomes its
@@ -90,7 +90,7 @@ pub fn error_field(code: &'static str, fields: Vec<(StaticStr, FieldValue)>) -> 
 /// `expr` evaluates to must still implement [`Loggable`](crate::Loggable), so
 /// the escape from a typed error into a `String` is closed here too.
 ///
-/// A unit variant is written `Variant {} => "code"`.
+/// A unit case is written `Variant {} => "code"`.
 #[macro_export]
 macro_rules! log_error {
     (
@@ -159,7 +159,7 @@ impl crate::Loggable for std::io::ErrorKind {
     fn to_field(&self) -> FieldValue {
         // Through an explicit table rather than `Debug` or `Display`. `Display`
         // renders prose ("entity not found") that can change between Rust
-        // releases, and `Debug` renders a variant name this crate would then be
+        // releases, and `Debug` renders a case name this crate would then be
         // promising to keep stable on the standard library's behalf. A code is
         // only worth alerting on if we own its spelling (§11).
         FieldValue::Str(StaticStr::new(io_kind_name(*self)))
@@ -250,7 +250,7 @@ mod tests {
         }
     }
 
-    /// The headline of §5.3: the variant's own message-bearing field exists on
+    /// The headline of §5.3: the case's own message-bearing field exists on
     /// the value and cannot reach the record, because it was never named.
     #[test]
     fn an_unnamed_field_cannot_reach_the_record() {
@@ -263,7 +263,7 @@ mod tests {
         assert!(!json.contains("sk-live"), "{json}");
     }
 
-    /// A variant with nothing safe to say still says which variant it was,
+    /// A case with nothing safe to say still says which case it was,
     /// which is usually the whole diagnosis.
     #[test]
     fn a_variant_with_no_safe_fields_records_its_name() {

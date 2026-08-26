@@ -53,7 +53,7 @@ pub fn dump_after_panic(dx: &Dx, dir: &Path, info: &PanicHookInfo<'_>) -> Option
             .with("line", location.line())
             .with("column", location.column());
     }
-    // The panic *payload* is deliberately absent. It is a formatted message
+    // The panic *payload* is absent. It is a formatted message
     // that routinely interpolates runtime values — a path, a tool argument, a
     // provider response — and §5.2 has no exception for the message that
     // happens to be attached to a crash. The previous hook has already printed

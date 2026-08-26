@@ -17,13 +17,13 @@
 //! the one deliberate exception to "every MCP tool is treated as mutating":
 //! this tool is authored *here*, not by the untrusted server.
 //!
-//! It is deliberately invisible to Best-of-N candidates: it never enters the
+//! It is invisible to Best-of-N candidates: it never enters the
 //! routing map, so [`super::McpToolSet::is_candidate_safe_tool`] answers
 //! `false` and [`super::CandidateMcpView`] filters it out — a candidate
 //! cannot act on a login instruction, only the user can.
 //!
 //! Everything here is deterministic prose over the server name, so the
-//! advertised schema is byte-stable across sessions (invariant #7's
+//! advertised schema is byte-stable across sessions (AGENTS.md #7's
 //! discipline applied to the tool surface).
 
 use stella_protocol::{ToolOutput, ToolSchema};

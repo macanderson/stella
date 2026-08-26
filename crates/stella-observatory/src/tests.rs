@@ -42,7 +42,7 @@ fn host_header_gates_dns_rebinding() {
 /// Build a workspace with a seeded `.stella/private/store.db` shaped like the
 /// real schema (the subset the observatory reads).
 ///
-/// A hand-written *subset*, not a copy, and deliberately a divergent one:
+/// A hand-written *subset*, not a copy, and a divergent one:
 /// `stella-store`'s shipped DDL also carries `executions.usage_complete` and
 /// `usage_status`, and `telemetry.call_role` and `usage_complete` — columns
 /// no query in this crate selects. The point of the subset is speed and

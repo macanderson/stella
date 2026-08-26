@@ -209,17 +209,17 @@ a thread-local, not a task-local, both of which are wrong under `!Send` turn
 futures and wrong under `tokio` task migration. `Dx` is a handle, not a global,
 for the same reason.
 
-This is nearly free here because invariant 2 already banned ambient state:
+This is nearly free here because AGENTS.md #2 already banned ambient state:
 `tracing`'s spans exist to reconstruct context that ordinary code loses, and
 this codebase does not lose it. The architecture stella chose for testability
 hands correlation over for nothing.
 
-## What this deliberately does not do
+## What this does not do
 
 - **No logging in `stella-core`'s pure functions.** Compaction, eviction, loop
   detection, budget, skill selection and hook matching keep *returning* their
   rationale as typed values; the caller — already at an I/O boundary — records
-  it. This is the invariant most likely to erode, and the one most responsible
+  it. This is the rule most likely to erode, and the one most responsible
   for `stella-core` being the crate the audit scores at 100.
 - **No egress, at any level, in any build.** No sink opens a socket.
 - **No per-token records.** `AgentEvent::TextDelta` fires per token and produces

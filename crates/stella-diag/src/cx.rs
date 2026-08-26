@@ -6,7 +6,7 @@
 //! `tracing`'s substantive advantage over a hand-rolled logger is span
 //! propagation, and hand-rolled loggers usually lose because they force every
 //! call site to re-thread ids by hand. Stella does not have that problem,
-//! because **invariant 2 already forces it**: "plain synchronous functions over
+//! because **AGENTS.md #2 already forces it**: "plain synchronous functions over
 //! owned data" means there is no ambient state to begin with and every decision
 //! function already receives its inputs explicitly.
 //!
@@ -88,7 +88,7 @@ impl ShortId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         // Every byte was written as ASCII hex by a constructor above, so this
-        // cannot fail; the fallback keeps invariant 5 rather than asserting it.
+        // cannot fail; the fallback keeps AGENTS.md #5 rather than asserting it.
         std::str::from_utf8(&self.0).unwrap_or("00000000")
     }
 }

@@ -52,7 +52,7 @@ fn level() -> impl Strategy<Value = Level> {
 
 fn field_value() -> impl Strategy<Value = FieldValue> {
     prop_oneof![
-        // Through `FieldValue::int`, not the variant, because that is the only
+        // Through `FieldValue::int`, not the case, because that is the only
         // way an emit site can build a signed field — and it is where the
         // Int/Uint normalisation that makes the round trip exact happens.
         any::<i64>().prop_map(FieldValue::int),
@@ -140,7 +140,7 @@ fn spec() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    /// **Property 8 — the envelope round-trips (invariant 4).**
+    /// **Property 8 — the envelope round-trips (AGENTS.md #4).**
     ///
     /// Both directions: the parsed record equals the original, *and*
     /// re-serializing it reproduces the same bytes. The second half is the one

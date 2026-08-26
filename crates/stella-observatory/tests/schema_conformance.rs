@@ -3,7 +3,7 @@
 
 //! **The schema-drift gate (#827).**
 //!
-//! `stella-observatory` deliberately does not link `stella-store` at runtime:
+//! `stella-observatory` does not link `stella-store` at runtime:
 //! opening the store runs migrations, and migrations are writes, so an
 //! observer that went through `Store::open` would mutate the thing it
 //! observes. It hand-writes its SQL against those tables instead and opens
@@ -277,7 +277,7 @@ fn real_store_workspace() -> tempfile::TempDir {
         )
         .expect("sub-agent finish");
     // The delegate's own tool traffic, stamped with its agent id (#4624).
-    // Deliberately journaled AFTER the `Finished` bracket: the engine
+    // Journaled AFTER the `Finished` bracket: the engine
     // dispatches independent delegates concurrently, so bracket order is not
     // what attributes a call — the stamp is, and a fixture that only ever put
     // a child's calls inside its own bracket would prove the weaker claim.

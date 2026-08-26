@@ -16,7 +16,7 @@
 //!
 //! - `prev` / `first` search **same-role** calls over the **whole session**,
 //!   oldest execution first — a system prompt is byte-stable inside one
-//!   execution by design (the prompt-cache invariant), so the only place it
+//!   execution by design (the prompt-cache rule), so the only place it
 //!   can drift is across turns, and stopping at the execution boundary would
 //!   report "no change" for exactly the comparison worth making.
 //! - A role's first call has no predecessor, so `prev`/`first` resolve to

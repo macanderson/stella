@@ -345,7 +345,7 @@ fn a_cancelled_runs_reflection_reads_partial_run_not_null() {
 }
 
 /// `/api/model-card` names its missing parameters; the card itself is read
-/// from the user-tier catalog, which a seeded workspace deliberately does not
+/// from the user-tier catalog, which a seeded workspace does not
 /// fabricate.
 #[test]
 fn model_card_route_names_its_missing_parameters() {
@@ -642,7 +642,7 @@ fn execution_context_rebuilds_the_message_array_a_call_was_sent() {
     assert_eq!(context["digest_mismatch_severity"], "none");
     assert_eq!(context["journal_era"], "compaction_unjournaled");
     // A gap block's preimage is stored locally, so its check is tautological
-    // and is deliberately not reported as evidence.
+    // and is not reported as evidence.
     assert!(messages[0]["blocks"][0]["digest_verified"].is_null());
     assert_eq!(messages[3]["blocks"][0]["digest_verified"], true);
     assert_eq!(messages[3]["blocks"][0]["cache_zone"], "volatile");
@@ -867,7 +867,7 @@ fn seed_running_execution(ws: &TempDir) {
 /// still-open second step: the response is JSON, carries the re-rendered
 /// running step and its receipt, and never repeats the already-settled first
 /// step. This is the capability #4593 (fix shape (b), client-side fold
-/// preservation) deliberately left open — it fails to compile against a
+/// preservation) left open — it fails to compile against a
 /// pre-#4566-shape-(a) tree, because `from_step` was not a recognised query
 /// parameter and the route always returned `text/html`.
 #[test]

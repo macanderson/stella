@@ -13,7 +13,7 @@
 //! Sink`.
 //!
 //! [`Sink::write`] returns a `Result` **that [`Dx`](crate::Dx) discards**, and
-//! that asymmetry is deliberate. A sink must be able to say it failed (invariant
+//! that asymmetry is deliberate. A sink must be able to say it failed (rule
 //! 5: no silent discards), and a caller must never be able to fail because of
 //! it (§3.4: losing a log line must never lose a turn). Property 4 of §12 pins
 //! the pair down.
@@ -29,7 +29,7 @@ use crate::record::Record;
 
 /// Why a sink could not record something.
 ///
-/// Typed rather than a `String` (invariant 5), and content-free for the same
+/// Typed rather than a `String` (AGENTS.md #5), and content-free for the same
 /// reason records are: an `io::Error`'s `Display` carries the filename, so only
 /// its [`std::io::ErrorKind`] is kept.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,7 +130,7 @@ impl JsonlSink {
     /// Append to `path`, owner-only, creating the parent directory if needed.
     ///
     /// 0600 because a log file is the easiest accidental egress there is —
-    /// §3.2's sharper reading of invariant 3 is that *operators ship logs*.
+    /// §3.2's sharper reading of AGENTS.md #3 is that *operators ship logs*.
     /// The contents are content-free by construction, and the permissions are
     /// a second, independent check.
     pub fn file(path: &Path) -> Result<Self, SinkError> {
@@ -155,7 +155,7 @@ impl Sink for JsonlSink {
 
 /// One human-readable line per record.
 ///
-/// The default when stderr is a TTY (§6). Deliberately not colourised and
+/// The default when stderr is a TTY (§6). Not colourised and
 /// deliberately not clever: this is the diagnostic plane, not the presentation
 /// plane, and §2's whole point is that the two stop borrowing each other's
 /// clothes.
@@ -475,7 +475,7 @@ mod tests {
         );
     }
 
-    /// The whole gate in one test, deliberately: `TERMINAL_HOLDS` is a
+    /// The whole gate in one test: `TERMINAL_HOLDS` is a
     /// process-wide static and the test binary is threaded, so splitting these
     /// assertions into separate `#[test]`s would let one function's hold
     /// silence another function's sink and fail at random.

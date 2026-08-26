@@ -25,7 +25,7 @@
 //! asserts the one property the outage violated, which is mechanically exact:
 //! **no HTML comment inside an inline `<script>` may contain a backtick.**
 //!
-//! It deliberately does not attempt a full template-literal balance check.
+//! It does not attempt a full template-literal balance check.
 //! That needs a JavaScript parser to be correct, and a half-right one would
 //! either miss real breakage or reject legitimate code — a guard that has to be
 //! argued with gets deleted. This property is narrow, it is the property that

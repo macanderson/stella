@@ -39,7 +39,7 @@
 //! `stella-graph`, and the hand-written scans in `lang` surviving for the
 //! three with no resident
 //! grammar (Markdown, TOML, JSON). syntect was declined: it loads grammar and
-//! theme assets at runtime, which invariant #2 forbids in this layer. The two
+//! theme assets at runtime, which AGENTS.md #2 forbids in this layer. The two
 //! token classes only a grammar can produce — [`Tok::Type`] and
 //! [`Tok::Function`] — grew the shared vocabulary, so all three palettes moved
 //! in that same change.
@@ -64,7 +64,7 @@ pub use lang::{Highlighter, Lang, lang_from_ext, lang_from_fence, lang_from_path
 /// A token class given a syntax colour; `None` runs stay the base colour.
 ///
 /// Shared by this crate's two renderers and by `stella-tui`'s lexers for every
-/// other language, which is why the variants are named for what they *are*
+/// other language, which is why the cases are named for what they *are*
 /// rather than for one language's use of them — the deck also spends
 /// [`Tok::Keyword`] on markdown headings and TOML table headers, and
 /// [`Tok::Number`] on markdown list markers.

@@ -42,7 +42,7 @@ const MAX_TOOL_PAGES: usize = 1000;
 //
 // The numbers below are RATIFIED as shipped (#616): sized to be invisible to
 // every well-behaved server we know of while still bounding a hostile one.
-// They are deliberately NOT configurable — no server has been observed to
+// They are NOT configurable — no server has been observed to
 // need more, and a config knob for a cap nobody hits is permanent public
 // surface (entry-point signatures, settings schema, docs) bought for
 // nothing. If a real server ever needs a higher cap, raise the const with

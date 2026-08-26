@@ -1,6 +1,6 @@
 //! Read-only queries over the workspace's `.stella` SQLite stores.
 //!
-//! The observatory deliberately does **not** go through `stella-store`'s
+//! The observatory does **not** go through `stella-store`'s
 //! `Store::open`: opening the store creates `.stella/` and runs schema
 //! migrations — writes — and an observer must never mutate what it observes.
 //! Instead every request opens the database file with
@@ -440,7 +440,7 @@ impl Observatory {
 
     /// One execution's transcript, replayed from its slice of the `events`
     /// journal (#1461): the answer text, reasoning and tool traffic the
-    /// telemetry projections deliberately do not carry.
+    /// telemetry projections do not carry.
     ///
     /// This is the second sanctioned read of `events` (after
     /// `recall_timings`) and it obeys the same bargain: the filter is
@@ -737,7 +737,7 @@ impl Observatory {
                     entry.errors += 1;
                     // '' is the store's spelling for "not audited into a
                     // class yet" (the v25 default). It counts under
-                    // "unclassified" — a key deliberately outside the wire
+                    // "unclassified" — a key outside the wire
                     // vocabulary of `stella-protocol`'s `ErrorClass`, so it
                     // can never collide with a real class token.
                     let class = if error_class.is_empty() {
@@ -1428,7 +1428,7 @@ fn or_empty(result: rusqlite::Result<Value>) -> Result<Value, DbError> {
 /// up. A dashboard that renders an older store with one section empty is
 /// strictly better than one that refuses to render at all, and the section
 /// fills in the moment a turn migrates the file.
-/// Both `rusqlite` variants are matched, and that is not defensive padding —
+/// Both `rusqlite` cases are matched, and that is not defensive padding —
 /// they carry these two failures **differently**, verified against the
 /// version in `Cargo.lock`:
 ///

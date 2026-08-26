@@ -22,7 +22,7 @@
 //!   has therefore already passed on all of it.
 //! - **Grammars are compiled in, so there is no runtime asset load.**
 //!   syntect's default path reads grammar and theme files at startup, which
-//!   invariant #2 forbids in this layer. Everything below is a pure function
+//!   AGENTS.md #2 forbids in this layer. Everything below is a pure function
 //!   over borrowed text.
 //!
 //! ## Why per line, and why that is not a parser instantiation per line
@@ -100,7 +100,7 @@ const PARSE_PROGRESS_BUDGET: u32 = 2_000;
 /// Deliberately *not* one-to-one with [`super::Lang`]: several languages share
 /// a grammar (every TypeScript/JavaScript dialect takes the TSX one), and the
 /// three languages with no resident grammar — Markdown, TOML, JSON — have no
-/// variant here at all and stay with the hand-written scan.
+/// case here at all and stay with the hand-written scan.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Grammar {
     Rust,
@@ -283,7 +283,7 @@ pub(super) fn runs(code: &str, g: Grammar) -> Option<Runs> {
 struct Emit<'a> {
     code: &'a str,
     runs: Runs,
-    /// Bytes before this are already emitted. The invariant that makes the
+    /// Bytes before this are already emitted. The rule that makes the
     /// output lossless: it only ever moves forward, and it reaches
     /// `code.len()` in [`Emit::finish`].
     cursor: usize,

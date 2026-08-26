@@ -19,7 +19,7 @@
 //! The **facets** — the per-crate typed enums that render into it — are each
 //! crate's own. That is the delta from `serve-observability.md`: one closed
 //! `ServeEvent` enum holds at crate scope and breaks at workspace scope,
-//! because a shared god-enum makes every new variant recompile the world and
+//! because a shared god-enum makes every new case recompile the world and
 //! stops any crate adding an event without editing a crate it does not own
 //! (§4, row 1). Nobody edits a shared enum here, and emission stays typed —
 //! which is the property that made the serve design testable in the first
@@ -127,7 +127,7 @@ impl Record {
 ///
 /// A clock that cannot be read is not a reason to lose a record: `0` is an
 /// obviously-wrong timestamp on a record that still carries its code, fields
-/// and correlation, which is strictly more than nothing (invariant 5, and the
+/// and correlation, which is strictly more than nothing (AGENTS.md #5, and the
 /// same posture `stella-serve::observe::sink` already takes).
 #[must_use]
 pub fn now_millis() -> u64 {
@@ -170,7 +170,7 @@ mod tests {
         );
     }
 
-    /// Invariant 4, and property 8 of §12.
+    /// AGENTS.md #4, and property 8 of §12.
     #[test]
     fn a_record_round_trips() {
         let record = Record::at(

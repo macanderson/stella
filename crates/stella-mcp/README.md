@@ -7,7 +7,7 @@ them exactly like a built-in tool.
 
 It is a client and nothing else. It drives `initialize` / `tools/list` /
 `tools/call` — plus `resources/list` / `resources/read` for servers that
-declare the `resources` capability (#2678) — and deliberately ignores every
+declare the `resources` capability (#2678) — and ignores every
 server-initiated request or notification (sampling, roots, progress). It also does not decide *where*
 anything lives on disk: [`config.rs`](src/config.rs) owns the shape of
 `mcp.toml`, not its path, and [`TokenStore`](src/oauth.rs) is handed a path by
@@ -49,7 +49,7 @@ dist (`[package.metadata.dist] dist = false`).
 |---|---|
 | [`src/lib.rs`](src/lib.rs) | The crate's authoritative design notes and the flat re-export surface. Read this first. |
 | [`src/toolset.rs`](src/toolset.rs) (+ [`src/toolset/tests.rs`](src/toolset/tests.rs)) | `McpToolSet` — the `ToolExecutor` impl, tool namespacing, routing, native fall-through, disabled servers, and the Best-of-N `CandidateMcpView`. Open it for anything the engine sees. [`src/toolset/needs_auth.rs`](src/toolset/needs_auth.rs) holds the synthetic `login_required` tool an auth-suppressed server advertises; [`src/toolset/resources.rs`](src/toolset/resources.rs) the synthetic `list_resources`/`read_resource` pair a resources-capable server advertises (#2678). |
-| [`src/client.rs`](src/client.rs) | `McpClient` — handshake, version negotiation, paginated discovery, `tools/call`, the reconnect/backoff state machine, and every ingest budget. The largest file and the one with the most invariants. |
+| [`src/client.rs`](src/client.rs) | `McpClient` — handshake, version negotiation, paginated discovery, `tools/call`, the reconnect/backoff state machine, and every ingest budget. The largest file and the one with the most rules. |
 | [`src/transport.rs`](src/transport.rs) | The `Transport` trait (framing only, no MCP methods) plus the `ScriptedTransport` test double used by the unit tests. |
 | [`src/stdio.rs`](src/stdio.rs) / [`src/http.rs`](src/http.rs) / [`src/sse.rs`](src/sse.rs) | The two transports and the SSE decoder streamable-HTTP needs. `http.rs` also owns the shared `truncate` / `truncate_middle_out` helpers. |
 | [`src/config.rs`](src/config.rs) | `mcp.toml`'s shape: `McpConfig` / `McpServerEntry` / `McpTransport`, the redacting `Debug`, and the `candidate_safe` opt-in. |
@@ -121,7 +121,7 @@ synthesized for servers the set skipped before connect (below).
 declared the `resources` capability in its `initialize` result advertises two
 extra synthetic tools, `mcp__<server>__list_resources` and
 `mcp__<server>__read_resource` ([`src/toolset/resources.rs`](src/toolset/resources.rs))
-— two single-purpose verbs per invariant #9, driving `resources/list` /
+— two single-purpose verbs per AGENTS.md #9, driving `resources/list` /
 `resources/read` on the server's live client. A server whose *own* tool list
 claims one of those wire names keeps it (the synthetic stands aside), a server
 that never declared the capability is not probed for it, and — like
@@ -212,7 +212,7 @@ and a server's metadata is untrusted for the same reason its output is
   prefix and resuming would reparse the remainder as a fresh frame — a way to
   smuggle a response past `MAX_LINE_BYTES` (8 MiB). `sse.rs` bounds an
   unterminated event on the same reasoning.
-- **`over_advertising_servers()` is deliberately not folded into
+- **`over_advertising_servers()` is not folded into
   `failed_servers()`.** Those servers are connected and their kept tools route
   normally; callers render `failed_servers()` as "server unavailable", which
   would be a lie. The dropped count is a floor — discovery stops at the cap.
@@ -275,7 +275,7 @@ drive the full protocol state machine over `transport::testkit::ScriptedTranspor
 
 ## Extending it
 
-**Add a transport.** 1. Add a variant to `McpTransport` in
+**Add a transport.** 1. Add a case to `McpTransport` in
 [`config.rs`](src/config.rs) (the enum is internally tagged on `transport`, so
 the discriminant is the TOML key) and cover it in `kind_label`,
 `credential_names`, `has_credentials`, `set_credential`, and the redacting

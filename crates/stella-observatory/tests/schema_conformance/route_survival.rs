@@ -46,10 +46,10 @@ fn every_route_survives_the_real_store_schema() {
 /// Found by pointing this crate at an untouched copy of a real 54 MB store:
 /// every route referencing the v18 `tool_calls.state` column 500'd. A missing
 /// *table* had always degraded to an empty payload; a missing *column* did
-/// not, because `rusqlite` reports the two through different error variants
+/// not, because `rusqlite` reports the two through different error cases
 /// (`SqliteFailure` vs `SqlInputError`) and only the first was matched.
 ///
-/// So this drives every route against a database deliberately rolled back to
+/// So this drives every route against a database rolled back to
 /// the pre-v18 shape. None may error: an older store renders with a section
 /// empty, and fills in the moment a turn migrates it.
 #[test]

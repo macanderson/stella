@@ -407,7 +407,7 @@ impl McpClient {
     }
 
     /// One bounded request on the *current* transport, classified into a
-    /// [`RequestOutcome`]. A timeout gets its own variant so the caller can
+    /// [`RequestOutcome`]. A timeout gets its own case so the caller can
     /// tell "hung" from "dropped" and react differently.
     async fn request_once(&self, conn: &Connection, method: &str, params: Value) -> RequestOutcome {
         let Some(transport) = conn.transport.as_deref() else {

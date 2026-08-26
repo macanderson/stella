@@ -346,7 +346,7 @@ fn render_turn(out: &mut Vec<Line>, ctx: &Ctx<'_>, turn: &Turn, index: usize) {
 /// The turn's opening rail: everything about a turn that is knowable before it
 /// runs, and nothing that is not.
 ///
-/// Deliberately carries no status and no chips. See [`render_turn_lines`]'s
+/// Carries no status and no chips. See [`render_turn_lines`]'s
 /// streaming contract — this is the line a live surface has to print first,
 /// when the only true answers to "how did it go" and "what did it cost" are
 /// "unknown".
@@ -488,7 +488,7 @@ fn note_lines(out: &mut Vec<Line>, ctx: &Ctx<'_>, note: &crate::model::Note, ti:
     }
 }
 
-/// The colour a note kind paints in. Money stays quiet deliberately — the
+/// The colour a note kind paints in. Money stays quiet — the
 /// model's rule is that metadata never carries the weight of the work.
 fn note_color(kind: crate::model::NoteKind) -> Color {
     use crate::model::NoteKind;
@@ -860,7 +860,7 @@ fn head_cells(text: &str, budget: usize) -> (&str, usize) {
 
 /// Cut `line` to at most `width` display cells.
 ///
-/// The backstop under the module doc's width contract, and deliberately not the
+/// The backstop under the module doc's width contract, and not the
 /// mechanism that keeps it. Every framed row fits itself as it is assembled,
 /// because a rail cut here would lose the `─╮` cap that closes it. What
 /// actually reaches this is a **content** row — a result body line, a diff row,

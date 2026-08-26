@@ -10,7 +10,7 @@ publish.workspace = true
 
 # A LEAF crate with NO workspace-crate dependencies — the `stella-diff` /
 # `stella-home` pattern (#1139, #1511). `stella-observatory` links this
-# deliberately: it must never link `stella-core` (an observer must not pull in
+#: it must never link `stella-core` (an observer must not pull in
 # the machinery it observes), yet it needs the SAME fold `stella-cli`'s
 # self-driving verbs use. It used to carry its own private `fold_runs`, and
 # the two implementations drifted — the dashboard and

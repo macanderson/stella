@@ -74,7 +74,7 @@ macro_rules! note {
 
 /// A runtime string that a human reviewed and judged safe to record.
 ///
-/// The name is deliberately uncomfortable. It reads as "this needed
+/// The name is uncomfortable. It reads as "this needed
 /// redacting", because the question every one of these should provoke in
 /// review is *did it?*
 pub struct Redacted<T> {

@@ -42,7 +42,7 @@
 //! So streams get a separate, smaller budget ([`MAX_LIVE_STREAMS`]) and the
 //! one-shot semaphore is left exactly as it was. A stream that cannot get a
 //! slot is **refused** rather than queued — the opposite of the one-shot
-//! policy, and deliberately: a queued one-shot request arrives a moment late,
+//! policy, and: a queued one-shot request arrives a moment late,
 //! but a queued stream would hang forever behind connections that never
 //! close, and a client told "no" can fall back to polling immediately.
 

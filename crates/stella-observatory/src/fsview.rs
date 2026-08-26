@@ -5,7 +5,7 @@
 //! Everything here is plain reads of files stella (or the user) already
 //! wrote — [`skills`] additionally joins in a read-only peek at
 //! `context.db`'s ledger to name the evidence grade behind a learned skill
-//! (#4871), never opening it as a store. Two invariants:
+//! (#4871), never opening it as a store. Two rules:
 //!
 //! 1. **Nothing is created or modified** — absent files, directories, and
 //!    ledger rows are states, rendered as empty sections.
@@ -35,7 +35,7 @@ const MAX_DIR_ENTRIES: usize = 512;
 ///
 /// Both uses look at the head of the file, so slurping a whole one to render
 /// 200 characters is pure waste — and unbounded waste, on the request path.
-/// The reported `bytes` is deliberately taken from the file's metadata rather
+/// The reported `bytes` is taken from the file's metadata rather
 /// than from what was read, so the number the dashboard shows stays the true
 /// file size.
 const MAX_SNIPPET_READ_BYTES: u64 = 64 * 1024;

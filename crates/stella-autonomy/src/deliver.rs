@@ -117,7 +117,7 @@ pub struct DeliverPolicy {
     pub rebase_ceiling: u32,
     /// Whether a human approval is required before merging.
     ///
-    /// **Deliberately explicit rather than implied by the forge.** A loop
+    /// **Explicit rather than implied by the forge.** A loop
     /// running unattended against a repository whose branch protection does not
     /// require review will merge its own work, and that is a decision an
     /// operator should make in a config file they can read — not one they

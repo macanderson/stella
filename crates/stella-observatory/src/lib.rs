@@ -16,7 +16,7 @@
 //!    writing telemetry is never blocked or altered by a dashboard tab —
 //!    `stella-store` keeps these files in WAL mode, so a reader and the
 //!    writing session never contend for the same lock.
-//! 3. **No new dependencies.** The HTTP layer is a deliberately tiny
+//! 3. **No new dependencies.** The HTTP layer is a tiny
 //!    GET-only HTTP/1.1 responder over `tokio`'s `TcpListener` — the
 //!    workspace already ships everything required. A router the size of a
 //!    web framework would be bloat for a handful of read-only JSON routes.
@@ -252,7 +252,7 @@ fn route_of(path: &str) -> &str {
 /// the unit tests drive this directly, no sockets involved.
 ///
 /// Every route here answers exactly once. The live SSE subscription
-/// (`/api/v1/live`) is deliberately absent: it is a stream, it is dispatched
+/// (`/api/v1/live`) is absent: it is a stream, it is dispatched
 /// before this function is reached, and giving it a `Response` here would
 /// mean buffering an endless one.
 #[must_use]
@@ -478,7 +478,7 @@ pub fn respond(workspace_root: &Path, path: &str) -> Response {
         // One turn's real on-disk diff (#1870), replayed from the
         // `session_turn_diffs` projection the owning session precomputed at
         // turn end — never from the work journal's bare repo, which this
-        // process deliberately cannot read.
+        // process cannot read.
         "/api/session-turn-diff" => {
             match (
                 query_param(query, "id"),

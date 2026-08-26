@@ -185,7 +185,7 @@ pub struct BacklogConvention {
 
 /// One reason a filing is not conformant.
 ///
-/// Typed rather than a message string (invariant 5), and the variants are
+/// Typed rather than a message string (AGENTS.md #5), and the cases are
 /// split by **what the caller does differently**: a missing axis is fixable by
 /// choosing a label, an ambiguous one by dropping a label, a reserved one by
 /// removing it, and an unaccepted convention is not fixable by the loop at
@@ -218,7 +218,7 @@ pub enum Violation {
 
 /// The verdict on one prospective filing.
 ///
-/// Deliberately not a `bool` and not a `Result<(), Vec<Violation>>`: the
+/// Not a `bool` and not a `Result<(), Vec<Violation>>`: the
 /// caller has to render every violation to a human at once. A filing refused
 /// one reason at a time is a filing refused four times.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

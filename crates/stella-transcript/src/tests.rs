@@ -491,7 +491,7 @@ fn acceptance_tool_is_named_exactly_once_per_call() {
 
     // The name as a *header* — `>bash<` in the markup's tool span, and the
     // padded verb column in the grid — rather than the bare substring, which
-    // the output line above deliberately also contains.
+    // the output line above also contains.
     let markup = html::render_run(&run, &state);
     assert_eq!(
         markup.matches("class=\"tool bash\">bash</span>").count(),
@@ -709,7 +709,7 @@ fn the_output_fold_control_has_something_behind_it() {
     assert_eq!(fold.more_label(), "▸ 3 more lines");
 }
 
-/// The invariant `PREVIEW_LINES` exists to state: **however** an output folds,
+/// The rule `PREVIEW_LINES` exists to state: **however** an output folds,
 /// a reader sees the same number of lines of it.
 ///
 /// Before this, the head-only fold and the head…tail fold showed different

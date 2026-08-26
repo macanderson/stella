@@ -610,7 +610,7 @@ pub(crate) fn session_detail(
     )?);
     // The self-improvement residue this session left behind: mined lessons
     // (reflections whose execution the session stamped — a NULL execution_id
-    // is a cross-turn lesson and deliberately stays out of any one session).
+    // is a cross-turn lesson and stays out of any one session).
     out["lessons"] = Value::Array(session_group(
         conn,
         id,
@@ -632,7 +632,7 @@ pub(crate) fn session_detail(
 
 /// The wire tags of every behavioural event [`execution_tendencies`] folds.
 /// Spelled once: the filter and the fold must agree, and the tags are the
-/// serde snake_case of `stella_protocol::AgentEvent` variant names.
+/// serde snake_case of `stella_protocol::AgentEvent` case names.
 const TENDENCY_EVENT_TYPES: &str = "'retry','retries_exhausted','loop_detected',\
      'budget_denied','compaction','policy_decision','speculation_discarded',\
      'steered','provider_fallback','usage_incomplete'";
