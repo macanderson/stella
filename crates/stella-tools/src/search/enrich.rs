@@ -427,6 +427,24 @@ const DEFINITION_KEYWORDS: &[&str] = &[
 /// days before it was taken (#4571), so "nobody cited one" and "nobody could"
 /// are the same measurement here. It is evidence about the cost, and the cost
 /// is what decides a widening whose benefit is still hypothetical.
+///
+/// # The second census, which settles no more than the first
+///
+/// #4739 asked for the demand half against a window that opens *after* #4571
+/// merged (2026-08-23 22:26 UTC). Re-run on 2026-08-25 across every Stella
+/// store on the measuring machine, that window holds **seven** search-shaped
+/// calls in seven executions, all of them this repository's; the two other
+/// workspaces with a store record no execution in it at all. None names a
+/// dotted table key — and zero out of seven cannot tell "no caller writes
+/// one" from "no caller has searched here since the feature landed". The
+/// whole-store totals moved from 786 calls over 314 executions to 793 over
+/// 321, and the same single execution is unreadable in both runs, so those
+/// seven calls are every search this store has taken since a dotted key
+/// became findable.
+///
+/// The refusal therefore stands where it stood, on the cost half alone and
+/// for the reason above. What would settle the other half is a store with
+/// post-#4571 search volume, not a later re-run of this one.
 fn is_bare_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some(c) if c.is_alphabetic() || c == '_')
