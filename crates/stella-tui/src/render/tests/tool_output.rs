@@ -217,7 +217,7 @@ fn a_plain_text_result_is_not_coloured_as_json() {
         "shell output picked up JSON structure colouring: {spans:?}"
     );
     // It still renders in the body's own tone rather than losing its style.
-    assert!(spans.iter().any(|(_, c)| *c == Some(theme::MUTED)));
+    assert!(spans.iter().any(|(_, c)| *c == Some(theme::TEXT_SECONDARY)));
 }
 
 /// A folded JSON result previews its first fields and states how many are
@@ -455,7 +455,9 @@ fn a_body_line_without_a_gutter_stays_plain() {
         .collect();
     assert!(!footer.is_empty(), "the footer vanished: {spans:?}");
     assert!(
-        footer.iter().all(|(_, c)| *c == Some(theme::MUTED)),
+        footer
+            .iter()
+            .all(|(_, c)| *c == Some(theme::TEXT_SECONDARY)),
         "the footer was lexed as source: {footer:?}"
     );
 }

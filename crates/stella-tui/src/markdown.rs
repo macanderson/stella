@@ -78,7 +78,7 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
 
         // ── Blockquote (> ...) ─────────────────────────────────────────────
         if let Some(rest) = raw.strip_prefix("> ") {
-            let mut spans = vec![Span::styled("▎ ", Style::new().fg(theme::MUTED))];
+            let mut spans = vec![Span::styled("▎ ", Style::new().fg(theme::TEXT_SECONDARY))];
             spans.extend(parse_inline_spans(rest));
             out.push(Line::from(spans));
             continue;
@@ -92,7 +92,7 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
             .or_else(|| lead.strip_prefix("+ "))
         {
             let prefix = format!("{}• ", " ".repeat(indent));
-            let mut spans = vec![Span::styled(prefix, Style::new().fg(theme::MUTED))];
+            let mut spans = vec![Span::styled(prefix, Style::new().fg(theme::TEXT_SECONDARY))];
             spans.extend(parse_inline_spans(rest));
             out.push(Line::from(spans));
             continue;
@@ -106,7 +106,7 @@ pub fn render(text: &str) -> Vec<Line<'static>> {
         // the bullet glyph.
         if let Some((marker, rest)) = strip_numbered(lead) {
             let prefix = format!("{}{marker} ", " ".repeat(indent));
-            let mut spans = vec![Span::styled(prefix, Style::new().fg(theme::MUTED))];
+            let mut spans = vec![Span::styled(prefix, Style::new().fg(theme::TEXT_SECONDARY))];
             spans.extend(parse_inline_spans(rest));
             out.push(Line::from(spans));
             continue;

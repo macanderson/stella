@@ -336,7 +336,10 @@ fn fold_line(hidden: usize, hint: Option<&str>) -> Line<'static> {
         crate::render::plural_lines(hidden),
         hint.unwrap_or_default()
     );
-    Line::from(vec![gutter(None), Span::styled(text, theme::muted())])
+    Line::from(vec![
+        gutter(None),
+        Span::styled(text, theme::text_secondary()),
+    ])
 }
 
 /// Whether a line is diff metadata rather than source content.
@@ -488,7 +491,7 @@ fn body_line(
         *new_no = None;
         return Line::from(vec![
             gutter(None),
-            Span::styled(raw.to_string(), theme::muted()),
+            Span::styled(raw.to_string(), theme::text_secondary()),
         ]);
     }
     if raw.starts_with("@@") {
@@ -510,7 +513,7 @@ fn body_line(
     if raw.starts_with('\\') {
         return Line::from(vec![
             gutter(None),
-            Span::styled(raw.to_string(), theme::muted()),
+            Span::styled(raw.to_string(), theme::text_secondary()),
         ]);
     }
     // File headers are recognized structurally (only before the first hunk
@@ -522,7 +525,7 @@ fn body_line(
     {
         return Line::from(vec![
             gutter(None),
-            Span::styled(raw.to_string(), theme::muted()),
+            Span::styled(raw.to_string(), theme::text_secondary()),
         ]);
     }
     match raw.as_bytes().first() {
@@ -574,7 +577,14 @@ fn body_line(
             // structure that makes it readable at a glance. The add/remove
             // tint already separates changed from unchanged; a second,
             // redundant signal is not worth an unreadable surround.
-            spans.extend(code_spans(marker, code, theme::MUTED, None, lang, None));
+            spans.extend(code_spans(
+                marker,
+                code,
+                theme::TEXT_SECONDARY,
+                None,
+                lang,
+                None,
+            ));
             Line::from(spans)
         }
     }
@@ -672,7 +682,7 @@ fn gutter(n: Option<u32>) -> Span<'static> {
         Some(n) => format!("{n:>GUTTER_W$} "),
         None => " ".repeat(GUTTER_W + 1),
     };
-    Span::styled(text, theme::muted())
+    Span::styled(text, theme::text_secondary())
 }
 
 /// Parse `@@ -a[,b] +c[,d] @@ …` into the starting `(old, new)` line numbers.
@@ -1242,15 +1252,15 @@ mod tests {
             "the declared name is a function token: {:?}",
             context.spans
         );
-        // The un-tokenized remainder still falls back to the muted body colour,
-        // so context reads a shade quieter than a changed line overall. This is
-        // the assertion the line above narrowed: it used to name
+        // The un-tokenized remainder still falls back to the secondary body
+        // colour, so context reads a shade quieter than a changed line overall.
+        // This is the assertion the line above narrowed: it used to name
         // `" unchanged() {}"` as one plain run, and only the punctuation is
         // plain now.
         assert_eq!(
             span_with(context, "() {}").map(|s| s.style.fg),
-            Some(Some(theme::MUTED)),
-            "plain runs stay muted: {:?}",
+            Some(Some(theme::TEXT_SECONDARY)),
+            "plain runs stay on the secondary tier: {:?}",
             context.spans
         );
         let added = &lines[2];

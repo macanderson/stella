@@ -365,7 +365,10 @@ pub(crate) fn push_detail_line(
 ) {
     push_detail_spans(
         margin,
-        vec![Span::styled(text.to_owned(), Style::new().fg(theme::MUTED))],
+        vec![Span::styled(
+            text.to_owned(),
+            Style::new().fg(theme::TEXT_SECONDARY),
+        )],
         width,
         out,
     );

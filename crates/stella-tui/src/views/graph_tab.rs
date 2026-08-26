@@ -149,8 +149,11 @@ fn render_empty(hint: &str, area: Rect, buf: &mut Buffer) {
         return;
     }
 
-    let line = Line::from(Span::styled(hint.to_string(), crate::theme::muted()))
-        .alignment(Alignment::Center);
+    let line = Line::from(Span::styled(
+        hint.to_string(),
+        crate::theme::text_secondary(),
+    ))
+    .alignment(Alignment::Center);
 
     // Vertically center the single line (mirrors the splash's centering idiom
     // — this crate doesn't carry a generic `centered_rect` helper).

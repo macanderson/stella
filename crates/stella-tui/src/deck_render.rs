@@ -413,7 +413,7 @@ fn render_inbox_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &m
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             "  inbox zero — notifications persist here until read",
-            theme::muted(),
+            theme::text_secondary(),
         )));
     }
 
@@ -431,7 +431,7 @@ fn render_inbox_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &m
         let is_sel = i == selected;
         let marker = if is_sel { "▸ " } else { "  " };
         let (dot, mut title_style) = if n.read {
-            ("✓ ", theme::muted())
+            ("✓ ", theme::text_secondary())
         } else {
             (
                 "● ",
@@ -442,7 +442,7 @@ fn render_inbox_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &m
             title_style = title_style.bg(theme::SELECT_BG);
         }
         let dot_style = if n.read {
-            theme::muted()
+            theme::text_secondary()
         } else {
             Style::default().fg(theme::WARNING_BRIGHT)
         };
@@ -457,7 +457,7 @@ fn render_inbox_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &m
         if n.session_id.is_some() {
             // A subtle link marker: ⏎ on this row opens the session it is
             // about (replaying it when it is no longer live).
-            row.push(Span::styled(" ↗", theme::muted()));
+            row.push(Span::styled(" ↗", theme::text_secondary()));
         }
         lines.push(Line::from(row));
         let source = if n.source.is_empty() {
@@ -473,14 +473,14 @@ fn render_inbox_overlay(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &m
         );
         lines.push(Line::from(Span::styled(
             truncate_chars(&detail, (w as usize).saturating_sub(4)),
-            theme::muted(),
+            theme::text_secondary(),
         )));
     }
 
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
         " ↑/↓ select · ↵ open · ␣ mark read · R mark all read · esc close",
-        theme::muted(),
+        theme::text_secondary(),
     )));
 
     let block = Block::default()
@@ -514,14 +514,14 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     if skills.is_empty() {
         lines.push(Line::from(Span::styled(
             "    none installed — /skills to browse",
-            theme::muted(),
+            theme::text_secondary(),
         )));
     }
     for skill in skills {
         let (glyph, glyph_style) = if skill.enabled {
             ("●", Style::default().fg(theme::SUCCESS_BRIGHT))
         } else {
-            ("○", theme::muted())
+            ("○", theme::text_secondary())
         };
         let desc = truncate_chars(&skill.description, (w as usize).saturating_sub(30));
         lines.push(Line::from(vec![
@@ -529,8 +529,8 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
             Span::styled(glyph, glyph_style),
             Span::raw(" "),
             Span::styled(skill.name.clone(), Style::default().fg(theme::INK)),
-            Span::styled(format!("  [{}]", skill.origin), theme::muted()),
-            Span::styled(format!("  {desc}"), theme::muted()),
+            Span::styled(format!("  [{}]", skill.origin), theme::text_secondary()),
+            Span::styled(format!("  {desc}"), theme::text_secondary()),
         ]));
     }
 
@@ -544,7 +544,7 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     if servers.is_empty() {
         lines.push(Line::from(Span::styled(
             "    none configured — /mcp to search + install",
-            theme::muted(),
+            theme::text_secondary(),
         )));
     }
     for server in servers {
@@ -553,7 +553,7 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
         } else if server.enabled {
             ("◌", Style::default().fg(theme::WARNING_BRIGHT))
         } else {
-            ("○", theme::muted())
+            ("○", theme::text_secondary())
         };
         let state = if !server.enabled {
             "disabled".to_string()
@@ -568,16 +568,19 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
             Span::styled(glyph, glyph_style),
             Span::raw(" "),
             Span::styled(heading, Style::default().fg(theme::INK)),
-            Span::styled(format!("  [{}]", server.kind), theme::muted()),
-            Span::styled(format!("  {state}"), theme::muted()),
-            Span::styled(format!("  · {} tools", server.tool_count), theme::muted()),
+            Span::styled(format!("  [{}]", server.kind), theme::text_secondary()),
+            Span::styled(format!("  {state}"), theme::text_secondary()),
+            Span::styled(
+                format!("  · {} tools", server.tool_count),
+                theme::text_secondary(),
+            ),
         ];
         match server.oauth {
             Some(true) => spans.push(Span::styled(
                 "  ⚿ oauth ✓",
                 Style::default().fg(theme::SUCCESS),
             )),
-            Some(false) => spans.push(Span::styled("  ⚿ no oauth login", theme::muted())),
+            Some(false) => spans.push(Span::styled("  ⚿ no oauth login", theme::text_secondary())),
             None => {}
         }
         lines.push(Line::from(spans));
@@ -620,7 +623,7 @@ fn render_context_overlay(model: &WorkspaceModel, ui: &mut DeckUi, area: Rect, b
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
         " ↑/↓ scroll · manage on the SKILLS / MCP tabs · esc/→ close",
-        theme::muted(),
+        theme::text_secondary(),
     )));
 
     // Clamp the scroll to the measured content so ↓ can't run off the end.
@@ -660,7 +663,7 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         title = " inspect · reconstructing ";
         lines.push(Line::from(Span::styled(
             "  reconstructing the call's context from the recorded receipt…",
-            theme::muted(),
+            theme::text_secondary(),
         )));
     } else if let Some(view) = ui.inspect_view.as_ref() {
         // Borrowed, never cloned and never moved out: a reconstructed context
@@ -685,7 +688,7 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
                 call.model,
                 view.messages.len()
             ),
-            theme::muted(),
+            theme::text_secondary(),
         )));
         // Never merged: unresolved is a coverage gap, a mismatch means the
         // recovered bytes are not this block's. The gap is never phrased as
@@ -739,7 +742,7 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
                 for chunk in wrap_chars(&attribution, body_width.saturating_sub(2)) {
                     lines.push(Line::from(Span::styled(
                         format!("    │ {chunk}"),
-                        theme::muted(),
+                        theme::text_secondary(),
                     )));
                 }
                 push_wrapped(&mut lines, &section.body, body_width);
@@ -748,24 +751,24 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             " ↑/↓ pgup/pgdn scroll · esc/← back to calls · q close",
-            theme::muted(),
+            theme::text_secondary(),
         )));
     } else {
         title = " inspect · recorded calls ";
         lines.push(Line::from(Span::styled(
             "  every model call this execution recorded a receipt for",
-            theme::muted(),
+            theme::text_secondary(),
         )));
         lines.push(Line::default());
         if ui.inspect_calls.is_empty() {
             lines.push(Line::from(Span::styled(
                 "    no receipts for this execution yet — run a turn, then reopen",
-                theme::muted(),
+                theme::text_secondary(),
             )));
         } else {
             lines.push(Line::from(Span::styled(
                 "    TURN  STEP  SEQ  ROLE            PROVIDER    MODEL",
-                theme::muted(),
+                theme::text_secondary(),
             )));
         }
         for (index, call) in ui.inspect_calls.iter().enumerate() {
@@ -792,7 +795,7 @@ fn render_inspect_overlay(ui: &mut DeckUi, area: Rect, buf: &mut Buffer) {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             " ↑/↓ select · ⏎ show the context it was sent · r refresh · esc close",
-            theme::muted(),
+            theme::text_secondary(),
         )));
         // The whole popup scrolls by `inspect_scroll`, and the list-mode key
         // handler only moves `inspect_sel` — it never touches the scroll. Track
@@ -935,7 +938,7 @@ fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
 
     // The filter query, with a violet caret so the keybind/edit accent reads.
     let mut lines: Vec<Line<'static>> = vec![Line::from(vec![
-        Span::styled("filter ", theme::muted()),
+        Span::styled("filter ", theme::text_secondary()),
         Span::styled(ui.graph_picker_query.clone(), theme::body()),
         Span::styled("▏", Style::new().fg(theme::VIOLET)),
     ])];
@@ -943,7 +946,7 @@ fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     if matches.is_empty() {
         lines.push(Line::from(Span::styled(
             "  no files match — Backspace to widen",
-            theme::muted(),
+            theme::text_secondary(),
         )));
     }
     for (i, file) in matches.iter().enumerate().take(last).skip(first) {
@@ -964,7 +967,7 @@ fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
         ];
         // Mark the file the neighborhood is currently rooted on (the default).
         if is_focus {
-            spans.push(Span::styled("  · current", theme::muted()));
+            spans.push(Span::styled("  · current", theme::text_secondary()));
         }
         lines.push(Line::from(spans));
     }
@@ -975,7 +978,7 @@ fn render_graph_picker(ui: &DeckUi, area: Rect, buf: &mut Buffer) {
     }
     lines.push(Line::from(Span::styled(
         " type to filter · ↑/↓ select · enter open · esc close",
-        theme::muted(),
+        theme::text_secondary(),
     )));
 
     let block = Block::default()
