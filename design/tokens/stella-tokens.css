@@ -24,7 +24,6 @@
   --st-paper-text: #F4F1EA; /* primary text on dark, off the deck */
   --st-muted: #777782; /* secondary text */
   --st-dim: #4B4B56; /* hints, captions, line numbers */
-  --st-comment: #565660; /* code comments */
   --st-green: #74C991; /* pass, additive diff sign */
   --st-red: #E0687A; /* fail, destructive, removal diff sign */
   --st-diff-add: #10201A; /* added diff row background */

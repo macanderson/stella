@@ -20,11 +20,11 @@ The logotype exemption is what lets rule 6 say "gold for the mark and for icons
 at 24px and larger, never gold body text on light" without contradicting
 itself.
 
-Four pairings sit under their threshold today, and they are palette values
+Three pairings sit under their threshold today, and they are palette values
 rather than an oversight: `muted` is 4.47:1 on the canvas against a 4.5 floor,
-and `dim`/`comment` are decorative tiers the terminal already documents as
-below every text floor. Moving them is a recolour and belongs to whoever owns
-the palette (#4063), so this guard records them in a **down-only ratchet**
+and `dim` is a decorative tier the terminal already documents as below every
+text floor. Moving them is a recolour and belongs to whoever owns the palette
+(#4063), so this guard records them in a **down-only ratchet**
 (`scripts/contrast-baseline.txt`) rather than waiting to become a gate step
 until they are fixed -- which is what it did for two releases, in no gate at
 all, while the tree carried figures that disagreed with it (#4423).
@@ -102,7 +102,12 @@ PAIRINGS = [
     ("green", "bg", "pass verdict", 4.5),
     ("red", "bg", "fail verdict", 4.5),
     ("dim", "bg", "hints and line numbers (large/decorative floor)", 3.0),
-    ("comment", "panel", "code comments (large/decorative floor)", 3.0),
+    # `comment on panel` sat here at 2.64:1 and measured a value nothing
+    # painted: `comment` was a token with no consumer on any surface, and code
+    # comments ship in `muted` — already on this list, at 4.32:1 on the same
+    # ground. It was one of the four sub-threshold rows #4063 is deciding about,
+    # so a quarter of that decision was about a colour no reader had seen.
+    # #4946 retired the token; this row and its floor went with it.
     ("border", "bg", "hairlines — a divider, not information", None),
     ("rule", "bg", "section rules — a divider, not information", None),
     ("gold-bright", "bg", "single-cell live indicators", 3.0),

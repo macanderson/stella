@@ -33,8 +33,8 @@
 <line x1="20" y1="204" x2="20" y2="278" stroke="#E0687A" stroke-width="2"/>
 <rect x="32" y="208" width="632" height="72" fill="#0F0F12" stroke="#E0687A" stroke-width="1"/>
 <text x="44" y="228" font-size="11" fill="#E0687A">✗ case auth_refresh_parallel</text>
-<text x="44" y="248" font-size="11" fill="#565660">assertion failed: findings.len() == 1</text>
-<text x="44" y="264" font-size="11" fill="#565660">expected 1 finding, got 2 (duplicate digest)</text>
+<text x="44" y="248" font-size="11" fill="#777782">assertion failed: findings.len() == 1</text>
+<text x="44" y="264" font-size="11" fill="#777782">expected 1 finding, got 2 (duplicate digest)</text>
 <text x="380" y="228" font-size="11" fill="#4B4B56">^N jump · l full log · r rerun gate</text>
 <line x1="20" y1="292" x2="20" y2="384" stroke="#F7D96B" stroke-width="2"/>
 <rect x="32" y="296" width="632" height="92" fill="#0F0F12" stroke="#EFC53F" stroke-width="1"/>

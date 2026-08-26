@@ -122,9 +122,6 @@ pub const MUTED: Color = Color::Rgb(0x77, 0x77, 0x82);
 /// Hints, captions, line numbers. `#4B4B56`
 pub const DIM: Color = Color::Rgb(0x4B, 0x4B, 0x56);
 
-/// Code comments. `#565660`
-pub const COMMENT: Color = Color::Rgb(0x56, 0x56, 0x60);
-
 /// Pass, additive diff sign. `#74C991`
 pub const GREEN: Color = Color::Rgb(0x74, 0xC9, 0x91);
 
@@ -190,7 +187,6 @@ pub const ALL: &[(&str, Color, Clamp)] = &[
     ("text", TEXT, Clamp::NeutralGray),
     ("muted", MUTED, Clamp::NeutralGray),
     ("dim", DIM, Clamp::NeutralGray),
-    ("comment", COMMENT, Clamp::NeutralGray),
     ("green", GREEN, Clamp::Verdict),
     ("red", RED, Clamp::Verdict),
     ("diff-add-bg", DIFF_ADD_BG, Clamp::Surface),

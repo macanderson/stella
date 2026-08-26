@@ -63,7 +63,7 @@ pub fn ansi16(color: Color) -> Color {
         token::GOLD | token::GOLD_BRIGHT => Color::Yellow,
         token::SILVER | token::SILVER_TYPE => Color::Gray,
         token::TEXT => Color::White,
-        token::MUTED | token::DIM | token::COMMENT => Color::DarkGray,
+        token::MUTED | token::DIM => Color::DarkGray,
         token::GREEN => Color::Green,
         token::RED => Color::Red,
         // The light-theme stops. They reach the terminal only when a paper
