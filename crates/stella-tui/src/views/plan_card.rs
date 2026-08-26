@@ -30,7 +30,7 @@
 //! labeled slots `think` / `work` / `verify`; the internal pipeline role
 //! identifiers never reach a rendered string.
 
-mod step_style;
+pub(crate) mod step_style;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -139,7 +139,7 @@ pub fn step_rows(
         // The elaboration, wrapped under the title at the title's indent.
         if let Some(detail) = &step.detail {
             let indent = 7usize;
-            for chunk in wrap(detail, width.saturating_sub(indent).max(8)) {
+            for chunk in cards::wrap(detail, width.saturating_sub(indent).max(8)) {
                 rows.push(Line::from(vec![
                     Span::raw(" ".repeat(indent)),
                     Span::styled(chunk, dim),
@@ -148,28 +148,6 @@ pub fn step_rows(
         }
     }
     (rows, selected_row)
-}
-
-/// Greedy word wrap. The card is fixed-width and the details are free text from
-/// the model, so a mid-word cut would be the common case, not the edge one.
-fn wrap(text: &str, width: usize) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut line = String::new();
-    for word in text.split_whitespace() {
-        if line.is_empty() {
-            line.push_str(word);
-        } else if line.chars().count() + 1 + word.chars().count() <= width {
-            line.push(' ');
-            line.push_str(word);
-        } else {
-            out.push(std::mem::take(&mut line));
-            line.push_str(word);
-        }
-    }
-    if !line.is_empty() {
-        out.push(line);
-    }
-    out
 }
 
 /// The operating-envelope grid: where the plan may write, what it may spend,

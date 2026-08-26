@@ -14,6 +14,7 @@ use stella_protocol::{
 
 use crate::envelope::{AgentMeta, AgentStatus, Inbound};
 use crate::graph::{GraphEdge, GraphNode, GraphSnapshot};
+use crate::plan::{ActualStep, EvidenceKind, EvidenceRow, PlanLanes, StepLedger, StepSpend};
 
 /// A sample code-graph neighborhood centered on the engine step driver.
 pub fn demo_graph() -> GraphSnapshot {
@@ -759,6 +760,115 @@ pub fn demo_tasks(tasks_done: usize) -> Vec<stella_protocol::TaskItem> {
             contract: None,
         })
         .collect()
+}
+
+/// The scripted task the zoom golden is taken over (SPEC 7.5, rendering
+/// `03-task-zoom`): the demo board's task 5 with everything that surface
+/// draws — a contract with both judges settled and unsettled, an evidence
+/// ledger, a spend line, and a plan that drifted once.
+///
+/// Separate from [`demo_tasks`] rather than folded into it. That board is
+/// played back as a demo, and a contract invented there would put checks on
+/// screen that no scenario ran; this fixture exists so one surface can be
+/// pinned in full, and nothing plays it back as a session.
+///
+/// The three parts are returned together because they describe one task, and
+/// a caller that installed the ledger without the board would be pricing a
+/// task the plan does not contain.
+#[must_use]
+pub fn demo_task_zoom() -> (Vec<stella_protocol::TaskItem>, PlanLanes, StepLedger) {
+    use stella_protocol::{
+        Check, CheckKind, CheckMechanism, CheckOutcome, DefinitionOfDone, Judge, TaskContract,
+    };
+
+    let mut graph = Check::new(
+        "no inbound refs to the removed trigger route",
+        CheckMechanism::Known(CheckKind::Graph),
+    );
+    graph.outcome = CheckOutcome::Passed {
+        evidence: "0 inbound edges over 438 nodes".into(),
+    };
+    let mut unit = Check::new(
+        "the automations suite is green",
+        CheckMechanism::Known(CheckKind::Unit),
+    );
+    unit.outcome = CheckOutcome::Failed {
+        evidence: "2 of 4 cases failing: triggers::org_guard".into(),
+    };
+    let contract = TaskContract::DefinitionOfDone(DefinitionOfDone::new(
+        graph,
+        vec![
+            unit,
+            Check::new(
+                "no duplicate findings over 3 runs",
+                CheckMechanism::Known(CheckKind::Harness),
+            ),
+            Check::new(
+                "the migration reads as reversible",
+                CheckMechanism::new("vera:reversibility", Judge::Model),
+            ),
+        ],
+    ));
+
+    let mut board = demo_tasks(4);
+    if let Some(task) = board.iter_mut().find(|t| t.id == "5") {
+        task.contract = Some(contract);
+    }
+
+    let lanes = PlanLanes {
+        planned: vec![
+            "read the trigger routes".into(),
+            "wire the org guard".into(),
+            "test".into(),
+        ],
+        actual: vec![
+            ActualStep {
+                title: "read the trigger routes".into(),
+                cause: None,
+            },
+            ActualStep {
+                title: "wire the org guard".into(),
+                cause: None,
+            },
+            ActualStep {
+                title: "fix borrow err".into(),
+                cause: Some("E0502 borrow".into()),
+            },
+            ActualStep {
+                title: "test".into(),
+                cause: None,
+            },
+        ],
+    };
+
+    let ledger = StepLedger {
+        evidence: vec![
+            EvidenceRow {
+                kind: EvidenceKind::Edit,
+                subject: "crates/stella-serve/src/automations/triggers.rs".into(),
+                outcome: "+41 -6".into(),
+            },
+            EvidenceRow {
+                kind: EvidenceKind::Run,
+                subject: "cargo test -p stella-serve triggers".into(),
+                outcome: "2/4".into(),
+            },
+            EvidenceRow {
+                kind: EvidenceKind::GraphWrite,
+                subject: "3 nodes · TriggerRoute, org guard".into(),
+                outcome: "wr".into(),
+            },
+        ],
+        spend: Some(StepSpend {
+            usd: 0.12,
+            tokens: 41_000,
+            cache_read_pct: 71,
+            model_calls: 2,
+            est_remaining_usd: Some(0.05),
+        }),
+    };
+
+    (board, lanes, ledger)
 }
 
 #[cfg(test)]

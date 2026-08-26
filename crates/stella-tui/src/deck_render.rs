@@ -234,9 +234,9 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
             render_inspect_overlay(ui, area, b)
         });
     }
-    // The floating cards (`/plan` · `/models` · `/budget`): at most one is up
-    // (`CardState::raise` lowers the rest); help and the startup notice still
-    // win the top of the stack below.
+    // The cards (`/plan` · `/models` · `/budget` · the task zoom): at most one
+    // is up (`CardState::raise` lowers the rest); help and the startup notice
+    // still win the top of the stack below.
     if let Some(card) = ui.cards.open {
         use crate::deck_ui::cards::Card;
         match card {
@@ -248,6 +248,12 @@ pub fn render_deck(model: &WorkspaceModel, ui: &mut DeckUi, frame: &mut Frame) {
             }),
             Card::Budget => guarded_overlay(buf, area, "budget card", |b| {
                 crate::views::budget_card::render(model, ui, area, b)
+            }),
+            // The zoom is a full-screen view (SPEC 7.5), not a float: it takes
+            // the content band the tab was drawn into, so the composer and the
+            // status bar stay where the reader left them.
+            Card::TaskZoom => guarded_overlay(buf, content, "task zoom", |b| {
+                crate::views::task_zoom::render(model, ui, content, b)
             }),
         }
     }
