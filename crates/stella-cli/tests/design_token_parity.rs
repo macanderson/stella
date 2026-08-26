@@ -308,10 +308,10 @@ fn scheme_gates(css: &str, scheme: &str) -> Vec<(String, BTreeMap<String, String
 /// What [`scheme_gates`] must find, so a scanner that quietly stops matching
 /// fails instead of passing over nothing.
 ///
-/// This half is not decoration. The bug being fixed is an *unread* gate, so
-/// "the gates agree" and "the scanner found one gate" produce the identical
-/// green — and the second is the state this test exists to end. Each row was
-/// counted by hand against the file it names.
+/// The bug being fixed is an *unread* gate. "The scanner found one gate" is
+/// the state this test exists to end, and it produces the same green as "the
+/// gates agree", so without a census the two are indistinguishable. Each row
+/// was counted by hand against the file it names.
 const GATE_CENSUS: [(&str, &str, usize); 6] = [
     // The two-gate surfaces: an OS-preference query and a toggle attribute.
     (
