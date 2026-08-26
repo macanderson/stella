@@ -575,3 +575,120 @@ async fn failed_overflow_summarizer_emits_content_free_incompleteness() {
             .contains("private upstream body")
     );
 }
+
+/// **The #4793 witness.** Two model calls sharing one `(turn_instance, step)`
+/// are separable by their metering rows.
+///
+/// `step_usage` carried `step` and nothing else that identifies a call, so a
+/// row could not be attributed to the receipt of the call that produced it
+/// whenever a step held more than one — which is the exact case `call_seq`
+/// exists to disambiguate, readable on `step_manifest` and unreadable on the
+/// cost. #4391's own suggested analysis ("read the summariser's `step_usage`
+/// row at `call_seq` 1") could not be performed.
+///
+/// Here the engine's worker turn runs at turn instance 4, and a summarizer-
+/// shaped auxiliary call is dispatched against the same `(4, 0)` through
+/// `run_accounted_call` — the path every management role takes. The two rows
+/// share a step and differ in `call_seq`, so the join the glossary describes
+/// is available on both sides.
+#[tokio::test]
+async fn two_calls_at_one_step_are_separable_by_their_usage_rows() {
+    const TURN: u32 = 4;
+
+    let provider = ScriptedProvider {
+        id: "scripted".into(),
+        script: TokioMutex::new(vec![Ok(text_result("done"))]),
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let tools = CountingTools {
+        calls: Arc::new(AtomicU32::new(0)),
+    };
+    let sleeper = NoopSleeper;
+    let engine = Engine::with_sleeper(&provider, &tools, EngineConfig::default(), &sleeper)
+        .with_turn_instance(TURN);
+    let mut messages = vec![
+        CompletionMessage::system("sys"),
+        CompletionMessage::user("work"),
+    ];
+    let mut budget = BudgetGuard::new(BudgetMode::Off, None, None);
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let _ = engine.run_turn(&mut messages, &mut budget, &tx).await;
+
+    // The auxiliary call riding the same step — the overflow summarizer's
+    // shape, dispatched the way every management role is.
+    let _ = crate::accounted_call::run_accounted_call(
+        crate::accounted_call::AccountedCall {
+            provider: &provider,
+            role: stella_protocol::ModelCallRole::Summarization,
+            model_hint: "scripted".into(),
+            request: stella_protocol::CompletionRequest {
+                messages: vec![CompletionMessage::user("summarize")],
+                max_output_tokens: None,
+                temperature: None,
+                effort: None,
+                tools: Vec::new(),
+                reasoning: None,
+                params: None,
+            },
+            retry_policy: crate::retry::RetryPolicy::new(1, 0, 0),
+            timeout: None,
+            estimated_input_tokens: 1,
+            receipt: Some(crate::accounted_call::ReceiptContext {
+                turn_instance: TURN,
+                step: 0,
+                call_seq: crate::receipts::RECEIPT_SEQ_SUMMARIZER,
+                lifecycle_enabled: false,
+            }),
+        },
+        &mut budget,
+        &crate::EventSender::new(tx.clone()),
+        &sleeper,
+    )
+    .await;
+
+    let rows: Vec<(
+        usize,
+        Option<u32>,
+        Option<u64>,
+        stella_protocol::ModelCallRole,
+    )> = std::iter::from_fn(|| rx.try_recv().ok())
+        .filter_map(|event| match event {
+            AgentEvent::StepUsage {
+                step,
+                turn_instance,
+                call_seq,
+                role,
+                ..
+            } => Some((step, turn_instance, call_seq, role)),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        rows.len(),
+        2,
+        "one metering row per committed call: {rows:?}"
+    );
+    for (_, turn_instance, _, _) in &rows {
+        assert_eq!(
+            *turn_instance,
+            Some(TURN),
+            "both calls rode turn {TURN}: {rows:?}"
+        );
+    }
+    let worker = rows
+        .iter()
+        .find(|(_, _, _, role)| *role == stella_protocol::ModelCallRole::Worker)
+        .expect("the engine's own call");
+    let summarizer = rows
+        .iter()
+        .find(|(_, _, _, role)| *role == stella_protocol::ModelCallRole::Summarization)
+        .expect("the auxiliary call");
+    assert_eq!(worker.0, summarizer.0, "the two share a step: {rows:?}");
+    assert_eq!(worker.2, Some(crate::receipts::RECEIPT_SEQ_WORKER));
+    assert_eq!(summarizer.2, Some(crate::receipts::RECEIPT_SEQ_SUMMARIZER));
+    assert_ne!(
+        worker.2, summarizer.2,
+        "two calls at one step must be separable, which is the whole ask: {rows:?}"
+    );
+}

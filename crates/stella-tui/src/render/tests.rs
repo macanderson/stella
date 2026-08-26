@@ -376,6 +376,8 @@ fn the_receipt_reports_what_the_turn_measured() {
 
     // tokens ← StepUsage's token fields (never its cost_usd)
     send(AgentEvent::StepUsage {
+        turn_instance: None,
+        call_seq: None,
         step: 1,
         role: Default::default(),
         provider: "openrouter".into(),

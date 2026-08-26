@@ -1320,6 +1320,8 @@ mod tests {
     fn step_usage_carries_the_model_through_the_reviewed_hatch() {
         let (mut bridge, records) = bridge();
         bridge.observe(&AgentEvent::StepUsage {
+            turn_instance: None,
+            call_seq: None,
             upstream_provider: None,
             reasoning_tokens: None,
             step: 1,

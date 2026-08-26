@@ -466,6 +466,8 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             minimal: true,
         }),
         ev(AgentEvent::StepUsage {
+            turn_instance: None,
+            call_seq: None,
             upstream_provider: None,
             reasoning_tokens: None,
             output_text: None,

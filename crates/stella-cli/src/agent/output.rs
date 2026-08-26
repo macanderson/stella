@@ -576,6 +576,8 @@ mod durable_stream_tests {
             scope: stella_protocol::StageScope::Run,
         };
         let usage = AgentEvent::StepUsage {
+            turn_instance: None,
+            call_seq: None,
             upstream_provider: None,
             reasoning_tokens: None,
             step: 0,

@@ -129,6 +129,8 @@ mod tests {
 
     fn step_usage(model: &str, input: u64, cached: u64, write: u64) -> AgentEvent {
         AgentEvent::StepUsage {
+            turn_instance: None,
+            call_seq: None,
             upstream_provider: None,
             reasoning_tokens: None,
             output_text: None,

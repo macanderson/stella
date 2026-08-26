@@ -319,6 +319,10 @@ export type AgentEvent = {
   cache_write_tokens?: number;
   cached_input_tokens: number;
   /**
+   * Which of the calls sharing this (turn_instance, step) this one is: the engine's own worker call is 0, auxiliary calls riding the same step take 1, 2, ... Absent means the stream cannot say -- a row written before this field existed may have been an auxiliary call, so absence must not be read as the worker.
+   */
+  call_seq?: number | null;
+  /**
    * Whether the provider supplied a truthful usage envelope. Missing
    * legacy values fail closed to `false`.
    */
@@ -403,6 +407,10 @@ export type AgentEvent = {
    */
   temperature?: number | null;
   tool_calls: number;
+  /**
+   * The `run_turn` this call rides -- a `step_manifest` event's field of this name, carried here so a metering row can be joined to the receipt of the call that produced it. Absent when the emitter had no turn to name, or when the stream predates this field; absence is not turn 0, which is a real turn.
+   */
+  turn_instance?: number | null;
   type: "step_usage";
   /**
    * The upstream the gateway routed to, when it names one

@@ -103,6 +103,8 @@ fn full_deck_frame_grows_a_second_status_band_row_for_a_diagnosed_agent() {
         model.apply_inbound(&Inbound::Event {
             agent: "lead".into(),
             event: AgentEvent::StepUsage {
+                turn_instance: None,
+                call_seq: None,
                 upstream_provider: None,
                 output_text: None,
                 step,
