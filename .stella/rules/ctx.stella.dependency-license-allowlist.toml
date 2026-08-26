@@ -12,13 +12,19 @@
 # tracks — and the cheapest moment to catch it is the edit that would have
 # admitted it, not the release that ships it.
 #
-# The guard names no `guard_tool` on purpose. `Edit` would cover `edit_file`
-# and `apply_edits` but not `write_file`, and a guard that stops the model's
-# usual path while leaving the other one open is worse than no guard: it reads
-# as enforcement in `stella context list` and is not. With the tool field
-# omitted the guard matches on path alone, so every tool that names a path is
-# covered, and `Bash` (which carries no `path`) is not — running `cargo deny`
-# is exactly what this record wants to happen.
+# The guard names no `guard_tool` on purpose, and the reason is about shape,
+# not about which tools exist this week. A tool-scoped guard is exactly as
+# complete as the list of names it spells, and that list is open: the built-in
+# surface has been rewritten twice, an installed MCP server contributes its
+# own, and a workspace custom tool contributes another. A guard that stops the
+# names it happened to know while a sibling walks past is worse than no guard —
+# it reads as enforcement in `stella context list` and is not.
+#
+# With the tool field omitted the guard matches on path alone, so any tool
+# that names a path is covered whatever it is called and wherever it came
+# from. A shell-shaped call carries no path and falls outside for that same
+# reason, which is the right answer here: running `cargo deny` is exactly what
+# this record wants to happen.
 
 schema = "context-record/v0.1"
 set_id = "stella"
