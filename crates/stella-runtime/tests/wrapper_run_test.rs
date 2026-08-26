@@ -20,8 +20,6 @@
 //! `cfg(unix)` is the same declared gap the rest of this suite carries, tracked
 //! in #3497.
 
-#![cfg(unix)]
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -139,9 +137,14 @@ fn host_without_a_plane(manifest: &PluginManifest) -> Arc<HostCallGate> {
     ))
 }
 
-fn plugin(script: &str, gate: Arc<HostCallGate>) -> SubprocessWrapper {
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
+
+/// The plugin asks about the handle it was given and reports the flip from
+/// the answer it reads (#4697). `flip=achieved` only if the host said the
+/// assertions passed, so a fabricated report cannot produce it.
+fn plugin(handle: &str, gate: Arc<HostCallGate>) -> SubprocessWrapper {
     SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), script.into()],
+        vec![FIXTURE.to_string(), "run-test-probe".into(), handle.into()],
         Vec::new(),
         Duration::from_secs(10),
     )
@@ -167,29 +170,6 @@ fn after() -> AfterTurnRequest {
     }
 }
 
-/// The plugin asks about the handle it was given and reports the flip from the
-/// answer it reads. `flip=achieved` only if the host said the assertions
-/// passed, so a fabricated report cannot produce it.
-const ASKS_ABOUT: &str = r#"
-read -r request
-printf '%s\n' '{"call":"run_test","id":7,"args":{"candidate":"CANDIDATE"}}'
-read -r answer
-case "$answer" in
-  *'"result":7'*) ;;
-  *) printf 'the answer did not carry the id this plugin chose\n' >&2 ; exit 1 ;;
-esac
-case "$answer" in
-  *'"assertions":"passed"'*) flip=achieved ;;
-  *'"err"'*)                 flip=unobservable ;;
-  *)                         flip=not-achieved ;;
-esac
-printf '{"point":"after_turn","body":{"protocol_version":1,"evidence":{"flip":"%s"}}}\n' "$flip"
-"#;
-
-fn asks_about(handle: &str) -> String {
-    ASKS_ABOUT.replace("CANDIDATE", handle)
-}
-
 /// **The witness.** The plugin asks, the host runs, and the plugin's evidence
 /// is built from the answer it read.
 ///
@@ -206,7 +186,7 @@ async fn a_plugin_asks_the_host_to_re_run_the_candidates_tests_and_the_host_does
     let workspaces = Workspaces::green();
     let gate = host(&manifest, Arc::clone(&workspaces));
 
-    let evidence = plugin(&asks_about("candidate-1"), gate)
+    let evidence = plugin("candidate-1", gate)
         .after_turn(after())
         .await
         .expect("the plugin answers the point")
@@ -237,7 +217,7 @@ async fn a_handle_from_another_run_is_refused_unavailable_not_unsupported() {
     let workspaces = Workspaces::green();
     let gate = host(&manifest, Arc::clone(&workspaces));
 
-    let evidence = plugin(&asks_about("candidate-from-another-run"), Arc::clone(&gate))
+    let evidence = plugin("candidate-from-another-run", Arc::clone(&gate))
         .after_turn(after())
         .await
         .expect("a refused call is a value, not a death")
@@ -267,7 +247,7 @@ async fn a_host_with_no_plane_is_unavailable_and_the_plugin_degrades() {
     let manifest = manifest();
     let gate = host_without_a_plane(&manifest);
 
-    let evidence = plugin(&asks_about("candidate-1"), Arc::clone(&gate))
+    let evidence = plugin("candidate-1", Arc::clone(&gate))
         .after_turn(after())
         .await
         .expect("a refused call is a value")
@@ -298,7 +278,7 @@ async fn a_plugin_that_did_not_declare_the_call_never_reaches_the_plane() {
     let workspaces = Workspaces::green();
     let gate = host(&undeclared, Arc::clone(&workspaces));
 
-    let evidence = plugin(&asks_about("candidate-1"), Arc::clone(&gate))
+    let evidence = plugin("candidate-1", Arc::clone(&gate))
         .after_turn(after())
         .await
         .expect("a refused call is a value")
