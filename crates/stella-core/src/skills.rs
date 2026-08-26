@@ -475,10 +475,10 @@ pub struct SelectedSkill {
 /// `config.min_score` are returned, top-k by `config.max_skills`, highest
 /// first (ties broken by name for determinism).
 ///
-/// Scoring runs in `crate::mining::score_terms`'s Unicode-aware space, not
-/// the miners' ASCII id space — selection is ephemeral and mints no ids, so a
-/// non-Latin prompt can match here without the id migration widening
-/// `mining::terms` would take (#3298).
+/// Scoring runs in `crate::mining::score_terms`'s space rather than the
+/// miners' `crate::mining::terms`. Both read Unicode since #3298; what
+/// separates them is vocabulary — scoring drops the generic coding words that
+/// discriminate between no two skills (#3688).
 pub fn select_skills(
     skills: &[Skill],
     prompt: &str,
