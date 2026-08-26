@@ -1056,19 +1056,14 @@ fn the_dashboards_plugin_skills_honour_the_project_trust_gate() {
     }
 
     let _env = crate::test_env::lock();
-    let _restore = crate::test_env::EnvRestore::capture(&[
-        "STELLA_TRUST_PROJECT",
-        "STELLA_PROJECT_HOOKS",
-        "STELLA_HOME",
-    ]);
+    let _restore =
+        crate::test_env::EnvRestore::capture(&["STELLA_TRUST_PROJECT", "STELLA_PROJECT_HOOKS"]);
     let root = temp_root("package-observatory-trust");
+    // Moves `stella_home::stella_home()` as well as this crate's thread-local
+    // (#4992), so the dashboard's own user-scope root is the fixture and a
+    // `house-style` in the developer's real `~/.stella/skills` cannot answer
+    // for the assertions below.
     let _paths = crate::paths::test_user_home(root.join("home"));
-    // The dashboard's own user-scope root is `stella_home::stella_home()`,
-    // which `test_user_home` does not move — without this the assertions read
-    // the developer's real `~/.stella/skills` and a `house-style` sitting
-    // there would answer for them.
-    // SAFETY: the env lock is held for the whole mutate-read-restore window.
-    unsafe { std::env::set_var("STELLA_HOME", root.join("home")) };
 
     let planted = stella_home::resolve_project_plugins_dir(&root).join("vera");
     plant(&stella_home::resolve_project_plugins_dir(&root), "vera");
