@@ -437,3 +437,38 @@ fn costs_come_back_in_board_order() {
         .collect();
     assert_eq!(ids, ["1", "2", "3", "10"]);
 }
+
+/// A fresh file and a migrated one must plan the ledger read the same way, so
+/// the index the migration creates has to exist on the fresh path too. The two
+/// paths build the schema from different code (`create_latest_schema` and
+/// `migrations::task_events`), which is exactly how one of them ends up
+/// silently doing a full scan of the largest table in the store.
+#[test]
+fn a_fresh_store_reads_the_ledger_through_the_same_index_a_migrated_one_does() {
+    let store = Store::in_memory().expect("store");
+    let conn = store.lock();
+    let indexed: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master \
+             WHERE type = 'index' AND name = 'events_by_task'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read");
+    assert_eq!(indexed, 1, "a fresh file must carry the ledger index");
+
+    let plan: String = conn
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT e.execution_id, e.seq FROM events e \
+             JOIN executions x ON x.id = e.execution_id \
+             WHERE x.session_id = 'ses' AND e.task_id = '3' \
+             ORDER BY e.execution_id ASC, e.seq ASC",
+            [],
+            |row| row.get(3),
+        )
+        .expect("plan");
+    assert!(
+        plan.contains("events_by_task"),
+        "the ledger read must go through its index, not scan `events`: {plan}"
+    );
+}
