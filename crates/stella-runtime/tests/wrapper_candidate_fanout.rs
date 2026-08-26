@@ -24,10 +24,6 @@
 //! three things the plugin contributed are the three fields
 //! `CandidateFanoutArgs` has.
 //!
-//! `cfg(unix)` is the same declared gap the rest of this suite carries, tracked
-//! in #3497.
-
-#![cfg(unix)]
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -215,9 +211,11 @@ fn host(
     (gate, plane)
 }
 
-fn plugin(script: &str, gate: Arc<HostCallGate>) -> SubprocessWrapper {
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
+
+fn plugin(mode: &str, gate: Arc<HostCallGate>) -> SubprocessWrapper {
     SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), script.into()],
+        vec![FIXTURE.to_string(), mode.to_string()],
         Vec::new(),
         Duration::from_secs(10),
     )
@@ -258,30 +256,7 @@ async fn a_plugin_asks_for_three_attempts_scores_them_and_the_host_lands_the_win
     let substrate = Substrate::default();
     let (gate, plane) = host(&manifest, substrate.clone(), Some(0.30));
 
-    // The plugin picks the candidate whose report is green and whose diff is
-    // smallest — a real (if crude) selection, made from the wire's evidence.
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"candidate_fanout","id":7,"args":{"role":"attempt","instruction":"make tests/test_flip.py pass","width":3}}'
-read -r answer
-winner=""
-case "$answer" in
-  *'"candidate":"candidate-2","root":"/tmp/stella-candidates/candidate-2","report":"green'*) winner="candidate-2" ;;
-esac
-if [ -z "$winner" ]; then
-  printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"candidates","text":"no green candidate"}]}}\n'
-  exit 0
-fi
-printf '{"call":"adopt_candidate","id":8,"args":{"candidate":"%s"}}\n' "$winner"
-read -r applied
-case "$applied" in
-  *'"adopted":"candidate-2"'*) note="landed candidate-2 of 3" ;;
-  *) note="the adoption did not land" ;;
-esac
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"candidates","text":"%s"}]}}\n' "$note"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate))
+    let response = plugin("fanout-adopt", Arc::clone(&gate))
         .before_turn(before())
         .await
         .expect("the plugin asked twice, was answered twice, and answered the point");
@@ -440,19 +415,7 @@ async fn a_width_over_the_ceiling_is_clamped_and_the_clamp_is_reported_back() {
     let substrate = Substrate::default();
     let (gate, plane) = host(&manifest, substrate.clone(), None);
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"candidate_fanout","id":1,"args":{"role":"attempt","instruction":"try it","width":8}}'
-read -r answer
-case "$answer" in
-  *'"requested":8'*) asked="8" ;;
-  *) asked="?" ;;
-esac
-ran=$(printf '%s' "$answer" | tr ',' '\n' | grep -c '"candidate":"candidate-')
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"candidates","text":"asked %s, ran %s"}]}}\n' "$asked" "$ran"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate))
+    let response = plugin("fanout-clamp", Arc::clone(&gate))
         .before_turn(before())
         .await
         .expect("the plugin asked and was answered");

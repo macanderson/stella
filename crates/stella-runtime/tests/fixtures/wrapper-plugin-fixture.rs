@@ -222,6 +222,57 @@ fn main() {
                  \"text\":\"granted {granted} refused {refused}\"}}]}}}}"
             ));
         }
+        // ── candidate fan-out (`wrapper_candidate_fanout.rs`, #4697) ──
+
+        // Best-of-N on the socket: ask for three attempts, score them from the
+        // evidence the answer carries, adopt the winner by handle. The scoring
+        // is deliberately crude — the claim under test is that a plugin can
+        // reach a winner from the wire alone, never that it picks well.
+        "fanout-adopt" => {
+            let _request = read_line();
+            emit(concat!(
+                r#"{"call":"candidate_fanout","id":7,"args":{"role":"attempt","#,
+                r#""instruction":"make tests/test_flip.py pass","width":3}}"#
+            ));
+            let answer = read_line();
+            let green = answer.contains(concat!(
+                r#""candidate":"candidate-2","root":"/tmp/stella-candidates/candidate-2","#,
+                r#""report":"green"#
+            ));
+            if !green {
+                emit(&labelled_context("candidates", "no green candidate"));
+                return;
+            }
+            emit(r#"{"call":"adopt_candidate","id":8,"args":{"candidate":"candidate-2"}}"#);
+            let applied = read_line();
+            let note = if applied.contains(r#""adopted":"candidate-2""#) {
+                "landed candidate-2 of 3"
+            } else {
+                "the adoption did not land"
+            };
+            emit(&labelled_context("candidates", note));
+        }
+        // Asks for a width over the host's ceiling and reports both numbers:
+        // what it asked for, read back from the answer, and how many candidates
+        // the answer actually named.
+        "fanout-clamp" => {
+            let _request = read_line();
+            emit(concat!(
+                r#"{"call":"candidate_fanout","id":1,"args":{"role":"attempt","#,
+                r#""instruction":"try it","width":8}}"#
+            ));
+            let answer = read_line();
+            let asked = if answer.contains(r#""requested":8"#) {
+                "8"
+            } else {
+                "?"
+            };
+            let ran = answer.matches(r#""candidate":"candidate-"#).count();
+            emit(&labelled_context(
+                "candidates",
+                &format!("asked {asked}, ran {ran}"),
+            ));
+        }
         // ── driver-socket conversations (`driver_socket.rs`, #4697) ──
         //
         // These answer at the `drive` point rather than `before_turn`, and
@@ -583,12 +634,17 @@ fn drive_halt(reason: &str) -> String {
     )
 }
 
-/// A `before_turn` response carrying one `note`-labelled context line.
-fn note_context(note: &str) -> String {
+/// A `before_turn` response carrying one context line under this label.
+fn labelled_context(label: &str, text: &str) -> String {
     format!(
         "{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\
-         \"context\":[{{\"label\":\"note\",\"text\":\"{note}\"}}]}}}}"
+         \"context\":[{{\"label\":\"{label}\",\"text\":\"{text}\"}}]}}}}"
     )
+}
+
+/// A `before_turn` response carrying one `note`-labelled context line.
+fn note_context(note: &str) -> String {
+    labelled_context("note", note)
 }
 
 /// An `after_turn` response carrying exactly these measurements.
