@@ -57,7 +57,10 @@
 // a non-finite float — are unrepresentable in `Value`. The failure is excluded
 // by the type, not by convention, so plumbing a `Result` no caller could match
 // on would trade a proof for ceremony.
-#![allow(clippy::expect_used)]
+#![expect(
+    clippy::expect_used,
+    reason = "the two `expect`s below serialize a `serde_json::Value`, whose only serialization failures are unrepresentable in the type; see the paragraph above"
+)]
 
 use std::collections::BTreeSet;
 use std::fmt::Write as _;

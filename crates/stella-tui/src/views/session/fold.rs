@@ -103,7 +103,10 @@ impl SessionFold {
     /// into the live tail after the last entry, so it re-wraps per frame
     /// like the tail does and vanishes without residue when the
     /// authoritative `Text` clears it — never a settled entry.
-    #[allow(clippy::too_many_arguments)] // mirrors the fold's inputs one to one; a struct would just add a second shape
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors the fold's inputs one to one; a struct would just add a second shape"
+    )]
     pub(super) fn refresh(
         &mut self,
         agent: &str,

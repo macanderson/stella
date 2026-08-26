@@ -116,7 +116,10 @@ impl<'a> Engine<'a> {
     /// rides, the same way [`Self::apply_overflow_summary`] carries the budget
     /// pair it reports. `instructions` is a PreCompact hook's `modify`
     /// steering for the summarizer, appended to its request (#2684).
-    #[allow(clippy::too_many_arguments)] // threaded turn-state fields, same shape as its siblings
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "threaded turn-state fields, same shape as its siblings"
+    )]
     pub(super) async fn summarize_overflow_span(
         &self,
         messages: &mut Vec<CompletionMessage>,
@@ -411,7 +414,10 @@ impl<'a> Engine<'a> {
     /// the restoration message appended after it reports its own size on the
     /// `agent.working_set.restored` lifecycle event instead of retroactively
     /// inflating the splice's number.
-    #[allow(clippy::too_many_arguments)] // threaded turn-state fields, same shape as its siblings
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "threaded turn-state fields, same shape as its siblings"
+    )]
     fn apply_overflow_summary(
         &self,
         messages: &mut Vec<CompletionMessage>,

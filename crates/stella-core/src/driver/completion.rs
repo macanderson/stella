@@ -34,7 +34,10 @@ impl<'a> Engine<'a> {
     /// injects the hook's reason as a marked tail user message and returns
     /// `None`, holding the turn open for another round. `stop_consults` is
     /// the bounded consultation counter (`driver::user_hooks` module docs).
-    #[allow(clippy::too_many_arguments)] // threaded turn-state fields, same shape as its siblings
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "threaded turn-state fields, same shape as its siblings"
+    )]
     pub(super) async fn dispatch_completion(
         &self,
         committed: CommittedStep,

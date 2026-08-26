@@ -1774,7 +1774,10 @@ fn stale_lock_sweep_releases_old_claims_only() {
 
 /// Test-only shorthand: a telemetry row with just the analytics-relevant
 /// fields set.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "nine columns of one telemetry row; naming them positionally is what lets a call site read as the row it is"
+)]
 fn telemetry(
     step: u64,
     provider: &str,

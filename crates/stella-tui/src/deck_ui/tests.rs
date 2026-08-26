@@ -4,7 +4,10 @@
 //! which ~2,960 were these tests. Shared fixtures live here; each tab or
 //! overlay with its own fixtures owns a submodule below.
 
-#![allow(clippy::field_reassign_with_default)]
+#![expect(
+    clippy::field_reassign_with_default,
+    reason = "these fixtures build with `Type::default()` and then set the few fields the test cares about, which reads better than a full struct literal listing every field"
+)]
 
 use super::*;
 use crate::envelope::AgentMeta;

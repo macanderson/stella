@@ -719,10 +719,6 @@ fn footer(mode: IssuesMode) -> Line<'static> {
 }
 
 #[cfg(test)]
-// The lint wants a struct literal, and `IssuesPanel` keeps a private request
-// counter — so `Default` followed by assignment is the only way to build one
-// from outside `deck_ui`.
-#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

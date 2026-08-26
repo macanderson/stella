@@ -47,7 +47,7 @@
 // clippy with `-D warnings` on that build, so a new one fails the gate instead
 // of arriving unremarked. The one exception is `schema_export.rs`, which is
 // only compiled under the `schema` feature (not part of `make lint` or CI's
-// clippy run) and carries its own justified `#[allow(clippy::expect_used)]`.
+// clippy run) and carries its own justified `#[expect(clippy::expect_used)]`.
 // `not(test)` scopes the lint exactly as the rule does: it is about runtime
 // data, and `unwrap` in a test is fine.
 #![cfg_attr(not(test), warn(clippy::unwrap_used, clippy::expect_used))]

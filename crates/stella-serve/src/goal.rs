@@ -85,7 +85,10 @@ pub struct GoalRun {
 ///   work or fabricating a verdict;
 /// - the round cap is the backstop, and reaching it is `Unmet` with a named
 ///   reason, never a silent success.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the round loop's whole state, threaded from its one caller; a struct would add a second shape between the caller and the loop"
+)]
 pub(crate) async fn drive_goal(
     engine: &Engine<'_>,
     verifier: &dyn Provider,
