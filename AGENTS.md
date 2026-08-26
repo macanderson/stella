@@ -825,6 +825,14 @@ inputs, not review afterthoughts:
   a PR of its own — safe precisely when nothing is blocked on it. Both modes
   still retire an entry whose file dropped under the limit or is gone, because
   the check hard-fails on those and names the update as the only remedy.
+- **A passing run names the files nearing the line** (#4897). `check-file-size`
+  used to say nothing about a file until the moment it failed, so a file eight
+  lines under its ceiling and a file at four hundred produced the same green
+  line — and the author who then met the ceiling was the one whose change was
+  about something else and who had no room to design a seam. The run now lists
+  the crowded files, tightest first, and exits 0 either way: it reports, it does
+  not judge. Grandfathered files are left out, because a baseline entry sits at
+  its ceiling by construction and is already named here and in its crate README.
 
 **The ratchet judges your change, not the tree** (#2004). A file over the line
 fails only when `current > max(its own limit, size in the base tree)` — where

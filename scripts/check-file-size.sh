@@ -144,6 +144,27 @@ set -euo pipefail
 
 LIMIT=1500
 
+# How little headroom a file may have before the guard names it, and how many
+# of the tightest it names before falling back to a count.
+#
+# Advisory, never a verdict: every file this reports is still UNDER its ceiling,
+# the check passes, and the exit code is 0. Failing a change because some other
+# file is crowded is the bug #2004 rewrote this guard to stop.
+#
+# It exists because the guard was otherwise silent about a file until the moment
+# it failed, so a file at 1492 lines and a file at 400 produced the same green
+# line. The author who then meets the ceiling is the one whose PR is about
+# something else, who has no room to design a module seam, and for whom the
+# cheapest-looking fix is the baseline entry CLAUDE.md calls a defect against
+# the PR that introduces it. #3923 named that trap; this is what puts it in view
+# beforehand (#4897).
+#
+# The cap is here because an advisory nobody reads is worse than none: 44 files
+# were within this margin when it was written, and a 44-line block on every
+# `make guards-fast` run trains people to scroll past the whole guard.
+CROWDING_MARGIN=50
+CROWDING_SHOW=10
+
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
@@ -438,10 +459,25 @@ raw_report="$(
   {
     grep -v '^#' "$baseline" | sed 's/^/B /'
     current_sizes | sed 's/^/C /'
-  } | awk -v limit="$LIMIT" '
+  } | awk -v limit="$LIMIT" -v margin="$CROWDING_MARGIN" '
     $1 == "B" { ceiling[$3] = $2; next }
     $1 == "C" {
       path = $3; n = $2; seen[path] = 1
+      # The crowding advisory, and only for a file with NO baseline entry.
+      # (No apostrophes in this block: it sits inside a single-quoted awk
+      # program, where one closes the quote and bash reports a syntax error
+      # forty lines away.)
+      #
+      # A grandfathered file sits at its recorded ceiling by construction, so
+      # including them puts every one of them at zero headroom and they fill
+      # the list — measured on this tree, all ten of the tightest were
+      # grandfathered and not one of the files the advisory exists for got
+      # printed. They also need it least: a baseline entry is already named in
+      # the per-crate table in AGENTS.md and in the crate README, so three
+      # places say "closed to growth" before this one. The trap #3923
+      # describes is the file with no entry available and none coming.
+      if (!(path in ceiling) && n <= limit && limit - n <= margin)
+        crowded = crowded sprintf("CROWDED %d %s %d %d\n", limit - n, path, n, limit)
       if (path in ceiling) {
         if (n <= limit)
           obsolete = obsolete sprintf("  %s is now %d lines (<= %d) — drop its baseline entry\n", path, n, limit)
@@ -455,6 +491,8 @@ raw_report="$(
       for (p in ceiling)
         if (!(p in seen))
           stale = stale sprintf("  %s (baseline entry, file no longer tracked)\n", p)
+      # First, so the report sections below keep the order they had.
+      if (crowded) printf "%s", crowded
       if (newover) printf "%s", newover
       if (grew) printf "%s", grew
       if (obsolete) printf "OBSOLETE\n%s", obsolete
@@ -484,10 +522,18 @@ effective_limit() {
 # the GREW section still lands between NEWOVER and OBSOLETE.
 report=""
 drift=""
+crowded=""
 newover_header_emitted=0
 grew_header_emitted=0
 while IFS= read -r line; do
   case "$line" in
+  "CROWDED "*)
+    # Sortable form: headroom first, so the tightest files lead the advisory.
+    # Handled explicitly rather than falling through to the `*)` arm below,
+    # which appends to `report` — and a non-empty `report` is a failed gate.
+    crowded="$crowded${line#CROWDED }
+"
+    ;;
   "NEWCAND "*)
     # Deliberate word split, as for GREWCAND below.
     # shellcheck disable=SC2086
@@ -602,3 +648,22 @@ else
 fi
 trap '' PIPE
 echo "check-file-size: OK — $tracked watched files, $grandfathered grandfathered over $LIMIT lines, and nothing went over by this change.${mode_note}${drift_note}" || true
+
+# The advisory (#4897). Printed after the verdict because it is not one: every
+# file named here is UNDER its ceiling and the exit code stays 0. See
+# CROWDING_MARGIN's comment at the top for why it exists at all.
+if [ -n "$crowded" ]; then
+  crowded_total="$(printf '%s' "$crowded" | grep -c '^')"
+  shown="$(printf '%s' "$crowded" | LC_ALL=C sort -n -k1,1 | head -n "$CROWDING_SHOW")"
+  if [ "$crowded_total" -gt "$CROWDING_SHOW" ]; then
+    lead="$crowded_total file(s) sit within $CROWDING_MARGIN lines of their ceiling. The $CROWDING_SHOW tightest:"
+  else
+    lead="$crowded_total file(s) sit within $CROWDING_MARGIN lines of their ceiling:"
+  fi
+  {
+    echo "check-file-size: $lead"
+    printf '%s\n' "$shown" | awk '{ printf "  %-64s %5d / %-5d %d line(s) left\n", $2, $3, $4, $1 }'
+    echo "Plan around these rather than into them: a file that crosses gets no baseline"
+    echo "entry, only a split (AGENTS.md, \"God files\")."
+  } || true
+fi
