@@ -320,6 +320,7 @@ mod tests {
                 temperature: None,
                 params: None,
                 sub_agent_id: None,
+                task_id: None,
             },
         };
         m.apply_inbound(&step(1_000, 0));

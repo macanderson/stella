@@ -345,6 +345,7 @@ fn step_usage_accumulates_tokens_and_file_change_fills_ledger() {
             temperature: None,
             params: None,
             sub_agent_id: None,
+            task_id: None,
         },
     ));
     w.apply_inbound(&ev(
@@ -356,6 +357,7 @@ fn step_usage_accumulates_tokens_and_file_change_fills_ledger() {
             removed: 1,
             diff: Some("+one\n+two\n-gone\n".into()),
             minimal: true,
+            task_id: None,
         },
     ));
     let lead = &w.agents[0];
@@ -396,6 +398,7 @@ fn an_auxiliary_call_spends_on_the_row_without_relabelling_its_model() {
         temperature: None,
         params: None,
         sub_agent_id: None,
+        task_id: None,
     };
     let mut w = WorkspaceModel::new();
     w.apply_inbound(&reg("lead"));
@@ -472,6 +475,7 @@ fn ledger_counts_reads_without_regressing_the_mutation_badge() {
                 removed: 0,
                 diff: None,
                 minimal: true,
+                task_id: None,
             },
         )
     };
@@ -493,6 +497,7 @@ fn ledger_counts_reads_without_regressing_the_mutation_badge() {
             removed: 0,
             diff: Some("+one\n".into()),
             minimal: true,
+            task_id: None,
         },
     ));
     w.apply_inbound(&read("src/a.rs"));
@@ -538,6 +543,7 @@ fn context_tokens_track_the_latest_window_not_the_cumulative_input() {
         temperature: None,
         params: None,
         sub_agent_id: None,
+        task_id: None,
     };
     // Three calls of 150k each: cumulative 450k dwarfs the 200k window, but
     // the window was only 150k full on the LAST call.
@@ -580,6 +586,7 @@ fn budget_tick_sets_live_spend_without_double_counting_step_usage() {
         temperature: None,
         params: None,
         sub_agent_id: None,
+        task_id: None,
     };
     let mut w = WorkspaceModel::new();
     w.apply_inbound(&reg("lead"));
@@ -686,6 +693,7 @@ fn trace_captures_every_agent_and_filters_by_agent() {
                 input: serde_json::json!({}),
             },
             sub_agent_id: None,
+            task_id: None,
         },
     ));
     assert_eq!(w.trace.rows.len(), 2);
@@ -717,6 +725,7 @@ fn ask_user_marks_waiting_then_a_later_event_resumes_running() {
             duration_ms: 1,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
     ));
     assert_eq!(w.agents[0].status, AgentStatus::Running);
@@ -1026,6 +1035,7 @@ fn shell_start(call_id: &str, cmd: &str) -> AgentEvent {
             input: serde_json::json!({ "cmd": cmd }),
         },
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -1039,6 +1049,7 @@ fn shell_result(call_id: &str, out: &str) -> AgentEvent {
         duration_ms: 1,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     }
 }
 

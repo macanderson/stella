@@ -159,6 +159,7 @@ async fn main() -> std::io::Result<()> {
                                 duration_ms: 0,
                                 speculated: false,
                                 sub_agent_id: None,
+                                task_id: None,
                             },
                         });
                     }
@@ -176,6 +177,7 @@ async fn main() -> std::io::Result<()> {
                                 duration_ms: 0,
                                 speculated: false,
                                 sub_agent_id: None,
+                                task_id: None,
                             },
                         });
                     }
@@ -455,6 +457,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
                 input: json!({ "path": "src/lib.rs" }),
             },
             sub_agent_id: None,
+            task_id: None,
         }),
         ev(AgentEvent::ToolResult {
             call_id: format!("{id}-c1"),
@@ -465,6 +468,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             duration_ms: 30,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         }),
         ev(AgentEvent::FileChange {
             path: "src/lib.rs".into(),
@@ -473,6 +477,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             removed: 1,
             diff: Some("@@ -1 +1,2 @@\n-old\n+new\n+line\n".into()),
             minimal: true,
+            task_id: None,
         }),
         ev(AgentEvent::StepUsage {
             turn_instance: None,
@@ -500,6 +505,7 @@ async fn mini_run(tx: &mpsc::UnboundedSender<Inbound>, id: &str) {
             temperature: None,
             params: None,
             sub_agent_id: None,
+            task_id: None,
         }),
         ev(AgentEvent::BudgetTick {
             spent_usd: 0.008,

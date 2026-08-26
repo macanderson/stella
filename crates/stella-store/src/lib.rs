@@ -167,6 +167,7 @@ pub mod scoreboard;
 pub mod session_stats;
 pub mod sessions;
 pub mod task_board;
+pub mod task_ledger;
 pub mod turn_diffs;
 pub mod usage;
 pub mod work_journal;
@@ -838,6 +839,10 @@ impl Store {
     /// meant a live turn reported zero tool calls and an interrupted one
     /// reported zero forever. See [`Store::materialize_tool_calls`], which is
     /// now the repair path rather than the only writer, for the full account.
+    ///
+    /// The event's own `task_id` is lifted into its column in the same
+    /// transaction and for the same reason (#5039) — see
+    /// [`Store::task_events`], which is the selection it exists for.
     pub fn record_event(&self, execution_id: i64, seq: u64, event: &AgentEvent) -> Result<()> {
         let seq = sqlite_i64("event sequence", seq)?;
         let payload = serde_json::to_string(event).map_err(|e| StoreError::Other(e.to_string()))?;
@@ -859,9 +864,11 @@ impl Store {
             .unwrap_or_else(|_| "unknown".into());
         let mut conn = self.lock();
         let tx = conn.transaction()?;
+        let task_id = event.task_id().map(stella_protocol::TaskId::as_str);
         tx.execute(
-            "INSERT INTO events (execution_id, seq, event_type, payload) VALUES (?, ?, ?, ?)",
-            params![execution_id, seq, event_type, payload],
+            "INSERT INTO events (execution_id, seq, event_type, payload, task_id) \
+             VALUES (?, ?, ?, ?, ?)",
+            params![execution_id, seq, event_type, payload, task_id],
         )?;
         tool_calls::project_event(&tx, execution_id, seq, event)?;
         tx.commit()?;

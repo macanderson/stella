@@ -98,8 +98,12 @@ pub(super) async fn run_lead_turn(
         claim_holder,
     );
     // Registry-born events (task board, sub-agent lifecycle) and this turn's
-    // per-call work-tree measurement both ride this turn's channel.
-    crate::turn_files::open_turn_streams_raw(registry, cfg, &tx, execution.as_ref());
+    // per-call work-tree measurement both ride this turn's channel. The sender
+    // it hands back is the one the engine runs through below, so the board tag
+    // it carries reaches the engine's own events too (#5039) — and it is one
+    // more clone of `tx`, so it is dropped before the stream is closed, beside
+    // the re-query adapter's.
+    let events = crate::turn_files::open_turn_streams_raw(registry, cfg, &tx, execution.as_ref());
     // ...and this turn's stop AND pause reach the sub-agents it dispatches
     // (`lead_control::turn_controls`). The guard takes them down on return.
     let _controls = registry.attach_turn_controls(lead_control::turn_controls(steering, pause));
@@ -134,7 +138,7 @@ pub(super) async fn run_lead_turn(
         if let Some(requery) = &requery {
             engine = engine.with_requery(requery); // #3243 Phase 3
         }
-        engine.run_turn(messages, budget, &tx).await
+        engine.run_turn_with_sender(messages, budget, &events).await
     };
     crate::turn_files::close_turn_boundary_raw(cfg, registry, &tx, execution.as_ref(), &outcome);
     // The model is done and the deck already painted "done". Everything below is
@@ -147,6 +151,11 @@ pub(super) async fn run_lead_turn(
     // requires gone; otherwise the forwarder's `recv()` stays pending forever
     // and the turn future wedges after the deck painted the turn done (#2290).
     drop(requery);
+    // The turn's tagging sender is another clone of the same channel, on the
+    // same terms (#5039): its work is done the moment the engine returns, and
+    // holding it would wedge `close_turn_stream` exactly as the adapter above
+    // would.
+    drop(events);
     // Taken out of the slot before the await, never held across it: the lock is
     // a plain `std::sync::Mutex` and a guard alive over a yield point would be
     // one held by a task the runtime may park.

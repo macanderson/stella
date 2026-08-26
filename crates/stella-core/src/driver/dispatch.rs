@@ -128,6 +128,7 @@ impl<'a> Engine<'a> {
                         let _ = events.send(AgentEvent::ToolStart {
                             call: call.clone(),
                             sub_agent_id: None,
+                            task_id: None,
                         });
                         let index = group_start + offset;
                         let harvested = match speculation.remove(&call.call_id) {
@@ -171,6 +172,7 @@ impl<'a> Engine<'a> {
                     duration_ms,
                     speculated,
                     sub_agent_id: None,
+                    task_id: None,
                 });
                 indexed.push((
                     index,
@@ -227,6 +229,7 @@ impl<'a> Engine<'a> {
                     duration_ms: 0,
                     speculated: false,
                     sub_agent_id: None,
+                    task_id: None,
                 });
                 indexed.push((
                     index,

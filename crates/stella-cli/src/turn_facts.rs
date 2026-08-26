@@ -157,6 +157,7 @@ mod tests {
                 input: serde_json::json!({}),
             },
             sub_agent_id: None,
+            task_id: None,
         }
     }
 
@@ -168,6 +169,7 @@ mod tests {
             removed: 1,
             diff: None,
             minimal: true,
+            task_id: None,
         }
     }
 

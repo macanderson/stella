@@ -158,6 +158,7 @@ fn tool_round_trip(call: &ToolCall, output: &ToolOutput) -> [AgentEvent; 2] {
         AgentEvent::ToolStart {
             call: call.clone(),
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::ToolResult {
             call_id: call.call_id.clone(),
@@ -165,6 +166,7 @@ fn tool_round_trip(call: &ToolCall, output: &ToolOutput) -> [AgentEvent; 2] {
             duration_ms: 12,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
     ]
 }
@@ -297,6 +299,7 @@ fn real_store_workspace() -> tempfile::TempDir {
         AgentEvent::ToolStart {
             call: child_call.clone(),
             sub_agent_id: Some("search-1".into()),
+            task_id: None,
         },
         AgentEvent::ToolResult {
             call_id: child_call.call_id.clone(),
@@ -304,6 +307,7 @@ fn real_store_workspace() -> tempfile::TempDir {
             duration_ms: 30,
             speculated: false,
             sub_agent_id: Some("search-1".into()),
+            task_id: None,
         },
     ]
     .into_iter()

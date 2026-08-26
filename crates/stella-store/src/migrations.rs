@@ -29,6 +29,7 @@
 //! | [`pipeline_variant`] | v25 → v26 | the door/wrapper split |
 //! | [`execution_role`] | v26 → v27 | the door/role split |
 //! | [`task_contract`] | v28 → v29 | what a task promised, beside what became of it |
+//! | [`task_events`] | v38 → v39 | which task an event is evidence for |
 //! | [`agent_use_kind`] | v30 → v31 | which of two writers minted an `agent_uses` name |
 //!
 //! A new step gets a new module (or joins the group whose shape it shares),
@@ -66,6 +67,7 @@ mod schema_removal;
 mod sub_agent_calls;
 mod sub_agent_tool_calls;
 mod task_contract;
+mod task_events;
 mod telemetry_call_identity;
 mod token_unit;
 
@@ -105,7 +107,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 38] = [
+pub(crate) const MIGRATIONS: [Migration; 39] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -314,6 +316,13 @@ pub(crate) const MIGRATIONS: [Migration; 38] = [
     // nothing" — the whole point is that those two are different answers.
     // See the module's own doc.
     delivered_runs::migrate_v37_to_v38,
+    // v38 → v39: `events` grows `task_id` — which board task an event is
+    // evidence for (#5039), plus the partial index a task's ledger reads
+    // through. Additive, column-guarded ADD COLUMN, nullable with no default
+    // and no backfill: NULL is "this event is in no task's ledger", which is
+    // every row a pre-#5039 build wrote, and nothing in those payloads can
+    // supply a tag they never carried. See the module's own doc.
+    task_events::migrate_v38_to_v39,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -367,7 +376,8 @@ pub(crate) const MIGRATIONS: [Migration; 38] = [
     //   v36 → v37: CLAIMED above by `telemetry.stream_seq` + the receipt join
     //              columns (#4924).
     //   v37 → v38: CLAIMED above by `executions.delivery` (#2808).
-    // Nothing is reserved now: take v38 → v39 and add your own line here.
+    //   v38 → v39: CLAIMED above by `events.task_id` (#5039).
+    // Nothing is reserved now: take v39 → v40 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];
@@ -385,6 +395,7 @@ pub(crate) fn create_latest_schema(tx: &rusqlite::Transaction<'_>) -> Result<()>
     tx.execute_batch(EXECUTIONS_DDL)?;
     tx.execute_batch(UNCHANGED_TABLES)?;
     tx.execute_batch(&events_ddl("events"))?;
+    tx.execute_batch(task_events::EVENTS_BY_TASK_INDEX)?;
     tx.execute_batch(&telemetry_ddl("telemetry"))?;
     tx.execute_batch(&files_touched_ddl("files_touched"))?;
     tx.execute_batch(RULES_TABLE)?;

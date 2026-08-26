@@ -430,6 +430,7 @@ mod tests {
                 input: serde_json::json!({}),
             },
             sub_agent_id: None,
+            task_id: None,
         }
     }
 
@@ -443,6 +444,7 @@ mod tests {
             duration_ms: 1,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         }
     }
 

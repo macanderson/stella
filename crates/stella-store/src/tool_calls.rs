@@ -463,7 +463,9 @@ pub(crate) fn project_event(
     event: &AgentEvent,
 ) -> rusqlite::Result<()> {
     match event {
-        AgentEvent::ToolStart { call, sub_agent_id } => {
+        AgentEvent::ToolStart {
+            call, sub_agent_id, ..
+        } => {
             let args_json = serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".into());
             project_tool_start(
                 tx,
@@ -532,7 +534,9 @@ fn fold_tool_stream(events: &[(i64, String, String)]) -> Vec<FoldedCall> {
             continue;
         };
         match event {
-            AgentEvent::ToolStart { call, sub_agent_id } => {
+            AgentEvent::ToolStart {
+                call, sub_agent_id, ..
+            } => {
                 let args_json = serde_json::to_string(&call.input).unwrap_or_else(|_| "{}".into());
                 // The same announcement seen twice is one call: its `seq` is
                 // the identity, so refresh in place rather than minting a

@@ -29,6 +29,7 @@ fn tool_call(m: &mut WorkspaceModel, agent: &str, id: &str, body: &str, ok: bool
                 input: serde_json::json!({ "path": "src/main.rs" }),
             },
             sub_agent_id: None,
+            task_id: None,
         },
     });
     m.apply_inbound(&Inbound::Event {
@@ -46,6 +47,7 @@ fn tool_call(m: &mut WorkspaceModel, agent: &str, id: &str, body: &str, ok: bool
             duration_ms: 20,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
     });
 }

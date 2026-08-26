@@ -19,6 +19,7 @@ fn call(id: &str, name: &str, input: serde_json::Value) -> AgentEvent {
             input,
         },
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -32,6 +33,7 @@ fn result(id: &str, content: &str) -> AgentEvent {
         duration_ms: 9,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     }
 }
 

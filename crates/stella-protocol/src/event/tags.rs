@@ -179,6 +179,13 @@ agent_event_tags! {
     // `tool_calls` row that the result settles, so severing this leaves every
     // call unrecorded and every result orphaned. Also folded into the turn
     // facts a wrapper plugin judges (`stella-cli/src/turn_facts.rs`).
+    //
+    // Since #5039 it carries a `task_id`, and `stella-store`'s
+    // `task_ledger::task_events` selects on it: this is one of the six cases
+    // a task's evidence ledger is a selection over (SPEC 7.1). That reader
+    // does not change the posture — the projection above already earned it —
+    // but it is why the field exists, so it is named here rather than left
+    // for someone to rediscover.
     ToolStart => "tool_start",
         ConsumerPosture::Behavioral {
             site: "stella-store/src/tool_calls.rs::project_event",
@@ -198,6 +205,9 @@ agent_event_tags! {
     // `Surface::Serve` joined the row in the #4501 census: the tally reads
     // `output.is_error()` off this event for its `tools_failed` count, which
     // makes it a selecting arm the same way `tool_start` is.
+    //
+    // It carries a `task_id` since #5039 and is selected by it, exactly as
+    // `tool_start` is — see that row.
     ToolResult => "tool_result",
         ConsumerPosture::Behavioral {
             site: "stella-store/src/tool_calls.rs::project_event",
@@ -290,6 +300,12 @@ agent_event_tags! {
     // per-call usage row every cost, cache and token figure is later read
     // from, and carries `complete` up into the execution's accounting bit.
     // Serve's tally counts it as the turn's model calls.
+    //
+    // Since #5039 a second fold reads it: `stella-store`'s
+    // `task_ledger::session_task_costs` sums the rows carrying one `task_id`
+    // into SPEC 7.1's per-task cost line. That fold is the *only* answer to
+    // "what did task 3 cost" — a turn can span several tasks, so no other
+    // field on this event can be grouped by to get it.
     StepUsage => "step_usage",
         ConsumerPosture::Behavioral {
             site: "stella-cli/src/agent/persistence.rs::persist_event_detailed",
@@ -300,6 +316,11 @@ agent_event_tags! {
     // the same persistence hop carries it into `usage_complete`, and
     // `settle_reflection_budget` counts it as accounting having happened. The
     // Observatory's tendencies fold names the tag.
+    //
+    // Its `task_id` (#5039) is what keeps a per-task cost truthful: the fold in
+    // `stella-store`'s `task_ledger` counts these rows separately, so a task
+    // whose spend cannot be fully accounted for reports a lower bound and
+    // says which it is, rather than a confident total that is quietly short.
     UsageIncomplete => "usage_incomplete",
         ConsumerPosture::Behavioral {
             site: "stella-cli/src/agent/persistence.rs::persist_event_detailed",
@@ -345,6 +366,11 @@ agent_event_tags! {
     // anything" graded every run as untouched. The Observatory's journal query
     // names the tag. The event's contract is unchanged by the posture:
     // observability, never evidence (#2873).
+    //
+    // Its `task_id` (#5039) is selected by `stella-store`'s
+    // `task_ledger::task_events` and inherits that same contract: the tag
+    // says which task was running when the change was measured, which is no
+    // more an attribution of authorship than the row it rides on.
     FileChange => "file_change",
         ConsumerPosture::Behavioral {
             site: "stella-cli/src/turn_facts.rs::TurnFacts::observe",
@@ -364,6 +390,17 @@ agent_event_tags! {
     // renders a line by exhaustive match, and no Observatory query names the
     // tag. Wiring a real consumer (a memory-pressure view, or a reflection
     // input) is what #4501 leaves open here.
+    //
+    // #5039 gave it a `task_id` — it is SPEC 7.1's "graph writes", the third
+    // of the three things a task's evidence ledger lists — and
+    // `stella-store`'s `task_ledger::task_events` selects it by that tag. The
+    // posture is NOT raised for it. That query is a reader, not
+    // a branch: deleting it changes what a person can look up and nothing the
+    // engine does, which is precisely the line `ConsumerPosture::Behavioral`
+    // draws. `Surfaced` is unavailable for a different reason — `Surface` is
+    // a closed set of two, and the task ledger is neither of them. So the gap
+    // #4501 names is still open, and saying otherwise would put the first
+    // false statement in this ledger.
     ContextWrite => "context_write",
         ConsumerPosture::RecordedOnly { issue: "#4501" },
         &[];

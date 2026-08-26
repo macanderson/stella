@@ -288,6 +288,7 @@ mod tests {
             duration_ms: 7,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         })
         .expect("serialize event");
         conn.execute(
@@ -418,7 +419,7 @@ mod tests {
                 duration_ms: 1,
                 speculated: false,
             sub_agent_id: None,
-            })
+            task_id: None,})
             .expect("serialize event")],
         )
         .expect("journal");

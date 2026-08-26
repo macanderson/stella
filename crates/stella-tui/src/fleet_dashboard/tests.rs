@@ -38,6 +38,7 @@ fn tool_start(name: &str, arg_key: &str, arg: &str) -> AgentEvent {
             input: serde_json::json!({ arg_key: arg }),
         },
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -79,6 +80,7 @@ fn grid_shows_tasks_statuses_last_action_and_header_clocks() {
                 removed: 1,
                 diff: Some("@@\n+a\n+b\n-c\n".into()),
                 minimal: true,
+                task_id: None,
             }),
         },
         Instant::now(),
@@ -538,6 +540,7 @@ fn a_lane_stops_reading_blocked_once_its_card_is_answered() {
                 duration_ms: 400,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             }),
         },
         now,

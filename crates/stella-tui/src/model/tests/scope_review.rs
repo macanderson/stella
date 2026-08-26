@@ -180,6 +180,7 @@ fn a_refused_plan_stops_claiming_a_decision_is_pending() {
         duration_ms: 400,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     assert!(
         model.pending_scope_review.is_none(),
@@ -220,6 +221,7 @@ fn the_board_reaches_the_rail_while_a_refused_plan_is_being_revised() {
         duration_ms: 400,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     assert_eq!(model.plan.state, crate::plan::PlanState::Cancelled);
 
@@ -281,6 +283,7 @@ fn a_failing_step_after_approval_is_not_a_refusal() {
         duration_ms: 3,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
     assert_eq!(
         model.plan.state,
@@ -300,6 +303,7 @@ fn start_a_plan(model: &mut SessionModel, call_id: &str, steps: &[&str]) {
             input: serde_json::json!({ "id": "1" }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     model.apply(&AgentEvent::ScopeReview {
         proposal: ScopeProposal {

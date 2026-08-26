@@ -224,6 +224,14 @@ fn touch_events(provenance: Provenance, added: u64, removed: u64) -> String {
 /// - **Who else is in the work tree** (#4386). The per-call measurements this
 ///   attaches read the cached answer, so the turn's first reading has to have
 ///   one; the closing bookend re-asks for a session that started mid-turn.
+/// - **Which board task the turn's work belongs to** (#5039). Forgetting this
+///   is silent in the third way: every event still lands, it simply carries no
+///   task tag, so the plan panel's evidence and cost lines are empty for a
+///   session that was in fact working through a plan. It rides here rather
+///   than at each engine construction site because the tag belongs to the
+///   *stream*, not to the engine: the registry's own events (file changes, the
+///   board mirror) need it exactly as much as the engine's do, and this is the
+///   one place both are in scope.
 pub(crate) fn open_turn_streams(
     registry: &stella_tools::registry::ToolRegistry,
     cfg: &Config,
@@ -231,6 +239,10 @@ pub(crate) fn open_turn_streams(
     execution: Option<&(Arc<Store>, i64)>,
 ) {
     cfg.durability.refresh_worktree_sharers();
+    // Before the attachments below, so no event can be admitted through this
+    // sender untagged: `attach_running_task` reaches every clone, but only the
+    // ones that have not been sent through yet.
+    tx.attach_running_task(registry.running_task());
     registry.attach_events(tx.clone());
     registry.attach_call_measure(Arc::new(TurnCallMeasure::new(
         cfg.durability.clone(),
@@ -242,13 +254,24 @@ pub(crate) fn open_turn_streams(
 /// [`open_turn_streams`] for a driver holding the raw channel sender rather
 /// than an [`EventSender`] — the Command Deck's lead turn, exactly as
 /// [`close_turn_boundary_raw`] serves it at the other end of the turn.
+///
+/// Returns the sender it built, which the deck's lead turn drives its engine
+/// through (#5039). It has to: the running-task source attached above is
+/// shared by a sender's *clones*, and a raw channel handed to
+/// [`stella_core::Engine::run_turn`] is wrapped in a second, unattached
+/// sender inside the engine — so a driver that kept using the raw handle would
+/// tag its registry's events and none of its engine's. Every other door
+/// already holds one `EventSender` and passes it to both.
+#[must_use]
 pub(crate) fn open_turn_streams_raw(
     registry: &stella_tools::registry::ToolRegistry,
     cfg: &Config,
     tx: &tokio::sync::mpsc::UnboundedSender<AgentEvent>,
     execution: Option<&(Arc<Store>, i64)>,
-) {
-    open_turn_streams(registry, cfg, &EventSender::new(tx.clone()), execution);
+) -> EventSender {
+    let sender = EventSender::new(tx.clone());
+    open_turn_streams(registry, cfg, &sender, execution);
+    sender
 }
 
 /// Everything the owner of a turn owes its event stream at the boundary, in
@@ -600,6 +623,7 @@ fn file_change(change: JournalChange) -> AgentEvent {
         // `git diff-tree -p` computed this, not `stella_diff::unified_diff` —
         // there is no area cap to trip.
         minimal: true,
+        task_id: None,
     }
 }
 
@@ -1237,6 +1261,7 @@ mod tests {
             removed,
             diff,
             minimal,
+            ..
         }) = rx.try_recv()
         else {
             panic!("the call's own reading must be published when nothing was measured");

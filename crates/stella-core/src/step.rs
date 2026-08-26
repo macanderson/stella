@@ -780,6 +780,7 @@ pub(crate) fn close_open_tool_calls(
             duration_ms: 0,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         });
     }
     messages.push(CompletionMessage {
@@ -1318,6 +1319,7 @@ impl Drop for CancelUsageGuard {
             // an abandoned call stays genuinely unknowable.
             partial: None,
             sub_agent_id: None,
+            task_id: None,
         });
     }
 }

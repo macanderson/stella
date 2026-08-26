@@ -231,6 +231,7 @@ fn nasty_unicode_transcript_never_panics_at_any_width() {
                     input: serde_json::json!({"path": text}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
             AgentEvent::ToolResult {
                 call_id: "c".into(),
@@ -238,6 +239,7 @@ fn nasty_unicode_transcript_never_panics_at_any_width() {
                 duration_ms: 5,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         ] {
             model.apply_inbound(&Inbound::Event {

@@ -1263,6 +1263,7 @@ mod tests {
                         input: serde_json::json!({ "path": "src/lib.rs" }),
                     },
                     sub_agent_id: None,
+                    task_id: None,
                 },
             },
             Inbound::Event {
@@ -1276,6 +1277,7 @@ mod tests {
                     duration_ms: 12,
                     speculated: false,
                     sub_agent_id: None,
+                    task_id: None,
                 },
             },
             Inbound::Event {
@@ -1306,6 +1308,7 @@ mod tests {
                     temperature: None,
                     params: None,
                     sub_agent_id: None,
+                    task_id: None,
                 },
             },
             Inbound::Event {

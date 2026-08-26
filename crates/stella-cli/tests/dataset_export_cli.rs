@@ -242,6 +242,7 @@ fn seeded_workspace() -> Seeded {
         AgentEvent::ToolStart {
             call: call.clone(),
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::ToolResult {
             call_id: "c1".into(),
@@ -249,6 +250,7 @@ fn seeded_workspace() -> Seeded {
             duration_ms: 5,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::FileChange {
             path: "src/lib.rs".into(),
@@ -257,6 +259,7 @@ fn seeded_workspace() -> Seeded {
             removed: 1,
             diff: Some("@@ -1 +1 @@\n-old\n+new\n".into()),
             minimal: true,
+            task_id: None,
         },
         AgentEvent::Verdict {
             passed: true,
@@ -316,6 +319,7 @@ fn seeded_workspace() -> Seeded {
                 removed: 0,
                 diff: None,
                 minimal: true,
+                task_id: None,
             },
         )
         .expect("event");
@@ -337,6 +341,7 @@ fn seeded_workspace() -> Seeded {
             removed: 0,
             diff: None,
             minimal: true,
+            task_id: None,
         },
         AgentEvent::Verdict {
             passed: false,
@@ -392,6 +397,7 @@ fn seeded_workspace() -> Seeded {
                 removed: 0,
                 diff: None,
                 minimal: true,
+                task_id: None,
             },
         )
         .expect("event");
@@ -436,6 +442,7 @@ fn seeded_workspace() -> Seeded {
             removed: 1,
             diff: None,
             minimal: true,
+            task_id: None,
         },
         AgentEvent::Verdict {
             passed: true,
@@ -519,6 +526,7 @@ fn seed_mismatching_execution(store: &Store, prompt: &str) -> i64 {
             duration_ms: 5,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::FileChange {
             path: "src/compacted.rs".into(),
@@ -527,6 +535,7 @@ fn seed_mismatching_execution(store: &Store, prompt: &str) -> i64 {
             removed: 0,
             diff: None,
             minimal: true,
+            task_id: None,
         },
     ];
     for (seq, event) in events.iter().enumerate() {

@@ -168,6 +168,7 @@ async fn a_file_tool_s_own_reading_is_published_without_a_measurer() {
         removed,
         diff,
         minimal,
+        ..
     }) = rx.try_recv()
     else {
         panic!("the write's own reading must reach the stream");
@@ -229,6 +230,7 @@ async fn a_deletion_publishes_its_own_reading_as_an_all_red_diff() {
         removed,
         diff,
         minimal,
+        ..
     }) = rx.try_recv()
     else {
         panic!("the deletion's own reading must reach the stream");

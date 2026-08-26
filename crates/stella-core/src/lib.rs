@@ -107,7 +107,7 @@ pub use subagent::{
     SubAgentOutcome, SubAgentReport, SubAgentSpec, SubAgentSpendLedger, drain_sub_agent_spend,
     forwards_to_parent, push_sub_agent_spend,
 };
-pub use tasks::{SpawnRequest, TaskBoard, TaskBoardError};
+pub use tasks::{RunningTask, SpawnRequest, TaskBoard, TaskBoardError};
 pub use tool_foundry::{
     GapDetectionConfig, ParamKind, ProposedTool, ShellInvocation, ToolParameter, detect_tool_gaps,
 };

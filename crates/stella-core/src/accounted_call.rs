@@ -369,6 +369,7 @@ pub async fn run_accounted_call(
         temperature: call.request.temperature,
         params: call.request.params,
         sub_agent_id: None,
+        task_id: None,
     });
     let budget_outcome = budget.record_spend(result.cost_usd);
     let _ = events.send(budget.tick_event(Instant::now()));
@@ -414,6 +415,7 @@ fn emit_incomplete(
         retries,
         partial,
         sub_agent_id: None,
+        task_id: None,
     });
 }
 

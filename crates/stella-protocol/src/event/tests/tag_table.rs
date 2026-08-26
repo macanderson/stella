@@ -90,6 +90,7 @@ fn type_tag_matches_the_serde_type_wire_tag() {
             retries: None,
             partial: None,
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::GoalVerdict {
             round: 1,

@@ -50,6 +50,7 @@ fn edit_events() -> Vec<AgentEvent> {
                 input: serde_json::json!({"path": "src/lib.rs"}),
             },
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::ToolResult {
             call_id: "c1".into(),
@@ -60,6 +61,7 @@ fn edit_events() -> Vec<AgentEvent> {
             duration_ms: 7,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
         AgentEvent::FileChange {
             path: "src/lib.rs".into(),
@@ -68,6 +70,7 @@ fn edit_events() -> Vec<AgentEvent> {
             removed: 1,
             diff: Some("@@ -1 +1 @@\n-old\n+new\n".into()),
             minimal: true,
+            task_id: None,
         },
     ]
 }
@@ -86,6 +89,7 @@ fn one_pass_over_the_journal_recovers_the_whole_trajectory() {
         removed: 0,
         diff: None,
         minimal: true,
+        task_id: None,
     });
     events.push(AgentEvent::Verdict {
         passed: true,
@@ -136,6 +140,7 @@ fn an_unclosed_tool_call_reports_its_output_as_unknown() {
             input: serde_json::json!({"command": "sleep 999"}),
         },
         sub_agent_id: None,
+        task_id: None,
     }]));
     assert_eq!(fold.tool_calls.len(), 1);
     assert_eq!(fold.tool_calls[0].output, None);
@@ -154,6 +159,7 @@ fn acceptance_needs_a_success_outcome_and_a_real_change() {
         removed: 0,
         diff: None,
         minimal: true,
+        task_id: None,
     }]));
 
     assert!(is_accepted("completed", &with_change, false));

@@ -692,6 +692,21 @@ impl ToolRegistry {
         self.task_board.clone()
     }
 
+    /// This lane's board as the live "which task is running now" source an
+    /// event sender tags from (#5039).
+    ///
+    /// A reader over the shared handle rather than a snapshot, so there is one
+    /// authority and no copy to keep fresh — see [`stella_core::RunningTask`]
+    /// for why that matters when six tools, a plan seeding and every `/clear`
+    /// can move the board underneath it. The board is read through a poisoned
+    /// lock for the reason [`Self::board_snapshot`] gives one method down.
+    pub fn running_task(&self) -> stella_core::RunningTask {
+        let board = self.task_board.clone();
+        stella_core::RunningTask::from_fn(move || {
+            board.lock().unwrap_or_else(|p| p.into_inner()).running()
+        })
+    }
+
     /// The board as one owned snapshot — what [`Self::execute`] publishes as
     /// [`stella_protocol::AgentEvent::TaskUpdate`] after every board tool.
     ///

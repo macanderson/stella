@@ -76,6 +76,7 @@ fn with_tool_exchange(m: &mut WorkspaceModel, agent: &str) {
                 input: serde_json::json!({ "path": "src/main.rs" }),
             },
             sub_agent_id: None,
+            task_id: None,
         },
     });
     m.apply_inbound(&Inbound::Event {
@@ -89,6 +90,7 @@ fn with_tool_exchange(m: &mut WorkspaceModel, agent: &str) {
             duration_ms: 7,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         },
     });
 }

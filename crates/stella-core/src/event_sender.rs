@@ -8,10 +8,12 @@
 //! until the caller's persistence boundary has completed.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use stella_protocol::AgentEvent;
 use tokio::sync::mpsc::UnboundedSender;
+
+use crate::tasks::RunningTask;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EventSendError;
@@ -27,6 +29,10 @@ type SendFn = dyn Fn(AgentEvent) -> Result<(), EventSendError> + Send + Sync;
 #[derive(Clone)]
 pub struct EventSender {
     send: Arc<SendFn>,
+    /// The running-task source, shared by every clone of this sender so a
+    /// host can attach it once (see the module docs). `None` until a host
+    /// does, which is every non-board caller and every test.
+    running_task: Arc<RwLock<Option<RunningTask>>>,
 }
 
 impl EventSender {
@@ -45,11 +51,79 @@ impl EventSender {
     ) -> Self {
         Self {
             send: Arc::new(send),
+            running_task: Arc::new(RwLock::new(None)),
         }
     }
 
+    /// Declare where this sender reads "which board task is running now"
+    /// (SPEC 7.1's evidence ledger, #5039).
+    ///
+    /// Every clone of this sender — the registry's, the re-query adapter's,
+    /// the one the engine drives its turn through — starts tagging from the
+    /// same instant, because they share one slot.
+    ///
+    /// # Why the tag rides the sender, and why the slot is late-attached
+    ///
+    /// The tag has to be applied **synchronously, at send**. A drain would be
+    /// the obvious place — a renderer or journal writer sees every event — but
+    /// it sees them later, and by the time it folds a `tool_result` the board
+    /// may have moved on, so the ledger would be misattributed. The emit sites
+    /// are the other obvious place, and there are dozens of them: threading
+    /// the running task to each is a rule every future call site has to
+    /// remember, and the one that forgets is silent, which is the shape
+    /// AGENTS.md #10 exists to end.
+    ///
+    /// Late-attached because whether anything can answer "which task is
+    /// running" is a fact about the *host*, not about the sender, and it is
+    /// not known where a sender is built — the same shape
+    /// `ToolRegistry::enable_task_delegation` and `attach_call_measure` have.
+    /// Attaching to any one clone reaches all of them, so a host wires the
+    /// engine's stream and the registry's stream by wiring the sender they
+    /// already share: no second sender to keep alive, and no drop order to get
+    /// right.
+    ///
+    /// What it does not do is chase a sender it cannot see. A host that builds
+    /// a *second* sender over the same channel gets a second, empty slot, and
+    /// its events go out untagged — the right failure, because an event with
+    /// no tag is in no task's ledger where a guessed tag would put it in the
+    /// wrong one.
+    ///
+    /// Attaching twice replaces the source rather than layering a second one:
+    /// there is one board per lane, so two sources would be two answers to a
+    /// question that has one.
+    pub fn attach_running_task(&self, running: RunningTask) {
+        *self
+            .running_task
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(running);
+    }
+
     pub fn send(&self, event: AgentEvent) -> Result<(), EventSendError> {
-        (self.send)(event)
+        (self.send)(self.tagged(event))
+    }
+
+    /// Stamp the running task onto an event that has a slot for one and has
+    /// not already been stamped.
+    ///
+    /// The two guards before the lock are what keep this off the hot path: a
+    /// turn's stream is mostly narration, and `carries_task_tag` is a match on
+    /// the case rather than a board read. An event that arrives already
+    /// tagged is left alone — see `AgentEvent::stamp_task`, which is where the
+    /// never-overwrite rule lives.
+    fn tagged(&self, mut event: AgentEvent) -> AgentEvent {
+        if !event.carries_task_tag() || event.task_id().is_some() {
+            return event;
+        }
+        let running = self
+            .running_task
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .and_then(RunningTask::current);
+        if let Some(task) = running {
+            event.stamp_task(&task);
+        }
+        event
     }
 
     /// Wrap this sender so a run owner's closing `Stage(Complete)` rides
@@ -277,5 +351,180 @@ mod run_ending_tests {
                 .any(|e| matches!(e, AgentEvent::RunComplete { .. })),
             "a failed run must not be sealed as a success: {seen:?}"
         );
+    }
+}
+
+/// The task-tagging half (#5039), tested against a real
+/// [`crate::tasks::TaskBoard`] rather than a stub source: the thing that must
+/// be true is that a *board* answers, not that a closure does.
+#[cfg(test)]
+mod task_tag_tests {
+    use std::sync::Mutex;
+
+    use stella_protocol::TaskStatus;
+
+    use super::*;
+    use crate::tasks::TaskBoard;
+
+    fn tool_start(call_id: &str) -> AgentEvent {
+        AgentEvent::ToolStart {
+            call: stella_protocol::ToolCall {
+                call_id: call_id.to_string(),
+                name: "edit_file".to_string(),
+                input: serde_json::json!({ "path": "src/auth.rs" }),
+            },
+            sub_agent_id: None,
+            task_id: None,
+        }
+    }
+
+    fn drain(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AgentEvent>) -> Vec<AgentEvent> {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            out.push(event);
+        }
+        out
+    }
+
+    /// A sender with a board attached tags the work it carries with whichever
+    /// task the board says is running **at the moment of the send** — and
+    /// re-reads it, so moving to the next task moves the tag with it.
+    ///
+    /// The second half is the one a cached copy would get wrong, and it is
+    /// the whole reason `RunningTask` is a closure over the board.
+    #[test]
+    fn work_dispatched_while_a_task_runs_is_tagged_with_that_task() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let board = Arc::new(Mutex::new(TaskBoard::new()));
+        {
+            let mut guard = board.lock().expect("fresh board");
+            guard.seed_from_plan(&["read the layout", "fold the rail"]);
+        }
+        let source = Arc::clone(&board);
+        events.attach_running_task(RunningTask::from_fn(move || {
+            source.lock().expect("board").running()
+        }));
+
+        // Before any task starts, work is in no task's ledger.
+        events.send(tool_start("c0")).expect("receiver alive");
+
+        board
+            .lock()
+            .expect("board")
+            .set_status("1", TaskStatus::InProgress)
+            .expect("start task 1");
+        events.send(tool_start("c1")).expect("receiver alive");
+
+        {
+            let mut guard = board.lock().expect("board");
+            guard
+                .set_status("1", TaskStatus::Completed)
+                .expect("close task 1");
+            guard
+                .set_status("2", TaskStatus::InProgress)
+                .expect("start task 2");
+        }
+        events.send(tool_start("c2")).expect("receiver alive");
+
+        let tags: Vec<Option<String>> = drain(&mut rx)
+            .iter()
+            .map(|event| event.task_id().map(|id| id.as_str().to_string()))
+            .collect();
+        assert_eq!(
+            tags,
+            vec![None, Some("1".to_string()), Some("2".to_string())],
+            "each send reads the board as it stood at that instant"
+        );
+    }
+
+    /// Every clone shares one slot, which is what lets a host attach once and
+    /// have the registry's stream and the engine's stream both tagged. Without
+    /// it the two would have to be wired separately, and the one nobody
+    /// remembered would be the silent gap.
+    #[test]
+    fn attaching_to_one_clone_tags_every_clone() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let registry_side = events.clone();
+        events.attach_running_task(RunningTask::from_fn(|| {
+            Some(stella_protocol::TaskId::new("7"))
+        }));
+
+        registry_side
+            .send(tool_start("c1"))
+            .expect("receiver alive");
+        // ...including a clone taken AFTER the attachment.
+        events
+            .clone()
+            .send(tool_start("c2"))
+            .expect("receiver alive");
+
+        for event in drain(&mut rx) {
+            assert_eq!(
+                event.task_id().map(|id| id.as_str().to_string()),
+                Some("7".to_string()),
+                "a clone must not carry its own empty slot"
+            );
+        }
+    }
+
+    /// Narration is not work: an event with no slot passes through untouched
+    /// and, critically, never pays for a board read.
+    #[test]
+    fn an_event_with_no_task_slot_is_untouched() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&reads);
+        events.attach_running_task(RunningTask::from_fn(move || {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some(stella_protocol::TaskId::new("7"))
+        }));
+
+        events
+            .send(AgentEvent::Text {
+                text: "the answer".to_string(),
+            })
+            .expect("receiver alive");
+        assert_eq!(
+            reads.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the board must not be locked for an event that cannot carry a tag"
+        );
+        assert!(drain(&mut rx).iter().all(|e| e.task_id().is_none()));
+    }
+
+    /// A tag applied closer to the work outranks the ambient one: a delegated
+    /// lane's event reaching the lead's sender keeps its own attribution.
+    #[test]
+    fn an_already_tagged_event_is_not_relabelled() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        events.attach_running_task(RunningTask::from_fn(|| {
+            Some(stella_protocol::TaskId::new("7"))
+        }));
+
+        let mut delegated = tool_start("c1");
+        delegated.stamp_task(&stella_protocol::TaskId::new("2"));
+        events.send(delegated).expect("receiver alive");
+
+        assert_eq!(
+            drain(&mut rx)
+                .first()
+                .and_then(|e| e.task_id())
+                .map(|id| id.as_str().to_string()),
+            Some("2".to_string())
+        );
+    }
+
+    /// A sender nobody attached a board to is unchanged — every existing
+    /// caller, and every test, keeps the behaviour it had.
+    #[test]
+    fn a_sender_with_no_board_leaves_work_untagged() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let events = EventSender::new(tx);
+        events.send(tool_start("c1")).expect("receiver alive");
+        assert!(drain(&mut rx).iter().all(|e| e.task_id().is_none()));
     }
 }

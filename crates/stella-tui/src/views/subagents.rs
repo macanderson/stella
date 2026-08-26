@@ -605,6 +605,7 @@ mod tests {
                     input: serde_json::json!({ "path": path }),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
         });
     }

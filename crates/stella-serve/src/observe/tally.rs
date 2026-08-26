@@ -156,6 +156,7 @@ mod tests {
         fold.observe(&AgentEvent::ToolStart {
             call: tool_call("a"),
             sub_agent_id: None,
+            task_id: None,
         });
         fold.observe(&AgentEvent::ToolResult {
             call_id: "a".to_string(),
@@ -163,10 +164,12 @@ mod tests {
             duration_ms: 3,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         });
         fold.observe(&AgentEvent::ToolStart {
             call: tool_call("b"),
             sub_agent_id: None,
+            task_id: None,
         });
         fold.observe(&AgentEvent::ToolResult {
             call_id: "b".to_string(),
@@ -177,6 +180,7 @@ mod tests {
             duration_ms: 4,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         });
         fold.observe(&AgentEvent::SpeculationDiscarded {
             call_id: "c".to_string(),
@@ -201,14 +205,17 @@ mod tests {
         fold.observe(&AgentEvent::ToolStart {
             call: tool_call("lead"),
             sub_agent_id: None,
+            task_id: None,
         });
         fold.observe(&AgentEvent::ToolStart {
             call: tool_call("child"),
             sub_agent_id: Some("d:1".to_string()),
+            task_id: None,
         });
         fold.observe(&AgentEvent::ToolStart {
             call: tool_call("child2"),
             sub_agent_id: Some("d:1".to_string()),
+            task_id: None,
         });
 
         let tally = fold.finish();

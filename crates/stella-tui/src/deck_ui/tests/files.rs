@@ -19,6 +19,7 @@ fn model_with_one_change() -> WorkspaceModel {
             removed: 1,
             diff: Some("@@ -1,2 +1,3 @@\n context\n-old\n+new\n".into()),
             minimal: true,
+            task_id: None,
         },
     });
     m

@@ -19,6 +19,7 @@ fn start(call_id: &str, name: &str) -> AgentEvent {
             input: serde_json::json!({ "path": "a.rs" }),
         },
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -32,6 +33,7 @@ fn ok_result(call_id: &str, content: &str, duration_ms: u64) -> AgentEvent {
         duration_ms,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -42,6 +44,7 @@ fn err_result(call_id: &str, message: &str) -> AgentEvent {
         duration_ms: 1,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -250,6 +253,7 @@ fn two_steps_announcing_one_call_id_project_two_rows() {
             input: serde_json::json!({ "path": "deck_ui.rs", "offset": offset }),
         },
         sub_agent_id: None,
+        task_id: None,
     };
     // Step 1 reads a window and gets its result; step 2 reads the next one.
     store.record_event(id, 0, &read(1)).unwrap();
@@ -488,6 +492,7 @@ fn a_classified_error_lands_its_class_in_the_projection() {
                 duration_ms: 1,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         )
         .unwrap();
@@ -591,6 +596,7 @@ fn rollup_splits_errors_by_class_and_still_ignores_abandonment() {
                 duration_ms: 1,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         )
         .unwrap();
@@ -654,6 +660,7 @@ fn materialize_keeps_two_announcements_sharing_a_call_id_apart() {
                     input: serde_json::json!({"pattern": "first"}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
         )
         .unwrap();
@@ -668,6 +675,7 @@ fn materialize_keeps_two_announcements_sharing_a_call_id_apart() {
                     input: serde_json::json!({"pattern": "final"}),
                 },
                 sub_agent_id: None,
+                task_id: None,
             },
         )
         .unwrap();
@@ -684,6 +692,7 @@ fn materialize_keeps_two_announcements_sharing_a_call_id_apart() {
                 duration_ms: 12,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         )
         .unwrap();
@@ -737,6 +746,7 @@ fn a_delegates_calls_are_attributed_to_it_and_the_leads_read_null() {
             input: serde_json::json!({ "query": "retry" }),
         },
         sub_agent_id: Some("search-1".into()),
+        task_id: None,
     };
     let child_result = |call_id: &str| AgentEvent::ToolResult {
         call_id: call_id.into(),
@@ -747,6 +757,7 @@ fn a_delegates_calls_are_attributed_to_it_and_the_leads_read_null() {
         duration_ms: 30,
         speculated: false,
         sub_agent_id: Some("search-1".into()),
+        task_id: None,
     };
 
     for (seq, event) in [

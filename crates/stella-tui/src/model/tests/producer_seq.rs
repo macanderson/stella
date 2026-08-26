@@ -55,6 +55,7 @@ fn fold_edit(model: &mut SessionModel, call_id: &str, path: &str, diff: &str, ad
             input: serde_json::json!({ "path": path }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     model.apply(&AgentEvent::FileChange {
         path: path.into(),
@@ -63,6 +64,7 @@ fn fold_edit(model: &mut SessionModel, call_id: &str, path: &str, diff: &str, ad
         removed: 0,
         diff: Some(diff.into()),
         minimal: true,
+        task_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: call_id.into(),
@@ -73,6 +75,7 @@ fn fold_edit(model: &mut SessionModel, call_id: &str, path: &str, diff: &str, ad
         duration_ms: 3,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 }
 
@@ -154,6 +157,7 @@ fn a_failed_call_after_a_successful_one_claims_no_diff() {
             input: serde_json::json!({ "path": "src/lib.rs" }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     // No FileChange: the registry measures only a successful call.
     model.apply(&AgentEvent::ToolResult {
@@ -162,6 +166,7 @@ fn a_failed_call_after_a_successful_one_claims_no_diff() {
         duration_ms: 1,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 
     assert!(
@@ -204,6 +209,7 @@ fn a_call_that_changed_nothing_must_not_adopt_a_later_boundary_change() {
             input: serde_json::json!({ "path": "src/a.rs" }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c2".into(),
@@ -214,6 +220,7 @@ fn a_call_that_changed_nothing_must_not_adopt_a_later_boundary_change() {
         duration_ms: 1,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 
     // Something else touches the path and the boundary sweeps it up.
@@ -262,6 +269,7 @@ fn a_bash_call_renders_the_change_it_measured() {
             input: serde_json::json!({ "command": "sed -i 's/a/b/' src/a.rs" }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     model.apply(&AgentEvent::FileChange {
         path: "src/a.rs".into(),
@@ -270,6 +278,7 @@ fn a_bash_call_renders_the_change_it_measured() {
         removed: 1,
         diff: Some("@@ sed did this @@\n".into()),
         minimal: true,
+        task_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c1".into(),
@@ -277,6 +286,7 @@ fn a_bash_call_renders_the_change_it_measured() {
         duration_ms: 12,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 
     let dref = inline_ref(&model, "c1").expect("the bash row claims the change it measured");
@@ -322,6 +332,7 @@ fn a_bash_call_that_measured_nothing_claims_no_change() {
             input: serde_json::json!({ "command": "cargo test" }),
         },
         sub_agent_id: None,
+        task_id: None,
     });
     model.apply(&AgentEvent::ToolResult {
         call_id: "c2".into(),
@@ -329,6 +340,7 @@ fn a_bash_call_that_measured_nothing_claims_no_change() {
         duration_ms: 900,
         speculated: false,
         sub_agent_id: None,
+        task_id: None,
     });
 
     assert!(

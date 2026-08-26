@@ -381,6 +381,7 @@ pub(super) fn emit_step_usage(events: &EventSender, call: SettledCall<'_>) {
         // known — `subagent::child_sender`, the one place that can say which
         // of several concurrent children an event belongs to (#4383).
         sub_agent_id: None,
+        task_id: None,
     });
 }
 

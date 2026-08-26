@@ -104,6 +104,7 @@ fn tool_start(id: &str, name: &str, input: serde_json::Value) -> AgentEvent {
             input,
         },
         sub_agent_id: None,
+        task_id: None,
     }
 }
 
@@ -275,6 +276,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 temperature: None,
                 params: None,
                 sub_agent_id: None,
+                task_id: None,
             },
         ),
         ev(
@@ -326,6 +328,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 duration_ms: 42,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         ),
         // The edit, measured the way a live turn measures it: the `FileChange`
@@ -357,6 +360,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 removed: crate::diff::count_diff_lines(PAGE_DIFF).1,
                 diff: Some(PAGE_DIFF.into()),
                 minimal: true,
+                task_id: None,
             },
         ),
         ev(
@@ -370,6 +374,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 duration_ms: 18,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         ),
         ev(
@@ -400,6 +405,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 temperature: None,
                 params: None,
                 sub_agent_id: None,
+                task_id: None,
             },
         ),
         ev(
@@ -464,6 +470,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 duration_ms: 61,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         ),
         // The new file lands inside its own `write_file` window, for the same
@@ -486,6 +493,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 removed: crate::diff::count_diff_lines(TRIGGERS_DIFF).1,
                 diff: Some(TRIGGERS_DIFF.into()),
                 minimal: true,
+                task_id: None,
             },
         ),
         ev(
@@ -499,6 +507,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 duration_ms: 9,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         ),
         ev(
@@ -529,6 +538,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 temperature: None,
                 params: None,
                 sub_agent_id: None,
+                task_id: None,
             },
         ),
         ev(
@@ -614,6 +624,7 @@ pub fn demo_inbound(started_ms: u64, self_pid: u32) -> Vec<Inbound> {
                 temperature: None,
                 params: None,
                 sub_agent_id: None,
+                task_id: None,
             },
         ),
         // ── lead proposes a larger scope change (gate) ──────────────────

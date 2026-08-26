@@ -335,6 +335,7 @@ impl DomainBridge {
                 retries,
                 partial,
                 sub_agent_id: _,
+                task_id: _,
             } => {
                 // Token counts are content-free, so the recovered figures ride
                 // the diagnostic timeline like any other operator id. They are
@@ -992,6 +993,7 @@ mod tests {
                 input,
             },
             sub_agent_id: None,
+            task_id: None,
         }
     }
 
@@ -1072,6 +1074,7 @@ mod tests {
             duration_ms: 1234,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         });
 
         let record = records.find("agent.tool.result").expect("a record");
@@ -1100,6 +1103,7 @@ mod tests {
             duration_ms: 7,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         });
 
         let record = records.find("agent.tool.result").expect("a record");
@@ -1126,6 +1130,7 @@ mod tests {
             duration_ms: 1,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         });
         let json = serde_json::to_string(&records.records()[0]).expect("serialize");
         assert!(json.contains(r#""tool":"other""#), "{json}");
@@ -1201,6 +1206,7 @@ mod tests {
             duration_ms: 1,
             speculated: false,
             sub_agent_id: None,
+            task_id: None,
         });
         assert!(bridge.in_flight.is_empty(), "the result removes its entry");
 
@@ -1303,6 +1309,7 @@ mod tests {
             removed: 3,
             diff: Some("- old secret\n+ new secret".into()),
             minimal: true,
+            task_id: None,
         });
 
         let json = serde_json::to_string(&records.records()[0]).expect("serialize");
@@ -1345,6 +1352,7 @@ mod tests {
             temperature: None,
             params: None,
             sub_agent_id: None,
+            task_id: None,
         });
 
         let json = serde_json::to_string(&records.records()[0]).expect("serialize");

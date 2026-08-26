@@ -202,6 +202,7 @@ impl AskUserIo for DeckAskUserIo {
                 duration_ms: 0,
                 speculated: false,
                 sub_agent_id: None,
+                task_id: None,
             },
         });
 

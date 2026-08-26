@@ -123,6 +123,11 @@ mod payload;
 mod scopes;
 mod steer_cause;
 mod tags;
+// Which cases carry a `task_id`, and the accessors over that fact. A `pub`
+// module rather than a private one because the split it documents is the
+// contract a consumer building a task's evidence ledger reads (#5039); the
+// accessors themselves are inherent methods on `AgentEvent` and need no path.
+pub mod task_tag;
 
 pub use call_role::ModelCallRole;
 pub use steer_cause::SteerCause;

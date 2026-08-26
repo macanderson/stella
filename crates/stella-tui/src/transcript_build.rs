@@ -116,9 +116,9 @@ impl RunBuilder {
             AgentEvent::Text { text, .. } => self.set_answer(text),
             AgentEvent::TextDelta { delta, .. } => self.append_answer(delta),
             AgentEvent::Reasoning { delta } => self.append_prose(delta),
-            AgentEvent::ToolStart { call, sub_agent_id } => {
-                self.open_call(call, sub_agent_id.clone())
-            }
+            AgentEvent::ToolStart {
+                call, sub_agent_id, ..
+            } => self.open_call(call, sub_agent_id.clone()),
             AgentEvent::ToolResult {
                 call_id,
                 output,

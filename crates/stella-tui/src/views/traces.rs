@@ -340,6 +340,7 @@ mod tests {
                 removed: 1,
                 diff: Some("+one\n-two\n".into()),
                 minimal: true,
+                task_id: None,
             },
         ));
         model

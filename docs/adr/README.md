@@ -81,6 +81,7 @@ open; nothing before Phase 3 forces it.
 |---|---|---|
 | [0013](0013-session-artifact-boundary.md) | The Session Artifact Boundary | **Proposed** — awaiting ratification |
 | [0014](0014-memories-join-the-record-control-plane.md) | Memories Join the Context-Record Control Plane | **Proposed** — awaiting ratification |
+| [0015](0015-the-task-tag-rides-the-event.md) | The Task Tag Rides the Event | Implemented — landed with #5039 |
 
 ADR 0013 draws the line between what Stella owes a caller that moves a session
 between machines (an artifact, a fingerprint, a version contract, a visible
@@ -88,6 +89,13 @@ fork) and what a control plane owns (identity, storage, transport, auth,
 retention). It decides a boundary, not a feature: nothing in it is implemented,
 and the parity rows `turn.checkpoint` and `turn.checkpoint_resume` defer to it
 by number.
+
+ADR 0015 records the four choices behind SPEC 7.1's evidence ledger and
+per-task cost: the tag is a field on the event rather than an envelope around
+it, it is applied at send through a slot every clone of an `EventSender` shares,
+the store projects it into a column, and `est remain` is absent where nothing
+measured supports it. It describes shipped code (#5039) rather than proposing a
+boundary.
 
 ADR 0014 brings workspace memories under the context-record control plane —
 one enumeration, one lifecycle, one suppression trail — while keeping their
