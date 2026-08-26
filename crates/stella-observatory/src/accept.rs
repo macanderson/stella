@@ -56,10 +56,10 @@
 //! and it clears.
 //!
 //! Rust cannot name most of them. `io::ErrorKind` has no EMFILE, ENFILE or
-//! ENOBUFS variant, so they arrive as the unmatchable `Uncategorized`.
+//! ENOBUFS case, so they arrive as the unmatchable `Uncategorized`.
 //! Discriminating them would take a hardcoded per-platform errno table — exactly
 //! the guessing this policy exists to remove. So the unnamed bucket is *treated*
-//! as exhaustion. That is the deliberately safe direction: `Uncategorized` also
+//! as exhaustion. That is the safe direction: `Uncategorized` also
 //! holds genuinely fatal errnos (EBADF, ENOTSOCK), but retrying those costs at
 //! most the streak cap below, whereas dying on a recoverable EMFILE is an
 //! outage.
@@ -82,7 +82,7 @@
 //!
 //! # Why this file exists twice
 //!
-//! `stella-observatory` and `stella-serve` are deliberately leaf crates with no
+//! `stella-observatory` and `stella-serve` are leaf crates with no
 //! shared dependency that could host this: the observatory's own module docs make
 //! "**No new dependencies**" a numbered design constraint, and it links no
 //! `stella-*` crate at all. Adding one purely to share ~40 lines of policy would
@@ -193,7 +193,7 @@ mod tests {
 
     /// The drift guard: the two copies of this policy must stay byte-identical.
     ///
-    /// `stella-observatory` and `stella-serve` deliberately share no crate that
+    /// `stella-observatory` and `stella-serve` share no crate that
     /// could host this module — the observatory's design constraints forbid it a
     /// `stella-*` dependency — so the policy is duplicated instead. That is only
     /// safe if a one-sided edit is impossible to miss, which is this test's whole

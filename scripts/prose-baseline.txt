@@ -1106,8 +1106,7 @@ crates/stella-model/tests/live_smoke.rs honesty-declaration 1
 crates/stella-observatory/Cargo.toml interface-jargon 1
 crates/stella-observatory/README.md filler-adverb 3
 crates/stella-observatory/README.md rust-jargon 2
-crates/stella-observatory/src/accept.rs filler-adverb 4
-crates/stella-observatory/src/accept.rs rust-jargon 1
+crates/stella-observatory/src/accept.rs filler-adverb 1
 crates/stella-observatory/src/codegraph.rs filler-adverb 1
 crates/stella-observatory/src/context_db.rs filler-adverb 1
 crates/stella-observatory/src/context_db.rs rust-jargon 1
