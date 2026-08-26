@@ -613,6 +613,21 @@ fn configure_lines(workspace_root: &Path, plugin: &roster::InstalledPlugin) -> V
 /// collected and reported at the end, naming every directory, while the
 /// copies that did go are still removed and still reported.
 fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
+    remove_reporting(workspace_root, name, &mut |line| println!("{line}"))
+}
+
+/// [`remove`], with its stdout lines handed to `report` rather than printed.
+///
+/// The seam exists so what a removal *says* is testable — it is the whole
+/// subject of #4904 — without a test having to capture the process's stdout.
+/// A sink rather than a returned `Vec` because the lines are interleaved with
+/// the deletes and with the `eprintln!` warnings, and a report that arrives
+/// after the work is a report that cannot be ordered against it.
+fn remove_reporting(
+    workspace_root: &Path,
+    name: &str,
+    report: &mut dyn FnMut(String),
+) -> Result<(), String> {
     let name = checked_name(name)?;
     let mut removed = 0usize;
     let mut failures: Vec<String> = Vec::new();
@@ -640,6 +655,9 @@ fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
             // resolvable to a `stella.toml` yields `None`, which `revert`
             // treats as "nothing can be put back" rather than redirected.
             let expected = configure::ConfigTarget::resolve(workspace_root, scope).ok();
+            // Also before the directory goes: the `[servers]` keys are read out
+            // of the package's own `mcp.toml`, which is inside it (#4904).
+            let servers = package::Inventory::of_package(&dir).mcp;
             let reverted = installs
                 .iter()
                 .find(|plugin| plugin.dir == dir)
@@ -671,20 +689,34 @@ fn remove(workspace_root: &Path, name: &str) -> Result<(), String> {
             if let Some(entry) = dir.file_name().and_then(|entry| entry.to_str()) {
                 receipt::forget(&tier, entry);
             }
-            println!(
+            report(format!(
                 "removed `{name}` ({}) from {}",
                 scope.as_str(),
                 dir.display()
-            );
+            ));
+            // Named, unlike the other three contribution kinds, because a
+            // server is a process the host connects to and its tools were in
+            // the model's registry under `mcp__<server>__*`. A tool, skill or
+            // record is inert until something selects it, so its absence is
+            // never mistaken for a fault; a server that stops answering looks
+            // like a broken connection, and a user who is not told the removal
+            // is what took it away goes looking for one (#4904).
+            if !servers.is_empty() {
+                report(format!(
+                    "  MCP servers gone: {} — no `mcp__<server>__*` tools from {} next session",
+                    servers.join(", "),
+                    if servers.len() == 1 { "it" } else { "them" }
+                ));
+            }
             if !reverted.keys.is_empty()
                 && let Some(config) = &reverted.config
             {
-                println!(
+                report(format!(
                     "  put back {} in {}: {}",
                     reverted.keys.len(),
                     config.display(),
                     reverted.keys.join(", ")
-                );
+                ));
             }
             // The honest half. A `remove` that reported success while leaving a
             // package's configuration in force is the failure this whole
