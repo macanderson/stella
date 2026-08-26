@@ -987,5 +987,48 @@ mod entry_body_tests {
             text_of(&via_router),
             "entry_body's compaction arm drifted from the projection"
         );
+        // One quiet line — SPEC 6.3's whole ask for compaction — from the
+        // projection, and the same one line through both routes.
+        assert_eq!(via_router.len(), 1, "{:?}", text_of(&via_router));
+        assert!(
+            text_of(&via_router)[0].contains("compacted 74k→69k"),
+            "{:?}",
+            text_of(&via_router)
+        );
+    }
+
+    /// The same event through [`entry_lines`] — the path every frame actually
+    /// takes: the one quiet line plus the block-closing spacer, and nothing
+    /// else, so neither route can double-print a compaction.
+    #[test]
+    fn a_compaction_renders_one_quiet_line_through_the_full_path() {
+        let entry = TranscriptEntry::Compaction {
+            before_tokens: 74_000,
+            after_tokens: 69_000,
+            evicted: 0,
+            deduped: 0,
+        };
+        let mut out = Vec::new();
+        entry_lines(
+            &entry,
+            EntryView::default(),
+            false,
+            false,
+            false,
+            100,
+            &mut out,
+        );
+        let rows = text_of(&out);
+        assert_eq!(
+            rows.iter().filter(|r| r.contains("compacted")).count(),
+            1,
+            "{rows:?}"
+        );
+        assert_eq!(
+            out.len(),
+            2,
+            "one quiet line and its trailing spacer: {rows:?}"
+        );
+        assert!(rows[1].trim().is_empty(), "{rows:?}");
     }
 }
