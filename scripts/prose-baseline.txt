@@ -1076,7 +1076,6 @@ crates/stella-core/src/skills/invoke.rs filler-adverb 1
 crates/stella-core/src/skills/invoke.rs rust-jargon 2
 crates/stella-core/src/skills/migration_contract.rs enumerative-announcement 1
 crates/stella-core/src/skills/migration_contract.rs filler-adverb 1
-crates/stella-core/src/skills/tests.rs filler-adverb 1
 crates/stella-core/src/skills/tests.rs interface-jargon 1
 crates/stella-core/src/skills/tests.rs rust-jargon 1
 crates/stella-core/src/speculation.rs honesty-declaration 1

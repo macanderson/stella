@@ -417,7 +417,7 @@
           "type": "string"
         },
         "source": {
-          "description": "The original source named by the frame's provenance chain. This is\ndeliberately distinct from [`Self::provider`]: a host adapter may be\n`workspace-memory` while the record source remains `stella-context`.",
+          "description": "The original source named by the frame's provenance chain. This is\ndistinct from [`Self::provider`]: a host adapter may be\n`workspace-memory` while the record source remains `stella-context`.",
           "type": "string"
         },
         "token_cost": {
@@ -451,7 +451,7 @@
           "type": "integer"
         },
         "frames_served": {
-          "description": "Frames accepted — they passed consent, the timeout, and the\nbudget-honesty audit.",
+          "description": "Frames accepted — they passed consent, the timeout, and the\nbudget audit.",
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -579,7 +579,7 @@
               "type": "string"
             },
             "proven": {
-              "description": "Whether a **passing verdict** stood behind the work.\n\n`false` is the ordinary case for a run that ran out of clock or came\nto rest on the revise rung, and it is deliberately not a reason to\nwithhold: a verdict is a claim about the work, not what decides\nwhether the work exists (#2927/#2943). Delivery never implies proof,\nand this field is what keeps the write from reading as a pass.",
+              "description": "Whether a **passing verdict** stood behind the work.\n\n`false` is the ordinary case for a run that ran out of clock or came\nto rest on the revise rung, and it is not a reason to\nwithhold: a verdict is a claim about the work, not what decides\nwhether the work exists (#2927/#2943). Delivery never implies proof,\nand this field is what keeps the write from reading as a pass.",
               "type": "boolean"
             }
           },
@@ -615,7 +615,7 @@
       ]
     },
     "ErrorClass": {
-      "description": "Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is deliberately no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original.",
+      "description": "Why a tool call failed, as a closed machine-readable set. A tool result's `message` is prose written for the model to retry against; this is the axis a measurement needs, because a per-tool error rate cannot mean anything while a tool defect, model misuse and a policy refusal all count as the same failure. The values partition failures by whose problem they are: the model's (`invalid_input`, `not_found`), the policy plane's (`permission_denied`, `refused_by_policy`), the world's (`timeout`, `environment`), or the agent's own (`internal`). There is no `abandoned` class: a call whose turn ended before it returned produced no tool result at all. An unrecognized token reads as `other`, and re-serializing writes `other` rather than the original.",
       "oneOf": [
         {
           "const": "invalid_input",
@@ -664,7 +664,7 @@
       "oneOf": [
         {
           "const": "read",
-          "description": "Content was successfully read — no mutation, never a diff.\n\n**Replay-only, permanently, and this is the decision rather than a gap\nawaiting one (#3413).** It had a producer when the `read` built-in\ndeclared its own touches; the 12-tool purge (#3244) removed that\nproducer, and restoring `read_file` did not bring it back. Neither\nsurviving producer can emit it: both diff a tree against a tree, and a\nread leaves no trace in a tree to diff. Re-acquiring one would\nmean going back to declaring file operations from tool inputs, which is\nthe defect [`AgentEvent::FileChange`] documents rather than a capability\nworth restoring.\n\nIt stays in the kind space because journals recorded before the purge\ncarry it and replay must parse them — deleting the variant would make\nthose streams unreadable. Consumers must keep handling it, and must not\ntreat its absence from a live stream as evidence that nothing was read.",
+          "description": "Content was successfully read — no mutation, never a diff.\n\n**Replay-only, permanently, and this is the decision rather than a gap\nawaiting one (#3413).** It had a producer when the `read` built-in\ndeclared its own touches; the 12-tool purge (#3244) removed that\nproducer, and restoring `read_file` did not bring it back. Neither\nsurviving producer can emit it: both diff a tree against a tree, and a\nread leaves no trace in a tree to diff. Re-acquiring one would\nmean going back to declaring file operations from tool inputs, which is\nthe defect [`AgentEvent::FileChange`] documents rather than a capability\nworth restoring.\n\nIt stays in the kind space because journals recorded before the purge\ncarry it and replay must parse them — deleting the case would make\nthose streams unreadable. Consumers must keep handling it, and must not\ntreat its absence from a live stream as evidence that nothing was read.",
           "type": "string"
         },
         {
@@ -873,7 +873,7 @@
         },
         {
           "const": "unverified",
-          "description": "Deterministic evidence was collected, and it did not amount to a proof.\nNo model was asked, because there is no question a model could settle\nthat the oracle could not.\n\nThis is the terminal rung for genuinely inconclusive evidence — no\nfail→pass flip, or a diff over budget, or a test that could not be run.\nIt is the ladder's honest \"I do not know\", and the run is scored\n`Unverified` on it.\n\n# Why the two rungs it replaces are gone\n\nBoth described a model's involvement rather than the work: `model_judge`\n/ `model_verdict` was \"a second model read the diff and offered an\nopinion\", and `heuristic_fallback` was \"that model was unreachable, so a\nheuristic stood in\". Neither is evidence about the change. Measured over\nan 89-task Terminal-Bench run the opinion agreed with the benchmark's\ngrader 46% of the time and 17 of its false passes cost 5 tasks outright\n— a coin flip that could end a run — so the escalation was removed and\nthe honest label put in its place.\n\nBoth aliases are retained for the same reason `model_verdict` once\naliased `model_judge`: sessions already on disk spell it those ways, and\nthis enum's contract is that an unknown rung fails the event rather than\nlaundering it, so a bare rename would make historical streams fail to\nparse loudly and totally. New writes use `unverified`; old reads still\nland, and land on the rung whose semantics they always actually had —\nunproven.",
+          "description": "Deterministic evidence was collected, and it did not amount to a proof.\nNo model was asked, because there is no question a model could settle\nthat the oracle could not.\n\nThis is the terminal rung for genuinely inconclusive evidence — no\nfail→pass flip, or a diff over budget, or a test that could not be run.\nIt is the ladder's \"I do not know\", and the run is scored\n`Unverified` on it.\n\n# Why the two rungs it replaces are gone\n\nBoth described a model's involvement rather than the work: `model_judge`\n/ `model_verdict` was \"a second model read the diff and offered an\nopinion\", and `heuristic_fallback` was \"that model was unreachable, so a\nheuristic stood in\". Neither is evidence about the change. Measured over\nan 89-task Terminal-Bench run the opinion agreed with the benchmark's\ngrader 46% of the time and 17 of its false passes cost 5 tasks outright\n— a coin flip that could end a run — so the escalation was removed and\nthe plain label put in its place.\n\nBoth aliases are retained for the same reason `model_verdict` once\naliased `model_judge`: sessions already on disk spell it those ways, and\nthis enum's contract is that an unknown rung fails the event rather than\nlaundering it, so a bare rename would make historical streams fail to\nparse loudly and totally. New writes use `unverified`; old reads still\nland, and land on the rung whose semantics they always actually had —\nunproven.",
           "type": "string"
         },
         {
@@ -1188,7 +1188,7 @@
       ]
     },
     "ModelCallRole": {
-      "description": "Concrete purpose of one provider call. This is more precise than the\nrouter's tier role: repair and guidance calls must remain distinguishable\nin the paid-call ledger even when they share a provider/model.\n\nThis vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]\nis the `serde(default)` for an *absent* `role`, not a `serde(other)`\ncatch-all for an unrecognized one. A role token this build has never seen\nfails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —\nbecause a known `\"type\"` with a body that does not fit stays a hard error by\ndesign (see the module docs). Adding a variant here is therefore a\none-directional change in a way adding an [`AgentEvent`] variant no longer\nis.",
+      "description": "Concrete purpose of one provider call. This is more precise than the\nrouter's tier role: repair and guidance calls must remain distinguishable\nin the paid-call ledger even when they share a provider/model.\n\nThis vocabulary grows, and it is **not** forward-tolerant: [`Self::Unknown`]\nis the `serde(default)` for an *absent* `role`, not a `serde(other)`\ncatch-all for an unrecognized one. A role token this build has never seen\nfails its whole event — `step_usage`, `step_manifest`, `usage_incomplete` —\nbecause a known `\"type\"` with a body that does not fit stays a hard error by\ndesign (see the module docs). Adding a case here is therefore a\none-directional change in a way adding an [`AgentEvent`] case no longer\nis.",
       "oneOf": [
         {
           "const": "unknown",
@@ -1363,7 +1363,7 @@
       "description": "One step of the proof a turn builds for its own work, in the order the pipeline makes the observation. Carried by the `proof` event. Note the forward-compatibility asymmetry: a reader that does not know the `proof` event preserves it whole as an `unknown` event, but a reader that knows `proof` and meets a future `kind` here fails the whole event -- this nested vocabulary is closed and has no unknown step.",
       "oneOf": [
         {
-          "description": "What assurance this turn is going to buy, stated by triage **before**\nany of it happens.\n\nEmitted first, and the reason the rail can be honest at all. Every\nother step reports something that *did* happen, so a turn where the\nanswer is \"we decided not to\" produced no steps and left the surface\nwith nothing to say — which is exactly the case that dominates in\npractice. A declared plan turns that silence into a statement: the\nwitness row reads \"waived by triage\" from the first second of the\nturn instead of implying a test is still coming.",
+          "description": "What assurance this turn is going to buy, stated by triage **before**\nany of it happens.\n\nEmitted first, and the reason the rail can be complete at all. Every\nother step reports something that *did* happen, so a turn where the\nanswer is \"we decided not to\" produced no steps and left the surface\nwith nothing to say — which is exactly the case that dominates in\npractice. A declared plan turns that silence into a statement: the\nwitness row reads \"waived by triage\" from the first second of the\nturn instead of implying a test is still coming.",
           "properties": {
             "kind": {
               "const": "assurance",
@@ -1478,7 +1478,7 @@
           "type": "object"
         },
         {
-          "description": "The evidence channels worked, and what they returned did not amount to a proof; the verdict rests on the `unverified` rung. Deliberately distinct from `verification_unavailable`: a reader has to be able to tell \"the instruments were blind\" from \"the instruments worked and the answer was not enough\", because they imply opposite repairs -- fix the probe, versus produce the missing observation.",
+          "description": "The evidence channels worked, and what they returned did not amount to a proof; the verdict rests on the `unverified` rung. Distinct from `verification_unavailable`: a reader has to be able to tell \"the instruments were blind\" from \"the instruments worked and the answer was not enough\", because they imply opposite repairs -- fix the probe, versus produce the missing observation.",
           "properties": {
             "kind": {
               "const": "verification_unproven",
@@ -1812,7 +1812,7 @@
       "type": "string"
     },
     "StageScope": {
-      "description": "Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).\n\nDeliberately **not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
+      "description": "Whose stage boundary an [`AgentEvent::Stage`] reports (#3398).\n\n**Not** `#[serde(default)]`. A default would silently claim\none scope for every historical recording, and half of them are the other\none — a decode ambiguity that would live in the fixtures forever. A\nrecording written before this field existed decodes through\n[`AgentEvent::Unknown`] instead, which says \"I do not know what this is\"\nrather than guessing wrong.",
       "oneOf": [
         {
           "const": "turn",
@@ -2037,7 +2037,7 @@
               "type": "null"
             }
           ],
-          "description": "What this task means by done (SPEC 7.1).\n\n`None` is *nobody has said yet*, and is deliberately not the same fact\nas [`TaskContract::ReadOnly`], which is *somebody looked and there is\nnothing to prove*. A board that collapsed the two would let an\nundeclared task close on the same terms as one declared harmless —\nwhich is the self-report [`TaskContract`] exists to end.\n\nOptional because the board predates contracts and a session may still\ncreate a task without one; `stella_core::tasks` refuses the *close*, not\nthe creation, so an undeclared task is visible on the board rather than\nrejected at the door."
+          "description": "What this task means by done (SPEC 7.1).\n\n`None` is *nobody has said yet*, and is not the same fact\nas [`TaskContract::ReadOnly`], which is *somebody looked and there is\nnothing to prove*. A board that collapsed the two would let an\nundeclared task close on the same terms as one declared harmless —\nwhich is the self-report [`TaskContract`] exists to end.\n\nOptional because the board predates contracts and a session may still\ncreate a task without one; `stella_core::tasks` refuses the *close*, not\nthe creation, so an undeclared task is visible on the board rather than\nrejected at the door."
         },
         "description": {
           "description": "What needs to be done, if the creator elaborated beyond the subject.",
@@ -2134,7 +2134,7 @@
                   "type": "string"
                 },
                 "data": {
-                  "description": "The structured half of the result, when the tool has one (#3285).\n`content` is prose for the model; `data` is the same facts as a\nvalue a contract's `output_schema` can check — \"references, not\npayloads\" (#2694 §4) is unenforceable over prose. `None` means\nthe tool produces no structured output, which is every tool\nwritten before this field existed. Optional and absent-when-`None`\nso every payload written before the field round-trips\nbyte-identically (invariant #4), and so the content bytes the\nmodel sees are never perturbed by structure."
+                  "description": "The structured half of the result, when the tool has one (#3285).\n`content` is prose for the model; `data` is the same facts as a\nvalue a contract's `output_schema` can check — \"references, not\npayloads\" (#2694 §4) is unenforceable over prose. `None` means\nthe tool produces no structured output, which is every tool\nwritten before this field existed. Optional and absent-when-`None`\nso every payload written before the field round-trips\nbyte-identically (AGENTS.md #4), and so the content bytes the\nmodel sees are never perturbed by structure."
                 }
               },
               "required": [
@@ -2163,7 +2163,7 @@
                       "type": "null"
                     }
                   ],
-                  "description": "Which [`ErrorClass`] this failure falls in (#3145). `None` is a\ndeclared default meaning \"unclassified\" — the site that built\nthis error has not been audited into a class yet, which is\ndistinct from any class it could be assigned. Optional and\nabsent-when-`None` so every payload written before the field\nexisted round-trips byte-identically (invariant #4), and so the\nmessage bytes the model sees are never perturbed by\nclassification."
+                  "description": "Which [`ErrorClass`] this failure falls in (#3145). `None` is a\ndeclared default meaning \"unclassified\" — the site that built\nthis error has not been audited into a class yet, which is\ndistinct from any class it could be assigned. Optional and\nabsent-when-`None` so every payload written before the field\nexisted round-trips byte-identically (AGENTS.md #4), and so the\nmessage bytes the model sees are never perturbed by\nclassification."
                 },
                 "message": {
                   "description": "Why it failed, phrased so the model can act on it — the model\nsees this text and retries against it.",
@@ -2184,7 +2184,7 @@
       ]
     },
     "UsageIncompleteReason": {
-      "description": "Content-free reason a provider attempt cannot contribute a truthful usage\nenvelope. Error bodies and prompts are deliberately unrepresentable.",
+      "description": "Content-free reason a provider attempt cannot contribute a truthful usage\nenvelope. Error bodies and prompts are unrepresentable.",
       "oneOf": [
         {
           "const": "provider_error",
@@ -2260,7 +2260,7 @@
       "type": "object"
     },
     "Withholder": {
-      "description": "Which authority held a workspace's steering back\n([`AgentEvent::SteeringWithheld`], #2302/#3616).\n\nTwo causes resolve one refusal, and they are not interchangeable: they have\ndifferent remedies, and one of them the user cannot lift at all. A harness\nthat folded them together would tell an operator to set a flag they have\nalready set.",
+      "description": "Which authority held a workspace's steering back\n([`AgentEvent::SteeringWithheld`], #2302/#3616).\n\nThe two causes that resolve one refusal are not interchangeable: they have\ndifferent remedies, and one of them the user cannot lift at all. A harness\nthat folded them together would tell an operator to set a flag they have\nalready set.",
       "oneOf": [
         {
           "const": "project_untrusted",
@@ -2276,7 +2276,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "One event in the turn's stream. Every stage boundary emits an event;\nnothing user-visible is derived from internal state that isn't also in\nthis stream.\n\n`remote = \"Self\"` keeps the derived codec as a pair of *inherent*\nassociated functions instead of the trait impls, so the hand-written\n[`Serialize`]/[`Deserialize`] impls in `event.rs` can delegate to it after\nrouting [`AgentEvent::Unknown`] around it. Without that indirection the\nforward-compat fallback would mean hand-writing a visitor for every variant.",
+  "description": "One event in the turn's stream. Every stage boundary emits an event;\nnothing user-visible is derived from internal state that isn't also in\nthis stream.\n\n`remote = \"Self\"` keeps the derived codec as a pair of *inherent*\nassociated functions instead of the trait impls, so the hand-written\n[`Serialize`]/[`Deserialize`] impls in `event.rs` can delegate to it after\nrouting [`AgentEvent::Unknown`] around it. Without that indirection the\nforward-compat fallback would mean hand-writing a visitor for every case.",
   "oneOf": [
     {
       "description": "A stage boundary was crossed. `scope` says whose stage it is, and it is not decoration: two disjoint authorities emit stages. The engine emits its own, once per turn, with scope `turn`. A wrapper -- the staged pipeline, a goal loop -- emits its own vocabulary once per run, with scope `run`. A consumer that branches on stage transitions must select on `scope` first, or it will see two interleaved vocabularies as one and read a wrapper's backwards-looking boundary as an engine regression.",
@@ -2307,7 +2307,7 @@
       "type": "object"
     },
     {
-      "description": "The step's answer text, in full — the authoritative, durable record.\nNot a fragment, despite the live preview sibling\n[`AgentEvent::TextDelta`]: consumers must REPLACE any accumulated\npreview with this value, never append it to one.\n\nWire history (#1886): this field was spelled `delta` (and\n`text_delta`'s payload was spelled `text` — each variant carried the\nother's natural name). Serialization writes the self-describing name;\nthe alias keeps every recorded stream replaying. Raw-JSONL readers\nmust stay bilingual the same way: `text` first, legacy `delta` back.",
+      "description": "The step's answer text, in full — the authoritative, durable record.\nNot a fragment, despite the live preview sibling\n[`AgentEvent::TextDelta`]: consumers must REPLACE any accumulated\npreview with this value, never append it to one.\n\nWire history (#1886): this field was spelled `delta` (and\n`text_delta`'s payload was spelled `text` — each case carried the\nother's natural name). Serialization writes the self-describing name;\nthe alias keeps every recorded stream replaying. Raw-JSONL readers\nmust stay bilingual the same way: `text` first, legacy `delta` back.",
       "properties": {
         "text": {
           "type": "string"
@@ -2581,7 +2581,7 @@
       "description": "The parked turn woke and the next model call is imminent — closes the\nspan its [`AgentEvent::TurnParked`] opened. Additive to the wire\ncontract, like its twin.",
       "properties": {
         "polls_used": {
-          "description": "Engine-side probes spent while parked — the poll history the\ntranscript deliberately never carries.",
+          "description": "Engine-side probes spent while parked — the poll history the\ntranscript never carries.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -2747,7 +2747,7 @@
       "type": "object"
     },
     {
-      "description": "One decision from the extension/policy audit plane bridged into the\nevent stream (receipts spec §6.4, #364 gap 6). The `HookBus` audit\nevents (`policy.evaluated`/`policy.blocked`, `approval.requested`,\n`secret.detected`) were process-ephemeral — hosts map them onto this\nvariant so the journal carries the policy plane too. Content-free by\ndesign: `subject` names the tool/capability/path, NEVER a secret\nvalue or file contents.",
+      "description": "One decision from the extension/policy audit plane bridged into the\nevent stream (receipts spec §6.4, #364 gap 6). The `HookBus` audit\nevents (`policy.evaluated`/`policy.blocked`, `approval.requested`,\n`secret.detected`) were process-ephemeral — hosts map them onto this\ncase so the journal carries the policy plane too. Content-free by\ndesign: `subject` names the tool/capability/path, NEVER a secret\nvalue or file contents.",
       "properties": {
         "kind": {
           "$ref": "#/$defs/PolicyKind"
@@ -2896,11 +2896,11 @@
       "type": "object"
     },
     {
-      "description": "Emitted after every provider/media call that spends money. The TUI HUD\nrenders spend live from this stream; nothing user-visible about spend\nis derived from state that isn't also in this event.",
+      "description": "Emitted after every provider/media call that spends money. The interactive-mode HUD\nrenders spend live from this stream; nothing user-visible about spend\nis derived from state that isn't also in this event.",
       "properties": {
         "deadline_remaining_ms": {
           "default": null,
-          "description": "Wall clock left before the task deadline at this tick — the third\naxis, and the only one a journal could not otherwise state (#2240).\n\n`None` means **no deadline was armed**, which is exactly the\ndistinction that used to require reading argv: a trial killed by its\nharness emitted dozens of these against a dollar cap it never\napproached, while the 900s wall clock that actually stopped it\nappeared nowhere in the journal. `Some(0)` is the opposite fact — a\ndeadline is armed and has already passed.\n\nMilliseconds rather than a `Duration` because this is a wire type\n(invariant 4): a whole-millisecond integer round-trips through JSON\nbyte-for-byte, where a float of seconds would not.\n\n`serde(default)` — absent on every journal written before this\nfield existed, where it reads as \"unarmed\". That is the honest\ndecode: those journals genuinely could not say otherwise.",
+          "description": "Wall clock left before the task deadline at this tick — the third\naxis, and the only one a journal could not otherwise state (#2240).\n\n`None` means **no deadline was armed**, which is exactly the\ndistinction that used to require reading argv: a trial killed by its\nharness emitted dozens of these against a dollar cap it never\napproached, while the 900s wall clock that actually stopped it\nappeared nowhere in the journal. `Some(0)` is the opposite fact — a\ndeadline is armed and has already passed.\n\nMilliseconds rather than a `Duration` because this is a wire type\n(AGENTS.md #4): a whole-millisecond integer round-trips through JSON\nbyte-for-byte, where a float of seconds would not.\n\n`serde(default)` — absent on every journal written before this\nfield existed, where it reads as \"unarmed\". That is the right\ndecode: those journals genuinely could not say otherwise.",
           "format": "uint64",
           "minimum": 0,
           "type": [
@@ -3009,7 +3009,7 @@
         },
         "estimated_input_tokens": {
           "default": 0,
-          "description": "The engine's RAW (uncalibrated) pre-call estimate of the input it\nsent — paired with `input_tokens` (plus cache-write tokens, which\nare real prompt tokens split out only for pricing) this is one\ndrift sample, the feedback that calibrates future estimates per\nmodel (`stella-core::estimator::Calibration`). Raw by contract:\nconsumers rebuild the correction from these pairs, and a\ncorrected estimate here would compound the correction on every\nround trip. Attachment weight is excluded — the media estimate is\na deliberate ~80× over-estimate of billed tokens, right for\ncontext pressure and poison as a drift sample. `0` means no\nestimate was taken (pre-drift emitters — hence `serde(default)`,\nso old streams still parse).",
+          "description": "The engine's RAW (uncalibrated) pre-call estimate of the input it\nsent — paired with `input_tokens` (plus cache-write tokens, which\nare real prompt tokens split out only for pricing) this is one\ndrift sample, the feedback that calibrates future estimates per\nmodel (`stella-core::estimator::Calibration`). Raw by contract:\nconsumers rebuild the correction from these pairs, and a\ncorrected estimate here would compound the correction on every\nround trip. Attachment weight is excluded — the media estimate is\na ~80× over-estimate of billed tokens, right for context pressure\nand poison as a drift sample. `0` means no\nestimate was taken (pre-drift emitters — hence `serde(default)`,\nso old streams still parse).",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -3067,7 +3067,7 @@
         },
         "provider": {
           "default": "",
-          "description": "Provider which actually served this call, never the session's\nconfigured default. Empty only on legacy events.\n\nFor a *gateway* this names the gateway (`openrouter`), which is as\nfar as this field can honestly go — the silicon behind it rides in\n`upstream_provider`.",
+          "description": "Provider which actually served this call, never the session's\nconfigured default. Empty only on legacy events.\n\nFor a *gateway* this names the gateway (`openrouter`), which is as\nfar as this field can go — the silicon behind it rides in\n`upstream_provider`.",
           "type": "string"
         },
         "reasoning_tokens": {
@@ -3176,7 +3176,7 @@
               "type": "null"
             }
           ],
-          "description": "Accounting the adapter had already observed when the attempt died.\n\n\"Incomplete\" is not the same as \"unknown\", and this field is the\ndifference. A stream cut mid-answer has usually already been told\nwhat the prompt cost, so `Some` here turns a bare warning into a\nnumber: how much of this attempt we can actually account for.\n`None` is the honest answer for a failure that learned nothing —\na connect timeout, a cancelled call, a 5xx with no stream.\n\nToken counts are content-free, so carrying them keeps this event\ninside its no-prompts-no-bodies contract."
+          "description": "Accounting the adapter had already observed when the attempt died.\n\n\"Incomplete\" is not the same as \"unknown\", and this field is the\ndifference. A stream cut mid-answer has usually already been told\nwhat the prompt cost, so `Some` here turns a bare warning into a\nnumber: how much of this attempt we can actually account for.\n`None` is the answer for a failure that learned nothing —\na connect timeout, a cancelled call, a 5xx with no stream.\n\nToken counts are content-free, so carrying them keeps this event\ninside its no-prompts-no-bodies contract."
         },
         "provider": {
           "type": "string"
@@ -3294,7 +3294,7 @@
       "type": "object"
     },
     {
-      "description": "A file was created/modified/deleted during a turn, carrying both the\nauthoritative line delta and a diff for display.\n\n**Observability, never evidence.** Nothing may found a claim about what\nchanged on counting these — #2873 removed the last three decisions that\ndid, and the tally survives only as a recorded-only field on\n`LadderSnapshot`. The reason is sharper than \"it might be incomplete\":\nthe two producers below answer two *different* questions, and only one\nof them is about the agent.\n\n# The two producers, and what each one's answer means\n\n1. **Candidate adoption** — `Pipeline::deliver_winner` (the built-in\n   staged pipeline's `pipeline/delivery.rs`, deleted in #3865), one\n   event per\n   `AdoptedChange`, emitted beside the `CandidateWorkspace::attribute_adopted`\n   call that writes the same rows to the host's durable ledger (#2907).\n   This one **was** attribution: adoption measured a candidate against a\n   sealed baseline, so it could tell the agent's edits from anyone\n   else's. **It has no producer in this workspace any more** — that\n   crate was deleted in #3865 — so every event on this stream today is\n   the second kind. Read the distinction below as the contract a\n   re-homed adoption producer would have to meet, not as two live\n   sources (#3881).\n2. **The shared-tree turn boundary** — `stella-cli`'s `turn_files`, over\n   `WorkJournal::snapshot_worktree` (#3413). This one is **not**\n   attribution. It answers *what changed in the tree during this turn*,\n   which is the honest question a whole-tree measurement can answer: a\n   user editing a file in another window mid-turn lands here\n   indistinguishably from the agent's own writes.\n\nA consumer that needs \"what did the agent do\" takes it from the git diff\nof the tree, or from adoption. This stream is for showing a human what\nmoved.\n\n# Why an engine-only turn is measured rather than hooked (#3413)\n\nIt once emitted from the tools, and for a while after that from nowhere:\nthe 12-tool purge (#3244) deleted every file-writing built-in and the\nfile-CRUD ledger that emitted these, and this doc went on naming a\n`ToolRegistry::record_touch` that no longer existed. The file built-ins\nhave since been restored, so a tool hook is now available — and it is\nstill not right. A hook on `write_file` / `edit_file` / `delete_file`\nwould report a *subset* of the turn while looking exhaustive: `bash`\nmutates the tree without naming a path, and so do MCP servers and\ncustom script tools, none of which describes its paths in any schema\nthe engine reads. And\nsynthesizing these from tool *inputs* is the known defect, not the\ndesign: a wrapper that did exactly that, knowing four hard-coded tool\nnames and sitting on one of three tool stacks, is what reported files\nedited in bulk or by a worker lane as `+0 -0` (#2290).\n\nSo the answer is a measurement, taken once per turn at the boundary.\nThe cost is one `git add -A` plus a `write-tree` against a dedicated\nindex, after the model has answered.\n\n`added`/`removed` are what the producer measured — git's `--numstat`\nagainst the two trees, or, for adoption, numstat plus the patch it\napplied. Consumers **must** use them rather than counting `+`/`-` lines\nin `diff`: the diff is a bounded, deliberately coarse rendering of the\nchanged region, and re-deriving from it is what made the two disagree.\nA binary file carries `0/0` and its kind.",
+      "description": "A file was created/modified/deleted during a turn, carrying both the\nauthoritative line delta and a diff for display.\n\n**Observability, never evidence.** Nothing may found a claim about what\nchanged on counting these — #2873 removed the last three decisions that\ndid, and the tally survives only as a recorded-only field on\n`LadderSnapshot`. The reason is sharper than \"it might be incomplete\":\nthe two producers below answer two *different* questions, and only one\nof them is about the agent.\n\n# The two producers, and what each one's answer means\n\n1. **Candidate adoption** — `Pipeline::deliver_winner` (the built-in\n   staged pipeline's `pipeline/delivery.rs`, deleted in #3865), one\n   event per\n   `AdoptedChange`, emitted beside the `CandidateWorkspace::attribute_adopted`\n   call that writes the same rows to the host's durable ledger (#2907).\n   This one **was** attribution: adoption measured a candidate against a\n   sealed baseline, so it could tell the agent's edits from anyone\n   else's. **It has no producer in this workspace any more** — that\n   crate was deleted in #3865 — so every event on this stream today is\n   the second kind. Read the distinction below as the contract a\n   re-homed adoption producer would have to meet, not as two live\n   sources (#3881).\n2. **The shared-tree turn boundary** — `stella-cli`'s `turn_files`, over\n   `WorkJournal::snapshot_worktree` (#3413). This one is **not**\n   attribution. It answers *what changed in the tree during this turn*,\n   which is the question a whole-tree measurement can answer: a\n   user editing a file in another window mid-turn lands here\n   indistinguishably from the agent's own writes.\n\nA consumer that needs \"what did the agent do\" takes it from the git diff\nof the tree, or from adoption. This stream is for showing a human what\nmoved.\n\n# Why an engine-only turn is measured rather than hooked (#3413)\n\nIt once emitted from the tools, and for a while after that from nowhere:\nthe 12-tool purge (#3244) deleted every file-writing built-in and the\nfile-CRUD ledger that emitted these, and this doc went on naming a\n`ToolRegistry::record_touch` that no longer existed. The file built-ins\nhave since been restored, so a tool hook is now available — and it is\nstill not right. A hook on `write_file` / `edit_file` / `delete_file`\nwould report a *subset* of the turn while looking exhaustive: `bash`\nmutates the tree without naming a path, and so do MCP servers and\ncustom script tools, none of which describes its paths in any schema\nthe engine reads. And\nsynthesizing these from tool *inputs* is the known defect, not the\ndesign: a wrapper that did exactly that, knowing four hard-coded tool\nnames and sitting on one of three tool stacks, is what reported files\nedited in bulk or by a worker lane as `+0 -0` (#2290).\n\nSo the answer is a measurement, taken once per turn at the boundary.\nThe cost is one `git add -A` plus a `write-tree` against a dedicated\nindex, after the model has answered.\n\n`added`/`removed` are what the producer measured — git's `--numstat`\nagainst the two trees, or, for adoption, numstat plus the patch it\napplied. Consumers **must** use them rather than counting `+`/`-` lines\nin `diff`: the diff is a bounded, coarse rendering of the\nchanged region, and re-deriving from it is what made the two disagree.\nA binary file carries `0/0` and its kind.",
       "properties": {
         "added": {
           "default": 0,
@@ -3532,7 +3532,7 @@
               "type": "null"
             }
           ],
-          "description": "This manifest's identity as a **compiled context frame** — ADR 0006\nas amended: the compiled frame is this manifest extended, not a\nparallel aggregate, so its id and hash are fields here rather than a\nsecond record of the same call.\n\n`Some` only when `context.lifecycle.enabled` is on; `None`\notherwise and on every manifest recorded before the frame existed.\nThe hash covers what entered the prompt and deliberately excludes\nthe accounting around it — `provider`, `model`, `call_seq`, the two\nbudget numbers, and each entry's `resident_since_step` — so two runs\nof identical work agree even when served by different models. See\n`stella_core::receipts::compiled_frame` for the exact preimage."
+          "description": "This manifest's identity as a **compiled context frame** — ADR 0006\nas amended: the compiled frame is this manifest extended, not a\nparallel aggregate, so its id and hash are fields here rather than a\nsecond record of the same call.\n\n`Some` only when `context.lifecycle.enabled` is on; `None`\notherwise and on every manifest recorded before the frame existed.\nThe hash covers what entered the prompt and excludes\nthe accounting around it — `provider`, `model`, `call_seq`, the two\nbudget numbers, and each entry's `resident_since_step` — so two runs\nof identical work agree even when served by different models. See\n`stella_core::receipts::compiled_frame` for the exact preimage."
         },
         "effective_budget_tokens": {
           "description": "The budget the compaction pass actually compared against THIS step —\nthe raw budget divided by the model's calibration factor. Evented so\nthe receipt's numbers line up with the decision that was made (the\n`Compaction` event's raw before/after do not, on their own — #364).",
@@ -3556,7 +3556,7 @@
           "$ref": "#/$defs/ModelCallRole"
         },
         "stall_seconds_requested": {
-          "description": "The pure-`sleep` seconds this turn has **asked for** across the\ndetector's window, as of this step — the number the stall rung\n(`stella_core::driver::loop_escalation`) decides on, recorded\nrather than thrown away once it has decided (#3621).\n\nRequested, never executed: it is read off the calls' own text so\nthe same transcript classifies the same way every step, which is\nwhat keeps the rung deterministic (invariant #2). A call killed by\nthe shell's own timeout still contributes its full request, so\nthis is an upper bound on wall clock. Executed seconds are already\nderivable from `ToolResult.duration_ms`, and the gap between the\ntwo is the signal — see #3624.\n\n`None` is \"this emitter did not classify\", not \"zero seconds\": the\nreplay/reconstruction path rebuilds a receipt from stored messages\nwith no detector window around it, and a reader must not count that\nas a turn that slept for nothing.",
+          "description": "The pure-`sleep` seconds this turn has **asked for** across the\ndetector's window, as of this step — the number the stall rung\n(`stella_core::driver::loop_escalation`) decides on, recorded\nrather than thrown away once it has decided (#3621).\n\nRequested, never executed: it is read off the calls' own text so\nthe same transcript classifies the same way every step, which is\nwhat keeps the rung deterministic (AGENTS.md #2). A call killed by\nthe shell's own timeout still contributes its full request, so\nthis is an upper bound on wall clock. Executed seconds are already\nderivable from `ToolResult.duration_ms`, and the gap between the\ntwo is the signal — see #3624.\n\n`None` is \"this emitter did not classify\", not \"zero seconds\": the\nreplay/reconstruction path rebuilds a receipt from stored messages\nwith no detector window around it, and a reader must not count that\nas a turn that slept for nothing.",
           "format": "uint64",
           "minimum": 0,
           "type": [
@@ -3631,7 +3631,7 @@
       "type": "object"
     },
     {
-      "description": "A verification verdict — from the deterministic ladder (flip oracle,\ntouched-tests-green) or the model verifier (L-E11: deterministic-first;\nmodel verifiers handle only inconclusive evidence).\n\nAliased: this event shipped on the wire as `judge_verdict`. Without the\nalias a stored stream's verdict line does not fail loudly — serde skips\nto the next variant and the event simply *disappears*, which is how the\ngolden trajectories came to be one event short rather than unparseable.",
+      "description": "A verification verdict — from the deterministic ladder (flip oracle,\ntouched-tests-green) or the model verifier (L-E11: deterministic-first;\nmodel verifiers handle only inconclusive evidence).\n\nAliased: this event shipped on the wire as `judge_verdict`. Without the\nalias a stored stream's verdict line does not fail loudly — serde skips\nto the next case and the event simply *disappears*, which is how the\ngolden trajectories came to be one event short rather than unparseable.",
       "properties": {
         "evidence": {
           "$ref": "#/$defs/VerdictEvidence"
@@ -3658,7 +3658,7 @@
       "type": "object"
     },
     {
-      "description": "Interactive gate before large plans execute (L-E5): the pipeline\npauses on this event and waits for approval above configured\nthresholds; headless requires a flag to bypass.",
+      "description": "Interactive gate before large plans execute (L-E5): the pipeline\npauses on this event and waits for approval above configured\nthresholds; a non-interactive run requires a flag to bypass.",
       "properties": {
         "proposal": {
           "$ref": "#/$defs/ScopeProposal"
@@ -3704,7 +3704,7 @@
       "type": "object"
     },
     {
-      "description": "The agent asked the user a multiple-choice question (the `ask_user`\ntool). BINDING renderer contract: present the structured `options`\nAND always exactly one additional free-text option — the user can\nalways answer in their own words, on every question, without the\nmodel having to list that affordance itself. The answer returns as\nthe tool call's ordinary `ToolResult`; there is no separate answer\nevent. Headless runs fail this tool with a named error instead of\nhanging on input that will never arrive.",
+      "description": "The agent asked the user a multiple-choice question (the `ask_user`\ntool). BINDING renderer contract: present the structured `options`\nAND always exactly one additional free-text option — the user can\nalways answer in their own words, on every question, without the\nmodel having to list that affordance itself. The answer returns as\nthe tool call's ordinary `ToolResult`; there is no separate answer\nevent. Non-interactive runs fail this tool with a named error instead of\nhanging on input that will never arrive.",
       "properties": {
         "id": {
           "description": "Correlates the eventual answer (the ToolResult's `call_id`)\nback to this question.",
@@ -3739,7 +3739,7 @@
       "type": "object"
     },
     {
-      "description": "A media generation job changed state. Video jobs are async and\nlong-lived; this event is how the TUI shows progress without polling\nshared state (L-T1).\n\n**No producer in this workspace, and kept anyway** (#4454, which\ndecided it): #4448 removed `crates/stella-media`, and CLAUDE.md's\ntool-surface rule forbids the media built-in that would have been its\ncaller (#3236, #3845). This variant and [`AgentEvent::MediaComplete`]\nstay as the wire contract an out-of-tree media MCP surface speaks.\n\nThe alternative was to retire them at the next version bump, and there\nis no such bump to wait for: this enum carries no version number at\nall. Its forward-compatibility mechanism is [`AgentEvent::Unknown`]\nplus `KNOWN_TYPE_TAGS` — a tag a build does not list is read as an\nevent from a newer stella and kept intact, which is what makes the\ngenerated wire contract additive-only. Dropping a tag is therefore not\na break a reader can detect and act on: it demotes an older recording's\nmedia lines to [`AgentEvent::Unknown`], reporting version skew that did\nnot happen. Keeping two producerless tags costs a `RecordedOnly` row\napiece; retiring them costs every recording that carries one.\n\n`stella_plugin::wire::PROTOCOL_VERSION` is the wrapper socket's\nversion, not this stream's. An earlier revision of this comment named\nit as the moment to retire these two, which was never a moment it could\nreach.",
+      "description": "A media generation job changed state. Video jobs are async and\nlong-lived; this event is how interactive mode shows progress without polling\nshared state (L-T1).\n\n**No producer in this workspace, and kept anyway** (#4454, which\ndecided it): #4448 removed `crates/stella-media`, and CLAUDE.md's\ntool-surface rule forbids the media built-in that would have been its\ncaller (#3236, #3845). This case and [`AgentEvent::MediaComplete`]\nstay as the wire contract an out-of-tree media MCP surface speaks.\n\nThe alternative was to retire them at the next version bump, and there\nis no such bump to wait for: this enum carries no version number at\nall. Its forward-compatibility mechanism is [`AgentEvent::Unknown`]\nplus `KNOWN_TYPE_TAGS` — a tag a build does not list is read as an\nevent from a newer stella and kept intact, which is what makes the\ngenerated wire contract additive-only. Dropping a tag is therefore not\na break a reader can detect and act on: it demotes an older recording's\nmedia lines to [`AgentEvent::Unknown`], reporting version skew that did\nnot happen. Keeping two producerless tags costs a `RecordedOnly` row\napiece; retiring them costs every recording that carries one.\n\n`stella_plugin::wire::PROTOCOL_VERSION` is the wrapper socket's\nversion, not this stream's. An earlier revision of this comment named\nit as the moment to retire these two, which was never a moment it could\nreach.",
       "properties": {
         "artifact_id": {
           "type": "string"
@@ -3893,7 +3893,7 @@
       "type": "object"
     },
     {
-      "description": "A bounded child turn started or finished -- the started/finished bracket IS the attribution for every event emitted between them. The child forwards a deliberately narrowed set of events across that boundary; see the sub-agent payload for what it carries and what it drops.",
+      "description": "A bounded child turn started or finished -- the started/finished bracket IS the attribution for every event emitted between them. The child forwards a narrowed set of events across that boundary; see the sub-agent payload for what it carries and what it drops.",
       "properties": {
         "phase": {
           "$ref": "#/$defs/SubAgentPhase"
@@ -3920,7 +3920,7 @@
       "properties": {
         "delivery": {
           "$ref": "#/$defs/DeliveryOutcome",
-          "description": "Deliberately **not** `serde(flatten)`: `AgentEvent` is internally\ntagged through a `remote = \"Self\"` codec and carries a `schemars`\nderive, and flattening a second internally-tagged enum into that is\nwhere both the wire schema and the forward-compat fallback stop\nagreeing with the Rust type. One nested object costs a `jq` reader\n`.delivery.outcome` instead of `.outcome`, which is cheaper than a\ngenerated schema that lies."
+          "description": "**Not** `serde(flatten)`: `AgentEvent` is internally\ntagged through a `remote = \"Self\"` codec and carries a `schemars`\nderive, and flattening a second internally-tagged enum into that is\nwhere both the wire schema and the forward-compat fallback stop\nagreeing with the Rust type. One nested object costs a `jq` reader\n`.delivery.outcome` instead of `.outcome`, which is cheaper than a\ngenerated schema that lies."
         },
         "root": {
           "type": [
