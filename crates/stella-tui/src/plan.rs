@@ -206,6 +206,20 @@ impl Plan {
     /// The plan-level state is *derived*, not stored, for the reason the proof
     /// rail's invariant exists: a state that has to be remembered at every exit
     /// is one refactor away from being wrong, and wrong invisibly.
+    ///
+    /// `Cancelled` is the exception, and it is terminal until [`Self::propose`]
+    /// replaces the plan. It is the only state here that records a *person's*
+    /// decision rather than a fold of the board, and the board cannot answer
+    /// for it: with every step still `Planned` and `decided` set, the
+    /// derivation below lands on `Approved`, which is the refusal read back as
+    /// its opposite. So the verdict outlives the snapshot, and the revised
+    /// proposal — not a `TaskUpdate` — is what clears it (#4667).
+    ///
+    /// This costs the rail nothing, because the state word is not how the rail
+    /// shows movement. [`Self::steps`] and [`Self::progress`] read `board`
+    /// directly, so a board arriving after a refusal moves the glyphs, the
+    /// active step and the fraction while the word stays `cancelled` —
+    /// `a_declined_plan_still_shows_the_board_moving` pins exactly that.
     fn resettle(&mut self) {
         if matches!(self.state, PlanState::Cancelled) {
             return;
@@ -406,6 +420,8 @@ mod tests {
         assert_eq!(plan.steps().len(), 1);
     }
 
+    /// The verdict is the user's, so nothing on the board may overwrite it —
+    /// see [`Plan::resettle`] for why a derivation would land on `Approved`.
     #[test]
     fn a_declined_plan_stays_cancelled_whatever_arrives_next() {
         let mut plan = Plan::default();
@@ -413,6 +429,50 @@ mod tests {
         plan.cancel();
         plan.apply_board(&[item("1", "one", TaskStatus::Completed)]);
         assert_eq!(plan.state, PlanState::Cancelled);
+    }
+
+    /// The other half of the same rule, and the half nothing pinned (#4667): a
+    /// terminal verdict freezes the *word*, never the board under it. A
+    /// `TaskUpdate` landing between a refusal and the re-proposal moves the
+    /// glyphs, the active step and the fraction, because [`Plan::steps`] and
+    /// [`Plan::progress`] read the snapshot rather than the state.
+    ///
+    /// Without this, an early return in [`Plan::apply_board`] for a cancelled
+    /// plan — the obvious reading of "cancelled is terminal" — would blank the
+    /// rail for the whole window the model spends revising, and no test would
+    /// have said so.
+    #[test]
+    fn a_declined_plan_still_shows_the_board_moving() {
+        let mut plan = Plan::default();
+        plan.propose(&proposal(&["one", "two", "three"]));
+        plan.cancel();
+        assert_eq!(plan.progress(), (0, 3));
+        assert!(plan.active().is_none());
+
+        plan.apply_board(&[
+            item("1", "one", TaskStatus::Completed),
+            item("2", "two", TaskStatus::InProgress),
+            item("3", "three", TaskStatus::Pending),
+        ]);
+        assert_eq!(
+            plan.state,
+            PlanState::Cancelled,
+            "the verdict is the user's"
+        );
+        assert_eq!(plan.progress(), (1, 3), "the fraction follows the board");
+        assert_eq!(
+            plan.active().map(|s| s.title).as_deref(),
+            Some("two"),
+            "the running step is named while the model revises"
+        );
+        assert_eq!(
+            plan.steps().iter().map(|s| s.state).collect::<Vec<_>>(),
+            vec![
+                PlanStepState::Complete,
+                PlanStepState::Started,
+                PlanStepState::Planned
+            ]
+        );
     }
 
     #[test]
