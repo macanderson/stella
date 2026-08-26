@@ -13,16 +13,12 @@
 //! **(path, content identity)**, where the identity is a SHA-256 over the
 //! file's bytes as read for rendering.
 //!
-//! The bytes themselves are the invalidation authority, deliberately, rather
-//! than the git blob sha #3163 opens with: a content hash needs no
-//! subprocess, works in a workspace that is not a git checkout at all, and
-//! makes the dirty-file case the issue calls out disappear instead of needing
-//! a bypass — an uncommitted edit simply *is* different bytes, so it can
-//! never be served an entry gathered from the old ones. The renderer already
-//! reads the file on every call (the source feeds the signature, doc and body
-//! facets), so the identity costs one hash over bytes that are in hand, and
-//! the source-derived facets are always rendered from the fresh read — only
-//! the graph lookups are skipped on a hit.
+//! The bytes are the invalidation authority rather than #3163's git blob sha:
+//! a content hash needs no subprocess, works outside a git checkout, and makes
+//! the dirty-file case disappear instead of needing a bypass — an uncommitted
+//! edit simply *is* different bytes. The renderer already reads the file on
+//! every call, so the identity costs one hash over bytes in hand, and only the
+//! graph lookups are skipped on a hit.
 //!
 //! A file whose bytes cannot be read as UTF-8 has no identity here and
 //! bypasses the cache entirely: it is gathered fresh every time, which is the

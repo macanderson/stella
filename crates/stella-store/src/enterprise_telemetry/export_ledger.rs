@@ -56,16 +56,12 @@
 //! must never leave the workspace. Stamped once by `INSERT OR IGNORE` and never
 //! rewritten.
 //!
-//! Advance it **early** — a re-enrollment that re-stamped it with today's
-//! `MAX(id)` — and every execution recorded since the original enrollment is
-//! dropped without a trace: those rows never enter the ledger, so no skip
-//! counter records them and no backlog shows them missing. Stamp it **low** —
-//! `0` on a workspace that already has history — and the first drain
-//! back-exports everything recorded before the operator opted in. Both
-//! directions are unrecoverable: one loses data silently, the other discloses
-//! it. (Dropping the enrollment row entirely is a third thing again, and not a
-//! low watermark: the eligibility check joins against that row, so a sink with
-//! no enrollment exports *nothing* rather than everything.)
+//! Advance it **early** and every execution since the original enrollment is
+//! dropped with no counter and no backlog to show it; stamp it **low** and the
+//! first drain back-exports everything recorded before the operator opted in.
+//! Both directions are unrecoverable — one loses data silently, the other
+//! discloses it. Dropping the enrollment row is a third thing: the eligibility
+//! check joins against it, so a sink with no enrollment exports *nothing*.
 //!
 //! ## 2. `compacted_through_execution_id` — memory of deleted rows
 //!
@@ -75,24 +71,16 @@
 //! its only writer, and writes it as `MAX(existing, cutoff)` so it can only
 //! rise.
 //!
-//! Leave it **late** — reclaim rows without raising it — and the reclaimed ids
-//! look un-exported to
+//! Leave it **late** and reclaimed ids look un-exported to
 //! [`Store::mark_enterprise_export_pending`](crate::Store::mark_enterprise_export_pending),
-//! which re-admits them and mints *fresh* nonces. Nonce idempotence cannot save
-//! this: the row that stored the original nonce is exactly what was deleted, so
-//! one execution becomes two distinct event ids and is double-counted
-//! downstream. Advance it **early** — past an execution that had not finished
-//! when the cutoff was chosen — and that execution is refused forever when it
-//! does finish, again with no counter. So compaction carries a precondition:
-//! run it only when the backlog below the cutoff is settled. The cutoff is
-//! drawn from settled rows alone, which makes an early advance narrow but not
-//! impossible — an execution can finish after ids above it already have.
-//!
-//! Note what this watermark does *not* gate: pending rows are never deleted by
-//! compaction, and
+//! which re-admits them and mints *fresh* nonces — idempotence cannot save
+//! this, because the row holding the original nonce is what was deleted, so one
+//! execution becomes two event ids. Advance it **early**, past an execution
+//! that had not finished, and that execution is refused forever with no
+//! counter. So compaction runs only when the backlog below the cutoff is
+//! settled. It gates re-admission only: pending rows are never deleted, and
 //! [`Store::pending_enterprise_export_page`](crate::Store::pending_enterprise_export_page)
-//! does not consult it. An execution already admitted still drains normally.
-//! The floor governs re-admission only.
+//! does not consult it.
 //!
 //! ## 3. `after_execution_id` — a position, not a promise
 //!
@@ -100,19 +88,13 @@
 //! nowhere. A pass that ends mid-backlog simply starts again from the beginning
 //! next time.
 //!
-//! Advance it **early**, skipping rows, and nothing is lost — the skipped rows
-//! are still `pending`, and the next pass lists them again. Leave it **late**,
-//! or reset it to `0`, and the same rows are re-listed and re-spooled — also
-//! harmless, because their nonces are stable, so the event ids are byte-for-byte
-//! the ones already enqueued and the spool dedups them. Both directions are
-//! absorbed.
-//!
-//! That is precisely why it must stay transient. Persisting it would buy
-//! nothing (a re-read is already free) and would convert its harmless failure
-//! into watermark 2's: a durable cursor that advanced past undrained rows would
-//! hide them permanently, with no counter to show for it. The two floors are
-//! durable because their failures are permanent and silent; the cursor is not,
-//! because its safety comes from being re-derivable.
+//! Both directions are absorbed: skipped rows are still `pending` and the next
+//! pass lists them, and re-listed rows carry stable nonces so the spool dedups
+//! them. That is why it stays transient — persisting it would buy nothing and
+//! convert a harmless failure into watermark 2's, hiding undrained rows
+//! permanently with no counter. The two floors are durable because their
+//! failures are permanent and silent; the cursor's safety is being
+//! re-derivable.
 
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 

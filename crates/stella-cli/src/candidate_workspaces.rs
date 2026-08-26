@@ -5,18 +5,11 @@
 //! candidate, one writing worker turn inside each, and one all-or-nothing
 //! adoption that lands a winner on the real tree (#3892).
 //!
-//! #3844 landed the socket half of best-of-N — the wire types, the
-//! `[loop] max_fanout_width` ceiling, and
-//! [`CandidateFanouts`](stella_runtime::wrapper::CandidateFanouts) over a
-//! [`CandidateWorkspaces`] port — and **nothing implemented the port**, so
-//! every shipped host answered both capabilities
-//! [`Unavailable`](stella_plugin::HostCallRefusal::Unavailable) and
-//! `plugins/stella-candidates` (`doc:pipeline-as-plugins` §3/§7 item 4) still
-//! could not be written as best-of-N. This is that implementation.
+//! This implements the [`CandidateWorkspaces`] port #3844's socket half left
+//! unimplemented, which had every shipped host answering both capabilities
+//! [`Unavailable`](stella_plugin::HostCallRefusal::Unavailable).
 //!
 //! # What is reused, and the one thing that is not
-//!
-//! Almost everything here is somebody else's machinery held together:
 //!
 //! | Concern | Whose |
 //! |---|---|
@@ -26,23 +19,19 @@
 //! | the operator's tool switches and the authorization gate | [`crate::agent::tool_stack`] |
 //!
 //! The one genuinely new decision is **which registry a candidate's turn runs
-//! against**, and it is the reason this could not be a field on
-//! [`SubAgentSpec`]. A fan-out runs N candidates *concurrently* in N disjoint
-//! trees, and [`ToolRegistry`](stella_tools::ToolRegistry)'s `root` is what
-//! every path fence resolves against — so there is no single root a shared
-//! registry could hold that
-//! would be true for all of them. A registry **per candidate**, rooted once at
-//! construction and never moved, is the only shape that is. Everything else
-//! about the turn stays the session's, which is what keeps one pool and one
-//! ledger over one session's money
-//! ([`SessionSubAgents::dispatch_in_workspace`]).
+//! against**, which is why it could not be a field on [`SubAgentSpec`]: N
+//! candidates run concurrently in N disjoint trees, and
+//! [`ToolRegistry`](stella_tools::ToolRegistry)'s `root` is what every path
+//! fence resolves against, so no single shared root is true for all of them. A
+//! registry **per candidate**, rooted once and never moved, is the only shape
+//! that is. Everything else stays the session's, keeping one pool and one
+//! ledger over one session's money ([`SessionSubAgents::dispatch_in_workspace`]).
 //!
 //! # Adoption applies a patch; it does not merge, commit, or rebase
 //!
 //! A candidate's output is **uncommitted working-tree bytes**, so adoption is
-//! `git diff` in the candidate and `git apply` on the real tree. Three
-//! properties follow, and each is the reason this shape was chosen over
-//! `cherry-pick`/`merge`:
+//! `git diff` in the candidate and `git apply` on the real tree — chosen over
+//! `cherry-pick`/`merge` for the properties below:
 //!
 //! - **It is indistinguishable from the worker having done it.** The user's
 //!   own turn leaves working-tree changes; so does an adopted candidate. A
@@ -54,10 +43,8 @@
 //!   nothing at all. The two refusals it produces are named on
 //!   [`SessionCandidateWorkspaces::adopt`].
 //! - **It applies at the repository's top level, never at the session's own
-//!   directory.** A patch's paths are top-relative, and `git apply` run from a
-//!   subdirectory filters them to what lies below the current directory —
-//!   finding nothing, applying nothing, and exiting **0**. See [`Layout`],
-//!   which exists for that one silent failure.
+//!   directory.** `git apply` from a subdirectory filters top-relative paths to
+//!   what lies below it, applying nothing and exiting **0**. See [`Layout`].
 //! - **It refuses rather than resolves.** There is no `--3way`, no merge
 //!   driver and no conflict-marker path: a candidate that no longer applies is
 //!   reported to the plugin as an `err`, and

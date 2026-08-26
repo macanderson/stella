@@ -19,12 +19,10 @@
 //! used — there is no second resolution to race, and no string that a rename
 //! can re-point after we have looked at it.
 //!
-//! [`RootHandle::open_entry`] is that walk for a caller which also has to
-//! *say* where it landed — an integrity check that pinned an artifact by path
-//! and has to notice that the artifact has since moved. It returns the
-//! descriptor and the walk's own record of the location as one value, so the
-//! location is not a second answer that a `canonicalize` produced later and
-//! could disagree with (#3483).
+//! [`RootHandle::open_entry`] is that walk for a caller which must also *say*
+//! where it landed. It returns the descriptor and the walk's record of the
+//! location as one value, so the location is not a second answer a later
+//! `canonicalize` could disagree with (#3483).
 //!
 //! # What confines the walk
 //!

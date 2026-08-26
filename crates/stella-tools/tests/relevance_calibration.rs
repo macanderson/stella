@@ -7,11 +7,10 @@
 //!
 //! `DEFAULT_ADMISSION_FLOOR` (`stella-embed/src/http.rs`),
 //! `DEFAULT_RELEVANCE_GAP_RATIO` and `DEFAULT_MIN_BOUNDARY_GAP`
-//! (`stella-embed/src/rank.rs`) each say "provisional" in their own doc
-//! comment, and the floor is worse than provisional — `voyage-code-3` scored
-//! *unrelated* files at 0.604 in the ranking recorded on #3089, so a floor of
-//! 0.25 admits everything and drops nothing. Setting them needs a
-//! distribution, and this file is the reproducible way to get one.
+//! (`stella-embed/src/rank.rs`) each say "provisional", and the floor is worse
+//! than that — `voyage-code-3` scored *unrelated* files at 0.604 (#3089), so a
+//! floor of 0.25 drops nothing. Setting them needs a distribution; this file is
+//! the reproducible way to get one.
 //!
 //! # How to run it
 //!
@@ -21,13 +20,11 @@
 //!     --test relevance_calibration -- --ignored --nocapture
 //! ```
 //!
-//! `--nocapture` is not optional: the distribution is the output, and libtest
-//! swallows `println!` without it. Any OpenAI-shaped backend works —
-//! `STELLA_EMBED_URL` + `STELLA_EMBED_MODEL` points it at a local server —
-//! and resolution is `stella_embed::from_env`'s, so this test invents no
-//! configuration of its own. Run it once per backend: the floor is a
-//! per-`HttpEmbedder` field, so `voyage-code-3` and a local model may
-//! legitimately differ.
+//! `--nocapture` is not optional: the distribution is the output and libtest
+//! swallows `println!` without it. Any OpenAI-shaped backend works
+//! (`STELLA_EMBED_URL` + `STELLA_EMBED_MODEL`), resolved by
+//! `stella_embed::from_env`. Run it once per backend — the floor is a
+//! per-`HttpEmbedder` field, so backends may legitimately differ.
 //!
 //! ## `STELLA_CALIBRATION_INDEX` — what made this affordable to run
 //!

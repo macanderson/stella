@@ -36,53 +36,37 @@
 //! handle is unknown, which is true.
 //!
 //! Running the raw turn *inside* an isolated candidate, with adoption behind
-//! the wrapper's verdict, is a different feature with its own blast radius (a
-//! failed adoption is the user's work stranded in a shadow worktree) and is not
-//! this slice.
+//! the wrapper's verdict, is a different feature with its own blast radius and
+//! is not this slice.
 //!
 //! # The tamper watch, and exactly what it covers
 //!
 //! `TamperPolicy::ArtifactIdentity` asks the **host** to snapshot artifact
-//! identity before the work and compare after, so that a worker which rewrote
-//! the witness does not win the flip. The host has to know which artifacts
-//! those are, and on this path it knows exactly one thing about the witness:
-//! the test invocation the user gave it. So the watch covers **the files that
-//! invocation names** — `sh tests/witness_flip.sh`, `pytest
-//! tests/test_regression.py` — snapshotted before the turn with the same
-//! no-follow identity (`crate::agent::tools::fs_artifact_identity`) and
-//! compared with the same comparator (`stella_plugin::witness_identity_matches`)
-//! the staged pipeline itself used.
+//! identity before the work and compare after, so a worker that rewrote the
+//! witness does not win the flip. On this path the host knows one thing about
+//! the witness — the test invocation the user gave it — so the watch covers
+//! **the files that invocation names** (`sh tests/witness_flip.sh`, `pytest
+//! tests/test_regression.py`), snapshotted with
+//! `crate::agent::tools::fs_artifact_identity` and compared with
+//! `stella_plugin::witness_identity_matches`.
 //!
-//! # The watch holds the tree open, and why that is the security half (#3483)
+//! # The watch holds the tree open (#3483)
 //!
 //! [`TamperWatch`] keeps a **directory descriptor** for the granted root, not
-//! its path, for the length of the turn. Everything a comparison needs — the
-//! walk to the artifact, the open, the re-check that the name still means the
-//! same file — happens off that descriptor.
+//! its path, for the length of the turn, and every comparison happens off that
+//! descriptor. A path is re-resolved on every observation, and the party the
+//! watch exists to catch has a shell inside that tree: it can rename the root
+//! aside, stand a pristine copy in its place, and the after-turn observation
+//! reads the copy and reports `Clean`. A descriptor cannot be re-pointed by
+//! renaming anything.
 //!
-//! Holding a path instead is not a smaller version of the same thing, it is a
-//! different claim. A path is re-resolved on every observation, and the party
-//! the watch exists to catch is running inside that tree with a shell. It can
-//! rename the root aside and stand a pristine copy in its place, and the
-//! after-turn observation then reads the copy, matches the pin, and reports
-//! `Clean` — the watch vouching for a witness in a directory the turn never
-//! touched. A descriptor cannot be re-pointed by renaming anything, so the
-//! comparison is about the tree that actually ran.
-//!
-//! Below the root the same discipline continues:
-//! `stella_tools::rootfd::RootHandle::open_entry` walks component by component
-//! with `O_NOFOLLOW`, so an interior directory swapped for a symlink is refused
-//! by the kernel rather than followed, and it hands back the descriptor
-//! together with the location the walk reached — one resolution, used, instead
-//! of a checked path somebody re-opens. A path the walk refuses is left out of
-//! the watch entirely.
-//!
-//! What still crosses first is the pure layer, [`stella_plugin::fence_lexical`]:
-//! text that is absolute, traverses, or carries a NUL or a backslash could
-//! never name an inside path and is refused without a syscall. `RootHandle`
-//! would *rebase* an absolute path that happens to lie under the root (#2058,
-//! right for a model naming its own workspace file), and a plugin-declared
-//! artifact is not owed that latitude.
+//! Below the root, `stella_tools::rootfd::RootHandle::open_entry` walks
+//! component by component with `O_NOFOLLOW` and returns the descriptor with
+//! the location it reached, so an interior symlink is refused by the kernel
+//! and nothing re-opens a checked path. [`stella_plugin::fence_lexical`] still
+//! crosses first: absolute, traversing or NUL-bearing text is refused without a
+//! syscall, because `RootHandle` would *rebase* an absolute path under the root
+//! (#2058) and a plugin-declared artifact is not owed that latitude.
 //!
 //! What the invocation cannot say, the plugin can. An invocation that names no
 //! path — `cargo test --test flip`, whose artifact is `tests/flip.rs` by
