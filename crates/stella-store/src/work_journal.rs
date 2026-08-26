@@ -199,9 +199,9 @@ pub const CHECKPOINT_BLOB: &str = "checkpoint.json";
 /// The reserved blob naming the staged pipeline the in-flight turn is running
 /// *inside*.
 ///
-/// A deliberately separate blob rather than a widened [`CHECKPOINT_BLOB`]:
+/// A separate blob rather than a widened [`CHECKPOINT_BLOB`]:
 /// the checkpoint is the engine's own shape and the engine must not learn
-/// pipeline shapes (architecture invariant 1). It shares the checkpoint's
+/// pipeline shapes (architecture AGENTS.md #1). It shares the checkpoint's
 /// lifetime — a frame describes one turn's
 /// staging and is retracted by [`WorkJournal::clear_checkpoint`] along with
 /// the resume point, because a frame that outlived its turn would tell the
@@ -314,7 +314,7 @@ impl WorkJournal {
     /// `.stella-journal/` blobs. The path-staging arm below is kept rather than
     /// deleted because it is what [`Self::read_at_turn`] would replay if a
     /// caller returned, and because [`Self::snapshot_worktree`]'s `git add -A`
-    /// is deliberately the *other* discipline: this one records what the agent
+    /// is the *other* discipline: this one records what the agent
     /// named, that one records what the tree became. A turn's diff reads the
     /// second (#3420).
     pub fn record(
@@ -576,7 +576,7 @@ impl WorkJournal {
     /// One of the reserved journal blobs as it stood at the end of `turn`.
     ///
     /// Unlike [`Self::read_at_turn`] this still has no production consumer:
-    /// the per-turn diff deliberately filters the reserved records out. Kept
+    /// the per-turn diff filters the reserved records out. Kept
     /// because the marks are written anyway and a historical checkpoint read
     /// is the obvious next replay surface; if that never lands, delete this
     /// alone.

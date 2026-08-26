@@ -26,7 +26,7 @@
 //! record leaves its executions alone: a run whose record was pruned stays
 //! unfinished rather than settled on a guess.
 //!
-//! There is deliberately no age cutoff. "Older than an hour" is a proxy for
+//! There is no age cutoff. "Older than an hour" is a proxy for
 //! the question the registry answers directly, and it is wrong in both
 //! directions — it settles a long-running live turn and spares a run that
 //! crashed a second ago.

@@ -36,7 +36,7 @@ pub struct GlobalTelemetryRow {
     /// finished with at least one paid call whose usage envelope never landed,
     /// so its receipts prove a lower bound and not the total (#4171).
     ///
-    /// Non-zero makes `cost_usd` an "at least" figure. It is deliberately a
+    /// Non-zero makes `cost_usd` an "at least" figure. It is a
     /// count of executions rather than of calls: the flag is per-execution, and
     /// "3 of 210 executions are floors" is the sentence a user checking a
     /// provider bill can act on.

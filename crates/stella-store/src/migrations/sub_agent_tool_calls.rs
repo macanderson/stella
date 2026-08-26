@@ -16,7 +16,7 @@
 //!
 //! `NULL` means **the lead's own call**, the overwhelming majority of rows and
 //! a fact rather than a gap — the same contract `telemetry.sub_agent_id`
-//! carries, deliberately, so the two tables read the same way.
+//! carries,, so the two tables read the same way.
 //!
 //! There is no backfill because there is nothing to backfill *from*. The
 //! `sub_agent` bracket events are in `events`, but the engine dispatches

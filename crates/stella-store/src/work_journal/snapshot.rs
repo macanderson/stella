@@ -59,7 +59,7 @@ use crate::{Result, StoreError};
 
 /// What happened to one path between two tree snapshots.
 ///
-/// Deliberately store-local rather than `stella-protocol`'s `FileChangeKind`:
+/// Store-local rather than `stella-protocol`'s `FileChangeKind`:
 /// `stella-store` does not depend on the protocol crate, and this is git's
 /// answer (`diff-tree --name-status`), not the event vocabulary. The caller
 /// that emits events maps it.

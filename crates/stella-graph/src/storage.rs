@@ -15,7 +15,7 @@
 //!
 //! Extraction here feeds the indexer (`crate::store`). Structure only: intent/boundary meaning comes from the committed
 //! manifest ([`crate::manifest`]) and is merged at snapshot time, never
-//! persisted in the rebuildable store (spec §6 rebuild invariant).
+//! persisted in the rebuildable store (spec §6 rebuild rule).
 //!
 //! An unrecognized pattern yields a false negative repaired by a manifest
 //! stub, never garbage and never a false block (spec §12) — every adapter
@@ -91,7 +91,7 @@ pub struct RelationDef {
     pub namespace: String,
     pub kind: RelationKind,
     pub fields: Vec<FieldDef>,
-    /// Enum variants for [`RelationKind::EnumType`]; empty otherwise.
+    /// Enum cases for [`RelationKind::EnumType`]; empty otherwise.
     pub enum_values: Vec<String>,
     /// Harvested `COMMENT ON TABLE` / `///` doc-comment text, when present
     /// in the same source.
@@ -162,7 +162,7 @@ impl StorageExtractor {
 pub const DEFAULT_NAMESPACE: &str = "default";
 
 /// The implicit layer for relational definitions (SQL DDL *and* relational
-/// schema-as-code) no manifest layer claims. Shared deliberately: a Prisma
+/// schema-as-code) no manifest layer claims. Shared: a Prisma
 /// model and the migration Prisma generates from it must resolve to one
 /// address, not a false cross-layer duplicate.
 pub const DEFAULT_SQL_LAYER: &str = "sql";

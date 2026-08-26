@@ -125,7 +125,7 @@ impl std::fmt::Display for IntegrityDepth {
 }
 
 /// What an integrity check found — a verdict, not a string to be re-parsed:
-/// "healthy" and "corrupt, here is what SQLite said" are different variants,
+/// "healthy" and "corrupt, here is what SQLite said" are different cases,
 /// and "the file is not a SQLite database at all" is a third (SQLite reports
 /// that as an *error* rather than as problem rows, and flattening it into the
 /// corrupt list would lose the distinction that the file cannot even be
@@ -147,7 +147,7 @@ pub enum IntegrityReport {
     /// nothing, overwritten, or encrypted). `reason` is SQLite's own wording for
     /// why — "file is not a database", "database disk image is malformed" — the
     /// same distinction `corrupt_store_error` classifies on the session path.
-    /// Deliberately just the reason, with no advice attached: the caller knows
+    /// Just the reason, with no advice attached: the caller knows
     /// whether it is a session that should point at `stella doctor` or the doctor
     /// itself, which must not tell a user to run the command they are running.
     Unreadable { reason: String },
@@ -160,7 +160,7 @@ impl IntegrityReport {
     }
 
     /// Is this the kind of failure a quarantine can address? True for both
-    /// failing variants and false for a healthy one — the gate
+    /// failing cases and false for a healthy one — the gate
     /// `stella doctor --repair` checks before it moves anything, so a store
     /// that failed to open for some OTHER reason (a schema version from a newer
     /// build, a permissions problem) is never mistaken for a corrupt one and
@@ -235,7 +235,7 @@ impl Store {
 /// Check this workspace's `store.db` without opening a [`Store`].
 ///
 /// `Ok(None)` means no store exists yet — a workspace that has never run a
-/// session has nothing to check, and this deliberately does not create one to
+/// session has nothing to check, and this does not create one to
 /// find out. Otherwise the located path is returned with its verdict, so a
 /// caller can name the exact file it judged.
 ///

@@ -238,7 +238,7 @@ async fn a_natural_language_question_finds_the_file_whose_name_it_does_not_share
     );
 
     // Deterministic: the identical query ranks identically, which is what
-    // invariant 7 needs from output that reaches the prompt.
+    // AGENTS.md #7 needs from output that reaches the prompt.
     let again = graph
         .rank_files_by_vector(&fingerprint, query, floor, 5)
         .expect("rank");

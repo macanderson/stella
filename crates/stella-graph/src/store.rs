@@ -300,7 +300,7 @@ pub struct IndexStats {
     /// Files skipped for exceeding the 4 MiB indexing ceiling — never read, so
     /// they cost a `stat` rather than their own bytes plus a syntax tree.
     ///
-    /// The ceiling is deliberately not public: it is a memory-safety bound on
+    /// The ceiling is not public: it is a memory-safety bound on
     /// tree-sitter, whose tree runs several times the size of its source, not
     /// a promise about which files get indexed.
     pub files_skipped_too_large: usize,
@@ -820,7 +820,7 @@ fn insert_storage_extract(
                 rel.kind.tag(),
                 rel.name,
                 // Relations reuse the constraints column for their enum
-                // variants (JSON array; empty for tables/views).
+                // cases (JSON array; empty for tables/views).
                 serde_json::to_string(&rel.enum_values).unwrap_or_default(),
                 rel.comment,
                 rel.start_line,
@@ -1069,7 +1069,7 @@ fn prune_missing(tx: &Transaction, current: &HashSet<String>) -> Result<usize, G
 /// `None` is deliberately "do not re-parse on this account" rather than a
 /// third tag: it covers a feature-trimmed build, which answers `None` for a
 /// language whose grammar it did not compile in and must not be allowed to
-/// churn a row a fully-featured build wrote (invariant: a trimmed build reads
+/// churn a row a fully-featured build wrote (rule: a trimmed build reads
 /// a shared `codegraph.db` without rewriting it).
 fn language_tag_for(abs: &Path) -> Option<&'static str> {
     Language::from_path(abs)

@@ -166,7 +166,7 @@ pub(crate) struct AnnProbe {
 }
 
 /// Which classes of index work a call performs. Mirrors
-/// [`ContextCompactPolicy`](crate::ContextCompactPolicy) deliberately: the two
+/// [`ContextCompactPolicy`](crate::ContextCompactPolicy): the two
 /// verbs sit next to each other under `stella memory`, and a second vocabulary
 /// for the same three ideas would be drift.
 ///

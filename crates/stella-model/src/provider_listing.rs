@@ -770,7 +770,7 @@ mod tests {
         assert_eq!(models[0].context_window, Some(400_000));
         assert_eq!(models[1].max_output_tokens, Some(8_192));
         assert_eq!(models[1].context_window, Some(128_000));
-        // The ambiguous name is deliberately NOT read.
+        // The ambiguous name is NOT read.
         assert_eq!(
             models[2].max_output_tokens, None,
             "a bare `max_tokens` is not a reliable output cap on this shape"
@@ -904,7 +904,7 @@ mod tests {
 
     /// The response cap: a body over `max_bytes` is refused by name instead
     /// of buffered whole — the OOM shape the cap exists to prevent. Driven
-    /// through the bounded variant so the test doesn't need a 16 MiB fixture.
+    /// through the bounded case so the test doesn't need a 16 MiB fixture.
     #[tokio::test]
     async fn a_listing_body_over_the_cap_is_refused_not_buffered() {
         use wiremock::matchers::method;

@@ -420,7 +420,7 @@ fn mark_column(rel: &mut RelationDef, name: &str, constraint: &str, keep_nullabl
     }
 }
 
-/// Enum variant literals of a `CREATE TYPE … AS ENUM ('a', 'b')` statement.
+/// Enum case literals of a `CREATE TYPE … AS ENUM ('a', 'b')` statement.
 fn enum_values(node: Node, src: &[u8]) -> Vec<String> {
     let Ok(text) = node.utf8_text(src) else {
         return Vec::new();
@@ -796,7 +796,7 @@ mod tests {
     ///
     /// Nesting depth in an indexed repository's SQL is environment-controlled,
     /// and a stack overflow aborts the host process rather than returning an
-    /// error. Extraction runs here on a thread with a deliberately small stack
+    /// error. Extraction runs here on a thread with a small stack
     /// so the fixture does not have to be large enough to exhaust the default
     /// 8 MiB main stack: the recursive shape dies on this input, the worklist
     /// shape returns.

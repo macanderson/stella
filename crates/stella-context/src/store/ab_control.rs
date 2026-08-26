@@ -16,7 +16,7 @@
 //! the same number, which would put two turns in the same arm and count them
 //! as one.
 //!
-//! The counter only ever rises; it is deliberately not reset by a rate change.
+//! The counter only ever rises; it is not reset by a rate change.
 //! The schedule shifts once when the rate changes and stays exact after, which
 //! is a smaller distortion than restarting the count (and thereby delaying the
 //! next control turn by a whole period) every time someone edits a setting.

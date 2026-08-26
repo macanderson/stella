@@ -313,7 +313,7 @@ fn barrel_file_import_frame_is_capped_and_survives_the_budget() {
 }
 
 /// A multi-sentence goal yields dozens of identifier tokens, each costing a SQL
-/// round trip plus a snippet file read. We deliberately stop looking after the
+/// round trip plus a snippet file read. We stop looking after the
 /// first 12 distinct tokens — the frames past that are budget-packed away
 /// anyway, so the lookups are pure cost.
 #[test]
@@ -334,7 +334,7 @@ fn query_stops_looking_after_twelve_distinct_identifiers() {
     assert_eq!(graph.definitions("sym_29").unwrap().len(), 1);
 
     let goal: Vec<String> = (0..NAMES).map(|i| format!("sym_{i:02}")).collect();
-    // Budget deliberately ample: the bound under test is the identifier cap,
+    // Budget ample: the bound under test is the identifier cap,
     // not `budget_pack`.
     let frames = graph
         .query(&query(&goal.join(" "), 1000, 1_000_000))

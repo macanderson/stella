@@ -54,7 +54,7 @@ impl Store {
         for item in tasks {
             let status = task_status_to_string(item.status)?;
             // The contract rides as its own JSON, which round-trips
-            // byte-for-byte (invariant 4). `None` writes SQL NULL and means
+            // byte-for-byte (AGENTS.md #4). `None` writes SQL NULL and means
             // *this row records no contract* — never `read_only`, which is a
             // declaration somebody made.
             let contract = item
@@ -136,7 +136,7 @@ impl Store {
     /// Delete a session's whole task-board mirror — the persisted half of
     /// `/clear` (#1692). Returns the number of rows removed.
     ///
-    /// Scoped by `session_id` alone, deliberately: the board a clear
+    /// Scoped by `session_id` alone: the board a clear
     /// destroys is the session's, and rows recorded without a session id
     /// (SQL NULLs never match `=`) belong to no session, so they are not
     /// this clear's to delete.

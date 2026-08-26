@@ -17,7 +17,7 @@
 //!   columns as foreign keys to the target model's table.
 //! - `///` doc comments harvest as meaning (spec §4b), model- and
 //!   field-level. `enum` blocks become [`RelationKind::EnumType`] with their
-//!   variants.
+//!   cases.
 
 use std::collections::HashMap;
 
@@ -38,7 +38,7 @@ pub(super) fn extract(source: &str) -> StorageExtract {
     let layer_hint = mongo.then(|| DEFAULT_MONGO_LAYER.to_string());
 
     // Pass 1: names. Models map to their `@@map` table name (else the model
-    // name); enums carry their variants — both are needed to classify field
+    // name); enums carry their cases — both are needed to classify field
     // types in pass 2.
     let mut table_names: HashMap<String, String> = HashMap::new();
     let mut enums: HashMap<String, Vec<String>> = HashMap::new();

@@ -54,7 +54,7 @@
 //! # Content-free by construction (#466)
 //!
 //! [`DrainRow`] enumerates only identity + addressing + telemetry keys — never
-//! prompt or completion text. It deliberately drops internal-only columns the
+//! prompt or completion text. It drops internal-only columns the
 //! hub row carries: the cursor address (`hub_rowid`), execution grouping
 //! (`execution_id`, `step`, `call_role`), and the local drift-analysis estimate
 //! (`estimated_input_tokens`) are not part of the enterprise rollup contract.
@@ -270,7 +270,7 @@ impl DrainRejection {
 
     /// Classify an HTTP status the intake returned.
     ///
-    /// The split is deliberately conservative in both directions, because both
+    /// The split is conservative in both directions, because both
     /// mistakes are expensive:
     ///
     /// - `408` / `429` / `5xx` are **transient**. A 4xx that means "slow down"
@@ -372,7 +372,7 @@ impl DrainOutcome {
 ///   and the poison row — in one transaction — then keep draining. The org's
 ///   newer rows flow again.
 ///
-/// The cursor invariant is untouched: every advance goes through the same
+/// The cursor rule is untouched: every advance goes through the same
 /// monotonic `MAX()` upsert, so it never rewinds.
 ///
 /// `batch_size` is clamped to at least 1.
@@ -459,7 +459,7 @@ enum Bisection {
 /// `O(log n)` probes instead of `n`.
 ///
 /// Searching prefixes rather than arbitrary halves is what makes the answer
-/// usable by a **monotonic** cursor. The loop invariant is that `lo - 1` is
+/// usable by a **monotonic** cursor. The loop rule is that `lo - 1` is
 /// always a prefix length the intake just confirmed, so on termination
 /// `events[..k-1]` are delivered and `events[k-1]` is the poison row — one
 /// contiguous, rowid-ascending run the cursor steps over in a single advance.
@@ -662,7 +662,7 @@ mod tests {
 
         /// An intake driven entirely from memory — the injected port that lets
         /// these tests exercise terminal and transient refusals with no network
-        /// and no #404 transport. Its refusal message deliberately does **not**
+        /// and no #404 transport. Its refusal message does **not**
         /// name the offending row, so the bisect has to actually find it.
         struct FakeIntake {
             /// `source_rowid`s this intake permanently refuses as invalid.

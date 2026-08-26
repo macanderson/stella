@@ -5,7 +5,7 @@
 //!
 //! - [`crate::identity::workspace_id`] is the *cloud* identity. It is minted
 //!   only by explicit registration and lives at `<root>/.stella/workspace.json`
-//!   *outside* `private/`, deliberately, so committing it gives one workspace
+//!   *outside* `private/`,, so committing it gives one workspace
 //!   identity across clones and machines. Keying local state on it would make
 //!   every clone of a repository share one store.
 //! - `project_id` ([`crate::usage::project_id_for`]) is a hash of the
@@ -36,7 +36,7 @@
 //! Guessing wrong in the copy direction is the expensive mistake — it merges
 //! two projects' state — so the ambiguous case resolves to "copy".
 //!
-//! # What is deliberately not solved
+//! # What is not solved
 //!
 //! Delete `.stella/private/` *and* move the directory and nothing links the
 //! two ends; no scheme can recover that, because nothing survived that both

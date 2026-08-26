@@ -34,7 +34,7 @@ use zeroize::Zeroize;
 pub use aux_credentials::AuxCredentials;
 pub use prompt::{CredentialPrompt, TerminalPrompt};
 
-/// `Clone` because every variant is owned strings with no secret in them — a
+/// `Clone` because every case is owned strings with no secret in them — a
 /// caller that fans one failure out to several reports (or a test that scripts
 /// the same error into repeated prompts) should not have to rebuild it.
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
@@ -96,7 +96,7 @@ pub enum CredentialSource {
     Interactive,
 }
 
-/// A secret API key. Deliberately has no `Display` and a redacted `Debug`
+/// A secret API key. Has no `Display` and a redacted `Debug`
 /// so a stray `println!`/`tracing::info!` can never leak it, and its
 /// plaintext is **wiped on drop** ([`Zeroize`]) rather than left legible in
 /// freed heap for the lifetime of the process.
@@ -273,7 +273,7 @@ impl fmt::Debug for ApiKey {
 /// Shape: `[credentials]` table, `provider_id = "key"` per row — flat and
 /// small on purpose; this is a handful of BYOK keys, not a config language.
 ///
-/// Deliberately NOT `Debug`: the map holds plaintext provider keys, so a
+/// NOT `Debug`: the map holds plaintext provider keys, so a
 /// derived `Debug` would print every secret in the file. [`CredentialsFile`]
 /// formats itself with a hand-written redacting impl instead — the same
 /// posture as [`ApiKey`] above and every other secret-bearing type in the
@@ -388,7 +388,7 @@ impl CredentialsFile {
     /// A file whose mode lets group or other read it is loaded **anyway**,
     /// with a [`CredentialAdvisory`] recorded on the returned value (see
     /// [`CredentialsFile::advisories`]). The advisory describes the file as
-    /// found at load time and is deliberately not cleared by a later `save`:
+    /// found at load time and is not cleared by a later `save`:
     /// the point it makes — "your secrets were read out of a world-readable
     /// file on this run" — stays true after the mode is tightened.
     pub fn load(path: impl Into<PathBuf>) -> Result<Self, CredentialError> {

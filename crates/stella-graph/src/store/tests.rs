@@ -761,7 +761,7 @@ fn a_file_marked_generated_after_the_fact_is_pruned_even_with_unchanged_bytes() 
 /// `looks_minified` only catches long-LINE shapes, so a newline-per-line
 /// giant with a recognized extension went straight into `fs::read` and
 /// then tree-sitter, whose tree is a multiple of the source. The content
-/// here is deliberately ordinary, well-formed, short-lined source — every
+/// here is ordinary, well-formed, short-lined source — every
 /// other exclusion signal says "index me", so only the size gate can be
 /// what skips it.
 #[test]

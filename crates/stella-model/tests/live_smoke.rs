@@ -57,7 +57,7 @@
 //! so a failure is typically read days later by someone with no credential to
 //! re-run it. Every failing smoke therefore reports through
 //! [`failure_report`]: a verdict (credential / quota / wire shape /
-//! undetermined) derived from the typed `ProviderError` variant — which *is*
+//! undetermined) derived from the typed `ProviderError` case — which *is*
 //! the adapter's own classification of the status code — plus the recovered
 //! status and a bounded prefix of the provider's text. The message it
 //! replaces stated the ambiguity instead of resolving it ("could be a genuine
@@ -439,7 +439,7 @@ const LIVE_PROVIDERS: &[LiveProvider] = &[
         dialect: Dialect::OpenaiCompatible,
         model: "openrouter/auto",
         base_url: "https://openrouter.ai/api/v1",
-        // Deliberately unseeded, matching production: OpenRouter's catalog is
+        // Unseeded, matching production: OpenRouter's catalog is
         // vendor-namespaced and routed, so there is no curated seed row (and
         // no list price) for its slugs.
         seeded: false,
@@ -767,18 +767,18 @@ impl FailureCause {
     }
 }
 
-/// Both halves of what the typed error tells us: the variant's name (for the
+/// Both halves of what the typed error tells us: the case's name (for the
 /// log) and the cause it establishes (for the verdict).
 ///
 /// The test holds a [`ProviderError`], never the raw `reqwest::Response` — the
 /// adapter has already read the status and the body and folded both into this
 /// error (`http::classify_http_status`). So the verdict is derived from the
-/// **variant**, which *is* the adapter's own classification of the status
+/// **case**, which *is* the adapter's own classification of the status
 /// code, and never from scraping its prose.
 ///
-/// One exhaustive match on purpose: a new `ProviderError` variant must fail
+/// One exhaustive match on purpose: a new `ProviderError` case must fail
 /// this file to compile rather than landing silently in the `Undetermined`
-/// bucket, which is the same "declared, not silent" discipline invariant #10
+/// bucket, which is the same "declared, not silent" discipline AGENTS.md #10
 /// applies to events.
 fn classify(error: &ProviderError) -> (&'static str, FailureCause) {
     match error {
@@ -791,7 +791,7 @@ fn classify(error: &ProviderError) -> (&'static str, FailureCause) {
             ("ProviderError::OutputBudgetExceeded", FailureCause::Quota)
         }
         // "A response arrived but could not be decoded into a
-        // CompletionResult" — the variant's own contract, and exactly the
+        // CompletionResult" — the case's own contract, and exactly the
         // regression signal this suite was built for.
         ProviderError::Malformed(_) => ("ProviderError::Malformed", FailureCause::WireShape),
         // A 5xx or a network fault: the provider is unwell, which is evidence
@@ -916,7 +916,7 @@ fn an_auth_refusal_is_reported_as_a_credential_problem() {
 }
 
 /// A 403 is the other half of the credential answer, and reaches the same
-/// variant by a different arm of the classifier.
+/// case by a different arm of the classifier.
 #[test]
 fn a_forbidden_refusal_is_also_reported_as_a_credential_problem() {
     let error = ProviderError::Auth(

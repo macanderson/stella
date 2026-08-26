@@ -272,7 +272,7 @@ CREATE TABLE IF NOT EXISTS context_compaction (
 ///   when the index was built and over how many vectors, which is what lets a
 ///   reader tell "never indexed" from "indexed and drifted".
 ///
-/// **Liveness is deliberately absent from all three.** A posting is a row about
+/// **Liveness is absent from all three.** A posting is a row about
 /// *content*, not about belief: `supersede_node` and `restore_node` flip a
 /// node's liveness without touching `embedding`, and an `as_of` query changes
 /// the live set with no vector change at all. Because the postings join back
@@ -332,8 +332,8 @@ CREATE TABLE IF NOT EXISTS ann_index_state (
 /// abort any `UPDATE` or `DELETE` against the table. Append-only is the entire
 /// value of a ledger — a "reconstruct what was believed at time T" answer read
 /// out of a table something could have quietly rewritten is worth nothing — and
-/// an invariant that holds only as long as every future caller remembers it is
-/// not an invariant. A correction is a new revision carrying `supersedes`, which
+/// a rule that holds only as long as every future caller remembers it is
+/// not a rule. A correction is a new revision carrying `supersedes`, which
 /// is an INSERT and therefore permitted.
 ///
 /// `record_id` is the identity of one revision; `lineage_id` is the durable
@@ -578,7 +578,7 @@ fn restrict_to_owner(_path: &Path) {}
 /// (`user_version > SCHEMA_VERSION`) is an error rather than an as-is open:
 /// this file holds episodic memory and the bi-temporal fact graph, neither of
 /// which is rebuildable, so an older stella writing into a schema it does not
-/// know would silently violate whatever invariants the newer schema added. The
+/// know would silently violate whatever rules the newer schema added. The
 /// message mirrors the one `stella_store::Store::migrate` already writes — the
 /// fault is an out-of-date binary, not a broken workspace.
 ///

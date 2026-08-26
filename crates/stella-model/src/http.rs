@@ -44,7 +44,7 @@ pub(crate) const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// 816s model deadline. A trip is fallback-eligible: see
 /// `crate::stream_recovery`.
 ///
-/// Deliberately carries no `MEASURED:` marker (#4572). 90 seconds is the
+/// Carries no `MEASURED:` marker (#4572). 90 seconds is the
 /// comparator's watchdog, picked to sit above the observed time-to-first-token
 /// rather than derived from it — a bound, which AGENTS.md's marker is not for.
 pub(crate) const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(90);
@@ -180,7 +180,7 @@ fn unix_epoch_secs_now() -> i64 {
 /// A date already in the past yields `Some(0)`; the retry policy floors a zero
 /// hint at its own base delay, so "retry now" is expressed rather than
 /// discarded. The two obsolete formats RFC 9110 §5.6.7 lists (RFC 850 and
-/// asctime) are deliberately not parsed — nothing observed emits them, and
+/// asctime) are not parsed — nothing observed emits them, and
 /// they degrade to `None` exactly as the date form used to.
 fn retry_after_ms_at(value: &str, now_epoch_secs: i64) -> Option<u64> {
     let value = value.trim();
@@ -315,7 +315,7 @@ fn parse_error_code(body: &str) -> Option<String> {
 /// Providers share no wire standard for this, so detection is per-dialect
 /// signatures over the machine `code` and the human message — each declared
 /// per provider on the parity matrix's overflow axis
-/// (`crate::provider_parity::OVERFLOW_POSTURE`, invariant 8) rather than
+/// (`crate::provider_parity::OVERFLOW_POSTURE`, AGENTS.md #8) rather than
 /// assumed:
 ///
 /// - **HTTP 413** is unconditional: Payload Too Large has no other meaning
@@ -331,7 +331,7 @@ fn parse_error_code(body: &str) -> Option<String> {
 /// - **Gemini / Vertex**: 400 `INVALID_ARGUMENT` with "input token count
 ///   (N) exceeds the maximum number of tokens allowed".
 ///
-/// Phrases are deliberately narrow — each is the vendor's documented
+/// Phrases are narrow — each is the vendor's documented
 /// overflow sentence, not a generic word like "context" or "long" — because
 /// a false positive here makes the engine compact and retry a request that
 /// failed for a different reason. An unmatched overflow shape degrades to
@@ -402,7 +402,7 @@ pub(crate) fn body_snippet(body: &str) -> String {
 /// `zai.rs`'s 429 billing classifier makes) — a false negative that falls
 /// through to the generic hint beats a wrong diagnosis.
 ///
-/// The model-enablement arm deliberately does NOT match on bare "access":
+/// The model-enablement arm does NOT match on bare "access":
 /// "access denied" / "you do not have access" is how providers phrase the
 /// *generic* permission refusal, so keying on that word sent nearly every
 /// plain 403 to the "enable this model for your key" hint — a confident

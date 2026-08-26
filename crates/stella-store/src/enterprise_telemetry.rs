@@ -1,6 +1,6 @@
 //! Content-free Oxagen Enterprise operational events and their host-owned spool.
 //!
-//! This module deliberately accepts only a finalized [`ExecutionRollupRow`]
+//! This module accepts only a finalized [`ExecutionRollupRow`]
 //! and projects it into a closed schema. Raw store events, prompts, paths,
 //! tool arguments/results, reasoning, errors, git state, memories, rules, and
 //! local identifiers have no representable field. Delivery is owned by a CLI

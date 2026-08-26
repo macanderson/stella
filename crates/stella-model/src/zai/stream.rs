@@ -356,7 +356,7 @@ pub(super) async fn aggregate_zai_stream(
             }
             // The gateway repeats its upstream on every chunk; first one wins,
             // so a stream cut before its usage frame still records who served
-            // it. Kept out of `fold_usage` deliberately — that folds the usage
+            // it. Kept out of `fold_usage` — that folds the usage
             // envelope, and this rides the chunk itself.
             if upstream_provider.is_none() {
                 upstream_provider = parsed.provider;

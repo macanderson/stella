@@ -6,7 +6,7 @@
 //!
 //! `.stella/` is the agent's own private state and every retrieval walk skips
 //! it wholesale — except for `.stella/rules/`, which holds the published
-//! **context records**: the one part of `.stella/` deliberately tracked in Git,
+//! **context records**: the one part of `.stella/` tracked in Git,
 //! because a record only steers a teammate's session if it travels with the
 //! repository (AGENTS.md § "The `.stella/` directory"). A retrieval tool that
 //! cannot see the repository's own steering policy is the hole #3162 names.

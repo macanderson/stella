@@ -362,7 +362,7 @@ enum OpenAiStreamEvent {
     /// One `function_call` item's arguments are complete. Modeled only so
     /// [`ToolCallObserver`] has a precise per-call boundary to announce on;
     /// the accumulated arguments remain the source of truth, so the wire's
-    /// own copy of them is deliberately not read here.
+    /// own copy of them is not read here.
     ///
     /// The chat-completions dialects have no such event and must announce a
     /// call when the *next* one starts, which leaves a stream's last call
@@ -818,7 +818,7 @@ mod tests {
     /// turns to the same shard — and the cache telemetry the routing earns
     /// (`input_tokens_details.cached_tokens`) lands in `CompletionUsage`.
     ///
-    /// Both halves in one witness, deliberately: this is the test the
+    /// Both halves in one witness: this is the test the
     /// parity matrix's `openai` row cites for its `Implicit` posture, and
     /// that posture's contract is "the telemetry lands in
     /// `CompletionUsage`". Until the usage assertion below existed, the

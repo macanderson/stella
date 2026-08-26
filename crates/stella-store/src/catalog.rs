@@ -196,7 +196,7 @@ pub struct AliasForm {
     /// profile) — `None` for undated forms.
     pub model_version: Option<String>,
     /// Where the form came from: `catalog` (the master list's own id),
-    /// `derived` (a generated variant), or `learned` (seen on the wire).
+    /// `derived` (a generated case), or `learned` (seen on the wire).
     pub source: String,
 }
 
@@ -749,7 +749,7 @@ mod tests {
                 last_updated: Some("2025-09-29".to_string()),
                 supports_reasoning: Some(true),
                 supports_tools: Some(true),
-                // Deliberately unknown here so the capability test's
+                // Unknown here so the capability test's
                 // pre-column hash pin stands; the cutoff test adds it.
                 knowledge: None,
             },

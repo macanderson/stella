@@ -143,11 +143,11 @@ pub enum DrainFormat {
 
 /// The `format` discriminator named an encoding this build cannot produce.
 ///
-/// A struct rather than a one-variant enum: the drain either knows the format
+/// A struct rather than a one-case enum: the drain either knows the format
 /// or does not, and there is no second way for this resolution to fail. It is
 /// a named type all the same, because "fails closed" is a security posture —
 /// a caller must be able to tell *this* from a transport error without
-/// matching on prose (invariant #5).
+/// matching on prose (AGENTS.md #5).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("unknown drain format `{format}` — supported: \"stella\", \"otel\"")]
 pub struct UnknownDrainFormat {

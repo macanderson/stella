@@ -4,7 +4,7 @@
 //! ## Why this lives in `stella-model` and not in the CLI
 //!
 //! Every arm of this factory constructs a `stella_model` adapter, and every
-//! variant of [`Dialect`] names one. Hosting the match one crate up meant the
+//! case of [`Dialect`] names one. Hosting the match one crate up meant the
 //! only callable copy sat behind `stella-cli`'s binary-only target, so two
 //! things that should have shared it could not:
 //!

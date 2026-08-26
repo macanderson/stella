@@ -820,7 +820,7 @@ async fn complete_streams_and_aggregates_text_deltas_from_a_mock_server() {
 
 /// Cache accounting: `message_start` reports `cache_read_input_tokens`
 /// and `cache_creation_input_tokens` separately from `input_tokens`.
-/// Reads fold into `input_tokens` (subset invariant) and surface as
+/// Reads fold into `input_tokens` (subset rule) and surface as
 /// `cached_input_tokens`; writes surface as `cache_write_tokens` WITHOUT
 /// folding in — the catalog has no cache-write rate, so pricing them as
 /// plain input would be wrong in the other direction (issue #97).

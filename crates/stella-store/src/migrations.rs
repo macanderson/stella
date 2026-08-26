@@ -67,7 +67,7 @@ mod sub_agent_tool_calls;
 mod task_contract;
 mod token_unit;
 
-// `Durability` is deliberately NOT re-exported alongside the runner: its only
+// `Durability` is NOT re-exported alongside the runner: its only
 // non-test reader is `initialize_store_pragmas` itself, so a re-export here is
 // unused outside `cfg(test)` and fails the `-D warnings` gate. Its one test
 // names it through the module path instead.
@@ -244,7 +244,7 @@ pub(crate) const MIGRATIONS: [Migration; 36] = [
     // v28 → v29: `tasks` grows `contract` — what a task promised, not only what
     // became of it (#4238). Additive, column-guarded ADD COLUMN, nullable with
     // no default and no backfill: NULL means "this row records no contract",
-    // which is deliberately NOT the stored `read_only` (someone looked and
+    // which is NOT the stored `read_only` (someone looked and
     // there was nothing to prove). A default would have to invent one of those
     // two for every pre-contract row, and inventing the second is the
     // self-report `TaskContract` exists to end.

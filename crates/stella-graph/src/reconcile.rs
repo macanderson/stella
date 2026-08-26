@@ -52,7 +52,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::error::GraphError;
 
 /// The questions reconciliation needs answered about the repository, as a
-/// port (invariant 1) rather than a direct `git` dependency.
+/// port (AGENTS.md #1) rather than a direct `git` dependency.
 ///
 /// Two reasons this is a trait and not three free functions calling
 /// `Command`. It keeps [`plan`] a pure decision over injected answers, so the
@@ -95,7 +95,7 @@ pub enum FullWalkReason {
 
 /// What one reconciliation decided a pass should do.
 ///
-/// Read every variant as advice about **ordering and eagerness**, never as
+/// Read every case as advice about **ordering and eagerness**, never as
 /// permission to skip work — see this module's caveat. The index's
 /// correctness rests on the indexer's content hash in all four.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,7 +137,7 @@ pub enum Plan {
 impl Plan {
     /// The commit a completed pass should record, if any.
     ///
-    /// [`Plan::Unchanged`] returns `None` deliberately: re-stamping a sha
+    /// [`Plan::Unchanged`] returns `None`: re-stamping a sha
     /// that is already stored is a write for no information, and the write
     /// path is the one place this module can contend with a live session.
     pub fn commit_to_record(&self) -> Option<&str> {
@@ -162,7 +162,7 @@ impl Plan {
 ///
 /// Pure: every repository fact arrives through `oracle`, so this function has
 /// no I/O, no clock, and no environment, and the whole branch table is
-/// testable against a fake (invariant 2's discipline, applied one crate out
+/// testable against a fake (AGENTS.md #2's discipline, applied one crate out
 /// from the engine that mandates it).
 pub fn plan(stored_head: Option<&str>, oracle: &dyn RepoOracle) -> Plan {
     let Some(current) = oracle.head() else {

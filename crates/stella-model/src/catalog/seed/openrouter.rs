@@ -31,7 +31,7 @@ pub(super) fn rows() -> Vec<CatalogEntry> {
         // underlying model it picks, so the effective price varies
         // per request and the gateway reports it back on its own
         // usage/generation endpoint — we cannot know it from the
-        // slug alone. Left at zero deliberately: a wrong fixed
+        // slug alone. Left at zero: a wrong fixed
         // estimate is worse than a zero the metering layer can flag
         // as "gateway-priced, reconcile from the provider's usage
         // record."

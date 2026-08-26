@@ -143,7 +143,7 @@ fn the_calendar_arithmetic_handles_leap_years_and_epoch_boundaries() {
 /// Strictness is the point: a header we cannot read exactly is one whose
 /// meaning we would be guessing at, and `None` only costs the fallback to
 /// computed backoff. The two obsolete RFC 9110 §5.6.7 formats are among
-/// these deliberately.
+/// these.
 #[test]
 fn a_malformed_or_obsolete_date_yields_no_hint_rather_than_a_wrong_one() {
     for header in [

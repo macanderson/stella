@@ -213,10 +213,10 @@ pub struct RecallResult {
     /// survivors plus [`Self::dropped`].
     ///
     /// That is `frames.len() + dropped.len()` in every ordinary recall, but
-    /// not by invariant: frame construction runs after packing and skips a
+    /// not by rule: frame construction runs after packing and skips a
     /// row that vanished between the two reads (a frame's digest must
     /// describe bytes that exist), so `frames` can come up short of the
-    /// packed count. The denominator deliberately counts what the budget
+    /// packed count. The denominator counts what the budget
     /// *decided over*, not what survived serving.
     ///
     /// This is the denominator [`Self::dropped`] is a numerator of, and it is
@@ -282,7 +282,7 @@ pub struct RecallResult {
 
 impl RecallResult {
     /// Total token cost of the assembled frames — must never exceed the
-    /// query's `max_tokens` (the invariant the packer guarantees).
+    /// query's `max_tokens` (the rule the packer guarantees).
     #[must_use]
     pub fn assembled_tokens(&self) -> u64 {
         self.frames.iter().map(|f| f.token_cost as u64).sum()

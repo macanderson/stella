@@ -34,7 +34,7 @@ impl ImportKind {
     }
 }
 
-/// A resolved (or deliberately unresolved) import edge out of one file.
+/// A resolved (or unresolved) import edge out of one file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportEdge {
     /// The specifier as written (or, for `from . import x`, reconstructed as

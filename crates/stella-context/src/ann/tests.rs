@@ -634,7 +634,7 @@ async fn forgetting_a_node_needs_no_reindex() {
         .clone();
 
     assert!(store.supersede_node(&doomed).unwrap(), "the forget landed");
-    // Deliberately NO rebuild here.
+    // NO rebuild here.
     let after = store.recall(&q).await.unwrap();
     assert!(
         after.used_ann_index,

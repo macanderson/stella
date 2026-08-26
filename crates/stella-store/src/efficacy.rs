@@ -340,7 +340,7 @@ mod tests {
         let store = store();
         let mine = finished(&store, "mine");
         let other = finished(&store, "someone else's");
-        // Deliberately not sorted by memory id: insert order is the contract,
+        // Not sorted by memory id: insert order is the contract,
         // and an id-sorted read would pass on an already-sorted fixture.
         store
             .record_memory_citations(

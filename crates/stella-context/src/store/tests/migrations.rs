@@ -105,7 +105,7 @@ fn migrates_v2_context_db_preserving_memories() {
         let conn = open_legacy(&path, 2);
         // Production writes a memory as a canonical `memory` row plus a
         // retrievable mirror `node` in one transaction; reproduce both.
-        // Raw SQL rather than `insert_memory`, deliberately: a fixture for
+        // Raw SQL rather than `insert_memory`: a fixture for
         // schema version N must write version N's shape. Calling today's
         // writer would put a v5 `lineage_id` into a v2 table and test a
         // database that never existed.

@@ -55,7 +55,7 @@ the file it describes — a stale answer naming a deleted file is structurally
 impossible rather than a pruning job somebody has to remember.
 
 What this crate does **not** do is produce a vector. Making one is I/O against
-a model, and this crate holds no transport and no key (invariant 1). It
+a model, and this crate holds no transport and no key (AGENTS.md #1). It
 reports what needs embedding (`files_pending_embedding`), accepts the result
 (`store_file_vectors`), and ranks (`rank_files_by_vector`, which delegates the
 arithmetic to `stella_embed::rank` — pure and property-tested there). The
@@ -96,9 +96,9 @@ crate; this crate exposes the pure reads it calls.
 The mistake to head off explicitly: **a new language is not a new crate.** It
 is a new tree-sitter grammar crate wired into this one — a workspace
 dependency, a queries pair in [`src/queries.rs`](src/queries.rs), a
-`Language` variant, a `LangPack` — per the six-step recipe under "Extending
+`Language` case, a `LangPack` — per the six-step recipe under "Extending
 it". Likewise a new storage source is a module under
-[`src/storage/`](src/storage) and a new symbol kind is a variant in
+[`src/storage/`](src/storage) and a new symbol kind is a case in
 [`src/symbol.rs`](src/symbol.rs). Thirteen languages and four storage families
 already live here without a split; the exhaustive matches in
 [`src/lang.rs`](src/lang.rs) are what keep that scalable.
@@ -155,10 +155,10 @@ written here would be stale by the next PR.
 ## Key concepts
 
 **Languages are wired in at compile time, natively.** Thirteen `Language`
-variants — Rust, Python, JavaScript, TypeScript, Tsx, Sql, Go, Java, C, Cpp,
+cases — Rust, Python, JavaScript, TypeScript, Tsx, Sql, Go, Java, C, Cpp,
 Php, Markdown, Toml — over ten grammar crates (`tree-sitter-typescript` supplies
 both `LANGUAGE_TYPESCRIPT` and `LANGUAGE_TSX`, which is why `Tsx` is a separate
-variant even though it shares TypeScript's query strings). Eleven of the
+case even though it shares TypeScript's query strings). Eleven of the
 thirteen are grammars; Markdown and Toml are the exceptions — neither has a
 tree-sitter grammar here, and each is line-scanned by a module of this crate's
 own ([`src/markdown.rs`](src/markdown.rs) for headings and link edges,
@@ -298,11 +298,11 @@ To add a language:
 2. Add `<LANG>_SYMBOLS`, `<LANG>_IMPORTS` and `<LANG>_CALLS` to
    [`src/queries.rs`](src/queries.rs), following the `@name` + kind-capture
    convention and matching name fields with `(_)`.
-3. Add the `Language` variant in [`src/lang.rs`](src/lang.rs) and extend the
+3. Add the `Language` case in [`src/lang.rs`](src/lang.rs) and extend the
    six matches: `from_path`, `tag`, `ts_language`, `symbol_query`,
    `import_query`, `call_query`. They are exhaustive, so the compiler
    enumerates what is missing. `ALL` is the one place it cannot: add the
-   variant there too, and grow the array's length.
+   case there too, and grow the array's length.
 4. In [`src/parse.rs`](src/parse.rs), add a `LangPack` field to `Grammars`,
    load it in `Grammars::load`, map it in `Grammars::pack`, and add an arm to
    the import-decoder match in `parse_file` (each language decodes its own

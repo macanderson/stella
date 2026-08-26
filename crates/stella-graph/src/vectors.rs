@@ -11,7 +11,7 @@
 //! the second question by *guessing names* — a run of greps for
 //! `redact|scrub|sanitize|mask` until one hit. Measured on Terminal-Bench 2.1:
 //! one task spent 13 of its 58 tool calls grepping a single file for spelling
-//! variants of a concept. That is a semantic question being asked of a
+//! cases of a concept. That is a semantic question being asked of a
 //! substring index.
 //!
 //! # The shape
@@ -350,7 +350,7 @@ pub fn stored(conn: &Connection, fingerprint: &str) -> Result<Vec<(String, Vec<f
 ///
 /// The ranking itself is [`stella_embed::rank::top_k`] — pure, total, and
 /// property-tested there. This function's only job is to get the vectors out
-/// of SQLite and hand them over, which is exactly the invariant-2 split: the
+/// of SQLite and hand them over, which is exactly the AGENTS.md #2 split: the
 /// decision is testable without a database, and the I/O has no decision in it.
 pub fn rank(
     conn: &Connection,

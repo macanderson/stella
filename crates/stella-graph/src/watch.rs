@@ -10,7 +10,7 @@
 //!
 //! # Structure: event source vs. pipeline
 //!
-//! Event *delivery* (the `notify` OS watcher) is deliberately decoupled from
+//! Event *delivery* (the `notify` OS watcher) is decoupled from
 //! the *pipeline* (channel → debounce → transactional apply). [`spawn`] wires
 //! the real watcher to [`start_pipeline`]; tests drive the identical pipeline
 //! through a [`WatchInjector`] instead, so live-index behavior is covered

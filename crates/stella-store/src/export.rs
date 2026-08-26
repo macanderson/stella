@@ -36,7 +36,7 @@ use crate::{Result, Store, UsageStatsRow};
 
 /// Which executions an analytics read covers.
 ///
-/// The two variants need *different* predicates, not one parameterized
+/// The two cases need *different* predicates, not one parameterized
 /// predicate: `executions` carries `session_id` itself, while the eight child
 /// tables reach it through `execution_id`. Both are served from here so a
 /// caller cannot pair one table's scope with another's.
@@ -91,7 +91,7 @@ impl ExportScope<'_> {
     }
 }
 
-/// What a session-scoped export deliberately left out of the archive, so the
+/// What a session-scoped export left out of the archive, so the
 /// manifest can say so.
 ///
 /// Silently dropping rows is its own quiet wrong answer: a reader who cannot
@@ -296,7 +296,7 @@ impl Store {
     /// the nine telemetry tables the export archive bundles — `executions`,
     /// `telemetry`, `tool_calls`, `files_touched`, `mcp_usage`, `agent_uses`,
     /// `skill_usage`, `execution_reflection`, and `reflections`. The rest of
-    /// the store stays out deliberately: `events` and the receipts plane
+    /// the store stays out: `events` and the receipts plane
     /// (`context_blocks` / `step_manifest` / `step_receipt`) carry full
     /// payloads and reconstruction preimages the archive must not ship, and
     /// the state tables (`rules`, `file_locks`, `memory_citations`,

@@ -26,12 +26,12 @@ Stella is becoming one turn loop with a plugin architecture around it
 `before_turn` point spends its budget on — "what could help here?" — asked once,
 answered with citations, and handed to the turn as context the engine did not have
 to go looking for. That is also why this crate is not part of the engine: retrieval
-is I/O, invariant #2 keeps it out of [`stella-core`](../stella-core), and the wrapper
+is I/O, AGENTS.md #2 keeps it out of [`stella-core`](../stella-core), and the wrapper
 socket that will call it is assembled in [`stella-runtime`](../stella-runtime).
 
 The steering planes are being consolidated (#3243) rather than multiplied, so a new
 "inject something helpful" path is a change to that one question, not a fifth plane
-of its own. And the byte-stable-prompt rule (invariant #7) is this crate's binding
+of its own. And the byte-stable-prompt rule (AGENTS.md #7) is this crate's binding
 constraint at the seam: recalled context rides as a volatile message *after* the
 stable prefix, because a prompt-cache miss is a cost regression a host pays for.
 
@@ -57,7 +57,7 @@ fuse → dedup → diversify → pack recall pipeline, compaction, or the
 recall is invoked or what the engine does with the frames — prompt assembly,
 steering, session wiring — belongs in `stella-cli`, the only dependent;
 decision logic over recalled content belongs in `stella-core`, which per
-AGENTS.md invariant #2 can never absorb this crate's I/O in return.
+AGENTS.md #2 can never absorb this crate's I/O in return.
 
 Three adjacent homes absorb the changes that look like they belong here but do
 not. Context Graph Protocol wire types come from the external
@@ -75,7 +75,7 @@ over the code graph or any other source, lands here and never there.
 Extension points are modules, not crates: a new node kind, retrieval signal,
 migration, or embedder follows the recipes under "Extending it" below. A new
 crate is justified only when the work (a) sits behind a port and would
-otherwise drag heavy dependencies into a deliberately light crate — the live
+otherwise drag heavy dependencies into a light crate — the live
 example is the R14 ONNX-embedder follow-up (#2994), which would put a model
 runtime behind the `Embedder` seam — now in [`stella-embed`](../stella-embed),
 which is precisely that split having already happened once — rather than into a
@@ -132,7 +132,7 @@ went stale before.
 | [`src/provider.rs`](src/provider.rs) | The `ContextProvider` trait, `ContextStore`'s implementation of it (`info`/`capabilities`/`query`/`verify`), and `ProviderRegistry` fan-out. |
 | [`src/embed.rs`](src/embed.rs) | A re-export of [`stella-embed`](../stella-embed), which now owns the `Embedder` seam, `EmbedderFingerprint` and the offline `HashEmbedder` default. The seam moved down to a leaf so `stella-graph` could share it for semantic code search without either plane depending on the other; nothing above this module changed. |
 | [`src/clock.rs`](src/clock.rs) | `Clock`, `SystemClock`, `FixedClock`, `format_rfc3339`. Inject `FixedClock` whenever a test needs an exact T1→T2 correction. |
-| [`src/error.rs`](src/error.rs) | `ContextError` — the typed failure set, including the invariants the plane refuses to violate. |
+| [`src/error.rs`](src/error.rs) | `ContextError` — the typed failure set, including the rules the plane refuses to violate. |
 
 ## Key concepts
 
@@ -163,7 +163,7 @@ matches, each stamped `crates/stella-context/lexical-fallback` in its provenance
 (`is_lexical_fallback` reads it back). `RecallResult::used_lexical_fallback`
 says so at the result level.
 
-**Citation and digest are constructor invariants, not conventions.**
+**Citation and digest are constructor rules, not conventions.**
 `upsert_node` rejects a blank `display_name` at write time and `frame_from_node`
 returns `ContextError::MissingCitation` at read time, so an uncitable frame
 cannot reach a prompt from either direction. Every minted frame also declares
@@ -277,7 +277,7 @@ cargo test -p stella-context
 There is no `make test-context` target and no `tests/` directory — every test is
 an inline `#[cfg(test)] mod tests` at the bottom of its module, next to the code
 it pins. `tempfile` backs real on-disk stores (an in-memory one never warms, so
-warming tests must use a file), `proptest` covers the packer invariant
+warming tests must use a file), `proptest` covers the packer rule
 (`packing_never_exceeds_budget_and_loses_nothing` in
 [`src/retrieval/tests.rs`](src/retrieval/tests.rs)), and async tests use `#[tokio::test]`.
 
@@ -294,7 +294,7 @@ path cited from a doc comment in this crate does not resolve.
 
 ## Extending it
 
-**Add a node kind.** 1. Add the variant to `NodeKind` in
+**Add a node kind.** 1. Add the case to `NodeKind` in
 [`src/store/node.rs`](src/store/node.rs). 2. Extend `as_str`, `parse`, and
 `to_frame_kind` — the compiler catches all three. 3. Add it to `store_kinds()`
 in [`src/provider.rs`](src/provider.rs), or kind-filtered queries will be routed

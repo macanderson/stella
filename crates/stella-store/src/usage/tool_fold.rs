@@ -67,7 +67,7 @@ pub(super) fn forget_project(tx: &Transaction<'_>, project_id: &str) -> Result<(
 /// Drop claims for days whose buckets the age cutoff has taken.
 ///
 /// `modifier` is the SQLite datetime modifier the caller applied to
-/// `tool_usage_rollup`, and the predicate is deliberately identical to that
+/// `tool_usage_rollup`, and the predicate is identical to that
 /// one: a claim must never outlive its bucket, and a bucket must never outlive
 /// its claim.
 pub(super) fn age_out(tx: &Transaction<'_>, modifier: &str) -> Result<()> {

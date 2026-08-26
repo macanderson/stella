@@ -63,7 +63,7 @@ pub(crate) const SYSTEM_NON_DOOR: &str = "system";
 /// by door counted those rows as doors somebody typed, and nobody ran
 /// `stella reflection`.
 ///
-/// It matters now because #3381 adds per-variant comparison over this table.
+/// It matters now because #3381 adds per-pipeline comparison over this table.
 /// A `GROUP BY kind` silently including role rows is a confounded
 /// measurement — which is the failure #3388 exists to prevent, arriving from
 /// the other side.

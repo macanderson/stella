@@ -41,7 +41,7 @@ use crate::Result;
 ///
 /// The block's own preimage — resolved by [`crate::reconstruct::resolve_content`],
 /// the same function `stella inspect` reconstructs through, over the same
-/// journal index. This is deliberately not a formula applied to the old
+/// journal index. This is not a formula applied to the old
 /// number: `ceil(chars/3.5)` is not invertible, so there is no arithmetic that
 /// recovers a byte count from it. The cost is *re-derived from the content*,
 /// which is also what makes the result verifiable — it is the number the

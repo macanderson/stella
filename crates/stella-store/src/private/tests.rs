@@ -36,7 +36,7 @@ fn race_generated_ignore(racers: usize, rounds: usize) -> Vec<String> {
             }
         }
 
-        // Whoever won, the invariant the function exists for must hold.
+        // Whoever won, the rule the function exists for must hold.
         let settled = std::fs::read(dot.join(".gitignore")).expect("read settled ignore");
         if !settled
             .split(|byte| *byte == b'\n')

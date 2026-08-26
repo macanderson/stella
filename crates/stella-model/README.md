@@ -57,12 +57,12 @@ itself (`Provider`, `CompletionRequest`, `ProviderError`) belong in
 port, it does not define it.
 
 A new vendor is a new adapter module behind the port — never a new crate, and
-never a rewrite of the engine side (AGENTS.md invariant #1) — and a module only
+never a rewrite of the engine side (AGENTS.md #1) — and a module only
 when its wire shape is genuinely new: per the dialect rule above, an
 OpenAI-compatible vendor is a `stella-cli` config row and lands no adapter code
 here at all. In either case the provider's rows in
 [`src/provider_parity.rs`](src/provider_parity.rs) land in the same PR (AGENTS.md
-invariant #8); "Extending it" below walks the mechanics and names the tests
+AGENTS.md #8); "Extending it" below walks the mechanics and names the tests
 that fail until you do.
 
 A new crate instead of a module is almost never the right split from here.
@@ -179,7 +179,7 @@ is not, because retrying re-truncates identically.
   parameters and must never enter the cached bytes. Distinct per adapter
   construction, so fleet siblings don't serialize onto one shard.
 - **Bedrock is non-streaming `Converse`, not `ConverseStream`** — the streaming
-  variant speaks binary `application/vnd.amazon.eventstream`, a separate
+  case speaks binary `application/vnd.amazon.eventstream`, a separate
   transport decoder. Its SigV4 signing is pinned by golden vectors generated from
   botocore, because signing code looks right while producing signatures a real
   endpoint rejects.
@@ -239,8 +239,8 @@ Adding a provider. **Step 0 is the one most new providers stop at.**
    pricing, `with_base_url`, `http::client()`, `SseDecoder`,
    `http::classify_http_status`, `attachment::wire_parts` for user content,
    `impl Provider` (+ `complete_observed` if it streams). Add a `ToolDialect`
-   variant in [`src/catalog.rs`](src/catalog.rs), and a matching `Dialect`
-   variant plus `build_provider_parts` arm in `stella-cli`.
+   case in [`src/catalog.rs`](src/catalog.rs), and a matching `Dialect`
+   case plus `build_provider_parts` arm in `stella-cli`.
 2. **Seed the catalog.** A row in `src/catalog/seed/<provider>.rs` (a new file
    plus one `mod` line in [`src/catalog/seed.rs`](src/catalog/seed.rs) for a
    provider that has none) for the provider's `default_model`, or
@@ -253,7 +253,7 @@ Adding a provider. **Step 0 is the one most new providers stop at.**
    - Cache: `OptIn` when the adapter must SEND a marker, `Implicit` when it must
      PARSE hit telemetry, `NotApplicable` only when no billed cache exists.
      Reasoning: `Controllable` when the effort preference reaches the request
-     body, `Unsupported` when the adapter deliberately drops it (an honest
+     body, `Unsupported` when the adapter drops it (an honest
      degradation — `stella-cli` surfaces a boot notice), `FixedOn`/`FixedOff` for
      a model with no dial at all.
    - `OptIn`, `Implicit`, and `Controllable` must name a `witness` — the exact
@@ -261,7 +261,7 @@ Adding a provider. **Step 0 is the one most new providers stop at.**
      the files `adapter_sources()` embeds with `include_str!` (see
      [`src/provider_parity.rs`](src/provider_parity.rs) for the current list);
      a witness in a *new* adapter's own test module is invisible until you add
-     that file there too. No-control variants carry a `note` instead.
+     that file there too. No-control cases carry a `note` instead.
    - What fails if you skip it: `every_seeded_provider_declares_a_cache_posture`
      / `every_seeded_provider_declares_a_reasoning_posture` (in `stella-cli`) on
      a missing row, `both_axes_cover_the_same_provider_ids` if you add one axis
@@ -282,7 +282,7 @@ axis in `provider_parity.rs` — record it as a matrix, not as adapter folklore.
 ## See also
 
 - [`../../AGENTS.md`](../../AGENTS.md) — "Architecture: ports, not direct dependencies",
-  invariant 8 ("Provider feature parity is declared, not assumed"), and the
+  AGENTS.md #8 ("Provider feature parity is declared, not assumed"), and the
   `stella-model` row in "Workspace layout — where a change goes".
 - [`../stella-protocol/src/provider.rs`](../stella-protocol/src/provider.rs) —
   the `Provider` / `ToolCallObserver` contract every adapter here implements.

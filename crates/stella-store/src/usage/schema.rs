@@ -22,7 +22,7 @@
 //! [`HUB_MIGRATIONS`] is that machinery, introduced at the first moment it
 //! was actually needed rather than in advance.
 //!
-//! It is deliberately the smallest thing that works: an index-ordered array
+//! It is the smallest thing that works: an index-ordered array
 //! stepped over `PRAGMA user_version`, exactly like [`crate::migrations`],
 //! with the same contract that **a slot is claimed by position, not by
 //! name**. Two branches that each append "the next hub migration" merge
@@ -329,7 +329,7 @@ pub(super) fn apply(conn: &mut Connection) -> Result<()> {
 /// this tree writes.
 ///
 /// `execution_rollup` is local-only and never drained (see
-/// [`crate::content_free`]), so the new column raises no invariant-3
+/// [`crate::content_free`]), so the new column raises no AGENTS.md #3
 /// question -- it is not a hub `telemetry` column and cannot become egress.
 fn migrate_hub_v0_to_v1(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     if !column_exists(tx, "execution_rollup", "role")? {
@@ -391,7 +391,7 @@ fn migrate_hub_v1_to_v2(tx: &rusqlite::Transaction<'_>) -> Result<()> {
 /// construction.
 ///
 /// `execution_rollup` is local-only and never drained (see
-/// [`crate::content_free`]), so the new column raises no invariant-3 question
+/// [`crate::content_free`]), so the new column raises no AGENTS.md #3 question
 /// — it is not a hub `telemetry` column and cannot become egress.
 fn migrate_hub_v2_to_v3(tx: &rusqlite::Transaction<'_>) -> Result<()> {
     if !column_exists(tx, "execution_rollup", "usage_complete")? {

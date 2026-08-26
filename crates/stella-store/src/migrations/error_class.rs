@@ -27,7 +27,7 @@ use crate::Result;
 ///
 /// `''` is the store's spelling of `ErrorClass` = `None`: **unclassified**,
 /// which is precisely what every pre-existing row is and what every
-/// still-unaudited call site keeps writing. It is deliberately not a class of
+/// still-unaudited call site keeps writing. It is not a class of
 /// its own — an unaudited site and a site audited as `internal` are different
 /// facts, and collapsing them would make the ceiling this column exists to
 /// enable count our unfinished audit as our defects. Non-empty only ever

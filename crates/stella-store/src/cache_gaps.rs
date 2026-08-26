@@ -7,7 +7,7 @@
 //! counter (issues #267/#269) by pairing each row's `gap_secs` against the
 //! provider's cache TTL
 //! (`stella_model::cache_economics::is_cache_expired_rewrite`). No TTL or
-//! pricing policy lives here — `stella-store` deliberately does not depend
+//! pricing policy lives here — `stella-store` does not depend
 //! on `stella-model`; this module only surfaces the facts the policy needs.
 
 use crate::{Result, Store};

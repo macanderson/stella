@@ -4,7 +4,7 @@
 //! consistent with postures already recorded elsewhere in this crate:
 //!
 //! - **Non-streaming `Converse`, not `ConverseStream`.** The streaming
-//!   variant speaks `application/vnd.amazon.eventstream` — a binary framing
+//!   case speaks `application/vnd.amazon.eventstream` — a binary framing
 //!   with per-message CRC32 prologues, not SSE — an entirely separate
 //!   transport decoder. `Converse` returns an identical `CompletionResult`,
 //!   so nothing downstream of the adapter can tell the difference; what the
@@ -637,7 +637,7 @@ fn to_bedrock_tool_config(
 /// Anthropic-vendored model on Bedrock supports caching — a gate that
 /// recognized only "claude" would run a differently-named Anthropic id with
 /// caching silently OFF, the exact defect class the parity matrix
-/// (invariant 8) exists to prevent. The known blind spot is an
+/// (AGENTS.md #8) exists to prevent. The known blind spot is an
 /// application-inference-profile ARN, which is opaque by construction: the
 /// family is not recoverable from the string, and defaulting to sending the
 /// marker would 400 every request on a non-supporting model — the worse
@@ -876,7 +876,7 @@ impl Provider for BedrockProvider {
             reported: usage_reported,
             // Converse's `inputTokens` EXCLUDES cache reads (same meter split
             // as Anthropic's native API), so reads are folded back in to keep
-            // the normalized subset invariant (cached ⊆ input) that
+            // the normalized subset rule (cached ⊆ input) that
             // `Pricing::cost_usd` relies on — otherwise cached tokens would
             // be double-subtracted and the turn under-billed.
             input_tokens: usage.input_tokens + usage.cache_read_input_tokens,
@@ -930,7 +930,7 @@ impl Provider for BedrockProvider {
     ///
     /// Empty text is not announced: a tool-call-only turn has no answer
     /// text, and a zero-length delta would make an observer counting
-    /// deltas believe an answer arrived. Tool calls are deliberately not
+    /// deltas believe an answer arrived. Tool calls are not
     /// announced either — see the module docs.
     async fn complete_observed_ref(
         &self,

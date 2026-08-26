@@ -9,7 +9,7 @@
 //! whole retry budget re-issuing the identical streaming request into the
 //! same broken pipe.
 //!
-//! The recovery is deliberately split across two attempts rather than hidden
+//! The recovery is split across two attempts rather than hidden
 //! inside one provider call: the faulted streaming attempt **fails with a
 //! retryable error**, so the caller's retry machinery (which already bills
 //! every discarded attempt through its `UsageIncomplete` observer and bounds

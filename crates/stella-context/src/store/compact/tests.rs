@@ -8,7 +8,7 @@
 //! is the v4-fixture migration, which lives beside `open_legacy` in
 //! `store/tests.rs` with the rest of the schema ladder.
 //!
-//! House style, deliberately: assertion messages name the law they defend, so a
+//! House style: assertion messages name the law they defend, so a
 //! red test says *what broke*, not merely *which line*.
 
 use std::sync::Arc;

@@ -41,7 +41,7 @@
 //! hands out, and between them they are the whole of its correctness. They are
 //! not three copies of one idea: each answers a different question, is advanced
 //! by a different caller, and fails in a different direction. Two must be
-//! durable; the third must deliberately not be.
+//! durable; the third must not be.
 //!
 //! | Watermark | Question it answers | Lives | Advanced by |
 //! | --- | --- | --- | --- |

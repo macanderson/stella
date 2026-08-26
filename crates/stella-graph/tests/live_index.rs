@@ -295,7 +295,7 @@ async fn irrelevant_paths_are_filtered_at_injection() {
 
     // Same filter as the real notify callback: non-source extensions,
     // ignored directories, and paths outside the workspace root never enter
-    // the pipeline. `.md` is deliberately NOT the example any more — markdown
+    // the pipeline. `.md` is NOT the example any more — markdown
     // became a source extension in #3095, and its relevance is asserted
     // positively by `markdown_is_a_source_extension_at_injection` below.
     let asset = fx.write("logo.png", "not source\n");

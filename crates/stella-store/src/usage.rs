@@ -908,7 +908,7 @@ pub const MAX_QUARANTINE_REASON_BYTES: usize = 512;
 /// Why the cloud intake permanently refused one row, as persisted by
 /// [`UsageStore::quarantine_cloud_row`].
 ///
-/// Deliberately distinct from the drain's [`crate::drain::DrainRejection`]: only
+/// Distinct from the drain's [`crate::drain::DrainRejection`]: only
 /// a **terminal, row-attributable** rejection may ever become a quarantine
 /// record, and the named constructor says so. A transient failure must retry,
 /// and a terminal *batch* failure (bad auth, unsupported schema version) is not
@@ -1319,7 +1319,7 @@ mod tests {
         );
     }
 
-    /// The hard invariant from #466 / AGENTS.md #3: the dead-letter store keeps
+    /// The hard rule from #466 / AGENTS.md #3: the dead-letter store keeps
     /// a row for inspection, so it must not become a content leak. The column
     /// set is pinned to identity + addressing + content-free telemetry + the
     /// intake's diagnostic — adding a prompt/completion/path column here fails
