@@ -175,11 +175,14 @@ This is a subset, hand-picked for the symptoms in
 generated list — every code the tree emits, its level, its emit site, and its
 full field set — is
 [`docs/reference/diagnostics.md`](https://github.com/macanderson/stella/blob/main/docs/reference/diagnostics.md)
-in the repository. It is regenerated from the emit sites themselves, so it can
-never drift the way a second hand-maintained copy would; this page's table is
-transcribed from it by hand, which is a gap of its own —
-[#3045](https://github.com/macanderson/stella/issues/3045) tracks generating
-this page's table from the same source instead.
+in the repository, regenerated from the emit sites themselves.
+
+Which codes this table shows, and how it describes them, are editorial: they
+are picked and written for a reader chasing a symptom. Which codes *exist* and
+what level each is emitted at are not, and this table is held to the same scan
+the generated reference is — a code here that the tree no longer emits, or a
+level cell that stops matching the emit site, fails the build
+([#3045](https://github.com/macanderson/stella/issues/3045)).
 
 ## Next
 

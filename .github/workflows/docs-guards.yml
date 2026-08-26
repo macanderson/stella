@@ -77,6 +77,15 @@ name: docs-guards
 #     subject is the brand kit, the standalone HTML documents, the two
 #     hand-maintained token mirrors and the decks (#3653).
 #
+# 11. diagnostic-codes (scripts/check-diagnostic-codes.sh): every emitted
+#     diagnostic code has a section in docs/reference/diagnostics.md, and every
+#     code the website's curated table surfaces is still emitted at the level
+#     that table claims (#3045). It runs in ci.yml too, and has to run here for
+#     the same reason website-inputs does: the website table is `.mdx`, and a
+#     PR that edits only it is the diff ci.yml's Rust job is skipped for. The
+#     in-repo reference is generated and could not drift; the website copy is
+#     hand-picked prose and could, which is the whole gap this closes.
+#
 # Rust sources are in the path filter because the first three read them: a
 # citation added to a .rs comment is exactly how one goes stale, and the
 # subcommand list the third guard checks is itself a Rust enum.
@@ -96,6 +105,8 @@ on:
       - "scripts/check-design-refs.sh"
       - "scripts/check-website-inputs.sh"
       - "scripts/website-rust-inputs.txt"
+      - "scripts/check-diagnostic-codes.sh"
+      - "scripts/diagnostic-codes.py"
       - "scripts/file-size-baseline.txt"
       - "README.md"
       - "scripts/check-tokens.py"
@@ -122,6 +133,8 @@ on:
       - "scripts/check-design-refs.sh"
       - "scripts/check-website-inputs.sh"
       - "scripts/website-rust-inputs.txt"
+      - "scripts/check-diagnostic-codes.sh"
+      - "scripts/diagnostic-codes.py"
       - "scripts/file-size-baseline.txt"
       - "README.md"
       - "scripts/check-tokens.py"
@@ -252,3 +265,11 @@ jobs:
       - name: the brand art's install line and tagline match their sources
         if: ${{ !cancelled() }}
         run: python3 docs/brand/social/build_social.py --check
+
+      # The `.mdx` half. ci.yml runs this guard for the tree's own reference,
+      # which is generated and cannot drift; the website's curated table is
+      # hand-written, and a PR editing only it starts no Rust job at all
+      # (#3045).
+      - name: every emitted diagnostic code is documented
+        if: ${{ !cancelled() }}
+        run: ./scripts/check-diagnostic-codes.sh
