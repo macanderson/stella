@@ -142,6 +142,86 @@ fn main() {
                 }
             }
         }
+        // Asks for a child turn and reports what came back, seat included.
+        // Two independent greps as the script had: the seat and the finding
+        // are separate facts, and `wrapper_child_turn.rs` reads the composed
+        // sentence, so collapsing them would prove less while looking right.
+        "child-review" => {
+            let _request = read_line();
+            emit(
+                "{\"call\":\"child_turn\",\"id\":11,\"args\":\
+                 {\"role\":\"reviewer\",\"instruction\":\"does the diff drop the retry?\"}}",
+            );
+            let answer = read_line();
+            if !answer.contains("\"result\":11") {
+                eprintln!("the answer did not carry the id this plugin chose");
+                std::process::exit(1);
+            }
+            let seat = if answer.contains("\"seat\":\"research\"") {
+                "research"
+            } else {
+                "unknown"
+            };
+            let finding = if answer.contains("drops the retry on 429") {
+                format!("the reviewer ({seat}) says the diff drops the retry on 429")
+            } else {
+                "no assessment was available".to_string()
+            };
+            emit(&format!(
+                "{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\
+                 \"context\":[{{\"label\":\"reviewer\",\"text\":\"{finding}\"}}]}}}}"
+            ));
+        }
+        // Asks for a child turn the host will refuse, and reports the refusal
+        // it was actually given. Parameterised because two tests differ only
+        // in which refusal they expect — `undeclared` for a role the manifest
+        // never named, `forbidden` for the worker's own seat — and an
+        // unrecognised answer must say so rather than pass as either.
+        "child-refusal" => {
+            let _request = read_line();
+            let role = arg(&args, 1);
+            let expected = arg(&args, 2);
+            let note = arg(&args, 3);
+            emit(&format!(
+                "{{\"call\":\"child_turn\",\"id\":1,\"args\":\
+                 {{\"role\":\"{role}\",\"instruction\":\"grade it\"}}}}"
+            ));
+            let answer = read_line();
+            let text = if answer.contains(&format!("\"refusal\":\"{expected}\"")) {
+                note
+            } else {
+                "unexpected answer"
+            };
+            emit(&note_context(text));
+        }
+        // Asks three times against an allowance that admits fewer, counting
+        // what was granted and what was refused. An answer that is neither
+        // is a fault rather than a third category — the script exited on it
+        // and so does this.
+        "child-allowance" => {
+            let _request = read_line();
+            let (mut granted, mut refused) = (0u32, 0u32);
+            for id in 1..=3 {
+                emit(&format!(
+                    "{{\"call\":\"child_turn\",\"id\":{id},\"args\":\
+                     {{\"role\":\"reviewer\",\"instruction\":\"ask {id}\"}}}}"
+                ));
+                let answer = read_line();
+                if answer.contains("\"refusal\":\"allowance-spent\"") {
+                    refused += 1;
+                } else if answer.contains("\"seat\":\"research\"") {
+                    granted += 1;
+                } else {
+                    eprintln!("unexpected answer: {answer}");
+                    std::process::exit(1);
+                }
+            }
+            emit(&format!(
+                "{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\
+                 \"context\":[{{\"label\":\"asks\",\
+                 \"text\":\"granted {granted} refused {refused}\"}}]}}}}"
+            ));
+        }
         "call-once" => {
             let _request = read_line();
             emit(arg(&args, 1));
