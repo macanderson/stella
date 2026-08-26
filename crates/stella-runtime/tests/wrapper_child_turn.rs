@@ -24,8 +24,6 @@
 //! `cfg(unix)` is the same declared gap the rest of this suite carries, tracked
 //! in #3497.
 
-#![cfg(unix)]
-
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -139,15 +137,15 @@ fn host(
     (gate, plane, dispatcher)
 }
 
-fn plugin(script: &str, gate: Arc<HostCallGate>) -> SubprocessWrapper {
-    SubprocessWrapper::declare(
-        vec!["/bin/sh".into(), "-c".into(), script.into()],
-        Vec::new(),
-        Duration::from_secs(10),
-    )
-    .expect("the transport is declared with a program and a budget")
-    .wrapper
-    .serving(gate)
+const FIXTURE: &str = env!("CARGO_BIN_EXE_wrapper-plugin-fixture");
+
+fn plugin(mode: &[&str], gate: Arc<HostCallGate>) -> SubprocessWrapper {
+    let mut argv = vec![FIXTURE.to_string()];
+    argv.extend(mode.iter().map(|part| (*part).to_string()));
+    SubprocessWrapper::declare(argv, Vec::new(), Duration::from_secs(10))
+        .expect("the transport is declared with a program and a budget")
+        .wrapper
+        .serving(gate)
 }
 
 fn before() -> BeforeTurnRequest {
@@ -178,26 +176,7 @@ async fn a_plugin_asks_for_a_model_call_at_a_declared_role_and_the_host_makes_it
     let manifest = manifest();
     let (gate, plane, dispatcher) = host(&manifest, 2);
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"child_turn","id":11,"args":{"role":"reviewer","instruction":"does the diff drop the retry?"}}'
-read -r answer
-case "$answer" in
-  *'"result":11'*) ;;
-  *) printf 'the answer did not carry the id this plugin chose\n' >&2 ; exit 1 ;;
-esac
-case "$answer" in
-  *'"seat":"research"'*) seat="research" ;;
-  *) seat="unknown" ;;
-esac
-case "$answer" in
-  *'drops the retry on 429'*) finding="the reviewer ($seat) says the diff drops the retry on 429" ;;
-  *) finding="no assessment was available" ;;
-esac
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"reviewer","text":"%s"}]}}\n' "$finding"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate))
+    let response = plugin(&["child-review"], Arc::clone(&gate))
         .before_turn(before())
         .await
         .expect("the plugin asked, was answered, and answered the point");
@@ -249,21 +228,18 @@ async fn an_undeclared_role_intent_is_refused_to_the_plugin_and_reported_to_the_
     let manifest = manifest();
     let (gate, plane, dispatcher) = host(&manifest, 2);
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"child_turn","id":1,"args":{"role":"auditor","instruction":"grade it"}}'
-read -r answer
-case "$answer" in
-  *'"refusal":"undeclared"'*) note="the host refused an undeclared role intent; degrading" ;;
-  *) note="unexpected answer" ;;
-esac
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"note","text":"%s"}]}}\n' "$note"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate))
-        .before_turn(before())
-        .await
-        .expect("a refused call is a value the plugin reads, never a death");
+    let response = plugin(
+        &[
+            "child-refusal",
+            "auditor",
+            "undeclared",
+            "the host refused an undeclared role intent; degrading",
+        ],
+        Arc::clone(&gate),
+    )
+    .before_turn(before())
+    .await
+    .expect("a refused call is a value the plugin reads, never a death");
     let messages = admissible(&manifest, response)
         .expect("the contribution is admissible")
         .into_messages();
@@ -305,21 +281,18 @@ async fn a_plugin_cannot_name_a_role_intent_that_resolves_to_the_worker() {
     );
     let (gate, plane, dispatcher) = host(&manifest, 2);
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"child_turn","id":2,"args":{"role":"grader","instruction":"grade your own work"}}'
-read -r answer
-case "$answer" in
-  *'"refusal":"forbidden"'*) note="the worker's seat is not for sale" ;;
-  *) note="unexpected answer" ;;
-esac
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"note","text":"%s"}]}}\n' "$note"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate))
-        .before_turn(before())
-        .await
-        .expect("the point still completes");
+    let response = plugin(
+        &[
+            "child-refusal",
+            "grader",
+            "forbidden",
+            "the worker's seat is not for sale",
+        ],
+        Arc::clone(&gate),
+    )
+    .before_turn(before())
+    .await
+    .expect("the point still completes");
     let messages = admissible(&manifest, response)
         .expect("the contribution is admissible")
         .into_messages();
@@ -344,23 +317,7 @@ async fn a_plugin_asking_for_more_child_turns_than_the_ceiling_is_clamped_not_ob
     let (gate, plane, dispatcher) = host(&manifest, 1);
     assert_eq!(plane.max_turns(), 1);
 
-    let script = r#"
-read -r request
-granted=0
-refused=0
-for id in 1 2 3; do
-  printf '{"call":"child_turn","id":%s,"args":{"role":"reviewer","instruction":"ask %s"}}\n' "$id" "$id"
-  read -r answer
-  case "$answer" in
-    *'"refusal":"allowance-spent"'*) refused=$((refused + 1)) ;;
-    *'"seat":"research"'*) granted=$((granted + 1)) ;;
-    *) printf 'unexpected answer: %s\n' "$answer" >&2 ; exit 1 ;;
-  esac
-done
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"asks","text":"granted %s refused %s"}]}}\n' "$granted" "$refused"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate))
+    let response = plugin(&["child-allowance"], Arc::clone(&gate))
         .before_turn(before())
         .await
         .expect("a spent allowance is answered, never fatal");
@@ -400,21 +357,18 @@ async fn a_host_with_no_child_turn_plane_says_so_rather_than_pretending() {
         Box::new(HostPlanes::none()),
     ));
 
-    let script = r#"
-read -r request
-printf '%s\n' '{"call":"child_turn","id":1,"args":{"role":"reviewer","instruction":"grade it"}}'
-read -r answer
-case "$answer" in
-  *'"refusal":"unavailable"'*) note="this host runs no child turns" ;;
-  *) note="unexpected answer" ;;
-esac
-printf '{"point":"before_turn","body":{"protocol_version":1,"context":[{"label":"note","text":"%s"}]}}\n' "$note"
-"#;
-
-    let response = plugin(script, Arc::clone(&gate))
-        .before_turn(before())
-        .await
-        .expect("the point completes");
+    let response = plugin(
+        &[
+            "child-refusal",
+            "reviewer",
+            "unavailable",
+            "this host runs no child turns",
+        ],
+        Arc::clone(&gate),
+    )
+    .before_turn(before())
+    .await
+    .expect("the point completes");
     let messages = admissible(&manifest, response)
         .expect("the contribution is admissible")
         .into_messages();
