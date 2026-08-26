@@ -275,6 +275,24 @@ impl WorkJournal {
         run(&mut cmd)
     }
 
+    /// The session id this handle records under — the same string the session
+    /// registry keys its record on.
+    ///
+    /// Public because attribution needs it (#4386): a snapshot measures the
+    /// *shared* work tree, so a caller asking who else is writing to that tree
+    /// has to be able to leave itself out of the answer.
+    pub fn session(&self) -> &str {
+        &self.session
+    }
+
+    /// The work tree this handle measures.
+    ///
+    /// Public for the same reason as [`Self::session`]: it is the key another
+    /// session's registry record is matched against.
+    pub fn work_tree(&self) -> &Path {
+        &self.work_tree
+    }
+
     /// The commit this session last recorded, if any.
     ///
     /// Public because marking a turn needs it: a caller that records several

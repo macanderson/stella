@@ -53,6 +53,12 @@
 //! authority on what the agent did is the pipeline's adoption, which measures
 //! a candidate against a sealed baseline and can tell the two apart.
 //!
+//! The durable half no longer *states* what it cannot know: since #4386 each
+//! `files_touched` row carries the provenance of the reading that produced it,
+//! and a row measured while another live session shared the work tree says so
+//! rather than naming this turn as the author. [`attribution`] holds that
+//! decision and the argument for labelling rather than filtering.
+//!
 //! It lives beside `agent.rs` rather than inside it because `agent.rs` sits
 //! close to the 1500-line ratchet (AGENTS.md § "God files — plan around them,
 //! never into them") — new logic lands in a sibling.
@@ -69,6 +75,10 @@ use stella_tools::own_change::{OwnChange, OwnChangeKind};
 
 use crate::config::Config;
 use crate::durability::{SessionDurability, UnmeasurableReason, WorktreeSnapshot};
+
+pub(crate) mod attribution;
+
+use attribution::Provenance;
 
 /// This module's `module_path!()`, so its records filter under one target.
 const DIAG_TARGET: &str = "stella::turn_files";
@@ -116,7 +126,7 @@ impl stella_tools::call_measure::CallMeasure for TurnCallMeasure {
     /// calls the boundary's own function rather than a per-call variant of it.
     fn measure_and_publish(&self, own: &[OwnChange]) {
         let measured =
-            emit_measured_tree_changes(&self.durability, &self.tx, self.execution.as_ref());
+            emit_measured_tree_changes(&self.durability, &self.tx, self.execution.as_ref(), own);
         emit_own_changes(&self.tx, self.execution.as_ref(), own, &measured);
     }
 }
@@ -167,14 +177,30 @@ fn own_touch_row(change: &OwnChange) -> FileTouchRow {
         .to_string(),
         lines_added: u64::from(change.added),
         lines_removed: u64::from(change.removed),
-        events_json: serde_json::json!([{
-            "event": "measured",
-            "reason": "the call's own before/after reading",
-            "lines_added": change.added,
-            "lines_removed": change.removed,
-        }])
-        .to_string(),
+        events_json: touch_events(
+            Provenance::OwnReading,
+            u64::from(change.added),
+            u64::from(change.removed),
+        ),
     }
+}
+
+/// The `events_json` both row builders write: one `measured` entry naming the
+/// reading that produced it and whether that reading can name an author.
+///
+/// One function rather than two literals because `attributed` is the field a
+/// reader has to be able to trust across both shapes — an export that renders
+/// it for a tree reading and omits it for a call's own reading would make its
+/// absence mean two things (#4386).
+fn touch_events(provenance: Provenance, added: u64, removed: u64) -> String {
+    serde_json::json!([{
+        "event": "measured",
+        "reason": provenance.reason(),
+        "attributed": provenance.attributed(),
+        "lines_added": added,
+        "lines_removed": removed,
+    }])
+    .to_string()
 }
 
 /// Everything the owner of a turn owes the **registry** when it opens the
@@ -195,12 +221,16 @@ fn own_touch_row(change: &OwnChange) -> FileTouchRow {
 ///   call that changed nothing. That is the exact shape #4155 was reported as,
 ///   and the exact shape #4160 had to repair once already at the turn
 ///   boundary.
+/// - **Who else is in the work tree** (#4386). The per-call measurements this
+///   attaches read the cached answer, so the turn's first reading has to have
+///   one; the closing bookend re-asks for a session that started mid-turn.
 pub(crate) fn open_turn_streams(
     registry: &stella_tools::registry::ToolRegistry,
     cfg: &Config,
     tx: &EventSender,
     execution: Option<&(Arc<Store>, i64)>,
 ) {
+    cfg.durability.refresh_worktree_sharers();
     registry.attach_events(tx.clone());
     registry.attach_call_measure(Arc::new(TurnCallMeasure::new(
         cfg.durability.clone(),
@@ -398,12 +428,18 @@ fn stale_lane_open_tasks(
 /// but the count is the one number a turn-boundary observation can want
 /// without re-reading the tree, and re-reading is precisely what the
 /// baseline-advancing snapshot above forbids.
+///
+/// The sharer set is re-asked here rather than reused from the turn's opening
+/// bookend, because this sweep covers the whole turn and a session that opened
+/// halfway through it wrote into the same window (#4386). No call owns this
+/// reading, so it carries no `own` paths to vouch for any of it.
 pub(crate) fn emit_shared_tree_changes(
     cfg: &Config,
     tx: &EventSender,
     execution: Option<&(Arc<Store>, i64)>,
 ) -> usize {
-    emit_measured_tree_changes(&cfg.durability, tx, execution).len()
+    cfg.durability.refresh_worktree_sharers();
+    emit_measured_tree_changes(&cfg.durability, tx, execution, &[]).len()
 }
 
 /// [`emit_shared_tree_changes`] for a driver holding the raw channel sender
@@ -455,6 +491,7 @@ pub(crate) fn emit_measured_tree_changes(
     durability: &SessionDurability,
     tx: &EventSender,
     execution: Option<&(Arc<Store>, i64)>,
+    own: &[OwnChange],
 ) -> Vec<String> {
     let measured = match durability.snapshot_worktree() {
         WorktreeSnapshot::Measured(changes) => changes,
@@ -486,7 +523,16 @@ pub(crate) fn emit_measured_tree_changes(
         return Vec::new();
     }
     if let Some((store, execution_id)) = execution {
-        let rows: Vec<FileTouchRow> = measured.iter().map(file_touch_row).collect();
+        // The sharer set is per turn, not per path, but the classification is
+        // per path: a call's own reading vouches for the path it named and for
+        // nothing else (#4386).
+        let sharers = durability.worktree_sharers();
+        let rows: Vec<FileTouchRow> = measured
+            .iter()
+            .map(|change| {
+                file_touch_row(change, attribution::provenance(&change.path, own, &sharers))
+            })
+            .collect();
         // Best-effort for the same reason `AdoptionLedger::record` is: this is
         // observability, not evidence (#2882). A telemetry write must never
         // fail a turn whose bytes are already on disk.
@@ -507,19 +553,17 @@ pub(crate) fn emit_measured_tree_changes(
 /// many it wrote. `Store::finalize_execution_reflection` reads exactly this
 /// table for its `wrote_files` flag, so the empty table also told the
 /// reflection loop that a turn which edited dozens of files had written none.
-fn file_touch_row(change: &JournalChange) -> FileTouchRow {
+fn file_touch_row(change: &JournalChange, provenance: Provenance) -> FileTouchRow {
     FileTouchRow {
         path: change.path.clone(),
         ops: ops_letter(change.kind).to_string(),
         lines_added: u64::from(change.added),
         lines_removed: u64::from(change.removed),
-        events_json: serde_json::json!([{
-            "event": "measured",
-            "reason": "turn-boundary work-tree measurement",
-            "lines_added": change.added,
-            "lines_removed": change.removed,
-        }])
-        .to_string(),
+        events_json: touch_events(
+            provenance,
+            u64::from(change.added),
+            u64::from(change.removed),
+        ),
     }
 }
 
@@ -1254,7 +1298,10 @@ mod tests {
     /// `FileChange` events and wrote no `files_touched` row at all.
     #[test]
     fn a_measured_change_becomes_a_durable_row_carrying_the_same_counts() {
-        let row = file_touch_row(&measured(JournalChangeKind::Modified));
+        let row = file_touch_row(
+            &measured(JournalChangeKind::Modified),
+            Provenance::SoleWriter,
+        );
         assert_eq!(row.path, "src/lib.rs");
         assert_eq!(row.ops, "U");
         assert_eq!((row.lines_added, row.lines_removed), (12, 3));
@@ -1268,6 +1315,95 @@ mod tests {
             !row.events_json.contains("@@"),
             "files_touched indexes paths; the diff rides the FileChange event"
         );
+    }
+
+    /// **Witness (#4386).** The reported shape: two sessions in one checkout,
+    /// one of them writing a file the other never opened. Session A's snapshot
+    /// sees it — that is what a shared work tree means and no fix changes it —
+    /// so the durable row must say the reading cannot name an author, where it
+    /// used to state "turn-boundary work-tree measurement" and let the export
+    /// present another session's file as this turn's work.
+    #[test]
+    fn a_file_another_live_session_wrote_is_not_claimed_by_this_turn() {
+        let guard = tempfile::tempdir().unwrap();
+        let ws = guard.path().join("ws");
+        std::fs::create_dir_all(&ws).unwrap();
+        let store_root = guard.path().join("store");
+        let registry_dir = guard.path().join("sessions");
+
+        // Two sessions on one tree, each with its own journal — the same
+        // arrangement `WorkJournal` gives them in a real checkout.
+        let session_a = stella_store::work_journal::WorkJournal::open_in(&store_root, &ws, "ses-a")
+            .expect("journal A");
+        let _session_b =
+            stella_store::work_journal::WorkJournal::open_in(&store_root, &ws, "ses-b")
+                .expect("journal B");
+        // A's baseline, discarded exactly as `SessionDurability::bind` does.
+        let _ = session_a.snapshot_worktree().expect("baseline");
+
+        // Session B writes. Session A does nothing at all.
+        std::fs::write(ws.join("prose_score.py"), "print('b')\n").unwrap();
+
+        let registry = stella_store::SessionRegistry::open(&registry_dir);
+        for id in ["ses-a", "ses-b"] {
+            registry
+                .upsert(&stella_store::SessionRecord {
+                    id: id.into(),
+                    pid: std::process::id(),
+                    workspace: ws.to_string_lossy().into_owned(),
+                    title: String::new(),
+                    summary: String::new(),
+                    description: None,
+                    status: stella_store::SessionStatus::InProgress,
+                    started_at_ms: 0,
+                    updated_at_ms: 0,
+                    supervisor: None,
+                })
+                .expect("register");
+        }
+        let sharers = attribution::sharers_of(&registry.list(), &ws, "ses-a");
+        assert_eq!(
+            sharers,
+            vec!["ses-b".to_string()],
+            "A must see B as sharing its tree"
+        );
+
+        let measured = session_a.snapshot_worktree().expect("A measures the tree");
+        let rows: Vec<FileTouchRow> = measured
+            .iter()
+            .map(|change| {
+                file_touch_row(change, attribution::provenance(&change.path, &[], &sharers))
+            })
+            .collect();
+        let row = rows
+            .iter()
+            .find(|row| row.path == "prose_score.py")
+            .expect("the shared tree puts B's file in A's reading — that is the defect's premise");
+        let events: serde_json::Value = serde_json::from_str(&row.events_json).expect("json");
+        assert_eq!(
+            events[0]["attributed"], false,
+            "a change measured while another session shared the tree must not be \
+             recorded as this turn's: {}",
+            row.events_json
+        );
+        assert!(
+            row.events_json.contains("another session"),
+            "the reason string is what `stella export` renders: {}",
+            row.events_json
+        );
+    }
+
+    /// The other side: the same reading, with nobody else in the tree, is still
+    /// this session's work and still says so.
+    #[test]
+    fn a_lone_session_still_claims_what_it_measured() {
+        let row = file_touch_row(
+            &measured(JournalChangeKind::Created),
+            attribution::provenance("src/lib.rs", &[], &[]),
+        );
+        let events: serde_json::Value = serde_json::from_str(&row.events_json).expect("json");
+        assert_eq!(events[0]["attributed"], true);
+        assert_eq!(events[0]["reason"], "turn-boundary work-tree measurement");
     }
 
     #[test]

@@ -91,6 +91,16 @@ pub struct SessionDurability {
     /// belongs to. `Arc` so `sink()` hands out cheap shares rather than
     /// re-opening the record per engine.
     bound: Arc<RwLock<Option<Bound>>>,
+    /// The other live sessions writing to this work tree, as of the last
+    /// [`Self::refresh_worktree_sharers`] (#4386).
+    ///
+    /// Cached rather than asked per reading because the answer is a walk of the
+    /// session registry directory and a reading is taken after every solo
+    /// mutating tool call. Refreshed at a turn's two bookends, which is the
+    /// resolution the answer is used at: a session that starts mid-turn is
+    /// caught by the closing sweep, and the opening one is what a long turn's
+    /// per-call readings consult.
+    sharers: Arc<RwLock<Vec<String>>>,
 }
 
 /// What one work-tree measurement produced.
@@ -221,6 +231,30 @@ impl SessionDurability {
         // After the write lock is released: `snapshot_worktree` takes the read
         // lock, and this is not a re-entrant lock.
         let _ = self.snapshot_worktree();
+    }
+
+    /// Re-ask the session registry which other live sessions are writing to
+    /// this work tree, and cache the answer for this turn's readings (#4386).
+    ///
+    /// Called at a turn's bookends. An unbound handle measures nothing, so it
+    /// has nothing to attribute and the question is not asked.
+    pub fn refresh_worktree_sharers(&self) {
+        let Some(journal) = self.journal() else {
+            return;
+        };
+        let found =
+            crate::turn_files::attribution::live_sharers(journal.work_tree(), journal.session());
+        *self.sharers.write().unwrap_or_else(|p| p.into_inner()) = found;
+    }
+
+    /// The sharer set the last refresh found — empty when this session is alone
+    /// in the tree, which is the only state in which a measurement may be
+    /// claimed as this session's work.
+    pub fn worktree_sharers(&self) -> Vec<String> {
+        self.sharers
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Declare that this session's turns are running inside a staged pipeline,
