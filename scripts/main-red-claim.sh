@@ -39,7 +39,7 @@
 # Twenty minutes is long enough to write a two-line fix and short enough that
 # a dead session is not in the way for a second incident.
 #
-# ## Fail-open, deliberately, at every unknown
+# ## Fail-open at every unknown
 #
 # Anything this cannot answer means PROCEED, loudly. An unreachable tracker, a
 # `gh` that is not installed, an identity it cannot read, two open `main-red`
@@ -174,7 +174,7 @@ elif ! open_issues="$(gh issue list --label "$label" --state open \
   proceed "ok  proceed (tracker unreachable)"
 fi
 
-# Newlines to spaces, then squeezed — deliberately NOT `tr -d ' '`, which
+# Newlines to spaces, then squeezed, and not `tr -d ' '` — which
 # check-main-red-hold.sh can afford because it only ever prints this list.
 # This one splits it, and deleting the separator turns "4671 4672" into the
 # single issue 46714672: two open issues would read as one unambiguous one,

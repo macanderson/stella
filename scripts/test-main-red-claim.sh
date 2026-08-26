@@ -18,7 +18,7 @@
 #     than the duplication it prevents), and it is one branch per unknown, so
 #     it is one case per branch.
 #
-# Deliberately not a `make gate` step, matching `main-red-hold-test`: the
+# Not a `make gate` step, matching `main-red-hold-test`: the
 # subject asks the issue tracker a question, and the gate is hermetic and
 # offline by contract.
 #
@@ -169,7 +169,7 @@ fi
 # --help prints the whole header, however long it grows.
 out="$("$SCRIPT" --help 2>&1)"
 case "$out" in
-*"Fail-open, deliberately, at every unknown"*) ok "--help reaches the end of the header" ;;
+*"Fail-open at every unknown"*) ok "--help reaches the end of the header" ;;
 *) bad "--help truncated the header" ;;
 esac
 
