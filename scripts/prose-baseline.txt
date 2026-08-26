@@ -752,10 +752,10 @@ crates/stella-cli/src/term_policy.rs interface-jargon 11
 crates/stella-cli/src/tests.rs interface-jargon 6
 crates/stella-cli/src/tests.rs rust-jargon 2
 crates/stella-cli/src/tests/flag_docs.rs filler-adverb 1
-crates/stella-cli/src/tool_docs.rs filler-adverb 3
+crates/stella-cli/src/tool_docs.rs filler-adverb 4
 crates/stella-cli/src/tool_docs.rs honesty-declaration 6
 crates/stella-cli/src/tool_docs.rs meta-writing 1
-crates/stella-cli/src/tool_docs.rs rust-jargon 4
+crates/stella-cli/src/tool_docs.rs rust-jargon 7
 crates/stella-cli/src/tool_foundry/adopt.rs filler-adverb 1
 crates/stella-cli/src/tool_foundry/adopt.rs meta-writing 1
 crates/stella-cli/src/tool_policy.rs filler-adverb 2
@@ -1076,7 +1076,6 @@ crates/stella-core/src/skills/invoke.rs filler-adverb 1
 crates/stella-core/src/skills/invoke.rs rust-jargon 2
 crates/stella-core/src/skills/migration_contract.rs enumerative-announcement 1
 crates/stella-core/src/skills/migration_contract.rs filler-adverb 1
-crates/stella-core/src/skills/tests.rs filler-adverb 1
 crates/stella-core/src/skills/tests.rs interface-jargon 1
 crates/stella-core/src/skills/tests.rs rust-jargon 1
 crates/stella-core/src/speculation.rs honesty-declaration 1
