@@ -1,0 +1,45 @@
+# deck golden · zoom_scripted
+# the task zoom over a scripted task: contract, evidence, lanes, spend
+# viewport 160×40 · rendered through render_deck, styling stripped
+# regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
+
+ SESSION  ▸ plan · task 5 Wire the triggers API · 4/7                                                                                         ⌃S plan   stella*
+task 5 · Wire the triggers API                                                                                             ● working · lead · glm-5.2 · esc back
+
+done means · the contract, checked not vibed
+  ✓ no inbound refs to the removed trigger route                                                                                                     graph · det
+      0 inbound edges over 438 nodes
+  ✗ the automations suite is green                                                                                                                    unit · det
+      2 of 4 cases failing: triggers::org_guard
+  ○ no duplicate findings over 3 runs                                                                                                              harness · det
+  ○ the migration reads as reversible                                                                                                 vera:reversibility · model
+  4 checks · 3 deterministic · 1 model-judged · 2 pending, 1 failed · it may not close
+
+evidence · every event tagged task:5
+  edit   crates/stella-serve/src/automations/triggers.rs                                                                                                  +41 -6
+  run    cargo test -p stella-serve triggers                                                                                                                 2/4
+  graph  3 nodes · TriggerRoute, org guard                                                                                                                    wr
+
+planned vs actual · [:NEXT] is the plan · [:THEN] is what happened
+  planned  read the trigger routes → wire the org guard → test
+  actual   read the trigger routes → wire the org guard → ⌥ fix borrow err → test
+  1 divergence · cause E0502 borrow · recorded as a trace outcome
+
+spend · what this task has cost so far
+  $0.12 · 41.0k tok · cache rd 71% · 2 model calls · est remain $0.05
+
+
+
+
+
+
+
+
+
+
+r re-run checks · s split task · b hand to worker · i promote to issue · ⌥ diff plan
+a task closes when its checks pass, not when the model says so.
+
+>>>
+ ⏎ queue · ↓ 2 sub-agents · ^N failure · ^Z fold turn · ^O expand · ! shell · / commands
+zai/glm-5.2-air · execute · ctx ▌░░░░░░░░░░░ 4% · $0.05 · saved $0.00 · ✉ 0                                                                               ? help

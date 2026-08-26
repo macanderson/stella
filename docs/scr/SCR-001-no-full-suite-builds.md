@@ -1,7 +1,7 @@
 ---
-id: SCR-001
+id: scr/001-no-full-suite-builds
 title: Never compile the full test suite in the inner loop
-status: active
+status: living
 origin: repeated manual prompt, ~daily, 2025–2026
 trigger: any build/test invocation during development
 autonomy: L2
@@ -32,10 +32,10 @@ Scope every test command to the touched unit, using the repo's stack:
 | Python / uv (arenabench) | `uv run pytest tests/test_x.py -q` | bare `pytest`, `make test` |
 | Next.js (cgp-website) | scope any future suite to the touched module | any bare full-suite `test` script |
 
-Reproduce full CI locally only when deliberately debugging a CI-only
-failure, and say so out loud in the session.
+Reproduce full CI locally only when debugging a CI-only failure, and say so
+out loud in the session.
 
 ## Exceptions
 
-Release verification; explicit maintainer request; deliberate, stated
-reproduction of a CI-only failure.
+Release verification; explicit maintainer request; stated reproduction of a
+CI-only failure.

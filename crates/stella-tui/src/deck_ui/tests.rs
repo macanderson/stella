@@ -33,6 +33,7 @@ mod settings;
 mod skills;
 mod splash;
 mod tabs;
+mod task_zoom;
 mod traces;
 mod transcript_nav;
 

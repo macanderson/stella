@@ -1,7 +1,7 @@
 ---
-id: SCR-003
+id: scr/003-dod-verified-close
 title: Close issues only against a verified definition of done
-status: active
+status: living
 origin: delegation-to-DoD steering pattern, 2025–2026
 trigger: declaring any issue or task complete
 autonomy: L2

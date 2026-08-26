@@ -1,3 +1,9 @@
+---
+id: scr/readme
+title: Steering Context Records
+status: living
+---
+
 # Steering Context Records
 
 An SCR is to steering what an ADR is to architecture: a numbered, versioned
@@ -55,24 +61,25 @@ agent bug.
 ## Lifecycle
 
 1. **Capture** — second occurrence of a manual steer → draft an SCR. Any
-   agent may draft; status `active`, autonomy `L1`.
+   agent may draft; status `living`, autonomy `L1`.
 2. **Promote** — attach an enforcement mechanism; update the `autonomy` and
    `enforcement` fields. The SCR is the changelog of its own automation.
 3. **Load** — agents receive the SCR corpus as context at session start. A
    steer that exists as an SCR should never need to be typed again.
 4. **Audit** — a periodic meta-review flags SCRs stuck at L1 whose directive
    keeps appearing in transcripts; that is the promotion backlog.
-5. **Retire / supersede** — SCRs are never deleted; they are marked
-   `superseded-by:SCR-0NN` so the 10-year reader can trace why the process
-   looks the way it does. Durability-first applies to the process itself.
+5. **Retire / supersede** — SCRs are never deleted; they take `status:
+   superseded` with a `superseded_by:` naming the replacement's id, so the
+   10-year reader can trace why the process looks the way it does.
+   Durability-first applies to the process itself.
 
 ## Template
 
 ```markdown
 ---
-id: SCR-0NN
+id: scr/0NN-<kebab-slug>  # `ns/name`, lowercase-kebab, as ADRs carry
 title: <directive as an imperative sentence>
-status: active            # active | superseded-by:SCR-0NN | retired
+status: living            # living | superseded (+ superseded_by:) | archived
 origin: <how/why this became a standing steer>
 trigger: <the situation in which an agent must apply it>
 autonomy: L1              # current rung on the ladder
