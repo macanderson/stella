@@ -487,21 +487,16 @@ impl<G: GitCli> WorktreeManager<G> {
         removed.and(branch)
     }
 
-    /// List the repository's worktrees (`git worktree list --porcelain`).
-    pub async fn list(&self) -> Result<Vec<WorktreeEntry>, WorktreeError> {
-        let out = self
-            .git
-            .run(&self.repo_root, &["worktree", "list", "--porcelain"])
-            .await?;
-        let out = ensure_ok(out, "worktree list --porcelain")?;
-        Ok(parse_worktree_list(&out.stdout))
-    }
-
     /// Stage exactly `paths` and commit them — **always** an explicit
     /// pathspec (`git add -- <paths>`, then `git commit -m <message> --
     /// <paths>`), never `-a` and never a pathspec-less commit that would sweep
     /// the whole index. Returns the new commit sha. Rejects an empty pathspec
     /// ([`WorktreeError::EmptyPathspec`]).
+    ///
+    /// No product path commits yet; this ships anyway because it is the only
+    /// place in the crate that encodes the pathspec discipline, and its tests
+    /// are what stop a later caller reaching for `git add -A` in a worktree
+    /// that shares an index with a human's checkout.
     pub async fn commit_paths(
         &self,
         repo: &Path,
@@ -997,8 +992,12 @@ detached
             "A should be clean: {status_a:?}"
         );
 
-        // list sees the base repo plus both task worktrees.
-        let listed = mgr.list().await.unwrap();
+        // Git registered both worktrees on their own `fleet/` branches.
+        let out = SystemGitCli
+            .run(repo, &["worktree", "list", "--porcelain"])
+            .await
+            .unwrap();
+        let listed = parse_worktree_list(&out.stdout);
         let branches: Vec<String> = listed.iter().filter_map(|e| e.branch.clone()).collect();
         assert!(
             branches.iter().any(|b| b.starts_with("fleet/task-a-")),

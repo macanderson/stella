@@ -316,22 +316,6 @@ impl Sink for TerminalGated {
     }
 }
 
-/// Discards everything.
-///
-/// The default when a caller does not care, and what keeps every library type
-/// in the workspace usable without wiring a sink — the same job
-/// `stella-serve::observe::sink::NullSink` does today.
-///
-/// No crate outside this one selects it yet; #4754 decides whether it stays
-/// shipped API.
-pub struct NullSink;
-
-impl Sink for NullSink {
-    fn write(&self, _record: &Record) -> Result<(), SinkError> {
-        Ok(())
-    }
-}
-
 /// Records in memory, for assertions.
 ///
 /// This is what makes acceptance criteria testable: a test matches on a

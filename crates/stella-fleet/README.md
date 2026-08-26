@@ -266,11 +266,15 @@ table-tested with an injected `Clock` instead of a real wait (L-E4).
   judges a branch against the `base_ref` its `Worktree` value carries, which
   the ledger does not record, and it has no `--force` rung. Consolidating the
   two is tracked separately.
-- **Some of this crate's surface has no product caller yet.**
-  `WorktreeManager::list` and `commit_paths` are exercised only by this crate's
-  own tests. They are API and tests, not shipped behavior; treat their coverage
-  as a contract for the wiring still to come, not as evidence the feature is
-  live; #4754 decides whether they get wired or go.
+- **`WorktreeManager::commit_paths` has no product caller yet.** It is
+  exercised only by this crate's own tests, and it ships anyway because it is
+  the only place here that encodes the pathspec discipline — `git add --
+  <paths>` and never `-A` — in a checkout that shares an index with a human's.
+  Treat its coverage as a contract for the wiring still to come, not as
+  evidence the feature is live. `WorktreeManager::list` used to sit beside it
+  and is gone: `Gc::sweep` is the only production sweep over worktrees, it runs
+  `git worktree list --porcelain` itself, and both parse the result through the
+  same `parse_worktree_list`.
 
   `WorktreeManager::remove` has left this list: `stella-cli`'s
   `candidate_workspaces` and `self_driving_cmd::work` both call it. So has the

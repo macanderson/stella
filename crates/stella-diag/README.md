@@ -243,6 +243,7 @@ hands correlation over for nothing.
 For a whole vocabulary rather than a call site, implement `Facet` on a per-crate
 enum: the crate that owns the events owns their rendering, so nobody edits a
 shared enum and no new option recompiles the world. Nothing in this workspace
-implements it yet — `stella-cli`'s `diag_bridge` builds `Record::new` by hand
-across about twenty sites — so read this as an offer, not as a description of
-what the tree does (#4754).
+implements it — `stella-cli`'s `diag_bridge` builds `Record::new` by hand,
+because it is a binary and no other crate renders its records — so read this
+as an offer to a library crate that owns a vocabulary, not as a description of
+what the tree does.

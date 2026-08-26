@@ -28,11 +28,15 @@
 //!
 //! [`record_turn`], [`sweep`], [`record_appraisal`] and [`queued_candidates`]
 //! are the retirement half, and they carry `#[allow(dead_code)]` because they
-//! have no production caller yet. The two seams they need are a turn-end hook
-//! that knows both the offered and the selected skill sets, and the retirement
-//! sweep that writes the tombstone. Wiring them is tracked in #4754; every
-//! function here is exercised by `tests.rs` and the shapes are the ones that
-//! wiring will call.
+//! have no production caller yet. They are kept rather than deleted because
+//! the decision half they call — `appraise` and `decide_demotion` in
+//! `stella-core::skills::appraisal` — is live, tested and has no other caller,
+//! so deleting these would leave that logic unreachable from the binary that
+//! owns the ledger. The two seams they need are a turn-end hook that knows
+//! both the offered and the selected skill sets, and the retirement sweep that
+//! writes the tombstone; #5086 tracks building them, and records the
+//! consequence of not having them — [`latest_verdicts`] reads a file nothing
+//! writes, so the creation gate sees `Unevaluated` in every real session.
 
 use std::collections::HashMap;
 use std::path::Path;
