@@ -23,13 +23,9 @@ use crate::deck::{DeckTab, WorkspaceModel};
 use crate::deck_ui::{DeckUi, InstalledMode, IssuesMode};
 use crate::panel_guard::{guarded_band, guarded_overlay};
 use crate::render::{render_arg_popup, render_slash_popup, scroll_window_start, slash_popup_area};
+use crate::views::frame::{PROMPT_PREFIX, PROMPT_PREFIX_W};
 use crate::{notice, splash, theme};
 
-/// The accent prompt prefix on every composer row. Chrome, not content — it
-/// is never part of the submitted string and the caret cannot enter it.
-const PROMPT_PREFIX: &str = ">>> ";
-/// Display width of [`PROMPT_PREFIX`].
-const PROMPT_PREFIX_W: usize = 4;
 /// One reserved column on the composer's right for the scroll indicator.
 const COMPOSER_GUTTER_W: usize = 1;
 
