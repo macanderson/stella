@@ -1,0 +1,42 @@
+# Down-only ratchet on module-header density, per crate (#4760).
+#
+# Each line is `<unit> <mean>` -- the mean length, in lines, of every leading
+# `//!` block in that crate's Rust files, recorded in hundredths so the
+# comparison is integer arithmetic. A unit may lower its mean; it may never
+# raise it, and a unit absent from this list is held to 12.00. Regenerate with
+# `make prose-update`, which refuses to raise a number.
+#
+# Mean header length rather than comment share, because share is a bad proxy on
+# its own: a well-documented pure-function crate should be comment-heavy, and
+# stella-diff scored 74/100 at 26% share. What #4392 measured and #4758 is
+# fixing is the forty-line header, which is what this counts.
+#
+# It answers a different question from scripts/prose-baseline.txt: that one
+# asks whether a sentence is content-free, this one asks whether there are too
+# many sentences. A file can be entirely within the first and three times
+# longer than it needs to be.
+crates/stella-autonomy 38.25
+crates/stella-cli 23.67
+crates/stella-context 18.19
+crates/stella-core 27.99
+crates/stella-diag 25.12
+crates/stella-diff 27.80
+crates/stella-embed 18.00
+crates/stella-engine 71.00
+crates/stella-fleet 24.15
+crates/stella-graph 21.88
+crates/stella-home 33.00
+crates/stella-mcp 19.10
+crates/stella-model 18.08
+crates/stella-observatory 22.77
+crates/stella-parity 35.00
+crates/stella-plugin 39.69
+crates/stella-protocol 28.94
+crates/stella-runtime 35.90
+crates/stella-serve 25.96
+crates/stella-store 25.86
+crates/stella-tools 35.69
+crates/stella-transcript 26.18
+crates/stella-tty 21.00
+crates/stella-tui 20.32
+crates/stella-tui-theme 28.12
