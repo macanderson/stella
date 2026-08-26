@@ -1,6 +1,6 @@
 ---
 title: stella plugin
-description: Install, list, and remove plugins — and see the whole grant a plugin asks for before any of it is granted.
+description: Install, list, remove, and drive plugins — and see the whole grant a plugin asks for before any of it is granted.
 ---
 
 `stella plugin` is the loader. A plugin declares, in one `plugin.toml`, exactly how much say it wants in your turn loop — a participation grade, the hook points it may act at, the process it runs as, and the precise list of environment variables that process inherits. This command shows you that declaration and installs nothing until you accept it.
@@ -13,6 +13,7 @@ Offline: reads and writes local files, no API key.
 stella plugin install <dir> [--scope project|user] [--yes]
 stella plugin list
 stella plugin remove <name>
+stella plugin drive <name>
 ```
 
 ## What a plugin declares
@@ -127,6 +128,33 @@ stella plugin remove vera
 Deletes the plugin's directory in **every** tier that holds the name — project scope first, then user — and names each copy it removed. Stopping at the first would report success while the other tier's copy was still dispatched on every tool call, which is the one failure uninstall may not have. The name is the one in the manifest, not the directory's, so a package that was unpacked or renamed into a differently named directory is still removable under the name `stella plugin list` prints for it.
 
 Its hook dispatches stop immediately: the roster is recomputed from disk every time it is read, so there is no second place a stale grant can survive.
+
+## `stella plugin drive`
+
+```bash
+stella plugin drive selfdriving
+```
+
+Opens **one driver session** against an installed plugin that declares a `[driver]` block, and prints what the driver said should happen next — `sleep <n>s` or `halt — <reason>`.
+
+A driver is the inverse of everything else on this page. A `[loop]` plugin is asked something during your turn; a driver has no turn to stand in, because it is what starts them. So it carries no participation grade at all — `participation = "none"` is the only answer one can give — and its capabilities live in their own block:
+
+```toml
+[driver]
+calls = ["backlog_next", "backlog_file"]   # exhaustive, like [loop] hooks
+max_calls = 4                              # an ask; the host clamps it
+
+[driver.process]
+argv = ["python3", "${plugin_dir}/drive.py"]
+timeout_secs = 600
+env = ["PATH"]                             # default-deny, exactly as [runtime]
+```
+
+`[driver.process]` rather than `[runtime]` because the two are different consents: `[runtime]` is the process a plugin is *inside* a turn, and stella refuses it below `participation = "observer"` on the grounds that such a plugin is never invoked. A driver is never invoked inside a turn either, and that is not a reason to refuse it a program — it is the definition of what it is.
+
+**A `[driver]` block with no `[driver.process]` is a declaration, not a program.** It says what such a driver would ask for, and stella starts nothing: `plugins/stella-selfdriving` is exactly this, and the install prompt says so rather than leaving you to infer it.
+
+Every capability a driver asks for is performed **by stella, on request** — the plugin holds no provider, no credential and no forge token of its own. Today every one of them answers `unsupported`, so a session that asks for anything is refused everything and says so; the verbs are being implemented one at a time. What re-opens a session after a `sleep` is the loop itself, not this command: one invocation is one session.
 
 ## Scopes, shadowing, and switching one off
 

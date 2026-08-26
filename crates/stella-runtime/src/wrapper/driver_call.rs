@@ -330,6 +330,9 @@ mod tests {
         DriverGrant {
             calls: calls.to_vec(),
             max_calls,
+            // The gate reads the grant's call list; which program the host
+            // starts is `stella-cli`'s question and never this one's.
+            process: None,
         }
     }
 

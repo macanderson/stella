@@ -53,6 +53,7 @@ mod diag_boot;
 mod diag_bridge;
 mod doctor;
 mod domains;
+mod driver_plugin;
 mod durability;
 mod engine_config;
 mod enterprise_telemetry;

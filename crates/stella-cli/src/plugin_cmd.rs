@@ -82,6 +82,16 @@ pub enum PluginCmd {
         #[arg(value_name = "NAME")]
         name: String,
     },
+    /// Open one driver session against an installed plugin that declares
+    /// `[driver]`, and report what it says to do next.
+    ///
+    /// One session per invocation: what re-opens it after a `sleep` is the
+    /// loop the driver is describing, not this verb (#3599 B2).
+    Drive {
+        /// The plugin's `name`, as `stella plugin list` prints it.
+        #[arg(value_name = "NAME")]
+        name: String,
+    },
 }
 
 /// The tier `--scope` selects. Mirrors [`PluginScope`], which is not a clap
@@ -114,7 +124,70 @@ pub fn run_plugin(cmd: &PluginCmd) -> Result<(), String> {
         }
         PluginCmd::List => list(&root, &settings),
         PluginCmd::Remove { name } => remove(&root, name),
+        PluginCmd::Drive { name } => drive(&root, name),
     }
+}
+
+/// A session identifier the driver echoes into its own records.
+///
+/// Minted the way `self_driving_cmd::state::new_run_id` mints a run id — a
+/// timestamp plus a salt off the clock's sub-second remainder and the process
+/// id — so two sessions started in the same second are still distinguishable.
+fn session_id() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let salt = (now.subsec_nanos() ^ std::process::id()) & 0xffff;
+    format!("drive-{}-{salt:04x}", now.as_secs())
+}
+
+/// `stella plugin drive <name>` — open one driver session.
+///
+/// The session's identifier is minted here and echoed into the driver's own
+/// telemetry, so a driver's records and the host's can be joined afterwards.
+///
+/// # Errors
+///
+/// Whatever [`crate::driver_plugin::bind_installed`] refuses, or the session's
+/// own failure — a driver that could not be started, timed out, died, or ended
+/// without saying what should happen next.
+fn drive(workspace_root: &Path, name: &str) -> Result<(), String> {
+    let name = checked_name(name)?;
+    let mut warn = |line: String| eprintln!("  ! {line}");
+    let resolved = crate::driver_plugin::resolve(workspace_root, name, &mut warn)?;
+    println!("driver \"{name}\": starting `{}`", resolved.program());
+
+    let session = session_id();
+    let bound = resolved.serving();
+    // Said before the session rather than inferred from the refusals after it:
+    // every capability answers `unsupported` until #3599's B1-B6 land, so a
+    // driver that asks for anything will be refused everything, and an
+    // operator should learn that from the host rather than from a driver's
+    // own halt message.
+    if bound.offers_calls() {
+        println!(
+            "  this build serves no driver capability yet, so every ask this session makes \
+             will be refused"
+        );
+    }
+    let next = bound.open(&session);
+
+    // Printed whichever way the session ended. A driver that asked for a
+    // capability and then failed is the case where the refusals matter most:
+    // they are usually why it failed.
+    for refusal in bound.refusals() {
+        eprintln!("  ! {refusal}");
+    }
+
+    match next? {
+        stella_plugin::DriveNext::Sleep { secs } => {
+            println!("session {session} ended: sleep {secs}s before the next one");
+        }
+        stella_plugin::DriveNext::Halt { reason } => {
+            println!("session {session} ended: halt — {reason}");
+        }
+    }
+    Ok(())
 }
 
 /// The directory a tier installs into, or a reason it cannot be resolved.
@@ -484,7 +557,10 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
                     runtime.env.join(", ")
                 }
             ),
-            None => println!("  runs: no [runtime] — this plugin ships no process"),
+            None => println!("  runs: no [runtime] — this plugin runs no process inside a turn"),
+        }
+        for line in driver_lines(plugin) {
+            println!("{line}");
         }
     }
 
@@ -556,6 +632,50 @@ fn list(workspace_root: &Path, settings: &Settings) -> Result<(), String> {
 /// clause rather than silence. It is a real and legitimate state (the user
 /// edited it by hand), and it changes what `remove` will do: the revert puts
 /// back the *prior* value, discarding the edit.
+/// What `stella plugin list` says about an installed `[driver.process]`, or
+/// nothing when the plugin declares none.
+///
+/// A driver's process is a second program, started outside every turn and
+/// never by the hook plane, so it gets its own line: the `runs:` line reports
+/// `[runtime]` and says nothing about this one, which would leave a package
+/// whose only program is a driver reading as though it shipped none (#3783).
+///
+/// A refused credential is named here for the reason the hook-route report
+/// names one — the author's fix is to stop asking, and they can only take it
+/// if they are told — and the two reports are separate because a driver has no
+/// route to be read off.
+fn driver_lines(plugin: &roster::InstalledPlugin) -> Vec<String> {
+    let Some(process) = plugin
+        .manifest
+        .driver
+        .as_ref()
+        .and_then(|grant| grant.process.as_ref())
+    else {
+        return Vec::new();
+    };
+    let mut lines = vec![format!(
+        "  drives: {} ({}s, env: {}) — `stella plugin drive {}`",
+        process.argv.join(" "),
+        process.timeout_secs,
+        if process.env.is_empty() {
+            "none".to_string()
+        } else {
+            process.env.join(", ")
+        },
+        plugin.manifest.name
+    )];
+    let refused = process::refused_credentials(&process.env);
+    if !refused.is_empty() {
+        lines.push(format!(
+            "  ! `{}` asks its driver to inherit {} — refused: a plugin never receives the \
+             credential that pays for the agent.",
+            plugin.manifest.name,
+            refused.join(", ")
+        ));
+    }
+    lines
+}
+
 fn configure_lines(workspace_root: &Path, plugin: &roster::InstalledPlugin) -> Vec<String> {
     let target = configure::ConfigTarget::resolve(workspace_root, plugin.scope).ok();
     configure::configured(

@@ -23,6 +23,11 @@ would widen that socket for a single caller. So the manifest declares
 `participation = "none"` and no `[runtime]`, no `[oracle]`, no `[wrapper]`:
 Stella never starts this program. A person does, and then it starts Stella.
 
+Since #3783 a driver *can* be started by Stella — `[driver.process]` names the
+program and `stella plugin drive <name>` opens one session against it. This
+package declares no such block, because there is no program here to name (see
+below), and the install prompt says so in as many words.
+
 **The authority question is settled** (run playbook §3, D-3). The loop already
 holds `gh`, the AWS CLI, `brew`, a line in `~/.zshrc` and a daemon, today, as
 a shell script running with your full authority. Packaging it **relocates**

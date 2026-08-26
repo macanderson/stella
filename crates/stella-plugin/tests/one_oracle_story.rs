@@ -61,14 +61,19 @@ const RETIRED: [&str; 5] = [
 ///   said without saying it. The paragraph lived in `manifest.rs` until the
 ///   `[oracle]` block moved to its own module (#3730), and the exemption
 ///   followed it rather than being kept for a file that no longer carries it.
-/// - `consent.rs` carries the same history paragraph plus the assertion string
-///   in `an_oracle_is_disclosed_as_the_plugins_own_report`, the test that
-///   proves the retired claim reaches no install prompt.
+/// - `consent.rs` narrates the same decision above the paragraph the prompt
+///   now prints — "the manifest used to document `[oracle]` as host-run and
+///   this prompt repeated it".
+/// - `consent/tests.rs` carries the history paragraph plus the assertion
+///   string in `an_oracle_is_disclosed_as_the_plugins_own_report`, the test
+///   that proves the retired claim reaches no install prompt. It was inside
+///   `consent.rs` until that file's suite moved to a sibling under the
+///   1500-line ratchet (#3783), and the exemption followed it.
 ///
 /// `manifest.rs`'s `[subloop]` line ("stages the host runs as bounded child
 /// turns") is a different subject and is correct; it matches none of
 /// [`RETIRED`] and needs no exemption of its own.
-const ABOUT_THE_RETIRED_CLAIM: [&str; 2] = ["oracle.rs", "consent.rs"];
+const ABOUT_THE_RETIRED_CLAIM: [&str; 3] = ["oracle.rs", "consent.rs", "consent/tests.rs"];
 
 /// One file's text with every run of whitespace collapsed to a single space,
 /// so a claim split across two lines reads as the sentence it is.

@@ -62,6 +62,7 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::host_call::HostCallFailure;
+use crate::runtime::Runtime;
 
 /// The capabilities a **driver** may ask the host for.
 ///
@@ -320,6 +321,37 @@ pub struct DriverGrant {
     /// Absent means "the host's ceiling", never "unbounded".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_calls: Option<u32>,
+    /// The program the host starts to open a driver session, and the exact
+    /// slice of the operator's environment it may see.
+    ///
+    /// **Absent means the host cannot start this driver**, which is a state a
+    /// manifest may want rather than a gap: `plugins/stella-selfdriving` is a
+    /// consent document for a loop a person starts by hand, so it declares the
+    /// grant and no process, and installing it still starts nothing.
+    ///
+    /// # Why this is not `[runtime]`
+    ///
+    /// `[runtime]` is the process a plugin is **inside a turn**, and the
+    /// manifest refuses it below `participation = "observer"`
+    /// ([`ManifestError::RuntimeRequiresObserver`](crate::ManifestError::RuntimeRequiresObserver))
+    /// on the argument that a content bundle is never invoked, so its process
+    /// would never start. A driver is the counterexample: it is never invoked
+    /// inside a turn *by construction* — this module's header is the argument —
+    /// and `participation = "none"` is the only grade one can carry. Reusing
+    /// `[runtime]` would therefore have made every driver either unloadable or
+    /// forced to overstate its in-turn standing to gain a process.
+    ///
+    /// Two blocks are also the shape this grant was split out on: a driver
+    /// grant and a loop grant are different consents, and neither grants any
+    /// part of the other. A plugin that both wraps turns and drives them
+    /// declares two processes and a human reads them separately.
+    ///
+    /// The *type* is shared with `[runtime]` because the decision is identical
+    /// — an argv rather than a shell string, a timeout, an environment
+    /// allowlist — and a second copy of those rules is how one copy grows a
+    /// check the other silently does not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<Runtime>,
 }
 
 impl DriverGrant {
@@ -754,6 +786,7 @@ mod tests {
         let grant = DriverGrant {
             calls: vec![DriverCall::BacklogNext],
             max_calls: None,
+            process: None,
         };
         assert!(grant.permits_call(DriverCall::BacklogNext));
         assert!(!grant.permits_call(DriverCall::DeliverMerge));
@@ -768,6 +801,7 @@ mod tests {
                 DriverCall::BacklogFile,
             ],
             max_calls: None,
+            process: None,
         };
         assert_eq!(
             grant.families(),
