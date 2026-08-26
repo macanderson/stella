@@ -10,7 +10,8 @@ use stella_tui_theme::oklch;
 ///
 /// The ladder used to carry a fifth name, `MUTED`, aliased to
 /// `TEXT_SECONDARY` — so `theme::MUTED` was silver while `token::MUTED` was
-/// the tier below it and `palette::MUTED` was a third colour again. A call
+/// the tier below it and the paper theme's secondary ink (`palette::INK_MUTED`
+/// since #5001) was a third colour again. A call
 /// site could not tell which one it had reached, and `crate::diff`'s `gutter`
 /// is where it went wrong. There is no name left here that resolves to a tier
 /// other than its own, and this test is what says so: the ladder is pinned to
@@ -125,7 +126,7 @@ const LIGHT_ONLY_PALETTE_TOKENS: &[&str] = &[
     "paper-raised",
     "paper-hairline",
     "ink",
-    "muted",
+    "ink-muted",
     "ink-dim",
     "ink-emphasis",
 ];
@@ -159,6 +160,34 @@ fn every_dark_palette_value_has_a_fallback() {
         assert!(
             !palette::ALL[..i].iter().any(|(other, _)| other == name),
             "duplicate palette token name `{name}`"
+        );
+    }
+}
+
+/// Every light-only palette value names the ground it belongs to (#5001).
+///
+/// `palette` is the raw layer — "name the role; put the hue in the value" —
+/// and the paper stops say which ground they are for: `paper`/`snow` for the
+/// surfaces, `ink…` for the text ramp, `…-ink` for the accent and status
+/// stops. `muted` was the one that did not, and it collided with
+/// `stella_tui_theme::token::MUTED`, the dark ramp's tier below silver — two
+/// colours, one word, on two different grounds. That is the trap
+/// [`every_text_tier_resolves_to_the_token_it_names`] describes one layer up:
+/// a call site cannot tell from the name which one it reached.
+#[test]
+fn every_light_only_palette_token_names_its_ground() {
+    for name in LIGHT_ONLY_PALETTE_TOKENS {
+        assert!(
+            name.starts_with("paper")
+                || name.starts_with("snow")
+                || name.starts_with("ink")
+                || name.contains("-ink"),
+            "light-only palette token `{name}` does not name its ground — a \
+             paper stop is `paper…`/`snow…` (surfaces), `ink…` (the text \
+             ramp), or `…-ink` (accent and status). A bare role name here \
+             collides with the dark ramp's vocabulary, which is how \
+             `palette::MUTED` and `token::MUTED` came to be two colours \
+             answering to one word (#5001)"
         );
     }
 }
@@ -675,7 +704,7 @@ fn palette_law_gold_is_the_brand() {
         (palette::PAPER_RAISED, "PAPER_RAISED"),
         (palette::PAPER_HAIRLINE, "PAPER_HAIRLINE"),
         (palette::INK, "INK"),
-        (palette::MUTED, "MUTED"),
+        (palette::INK_MUTED, "INK_MUTED"),
         (palette::INK_DIM, "INK_DIM"),
         (palette::INK_EMPHASIS, "INK_EMPHASIS"),
     ] {
