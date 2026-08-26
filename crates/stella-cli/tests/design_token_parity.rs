@@ -125,8 +125,10 @@ const ROLES: [&str; 9] = [
 fn canonical() -> Vec<(&'static str, String, String)> {
     let observatory = read("crates/stella-observatory/src/assets/index.html");
     let dark = declarations(between(&observatory, "BEGIN palette", "END palette"));
-    // The explicit gate, not the media query: identical values, and it is the
-    // one a reader's own toggle reaches.
+    // The explicit gate, not the media query. It is the one a reader's own
+    // toggle reaches, and the two carry the same values — which is now a fact
+    // `each_surface_declares_one_scheme_per_gate` checks rather than a claim
+    // this comment makes.
     let light = declarations(between(&observatory, r#":root[data-theme="light"]"#, "\n}"));
 
     let role = |name: &str| -> (String, String) {
@@ -148,6 +150,249 @@ fn canonical() -> Vec<(&'static str, String, String)> {
             (r, dark, light)
         })
         .collect()
+}
+
+/// `css` with every `/* … */` comment removed.
+///
+/// The gate scanner below matches on selector text, and these files carry more
+/// prose than declarations — `export.rs`'s own light-mode header spells
+/// `data-theme` in a sentence, and the Observatory's toggle script quotes
+/// `@media (prefers-color-scheme: light)` inside a `String.replace`. A scanner
+/// that reads those as gates extracts whatever braces follow a sentence.
+fn strip_comments(css: &str) -> String {
+    let mut out = String::with_capacity(css.len());
+    let mut rest = css;
+    while let Some(open) = rest.find("/*") {
+        out.push_str(&rest[..open]);
+        match rest[open..].find("*/") {
+            Some(close) => rest = &rest[open + close + 2..],
+            None => return out,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Every `--token: value` declaration in a block, custom properties only, with
+/// the value taken verbatim rather than parsed.
+///
+/// [`declarations`] keeps only `#rrggbb`, because the parity matrix compares
+/// colours across three vocabularies. Two gates of *one* surface are the same
+/// author writing the same block twice, so everything they say is comparable —
+/// `rgba(10,10,12,.06)` and `color-scheme` included, and those are precisely
+/// the declarations a copy-paste edit forgets.
+fn gate_declarations(block: &str) -> BTreeMap<String, String> {
+    let mut found = BTreeMap::new();
+    // Braces end a declaration as surely as a semicolon does, and a media
+    // query's block opens with a nested `:root{` — so without this the first
+    // declaration inside it reads as part of that selector and vanishes, which
+    // is a *silent* loss: the token then looks absent from the gate rather
+    // than mismatched.
+    let block = block.replace(['{', '}'], ";");
+    for decl in block.split(';') {
+        let Some((name, value)) = decl.split_once(':') else {
+            continue;
+        };
+        let name = name.trim();
+        if !name.starts_with("--")
+            || !name[2..]
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            continue;
+        }
+        let value = value.trim().to_ascii_lowercase();
+        if !value.is_empty() {
+            found.insert(name.to_string(), value);
+        }
+    }
+    found
+}
+
+/// The block opened by the first `{` at or after `from`, brace-balanced.
+///
+/// `export.rs` is a Rust `format!` string, so its CSS braces are doubled. That
+/// is invisible to a balanced count — `{{` is +2 and `}}` is -2 — and so are
+/// the file's `{placeholder}` interpolations, which are +1 then -1.
+fn balanced_block(css: &str, from: usize) -> Option<&str> {
+    let open = from + css[from..].find('{')?;
+    let mut depth = 0usize;
+    for (offset, byte) in css[open..].bytes().enumerate() {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&css[open + 1..open + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Where a `:root` selector's block starts, if the selector is bare — i.e. the
+/// text after it is whitespace and then `{`.
+///
+/// The Observatory declares `:root[data-theme="light"] .bword-dark{…}` for its
+/// wordmark swap and `:root[data-theme="light"] .theme-toggle .i-sun{…}` for
+/// its icon swap. Those are the same gate qualifying one element, not a second
+/// declaration of the scheme, and they carry no custom property at all.
+fn bare_root_block(css: &str, after: usize) -> Option<&str> {
+    let tail = &css[after..];
+    let gap = tail.len() - tail.trim_start().len();
+    if !tail[gap..].starts_with('{') {
+        return None;
+    }
+    balanced_block(css, after + gap)
+}
+
+/// Every block in `css` that declares the named scheme, as
+/// `(selector, its declarations)`.
+///
+/// Discovery is by selector rather than by a per-surface marker list, which is
+/// the point: a surface that *grows* a second gate is covered the moment it
+/// does. That is how `export.rs`'s unchecked half arrived — the matrix named
+/// one gate, the file grew two.
+///
+/// A gate declaring no custom property is dropped rather than compared: it is
+/// styling an element under the scheme, not declaring the scheme.
+fn scheme_gates(css: &str, scheme: &str) -> Vec<(String, BTreeMap<String, String>)> {
+    let css = strip_comments(css);
+    let mut gates = Vec::new();
+
+    let attribute = format!(r#":root[data-theme="{scheme}"]"#);
+    for (index, _) in css.match_indices(attribute.as_str()) {
+        if let Some(block) = bare_root_block(&css, index + attribute.len()) {
+            gates.push((attribute.clone(), gate_declarations(block)));
+        }
+    }
+
+    // Both CSS spellings of the query, and `not(…)` cannot appear in either:
+    // `:root:not([data-theme="dark"])` is the light gate's *inner* selector and
+    // is reached as part of the query's block, never as a gate of its own.
+    for spacing in [" ", ""] {
+        let query = format!("@media (prefers-color-scheme:{spacing}{scheme})");
+        for (index, _) in css.match_indices(query.as_str()) {
+            if let Some(block) = balanced_block(&css, index + query.len()) {
+                gates.push((query.clone(), gate_declarations(block)));
+            }
+        }
+    }
+
+    gates.retain(|(_, declarations)| !declarations.is_empty());
+    gates
+}
+
+/// **A surface's gates for one scheme declare one scheme, not several.**
+///
+/// The OS-preference gate and the explicit `data-theme` gate paint the same
+/// page for different readers — one who left their desktop on light, one who
+/// clicked the toggle — so a role that differs between them is one design
+/// shipping in two casts, and the matrix above reads only one of them.
+///
+/// The Observatory had drifted exactly that way: its media query kept the
+/// pre-v5.0 cool-graphite neutrals while its attribute gate moved to the
+/// product ramp, seventeen roles apart, and the worst was an absence — nothing
+/// re-pointed `--text-emph`, so an OS-light reader got `#BFC1CC` on paper at
+/// 1.68:1. #4296 fixed that surface and
+/// `crates/stella-observatory/tests/light_mode.rs` holds it there.
+///
+/// `crates/stella-cli/src/export.rs` has the same two gates and had no such
+/// test. What stood in for one was a sentence in the file — *"No colour is
+/// defined only inside the media query, so the attribute wins in both
+/// directions"* — and `canonical()`'s own comment, *"identical values"*. Both
+/// were true and neither was checked, which is the same position the
+/// Observatory was in the day before it drifted.
+/// What [`scheme_gates`] must find, so a scanner that quietly stops matching
+/// fails instead of passing over nothing.
+///
+/// This half is not decoration. The bug being fixed is an *unread* gate, so
+/// "the gates agree" and "the scanner found one gate" produce the identical
+/// green — and the second is the state this test exists to end. Each row was
+/// counted by hand against the file it names.
+const GATE_CENSUS: [(&str, &str, usize); 6] = [
+    // The two-gate surfaces: an OS-preference query and a toggle attribute.
+    (
+        "crates/stella-observatory/src/assets/index.html",
+        "light",
+        2,
+    ),
+    ("crates/stella-cli/src/export.rs", "light", 2),
+    // No `data-theme` gate by design — neither page has a toggle to hang one
+    // on, so the media query is the whole light scheme.
+    (
+        "crates/stella-transcript/src/html/transcript.css",
+        "light",
+        1,
+    ),
+    // The benchmark pages declare light in a bare `:root` and repeat it under
+    // the attribute; the base block is not a gate and is not counted here.
+    ("docs/benchmarks/index.html", "dark", 2),
+    ("docs/benchmarks/terminal-bench-2-1-glm-5-2.html", "dark", 2),
+    ("docs/benchmarks/index.html", "light", 1),
+];
+
+#[test]
+fn each_surface_declares_one_scheme_per_gate() {
+    let mut files: Vec<&'static str> = vec!["crates/stella-observatory/src/assets/index.html"];
+    files.extend(surfaces().iter().map(|s| s.file));
+
+    for (file, scheme, want) in GATE_CENSUS {
+        let found = scheme_gates(&read(file), scheme).len();
+        assert_eq!(
+            found, want,
+            "{file}: the scanner found {found} {scheme} gate(s), not {want}. \
+             Either the file changed or the scanner stopped seeing a gate — \
+             and an unseen gate is the exact defect this test exists to catch, \
+             so it must not pass silently."
+        );
+    }
+
+    let mut drift = Vec::new();
+    for file in files {
+        let text = read(file);
+        for scheme in ["light", "dark"] {
+            let gates = scheme_gates(&text, scheme);
+            let Some(((first_selector, first), rest)) = gates.split_first() else {
+                continue;
+            };
+            for (selector, other) in rest {
+                for (token, want) in first {
+                    match other.get(token) {
+                        Some(got) if got == want => {}
+                        Some(got) => drift.push(format!(
+                            "{file}: {scheme} `{token}` is {got} under `{selector}` \
+                             and {want} under `{first_selector}`"
+                        )),
+                        None => drift.push(format!(
+                            "{file}: {scheme} `{token}` is declared under \
+                             `{first_selector}` and absent from `{selector}`, \
+                             which therefore inherits whatever the page's \
+                             default scheme says"
+                        )),
+                    }
+                }
+                for token in other.keys() {
+                    if !first.contains_key(token) {
+                        drift.push(format!(
+                            "{file}: {scheme} `{token}` is declared under \
+                             `{selector}` and absent from `{first_selector}`"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        drift.is_empty(),
+        "{} gate disagreement(s); a reader who uses their OS preference and a \
+         reader who clicked a toggle see different casts of the same page:\n  {}",
+        drift.len(),
+        drift.join("\n  ")
+    );
 }
 
 /// A derived surface: where it lives, and how it spells each canonical role.
