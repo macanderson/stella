@@ -1,0 +1,62 @@
+# Steering Context Records
+
+An SCR is to steering what an ADR is to architecture: a numbered, versioned
+record of a directive the maintainer would otherwise deliver by hand. The SCR
+corpus is the steering context loaded by every agent working in this
+repository — Claude Code loads it through the standing-decisions block in
+`AGENTS.md` (imported by `CLAUDE.md`), Stella loads `AGENTS.md` directly — and
+the ledger showing where each behavior sits on the autonomy ladder.
+
+The corpus is replicated identically across the macanderson org repos
+(oxagen, context-graph-protocol, cgp-website, arenabench, stella). Propose
+changes once and roll them out everywhere; drift between copies is a bug.
+
+## The autonomy ladder
+
+Each SCR carries an `autonomy` field naming its current rung:
+
+| Rung | Meaning | Failure mode it removes |
+|------|---------|-------------------------|
+| L0 | Manual prompt | — |
+| L1 | Written rule | Forgetting to say it |
+| L2 | Enforced (hook, template, CI guard) | Agents forgetting to follow it |
+| L3 | Delegated (an agent owns it) | The maintainer in the loop |
+| L4 | Recorded (SCR is the source of truth) | Knowledge living in one person's habits |
+
+**Promotion rules.** The second time the same steering prompt is typed, it
+becomes an SCR at L1 minimum — write it down. The third time, it must acquire
+an L2 or L3 mechanism. Typing it a fourth time is a process bug, not an
+agent bug.
+
+## Lifecycle
+
+1. **Capture** — second occurrence of a manual steer → draft an SCR. Any
+   agent may draft; status `active`, autonomy `L1`.
+2. **Promote** — attach an enforcement mechanism; update the `autonomy` and
+   `enforcement` fields. The SCR is the changelog of its own automation.
+3. **Load** — agents receive the SCR corpus as context at session start. A
+   steer that exists as an SCR should never need to be typed again.
+4. **Audit** — a periodic meta-review flags SCRs stuck at L1 whose directive
+   keeps appearing in transcripts; that is the promotion backlog.
+5. **Retire / supersede** — SCRs are never deleted; they are marked
+   `superseded-by:SCR-0NN` so the 10-year reader can trace why the process
+   looks the way it does. Durability-first applies to the process itself.
+
+## Template
+
+```markdown
+---
+id: SCR-0NN
+title: <directive as an imperative sentence>
+status: active            # active | superseded-by:SCR-0NN | retired
+origin: <how/why this became a standing steer>
+trigger: <the situation in which an agent must apply it>
+autonomy: L1              # current rung on the ladder
+enforcement: <mechanisms that deliver it without the maintainer>
+---
+
+## Directive
+## Rationale
+## How an agent complies
+## Exceptions
+```

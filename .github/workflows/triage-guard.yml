@@ -1,0 +1,44 @@
+# Triage separation of duties (SCR-005): issue creators get exactly one
+# label — `triage`. Priority labels come only from the triage identity.
+# Invariant: every open issue carries a P-label or `triage`, never neither,
+# never both.
+name: triage-guard
+on:
+  issues:
+    types: [opened, labeled]
+permissions:
+  issues: write
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        env:
+          # Logins allowed to set P-labels. `macanderson` is the interim
+          # triage authority until the dedicated triage-agent identity
+          # stands up (SCR-005 §Exceptions) — remove it then.
+          TRIAGE_LOGINS: triage-bot macanderson
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const P = /^P[0-3]$/;
+            const allowed = process.env.TRIAGE_LOGINS.split(/\s+/);
+            const names = issue.labels.map(l => (typeof l === 'string' ? l : l.name));
+            if (context.payload.action === 'opened'
+                && !names.includes('triage')
+                && !names.some(n => P.test(n))) {
+              await github.rest.issues.addLabels({
+                ...context.repo, issue_number: issue.number, labels: ['triage'] });
+            }
+            if (context.payload.action === 'labeled'
+                && P.test(context.payload.label.name)
+                && !allowed.includes(context.payload.sender.login)) {
+              await github.rest.issues.removeLabel({
+                ...context.repo, issue_number: issue.number,
+                name: context.payload.label.name });
+              await github.rest.issues.addLabels({
+                ...context.repo, issue_number: issue.number, labels: ['triage'] });
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number: issue.number,
+                body: 'Priority labels are assigned only by the triage agent (SCR-005). Re-queued as `triage`.' });
+            }
