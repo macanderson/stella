@@ -5,13 +5,13 @@
 
  SESSION AGENTS TRACES GRAPH FILES SKILLS MCP ISSUES   SETTINGS                                                                                         stella*
   AGENTS  │  TOOLS  │  SEATS   ←/→
-   GLOBAL   default                                                                                                                                    modified
+   GLOBAL   default
 
-  waiting for the engine config snapshot — r to reload
-
-
-
-
+▸ auto_mode           off
+  effort_auto         on
+  reasoning_auto      off
+  minimal_prompt      off
+  allowed_models      (none — pickers offer the catalog)
 
 
 
