@@ -122,8 +122,9 @@ impl RecalledFrame {
 /// Context recall at turn start (L-E8): a *live provider query*, never a
 /// cached prompt block. The recalled frames ride as a volatile message
 /// **after** the byte-stable system prefix so prompt-cache hits on that
-/// prefix are preserved. A caller with no context plane wired yet supplies
-/// [`NoContextRecall`].
+/// prefix are preserved. A caller with no context plane wired yet implements
+/// this to return [`Recall::default`], which is four lines and keeps the
+/// no-op where its owner can see it.
 #[async_trait]
 pub trait ContextRecallPort: Send + Sync {
     /// Recall material relevant to `goal`. Returns an empty frame list when
@@ -244,54 +245,9 @@ impl Recall {
     }
 }
 
-/// A [`ContextRecallPort`] that recalls nothing — the default before a
-/// context plane is wired, and for tasks where context grounding is off.
-///
-/// Nothing in this workspace instantiates it; it is here for an external host
-/// driving `stella-engine` with no context plane of its own. #4754 decides
-/// whether that is reason enough to keep shipping it.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NoContextRecall;
-
-#[async_trait]
-impl ContextRecallPort for NoContextRecall {
-    async fn recall(&self, _goal: &str) -> Recall {
-        Recall::default()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Drives a future to completion on the current thread with no runtime.
-    ///
-    /// This crate is a zero-logic, zero-I/O leaf (`AGENTS.md` AGENTS.md #4) and
-    /// pulls in no async executor — [`ContextRecallPort::recall`] is `async`
-    /// only because the trait must accommodate an implementer that really
-    /// does await a query, and [`NoContextRecall`]'s own body never does.
-    /// `Waker::noop` (stable since 1.90) is enough to poll a future that
-    /// completes on its first poll; a future that genuinely parks would hang
-    /// here, which is the correct failure mode for a "no-op port" test.
-    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
-        use std::task::{Context, Poll};
-
-        let mut fut = std::pin::pin!(fut);
-        let waker = std::task::Waker::noop();
-        match fut.as_mut().poll(&mut Context::from_waker(waker)) {
-            Poll::Ready(value) => value,
-            Poll::Pending => panic!("test future did not complete on its first poll"),
-        }
-    }
-
-    #[test]
-    fn no_context_recall_is_inert() {
-        assert!(block_on(NoContextRecall.recall("anything")).is_empty());
-        assert!(
-            block_on(NoContextRecall.recall("anything")).usage.is_none(),
-            "a port with no CGP host behind it reports no usage"
-        );
-    }
 
     fn recalled(provider: &str, id: &str, digest: Option<&str>) -> RecalledFrame {
         RecalledFrame {

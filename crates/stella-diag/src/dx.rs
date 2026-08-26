@@ -289,9 +289,10 @@ macro_rules! diag {
 /// worth of fields, so the crate that owns the vocabulary owns the rendering
 /// too and nobody edits a shared enum.
 ///
-/// No production crate implements it yet — `stella-cli`'s `diag_bridge`
-/// builds [`Record::new`] by hand. #4754 decides whether it gets an
-/// implementer or goes.
+/// It ships without an in-tree implementer on purpose: the facet belongs to
+/// the crate that owns the vocabulary (`doc:diagnostics` §5.1), and the only
+/// heavy emitter today is `stella-cli`'s `diag_bridge`, a binary whose records
+/// nothing else renders, so a trait buys it nothing.
 pub trait Facet {
     /// This event's stable diagnostic code (§11).
     fn code(&self) -> &'static str;

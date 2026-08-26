@@ -324,7 +324,7 @@ evolution_surfaces! {
         ImpactClass::AdvisoryRecord,
         "none wired. The demotion half — `record_turn`, `sweep`, `record_appraisal`, \
          `queued_candidates` — carries `#[allow(dead_code)]` for want of a production caller, \
-         so a promoted skill that later regresses is demoted by nothing. Tracked in #4754";
+         so a promoted skill that later regresses is demoted by nothing. Tracked in #5086";
 
     /// Executable capability Stella adds to its own working surface.
     Tool => "tool",

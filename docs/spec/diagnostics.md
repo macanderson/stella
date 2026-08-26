@@ -502,7 +502,8 @@ are the ones that change a user's life.
 
 | # | Contents | Why this order |
 |---|---|---|
-| **1** | `stella-diag`: envelope, `Level`, `Filter`, `Loggable`, `log_enum!`, `Diag` port, `JsonlSink`, `Capture`, `NullSink`, ring. Properties 3, 4, 8 and the `trybuild` case | the leaf crate everything else needs |
+| **1** | `stella-diag`: envelope, `Level`, `Filter`, `Loggable`, `log_enum!`, `Diag` port, `JsonlSink`, `Capture`, ring (a no-op sink was planned here and
+is not shipped: `Dx::disabled()` is the handle with no sinks at all). Properties 3, 4, 8 and the `trybuild` case | the leaf crate everything else needs |
 | **2** | CLI wiring: `-v`/`--log-level`/`--log-file`, `STELLA_LOG`, panic hook, crash ring on disk, `stella doctor --last-failure`. Property 5 | the moment the project can say "attach the log" |
 | **3** | `crates/stella-serve/observe` re-based on `stella-diag`; `ServeEvent` becomes a facet; `STELLA_SERVE_LOG` kept as an alias | proves generality against the one real existing consumer, and retires the duplicate |
 | **4** | `or_diag`, `check-silent-discards.sh`, ceilings, and the first crate cleaned (`stella-store`) | starts the ratchet falling |

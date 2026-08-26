@@ -148,7 +148,7 @@ pub use provider::{Provider, ToolCallObserver};
 // The context-recall port every door's memory injection shares (removal
 // census for `stella-pipeline`, `docs/spec/pipeline-as-plugins.md` §7) — see
 // the module doc for why it lives here rather than in a pipeline-shaped crate.
-pub use recall::{ContextRecallPort, NoContextRecall, Recall, RecalledFrame};
+pub use recall::{ContextRecallPort, Recall, RecalledFrame};
 pub use role::{ModelRef, Role};
 pub use subagent_event::{SubAgentPhase, SubAgentStatus};
 pub use tokens::{

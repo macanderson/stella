@@ -24,9 +24,9 @@
 //! - **pull_requests** — tracked pull requests keyed by URL: lifecycle
 //!   status, CI verdict, and the session that produced them. Write-ahead
 //!   state: the deck's PR tracking writes rows
-//!   ([`Store::upsert_pull_request`]) and [`Store::list_pull_requests`] is
-//!   the read API reserved for a future PR panel. No shipped reader consumes
-//!   it yet; #4754 decides whether it gets one or goes.
+//!   ([`Store::upsert_pull_request`]), [`scoreboard`] joins its `status` in
+//!   SQL for a session's verdict, and [`Store::list_pull_requests`] is the
+//!   row-level read kept for the PR panel that will want whole rows.
 //! - **telemetry** — one row per committed model call (from `StepUsage`):
 //!   provider, model, tokens in/out, the engine's pre-call input estimate
 //!   (the drift sample [`Store::drift_samples`] serves back to calibrate
