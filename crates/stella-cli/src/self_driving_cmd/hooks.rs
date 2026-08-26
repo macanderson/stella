@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! The loop's own hook dispatch — `PreIssueWork` and `PostIssueWork` (#3599).
+//! The loop's own hook dispatch — every event `HookEvent::in_turn` places
+//! outside a turn (#3599, #4017).
 //!
 //! Every other hook point in this workspace is dispatched by the engine's
-//! driver, from inside a turn. These two are dispatched from here, because
-//! they bracket a turn rather than sitting inside one: `PreIssueWork` fires
-//! before the worktree exists and before any model call, and `PostIssueWork`
-//! fires after the whole work unit is done.
+//! driver, from inside a turn. These are dispatched from here, because they
+//! bracket a turn or stand entirely outside one: `PreIssueWork` fires before
+//! the worktree exists and before any model call, `PostIssueWork` after the
+//! whole work unit is done, and the run, cycle, tracker, pull-request and
+//! check events at the moments the loop's own verbs reach them.
+//!
+//! **One of them is a gate and the rest report.** [`before_issue_work`] folds
+//! a decision; everything else goes through [`report`], for the reason its own
+//! doc gives.
 //!
 //! # Why `PreIssueWork` can veto, and why the veto is a *skip*
 //!
@@ -51,8 +57,10 @@
 use std::path::Path;
 
 use stella_core::bus::HookDecision;
-use stella_core::hooks::{HookEvent, HookPayload, decision::run_decision_hooks};
-pub(super) use stella_core::hooks::{HookIssueInfo, HookIssueOutcome};
+pub(super) use stella_core::hooks::{
+    HookEvent, HookIssueInfo, HookIssueOutcome, HookPullRequestInfo, HookRunInfo,
+};
+use stella_core::hooks::{HookPayload, decision::run_decision_hooks};
 use stella_tools::hook_runner::HostHookRunner;
 
 use crate::settings::Settings;
@@ -135,25 +143,100 @@ pub(super) fn after_issue_work(
     issue: &HookIssueInfo,
     outcome: HookIssueOutcome,
 ) {
-    let Some(hooks) = registered(settings, HookEvent::PostIssueWork) else {
+    report(
+        settings,
+        HookPayload::post_issue_work(root.display().to_string(), issue.clone(), outcome),
+    );
+}
+
+/// Run one reporting event's chain. Never blocks, and never fails a verb.
+///
+/// Every loop event except [`HookEvent::PreIssueWork`] comes through here, and
+/// the reason is the naming rule `stella_protocol::hook` states: a `Pre`
+/// brackets something that has not happened and can therefore be vetoed, while
+/// a Start, an End or a past participle names something that already did. A
+/// `deny` from one of these would be a decision arriving too late to act on,
+/// so the decision is not asked for — the chain's output and its failures are
+/// reported and the verb carries on.
+///
+/// A failure is still **said out loud**. A notifier that silently stopped
+/// notifying is what AGENTS.md's rule #10 exists to prevent, on the
+/// consumption side, and it is worse here than in a turn: these are the
+/// events an operator subscribes to because they are not watching.
+pub(super) fn report(settings: &Settings, payload: HookPayload) {
+    let event = payload.event;
+    let Some(hooks) = registered(settings, event) else {
         return;
     };
-    let payload = HookPayload::post_issue_work(root.display().to_string(), issue.clone(), outcome);
-
     match dispatch(&payload, hooks) {
         Ok(run) => {
             for diagnostic in &run.diagnostics {
-                eprintln!("  ! PostIssueWork: {diagnostic}");
+                eprintln!("  ! {event}: {diagnostic}");
             }
             if !run.output.trim().is_empty() {
                 eprintln!("{}", run.output.trim_end());
             }
             if let Err(failure) = run.evaluation {
-                eprintln!("  ! PostIssueWork hook failed: {failure}");
+                eprintln!("  ! {event} hook failed: {failure}");
             }
         }
-        Err(reason) => eprintln!("  ! PostIssueWork hook could not be run: {reason}"),
+        Err(reason) => eprintln!("  ! {event} hook could not be run: {reason}"),
     }
+}
+
+/// Report a loop-lifecycle event: a run, optionally a cycle inside it, and
+/// why where there is a why.
+pub(super) fn drive(
+    root: &Path,
+    settings: &Settings,
+    event: HookEvent,
+    run: HookRunInfo,
+    reason: Option<String>,
+) {
+    report(
+        settings,
+        HookPayload::drive(event, root.display().to_string(), run, reason),
+    );
+}
+
+/// Report a tracker event: which issue, and the loop's own words for what it
+/// decided about it.
+pub(super) fn tracker(
+    root: &Path,
+    settings: &Settings,
+    event: HookEvent,
+    issue: HookIssueInfo,
+    reason: Option<String>,
+) {
+    report(
+        settings,
+        HookPayload::tracker(event, root.display().to_string(), issue, reason),
+    );
+}
+
+/// Report a pull-request or check event: which pull request, and why where
+/// there is a why.
+pub(super) fn pull_request(
+    root: &Path,
+    settings: &Settings,
+    event: HookEvent,
+    pull_request: HookPullRequestInfo,
+    reason: Option<String>,
+) {
+    report(
+        settings,
+        HookPayload::pull_request(event, root.display().to_string(), pull_request, reason),
+    );
+}
+
+/// The workspace's merged settings, for a verb that holds none.
+///
+/// The one-shot verbs (`run start`, `cycle end`, `close`, …) are one process
+/// invocation each, so a load per dispatch is a load per run of the command.
+/// `drive` is the exception and loads once, because it dispatches many times
+/// inside one process.
+pub(super) fn settings_for(root: &Path) -> Settings {
+    Settings::load(root).unwrap_or_default()
 }
 
 /// The workspace's hooks, but only when something is registered for `event`.

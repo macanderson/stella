@@ -147,13 +147,30 @@ fn slot_for(hooks: &mut Hooks, event: HookEvent) -> &mut Vec<HookMatcher> {
         HookEvent::PostToolUse => &mut hooks.post_tool_use,
         HookEvent::Stop => &mut hooks.stop,
         HookEvent::PreCompact => &mut hooks.pre_compact,
-        // Unreachable through the roster: `EVENT_ORDER` omits the
-        // loop-lifecycle pair and `ManifestError::HookNotAvailableToPlugins`
-        // refuses a manifest that declares one. Named rather than
-        // `unreachable!` — invariant 5 — so a future route lands somewhere
-        // real instead of panicking a session.
+        // Unreachable through the roster: `EVENT_ORDER` holds the in-turn
+        // events alone, and `ManifestError::HookNotAvailableToPlugins` refuses
+        // a manifest declaring anything `HookEvent::in_turn` places outside a
+        // turn. Named rather than `unreachable!` — invariant 5 — so a future
+        // route lands somewhere real instead of panicking a session.
         HookEvent::PreIssueWork => &mut hooks.pre_issue_work,
         HookEvent::PostIssueWork => &mut hooks.post_issue_work,
+        HookEvent::DriveRunStart => &mut hooks.drive_run_start,
+        HookEvent::DriveRunEnd => &mut hooks.drive_run_end,
+        HookEvent::DriveCycleStart => &mut hooks.drive_cycle_start,
+        HookEvent::DriveCycleEnd => &mut hooks.drive_cycle_end,
+        HookEvent::DriveIdle => &mut hooks.drive_idle,
+        HookEvent::IssueCreated => &mut hooks.issue_created,
+        HookEvent::IssueClosed => &mut hooks.issue_closed,
+        HookEvent::IssueEscalated => &mut hooks.issue_escalated,
+        HookEvent::PullRequestOpened => &mut hooks.pull_request_opened,
+        HookEvent::PullRequestReadyForReview => &mut hooks.pull_request_ready_for_review,
+        HookEvent::PullRequestConflicted => &mut hooks.pull_request_conflicted,
+        HookEvent::PullRequestMerged => &mut hooks.pull_request_merged,
+        HookEvent::ChecksFailed => &mut hooks.checks_failed,
+        HookEvent::BaseBroken => &mut hooks.base_broken,
+        HookEvent::ChecksGreen => &mut hooks.checks_green,
+        HookEvent::DriveBudgetExhausted => &mut hooks.drive_budget_exhausted,
+        HookEvent::DriveRefused => &mut hooks.drive_refused,
     };
     slot.get_or_insert_with(Vec::new)
 }
