@@ -123,11 +123,9 @@ fn is_unsegmented_cjk(ch: char) -> bool {
 /// **Two token spaces, one axis apart (#3298).** [`terms`] is the *clustering
 /// space*: it decides which observations group, and the group's representative
 /// wording is what gets slugged and hashed into a `<slug>-<hash8>`. This is
-/// the *scoring space*: nothing durable derives from it at all. They are not
-/// copies — the module history (two byte-identical private copies that drifted
-/// apart) is why the difference is named rather than left to be noticed — and
-/// they share [`tokenize`]'s body so the part that *is* the same cannot drift
-/// again.
+/// the *scoring space*: nothing durable derives from it at all. They share
+/// [`tokenize`]'s body, so the part that *is* the same cannot drift the way
+/// the module's two original private copies did.
 ///
 /// The axis is **vocabulary**: [`SCORING_STOPWORDS`] on top of [`STOPWORDS`]
 /// (#3688), so the generic coding words that discriminate between no two
