@@ -24,6 +24,11 @@ Three modes:
     list    print the extracted inventory as JSON (a debugging aid, not an
             interface; nothing may parse this).
 
+Every mode takes an optional root after it — `diagnostic-codes.py check /tmp/t`
+— and defaults to the repository this file lives in. That is what lets
+`scripts/test-diagnostic-codes.sh` run each of the failure directions below
+against a fixture tree; see [`Tree`].
+
 ## How codes are found, and why by reading source
 
 The generator must not need to run a binary to enumerate codes — the gate has
@@ -87,14 +92,39 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CRATES = REPO / "crates"
-REFERENCE = REPO / "docs" / "reference" / "diagnostics.md"
-# The website's curated table. Its *rows* are hand-picked for troubleshooting
-# symptoms and its "What it means" prose is written for a reader, so neither is
-# generated; its codes and levels are facts about the tree and are checked
-# against the same scan the reference is (#3045).
-WEBSITE = REPO / "website" / "content" / "docs" / "diagnostics.mdx"
 WEBSITE_ANCHOR = "## Reading the codes"
+
+
+@dataclass(frozen=True)
+class Tree:
+    """The three places this script reads, rooted at one directory.
+
+    Rooted rather than resolved from `__file__` so `scripts/test-diagnostic-
+    codes.sh` can point the guard at a fixture tree and watch it fire. Without
+    that the guard could not be shown to fail, which is the same defect one
+    notation over from the one it exists to catch (#4948). Every caller in the
+    tree passes no root and gets this repository, as they always did.
+    """
+
+    root: Path
+
+    @property
+    def crates(self) -> Path:
+        return self.root / "crates"
+
+    @property
+    def reference(self) -> Path:
+        return self.root / "docs" / "reference" / "diagnostics.md"
+
+    @property
+    def website(self) -> Path:
+        """The website's curated table. Its *rows* are hand-picked for
+        troubleshooting symptoms and its "What it means" prose is written for a
+        reader, so neither is generated; its codes and levels are facts about
+        the tree and are checked against the same scan the reference is
+        (#3045)."""
+        return self.root / "website" / "content" / "docs" / "diagnostics.mdx"
+
 
 # The code grammar: lowercase dotted segments, at least two of them. This is
 # deliberately narrower than "any string" — it is what keeps shape 3's
@@ -330,9 +360,9 @@ def record(inventory: dict[str, Emit], code: str, crate: str, rel: str) -> Emit:
     return entry
 
 
-def scan_file(path: Path, inventory: dict[str, Emit]) -> None:
-    rel = path.relative_to(REPO).as_posix()
-    crate = path.relative_to(CRATES).parts[0]
+def scan_file(tree: Tree, path: Path, inventory: dict[str, Emit]) -> None:
+    rel = path.relative_to(tree.root).as_posix()
+    crate = path.relative_to(tree.crates).parts[0]
     src = strip_cfg_test(strip_comments(path.read_text(encoding="utf-8")))
     consts = dict(CONST_STR.findall(src))
 
@@ -395,13 +425,13 @@ def scan_file(path: Path, inventory: dict[str, Emit]) -> None:
             entry.dynamic = entry.dynamic or dynamic
 
 
-def scan_tree() -> dict[str, Emit]:
+def scan_tree(tree: Tree) -> dict[str, Emit]:
     inventory: dict[str, Emit] = {}
-    for path in sorted(CRATES.glob("*/src/**/*.rs")):
-        rel = path.relative_to(REPO).as_posix()
+    for path in sorted(tree.crates.glob("*/src/**/*.rs")):
+        rel = path.relative_to(tree.root).as_posix()
         if "/tests/" in rel or "/benches/" in rel or "/examples/" in rel:
             continue
-        scan_file(path, inventory)
+        scan_file(tree, path, inventory)
     return inventory
 
 
@@ -535,11 +565,11 @@ def parse_website_table(text: str) -> tuple[list[tuple[list[str], set[str]]], st
 # ── Modes ────────────────────────────────────────────────────────────────────
 
 
-def do_check() -> int:
+def do_check(tree: Tree) -> int:
     # The verdict is decided before anything is written, like the shell guards
     # (#1815): buffer, then emit once.
     report: list[str] = []
-    inventory = scan_tree()
+    inventory = scan_tree(tree)
 
     for entry in sorted(inventory.values(), key=lambda e: e.code):
         if len(entry.crates) > 1:
@@ -548,12 +578,13 @@ def do_check() -> int:
                 f"({', '.join(sorted(entry.crates))}); a facet vocabulary has one owner (§5.1)."
             )
 
-    if not REFERENCE.exists():
+    if not tree.reference.exists():
         report.append(
-            f"FAIL — {REFERENCE.relative_to(REPO)} does not exist. Generate it: make diag-reference"
+            f"FAIL — {tree.reference.relative_to(tree.root)} does not exist. "
+            "Generate it: make diag-reference"
         )
     else:
-        text = REFERENCE.read_text(encoding="utf-8")
+        text = tree.reference.read_text(encoding="utf-8")
         codes, prose = parse_reference(text)
         seen: set[str] = set()
         for code in codes:
@@ -582,15 +613,15 @@ def do_check() -> int:
             )
 
     surfaced = 0
-    if not WEBSITE.exists():
+    if not tree.website.exists():
         report.append(
-            f"FAIL — {WEBSITE.relative_to(REPO)} does not exist. It carries the "
-            "reader-facing code table; if the page moved, move this check with it."
+            f"FAIL — {tree.website.relative_to(tree.root)} does not exist. It carries "
+            "the reader-facing code table; if the page moved, move this check with it."
         )
     else:
-        rows, unreadable = parse_website_table(WEBSITE.read_text(encoding="utf-8"))
+        rows, unreadable = parse_website_table(tree.website.read_text(encoding="utf-8"))
         surfaced = sum(len(codes) for codes, _ in rows)
-        site = WEBSITE.relative_to(REPO)
+        site = tree.website.relative_to(tree.root)
         if unreadable:
             report.append(f"FAIL — {site}: {unreadable}.")
         for codes, levels in rows:
@@ -624,15 +655,18 @@ def do_check() -> int:
     return 0
 
 
-def do_write() -> int:
-    inventory = scan_tree()
+def do_write(tree: Tree) -> int:
+    inventory = scan_tree(tree)
     prose: dict[str, str] = {}
-    if REFERENCE.exists():
-        _, prose = parse_reference(REFERENCE.read_text(encoding="utf-8"))
-    REFERENCE.parent.mkdir(parents=True, exist_ok=True)
-    REFERENCE.write_text(render(inventory, prose), encoding="utf-8")
+    if tree.reference.exists():
+        _, prose = parse_reference(tree.reference.read_text(encoding="utf-8"))
+    tree.reference.parent.mkdir(parents=True, exist_ok=True)
+    tree.reference.write_text(render(inventory, prose), encoding="utf-8")
     missing = [c for c in sorted(inventory) if prose.get(c, "").strip() in ("", PLACEHOLDER)]
-    print(f"diagnostic-codes: wrote {REFERENCE.relative_to(REPO)} — {len(inventory)} codes.")
+    print(
+        f"diagnostic-codes: wrote {tree.reference.relative_to(tree.root)} — "
+        f"{len(inventory)} codes."
+    )
     if missing:
         print(
             f"diagnostic-codes: {len(missing)} still placeholder: {', '.join(missing)}"
@@ -640,8 +674,8 @@ def do_write() -> int:
     return 0
 
 
-def do_list() -> int:
-    inventory = scan_tree()
+def do_list(tree: Tree) -> int:
+    inventory = scan_tree(tree)
     print(
         json.dumps(
             {
@@ -660,17 +694,20 @@ def do_list() -> int:
     return 0
 
 
-def main() -> int:
-    mode = sys.argv[1] if len(sys.argv) > 1 else "check"
+def main(argv: list[str]) -> int:
+    mode = argv[1] if len(argv) > 1 else "check"
+    # An optional root, for the reason [`Tree`] gives. Absent, every mode reads
+    # the repository this script lives in.
+    tree = Tree(Path(argv[2]).resolve() if len(argv) > 2 else REPO)
     if mode == "check":
-        return do_check()
+        return do_check(tree)
     if mode == "write":
-        return do_write()
+        return do_write(tree)
     if mode == "list":
-        return do_list()
-    print(f"usage: {sys.argv[0]} check|write|list", file=sys.stderr)
+        return do_list(tree)
+    print(f"usage: {argv[0]} check|write|list [root]", file=sys.stderr)
     return 2
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv))

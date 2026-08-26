@@ -848,6 +848,10 @@ file-size-test: ## Test the file-size ratchet's language coverage and its change
 website-inputs-test: ## Test the website-inputs guard's three failure directions (hermetic; not part of `gate`)
 	./scripts/test-website-inputs.sh
 
+.PHONY: diagnostic-codes-test
+diagnostic-codes-test: ## Test the diagnostic-code registry's failure directions (#4948; hermetic; not part of `gate`)
+	./scripts/test-diagnostic-codes.sh
+
 .PHONY: ci-rust-scope-test
 ci-rust-scope-test: ## Test which diffs run the Rust gate, prose skips and fail-open included (hermetic; not part of `gate`)
 	./scripts/test-ci-rust-scope.sh
