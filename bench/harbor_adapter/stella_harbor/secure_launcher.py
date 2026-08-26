@@ -447,23 +447,17 @@ _MANIFEST_CALIBRATION_FIELDS = frozenset(
     }
 )
 _MANIFEST_CONFIRMATORY_FIELDS = frozenset({"job_name", "n_concurrent_trials"})
+# The `engine_posture` record wrapping one posture — the only posture shape this
+# module states. The posture *inside* it is not described here by a field set:
+# `_validate_confirmatory_manifest_contract` rebuilds it with the adapter's own
+# `_benchmark_engine_posture` and compares the whole dict, roles and all, so a
+# key-name vocabulary beside that equality could only ever be weaker than the
+# check already running. The root keys the trusted launcher will accept at all
+# are `settings::ENGINE_ROOT_FIELDS` in `unknown.rs`, read from the Rust rather
+# than copied (`tests/test_posture.py::_engine_root_fields`); the required and
+# optional halves of the recorded posture are
+# `terminal_bench_analysis/tb21_posture_schema.py` (#4668).
 _ENGINE_POSTURE_RECORD_FIELDS = frozenset({"version", "posture", "sha256"})
-_ENGINE_POSTURE_FIELDS = frozenset(
-    {
-        "default_model",
-        "allowed_models",
-        "auto_mode",
-        "effort_auto",
-        "reasoning_auto",
-        "minimal_prompt",
-        "headless_scope_bypass",
-        "agents",
-    }
-)
-_ENGINE_POSTURE_AGENT_ROLES = frozenset({"default", "worker", "verifier", "triage"})
-# Every role is the same shape: #2411 took the output cap out of the posture, so
-# nothing is left for a `params` key to hold. `posture.py` is the normative home.
-_ENGINE_POSTURE_AGENT_FIELDS = frozenset({"effort", "reasoning"})
 RUNTIME_IDENTITY_FIELDS = frozenset(
     {
         "binary_sha256",

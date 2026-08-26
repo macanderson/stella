@@ -15,6 +15,7 @@ metadata.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import re
@@ -1000,6 +1001,63 @@ class TestWitnessArmEndToEnd:
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _BENCH_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "bench.yml"
 _UNKNOWN_RS = _REPO_ROOT / "crates" / "stella-cli" / "src" / "settings" / "unknown.rs"
+_SECURE_LAUNCHER_PY = (
+    _REPO_ROOT / "bench" / "harbor_adapter" / "stella_harbor" / "secure_launcher.py"
+)
+
+
+def _unread_private_module_constants(path: Path) -> list[str]:
+    """Module-level ``_NAME = ...`` bindings the module never loads again.
+
+    A private name has no importer outside the file by construction, so one
+    that is never loaded inside it is read by nothing at all — which is how a
+    schema the launcher looks like it enforces can sit beside the check that
+    actually runs and describe a different shape.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    bound: list[str] = []
+    for node in tree.body:
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id.startswith("_"):
+                bound.append(target.id)
+    loaded = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    return sorted(name for name in bound if name not in loaded)
+
+
+class TestLauncherDeclaresNoVocabularyNothingReads:
+    """#4668: the launcher states a posture shape or it does not state one.
+
+    `_ENGINE_POSTURE_FIELDS` listed eight root keys and was referenced nowhere.
+    It read as the fail-closed schema and was not one, and it had drifted from
+    both authorities that are: `settings::ENGINE_ROOT_FIELDS` decides what the
+    trusted launcher accepts, and `tb21_posture_schema.py` splits the recorded
+    posture into required and optional halves — a split this set did not have,
+    so wiring it as written would have refused every posture omitting an
+    optional arm key. The check that does run is stronger than either: the
+    confirmatory manifest's posture is rebuilt with `_benchmark_engine_posture`
+    and compared whole.
+    """
+
+    def test_no_private_constant_in_the_launcher_is_read_by_nothing(self) -> None:
+        assert _unread_private_module_constants(_SECURE_LAUNCHER_PY) == []
+
+    def test_the_reader_finds_a_planted_dead_constant(self, tmp_path: Path) -> None:
+        """The guard's own witness: without this, an `ast` walk that silently
+        matched nothing would report a clean module forever."""
+        probe = tmp_path / "probe.py"
+        probe.write_text(
+            "_LIVE = 1\n_DEAD = 2\nPUBLIC = 3\nprint(_LIVE)\n", encoding="utf-8"
+        )
+        assert _unread_private_module_constants(probe) == ["_DEAD"]
 
 
 def _parse_rust_str_slice(source: str, const_name: str) -> frozenset[str]:
