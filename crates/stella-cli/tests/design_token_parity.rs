@@ -45,7 +45,8 @@
 //! as text rather than linking any of them. It needs no crate it does not
 //! already have.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use stella_tui_theme::oklch;
@@ -285,6 +286,96 @@ fn scheme_gates(css: &str, scheme: &str) -> Vec<(String, BTreeMap<String, String
     gates
 }
 
+/// Which scheme each surface's bare `:root{…}` block declares.
+///
+/// A bare `:root` block **is** a scheme — the one a reader gets with no
+/// `data-theme` stamped and no media query matching — but *which* scheme it is
+/// cannot be discovered, because the selector does not say. It is light on the
+/// two benchmark pages and dark on the other three. So it is configuration,
+/// one fact per file, and it is the only per-surface fact [`scheme_blocks`]
+/// needs that [`scheme_gates`]'s selector scan cannot supply (#4973).
+///
+/// Every file this test walks needs a row, which
+/// [`each_surface_declares_one_scheme_per_gate`] asserts: a surface added
+/// without one is a base block nothing compares, which is the defect.
+const DEFAULT_SCHEMES: [(&str, &str); 5] = [
+    ("crates/stella-observatory/src/assets/index.html", "dark"),
+    ("crates/stella-cli/src/export.rs", "dark"),
+    ("crates/stella-transcript/src/html/transcript.css", "dark"),
+    ("docs/benchmarks/index.html", "light"),
+    ("docs/benchmarks/terminal-bench-2-1-glm-5-2.html", "light"),
+];
+
+/// The at-rule blocks in `css`, as byte ranges.
+///
+/// A bare `:root` inside one is not the page's default scheme: it is the
+/// scheme that at-rule gates. `export.rs`'s `@media print` block declares a
+/// whole paper palette under `:root` and is the reason this cannot be an
+/// index-of-the-first-`:root` search, and `@media (prefers-color-scheme:dark)`
+/// on the benchmark pages is the reason it cannot be a depth count — depth is
+/// unreadable in `export.rs`, whose CSS sits inside a Rust `format!` string
+/// with doubled braces and a function body around it.
+fn at_rule_spans(css: &str) -> Vec<Range<usize>> {
+    let mut spans = Vec::new();
+    for at in ["@media", "@supports"] {
+        for (index, _) in css.match_indices(at) {
+            if let Some(block) = balanced_block(css, index + at.len()) {
+                let start = block.as_ptr() as usize - css.as_ptr() as usize;
+                spans.push(start..start + block.len());
+            }
+        }
+    }
+    spans
+}
+
+/// The page's own `:root{…}` block — bare, and outside every at-rule.
+fn base_root_block(css: &str) -> Option<&str> {
+    let spans = at_rule_spans(css);
+    css.match_indices(":root")
+        .filter(|(index, _)| !spans.iter().any(|span| span.contains(index)))
+        .find_map(|(index, _)| bare_root_block(css, index + ":root".len()))
+}
+
+/// Every custom property some scheme gate of this file re-declares.
+///
+/// A base block carries more than a scheme: the benchmark pages declare their
+/// type scale, spacing steps and transition duration in the same `:root`, and
+/// those are the same in both casts. A property no gate ever re-declares is
+/// therefore not part of the scheme, and comparing it against a gate that has
+/// no business carrying it would report the type scale as missing from the
+/// light theme.
+fn scheme_tokens(css: &str) -> BTreeSet<String> {
+    ["light", "dark"]
+        .into_iter()
+        .flat_map(|scheme| scheme_gates(css, scheme))
+        .flat_map(|(_, declarations)| declarations.into_keys())
+        .collect()
+}
+
+/// Every block of `file` that declares `scheme`: the gates [`scheme_gates`]
+/// discovers, plus the base `:root` block when [`DEFAULT_SCHEMES`] says this
+/// file's default is that scheme.
+fn scheme_blocks(file: &str, css: &str, scheme: &str) -> Vec<(String, BTreeMap<String, String>)> {
+    let mut blocks = scheme_gates(css, scheme);
+    if !DEFAULT_SCHEMES
+        .iter()
+        .any(|(name, default)| *name == file && *default == scheme)
+    {
+        return blocks;
+    }
+    let stripped = strip_comments(css);
+    let Some(block) = base_root_block(&stripped) else {
+        return blocks;
+    };
+    let tokens = scheme_tokens(css);
+    let mut declarations = gate_declarations(block);
+    declarations.retain(|name, _| tokens.contains(name));
+    if !declarations.is_empty() {
+        blocks.push((":root".to_string(), declarations));
+    }
+    blocks
+}
+
 /// **A surface's gates for one scheme declare one scheme, not several.**
 ///
 /// The OS-preference gate and the explicit `data-theme` gate paint the same
@@ -305,14 +396,22 @@ fn scheme_gates(css: &str, scheme: &str) -> Vec<(String, BTreeMap<String, String
 /// directions"* — and `canonical()`'s own comment, *"identical values"*. Both
 /// were true and neither was checked, which is the same position the
 /// Observatory was in the day before it drifted.
-/// What [`scheme_gates`] must find, so a scanner that quietly stops matching
+///
+/// The base `:root` block is a third copy, and it was the one nothing read
+/// (#4973). Both benchmark pages state their light scheme there and then
+/// again, verbatim, under `:root[data-theme="light"]` — and a reader who has
+/// never touched the toggle gets the base block, which is to say the copy no
+/// test compared is the copy most readers see. It joins the comparison through
+/// [`DEFAULT_SCHEMES`], because a selector scan can find a bare `:root` but
+/// cannot tell which scheme it declares.
+/// What [`scheme_blocks`] must find, so a scanner that quietly stops matching
 /// fails instead of passing over nothing.
 ///
 /// The bug being fixed is an *unread* gate. "The scanner found one gate" is
 /// the state this test exists to end, and it produces the same green as "the
 /// gates agree", so without a census the two are indistinguishable. Each row
 /// was counted by hand against the file it names.
-const GATE_CENSUS: [(&str, &str, usize); 6] = [
+const GATE_CENSUS: [(&str, &str, usize); 10] = [
     // The two-gate surfaces: an OS-preference query and a toggle attribute.
     (
         "crates/stella-observatory/src/assets/index.html",
@@ -327,11 +426,29 @@ const GATE_CENSUS: [(&str, &str, usize); 6] = [
         "light",
         1,
     ),
-    // The benchmark pages declare light in a bare `:root` and repeat it under
-    // the attribute; the base block is not a gate and is not counted here.
+    // The three dark-by-default surfaces declare their dark scheme in the base
+    // `:root` block and nowhere else, so that block is the whole of it. A zero
+    // here would mean the base-block scanner found nothing — and on these
+    // three there is no second block to disagree with, so nothing else would
+    // notice (#4973).
+    ("crates/stella-observatory/src/assets/index.html", "dark", 1),
+    ("crates/stella-cli/src/export.rs", "dark", 1),
+    (
+        "crates/stella-transcript/src/html/transcript.css",
+        "dark",
+        1,
+    ),
+    // The benchmark pages are light by default and declare that scheme twice —
+    // the base `:root` block and the toggle attribute, verbatim. Both are
+    // counted now; the base block was the copy nothing read.
     ("docs/benchmarks/index.html", "dark", 2),
     ("docs/benchmarks/terminal-bench-2-1-glm-5-2.html", "dark", 2),
-    ("docs/benchmarks/index.html", "light", 1),
+    ("docs/benchmarks/index.html", "light", 2),
+    (
+        "docs/benchmarks/terminal-bench-2-1-glm-5-2.html",
+        "light",
+        2,
+    ),
 ];
 
 #[test]
@@ -339,13 +456,30 @@ fn each_surface_declares_one_scheme_per_gate() {
     let mut files: Vec<&'static str> = vec!["crates/stella-observatory/src/assets/index.html"];
     files.extend(surfaces().iter().map(|s| s.file));
 
+    for file in &files {
+        let default = DEFAULT_SCHEMES.iter().find(|(name, _)| name == file);
+        let Some((_, default)) = default else {
+            panic!(
+                "{file} declares no row in DEFAULT_SCHEMES. Its bare `:root` \
+                 block is a scheme — say which one, or it is a second \
+                 declaration nothing compares (#4973)."
+            );
+        };
+        assert!(
+            base_root_block(&strip_comments(&read(file))).is_some(),
+            "{file}: DEFAULT_SCHEMES calls its base block {default}, and the \
+             scanner found no bare `:root` block outside an at-rule. A row \
+             pointing at nothing reads as coverage."
+        );
+    }
+
     for (file, scheme, want) in GATE_CENSUS {
-        let found = scheme_gates(&read(file), scheme).len();
+        let found = scheme_blocks(file, &read(file), scheme).len();
         assert_eq!(
             found, want,
-            "{file}: the scanner found {found} {scheme} gate(s), not {want}. \
-             Either the file changed or the scanner stopped seeing a gate — \
-             and an unseen gate is the exact defect this test exists to catch, \
+            "{file}: the scanner found {found} {scheme} block(s), not {want}. \
+             Either the file changed or the scanner stopped seeing one — \
+             and an unseen block is the exact defect this test exists to catch, \
              so it must not pass silently."
         );
     }
@@ -354,7 +488,7 @@ fn each_surface_declares_one_scheme_per_gate() {
     for file in files {
         let text = read(file);
         for scheme in ["light", "dark"] {
-            let gates = scheme_gates(&text, scheme);
+            let gates = scheme_blocks(file, &text, scheme);
             let Some(((first_selector, first), rest)) = gates.split_first() else {
                 continue;
             };
@@ -392,6 +526,33 @@ fn each_surface_declares_one_scheme_per_gate() {
          reader who clicked a toggle see different casts of the same page:\n  {}",
         drift.len(),
         drift.join("\n  ")
+    );
+}
+
+/// The page's `:root` is the page's, and an at-rule's `:root` is the
+/// at-rule's (#4973).
+///
+/// `export.rs` declares a full paper palette under `@media print{:root{…}}`,
+/// and the benchmark pages open their dark scheme with
+/// `@media (prefers-color-scheme:dark){:root{`. Reading either as the page's
+/// default scheme would compare the dashboard against a printer's palette, or
+/// a page's light default against its own dark cast. Both of those sit *after*
+/// the base block in the files that ship today, so "the first bare `:root`"
+/// would pass over this — which is why the rule is stated against a file that
+/// puts them the other way round.
+#[test]
+fn the_base_root_block_is_never_an_at_rules_root() {
+    let css = "@media print{:root{--x:#111111}}:root{--x:#222222}";
+    let base = base_root_block(css).expect("the trailing bare :root is the page's own");
+    assert_eq!(
+        gate_declarations(base).get("--x").map(String::as_str),
+        Some("#222222"),
+        "the `@media print` block's `:root` was read as the page's own"
+    );
+    assert!(
+        base_root_block("@media print{:root{--x:#111111}}").is_none(),
+        "a page whose only bare `:root` is inside an at-rule declares no base \
+         scheme, and must report none rather than borrow the at-rule's"
     );
 }
 

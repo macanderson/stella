@@ -122,9 +122,14 @@ RUST = "rust"
 
 # `gate` names the light block to read. Discovery belongs to
 # `crates/stella-cli/tests/design_token_parity.rs`, which finds every light
-# gate a surface declares and proves they agree with each other -- so one gate
-# read here is every gate. This guard reads six files in two syntaxes, one of
-# them Rust, where a CSS selector scan has nothing to find.
+# block a surface declares and proves they agree with each other -- so one
+# block read here is every block. That held for the media query and the
+# `data-theme` attribute from the start, and for the bare `:root` block only
+# since #4973: the benchmark pages state their light scheme there and repeat it
+# verbatim under the attribute, and until that issue the base copy -- the one a
+# reader who never touched the toggle gets -- was compared against nothing.
+# This guard reads six files in two syntaxes, one of them Rust, where a CSS
+# selector scan has nothing to find.
 SURFACES = (
     {
         "file": "crates/stella-observatory/src/assets/index.html",
