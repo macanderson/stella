@@ -220,6 +220,12 @@ pub const BINDINGS: &[Binding] = &[
         &["up_selects_the_last_message_and_ctrl_o_toggles_it"],
     ),
     row(
+        "u",
+        "undo the highlighted delete — restore the file from git",
+        Tab(T::Session),
+        &["u_on_a_highlighted_delete_sends_the_undo_and_otherwise_types"],
+    ),
+    row(
         "ctrl-r",
         "expand / collapse all thinking",
         Tab(T::Session),

@@ -224,6 +224,15 @@ async fn main() -> std::io::Result<()> {
                             .to_string(),
                     ));
                 }
+                // `u` on a delete row: the demo has no git workspace to
+                // restore from, so it answers with the notice the real
+                // driver would send.
+                WorkspaceInput::UndoDelete { paths } => {
+                    let _ = react_tx.send(Inbound::Notice(format!(
+                        "undo: restored {} from git",
+                        paths.join(", ")
+                    )));
+                }
                 // The budget cap folds straight back through a BudgetTick, the
                 // same stream the real driver's guard reports on.
                 WorkspaceInput::SetBudget { limit_usd } => {

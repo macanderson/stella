@@ -109,6 +109,59 @@ pub(super) fn spawn_mcp_connect(
     configured
 }
 
+/// Service `u undo` on a delete event: restore each path that one
+/// `delete_file` call removed, from git's reading of the file
+/// (`git checkout -- <path>`). Returns `true` if `input` was the undo verb
+/// (so the caller skips its own dispatch). A cheap local git op over files
+/// git already holds, serviced identically idle or mid-turn — and answered
+/// either way with an [`Inbound::Notice`], because an undo that says nothing
+/// leaves the reader checking the tree by hand.
+///
+/// A path git cannot restore — an untracked file, a repo-less workspace — is
+/// reported with git's own words rather than guessed at: the row's
+/// `git-backed` label states the mechanism, and the mechanism's refusal is
+/// the honest answer.
+pub(super) fn service_undo_delete(
+    input: &WorkspaceInput,
+    workspace: &str,
+    in_tx: &UnboundedSender<Inbound>,
+) -> bool {
+    let WorkspaceInput::UndoDelete { paths } = input else {
+        return false;
+    };
+    let mut restored: Vec<String> = Vec::new();
+    let mut failed: Vec<String> = Vec::new();
+    for path in paths {
+        let run = std::process::Command::new("git")
+            .args(["checkout", "--"])
+            .arg(path)
+            .current_dir(workspace)
+            .output();
+        match run {
+            Ok(out) if out.status.success() => restored.push(path.clone()),
+            Ok(out) => {
+                let why = String::from_utf8_lossy(&out.stderr);
+                failed.push(format!(
+                    "{path} ({})",
+                    why.trim().lines().next().unwrap_or("git refused")
+                ));
+            }
+            Err(err) => failed.push(format!("{path} ({err})")),
+        }
+    }
+    let notice = match (restored.is_empty(), failed.is_empty()) {
+        (false, true) => format!("undo: restored {} from git", restored.join(", ")),
+        (true, false) => format!("undo failed: {}", failed.join(" · ")),
+        _ => format!(
+            "undo: restored {} from git · failed: {}",
+            restored.join(", "),
+            failed.join(" · ")
+        ),
+    };
+    let _ = in_tx.send(Inbound::Notice(notice));
+    true
+}
+
 /// Service a session-registry / inbox verb from the deck. Returns `true` if
 /// `input` was one (so the caller skips its own dispatch). All of these are
 /// cheap local file ops, serviced identically idle or mid-turn.
@@ -489,4 +542,72 @@ pub(super) fn spawn_notification_poller(in_tx: mpsc::UnboundedSender<Inbound>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod undo_delete_tests {
+    use super::*;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    }
+
+    /// The other half of the deck's `u` binding (#5036): the driver restores
+    /// the deleted file from git and says so. A tracked, committed file comes
+    /// back byte-for-byte; an untracked path is refused with git's own reason
+    /// in the notice — both answered, never silent.
+    #[test]
+    fn undo_delete_restores_a_tracked_file_and_reports_an_untracked_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        git(root, &["init", "-q"]);
+        git(root, &["config", "user.email", "t@example.invalid"]);
+        git(root, &["config", "user.name", "t"]);
+        std::fs::write(root.join("kept.rs"), "fn kept() {}\n").expect("write");
+        git(root, &["add", "kept.rs"]);
+        git(root, &["commit", "-q", "-m", "seed"]);
+        std::fs::remove_file(root.join("kept.rs")).expect("delete");
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let workspace = root.display().to_string();
+        let input = WorkspaceInput::UndoDelete {
+            paths: vec!["kept.rs".into()],
+        };
+        assert!(service_undo_delete(&input, &workspace, &tx));
+        assert_eq!(
+            std::fs::read_to_string(root.join("kept.rs")).expect("restored"),
+            "fn kept() {}\n",
+            "the tracked file is back byte-for-byte"
+        );
+        match rx.try_recv().expect("a notice was sent") {
+            Inbound::Notice(text) => assert!(text.contains("restored kept.rs"), "{text}"),
+            other => panic!("expected a notice, got {other:?}"),
+        }
+
+        // An untracked path has no git reading to restore from: refused, with
+        // the refusal named.
+        let input = WorkspaceInput::UndoDelete {
+            paths: vec!["never-tracked.rs".into()],
+        };
+        assert!(service_undo_delete(&input, &workspace, &tx));
+        match rx.try_recv().expect("a notice was sent") {
+            Inbound::Notice(text) => {
+                assert!(text.starts_with("undo failed:"), "{text}");
+                assert!(text.contains("never-tracked.rs"), "{text}");
+            }
+            other => panic!("expected a notice, got {other:?}"),
+        }
+
+        // Any other input is not this service's verb.
+        assert!(!service_undo_delete(
+            &WorkspaceInput::McpRefresh,
+            &workspace,
+            &tx
+        ));
+    }
 }
