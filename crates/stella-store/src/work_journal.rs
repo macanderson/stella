@@ -793,7 +793,7 @@ impl WorkJournal {
     /// `stella-cli`'s deck derives a worker lane's key from the lead session's
     /// (#3233) — needs to read back the ones it already minted. Every ref this
     /// module writes lives under its key, so the refs *are* that record; until
-    /// this, nothing could ask them for it. [`Self::recorded_sessions`] is the
+    /// this, nothing could ask them for it. `recorded_sessions` is the
     /// retention half of the same question and stays private, because an age
     /// cutoff is [`Self::prune`]'s business alone.
     ///
