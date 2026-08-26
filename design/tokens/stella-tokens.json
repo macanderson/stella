@@ -13,7 +13,40 @@
     "kind of colour it is -- and the warm-drift predicates reject the choice that",
     "kills a gold-on-black scheme. The predicates are defined once in",
     "crates/stella-tui-theme/src/clamp.rs and mirrored by scripts/check-tokens.py;",
-    "both are held to this file's `clamps` block below."
+    "both are held to this file's `clamps` block below.",
+    "",
+    "Every token also declares a `paint` posture, for the same reason and against a",
+    "different failure. `clamp` asks what KIND of colour this is; `paint` asks",
+    "WHETHER ANYTHING RENDERS IT. Nothing asked that until #4975, and `comment`",
+    "is what got through: a published token with a role sentence, a --st-comment",
+    "declaration on four surfaces, a COMMENT constant in the generated token.rs,",
+    "a row in the SPEC's palette table, three design renderings using its hex, a",
+    "row in the contrast ratchet -- and no call site anywhere. One of the sub-AA",
+    "pairings #4063 was deciding about was a colour no reader had ever seen. This",
+    "is AGENTS.md invariant #10 (`every emitted signal names its consumer`) pointed",
+    "at the palette, and crates/stella-protocol/src/event/consumers.rs is the shape",
+    "it copies: a declared posture per row, enforced from both sides.",
+    "",
+    "Two postures, and the guard checks each against the tree rather than trusting",
+    "it -- a declaration nothing verifies is what `comment`'s `role` field already",
+    "was:",
+    "",
+    "  \"paint\": \"painted\"          some hand-written surface names this token,",
+    "                              as var(--st-<css>) or as token::<rust>. The",
+    "                              sweep fails if it finds none.",
+    "  \"paint\": { \"gap\": \"#N\" }   nothing names it, and #N is where that is being",
+    "                              decided. The sweep fails if it finds a site --",
+    "                              a gap that has been closed must be redeclared,",
+    "                              not left standing.",
+    "",
+    "What the sweep can and cannot see is stated at check 4 in",
+    "scripts/check-tokens.py. The short version: it is a NAME sweep, not a render",
+    "trace, so it cannot follow a value copied under another name. Eleven of the",
+    "web stops below sat at `gap` for exactly that reason -- the site shipped",
+    "their values as literals under --stella-* rather than through var(--st-*).",
+    "#4978 completed the two hand-mirrored sheets and repointed those roles, so",
+    "they are `painted` now: the fix the posture asked for, rather than a posture",
+    "written to match the code."
   ],
   "version": "5.1.0",
   "name": "stella black and gold",
@@ -115,7 +148,8 @@
       "css": "--st-bg",
       "rust": "BG",
       "role": "canvas",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "panel",
@@ -124,7 +158,8 @@
       "css": "--st-panel",
       "rust": "PANEL",
       "role": "panels, cards, code blocks",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "hl",
@@ -133,7 +168,8 @@
       "css": "--st-hl",
       "rust": "HL",
       "role": "selected and hover rows",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "border",
@@ -142,7 +178,8 @@
       "css": "--st-border",
       "rust": "BORDER",
       "role": "hairlines, dividers, unfilled meter track",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "rule",
@@ -151,7 +188,8 @@
       "css": "--st-rule",
       "rust": "RULE",
       "role": "section rules, turn boundaries",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "gold",
@@ -160,7 +198,8 @@
       "css": "--st-gold",
       "rust": "GOLD",
       "role": "the brand metal: actions, active states, money, the mark",
-      "surfaces": ["tui", "web-dark", "web-light", "asset"]
+      "surfaces": ["tui", "web-dark", "web-light", "asset"],
+      "paint": "painted"
     },
     {
       "name": "gold-bright",
@@ -169,7 +208,8 @@
       "css": "--st-gold-bright",
       "rust": "GOLD_BRIGHT",
       "role": "tiny live indicators only: spinner, hot marker, drift glyph",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "silver",
@@ -178,7 +218,8 @@
       "css": "--st-silver",
       "rust": "SILVER",
       "role": "secondary emphasis, incoming context, syntax strings",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "silver-type",
@@ -187,7 +228,8 @@
       "css": "--st-silver-type",
       "rust": "SILVER_TYPE",
       "role": "syntax types, tertiary labels",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "text",
@@ -196,7 +238,8 @@
       "css": "--st-text",
       "rust": "TEXT",
       "role": "primary text on dark, in the deck",
-      "surfaces": ["tui"]
+      "surfaces": ["tui"],
+      "paint": "painted"
     },
     {
       "name": "paper-text",
@@ -204,7 +247,8 @@
       "clamp": "warm-paper",
       "css": "--st-paper-text",
       "role": "primary text on dark, off the deck",
-      "surfaces": ["web-dark", "asset"]
+      "surfaces": ["web-dark", "asset"],
+      "paint": "painted"
     },
     {
       "name": "muted",
@@ -213,7 +257,8 @@
       "css": "--st-muted",
       "rust": "MUTED",
       "role": "secondary text",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "dim",
@@ -222,7 +267,8 @@
       "css": "--st-dim",
       "rust": "DIM",
       "role": "hints, captions, line numbers",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": "painted"
     },
     {
       "name": "green",
@@ -231,7 +277,8 @@
       "css": "--st-green",
       "rust": "GREEN",
       "role": "pass, additive diff sign",
-      "surfaces": ["tui", "web-dark", "web-light"]
+      "surfaces": ["tui", "web-dark", "web-light"],
+      "paint": "painted"
     },
     {
       "name": "red",
@@ -240,7 +287,8 @@
       "css": "--st-red",
       "rust": "RED",
       "role": "fail, destructive, removal diff sign",
-      "surfaces": ["tui", "web-dark", "web-light"]
+      "surfaces": ["tui", "web-dark", "web-light"],
+      "paint": "painted"
     },
     {
       "name": "diff-add-bg",
@@ -249,7 +297,8 @@
       "css": "--st-diff-add",
       "rust": "DIFF_ADD_BG",
       "role": "added diff row background",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": { "gap": "#4058" }
     },
     {
       "name": "diff-del-bg",
@@ -258,7 +307,8 @@
       "css": "--st-diff-del",
       "rust": "DIFF_DEL_BG",
       "role": "removed diff row background",
-      "surfaces": ["tui", "web-dark"]
+      "surfaces": ["tui", "web-dark"],
+      "paint": { "gap": "#4058" }
     },
     {
       "name": "ink",
@@ -267,7 +317,8 @@
       "css": "--st-ink",
       "rust": "INK",
       "role": "primary text on light surfaces (web light mode only)",
-      "surfaces": ["web-light", "asset"]
+      "surfaces": ["web-light", "asset"],
+      "paint": "painted"
     },
     {
       "name": "paper",
@@ -276,7 +327,8 @@
       "css": "--st-paper",
       "rust": "PAPER",
       "role": "the warm light canvas",
-      "surfaces": ["web-light", "asset"]
+      "surfaces": ["web-light", "asset"],
+      "paint": "painted"
     },
     {
       "name": "paper-panel",
@@ -285,7 +337,8 @@
       "css": "--st-paper-panel",
       "rust": "PAPER_PANEL",
       "role": "light panel",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": { "gap": "#4058" }
     },
     {
       "name": "paper-border",
@@ -294,7 +347,8 @@
       "css": "--st-paper-border",
       "rust": "PAPER_BORDER",
       "role": "light border",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": { "gap": "#4058" }
     },
     {
       "$comment": [
@@ -320,7 +374,8 @@
       "clamp": "neutral-gray",
       "css": "--st-void",
       "role": "below the canvas: full-bleed backdrops",
-      "surfaces": ["web-dark"]
+      "surfaces": ["web-dark"],
+      "paint": "painted"
     },
     {
       "name": "gold-ink",
@@ -328,7 +383,8 @@
       "clamp": "resting-gold",
       "css": "--st-gold-ink",
       "role": "gold as TEXT on the light ground, where the metal cannot clear AA",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": "painted"
     },
     {
       "name": "paper-ground",
@@ -336,7 +392,8 @@
       "clamp": "warm-paper",
       "css": "--st-paper-ground",
       "role": "the warm paper page ground, one step under the panel",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": "painted"
     },
     {
       "name": "paper-raised",
@@ -344,7 +401,8 @@
       "clamp": "warm-paper",
       "css": "--st-paper-raised",
       "role": "light surface raised above the page ground",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": "painted"
     },
     {
       "name": "paper-row",
@@ -352,7 +410,8 @@
       "clamp": "warm-paper",
       "css": "--st-paper-row",
       "role": "light hover and selected rows",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": "painted"
     },
     {
       "name": "paper-seam",
@@ -360,7 +419,8 @@
       "clamp": "warm-paper",
       "css": "--st-paper-seam",
       "role": "light seam: the hairline under a border",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": "painted"
     },
     {
       "name": "ink-muted",
@@ -368,7 +428,8 @@
       "clamp": "warm-paper",
       "css": "--st-ink-muted",
       "role": "secondary text on light surfaces",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": "painted"
     },
     {
       "name": "green-ink",
@@ -376,7 +437,8 @@
       "clamp": "verdict",
       "css": "--st-green-ink",
       "role": "pass, as text on the light ground",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": "painted"
     },
     {
       "name": "amber",
@@ -384,7 +446,8 @@
       "clamp": "verdict",
       "css": "--st-amber",
       "role": "warning: the one status the core palette does not name",
-      "surfaces": ["web-dark"]
+      "surfaces": ["web-dark"],
+      "paint": "painted"
     },
     {
       "name": "amber-ink",
@@ -392,7 +455,8 @@
       "clamp": "verdict",
       "css": "--st-amber-ink",
       "role": "warning, as text on the light ground",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": "painted"
     },
     {
       "name": "red-ink",
@@ -400,7 +464,8 @@
       "clamp": "verdict",
       "css": "--st-red-ink",
       "role": "fail, as text on the light ground",
-      "surfaces": ["web-light"]
+      "surfaces": ["web-light"],
+      "paint": "painted"
     }
   ],
   "banned": {

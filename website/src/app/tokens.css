@@ -40,11 +40,11 @@
  *  - `--stella-glow-brand`. Rule 5 retires gradients, glows and coloured
  *    shadows on every surface; a glow is a gradient with a soft edge.
  *
- * WHAT IS AN OPEN EXCEPTION. `--stella-warning` has no token. The system ships
- * two verdicts, pass and fail, and a warning is neither — and the colour a
- * warning wants is an amber, which is precisely the hue the clamp exists to
- * reject. It is aliased to gold here so nothing renders an undefined value, and
- * that choice needs a human: see the note at its definition.
+ * WHAT WAS AN OPEN EXCEPTION, and is not. `--stella-warning` had no token: the
+ * system ships two verdicts, pass and fail, and a warning is neither. PR #4086
+ * settled it — `amber` and `amber-ink` are tokens now, under the `verdict`
+ * clamp, and the 30° separation law that governs the hue is enforced by
+ * `scripts/check-hue-separation.py` rather than argued in this comment.
  *
  * The token family stays role-named. A hue in a token name falsifies itself the
  * first time the hue moves, and this one has moved five times.
@@ -73,6 +73,17 @@
   --st-paper-text: #f4f1ea; /* primary text on dark, off the deck */
   --st-paper-panel: #f9f6ef; /* light panel */
   --st-paper-border: #e6e3dd; /* light border */
+  --st-void: #050507; /* below the canvas: full-bleed backdrops */
+  --st-gold-ink: #725a00; /* gold as TEXT on the light ground */
+  --st-paper-ground: #f7f4ed; /* the warm paper page ground */
+  --st-paper-raised: #fdfaf3; /* light surface raised above the page ground */
+  --st-paper-row: #e9e6e0; /* light hover and selected rows */
+  --st-paper-seam: #e0ddd7; /* light seam: the hairline under a border */
+  --st-ink-muted: #605f5c; /* secondary text on light surfaces */
+  --st-green-ink: #006933; /* pass, as text on the light ground */
+  --st-amber: #e78d54; /* warning */
+  --st-amber-ink: #8a3f00; /* warning, as text on the light ground */
+  --st-red-ink: #96213c; /* fail, as text on the light ground */
 
   /* ── brand core, named by role ──────────────────────────────────────── */
   --stella-brand: var(--st-gold);
@@ -115,33 +126,38 @@
    * moving. Role names, not hue names, for the same reason the ramp above
    * uses them. */
   /* Roles, pointed at the generated ramp above rather than restating its
-   * values. Twelve of these were literals identical to an `--st-*` a few lines
-   * up — duplication rather than drift, since `check-tokens.py` would have
-   * caught a value that was not a live token. But it would NOT have caught a
-   * role quietly re-pointed at a different one: the guard asks "is this hex a
-   * token?", never "is this role still the token it names". `var()` makes that
-   * unaskable, which is what the token system is for, and is what the five
-   * brand-core roles above already do.
+   * values. Every one of these was once a literal identical to an `--st-*` a
+   * few lines up — duplication rather than drift, since `check-tokens.py`
+   * would have caught a value that was not a live token. But it would NOT have
+   * caught a role quietly re-pointed at a different one: the guard asks "is
+   * this hex a token?", never "is this role still the token it names". `var()`
+   * makes that unaskable, which is what the token system is for.
+   *
+   * Twelve were repointed first; the last eleven had no `--st-*` to point at,
+   * because the ramp above stopped at twenty-one of the palette's thirty-two
+   * and every missing one was a light-ground stop, an ink or `void` (#4978).
+   * They were the whole warm-paper half of the system, hand-copied. The ramp
+   * is complete now, so nothing here restates a value.
    *
    * The contrast ratios stay in the comments: a measurement is a fact about
    * this pairing that a `var()` cannot carry. */
-  --stella-void: #050507; /* below the canvas — full-bleed backdrops */
+  --stella-void: var(--st-void); /* below the canvas — full-bleed backdrops */
   --stella-canvas: var(--st-bg); /* the page ground */
   --stella-canvas-code: var(--st-panel); /* cards, code blocks */
   --stella-canvas-row: var(--st-hl); /* highlight rows, hover surfaces */
   --stella-canvas-edge: var(--st-border); /* borders */
   --stella-signal: var(--st-gold); /* 11.99:1 on canvas */
   --stella-signal-live: var(--st-gold-bright); /* 14.22:1 — small, and moving */
-  --stella-signal-ink: #725a00; /* gold TEXT on the paper ground, 6.02:1 */
+  --stella-signal-ink: var(--st-gold-ink); /* gold TEXT on the paper ground, 6.02:1 */
   --stella-text: var(--st-paper-text); /* 16.19:1 on canvas */
   --stella-text-2: var(--st-silver); /* 8.58:1 — the safe small-text tone */
   --stella-text-3: var(--st-muted); /* 4.47:1 — caption/UI tier, under AA body */
   --stella-text-dim: var(--st-dim); /* 2.30:1 — chrome only, never words */
-  --stella-paper-2: #f7f4ed; /* the warm paper ground */
-  --stella-paper-3: #fdfaf3; /* paper surface */
-  --stella-paper-row: #e9e6e0; /* paper hover / raised */
-  --stella-paper-edge: #e0ddd7; /* paper seam */
-  --stella-ink-2: #605f5c; /* paper secondary text, 5.83:1 */
+  --stella-paper-2: var(--st-paper-ground); /* the warm paper ground */
+  --stella-paper-3: var(--st-paper-raised); /* paper surface */
+  --stella-paper-row: var(--st-paper-row); /* paper hover / raised */
+  --stella-paper-edge: var(--st-paper-seam); /* paper seam */
+  --stella-ink-2: var(--st-ink-muted); /* paper secondary text, 5.83:1 */
 
   /* ── status. Not part of the brand kit's one-color law: these are
    *    FUNCTIONAL hues (a warning must not read as decoration), and each has
@@ -169,11 +185,11 @@
    *    they sit 63.1° and 78.0° from it. Each `-ink` variant holds its dark
    *    twin's hue to within 2° and clears AA on the paper ground. */
   --stella-success: var(--st-green);
-  --stella-success-ink: #006933;
-  --stella-warning: #e78d54;
-  --stella-warning-ink: #8a3f00;
+  --stella-success-ink: var(--st-green-ink);
+  --stella-warning: var(--st-amber);
+  --stella-warning-ink: var(--st-amber-ink);
   --stella-danger: var(--st-red);
-  --stella-danger-ink: #96213c;
+  --stella-danger-ink: var(--st-red-ink);
 
   /* ── motion — assemble, don't spin ──────────────────────────────────── */
   --stella-ease-arrive: cubic-bezier(0.22, 0.9, 0.35, 1);

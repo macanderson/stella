@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Tests for check-tokens.py's BAN CHECK, over every notation it claims to
-# watch (#4910), and for its CITATION CHECK, whose subject is a pair (#3653).
+# watch (#4910), for its CITATION CHECK, whose subject is a pair (#3653), and
+# for its PAINT CHECK, whose subject is an absence (#4975).
 #
 #   ./scripts/test-tokens.sh    (or: make tokens-test)
 #
@@ -39,6 +40,14 @@
 # value that is some other token's: that value is live, so it passes a
 # membership test while saying something false. A name quoted at a value the
 # palette has moved past is the other failure mode, and looks nothing like it.
+#
+# The paint cases earn theirs because that check's subject is an ABSENCE, and
+# every other check here is about something present. A token nothing paints is
+# a value that is live, correctly quoted, and inside no token-only path -- so
+# all three older checks pass it, which is exactly what happened to `comment`
+# (#4946, #4975). Both directions get a case: a `painted` declaration with no
+# site must fail, and a `gap` declaration that has since acquired one must fail
+# too, or the ledger records a hole somebody already filled.
 #
 # Every fixture below reads its colours out of the real token file at run time,
 # citation fixtures included — which is why this file is in neither `SELF` nor
@@ -134,30 +143,60 @@ else:
 # A throwaway git repository holding the real token file plus one source file.
 # Real git, because the script discovers its inputs with `git ls-files` and a
 # fixture that stubbed that would be testing a path nothing runs.
-# $1 = case name, $2 = file path within the root, $3 = file contents.
+#
+# The token file arrives with every `paint` posture rewritten to a gap. A
+# fixture tree holds one source file, so it paints nothing, and the real file's
+# seventeen `painted` declarations would fail check 4 in every case below --
+# turning a suite about the ban and the citation into a suite about the paint
+# sweep. Values, names and the ban list are copied untouched, which is what the
+# other three checks read. The paint cases rewrite the posture they are about
+# and read the token names out of the same file, so nothing here is typed.
+#
+# $1 = case name, $2 = file path within the root, $3 = file contents,
+# $4 = optional `name=posture` (posture is `painted`, else an issue for a gap).
 new_root() {
   local dir="$TMP/$1"
   mkdir -p "$dir/design/tokens" "$dir/$(dirname "$2")"
-  cp "$repo_root/$TOKENS_REL" "$dir/$TOKENS_REL"
+  python3 -c "
+import json, sys
+doc = json.loads(open(sys.argv[1]).read())
+override = sys.argv[3]
+name, _, posture = override.partition('=')
+for tok in doc['tokens']:
+    if 'name' not in tok:
+        continue
+    if tok['name'] == name:
+        tok['paint'] = 'painted' if posture == 'painted' else {'gap': posture}
+    else:
+        tok['paint'] = {'gap': '#4975'}
+open(sys.argv[2], 'w').write(json.dumps(doc, indent=2))
+" "$repo_root/$TOKENS_REL" "$dir/$TOKENS_REL" "${4:-}"
   printf '%s\n' "$3" >"$dir/$2"
   git -C "$dir" init -q 2>/dev/null
   git -C "$dir" add -A 2>/dev/null
   echo "$dir"
 }
 
-# want <name> <expect-pass|expect-ban|expect-fail> <file> <contents> [substring]
+# want <name> <expect-pass|expect-ban|expect-fail|expect-absent> <file>
+#      <contents> [substring] [token=posture]
 #
 # `expect-ban` and `expect-fail` are the same assertion — a non-zero exit — and
 # both spellings exist because a misquote is not a ban and calling it one at the
 # call site would read as a mistake.
 #
+# `expect-absent` is that assertion minus one clause: the paint check's subject
+# is a token nothing names, and an absence has no file to name. Every other
+# failure here is a value sitting at a line, so those must report where.
+#
 # The optional substring is checked on BOTH verdicts. On a failure it pins which
 # value was named and in what words; on a pass it pins what the run reported,
 # without which a guard that passed by scanning nothing satisfies the case.
+#
+# The optional `token=posture` is the paint cases' subject; see `new_root`.
 want() {
-  local name="$1" expect="$2" file="$3" contents="$4" sub="${5:-}"
+  local name="$1" expect="$2" file="$3" contents="$4" sub="${5:-}" paint="${6:-}"
   local root out rc
-  root="$(new_root "$(echo "$name" | tr ' /' '__')" "$file" "$contents")"
+  root="$(new_root "$(echo "$name" | tr ' /' '__')" "$file" "$contents" "$paint")"
   out="$(python3 "$SCRIPT" "$root" 2>&1)"
   rc=$?
   if [ "$expect" = "expect-pass" ]; then
@@ -176,17 +215,20 @@ want() {
     return
   fi
   # Naming the file is half the guard: an exit code alone sends a reader
-  # hunting through the tree for a colour the script already located.
-  case "$out" in
-  *"$file"*) ;;
-  *)
-    bad "$name — caught it but did not name $file: $out"
-    return
-    ;;
-  esac
+  # hunting through the tree for a colour the script already located. An
+  # absence is the one finding with nowhere to point.
+  if [ "$expect" != "expect-absent" ]; then
+    case "$out" in
+    *"$file"*) ;;
+    *)
+      bad "$name — caught it but did not name $file: $out"
+      return
+      ;;
+    esac
+  fi
   case "$out" in
   *"$sub"*) ok "$name" ;;
-  *) bad "$name — named $file but not '$sub': $out" ;;
+  *) bad "$name — caught it but did not report '$sub': $out" ;;
   esac
 }
 
@@ -338,6 +380,102 @@ want "SELF suppresses the ban and not the citation check" expect-fail \
 want "a stray hex in a token-only path is flagged" expect-fail \
   "docs/brand/css/tokens.css" "  --custom: $WRONG_HEX;" \
   "is not a token in"
+
+echo ""
+echo "check-tokens paint check:"
+
+# The subject of every case below: one token that carries both notations, read
+# out of the real file so a rename cannot leave these cases testing nothing.
+eval "$(python3 -c "
+import json, sys
+doc = json.loads(open(sys.argv[1]).read())
+for t in doc['tokens']:
+    if t.get('rust'):
+        print('P_NAME=%s' % t['name'])
+        print('P_CSS=%s' % t['css'])
+        print('P_RUST=%s' % t['rust'])
+        break
+else:
+    raise SystemExit('no token declares a rust name')
+" "$repo_root/$TOKENS_REL")"
+
+# The failure this check exists for, and the one every other check here passes:
+# a token declared `painted` that nothing in the tree names. `comment` shipped
+# in exactly this state — a live value, correctly quoted, in no token-only path.
+want "a painted token nothing names is caught" expect-absent \
+  "website/src/app/page.tsx" "const x = 1;" \
+  "$P_NAME: declares \`painted\`, and nothing in the tree names $P_CSS" \
+  "$P_NAME=painted"
+
+# The other direction, and the half a one-sided check would miss: a gap that
+# somebody has since closed. Left standing, the ledger records a hole that is
+# not there any more, and the next reader trusts it.
+want "a gap the tree has closed is caught" expect-fail \
+  "website/src/app/globals.css" "  color: var($P_CSS);" \
+  "declares a gap citing #4975, but 1 site(s) name it" \
+  "$P_NAME=#4975"
+
+# Both notations satisfy a `painted` declaration. Two cases rather than one,
+# because a matcher that only sees CSS looks exactly like a clean tree on the
+# Rust side — the shape #4910 found one check over.
+want "a var() use satisfies a painted declaration" expect-pass \
+  "website/src/app/globals.css" "  color: var($P_CSS);" \
+  "1 token(s) painted" \
+  "$P_NAME=painted"
+
+want "a token:: use satisfies a painted declaration" expect-pass \
+  "crates/stella-tui/src/views/session.rs" \
+  "let s = Style::new().fg(token::$P_RUST);" \
+  "1 token(s) painted" \
+  "$P_NAME=painted"
+
+# A **declaration** is not a paint. This is the distinction the whole check
+# turns on: `comment` had four of these across four surfaces and no reader ever
+# saw the colour, so a mirrored stylesheet binding the name must not count.
+want "a declaration in a mirror sheet is not a paint" expect-absent \
+  "docs/brand/css/tokens.css" "  $P_CSS: $LIVE_HEX;" \
+  "declares \`painted\`, and nothing in the tree names $P_CSS" \
+  "$P_NAME=painted"
+
+# `fallback.rs` names every terminal token by construction — `ansi16` is total
+# over `token::ALL` — so counting it would pass six tokens nothing paints.
+want "fallback.rs's total map does not count as a paint" expect-absent \
+  "crates/stella-tui-theme/src/fallback.rs" \
+  "        token::$P_RUST => Color::Black," \
+  "declares \`painted\`, and nothing in the tree names $P_CSS" \
+  "$P_NAME=painted"
+
+# The door, in gen-tokens.py rather than here: a token with no posture at all.
+# Checked through the generator because that is what refuses it, and a suite
+# that only tested the sweep would leave the door untested.
+paint_root="$(new_root "no_posture" "website/src/app/page.tsx" "const x = 1;")"
+python3 -c "
+import json, sys
+doc = json.loads(open(sys.argv[1]).read())
+for tok in doc['tokens']:
+    tok.pop('paint', None)
+open(sys.argv[1], 'w').write(json.dumps(doc, indent=2))
+" "$paint_root/$TOKENS_REL"
+out="$(python3 "$repo_root/scripts/gen-tokens.py" --check "$paint_root" 2>&1)"
+rc=$?
+case "$rc:$out" in
+0:*) bad "a token with no \`paint\` posture was accepted: $out" ;;
+*"no \`paint\` posture"*) ok "a token with no posture is refused at the door" ;;
+*) bad "refused with the wrong message: $out" ;;
+esac
+
+# A gap with no issue is the silence the field exists to refuse. `{"gap": ""}`
+# and `{"gap": "later"}` are both a token nobody has to explain, which is the
+# state `comment` was in for its whole life.
+gap_root="$(new_root "empty_gap" "website/src/app/page.tsx" "const x = 1;" \
+  "$P_NAME=later")"
+out="$(python3 "$repo_root/scripts/gen-tokens.py" --check "$gap_root" 2>&1)"
+rc=$?
+case "$rc:$out" in
+0:*) bad "a gap citing no issue was accepted: $out" ;;
+*"must cite an issue"*) ok "a gap that cites no issue is refused at the door" ;;
+*) bad "refused with the wrong message: $out" ;;
+esac
 
 echo ""
 echo "check-tokens, the real tree:"

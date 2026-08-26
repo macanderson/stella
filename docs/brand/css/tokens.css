@@ -1,25 +1,29 @@
 /* ==========================================================================
    stella — design tokens
-   One color, owned: Gold on Obsidian. Everything else is restraint.
+   One color, owned: Gold on a cool near-black. Everything else is restraint.
    Drop this file in before any component styles. Pure CSS custom properties;
    no build step required. Pair with globals.css for shadcn/ui + Tailwind v4.
 
-   v4.0 returns the brand hue to gold, reversing v3.0's Ion recolour (#3658)
-   and restoring v2.0's bronze ramp value-for-value. The cool neutral
-   ramp and the Obsidian ground that v3.0 introduced are kept: the complaint
-   the recolour answered was the *neutrals*, which were warm and muddy, and
-   only the brand hue is being taken back. Gold on a cool black is the
-   yellow-and-black standard, and it is what this system is called.
+   The `--st-*` block is the WHOLE palette, and is the content of
+   design/tokens/stella-tokens.css, which scripts/gen-tokens.py emits from
+   design/tokens/stella-tokens.json. Every hex here must be a live token
+   (scripts/check-tokens.py's TOKEN_ONLY), every name must be one
+   (website/src/lib/brand-parity.test.ts), and the set must be complete —
+   the same test compares it against the palette both ways.
 
-   The token family stays `--stella-brand-*`, NOT `--stella-gold-*`. That
-   lesson survives the reversal and is in fact confirmed by it: a hue in a
-   token name falsifies itself the first time the hue moves, and this ramp has
-   now moved four times. Name the role; put the hue in the value. Renaming
-   back would also break `design_token_parity.rs`, which reads role names for
+   It was not complete until #4978: this sheet carried 20 of 32, and the
+   twelve it dropped were the entire light-ground half plus `void`. Nothing
+   noticed, because every check over it was a MEMBERSHIP question — is this
+   hex a token, is this name a token — and none of them can see a token that
+   was never mirrored. The kit's own guidelines page and design brief already
+   published all thirty-two as tables, so the sheet was the one kit artifact
+   that disagreed with the kit.
+
+   The token family stays `--stella-brand-*`, NOT `--stella-gold-*`: a hue in
+   a token name falsifies itself the first time the hue moves, and this ramp
+   has now moved five times. Name the role; put the hue in the value. Renaming
+   would also break `design_token_parity.rs`, which reads role names for
    exactly this reason.
-
-   Both ramps are generated in OKLCH — the brand at hue 73, the neutrals at
-   hue 250 — so the steps are perceptually even rather than eyeballed in sRGB.
    ========================================================================== */
 
 :root {
@@ -49,8 +53,20 @@
   --st-diff-del: #241019;
   --st-ink: #141413;
   --st-paper: #FFFCF5;
+  --st-paper-text: #F4F1EA;
   --st-paper-panel: #F9F6EF;
   --st-paper-border: #E6E3DD;
+  --st-void: #050507;
+  --st-gold-ink: #725A00;
+  --st-paper-ground: #F7F4ED;
+  --st-paper-raised: #FDFAF3;
+  --st-paper-row: #E9E6E0;
+  --st-paper-seam: #E0DDD7;
+  --st-ink-muted: #605F5C;
+  --st-green-ink: #006933;
+  --st-amber: #E78D54;
+  --st-amber-ink: #8A3F00;
+  --st-red-ink: #96213C;
 
   /* ---- typography ------------------------------------------------------ */
   /* JetBrains Mono is the brand voice — the product lives in a terminal,

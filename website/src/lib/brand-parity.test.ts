@@ -282,18 +282,26 @@ test("the site's brand tokens are the kit's, value for value", () => {
       `stella-tokens.json does not define: ${unknown.join(", ")}`,
   );
 
-  // And the sheet has not quietly lost rows, which would make the loop below
-  // pass over less than it thinks. The number moved 21 -> 20 when #4946
-  // retired `comment`, a token nothing painted; it is a floor on the mirror's
-  // size, so it moves only when the palette itself shrinks and the reason goes
-  // here beside it.
+  // And the other direction: every token the palette declares has a row here.
   //
-  // The sheet is a subset by design: it carries 20 of the palette's 32, and
-  // the twelve it has never mirrored are #4978.
-  assert.ok(
-    ramp.length >= 20,
-    `docs/brand/css/tokens.css defines the generated --st-* ramp ` +
-      `(found ${ramp.length})`,
+  // This used to be `ramp.length >= 20`, a floor on the count — which cannot
+  // see a token that was never mirrored in the first place, and twelve had not
+  // been. The sheet carried 20 of the palette's 32, and the missing twelve were
+  // the entire warm-paper half plus `void`: the two documents a designer reads
+  // to learn the palette did not contain the light scheme (#4978). A count
+  // could not have found that, and no other check over this file could either
+  // — `check-tokens.py` asks whether every hex here is a live token, never
+  // whether a live token is absent.
+  //
+  // Equality rather than a floor, because the kit is the kit. A published
+  // *subset* is a defensible thing for the marketing site to be, and it is not
+  // what this file is: `docs/brand/` is what a designer is handed.
+  const missing = [...live].filter((name) => !kit.has(name));
+  assert.deepEqual(
+    missing,
+    [],
+    `docs/brand/css/tokens.css must carry every token in ` +
+      `design/tokens/stella-tokens.json; it is missing: ${missing.join(", ")}`,
   );
 
   for (const name of [...MIRRORED_CORE, ...ramp]) {
