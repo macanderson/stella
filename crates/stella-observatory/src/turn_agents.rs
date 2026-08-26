@@ -272,7 +272,7 @@ mod tests {
              );
              CREATE TABLE telemetry (
                execution_id INTEGER NOT NULL,
-               step INTEGER NOT NULL,
+               stream_seq INTEGER NOT NULL,
                ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                provider TEXT NOT NULL,
                call_role TEXT NOT NULL DEFAULT 'unknown',
@@ -286,7 +286,7 @@ mod tests {
                retries INTEGER NOT NULL,
                tool_calls INTEGER NOT NULL,
                sub_agent_id TEXT,
-               UNIQUE (execution_id, step)
+               UNIQUE (execution_id, stream_seq)
              );",
         )
         .expect("schema");
@@ -354,7 +354,7 @@ mod tests {
             (3, "audit-2", 70),
         ] {
             conn.execute(
-                "INSERT INTO telemetry (execution_id, step, provider, model, input_tokens,
+                "INSERT INTO telemetry (execution_id, stream_seq, provider, model, input_tokens,
                    output_tokens, cache_read_tokens, cache_miss_tokens, cost_usd,
                    duration_ms, retries, tool_calls, sub_agent_id)
                  VALUES (7, ?1, 'zai', 'glm-5.2', ?2, 50, 0, 0, 0.002, 1200, 0, 1, ?3)",
@@ -410,7 +410,7 @@ mod tests {
 
         conn.execute_batch(
             "ALTER TABLE telemetry RENAME TO telemetry_v33;
-             CREATE TABLE telemetry AS SELECT execution_id, step, provider, model
+             CREATE TABLE telemetry AS SELECT execution_id, stream_seq, provider, model
              FROM telemetry_v33;",
         )
         .expect("drop the column");

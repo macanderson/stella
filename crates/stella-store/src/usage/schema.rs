@@ -132,7 +132,11 @@ CREATE TABLE IF NOT EXISTS telemetry (
     workspace_id   TEXT,
     repo_id        TEXT NOT NULL DEFAULT '',
     execution_id   INTEGER NOT NULL,
-    step           INTEGER NOT NULL,
+    -- The event-stream `seq` the project store replicated, under the name it
+    -- has held there since #4924. It was called `step` on both sides and was
+    -- never the engine's step; the hub keeps the source column's spelling so
+    -- a reader joining the two surfaces meets one word for one thing.
+    stream_seq     INTEGER NOT NULL,
     recorded_at    TEXT NOT NULL DEFAULT '',
     provider       TEXT NOT NULL,
     call_role      TEXT NOT NULL,
@@ -213,7 +217,7 @@ struct HubMigrationStep {
 ///
 /// Append only -- see the module doc for why position is the contract -- and
 /// **never renumber**: a slot is claimed by position, not by name.
-const HUB_MIGRATIONS: [HubMigrationStep; 3] = [
+const HUB_MIGRATIONS: [HubMigrationStep; 4] = [
     // v0 -> v1: back-propagate #3388's door-only `kind` vocabulary, and give
     // the hub the `role` column #3395 gave the project store.
     HubMigrationStep {
@@ -232,6 +236,13 @@ const HUB_MIGRATIONS: [HubMigrationStep; 3] = [
         target_version: 3,
         apply: migrate_hub_v2_to_v3,
     },
+    // v3 -> v4: `telemetry.step` becomes `stream_seq`, following the project
+    // store's rename (#4924). A rename only -- no new column crosses into the
+    // hub, which is a `content_free` decision of its own.
+    HubMigrationStep {
+        target_version: 4,
+        apply: migrate_hub_v3_to_v4,
+    },
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `HUB_SCHEMA_VERSION` is its length,
     // so a slot is claimed by position, not by name. Two branches that each
@@ -245,7 +256,7 @@ const HUB_MIGRATIONS: [HubMigrationStep; 3] = [
     // fails loudly if a parallel merge left two entries claiming the same
     // slot.
     //
-    // Nothing is reserved now: take v3 -> v4 and add your own line here. If a
+    // Nothing is reserved now: take v4 -> v5 and add your own line here. If a
     // reserved phase ships without needing its slot, delete its line rather
     // than leaving a hole -- index order is the contract.
 ];
@@ -399,6 +410,30 @@ fn migrate_hub_v2_to_v3(tx: &rusqlite::Transaction<'_>) -> Result<()> {
             "ALTER TABLE execution_rollup \
              ADD COLUMN usage_complete INTEGER NOT NULL DEFAULT 1;",
         )?;
+    }
+    Ok(())
+}
+
+/// v3 -> v4: the hub's `telemetry.step` follows the project store's, and
+/// becomes `stream_seq` (#4924).
+///
+/// The column replicates the source store's, and the source column was never
+/// the engine's step: it holds the event-stream `seq`, the execution-global
+/// call identity. The hub inherited both the value and the wrong name, which
+/// makes it the surface where the confusion costs most — a cross-project
+/// reader has no `stella-events.jsonl` to check the meaning against.
+///
+/// A rename and nothing else. The engine-side identity the store gained in
+/// the same change (`turn_instance`, `engine_step`, `call_seq`) does **not**
+/// follow: what may cross into the hub is governed by
+/// [`crate::content_free`]'s reviewed allowlist and AGENTS.md's rule 3, and
+/// adding a column there is a decision a human takes on its own rather than a
+/// side effect of repairing a name. `stream_seq` was already on that
+/// allowlist under its old spelling, so this changes what the column is
+/// called and nothing about what leaves the machine.
+fn migrate_hub_v3_to_v4(tx: &rusqlite::Transaction<'_>) -> Result<()> {
+    if column_exists(tx, "telemetry", "step")? && !column_exists(tx, "telemetry", "stream_seq")? {
+        tx.execute_batch("ALTER TABLE telemetry RENAME COLUMN step TO stream_seq;")?;
     }
     Ok(())
 }

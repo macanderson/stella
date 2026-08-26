@@ -174,7 +174,13 @@ fn an_abandoned_attempt_with_nothing_to_salvage_still_lands_a_flagged_row() {
         "an abandoned call must be visible, not a hole in the count"
     );
     let row = &rows[0].telemetry;
-    assert_eq!(row.step, 7, "the row names the call that died");
+    assert_eq!(row.stream_seq, 7, "the row names the call that died");
+    // …and cannot name the receipt it belongs to, because `UsageIncomplete`
+    // carries no turn identity: the call died before the engine named one.
+    // NULL says that; 0 would claim it was the worker call of turn 0 (#4924).
+    assert_eq!(row.turn_instance, None);
+    assert_eq!(row.engine_step, None);
+    assert_eq!(row.call_seq, None);
     assert_eq!(row.model, "claude-opus-5");
     assert_eq!(row.input_tokens, 0);
     assert_eq!(row.output_tokens, 0);

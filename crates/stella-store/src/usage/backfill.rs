@@ -79,7 +79,10 @@ mod tests {
             execution_id: 1,
             recorded_at: "2026-07-23T10:00:00Z".into(),
             telemetry: crate::TelemetryRow {
-                step: source_rowid as u64,
+                stream_seq: source_rowid as u64,
+                turn_instance: None,
+                engine_step: None,
+                call_seq: None,
                 provider: "zai".into(),
                 call_role: "engine".into(),
                 model: "glm-5.2".into(),

@@ -93,7 +93,10 @@ mod tests {
     /// One landed model call's durable receipt, priced at `cost_usd`.
     fn receipt(step: u64, cost_usd: f64) -> TelemetryRow {
         TelemetryRow {
-            step,
+            stream_seq: step,
+            turn_instance: None,
+            engine_step: None,
+            call_seq: None,
             provider: "anthropic".into(),
             call_role: "worker".into(),
             model: "test-model".into(),

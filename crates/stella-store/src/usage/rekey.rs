@@ -130,7 +130,10 @@ mod tests {
             execution_id: 1,
             recorded_at: "2026-07-28T06:00:00Z".into(),
             telemetry: crate::TelemetryRow {
-                step: 1,
+                stream_seq: 1,
+                turn_instance: None,
+                engine_step: None,
+                call_seq: None,
                 provider: "zai".into(),
                 call_role: "engine".into(),
                 model: "glm-5.2".into(),

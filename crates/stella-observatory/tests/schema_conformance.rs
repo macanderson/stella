@@ -93,7 +93,10 @@ const ROUTES: &[(&str, Option<&str>)] = &[
     ("/api/v1/snapshot", Some("/executions/0/id")),
     ("/api/overview", Some("/runs")),
     ("/api/executions", Some("/0/id")),
-    ("/api/execution?id=1", Some("/steps/0/step")),
+    // `stream_seq`, not `step`: the telemetry column was renamed in store
+    // schema v37 and the JSON key followed it (#4924). This probe caught the
+    // rename, which is exactly its job.
+    ("/api/execution?id=1", Some("/steps/0/stream_seq")),
     ("/api/execution-journal?id=1", Some("/0/type")),
     ("/api/execution-context?id=1", Some("/calls/0/step")),
     (
@@ -340,7 +343,10 @@ fn real_store_workspace() -> tempfile::TempDir {
         .record_telemetry(
             completed,
             &TelemetryRow {
-                step: 1,
+                stream_seq: 1,
+                turn_instance: None,
+                engine_step: None,
+                call_seq: None,
                 provider: "zai".into(),
                 call_role: "worker".into(),
                 model: "glm-5.2".into(),
@@ -363,7 +369,10 @@ fn real_store_workspace() -> tempfile::TempDir {
         .record_telemetry(
             completed,
             &TelemetryRow {
-                step: 2,
+                stream_seq: 2,
+                turn_instance: None,
+                engine_step: None,
+                call_seq: None,
                 provider: "zai".into(),
                 call_role: "worker".into(),
                 model: "glm-5.2".into(),

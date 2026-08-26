@@ -185,10 +185,36 @@ pub(crate) fn files_touched_ddl(table: &str) -> String {
 /// `telemetry` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION) — see [`events_ddl`] for why it is
 /// name-parameterized.
 ///
-/// UNIQUE (execution_id, step): one row per committed model call —
-/// `StepUsage` is emitted exactly once per step that lands. `drift_samples`
-/// treats `(execution_id, step)` as insertion order and `usage_stats` sums
-/// tokens/cost per execution, so a duplicate step double-counts money.
+/// UNIQUE (execution_id, stream_seq): one row per committed model call.
+///
+/// `stream_seq` is the **event-stream `seq`**, not the engine's step — it was
+/// called `step` until v37 and held a seq for as long as it existed (#4924).
+/// The value is right and the old name was not: the seq is the
+/// execution-global call identity, while the engine's `step` restarts on
+/// every `run_turn` and several calls can share one, so keying on it would
+/// collide and double-count money. `drift_samples` treats
+/// `(execution_id, stream_seq)` as insertion order and `usage_stats` sums
+/// tokens/cost per execution, so a duplicate is a real accounting error.
+/// AGENTS.md § Glossary is the authority on how far apart `step`,
+/// `turn_instance` and `call_seq` are; this column was that hazard sitting in
+/// the schema.
+///
+/// `turn_instance`, `engine_step` and `call_seq` (v37) carry the engine-side
+/// identity the `step_usage` event has carried since #4793, so a receipt can
+/// be found for a cost without going back to `stella-events.jsonl`: together
+/// with `execution_id` they are `step_receipt`'s primary key
+/// `(execution_id, turn_instance, step, call_seq)` — `engine_step` is that
+/// `step`, spelled apart from it here because this table's `step` meant
+/// something else for thirty-six versions.
+///
+/// All three are nullable, and NULL means **this row cannot say**, never
+/// zero. A row written before v37 genuinely does not know; so does a
+/// `usage_incomplete` receipt for a call that died before the engine could
+/// name the turn. Turn instances and call seqs are both 0-based, so
+/// defaulting either to 0 would state that every legacy auxiliary call was
+/// the worker call of turn 0 — the same reason the event's own fields are
+/// `Option` (`AgentEvent::StepUsage::call_seq`'s doc). A consumer joining on
+/// them treats NULL as unjoinable.
 ///
 /// `sub_agent_id` (v33) names which delegate spent the call, or NULL for the
 /// lead's own (#4383). Nullable with no default because NULL is the lead — a
@@ -201,7 +227,10 @@ pub(crate) fn telemetry_ddl(table: &str) -> String {
     format!(
         "CREATE TABLE {table} (
            execution_id INTEGER NOT NULL,
-           step INTEGER NOT NULL,
+           stream_seq INTEGER NOT NULL,
+           turn_instance INTEGER,
+           engine_step INTEGER,
+           call_seq INTEGER,
            ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
            provider TEXT NOT NULL,
            call_role TEXT NOT NULL DEFAULT 'unknown',
@@ -218,7 +247,7 @@ pub(crate) fn telemetry_ddl(table: &str) -> String {
            tool_calls INTEGER NOT NULL,
            usage_complete INTEGER NOT NULL DEFAULT 0 CHECK(usage_complete IN (0, 1)),
            sub_agent_id TEXT,
-           UNIQUE (execution_id, step)
+           UNIQUE (execution_id, stream_seq)
          );"
     )
 }
@@ -240,12 +269,12 @@ pub(crate) const RULES_TABLE: &str = "CREATE TABLE IF NOT EXISTS rules (
      );";
 
 /// `drift_samples` filters (provider, model) and sorts (execution_id DESC,
-/// step DESC) at EVERY session start, over a table that grows one row per
-/// model call forever — without this index it full-scans. Non-unique on
-/// purpose: uniqueness lives on the (execution_id, step) key; this is the
-/// query's covering access path.
+/// stream_seq DESC) at EVERY session start, over a table that grows one row
+/// per model call forever — without this index it full-scans. Non-unique on
+/// purpose: uniqueness lives on the (execution_id, stream_seq) key; this is
+/// the query's covering access path.
 pub(crate) const TELEMETRY_INDEX: &str = "CREATE INDEX IF NOT EXISTS telemetry_by_model
-       ON telemetry(provider, model, execution_id, step);";
+       ON telemetry(provider, model, execution_id, stream_seq);";
 
 /// `memory_citations` DDL at [`SCHEMA_VERSION`](crate::migrations::SCHEMA_VERSION).
 ///

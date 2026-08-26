@@ -22,7 +22,10 @@ use common::SealsEmbedderBackend;
 
 fn telemetry(step: u64) -> TelemetryRow {
     TelemetryRow {
-        step,
+        stream_seq: step,
+        turn_instance: None,
+        engine_step: None,
+        call_seq: None,
         provider: "anthropic".into(),
         call_role: "worker".into(),
         model: "opus".into(),

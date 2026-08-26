@@ -138,9 +138,16 @@ pub(super) fn migrate_v0_to_v1(tx: &rusqlite::Transaction<'_>) -> Result<()> {
         } else {
             "0"
         };
+        // `telemetry_ddl` is the CURRENT shape, so the rebuilt table already
+        // carries #4924's names: the target column is `stream_seq` while the
+        // v0 file being read still spells the same value `step`. Both sides
+        // of this statement are correct and they disagree on purpose — the
+        // whole point of the rename is that the value was never a step.
+        // Later rungs of the ladder are column-guarded and no-op over a table
+        // that arrived here already renamed.
         tx.execute_batch(&telemetry_ddl("telemetry_v1"))?;
         tx.execute_batch(&format!(
-            "INSERT INTO telemetry_v1 (execution_id, step, ts, provider, model, input_tokens,
+            "INSERT INTO telemetry_v1 (execution_id, stream_seq, ts, provider, model, input_tokens,
                estimated_input_tokens, output_tokens, cache_read_tokens, cache_miss_tokens,
                cache_write_tokens, cost_usd, duration_ms, retries, tool_calls)
              SELECT execution_id, step, ts, provider, model, input_tokens,

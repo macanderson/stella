@@ -65,6 +65,7 @@ mod schema_removal;
 mod sub_agent_calls;
 mod sub_agent_tool_calls;
 mod task_contract;
+mod telemetry_call_identity;
 mod token_unit;
 
 // `Durability` is NOT re-exported alongside the runner: its only
@@ -103,7 +104,7 @@ pub(crate) type Migration = fn(&rusqlite::Transaction<'_>) -> Result<()>;
 /// a file at `user_version` i to i + 1. Fresh files never run these — they
 /// get [`create_latest_schema`] and are stamped at [`SCHEMA_VERSION`]
 /// directly.
-pub(crate) const MIGRATIONS: [Migration; 36] = [
+pub(crate) const MIGRATIONS: [Migration; 37] = [
     // v0 → v1: dedupe events/telemetry, then retrofit the UNIQUE keys
     // their write paths have always assumed.
     migrate_v0_to_v1,
@@ -297,6 +298,13 @@ pub(crate) const MIGRATIONS: [Migration; 36] = [
     // from the composer, and nothing recorded the fact for the rest. See the
     // module's own doc.
     dispatched_executions::migrate_v35_to_v36,
+    // v36 → v37: `telemetry.step` is renamed `stream_seq` — it always held
+    // the event-stream seq, never the engine's step — and the table grows
+    // nullable `turn_instance`/`engine_step`/`call_seq`, which together with
+    // `execution_id` are `step_receipt`'s primary key, so a cost can be
+    // joined to the receipt of the call that produced it (#4924). NULL is
+    // "this row cannot say", never 0. See the module's own doc.
+    telemetry_call_identity::migrate_v36_to_v37,
     // ── APPEND POINT — RESERVED SLOTS ───────────────────────────────────
     // This is an INDEX-ORDERED array and `SCHEMA_VERSION` is its length, so
     // a slot is claimed by position, not by name. Two branches that each
@@ -347,7 +355,9 @@ pub(crate) const MIGRATIONS: [Migration; 36] = [
     //   v33 → v34: CLAIMED above by `step_receipt.upstream_provider` (#3054).
     //   v34 → v35: CLAIMED above by `tool_calls.sub_agent_id` (#4624).
     //   v35 → v36: CLAIMED above by `executions.parent_execution_id` (#4628).
-    // Nothing is reserved now: take v36 → v37 and add your own line here.
+    //   v36 → v37: CLAIMED above by `telemetry.stream_seq` + the receipt join
+    //              columns (#4924).
+    // Nothing is reserved now: take v37 → v38 and add your own line here.
     // If a reserved phase ships without needing its slot, delete its line
     // rather than leaving a hole — index order is the contract.
 ];

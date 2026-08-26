@@ -524,7 +524,10 @@ mod tests {
             source_rowid: 99,
             recorded_at: "2026-07-23T00:00:00Z".into(),
             telemetry: TelemetryRow {
-                step: 3,
+                stream_seq: 3,
+                turn_instance: None,
+                engine_step: None,
+                call_seq: None,
                 provider: "zai".into(),
                 call_role: "lead".into(),
                 model: "glm-5.2".into(),
@@ -752,7 +755,10 @@ mod tests {
                     execution_id: 1,
                     recorded_at: "2026-07-23T10:00:00Z".into(),
                     telemetry: TelemetryRow {
-                        step: *id as u64,
+                        stream_seq: *id as u64,
+                        turn_instance: None,
+                        engine_step: None,
+                        call_seq: None,
                         provider: "zai".into(),
                         call_role: "engine".into(),
                         model: "glm-5.2".into(),
