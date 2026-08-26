@@ -1,3 +1,9 @@
+---
+id: wire-contract
+title: "The wire contract"
+status: living
+---
+
 # The wire contract
 
 Generated files. Do not edit them by hand.
