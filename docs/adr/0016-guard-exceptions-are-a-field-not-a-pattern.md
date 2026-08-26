@@ -32,7 +32,7 @@ Three ways around it were considered, and each fails in the same direction:
 
 2. **Extend the glob language** with negation or alternation. This changes the
    matcher shared by rule guards *and* hook matchers (`glob.rs` is used by
-   both), turning a deliberately tiny, auditable language into a small regex
+   both), turning a tiny, auditable language into a small regex
    dialect — and every existing pattern would have to be re-read under the new
    grammar to be sure none changed meaning.
 
@@ -99,13 +99,13 @@ rules are written in.
   `concrete()` and the frontmatter parser both had to learn that it does not,
   by itself, constitute a guard; both are covered by tests.
 - Authoring the SCR-001 record itself is follow-up work, not part of this
-  decision. A repository-published record with a hard guard deliberately does
-  not arm on clone — it reaches the tool boundary only through the local
+  decision. A repository-published record with a hard guard does not arm on
+  clone — it reaches the tool boundary only through the local
   decision ledger (`stella context promote`), which is a human act by design
   and correctly so: a repository must not be able to arm blocking rules on
   everyone who checks it out.
-- `guard-allow-path` is the obvious symmetric question and is deliberately
-  not answered here. Path guards have not yet shown the same
+- `guard-allow-path` is the obvious symmetric question and is not answered
+  here. Path guards have not yet shown the same
   broad-family-with-a-carve-out shape, and adding an unused subtractive field
   to the file surface is how a vocabulary accretes. Filed as residue; add it
   when a real rule needs it.
