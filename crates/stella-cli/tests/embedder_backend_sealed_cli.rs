@@ -172,25 +172,207 @@ fn a_sealed_child_reaches_no_backend() {
     );
 }
 
+/// The binary-path macro, whose occurrences in code are the spawn sites.
+///
+/// Spelled as `concat!` halves so this file's own source does not carry the
+/// needle beyond the one real spawn site above. A guard that matched itself
+/// would count its own needles as evidence about the code it is judging.
+const SPAWNS: &str = concat!("CARGO_BIN_EXE", "_stella");
+
+/// What seals a spawned child. `env_clear` counts — a child with no inherited
+/// environment has no inherited key.
+const SEALS: [&str; 2] = [concat!(".without_embedder", "_backend()"), ".env_clear()"];
+
+/// `source` with its comments removed, so prose naming the binary-path macro
+/// is not counted as a spawn site (#4986).
+///
+/// String literals are copied through rather than dropped, because the needle
+/// lives inside one — `env!("CARGO_BIN_EXE_…")`. They are also *tracked*, so a
+/// `//` inside one does not open a comment and swallow the rest of the line:
+/// this directory writes `"http://{addr}/v1"`, and truncating there would drop
+/// a sealing call after it and fail a correctly sealed file.
+fn code_only(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut code = String::with_capacity(source.len());
+    let mut at = 0usize;
+    while at < bytes.len() {
+        if let Some(end) = raw_string_end(bytes, at) {
+            code.push_str(&source[at..end]);
+            at = end;
+            continue;
+        }
+        match bytes[at] {
+            b'/' if bytes.get(at + 1) == Some(&b'/') => {
+                while at < bytes.len() && bytes[at] != b'\n' {
+                    at += 1;
+                }
+            }
+            b'/' if bytes.get(at + 1) == Some(&b'*') => {
+                // Rust nests block comments, so this counts depth rather than
+                // stopping at the first `*/`.
+                let mut depth = 1usize;
+                at += 2;
+                while at < bytes.len() && depth > 0 {
+                    if bytes[at] == b'/' && bytes.get(at + 1) == Some(&b'*') {
+                        depth += 1;
+                        at += 2;
+                    } else if bytes[at] == b'*' && bytes.get(at + 1) == Some(&b'/') {
+                        depth -= 1;
+                        at += 2;
+                    } else {
+                        at += 1;
+                    }
+                }
+                // A space, so dropping a comment cannot join the tokens either
+                // side of it into a needle.
+                code.push(' ');
+            }
+            b'"' => {
+                let end = quoted_end(bytes, at);
+                code.push_str(&source[at..end]);
+                at = end;
+            }
+            b'\'' => {
+                let end = char_literal_end(bytes, at).unwrap_or(at + 1);
+                code.push_str(&source[at..end]);
+                at = end;
+            }
+            _ => {
+                let mut end = at + 1;
+                while end < bytes.len() && !source.is_char_boundary(end) {
+                    end += 1;
+                }
+                code.push_str(&source[at..end]);
+                at = end;
+            }
+        }
+    }
+    code
+}
+
+/// The byte after the raw string starting at `at`, or `None` when one does not
+/// start there. Covers `r"…"`, `r#"…"#` and the `b`-prefixed forms.
+fn raw_string_end(bytes: &[u8], at: usize) -> Option<usize> {
+    if at > 0 && (bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_') {
+        return None;
+    }
+    let mut cursor = at;
+    if bytes.get(cursor) == Some(&b'b') {
+        cursor += 1;
+    }
+    if bytes.get(cursor) != Some(&b'r') {
+        return None;
+    }
+    cursor += 1;
+    let opened = cursor;
+    while bytes.get(cursor) == Some(&b'#') {
+        cursor += 1;
+    }
+    let hashes = cursor - opened;
+    if bytes.get(cursor) != Some(&b'"') {
+        return None;
+    }
+    cursor += 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'"' {
+            let after = cursor + 1;
+            if bytes.len() - after >= hashes
+                && bytes[after..].iter().take(hashes).all(|byte| *byte == b'#')
+            {
+                return Some(after + hashes);
+            }
+        }
+        cursor += 1;
+    }
+    Some(bytes.len())
+}
+
+/// The byte after the ordinary string literal starting at `at`.
+fn quoted_end(bytes: &[u8], at: usize) -> usize {
+    let mut cursor = at + 1;
+    while cursor < bytes.len() {
+        match bytes[cursor] {
+            b'\\' => cursor += 2,
+            b'"' => return cursor + 1,
+            _ => cursor += 1,
+        }
+    }
+    bytes.len()
+}
+
+/// The byte after the character literal starting at `at`, or `None` when the
+/// quote opens a lifetime or a loop label instead.
+fn char_literal_end(bytes: &[u8], at: usize) -> Option<usize> {
+    let mut cursor = at + 1;
+    if bytes.get(cursor) == Some(&b'\\') {
+        cursor += 2;
+        // `'\u{1F600}'` — run on to the closing quote of a braced escape.
+        while cursor < bytes.len() && bytes[cursor] != b'\'' {
+            cursor += 1;
+        }
+    } else {
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor] & 0b1100_0000 == 0b1000_0000 {
+            cursor += 1;
+        }
+    }
+    (bytes.get(cursor) == Some(&b'\'')).then_some(cursor + 1)
+}
+
+/// How many spawn sites `source` has, and how many seals — counted over its
+/// code, with comments excluded.
+fn spawn_and_seal_counts(source: &str) -> (usize, usize) {
+    let code = code_only(source);
+    let spawn_sites = code.matches(SPAWNS).count();
+    let sealed = SEALS.iter().map(|seal| code.matches(seal).count()).sum();
+    (spawn_sites, sealed)
+}
+
+/// Prose naming the binary-path macro is not a spawn site, and an unsealed
+/// spawn beside that prose is still caught (#4986).
+///
+/// Both fixtures are built from the needles rather than spelled, for the
+/// reason [`SPAWNS`] gives. Each carries three hazards at once: a line
+/// comment naming the macro, a nested block comment naming it, and a `//`
+/// inside a string literal on the same line as the sealing call — so a
+/// line-truncating strip fails here too, not only a strip that does nothing.
+#[test]
+fn prose_naming_the_macro_is_not_a_spawn_site() {
+    let one_sealed_spawn = format!(
+        "//! Spawned through {SPAWNS}, sealed.\n\
+         /* {SPAWNS} again, and /* nested */ */\n\
+         fn go() {{\n    \
+         Command::new(env!(\"{SPAWNS}\")).env(\"URL\", \"http://a/v1\"){}; \n\
+         }}\n",
+        SEALS[0]
+    );
+    assert_eq!(
+        spawn_and_seal_counts(&one_sealed_spawn),
+        (1, 1),
+        "a comment naming the macro was counted as a spawn site, or a `//` \
+         inside a string literal swallowed the sealing call after it"
+    );
+
+    let leaking = format!("{one_sealed_spawn}fn slip() {{ Command::new(env!(\"{SPAWNS}\")); }}\n");
+    let (spawn_sites, sealed) = spawn_and_seal_counts(&leaking);
+    assert!(
+        sealed < spawn_sites,
+        "an unsealed spawn beside the prose must still fail: \
+         {spawn_sites} spawn site(s), {sealed} sealed"
+    );
+}
+
 /// Every test in this directory that spawns the binary must seal the embedder
 /// backend, because the developer whose key is exported is not the one who
 /// wrote the seventeenth test file.
 ///
 /// # How it counts
 ///
-/// Once per occurrence of the binary-path macro, not once per file: a helper
-/// that seals one of a file's three spawn sites is the failure this is for.
-/// `env_clear` counts as a seal — a child with no inherited environment has no
-/// inherited key.
-///
-/// The two needles are spelled as `concat!` halves so this file's own source
-/// does not contain them. A guard that matched itself would count its own
-/// needles as evidence about the code it is judging.
+/// Once per occurrence of the binary-path macro in code, not once per file: a
+/// helper that seals one of a file's three spawn sites is the failure this is
+/// for. Comments do not count — see [`code_only`].
 #[test]
 fn every_spawning_test_seals_the_embedder_backend() {
-    let spawns = concat!("CARGO_BIN_EXE", "_stella");
-    let seals = [concat!(".without_embedder", "_backend()"), ".env_clear()"];
-
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
     let mut checked = 0usize;
     for entry in std::fs::read_dir(&dir).expect("read tests dir") {
@@ -199,11 +381,10 @@ fn every_spawning_test_seals_the_embedder_backend() {
             continue;
         }
         let source = std::fs::read_to_string(&path).expect("read test source");
-        let spawn_sites = source.matches(spawns).count();
+        let (spawn_sites, sealed) = spawn_and_seal_counts(&source);
         if spawn_sites == 0 {
             continue;
         }
-        let sealed: usize = seals.iter().map(|seal| source.matches(seal).count()).sum();
         assert!(
             sealed >= spawn_sites,
             "{}: {spawn_sites} spawn site(s), {sealed} sealed — a spawned child \
