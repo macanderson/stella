@@ -215,3 +215,14 @@
   toolchain-free guards (`make guards-fast`) compile nothing and are always
   fine. A PR's evidence is its CI run, so cite the run — a green workspace
   build on this laptop is not evidence, it is a cost.
+- **Before you repair a red `main`, ask whether somebody already is.** Run
+  `./scripts/main-red-claim.sh check`; if it stands you down, wait. If it
+  clears you, `./scripts/main-red-claim.sh claim` before you start writing,
+  so the next session reads your claim rather than colliding with it. Three
+  sessions each wrote the same two-line fix on 2026-08-24 and merged them 95
+  seconds apart (#4680); they composed by luck, because identical edits
+  resolve cleanly. Every session that notices red `main` reaches the same
+  correct conclusion at the same moment, which is why the check is a step
+  rather than a judgement. It fails open at every unknown, so it can never
+  be what stops a repair — see AGENTS.md § the canary for why a claim lapses
+  after twenty minutes instead of being an assignee.

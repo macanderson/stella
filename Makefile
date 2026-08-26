@@ -754,6 +754,18 @@ main-red-hold: ## Ask whether an open `main-red` issue should hold a PR (reads t
 main-red-hold-test: ## Test the red-main hold, blocking branch included (hermetic; not part of `gate`)
 	./scripts/test-main-red-hold.sh
 
+# The third signal in the red-main chain: the canary detects, the hold stops
+# a merge, and this stops a second session writing the same patch (#4680).
+# Not a gate step for the same reason as the other two — it reads the tracker,
+# and it informs a decision made before CI has anything to look at.
+.PHONY: main-red-claim
+main-red-claim: ## Ask whether somebody is already repairing a red `main` (reads the tracker)
+	@./scripts/main-red-claim.sh check
+
+.PHONY: main-red-claim-test
+main-red-claim-test: ## Test the red-main claim pre-flight, standing-down branch included (hermetic; not part of `gate`)
+	./scripts/test-main-red-claim.sh
+
 .PHONY: check
 check: $(GATE_GUARDS) $(GATE_NO_BUILD) lint ## Reduced pre-push gate: every guard + lock resolve + fmt + clippy, no rustdoc and no tests
 	@./scripts/check-hooks-installed.sh

@@ -174,6 +174,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/test-main-red-hold.sh
 
+      - name: the red-main claim pre-flight, standing-down branch included
+        if: ${{ !cancelled() }}
+        run: ./scripts/test-main-red-claim.sh
+
       - name: measured-constants guard failure directions
         if: ${{ !cancelled() }}
         run: ./scripts/test-measured-constants.sh
