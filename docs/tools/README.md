@@ -12,7 +12,7 @@ One TOML page per dispatchable tool — 19 of them — generated from the declar
 
 Each page carries the tool's name, description, input schema, output schema, `read_only`, `available_for_speculation`, `risk_level`, category, and a commented example input and output payload.
 
-`risk_level` is a reviewed judgement declared beside the flags it sits with in `crates/stella-tools/src/catalog.rs`, graded against the rubric on `ToolEntry::risk` (#2716, #3060). It answers a different question from `read_only` — what one honest call costs the world, rather than whether the workspace changes — and is not derived from the booleans above it, which would be a relabelling rather than information. A policy grant is expressed as a ceiling over this grade; every tool that is not a built-in (MCP, custom manifest) is graded `high` for being unreviewed.
+`risk_level` is a reviewed judgement declared beside the flags it sits with in `crates/stella-tools/src/catalog.rs`, graded against the rubric on `ToolEntry::risk` (#2716, #3060). It answers a different question from `read_only` — what one honest call costs the world, rather than whether the workspace changes — and is deliberately not derived from the booleans above it, which would be a relabelling rather than information. A policy grant is expressed as a ceiling over this grade; every tool that is not a built-in (MCP, custom manifest) is graded `high` for being unreviewed.
 
 One field remains a stated absence rather than a value, because inventing it would manufacture a source of truth nobody reviewed:
 
