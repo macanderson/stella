@@ -1,44 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
-//! Whether a run shipped anything — recorded apart from how it ended (#2808).
+//! Whether a run shipped anything, apart from how it ended (#2808).
 //!
-//! `executions.outcome` is one final label carrying two independent facts.
-//! *How a run ended* (completed / aborted / cancelled / failed / error) says
-//! nothing about *whether it delivered*, and the two really do come apart in
-//! both directions: a completed run can deliver nothing, and a cancelled run
-//! can have pushed and merged a pull request before the cancel landed. Every
-//! analysis that filters on `outcome = 'completed'` scores the second case as
-//! zero — `Store::usage_stats`' `resolved` count, the scoreboard, and every
-//! cost-per-resolved-task receipt derived from them.
+//! `executions.outcome` says how a run ended and nothing about whether it
+//! delivered. The two come apart in both directions: a completed run can ship
+//! nothing, and a cancelled one can have merged a pull request before the
+//! cancel landed.
 //!
-//! # Three answers, not two
+//! **The column reads three ways, and the absent one is an answer.** `None` is
+//! "nothing observed this run's delivery"; [`Delivery::Nothing`] is "something
+//! looked, and it shipped nothing". Do not collapse them — reading an absence
+//! of evidence as a record of failure is the defect this column exists to fix.
+//! Most rows are `None`, because only a door that can see its own commits
+//! writes here.
 //!
-//! The column is nullable, and the absent state is one of the three answers:
-//!
-//! | Reading | Means |
-//! |---|---|
-//! | `None` | Nothing observed this run's delivery. |
-//! | `Some(Delivery::Nothing)` | Something looked, and the run shipped nothing. |
-//! | `Some(Delivery::Commits)` | The run landed at least one commit. |
-//!
-//! Collapsing `None` into `Nothing` would rebuild the defect this column
-//! exists to fix: an absence of evidence read as a record of failure. Most
-//! rows are `None` and will stay that way, because only a door that can see an
-//! attempt's own commits writes here — today the fleet attempt, whose
-//! execution row and commit set are the same attempt's and need no attribution
-//! guess.
-//!
-//! # Why the token set is this short
-//!
-//! A token is declared when a door writes it, not when one can be imagined.
-//! `Nothing` and `Commits` are both written by the fleet attempt close; a PR
-//! or merge token waits for a door that can join a pull request to the
-//! execution that opened it, which `pull_requests` cannot do today (it is keyed
-//! by URL and linked to a session).
-//!
-//! Not to be confused with `execution_reflection.delivered`, which is the
-//! model's own self-report about its turn. This is an observation.
+//! Not `execution_reflection.delivered`, which is the model's self-report
+//! about its turn. This is an observation.
 
 use rusqlite::OptionalExtension as _;
 use rusqlite::params;
@@ -49,6 +27,12 @@ use crate::{Result, Store};
 ///
 /// The *absence* of a value is a third answer and is spelled `Option::None` by
 /// every reader — see the module doc.
+///
+/// A token is declared when a door writes it, not when one can be imagined.
+/// Both of these are written by the fleet attempt close; a pull-request or
+/// merge token waits for a door that can join a pull request to the execution
+/// that opened it, which `pull_requests` cannot do today — it is keyed by URL
+/// and linked to a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
     /// The run's delivery was observed and it shipped nothing.
