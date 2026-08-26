@@ -130,6 +130,7 @@ jobs:
           --test wrapper_run_test
           --test wrapper_host_call
           --test wrapper_child_turn
+          --test driver_socket
 
       - name: the group-kill guard at the bash/custom-tool/hook spawn sites, on Windows (#4698)
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
