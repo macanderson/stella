@@ -198,6 +198,15 @@ impl Store {
     ///   execution before the join so a multi-step run can never fan out the
     ///   executions side.
     /// - `cost_per_resolved_usd` is `None` when `resolved = 0`.
+    ///
+    /// `resolved` still means `outcome = 'completed'` and nothing else, now
+    /// that `executions.delivery` exists beside it (#2808). Folding a
+    /// delivered-but-cancelled run in here would move every published
+    /// cost-per-resolved number on the strength of a signal only some doors
+    /// write, so the two stay separable: read `delivery` when the question is
+    /// what shipped, and `outcome` when it is how the run ended. Promoting
+    /// delivery into this count is a decision about published figures, and it
+    /// belongs to whoever owns them.
     /// - Rows are ordered by total cost descending (ties broken by
     ///   provider, then model, so output is deterministic).
     ///
@@ -337,7 +346,7 @@ impl Store {
         {
             let sql = format!(
                 "SELECT id, kind, prompt, provider, model, started_at, finished_at, outcome, \
-                 cost_usd, usage_complete FROM executions {} ORDER BY id ASC",
+                 cost_usd, usage_complete, delivery FROM executions {} ORDER BY id ASC",
                 scope.executions_where("")
             );
             let mut stmt = conn.prepare(&sql)?;
@@ -353,6 +362,11 @@ impl Store {
                     "outcome": row.get::<_, Option<String>>(7)?,
                     "cost_usd": row.get::<_, f64>(8)?,
                     "usage_complete": row.get::<_, bool>(9)?,
+                    // Null rather than absent when unobserved: the three
+                    // readings of `delivery` are `null` / `"none"` /
+                    // `"commits"`, and an analysis must be able to tell the
+                    // first from the second (#2808).
+                    "delivery": row.get::<_, Option<String>>(10)?,
                 }))
             })?;
             let mut arr = Vec::new();

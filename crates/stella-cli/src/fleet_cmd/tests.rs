@@ -193,6 +193,7 @@ async fn fleet_attempt_persists_usage_before_complete_closeout() {
         0.25,
         rendered.persistence_complete,
         false,
+        stella_store::Delivery::Nothing,
     ));
     assert_eq!(store.count("telemetry").unwrap(), 1);
     assert!(store.execution_usage_complete(id).unwrap());
@@ -215,6 +216,7 @@ fn stopped_fleet_attempt_never_becomes_exportable() {
         0.0,
         true,
         true,
+        stella_store::Delivery::Nothing,
     ));
     assert!(!store.execution_usage_complete(id).unwrap());
     // The flag is what withholds it from the enterprise export
@@ -229,6 +231,73 @@ fn stopped_fleet_attempt_never_becomes_exportable() {
         .unwrap()
         .expect("a stopped attempt rolls up as a floor");
     assert!(!rollup.usage_complete, "and is marked as one");
+}
+
+/// **The witness for #2808.** How an attempt ended and whether it shipped are
+/// two readings, and the attempt close writes both.
+///
+/// Execution 99 is the case: recorded `outcome = 'cancelled'`, and what
+/// actually happened is that the worker pushed and merged a pull request
+/// before the cancel landed. `outcome` alone cannot hold that, so every
+/// analysis filtering on `'completed'` scored a $5.29 delivered run as zero.
+///
+/// Two stopped attempts here, identical in outcome and cost, differing only in
+/// what they landed — and the store now tells them apart. The third reading,
+/// `None`, is what a door that cannot see its own commits leaves behind, and
+/// `stella-store`'s `delivery` module owns that case.
+#[test]
+fn a_stopped_attempt_that_landed_commits_is_not_a_stopped_attempt_that_landed_none() {
+    let root = tempfile::tempdir().expect("root");
+    let store = Arc::new(stella_store::Store::open(root.path()).expect("store"));
+    let registry = ToolRegistry::new(root.path().to_path_buf());
+
+    let shipped = store
+        .begin_execution("fleet", "task", "anthropic", "claude")
+        .expect("begin");
+    finalize_fleet_execution(
+        &Some((store.clone(), shipped)),
+        &registry,
+        "cancelled",
+        5.29,
+        true,
+        true,
+        crate::fleet_commits::delivery_of(&[commit_record("a1b2c3d")]),
+    );
+
+    let empty = store
+        .begin_execution("fleet", "task", "anthropic", "claude")
+        .expect("begin");
+    finalize_fleet_execution(
+        &Some((store.clone(), empty)),
+        &registry,
+        "cancelled",
+        5.29,
+        true,
+        true,
+        crate::fleet_commits::delivery_of(&[]),
+    );
+
+    assert_eq!(
+        store.delivery(shipped).expect("read"),
+        Some(stella_store::Delivery::Commits),
+        "a cancelled attempt that landed a commit must record that it shipped"
+    );
+    assert_eq!(
+        store.delivery(empty).expect("read"),
+        Some(stella_store::Delivery::Nothing),
+        "and one that landed nothing must say so, not fall silent"
+    );
+}
+
+/// One landed commit, in the shape the fleet ledger records them.
+fn commit_record(sha: &str) -> stella_fleet::CommitRecord {
+    stella_fleet::CommitRecord {
+        sha: sha.to_string(),
+        branch: "stella/task".to_string(),
+        task_id: "task".to_string(),
+        message: "fix the router".to_string(),
+        timestamp_ms: 0,
+    }
 }
 
 // the post-fanout PR/CI watch (--watch)

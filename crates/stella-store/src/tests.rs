@@ -1052,8 +1052,11 @@ fn skill_usage_records_per_execution_version_rows() {
     //       it did. v36 `executions.parent_execution_id` (#4628) — which turn
     //       dispatched a deck lane, NULL when nobody's turn did. v37
     //       `telemetry.step` becomes `stream_seq` and gains the receipt join
-    //       key (#4924) — the column never held the engine's step.
-    assert_eq!(SCHEMA_VERSION, 37);
+    //       key (#4924) — the column never held the engine's step. v38
+    //       `executions.delivery` (#2808) — whether the run SHIPPED, apart
+    //       from how it ended; NULL is "nobody looked", not "shipped
+    //       nothing".
+    assert_eq!(SCHEMA_VERSION, 38);
 
     let id = store
         .begin_execution("deck", "format the sql", "zai", "glm-5.2")
