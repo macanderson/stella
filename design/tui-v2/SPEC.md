@@ -194,7 +194,7 @@ uv run --with fonttools --with pyobjc-framework-CoreText \
 Top to bottom:
 
 1. **Tab bar** (1 row): `SESSION AGENTS TRACES GRAPH FILES SKILLS MCP ISSUES SETTINGS`, active tab gold, wordmark right-aligned.
-2. **Plan breadcrumb strip** (1 row, SESSION only): `▸ plan r3 · task 3 wire dedup digest · 2/6`. `tab` expands to the full plan panel. The transcript gets full width by default; the old permanent side panel is gone.
+2. **Plan breadcrumb strip** (1 row, SESSION only): `▸ plan r3 · task 3 wire dedup digest · 2/6`. `^S` expands to the full plan panel. The transcript gets full width by default; the old permanent side panel is gone.
 3. **Body**: tab content.
 4. **Prompt block**: pipeline line (`✓ plan ▸ execute [bar] 50% · verify`), input line `>>>`, keybinding hint row.
 5. **Status bar** (1 row, replaces the old two-row wall): `worker · stage · ctx [bar] 35% · $spend · saved $x · ✉ n · ? help`. MODEL detail, CPU, MEM, WARMTH, and ENGINE move behind `?` and the AGENTS tab. Money renders gold. Meters render gold fill on `border` gray. No pink, no green meters.
@@ -266,7 +266,7 @@ Rule: contracts are **required only for tasks that produce diffs**. Read-only ta
 
 ### 7.3 Plan panel
 
-Collapsed: the breadcrumb strip. Expanded (tab): task list with per-task right-aligned economics (`9k tok`), the running task as a highlighted card showing its contract line, evidence line, and cost line. Drift-inserted tasks render with `⌥` in gold_bright and an `inserted` tag. Footer: `planned 6 · actual 7 · ⌥ 1 drift`, then `drift is recorded, not hidden. it trains your model.`
+Collapsed: the breadcrumb strip. Expanded (`^S`): task list with per-task right-aligned economics (`9k tok`), the running task as a highlighted card showing its contract line, evidence line, and cost line. Drift-inserted tasks render with `⌥` in gold_bright and an `inserted` tag. Footer: `planned 6 · actual 7 · ⌥ 1 drift`, then `drift is recorded, not hidden. it trains your model.`
 
 ### 7.4 Drift
 
@@ -358,7 +358,8 @@ Keep current information architecture (executions table, installed agents, agent
 
 | Key | Action |
 |---|---|
-| `tab` | expand or collapse plan panel |
+| `^S` | expand or collapse plan panel |
+| `tab` / `⇧tab` | the next / previous tab |
 | `^Z` | fold turn |
 | `^N` | jump to next failure |
 | `^F` | find in transcript |

@@ -62,7 +62,13 @@ pub fn render_tab_row(model: &WorkspaceModel, ui: &DeckUi, area: Rect, buf: &mut
     // other screen.
     let mut right: Vec<Span<'static>> = Vec::new();
     if ui.tab == DeckTab::Session && plan_of(model, ui).is_some_and(|p| !p.is_empty()) {
-        right.push(Span::styled("⌃S plan", Style::new().fg(token::DIM)));
+        // The chord comes from the keymap, never from a literal here: this
+        // hint is one of three surfaces printing it, and the other two had
+        // already drifted apart (#4341).
+        right.push(Span::styled(
+            format!("{} plan", crate::keymap::plan_card_chord()),
+            Style::new().fg(token::DIM),
+        ));
         right.push(Span::raw("   "));
     }
     right.extend(stella_tui_theme::wordmark::spans());

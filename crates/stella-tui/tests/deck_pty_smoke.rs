@@ -372,6 +372,16 @@ fn run_deck_paints_folds_resizes_and_restores_under_a_real_pty() {
         d.painted().contains("abc-wz")
     });
 
+    // Tab from an empty composer walks the tab strip — it does not expand the
+    // plan panel, which SPEC 11 claimed until #4341 amended it to `^S`. The
+    // needles are two tab names the SESSION breadcrumb never carries, so
+    // seeing them proves the tab row switched to the tab list.
+    deck.send(b"\t");
+    deck.wait_for("the tab list after tab", |d| {
+        let s = d.painted();
+        s.contains("TRACES") && s.contains("SETTINGS")
+    });
+
     // Ctrl-C: clean cancel + quit, from anywhere.
     deck.send(&[0x03]);
     let status = deck.wait_exit();

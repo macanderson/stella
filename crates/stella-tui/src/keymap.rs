@@ -92,6 +92,35 @@ const fn hinted(
 use DeckTab as T;
 use Scope::{Everywhere, Navigation, Tab};
 
+/// The chord that opens the plan card, spelled as the `?` sheet prints it.
+///
+/// Named rather than written three times. SPEC 11 bound `tab` to the plan
+/// panel while the deck had `tab` on the tab strip and the plan card on
+/// `⌃S`; the tab row's breadcrumb hint agreed with the deck, but as a literal
+/// that no rebind would have moved (#4341). The deck wins — `tab`/`⇧tab` are
+/// deck-global navigation, and a hand reaches for them in every other terminal
+/// application — so the spec was amended and both surfaces now read this.
+pub const PLAN_CARD_KEYS: &str = "ctrl-s";
+
+/// `ctrl-s` as the chrome prints it: `⌃S`.
+///
+/// The `?` sheet spells a chord out and the one-row surfaces have no cells to
+/// spare, so the two forms are one fact rendered twice. Anything that is not a
+/// single-letter control chord has no caret form and comes back unchanged.
+fn caret_form(keys: &str) -> String {
+    match keys.strip_prefix("ctrl-") {
+        Some(letter) if letter.chars().count() == 1 => format!("⌃{}", letter.to_uppercase()),
+        _ => keys.to_string(),
+    }
+}
+
+/// [`PLAN_CARD_KEYS`] in caret form, for the surfaces that print a chord in
+/// one cell of chrome.
+#[must_use]
+pub fn plan_card_chord() -> String {
+    caret_form(PLAN_CARD_KEYS)
+}
+
 /// Every binding the deck teaches, in the order the sheet prints them
 /// within each scope.
 pub const BINDINGS: &[Binding] = &[
@@ -559,7 +588,7 @@ pub const BINDINGS: &[Binding] = &[
         &["ctrl_g_opens_inspect_and_asks_the_driver_for_the_call_index"],
     ),
     row(
-        "ctrl-s",
+        PLAN_CARD_KEYS,
         "PLAN — every step of the approved plan, in full",
         Everywhere,
         &["ctrl_s_opens_and_closes_the_plan_card"],
@@ -724,6 +753,66 @@ mod tests {
     fn the_sweep_can_fail() {
         assert!(!witness_exists("no_such_witness_test_exists"));
         assert!(witness_exists("question_mark_opens_help_overlay"));
+    }
+
+    /// `PLAN_CARD_KEYS` is a row of this table, not a constant beside it.
+    #[test]
+    fn the_plan_card_chord_is_a_binding() {
+        assert!(
+            BINDINGS.iter().any(|b| b.keys == PLAN_CARD_KEYS),
+            "{PLAN_CARD_KEYS} names no row — the surfaces would print a chord the deck does not bind"
+        );
+    }
+
+    #[test]
+    fn a_chord_with_no_caret_form_is_left_alone() {
+        assert_eq!(caret_form("ctrl-s"), "⌃S");
+        assert_eq!(caret_form("tab / ⇧tab"), "tab / ⇧tab");
+        assert_eq!(caret_form("ctrl-x ×2"), "ctrl-x ×2");
+    }
+
+    /// **The guard (#4341).** SPEC 11 names the chord the deck actually binds
+    /// to the plan panel.
+    ///
+    /// The spec said `tab` and the deck has said `⌃S` since the focus tree
+    /// landed, so a reader who followed the document got the tab strip. The
+    /// deck won that call — `tab`/`⇧tab` are deck-global navigation — and this
+    /// is what stops the document drifting off it again.
+    ///
+    /// `design/` is outside ci.yml's prose paths (`scripts/ci-rust-scope.sh`),
+    /// so a diff that edits the spec alone still runs the gate that reads it.
+    #[test]
+    fn spec_11_names_the_chord_the_deck_binds_to_the_plan_panel() {
+        const SPEC: &str = include_str!("../../../design/tui-v2/SPEC.md");
+
+        let table = SPEC
+            .split("## 11. Keybindings")
+            .nth(1)
+            .expect("SPEC.md has no section 11")
+            .split("\n## ")
+            .next()
+            .expect("split always yields one");
+
+        let row = table
+            .lines()
+            .find(|l| l.contains("plan panel"))
+            .expect("section 11 names no plan panel row");
+
+        let key = row
+            .split('|')
+            .nth(1)
+            .expect("a table row has cells")
+            .trim()
+            .trim_matches('`')
+            // The spec spells a control chord `^S`; the chrome draws `⌃S`.
+            .replace('^', "⌃");
+
+        assert_eq!(
+            key,
+            plan_card_chord(),
+            "SPEC 11 binds `{key}` to the plan panel and the deck binds {}",
+            plan_card_chord()
+        );
     }
 
     /// Every tab has at least one row, so no tab's sheet is empty.
