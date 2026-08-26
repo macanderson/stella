@@ -715,15 +715,15 @@ mod tests {
     /// since #3421, forgetting to fails `ENGINE_DRIVERS`' own fence rather than
     /// waiting for a bench run to notice.
     ///
-    /// Two lanes are deliberately absent and are **not** an oversight:
-    /// `subsession.rs` and `fleet_cmd.rs` run on a `Config::clone` sharing one
-    /// `SessionDurability` cell, so a per-call measurement there would read a
-    /// journal another lane is also snapshotting. They join this list once
-    /// #3233 gives a lane its own durability. Two live `attach_events` calls
-    /// are what the widened `raw` check below would fail on today:
-    /// `subsession.rs`, and `fleet_cmd/wrapped.rs`'s `AttemptPointStream`,
-    /// which publishes an attempt's channel across a wrapper's points (#4730)
-    /// with the measurer withheld for exactly the reason above.
+    /// Two lanes are absent and are **not** an oversight — they are named,
+    /// with the reason each is still out, in
+    /// [`LANES_OUTSIDE_THE_SEAM`], which
+    /// [`only_the_seam_and_the_declared_lanes_attach_a_turn_stream`] enforces
+    /// from both sides. Read that table rather than a summary here: this
+    /// comment said both lanes shared one `SessionDurability` cell and would
+    /// join the list "once #3233 gives a lane its own durability", and by the
+    /// time anyone read it both lanes had held their own for months. What
+    /// actually blocks each is a different problem, and neither is #3233.
     const STREAM_OWNERS: &[(&str, &str)] = &[
         // The raw engine turn, which reaches the seam through
         // `persistence::attach_run_streams`.
@@ -828,19 +828,24 @@ mod tests {
         (
             "subsession.rs",
             DriverPosture::Blocked(
-                "#3233: a lane runs on a `Config::clone` sharing one \
-                 `SessionDurability` cell, so a measurement here would consume \
-                 the lead's baseline and split one turn's changes across two \
-                 bursts",
+                "#4507: the lane has held its own `lane_durability` since \
+                 #3233's first slice. What blocks it now is that \
+                 `open_turn_streams` reads `cfg.durability` and the lane's \
+                 handle is on its `EngineConfig` instead — plus the question a \
+                 seam taking an explicit handle would force: the lead and the \
+                 lane snapshot one shared work tree from two baselines, so a \
+                 lane's writes would be attributed to both",
             ),
         ),
         (
             "fleet_cmd.rs",
             DriverPosture::Blocked(
-                "#3233, and worse than the lane's: a worker rebinds \
-                 `cfg.workspace_root` to its own worktree while the shared \
-                 journal stays rooted at the lead's, so a snapshot here would \
-                 measure the wrong tree",
+                "#4507, and a different problem from the lane's: the attempt \
+                 has its own `attempt_durability` (#3232), bound at the \
+                 invocation root while the worker rebinds `cfg.workspace_root` \
+                 to its own worktree — so a snapshot here would measure the \
+                 wrong tree, and the fix is the journal's root rather than a \
+                 durability handle",
             ),
         ),
     ];
@@ -933,6 +938,162 @@ mod tests {
         out
     }
 
+    /// The part of a source file that ships: everything above its inline
+    /// `#[cfg(test)] mod … {`.
+    ///
+    /// [`shipping_sources`] drops `tests.rs` and `tests/` directories, which
+    /// is the whole answer for a crate that keeps its tests in separate files.
+    /// It is not the answer for an inline test module, and
+    /// `command_deck/forwarder.rs` is exactly that: its #2290 witness builds a
+    /// registry and attaches a sender to it by hand, because standing a real
+    /// turn up around `close_turn_stream` would be testing something else. A
+    /// scan that counted it would report a bypassing door that does not exist,
+    /// and the fix a reader would reach for is to make the fixture lie.
+    ///
+    /// **The marker is the module, never the attribute**, and the difference
+    /// is not cosmetic. `#[cfg(test)]` also sits on individual items —
+    /// `subsession.rs` puts it on two test-only helpers around line 230, eight
+    /// hundred lines above the call the fence below exists to see. Cutting at
+    /// the first attribute truncated that file to its first fifth and reported
+    /// a clean scan, which is how this helper's first version passed while
+    /// looking at almost nothing. So the cut needs a bare `#[cfg(test)]` on
+    /// its own line followed by a module *body*: an item-level attribute is
+    /// indented, and a bodiless `#[cfg(test)] mod tests;` declaration hides
+    /// nothing because its file is skipped already.
+    fn ships(body: &str) -> &str {
+        let mut offset = 0;
+        let mut chunks = body.split_inclusive('\n').peekable();
+        while let Some(chunk) = chunks.next() {
+            let opens_a_test_module = chunks.peek().is_some_and(|next| {
+                let next = next.trim_end();
+                next.starts_with("mod ") && next.ends_with('{')
+            });
+            if chunk.trim_end() == "#[cfg(test)]" && opens_a_test_module {
+                return &body[..offset];
+            }
+            offset += chunk.len();
+        }
+        body
+    }
+
+    /// The lanes that still open a turn's event stream by hand, and the issue
+    /// deciding each.
+    ///
+    /// **A closed set, not a list to add to.** It records debt that predates
+    /// the fence below — the legitimate reason for a ratchet, and the only one
+    /// (AGENTS.md § "Ports, not direct dependencies", rule 5). A new file
+    /// reaching for `attach_events`
+    /// fails that fence, and the fix is the seam, never a row here.
+    ///
+    /// Each lane is blocked on its own problem, and **neither is the shared
+    /// `SessionDurability` cell** the surrounding comments blamed until now:
+    ///
+    /// - `subsession.rs` has held its own `lane_durability` since #3233's
+    ///   first slice landed. What stops it is that [`open_turn_streams`] reads
+    ///   `cfg.durability`, and the lane's handle is on its `EngineConfig`
+    ///   instead (`agent::engine::subsession_engine_config_for`). Routing it
+    ///   through needs a seam taking an explicit handle — and a decision about
+    ///   the lead and the lane snapshotting one shared work tree from two
+    ///   baselines, which would attribute a lane's writes to both.
+    /// - `fleet_cmd/wrapped.rs` has `attempt_durability` (#3232), bound at the
+    ///   invocation root while the worker's config is rebound to its worktree.
+    ///   A measurer attached there would snapshot the wrong tree.
+    const LANES_OUTSIDE_THE_SEAM: &[(&str, &str)] = &[
+        ("subsession.rs", "#4507"),
+        ("fleet_cmd/wrapped.rs", "#4507"),
+    ];
+
+    /// **The fence [`every_turn_owner_opens_its_streams_through_the_one_seam`]
+    /// cannot be.** That one asks whether each *listed* owner reaches the
+    /// seam; this asks whether anything else in the crate opens a turn's
+    /// stream at all.
+    ///
+    /// The gap between them is a file on no list. `ENGINE_DRIVERS` closes half
+    /// of it — a new file that builds an engine must declare a posture — and
+    /// the other half is a file that attaches a stream without building one,
+    /// which is what both lanes below do and what nothing could see.
+    ///
+    /// It asks in both directions, and the second is what makes it #4507's
+    /// acceptance test rather than a snapshot: a declared lane that no longer
+    /// calls `attach_events` **fails**, so routing one through the seam is
+    /// finished by deleting its row, and the list cannot outlive the debt it
+    /// records.
+    #[test]
+    fn only_the_seam_and_the_declared_lanes_attach_a_turn_stream() {
+        // Built rather than written out, so this file is not its own match —
+        // the convention the fences above follow for the same reason.
+        let raw = format!("attach_{}(", "events");
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+
+        let mut found: Vec<String> = Vec::new();
+        for path in shipping_sources(&src) {
+            let body = std::fs::read_to_string(&path).expect("a shipping source");
+            if !ships(&body).contains(&raw) {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(&src)
+                .expect("walked from src")
+                .to_string_lossy()
+                .replace('\\', "/");
+            // The seam itself, which is where the call belongs.
+            if relative == "turn_files.rs" {
+                continue;
+            }
+            assert!(
+                LANES_OUTSIDE_THE_SEAM
+                    .iter()
+                    .any(|(lane, _)| *lane == relative),
+                "{relative} opens a turn's event stream by hand. It gets no \
+                 per-call measurer, so that turn's file changes reach no Files \
+                 tab, no `stella export` and no audit log — silently. Use \
+                 `open_turn_streams`; adding a row to \
+                 `LANES_OUTSIDE_THE_SEAM` is not the fix."
+            );
+            found.push(relative);
+        }
+
+        for (lane, issue) in LANES_OUTSIDE_THE_SEAM {
+            assert!(
+                found.iter().any(|seen| seen == lane),
+                "{lane} is declared as still outside the seam ({issue}) and no \
+                 longer calls it. If it now routes through `open_turn_streams`, \
+                 delete its row — a declared exception that has been fixed \
+                 teaches the next reader that a door is broken when it is not."
+            );
+        }
+    }
+
+    /// The cut is the subtle half of the fence above, so it is checked
+    /// directly rather than trusted: a green scan must mean the shipping half
+    /// was searched, not that the search stopped before it.
+    ///
+    /// The item-level case is the bug this helper shipped with for one run:
+    /// an item-level `#[cfg(test)]` truncating a file eight hundred lines
+    /// above the call the fence is looking for.
+    #[test]
+    fn the_shipping_half_stops_at_a_test_module_and_nothing_else() {
+        let inline = "fn ships_me() {}\n#[cfg(test)]\nmod tests {\n fn hidden() {}\n}\n";
+        assert!(ships(inline).contains("ships_me"));
+        assert!(!ships(inline).contains("hidden"));
+
+        // No test module: the whole file ships.
+        assert_eq!(ships("fn only() {}"), "fn only() {}");
+
+        // An item-level attribute is not a module and must not cut — the
+        // shape `subsession.rs` has, with the interesting call below it.
+        let item_level = "impl T {\n    #[cfg(test)]\n    fn helper() {}\n}\nfn later_call() {}\n";
+        assert!(
+            ships(item_level).contains("later_call"),
+            "a test-only helper must not blind the scan to the rest of the file"
+        );
+
+        // A bodiless declaration points at a file `shipping_sources` already
+        // skips, so it hides nothing and must not cut either.
+        let declaration = "#[cfg(test)]\nmod tests;\nfn later_call() {}\n";
+        assert!(ships(declaration).contains("later_call"));
+    }
+
     /// Every stream owner that ends its run with the cost-shaped terminator
     /// also measures what the run changed.
     ///
@@ -951,9 +1112,11 @@ mod tests {
     /// it is and this asks the question directly instead — a caller of the
     /// cost terminator must also carry a tree reading.
     ///
-    /// `fleet_cmd.rs` is the one caller that carries neither, and it is
-    /// deliberately not listed above: a fan-out's lanes share one
-    /// `SessionDurability`, so it is blocked on #3233 with `subsession.rs`.
+    /// `fleet_cmd.rs` is the one caller that carries neither, and it is not
+    /// listed above. Why it is still out is in [`LANES_OUTSIDE_THE_SEAM`] —
+    /// its journal is rooted where the worker's tree is not, which is a
+    /// different problem from the shared `SessionDurability` this comment used
+    /// to blame and from what blocks `subsession.rs`.
     #[test]
     fn a_cost_terminator_never_ships_without_a_tree_reading() {
         // A *call*, path-qualified — `agent/persistence.rs` is on the owner

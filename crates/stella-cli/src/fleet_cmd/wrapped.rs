@@ -125,12 +125,15 @@ mod tests;
 /// publishes the registry's own event slot and not the per-call
 /// work-tree measurement beside it (`turn_files::open_turn_streams`), because a
 /// fleet worker rebinds `cfg.workspace_root` to its own worktree while the
-/// shared `SessionDurability` journal stays rooted at the lead's — a measurer
-/// attached here would snapshot the wrong tree, which is exactly why
-/// `turn_files`' `ENGINE_DRIVERS` records this door as `Blocked` on #3233 and
-/// why `STREAM_OWNERS` omits it. Publishing the measurer here
-/// would silently un-block #3233 rather than close #4730, so it stays withheld
-/// and this type is what says so out loud.
+/// attempt's `SessionDurability` journal stays rooted at the invocation root
+/// (#3232) — a measurer attached here would snapshot the wrong tree, which is
+/// why `turn_files`' `ENGINE_DRIVERS` records this door as `Blocked` and why
+/// `STREAM_OWNERS` omits it. What blocks it is the journal's **root**, not a
+/// shared durability handle: this attempt has held its own since #3232, and
+/// the claim that it was waiting on #3233 outlived the thing it described.
+/// Publishing the measurer here would silently take on that root mismatch
+/// rather than close #4730, so it stays withheld and this type says so out
+/// loud. `turn_files`' `LANES_OUTSIDE_THE_SEAM` is the enforced record.
 pub(super) struct AttemptPointStream {
     /// A sender over the attempt's raw channel — the one `run_task`'s renderer
     /// drains and whose registry clone [`Self::detach`] takes down.
@@ -161,7 +164,7 @@ impl PointStream for AttemptPointStream {
     fn publish(&self, registry: &stella_tools::ToolRegistry, _cfg: &crate::config::Config) {
         // `cfg` is ignored rather than used: the workspace it names is the one
         // this door must NOT measure against — see the type's doc comment and
-        // #3233.
+        // #4507.
         registry.attach_events(self.tx.clone());
     }
 }
