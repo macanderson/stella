@@ -85,7 +85,12 @@ Thumbs.db
 !bench/readiness/synthetic-adapter-sentinel/environment/app/.stella/settings.json
 
 # Claude/Agents
-.claude/
+# Claude Code: project settings + hooks are checked in (SCR-001 L2 guard);
+# only per-user local overrides stay ignored.
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/settings.local.json
 .agents/
 .agents.d/
 # Singular ".agent" too — it held tracked agent reflections/lessons until #448.

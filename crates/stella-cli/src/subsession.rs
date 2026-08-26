@@ -130,6 +130,43 @@ impl SubSessions {
         }
     }
 
+    /// A board for a session that may already have run `req:<n>` lanes —
+    /// every deck session, since a resumed one keeps its id.
+    ///
+    /// [`Self::new`] starts `next_req` at 0, so the first prompt lane of a
+    /// resumed session mints `req:1` again. That id is not cosmetic: it is
+    /// half of the lane's journal key ([`lane_journal_key`]), and
+    /// [`run_worker`] re-enters whatever transcript it finds there rather than
+    /// starting from the prompt. A fresh dispatch would therefore wake up
+    /// inside a dead lane's conversation — the one thing per-lane durability
+    /// (#3233) must not make possible.
+    ///
+    /// So the counter starts above the highest `req:<n>` the store has already
+    /// recorded for this session. The refs under `{session}__…` are that
+    /// record, and they are the same refs the collision would have read, which
+    /// is why they are asked rather than the session event journal: a signal
+    /// that merely correlates with the hazard is not the hazard.
+    ///
+    /// Unreadable or unbound reads as none recorded, which is
+    /// [`Self::new`]'s behaviour — a store that will not answer must not stop
+    /// a session starting.
+    pub(crate) fn resuming(
+        durability: &crate::durability::SessionDurability,
+        session_id: &str,
+    ) -> Self {
+        let prefix = lane_journal_key(session_id, "req:");
+        let highest = durability
+            .recorded_keys(&prefix)
+            .iter()
+            .filter_map(|key| key.strip_prefix(&prefix)?.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0);
+        Self {
+            next_req: highest,
+            ..Self::new()
+        }
+    }
+
     pub(crate) fn has_slot(&self) -> bool {
         self.active < MAX_CONCURRENT
     }

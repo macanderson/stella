@@ -544,8 +544,9 @@ currently express:
 ### v0 — a `Stop` hook (days, no Stella change at all)
 
 Stella's hook surface (`crates/stella-protocol/src/hook.rs`) fires
-`SessionStart` / `PreToolUse` / `PostToolUse` / `Stop` / `PreCompact` /
-`PreIssueWork` / `PostIssueWork`. A `Stop` hook configured in
+`SessionStart` / `PreToolUse` / `PostToolUse` / `Stop` / `PreCompact` inside a
+turn, and the self-driving loop's own run, cycle, issue, pull-request and check
+events outside every turn — `HookEvent::ALL` is the set. A `Stop` hook configured in
 `.stella/settings.json` can read the durable stream-json file and POST it.
 
 - **Pro:** ships today, zero Rust, per-workspace opt-in by editing a settings

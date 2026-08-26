@@ -278,6 +278,18 @@ fn apply_closure(
             .unwrap_or_default(),
     }
 
+    // After the tracker has taken it, so a subscriber woken by this event
+    // finds the issue already closed. Both callers funnel here — the
+    // hand-typed `close` verb and `drive`'s own settlement — so the event
+    // fires once for either, `--partial` included (#4017).
+    super::hooks::tracker(
+        &root,
+        &super::hooks::settings_for(&root),
+        super::hooks::HookEvent::IssueClosed,
+        super::hooks::HookIssueInfo::new(key),
+        Some(format!("{canonical:?}: {spelled}")),
+    );
+
     Ok(spelled)
 }
 

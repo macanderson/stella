@@ -4,15 +4,13 @@
 //! What a plugin *ships*, as opposed to what it *does* in the turn loop
 //! (#3380).
 //!
-//! A plugin's manifest declares a say in the turn: hook points, wrapper
-//! points, an oracle, a process. That is the whole of `plugin.toml` and it
-//! was never the whole of a package. The three surfaces a workspace already
-//! steers itself with — script tools, skills, context records, and MCP
-//! servers — had no way to arrive with a plugin, so "install the review
-//! plugin" could deliver an arbiter that holds a turn open but not the
-//! `lint_fix` tool it wants to call, the skill that explains the house style,
-//! the record that steers toward it, or the vendor server its whole
-//! integration is. This module makes a package able to carry all four.
+//! `plugin.toml` declares a say in the turn — hook points, wrapper points, an
+//! oracle, a process — and that is not the whole of a package. A package also
+//! carries the four surfaces a workspace steers itself with: script tools,
+//! skills, context records, and MCP servers. So "install the review plugin"
+//! delivers the arbiter *and* the `lint_fix` tool it calls, the skill that
+//! explains the house style, the record that steers toward it, and the vendor
+//! server it integrates.
 //!
 //! # A package is `.stella`-shaped, and that is the whole format
 //!

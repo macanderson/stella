@@ -58,6 +58,32 @@ fn concat_hooks(base: &mut Option<Hooks>, extra: &Hooks) {
     join(&mut target.pre_compact, &extra.pre_compact);
     join(&mut target.pre_issue_work, &extra.pre_issue_work);
     join(&mut target.post_issue_work, &extra.post_issue_work);
+    join(&mut target.drive_run_start, &extra.drive_run_start);
+    join(&mut target.drive_run_end, &extra.drive_run_end);
+    join(&mut target.drive_cycle_start, &extra.drive_cycle_start);
+    join(&mut target.drive_cycle_end, &extra.drive_cycle_end);
+    join(&mut target.drive_idle, &extra.drive_idle);
+    join(&mut target.issue_created, &extra.issue_created);
+    join(&mut target.issue_closed, &extra.issue_closed);
+    join(&mut target.issue_escalated, &extra.issue_escalated);
+    join(&mut target.pull_request_opened, &extra.pull_request_opened);
+    join(
+        &mut target.pull_request_ready_for_review,
+        &extra.pull_request_ready_for_review,
+    );
+    join(
+        &mut target.pull_request_conflicted,
+        &extra.pull_request_conflicted,
+    );
+    join(&mut target.pull_request_merged, &extra.pull_request_merged);
+    join(&mut target.checks_failed, &extra.checks_failed);
+    join(&mut target.base_broken, &extra.base_broken);
+    join(&mut target.checks_green, &extra.checks_green);
+    join(
+        &mut target.drive_budget_exhausted,
+        &extra.drive_budget_exhausted,
+    );
+    join(&mut target.drive_refused, &extra.drive_refused);
 }
 
 impl Settings {

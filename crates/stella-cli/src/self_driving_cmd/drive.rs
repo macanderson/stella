@@ -67,6 +67,7 @@ use stella_autonomy::{
 use stella_fleet::issue_claim_key;
 
 mod ending;
+mod notify;
 mod settlement;
 
 use ending::{Tally, budget_reached, report, stopped_by_signal};
@@ -87,6 +88,10 @@ struct Spent {
     /// Whether the stale-red re-run has already been spent on this pull
     /// request. Exactly one is allowed — see [`advance`].
     rerun: bool,
+    /// The state this pull request was last *reported* in, so a check event
+    /// fires on a change of answer rather than on every poll — [`notify`]
+    /// holds the argument. `None` is "nothing reported yet".
+    reported: Option<PrState>,
 }
 
 /// Drive until there is nothing left to do, or a bound is reached.
@@ -103,6 +108,9 @@ pub(super) fn drive(
 ) -> Result<(), String> {
     let root = super::state::repo_root();
     let cfg = super::config::load(&root);
+    // Once for the whole run: `drive` fires many events inside one process,
+    // and every load reads up to three scope files.
+    let settings = super::hooks::settings_for(&root);
     let doctrine = cfg.doctrine;
     let provider = crate::issue_provider::GhIssueProvider;
     // The branch every pull request targets, and the one whose health
@@ -270,6 +278,8 @@ pub(super) fn drive(
     // `work::run_turn`, which takes this rather than the flags — so a turn
     // cannot be started against the original cap, and cannot finish without
     // its cost being folded in.
+    // The refusal last reported — `notify::refused` holds the argument.
+    let mut last_refusal: Option<String> = None;
     let mut budget = super::budget::RunBudget::new(flags.clone());
     let mut spent: HashMap<String, Spent> = HashMap::new();
     // The ledger claims this run holds, one per issue taken and not yet
@@ -311,6 +321,15 @@ pub(super) fn drive(
         // an exhausted run has nothing to decide: reading the queue would spend
         // a tracker call to choose an issue it cannot pay to work.
         if let Some(out) = budget.exhausted() {
+            // Its own event rather than a `DriveRunEnd` to be parsed: one
+            // asks what happened, the other whether to raise a ceiling.
+            notify::run(
+                &root,
+                &settings,
+                super::hooks::HookEvent::DriveBudgetExhausted,
+                &session_id,
+                out.to_string(),
+            );
             return budget_reached(durable, &tally, out);
         }
 
@@ -323,11 +342,25 @@ pub(super) fn drive(
             tally.opened,
         );
 
-        match step(&state, &obs, &doctrine) {
+        let next = step(&state, &obs, &doctrine);
+        // A pass that is not blocked clears the latch, so a block that returns
+        // after the loop ran is reported again rather than read as a repeat.
+        if !matches!(next, LoopStep::Blocked { .. }) {
+            last_refusal = None;
+        }
+
+        match next {
             LoopStep::Blocked {
                 reason,
                 clears_when,
             } => {
+                notify::refused(
+                    &root,
+                    &settings,
+                    &session_id,
+                    &mut last_refusal,
+                    format!("{reason:?}; clears when {clears_when:?}"),
+                );
                 audit::record(
                     durable,
                     Audit::Waited,
@@ -682,6 +715,13 @@ pub(super) fn drive(
                             Some(&pr),
                             &format!("opened for #{} — ci in progress", issue.0),
                         );
+                        notify::performed(
+                            &root,
+                            &settings,
+                            super::hooks::HookEvent::PullRequestOpened,
+                            &pr,
+                            Some(&issue.0),
+                        );
                         tally.opened += 1;
                         durable.update_stats(|s| s.prs_opened += 1);
                         state.carrying.push(CarriedPr {
@@ -711,14 +751,14 @@ pub(super) fn drive(
                             Some(&issue.0),
                             &format!("the turn did not complete: {reason}"),
                         );
-                        escalate(durable, &provider, &cfg, &resolved.key, &reason);
+                        escalate(durable, &settings, &provider, &cfg, &resolved.key, &reason);
                     }
                 }
             }
 
             LoopStep::Deliver { pr } => {
                 let settled = match advance(
-                    &cfg.merge, &pr.0, &mut spent, no_review, &mut tally, durable,
+                    &cfg.merge, &pr.0, &mut spent, no_review, &mut tally, durable, &settings,
                 ) {
                     Ok(settled) => settled,
                     Err(error) => {
@@ -910,6 +950,7 @@ fn resume(durable: &Durable, cfg: &super::config::LoopConfig, state: &mut LoopSt
 /// Mark an issue the loop tried and could not resolve.
 fn escalate(
     durable: &Durable,
+    settings: &crate::settings::Settings,
     provider: &crate::issue_provider::GhIssueProvider,
     cfg: &super::config::LoopConfig,
     key: &stella_protocol::issue::IssueKey,
@@ -932,6 +973,7 @@ fn escalate(
                     stella_autonomy::ESCALATION_LABEL
                 ),
             );
+            notify::escalated(&durable.repo_root, settings, key.as_str(), why);
         }
         Err(error) => audit::record(
             durable,
@@ -1029,6 +1071,7 @@ fn advance(
     no_review: bool,
     tally: &mut Tally,
     durable: &Durable,
+    settings: &crate::settings::Settings,
 ) -> Result<Settlement, String> {
     let entry = spent.entry(pr.to_owned()).or_default();
     let reading = super::deliver::observe(pr, policy_blocking)?;
@@ -1104,12 +1147,23 @@ fn advance(
         durable.update_stats(|s| s.base_broken_waits += 1);
     }
 
+    notify::observed(&durable.repo_root, settings, entry, transition.state, pr);
+
     match transition.action {
         Action::Merge => {
             super::deliver::merge(pr)?;
             tally.merged += 1;
             durable.update_stats(|s| s.prs_merged += 1);
             audit::record(durable, Audit::PrMerged, Some(pr), "merged");
+            // After the merge, so the event means it landed. The
+            // already-settled arm above fires none: a human merged that one.
+            notify::performed(
+                &durable.repo_root,
+                settings,
+                super::hooks::HookEvent::PullRequestMerged,
+                pr,
+                None,
+            );
             Ok(Settlement::Merged)
         }
         Action::Escalate { reason } => {
@@ -1130,6 +1184,13 @@ fn advance(
                 Audit::PrObserved,
                 Some(pr),
                 "ci is green — taken out of draft",
+            );
+            notify::performed(
+                &durable.repo_root,
+                settings,
+                super::hooks::HookEvent::PullRequestReadyForReview,
+                pr,
+                None,
             );
             Ok(Settlement::Pending)
         }

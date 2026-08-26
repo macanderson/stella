@@ -3,103 +3,47 @@
 
 //! The isolation substrate a `candidate_fanout` runs on: one git worktree per
 //! candidate, one writing worker turn inside each, and one all-or-nothing
-//! adoption that lands a winner on the real tree (#3892).
+//! adoption that lands a winner on the real tree — the [`CandidateWorkspaces`]
+//! port's implementation (#3892; the port and wire types are #3844's).
 //!
-//! #3844 landed the socket half of best-of-N — the wire types, the
-//! `[loop] max_fanout_width` ceiling, and
-//! [`CandidateFanouts`](stella_runtime::wrapper::CandidateFanouts) over a
-//! [`CandidateWorkspaces`] port — and **nothing implemented the port**, so
-//! every shipped host answered both capabilities
-//! [`Unavailable`](stella_plugin::HostCallRefusal::Unavailable) and
-//! `plugins/stella-candidates` (`doc:pipeline-as-plugins` §3/§7 item 4) still
-//! could not be written as best-of-N. This is that implementation.
-//!
-//! # What is reused, and the one thing that is not
-//!
-//! Almost everything here is somebody else's machinery held together:
-//!
-//! | Concern | Whose |
-//! |---|---|
-//! | `worktree add` / `remove --force`, the slug that survives `git check-ref-format` | [`WorktreeManager`] |
-//! | the child's provider, seat map, spend pool, ledger, orphan cascade, settle-on-the-thread | [`SessionSubAgents`] |
-//! | the write-directory grant | [`crate::write_dirs::registry_rooted_at`] |
-//! | the operator's tool switches and the authorization gate | [`crate::agent::tool_stack`] |
-//!
-//! The one genuinely new decision is **which registry a candidate's turn runs
-//! against**, and it is the reason this could not be a field on
-//! [`SubAgentSpec`]. A fan-out runs N candidates *concurrently* in N disjoint
-//! trees, and [`ToolRegistry`](stella_tools::ToolRegistry)'s `root` is what
-//! every path fence resolves against — so there is no single root a shared
-//! registry could hold that
-//! would be true for all of them. A registry **per candidate**, rooted once at
-//! construction and never moved, is the only shape that is. Everything else
-//! about the turn stays the session's, which is what keeps one pool and one
-//! ledger over one session's money
+//! Worktrees, the child turn's plumbing, the write grant and the tool gate are
+//! all reused ([`WorktreeManager`], [`SessionSubAgents`],
+//! [`crate::write_dirs::registry_rooted_at`], [`crate::agent::tool_stack`]).
+//! The one new decision is **a registry per candidate**: N candidates run
+//! concurrently in N disjoint trees, and a
+//! [`ToolRegistry`](stella_tools::ToolRegistry)'s `root` is what every path
+//! fence resolves against, so no single shared root could be true for all of
+//! them. Each is rooted once at construction and never moved; everything else
+//! about the turn stays the session's, one pool and one ledger
 //! ([`SessionSubAgents::dispatch_in_workspace`]).
 //!
 //! # Adoption applies a patch; it does not merge, commit, or rebase
 //!
-//! A candidate's output is **uncommitted working-tree bytes**, so adoption is
-//! `git diff` in the candidate and `git apply` on the real tree. Three
-//! properties follow, and each is the reason this shape was chosen over
-//! `cherry-pick`/`merge`:
+//! A candidate's output is uncommitted working-tree bytes, so adoption is
+//! `git diff` in the candidate and `git apply` on the real tree — atomic by
+//! construction (no `--reject`: a patch that does not fit changes nothing),
+//! indistinguishable from the worker having done it, applied at the
+//! repository's top level ([`Layout`] exists because `git apply` from a
+//! subdirectory silently filters paths and exits 0), and **refusing rather
+//! than resolving**: no `--3way`, no merge driver — a candidate that no
+//! longer applies is reported as an `err` with the losers still on disk
+//! ([`SessionCandidateWorkspaces::adopt`] names the refusals). Resolving a
+//! conflict is a judgement a host must not make silently.
 //!
-//! - **It is indistinguishable from the worker having done it.** The user's
-//!   own turn leaves working-tree changes; so does an adopted candidate. A
-//!   plugin cannot use best-of-N to put a commit in someone's history that
-//!   they did not write.
-//! - **It is all-or-nothing without needing to be made so.** `git apply` is
-//!   already atomic — it validates every hunk before writing any, and this
-//!   deliberately passes no `--reject`, so a patch that does not fit changes
-//!   nothing at all. The two refusals it produces are named on
-//!   [`SessionCandidateWorkspaces::adopt`].
-//! - **It applies at the repository's top level, never at the session's own
-//!   directory.** A patch's paths are top-relative, and `git apply` run from a
-//!   subdirectory filters them to what lies below the current directory —
-//!   finding nothing, applying nothing, and exiting **0**. See [`Layout`],
-//!   which exists for that one silent failure.
-//! - **It refuses rather than resolves.** There is no `--3way`, no merge
-//!   driver and no conflict-marker path: a candidate that no longer applies is
-//!   reported to the plugin as an `err`, and
-//!   [`CandidateFanouts::adopt`](stella_runtime::wrapper::CandidateFanouts)
-//!   guarantees the losing candidates are still on disk when it is. Resolving
-//!   a conflict is a judgement, and a host that made it silently would be
-//!   editing the user's tree on its own authority.
+//! # Boundaries a maintainer must keep
 //!
-//! # It needs a git repository, and says so rather than pretending
-//!
-//! A workspace that is not a repository, or one with no commit for `HEAD` to
-//! name, fails at `git worktree add` — which surfaces as
-//! [`CandidateFanoutError::NotCreated`], then as a `Failed` answer carrying
-//! git's own words. That is the honest outcome for *this* substrate: what it
-//! promotes is a patch, and a patch is a statement about a commit.
-//!
-//! Copying the tree instead is the other answer, and it is a second substrate
-//! rather than a fallback here ([`copy_tree`], #1383). It is not
-//! interchangeable: a copy carries no `.gitignore` semantics, so its adoption
-//! carries a candidate's `target/` too — right where the tree is a disposable
-//! container whose ignored state the task's own tests execute, wrong where
-//! the tree is
-//! somebody's working copy. Which one a workspace gets is
-//! [`CandidateIsolation`](crate::settings::CandidateIsolation), an operator's
-//! setting that defaults to this one and is never inferred.
-//!
-//! # What is left behind, and by what
-//!
-//! Every candidate this substrate mints is registered in the plane's live
-//! table, and a wrapped run sweeps that table when it ends
-//! (`crate::wrapper_plugin::run_wrapped`). That table is process memory, so a
-//! process **killed** mid-fan-out used to take the only name its checkouts had
-//! with it — `stella fleet gc` cannot reclaim them either, because this
-//! substrate moves out of the `.stella/worktrees/` + `fleet/` namespace on
-//! purpose ([`WorktreeManager::with_worktrees_root`]) rather than borrow a
-//! sweeper that would then also delete checkouts it did not create. Each
-//! candidate now writes a [`record`] beside its checkout, and a later run in
-//! the same workspace names what a dead owner left rather than deleting it
-//! (#2813).
+//! It needs a git repository: a workspace with no repo or no `HEAD` commit
+//! fails at `git worktree add` as [`CandidateFanoutError::NotCreated`],
+//! carrying git's own words — a patch is a statement about a commit. The
+//! copying substrate ([`copy_tree`], #1383) is a second substrate selected by
+//! [`CandidateIsolation`](crate::settings::CandidateIsolation), never a
+//! fallback, because a copy carries no `.gitignore` semantics. And each
+//! candidate writes a [`record`] beside its checkout so a killed process
+//! leaves a name rather than an orphan (#2813) — this substrate deliberately
+//! lives outside the `fleet/` namespace, so `stella fleet gc` must not be
+//! taught to sweep it.
 //!
 //! [`CandidateWorkspaces`]: stella_runtime::wrapper::CandidateWorkspaces
-//! [`SubAgentSpec`]: stella_core::subagent::SubAgentSpec
 //! [`SessionSubAgents`]: crate::subagent::SessionSubAgents
 //! [`SessionSubAgents::dispatch_in_workspace`]: crate::subagent::SessionSubAgents::dispatch_in_workspace
 
