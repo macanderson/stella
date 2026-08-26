@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """Census: what one compaction pass-0 (retention) firing costs and buys (#4452).
 
-`RETENTION_TRIGGER_BUDGET_DIVISOR` in `crates/stella-core/src/compaction.rs`
-gates the retention pass on how far into its budget a conversation is. #4452
-asked whether half is the right fraction, and required the answer to be a
-number over recorded runs rather than an argument. This is that census.
+The retention pass in `crates/stella-core/src/compaction.rs` used to be gated
+on how far into its budget a conversation was. #4452 asked whether half was
+the right fraction, and required the answer to be a number over recorded runs
+rather than an argument. This is that census, and its answer was that the key
+was wrong at every value: the last table below prices the reclaim ratio
+instead, and #4753 shipped `RETENTION_TRIGGER_RECLAIM_PERCENT` from its
+minimum-net row.
+
+The budget-divisor tables are kept because they are the evidence for that
+replacement. Re-run this to re-measure either gate; the journals it reads are
+still from binaries that had no gate at all, so both counterfactuals stay
+askable.
 
 It reads `~/.stella/sessions/*/journal.jsonl` -- the durable session journals,
 not `store.db`, because the maintainer's project store is corrupt
