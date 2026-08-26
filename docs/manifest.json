@@ -834,6 +834,17 @@
       "status": "living",
       "title": "Why stella"
     },
+    "wire-contract": {
+      "path": "docs/wire/README.md",
+      "sections": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "status": "living",
+      "title": "The wire contract"
+    },
     "witness-protocol": {
       "path": "docs/spec/witness-protocol.md",
       "sections": [

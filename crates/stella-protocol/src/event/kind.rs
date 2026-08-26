@@ -1071,8 +1071,9 @@ pub enum AgentEvent {
     /// is no such bump to wait for: this enum carries no version number at
     /// all. Its forward-compatibility mechanism is [`AgentEvent::Unknown`]
     /// plus `KNOWN_TYPE_TAGS` — a tag a build does not list is read as an
-    /// event from a newer stella and kept intact, which is what makes the
-    /// generated wire contract additive-only. Dropping a tag is therefore not
+    /// event from a newer stella and kept intact (`doc:wire-contract §4`),
+    /// which is what makes the contract additive-only
+    /// (`doc:wire-contract §3`). Dropping a tag is therefore not
     /// a break a reader can detect and act on: it demotes an older recording's
     /// media lines to [`AgentEvent::Unknown`], reporting version skew that did
     /// not happen. Keeping two producerless tags costs a `RecordedOnly` row
