@@ -128,6 +128,7 @@ jobs:
           --test wrapper_late_credential
           --test wrapper_declared_witness
           --test wrapper_run_test
+          --test wrapper_host_call
 
       - name: the group-kill guard at the bash/custom-tool/hook spawn sites, on Windows (#4698)
         if: ${{ !cancelled() && steps.rust.outcome == 'success' }}

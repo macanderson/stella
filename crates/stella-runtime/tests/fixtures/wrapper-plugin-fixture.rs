@@ -120,6 +120,94 @@ fn main() {
         // The id check is the shell script's and is kept: an answer carrying
         // someone else's id means the transport crossed two calls, and
         // failing loudly there beats reporting a flip against the wrong one.
+        // Emits one host call and exits without reading the answer — the
+        // plugin that asks and then walks away. Distinct from `emit`, which
+        // never reads the request either: the host must see a well-formed
+        // ask before the silence, or the test would be about a malformed
+        // plugin instead of an abandoned call.
+        // Never answers the point; just keeps asking until the host stops
+        // answering. The deadline is what ends it, which is the property
+        // `wrapper_host_call.rs` measures — so this loop must be genuinely
+        // unbounded rather than capped at a large number.
+        "ask-forever" => {
+            let _request = read_line();
+            let mut n = 0u32;
+            loop {
+                n += 1;
+                emit(&format!(
+                    "{{\"call\":\"recall\",\"id\":{n},\"args\":{{\"goal\":\"again\"}}}}"
+                ));
+                if read_line().is_empty() {
+                    return;
+                }
+            }
+        }
+        "call-once" => {
+            let _request = read_line();
+            emit(arg(&args, 1));
+        }
+        // Asks `recall`, then builds its context from what came back. Two
+        // independent greps, both kept: `wrapper_host_call.rs` reads the
+        // composed sentence, so a mode that answered either half alone
+        // would still look plausible while proving less.
+        "recall-probe" => {
+            let _request = read_line();
+            emit(
+                "{\"call\":\"recall\",\"id\":7,\"args\":\
+                 {\"goal\":\"retry_budget is not honoured\",\"limit\":2}}",
+            );
+            let answer = read_line();
+            if !answer.contains("\"result\":7") {
+                eprintln!("the answer did not carry the id this plugin chose");
+                std::process::exit(1);
+            }
+            let mut known = if answer.contains("the retry budget is 3") {
+                "the retry budget is 3 (recalled)".to_string()
+            } else {
+                "nothing was recalled".to_string()
+            };
+            if answer.contains("RETRY_BUDGET") {
+                known.push_str(", and src/retry.rs defines it");
+            }
+            emit(&format!(
+                "{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\
+                 \"context\":[{{\"label\":\"recall\",\"text\":\"{known}\"}}]}}}}"
+            ));
+        }
+        // Asks for a call it never declared, and reports the refusal it was
+        // given. The `undeclared` branch is what proves the host refuses by
+        // name rather than by silence — an unrecognised answer says so.
+        "child-turn-probe" => {
+            let _request = read_line();
+            emit(
+                "{\"call\":\"child_turn\",\"id\":1,\"args\":\
+                 {\"role\":\"verifier\",\"instruction\":\"grade it\"}}",
+            );
+            let answer = read_line();
+            let note = if answer.contains("\"refusal\":\"undeclared\"") {
+                "the host refused child_turn; degrading"
+            } else {
+                "unexpected answer"
+            };
+            emit(&note_context(note));
+        }
+        // Asks twice, so the second ask meets an allowance the first spent.
+        // Reading the first answer matters even though nothing branches on
+        // it: skipping the read would leave it queued and the second ask
+        // would read it instead of its own.
+        "two-recalls" => {
+            let _request = read_line();
+            emit("{\"call\":\"recall\",\"id\":1,\"args\":{\"goal\":\"first\"}}");
+            let _first = read_line();
+            emit("{\"call\":\"recall\",\"id\":2,\"args\":{\"goal\":\"second\"}}");
+            let second = read_line();
+            let note = if second.contains("\"refusal\":\"allowance-spent\"") {
+                "the second ask was refused"
+            } else {
+                "the allowance was not enforced"
+            };
+            emit(&note_context(note));
+        }
         "run-test-probe" => {
             let _request = read_line();
             let handle = arg(&args, 1);
@@ -272,6 +360,14 @@ fn emit(message: &str) {
     let mut stdout = std::io::stdout();
     let _ = writeln!(stdout, "{message}");
     let _ = stdout.flush();
+}
+
+/// A `before_turn` response carrying one `note`-labelled context line.
+fn note_context(note: &str) -> String {
+    format!(
+        "{{\"point\":\"before_turn\",\"body\":{{\"protocol_version\":1,\
+         \"context\":[{{\"label\":\"note\",\"text\":\"{note}\"}}]}}}}"
+    )
 }
 
 /// An `after_turn` response carrying exactly these measurements.
