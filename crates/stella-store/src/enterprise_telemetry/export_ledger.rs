@@ -47,7 +47,7 @@
 //! | --- | --- | --- | --- |
 //! | `enrolled_after_execution_id` | may this sink ever see it? | durable, per sink | [`Store::begin_enterprise_enrollment`](crate::Store::begin_enterprise_enrollment), once |
 //! | `compacted_through_execution_id` | is it already settled and reclaimed? | durable, per sink | [`Store::compact_enterprise_export_ledger`](crate::Store::compact_enterprise_export_ledger), monotonically |
-//! | `after_execution_id` | where did this drain get to? | transient, per pass | the caller, between pages |
+//! | `after_execution_id` | where did this drain get to? | transient, per pass | the caller, between pages — see [`Store::pending_enterprise_export_page`](crate::Store::pending_enterprise_export_page) |
 //!
 //! ## 1. `enrolled_after_execution_id` — consent
 //!
@@ -94,25 +94,6 @@
 //! does not consult it. An execution already admitted still drains normally.
 //! The floor governs re-admission only.
 //!
-//! ## 3. `after_execution_id` — a position, not a promise
-//!
-//! The keyset cursor within one drain pass, supplied by the caller and stored
-//! nowhere. A pass that ends mid-backlog simply starts again from the beginning
-//! next time.
-//!
-//! Advance it **early**, skipping rows, and nothing is lost — the skipped rows
-//! are still `pending`, and the next pass lists them again. Leave it **late**,
-//! or reset it to `0`, and the same rows are re-listed and re-spooled — also
-//! harmless, because their nonces are stable, so the event ids are byte-for-byte
-//! the ones already enqueued and the spool dedups them. Both directions are
-//! absorbed.
-//!
-//! That is precisely why it must stay transient. Persisting it would buy
-//! nothing (a re-read is already free) and would convert its harmless failure
-//! into watermark 2's: a durable cursor that advanced past undrained rows would
-//! hide them permanently, with no counter to show for it. The two floors are
-//! durable because their failures are permanent and silent; the cursor is not,
-//! because its safety comes from being re-derivable.
 
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
 
@@ -283,6 +264,27 @@ impl crate::Store {
     /// One page of what this store still owes `sink_fingerprint`, in ascending
     /// execution order — the keyset cursor is `after_execution_id`, so a drain
     /// walks the backlog without an OFFSET scan.
+    ///
+    /// # `after_execution_id` is a position, not a promise
+    ///
+    /// The third of the module's three watermarks, and the one that is
+    /// supplied by the caller and stored nowhere. A pass that ends mid-backlog
+    /// starts again from the beginning next time.
+    ///
+    /// Advance it **early**, skipping rows, and nothing is lost — the skipped
+    /// rows are still `pending` and the next pass lists them again. Leave it
+    /// **late**, or reset it to `0`, and the same rows are re-listed and
+    /// re-spooled — also harmless, because their nonces are stable, so the
+    /// event ids are byte-for-byte the ones already enqueued and the spool
+    /// dedups them. Both directions are absorbed.
+    ///
+    /// That is why it must stay transient. Persisting it would buy nothing (a
+    /// re-read is already free) and would convert its harmless failure into
+    /// `compacted_through_execution_id`'s: a durable cursor that advanced past
+    /// undrained rows would hide them permanently, with no counter to show for
+    /// it. The two durable floors are durable because their failures are
+    /// permanent and silent; this one is not, because its safety comes from
+    /// being re-derivable.
     ///
     /// Only executions whose local accounting is complete (`usage_complete`)
     /// are listed: the enterprise projection refuses an incomplete envelope

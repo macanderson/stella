@@ -37,34 +37,9 @@
 //! ledger over one session's money
 //! ([`SessionSubAgents::dispatch_in_workspace`]).
 //!
-//! # Adoption applies a patch; it does not merge, commit, or rebase
-//!
-//! A candidate's output is **uncommitted working-tree bytes**, so adoption is
-//! `git diff` in the candidate and `git apply` on the real tree. Three
-//! properties follow, and each is the reason this shape was chosen over
-//! `cherry-pick`/`merge`:
-//!
-//! - **It is indistinguishable from the worker having done it.** The user's
-//!   own turn leaves working-tree changes; so does an adopted candidate. A
-//!   plugin cannot use best-of-N to put a commit in someone's history that
-//!   they did not write.
-//! - **It is all-or-nothing without needing to be made so.** `git apply` is
-//!   already atomic — it validates every hunk before writing any, and this
-//!   deliberately passes no `--reject`, so a patch that does not fit changes
-//!   nothing at all. The two refusals it produces are named on
-//!   [`SessionCandidateWorkspaces::adopt`].
-//! - **It applies at the repository's top level, never at the session's own
-//!   directory.** A patch's paths are top-relative, and `git apply` run from a
-//!   subdirectory filters them to what lies below the current directory —
-//!   finding nothing, applying nothing, and exiting **0**. See [`Layout`],
-//!   which exists for that one silent failure.
-//! - **It refuses rather than resolves.** There is no `--3way`, no merge
-//!   driver and no conflict-marker path: a candidate that no longer applies is
-//!   reported to the plugin as an `err`, and
-//!   [`CandidateFanouts::adopt`](stella_runtime::wrapper::CandidateFanouts)
-//!   guarantees the losing candidates are still on disk when it is. Resolving
-//!   a conflict is a judgement, and a host that made it silently would be
-//!   editing the user's tree on its own authority.
+//! Adoption applies a patch rather than merging, committing or rebasing.
+//! The four properties that follow from that are on
+//! [`SessionCandidateWorkspaces::adopt`].
 //!
 //! # It needs a git repository, and says so rather than pretending
 //!
@@ -651,6 +626,36 @@ impl CandidateWorkspaces for SessionCandidateWorkspaces {
     }
 
     /// Apply this candidate's changes to the real tree, all-or-nothing.
+    ///
+    /// # It applies a patch; it does not merge, commit, or rebase
+    ///
+    /// A candidate's output is **uncommitted working-tree bytes**, so adoption is
+    /// `git diff` in the candidate and `git apply` on the real tree. Three
+    /// properties follow, and each is the reason this shape was chosen over
+    /// `cherry-pick`/`merge`:
+    ///
+    /// - **It is indistinguishable from the worker having done it.** The user's
+    ///   own turn leaves working-tree changes; so does an adopted candidate. A
+    ///   plugin cannot use best-of-N to put a commit in someone's history that
+    ///   they did not write.
+    /// - **It is all-or-nothing without needing to be made so.** `git apply` is
+    ///   already atomic — it validates every hunk before writing any, and this
+    ///   deliberately passes no `--reject`, so a patch that does not fit changes
+    ///   nothing at all. The two refusals it produces are named on
+    ///   below.
+    /// - **It applies at the repository's top level, never at the session's own
+    ///   directory.** A patch's paths are top-relative, and `git apply` run from a
+    ///   subdirectory filters them to what lies below the current directory —
+    ///   finding nothing, applying nothing, and exiting **0**. See [`Layout`],
+    ///   which exists for that one silent failure.
+    /// - **It refuses rather than resolves.** There is no `--3way`, no merge
+    ///   driver and no conflict-marker path: a candidate that no longer applies is
+    ///   reported to the plugin as an `err`, and
+    ///   [`CandidateFanouts::adopt`](stella_runtime::wrapper::CandidateFanouts)
+    ///   guarantees the losing candidates are still on disk when it is. Resolving
+    ///   a conflict is a judgement, and a host that made it silently would be
+    ///   editing the user's tree on its own authority.
+    ///
     ///
     /// # The two refusals
     ///

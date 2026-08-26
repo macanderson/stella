@@ -4,17 +4,10 @@
 //! The candidate grant and the tamper snapshot the CLI's wrapper driver owes a
 //! plugin (#3553).
 //!
-//! # What was broken
-//!
-//! `crate::wrapper_plugin` sent `RoundInput { candidate: None, .. }` and
-//! reported [`TamperFinding::NotChecked`], and both were honest — the host had
-//! neither. The consequence was not honest at all: `judge` reads the flip first
-//! and `FlipObservation::Unobservable` under `flip = "required"` is
-//! `UndecidedReason::FlipUnobservable`, so **every witness-flavoured wrapper
-//! reported `Undecided` on every run, forever**. Only a measurement oracle
-//! (`flip = "not-applicable"`) worked. A plugin with no root to read and no
-//! test to run cannot observe a flip, and a flip nobody vouched for cannot be
-//! credited.
+//! Without a grant a plugin has no root to read and no test to run, so it
+//! cannot observe a flip — and under `flip = "required"` an unobservable flip
+//! is `UndecidedReason::FlipUnobservable`, which made every witness-flavoured
+//! wrapper report `Undecided` on every run.
 //!
 //! # The grant names the tree the turn actually ran in
 //!

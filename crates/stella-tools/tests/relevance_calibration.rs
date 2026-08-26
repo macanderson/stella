@@ -48,38 +48,8 @@
 //! the live file: it opens the graph for writing (`CodeGraph::open`), and a
 //! session's own indexer is already writing to that one.
 //!
-//! # What it prints, and what to do with it
-//!
-//! Per query, the top [`DEPTH`] candidates, labelled relevant or irrelevant
-//! against the answers below, with their cosines. Then, per query and over the
-//! whole set:
-//!
-//! - **the recall rank** — where the best labelled answer sits in the
-//!   **whole** ranking, not in the printed window. It is first because it is
-//!   the one question a threshold cannot answer: a floor cannot rescue a
-//!   ranking that does not contain the answer, so whether the answer is in
-//!   there at all is prior to every other number here. Every other line below
-//!   is read off the window; this one is read off the corpus.
-//! - **the separation** — the lowest relevant score minus the highest
-//!   irrelevant one. Positive, and a floor between them drops the tail without
-//!   dropping an answer. Negative, and **no floor separates this corpus**: the
-//!   honest conclusion is then that the floor cannot do the job the
-//!   `SimilarityPosture` contract assigns it for this backend, which is a
-//!   result to write down rather than a number to tune around.
-//! - **the boundary gap** — the drop across the true relevant/irrelevant
-//!   frontier, as a multiple of the ranking's mean gap and in absolute
-//!   cosine. Those are exactly the two tests `relevant_prefix` applies, so the
-//!   two `rank.rs` constants are read straight off this column: the ratio must
-//!   sit below the observed multiples and `DEFAULT_MIN_BOUNDARY_GAP` below the
-//!   observed absolute drops, or the cut fires in the wrong place.
-//! - **what the shipped constants would have done** — where
-//!   `relevant_prefix` puts the cut today against where the labels say it
-//!   belongs. A row where those agree is a constant *confirmed by
-//!   measurement*, which is a result, not a non-result.
-//!
-//! Then edit the doc comments: replace each "provisional" paragraph with the
-//! measurement and its date. **Do not delete a paragraph without measuring**
-//! — that converts an honest disclosure into a silent assumption.
+//! What it prints, and how to read each column into a constant, is on
+//! [`measure`] — the function that computes every one of those numbers.
 //!
 //! # Why this asserts almost nothing
 //!
@@ -334,6 +304,39 @@ struct Measured {
 /// AGENTS.md chunk (`Code style and conventions`, 36th) was reported as the
 /// answer while the section the label's own `basis` names
 /// (`Essential commands`) sat 12th (#4784).
+/// # What the run prints, and what to do with it
+///
+/// Per query, the top [`DEPTH`] candidates, labelled relevant or irrelevant
+/// against the answers below, with their cosines. Then, per query and over the
+/// whole set:
+///
+/// - **the recall rank** — where the best labelled answer sits in the
+///   **whole** ranking, not in the printed window. It is first because it is
+///   the one question a threshold cannot answer: a floor cannot rescue a
+///   ranking that does not contain the answer, so whether the answer is in
+///   there at all is prior to every other number here. Every other line below
+///   is read off the window; this one is read off the corpus.
+/// - **the separation** — the lowest relevant score minus the highest
+///   irrelevant one. Positive, and a floor between them drops the tail without
+///   dropping an answer. Negative, and **no floor separates this corpus**: the
+///   honest conclusion is then that the floor cannot do the job the
+///   `SimilarityPosture` contract assigns it for this backend, which is a
+///   result to write down rather than a number to tune around.
+/// - **the boundary gap** — the drop across the true relevant/irrelevant
+///   frontier, as a multiple of the ranking's mean gap and in absolute
+///   cosine. Those are exactly the two tests `relevant_prefix` applies, so the
+///   two `rank.rs` constants are read straight off this column: the ratio must
+///   sit below the observed multiples and `DEFAULT_MIN_BOUNDARY_GAP` below the
+///   observed absolute drops, or the cut fires in the wrong place.
+/// - **what the shipped constants would have done** — where
+///   `relevant_prefix` puts the cut today against where the labels say it
+///   belongs. A row where those agree is a constant *confirmed by
+///   measurement*, which is a result, not a non-result.
+///
+/// Then edit the doc comments: replace each "provisional" paragraph with the
+/// measurement and its date. **Do not delete a paragraph without measuring**
+/// — that converts an honest disclosure into a silent assumption.
+///
 fn measure(candidates: &[Candidate], full: &[Candidate]) -> Measured {
     let best = full.iter().position(|c| c.relevant);
     let best_rank = best.map(|index| index + 1);
