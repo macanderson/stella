@@ -437,6 +437,64 @@ entry_is "U7 --update still refuses to add an entry for a first-time crossing" "
 "$r/scripts/check-file-size.sh" --update --retighten >/dev/null 2>&1
 entry_is "U8 --retighten refuses it too" "$r" src/new.rs absent
 
+# ── The crowding advisory (#4897) ────────────────────────────────────────────
+#
+# The guard used to say nothing about a file until the moment it failed, so a
+# file at 1492 lines and a file at 400 produced the same green line. The author
+# who then meets the ceiling is the one whose change is about something else,
+# who has no room to design a module seam, and for whom the cheapest-looking
+# fix is the baseline entry the guard refuses to write (#3923).
+#
+# Every case here is expect-pass, which is the property that matters most: the
+# advisory reports, it does not judge.
+
+# want_absent <name> <repo> <substring> — the guard passes and does NOT say it.
+# The positive cases below are all satisfiable by an advisory that names every
+# watched file, and that advisory would be noise rather than a signal.
+want_absent() {
+  local name="$1" dir="$2" sub="$3" out
+  if ! out="$("$dir/scripts/check-file-size.sh" 2>&1)"; then
+    fail=$((fail + 1)); echo "FAIL $name — expected OK, got:"; echo "$out"
+    return
+  fi
+  case "$out" in
+    *"$sub"*) fail=$((fail + 1)); echo "FAIL $name — named '$sub' when it should not:"; echo "$out" ;;
+    *) pass=$((pass + 1)); echo "ok   $name" ;;
+  esac
+}
+
+r="$(new_repo "crowding")"
+plant "$r" "src/crowded.rs" 1492
+plant "$r" "src/roomy.rs" 900
+want "W1 a file 8 lines under the limit is named while there is room" \
+  expect-pass "$r" "src/crowded.rs"
+want "W2 ...with its size, its ceiling and its headroom" \
+  expect-pass "$r" "1492 / 1500  8 line(s) left"
+want_absent "W3 a file with room to spare is not named" "$r" "src/roomy.rs"
+
+# The narrowing this advisory makes, and the measurement behind it: a
+# grandfathered file sits AT its recorded ceiling by construction, so counting
+# them puts every one at zero headroom and they fill the list. Measured on the
+# tree that introduced this, all ten of the tightest were grandfathered and not
+# one of the files the advisory exists for was printed. They also need it least
+# — the per-crate table in AGENTS.md and the crate README already say "closed
+# to growth".
+r="$(new_repo "crowding_skips_grandfathered")"
+plant "$r" "src/godfile.rs" 2400
+plant "$r" "src/crowded.rs" 1490
+set_baseline "$r" "2400 src/godfile.rs"
+want "W4 a file with no entry is still named beside a god file" \
+  expect-pass "$r" "src/crowded.rs"
+want_absent "W5 a grandfathered file at its own ceiling is not named" \
+  "$r" "src/godfile.rs"
+
+# Nothing crowded means nothing printed. Without this the advisory could emit
+# its "0 file(s)" header forever and read as a finding on a clean tree.
+r="$(new_repo "crowding_quiet")"
+plant "$r" "src/small.rs" 200
+want_absent "W6 a tree with nothing near the line says nothing" \
+  "$r" "of their ceiling"
+
 echo
 echo "passed ${pass}, failed ${fail}"
 [ "$fail" -eq 0 ]
