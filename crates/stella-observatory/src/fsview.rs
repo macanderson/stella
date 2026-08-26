@@ -3,15 +3,18 @@
 //! the `settings.json` scope chain.
 //!
 //! Everything here is plain reads of files stella (or the user) already
-//! wrote. Two invariants:
+//! wrote — [`skills`] additionally joins in a read-only peek at
+//! `context.db`'s ledger to name the evidence grade behind a learned skill
+//! (#4871), never opening it as a store. Two invariants:
 //!
-//! 1. **Nothing is created or modified** — absent files and directories are
-//!    states, rendered as empty sections.
+//! 1. **Nothing is created or modified** — absent files, directories, and
+//!    ledger rows are states, rendered as empty sections.
 //! 2. **Secrets never reach the browser.** `settings.json` and `mcp.toml`
 //!    may carry credentials; [`redact`] scrubs any value under a
 //!    sensitive-looking key (and every value under `env`/`headers` maps)
 //!    before the JSON is serialized into a response.
 
+use std::collections::HashMap;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -133,7 +136,12 @@ fn frontmatter_fields(text: &str) -> (Option<String>, Option<String>, Option<Str
 /// promoted. `origin: auto` is the marker the writer itself stamps into the
 /// frontmatter (`render_skill_markdown`), so it is the authority here — and it
 /// keeps traveling with the file if the user moves or renames it.
-fn skill_entry(path: &Path, scope: &str, in_learned_dir: bool) -> Option<Value> {
+fn skill_entry(
+    path: &Path,
+    scope: &str,
+    in_learned_dir: bool,
+    grades: &HashMap<String, &'static str>,
+) -> Option<Value> {
     // Only the frontmatter block is read out of this, so a bounded head read is
     // equivalent for any file whose frontmatter is not itself 64 KiB.
     let text = read_head(path)?;
@@ -152,11 +160,18 @@ fn skill_entry(path: &Path, scope: &str, in_learned_dir: bool) -> Option<Value> 
     } else {
         stem
     };
+    let name = name.unwrap_or(fallback);
+    // The candidate id the miner named the file for is the skill's own `name`
+    // (`stella_core::skills::decide_auto_creation` builds `{name}.md`), so
+    // that is the join key back to the proposal that promoted it (#4871). A
+    // hand-authored skill was never a candidate and has no entry to find.
+    let evidence_grade = grades.get(&name).copied();
     Some(json!({
-        "name": name.unwrap_or(fallback),
+        "name": name,
         "description": description.unwrap_or_default(),
         "scope": scope,
         "learned": learned,
+        "evidence_grade": evidence_grade,
         "path": path.display().to_string(),
         "modified_unix": mtime_unix(path),
     }))
@@ -167,7 +182,12 @@ fn skill_entry(path: &Path, scope: &str, in_learned_dir: bool) -> Option<Value> 
 /// recognized by its `origin: auto` frontmatter rather than by landing in
 /// `learned/` — see [`skill_entry`] — so the flat-file branch below yields
 /// learned skills too, which is where the miner actually writes them.
-fn scan_skills_dir(dir: &Path, scope: &str, out: &mut Vec<Value>) {
+fn scan_skills_dir(
+    dir: &Path,
+    scope: &str,
+    grades: &HashMap<String, &'static str>,
+    out: &mut Vec<Value>,
+) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -180,32 +200,97 @@ fn scan_skills_dir(dir: &Path, scope: &str, out: &mut Vec<Value>) {
                     for file in learned.flatten().take(MAX_DIR_ENTRIES) {
                         let p = file.path();
                         if p.extension().is_some_and(|e| e == "md") {
-                            out.extend(skill_entry(&p, scope, true));
+                            out.extend(skill_entry(&p, scope, true, grades));
                         }
                     }
                 }
             } else {
                 let manifest = path.join("SKILL.md");
                 if manifest.is_file() {
-                    out.extend(skill_entry(&manifest, scope, false));
+                    out.extend(skill_entry(&manifest, scope, false, grades));
                 }
             }
         } else if path.extension().is_some_and(|e| e == "md") {
             // `extend`, not `push(…unwrap_or_default())`: an unreadable file is
             // a skipped row, never a JSON `null` the dashboard would try to
             // render as a skill.
-            out.extend(skill_entry(&path, scope, false));
+            out.extend(skill_entry(&path, scope, false, grades));
         }
     }
+}
+
+/// The evidence grade recorded against each skill candidate id, read straight
+/// off `.stella/private/context.db`'s `record_proposal` rows (#4871).
+///
+/// Read-only and best-effort, the same posture as everything else in this
+/// module (module doc point 1): a missing or unreadable ledger — the common
+/// case, since the shipped lexical loop never writes one — answers an empty
+/// map rather than failing the dashboard. Folds every `Knowledge` proposal
+/// recorded for a candidate with the weakest grade recorded
+/// (`stella_protocol::provenance::ProvenanceGrade::weakest`) — #2782's rule
+/// that combining evidence can only weaken it, applied across ledger
+/// revisions the same way `EvidencePool` applies it across observations
+/// within one. Named only through `ProposalRecord`'s own field and method,
+/// never by importing `stella_protocol` itself: this crate's isolation note
+/// (see the dev-dependency comments in `Cargo.toml`) keeps every write-path
+/// crate a dev-only dependency, `ProvenanceGrade` included.
+fn skill_evidence_grades(workspace_root: &Path) -> HashMap<String, &'static str> {
+    use stella_core::context_record::{ProposalRecord, RecordProposalKind};
+
+    let db = workspace_root
+        .join(".stella")
+        .join("private")
+        .join("context.db");
+    let Some(conn) = crate::db::open_read_only(&db) else {
+        return HashMap::new();
+    };
+    let Ok(mut stmt) =
+        conn.prepare("SELECT body FROM context_records WHERE record_kind = 'record_proposal'")
+    else {
+        return HashMap::new();
+    };
+    let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) else {
+        return HashMap::new();
+    };
+
+    let mut grades = HashMap::new();
+    for body in rows.flatten() {
+        let Ok(proposal) = serde_json::from_str::<ProposalRecord>(&body) else {
+            continue;
+        };
+        if proposal.proposal_kind != RecordProposalKind::Knowledge {
+            continue;
+        }
+        let Some(grade) = proposal.provenance else {
+            continue;
+        };
+        let weaker = match grades.get(&proposal.candidate_id) {
+            Some(&existing) => grade < existing,
+            None => true,
+        };
+        if weaker {
+            grades.insert(proposal.candidate_id, grade);
+        }
+    }
+    grades
+        .into_iter()
+        .map(|(id, grade)| (id, grade.as_str()))
+        .collect()
 }
 
 /// Every skill visible to this workspace: project `.stella/skills` plus the
 /// user-scope skills dir, with learned (self-extracted) skills flagged.
 pub fn skills(workspace_root: &Path) -> Value {
+    let grades = skill_evidence_grades(workspace_root);
     let mut rows = Vec::new();
-    scan_skills_dir(&workspace_root.join(".stella/skills"), "project", &mut rows);
+    scan_skills_dir(
+        &workspace_root.join(".stella/skills"),
+        "project",
+        &grades,
+        &mut rows,
+    );
     if let Some(user) = user_config_dir() {
-        scan_skills_dir(&user.join("skills"), "user", &mut rows);
+        scan_skills_dir(&user.join("skills"), "user", &grades, &mut rows);
     }
     rows.sort_by(|a, b| {
         let key = |v: &Value| {
@@ -838,7 +923,7 @@ tags       = ["testing", "pins"]
         )
         .unwrap();
         let mut rows = Vec::new();
-        scan_skills_dir(dir.path(), "project", &mut rows);
+        scan_skills_dir(dir.path(), "project", &HashMap::new(), &mut rows);
         let find = |name: &str| {
             rows.iter()
                 .find(|r| r["name"] == name)
@@ -847,6 +932,103 @@ tags       = ["testing", "pins"]
         };
         assert_eq!(find("money-is-minor-units")["learned"], true);
         assert_eq!(find("hand-written")["learned"], false);
+    }
+
+    /// A learned skill's dashboard row names the grade of the evidence that
+    /// promoted it (#4871), joined out of `context.db`'s ledger by candidate
+    /// id — never by touching the `SKILL.md` bytes, which the byte-identity
+    /// guarantee (`stella-cli`'s `learning::guarantees`) requires stay
+    /// silent on it. A hand-authored skill was never a candidate and carries
+    /// no grade at all.
+    #[test]
+    fn skills_names_the_evidence_grade_behind_a_learned_skill() {
+        use stella_context::{ContextStore, LedgerAppend};
+        use stella_core::context_record::{
+            ContextRecordKind, EvidencePool, LIFECYCLE_SCHEMA_VERSION, ObservationRecord,
+            ObservationSource, ProposalRecord, ProposalScore, RecordProposalKind,
+            RecordProposalStatus, confidence_from_score,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let workspace_root = dir.path();
+        let skills_dir = workspace_root.join(".stella").join("skills");
+        std::fs::create_dir_all(&skills_dir).unwrap();
+        std::fs::write(
+            skills_dir.join("money-is-minor-units-a1b2c3d4.md"),
+            "---\nname: money-is-minor-units-a1b2c3d4\ndescription: d\norigin: auto\n---\nbody",
+        )
+        .unwrap();
+        std::fs::write(
+            skills_dir.join("hand-written.md"),
+            "---\nname: hand-written\ndescription: d\n---\nbody",
+        )
+        .unwrap();
+
+        let private = workspace_root.join(".stella").join("private");
+        std::fs::create_dir_all(&private).unwrap();
+        let store = ContextStore::open(private.join("context.db")).unwrap();
+
+        let observation = ObservationRecord::new(
+            ObservationSource::ToolOutcome,
+            "tool:cargo_test#1",
+            "turn:1",
+            "money amounts must be stored as minor units",
+            Vec::new(),
+            false,
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+        let score = ProposalScore {
+            occurrences: 3,
+            distinct_tasks: 3,
+            salient: false,
+            rank: 30.0,
+        };
+        let confidence = confidence_from_score(&score).unwrap();
+        let proposal = ProposalRecord::new(
+            RecordProposalKind::Knowledge,
+            RecordProposalStatus::Eligible,
+            "money-is-minor-units-a1b2c3d4",
+            "money is minor units",
+            "money amounts must be stored as minor units",
+            Vec::new(),
+            EvidencePool::from_observations([&observation]),
+            score,
+            confidence,
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
+        let body = serde_json::to_string(&proposal).unwrap();
+        store
+            .append_record(LedgerAppend {
+                record_id: &proposal.record_id,
+                lineage_id: &proposal.lineage_id,
+                record_kind: ContextRecordKind::RecordProposal.as_str(),
+                record_hash: &proposal.record_hash,
+                schema_version: LIFECYCLE_SCHEMA_VERSION,
+                body: &body,
+                observed_at: &proposal.observed_at,
+                supersedes: None,
+            })
+            .unwrap();
+        drop(store);
+
+        let rows = skills(workspace_root);
+        let rows = rows.as_array().expect("skills returns an array");
+        let find = |name: &str| {
+            rows.iter()
+                .find(|r| r["name"] == name)
+                .unwrap_or_else(|| panic!("{name} listed"))
+                .clone()
+        };
+        assert_eq!(
+            find("money-is-minor-units-a1b2c3d4")["evidence_grade"],
+            "environment_observation"
+        );
+        assert_eq!(
+            find("hand-written")["evidence_grade"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]

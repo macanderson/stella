@@ -40,6 +40,16 @@ pub struct SkillRow {
     /// Provenance label — `"workspace"`, `"user"`, `"installed"`, `"auto"`,
     /// `"plugin"`.
     pub origin: String,
+    /// How strong the evidence behind an `"auto"` skill actually is —
+    /// `stella_protocol::provenance::ProvenanceGrade::as_str()`, e.g.
+    /// `"model_critique"` or `"environment_observation"` — looked up from the
+    /// proposal ledger by candidate id (#4871). `None` for a hand-authored,
+    /// installed, or contributed skill, and for an auto-created one whose
+    /// promoting proposal predates the ledger or has aged out of it: absent,
+    /// not a weak grade the tab invented. Kept a plain label rather than the
+    /// typed enum so this crate stays independent of `stella-protocol`, the
+    /// same reason [`Self::origin`] is a `String`.
+    pub evidence_grade: Option<String>,
     /// The plugin package that ships this skill, by its manifest `name`, when
     /// it is a contributed one; `None` for a skill the user wrote, installed,
     /// or had written for them.
