@@ -915,12 +915,13 @@ pub(crate) async fn run_goal_turn(
         let mut engine =
             Engine::with_sleeper(provider, &tools, engine_config_for(cfg), &TokioSleeper)
                 .with_calibration(calibration)
-                // The arc's whistle, on the WORKER engine only. The verifier
-                // runs as a sub-agent off `Engine::assess` with its own
-                // transcript, and `drain_steering` empties the queue — so a
-                // shared tap would let the judge swallow a steer meant for the
-                // work, at a boundary the person whistling cannot see. One
-                // drainer, and it is the round doing the work.
+                // Every round's worker turn drains this, and only those. The
+                // verifier runs as a sub-agent off `Engine::assess`, which
+                // sees a parent's steering through
+                // `stella_core::subagent::ChildSteering` — soft stop
+                // forwarded, `drain_steering` refused — so a whistle cannot
+                // be eaten by the judge, and the person who sent it does not
+                // have to know a judge exists.
                 .with_steering(whistle.steering());
         if let Some(hooks) = &cfg.hooks {
             engine = engine.with_hooks(hooks, &hook_runner);
