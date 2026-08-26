@@ -15,7 +15,11 @@ async fn main() {
         .or_else(|| std::env::current_dir().ok())
         .expect("workspace root");
     let port: u16 = args.next().and_then(|p| p.parse().ok()).unwrap_or(7787);
-    stella_observatory::serve(root, port, |addr| {
+    // No roster: resolving one means the project-tier trust gate and the rest
+    // of `stella-cli`'s plugin machinery, which is the whole reason this
+    // harness exists without it. The skills tab shows the workspace's own.
+    let plugins = std::sync::Arc::new(stella_observatory::NoPluginSkills);
+    stella_observatory::serve(root, port, plugins, |addr| {
         println!("observatory: http://{addr}");
     })
     .await

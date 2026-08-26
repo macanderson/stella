@@ -98,6 +98,49 @@ pub(crate) fn preflight_observatory_stores(
     })
 }
 
+/// The dashboard's answer for "which plugin-contributed skills would a session
+/// started in this workspace load?", read off the one roster the session's own
+/// skill load reads (#4917).
+///
+/// A plugin's skills are contributed by derivation from `<plugin_dir>/skills`
+/// and are never copied into `.stella/skills`, so the observatory — which
+/// derives what it shows from the filesystem and may not link this crate —
+/// could not see them at all. It resolves them here instead of there because
+/// reaching them means answering the project-tier trust gate (#3509), the
+/// `plugins.<name> = "off"` retraction, the install receipt and the
+/// reconcile-on-every-load check, and a second implementation of those is a
+/// second answer.
+///
+/// [`package::contributed_skill_dirs`](crate::plugin_cmd::package) is that one
+/// answer, called per request rather than once at startup so a package
+/// installed while the dashboard is open appears on the next refresh — and
+/// answering an empty roster in a workspace nobody has trusted, which is the
+/// property `the_dashboards_plugin_skills_honour_the_project_trust_gate` pins.
+pub(crate) struct RosterSkills;
+
+impl stella_observatory::PluginSkills for RosterSkills {
+    fn contributed_skill_dirs(
+        &self,
+        workspace_root: &std::path::Path,
+    ) -> Vec<stella_observatory::ContributedSkills> {
+        crate::plugin_cmd::package::contributed_skill_dirs(workspace_root)
+            .into_iter()
+            .map(|contributed| stella_observatory::ContributedSkills {
+                plugin: contributed.plugin,
+                tier: match contributed.scope {
+                    crate::plugin_cmd::roster::PluginScope::Project => {
+                        stella_observatory::PluginTier::Project
+                    }
+                    crate::plugin_cmd::roster::PluginScope::User => {
+                        stella_observatory::PluginTier::User
+                    }
+                },
+                dir: contributed.dir,
+            })
+            .collect()
+    }
+}
+
 pub fn run_observe(port: u16, open: bool) -> Result<(), String> {
     let root =
         std::env::current_dir().map_err(|e| format!("cannot determine workspace root: {e}"))?;
@@ -109,39 +152,46 @@ pub fn run_observe(port: u16, open: bool) -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|e| format!("failed to start runtime: {e}"))?;
-    rt.block_on(stella_observatory::serve(root, port, move |addr| {
-        let url = format!("http://{addr}/");
-        println!();
-        // Comet kit v1.0: gold accent (ANSI yellow is the terminal's phosphor
-        // gold), lowercase always.
-        println!("  {} {}", "◆".yellow(), "stella observatory".bold());
-        println!("  {} {}", "→".yellow(), url);
-        // Which workspace is on screen. Unconditional, because the reader who
-        // needs it most is the one who does not yet suspect they are in the
-        // wrong directory — an advisory that only fires on an absent store
-        // would have stayed silent for the sparse-but-present case that
-        // motivated this.
-        println!("  {} {}", "·".dimmed(), workspace.dimmed());
-        println!(
-            "  {}",
-            "reads .stella (read-only) · binds 127.0.0.1 only · Ctrl+C to stop".dimmed()
-        );
-        if let Some(notice) = &notice {
-            println!("  {} {notice}", "!".yellow());
-        }
-        if open {
-            // Best-effort convenience; the printed URL is the contract.
-            let opener = if cfg!(target_os = "macos") {
-                "open"
-            } else {
-                "xdg-open"
-            };
-            let mut command = std::process::Command::new(opener);
-            command.arg(&url);
-            stella_tools::subprocess_env::scrub_sensitive_std_env(&mut command);
-            let _ = command.spawn();
-        }
-    }))
+    let plugins: std::sync::Arc<dyn stella_observatory::PluginSkills> =
+        std::sync::Arc::new(RosterSkills);
+    rt.block_on(stella_observatory::serve(
+        root,
+        port,
+        plugins,
+        move |addr| {
+            let url = format!("http://{addr}/");
+            println!();
+            // Comet kit v1.0: gold accent (ANSI yellow is the terminal's phosphor
+            // gold), lowercase always.
+            println!("  {} {}", "◆".yellow(), "stella observatory".bold());
+            println!("  {} {}", "→".yellow(), url);
+            // Which workspace is on screen. Unconditional, because the reader who
+            // needs it most is the one who does not yet suspect they are in the
+            // wrong directory — an advisory that only fires on an absent store
+            // would have stayed silent for the sparse-but-present case that
+            // motivated this.
+            println!("  {} {}", "·".dimmed(), workspace.dimmed());
+            println!(
+                "  {}",
+                "reads .stella (read-only) · binds 127.0.0.1 only · Ctrl+C to stop".dimmed()
+            );
+            if let Some(notice) = &notice {
+                println!("  {} {notice}", "!".yellow());
+            }
+            if open {
+                // Best-effort convenience; the printed URL is the contract.
+                let opener = if cfg!(target_os = "macos") {
+                    "open"
+                } else {
+                    "xdg-open"
+                };
+                let mut command = std::process::Command::new(opener);
+                command.arg(&url);
+                stella_tools::subprocess_env::scrub_sensitive_std_env(&mut command);
+                let _ = command.spawn();
+            }
+        },
+    ))
     .map_err(|e| e.to_string())
 }
 
