@@ -247,6 +247,33 @@ pub(crate) fn fmt_mss(ms: u64) -> String {
     format!("{}:{:02}", secs / 60, secs % 60)
 }
 
+/// Greedy word wrap to `width` columns.
+///
+/// Shared by [`crate::views::plan_card`] and [`crate::views::task_zoom`],
+/// which wrap for the same reason: their content is free text a model wrote,
+/// so a mid-word cut is the common case rather than the edge one, and the
+/// point of opening either surface is to read the words. A word wider than
+/// `width` still takes a row of its own — nothing here splits one.
+pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if line.is_empty() {
+            line.push_str(word);
+        } else if line.chars().count() + 1 + word.chars().count() <= width {
+            line.push(' ');
+            line.push_str(word);
+        } else {
+            out.push(std::mem::take(&mut line));
+            line.push_str(word);
+        }
+    }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    out
+}
+
 /// Push `right` right-aligned onto `row` given the card's inner width —
 /// column arithmetic on display width, grapheme-safe because it only ever
 /// pads (never slices).

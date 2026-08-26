@@ -5,12 +5,6 @@
 //! through an installed wrapper plugin, bound once per attempt (#3695, fleet
 //! half).
 //!
-//! A submodule of [`crate::fleet_cmd`] rather than a `mod` block inside
-//! `fleet_cmd.rs`, for the reason AGENTS.md § "God files" gives for
-//! [`crate::wrapper_plugin`] living beside `agent.rs`: this is new logic, and
-//! the parent already carries the fan-out, the dashboard tee, the claim tap
-//! and the report.
-//!
 //! # Bound per attempt, resolved from the invocation's workspace
 //!
 //! A fleet worker runs in the task's own tree — the shared work tree for a

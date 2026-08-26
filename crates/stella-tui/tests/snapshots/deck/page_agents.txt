@@ -1,9 +1,9 @@
 # deck golden · page_agents
-# the full-frame AGENTS page: counts, working lanes, resumable sessions, and the new-task prompt
+# the full-frame AGENTS page: wordmark, counts, working lanes, resumable sessions, and the new-task prompt
 # viewport 160×40 · rendered through render_deck, styling stripped
 # regenerate: BLESS=1 cargo test -p stella-tui --test deck_render_snapshots
 
- AGENTS · 1 waiting · 2 working · 1 completed
+ AGENTS · 1 waiting · 2 working · 1 completed                                                                                                           stella*
 
  WORKING
  ▸ ◆ sub:auth  needs input · 5:12 · glm-5.2 · $0.01
@@ -41,5 +41,5 @@
 
 
 
- ❯ describe a task for a new session
-   ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · n new session · ⌃x⌃x kill · r refresh · esc back
+>>> describe a task for a new session
+    ⏎ start a new agent · / commands · ↑↓ select · ⏎ open · n new session · ⌃x⌃x kill · r refresh · esc back

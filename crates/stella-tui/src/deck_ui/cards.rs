@@ -1,9 +1,9 @@
-//! The floating card overlays — the plan, model routing, and the budget
-//! editor — their shared view state and their modal key handlers. Split out
+//! The card overlays — the plan, model routing, the budget editor and the
+//! task zoom — their shared view state and their modal key handlers. Split out
 //! of `deck_ui.rs` (already the crate's largest file) so the file-size guard
 //! holds; the rendering lives in
-//! `crate::views::{plan_card, models_card, budget_card}` over the shared
-//! chrome in `crate::views::cards`.
+//! `crate::views::{plan_card, models_card, budget_card, task_zoom}` over the
+//! shared chrome in `crate::views::cards`.
 //!
 //! `/plan` is one card where there used to be three. `/tasks` showed a board
 //! nothing ever populated, `/scope` showed the same plan's envelope without
@@ -37,6 +37,11 @@ pub enum Card {
     Models,
     /// The spend-cap editor (`/budget`).
     Budget,
+    /// The task zoom (SPEC 7.5): the plan card's selected step at full size —
+    /// its contract, its evidence, the planned and actual lanes, and what it
+    /// spent. Raised by `⏎` on the plan card, and the one card that takes the
+    /// whole content band instead of floating over it.
+    TaskZoom,
 }
 
 /// The card overlays' ephemeral view state.
@@ -44,11 +49,10 @@ pub enum Card {
 pub struct CardState {
     /// The raised card, if any.
     pub open: Option<Card>,
-    /// Plan-card step selection, clamped to the plan at render time.
+    /// Plan-card step selection, clamped to the plan at render time. The task
+    /// zoom reads the same field, so zooming and returning keep one selection
+    /// rather than two that can disagree.
     pub plan_sel: usize,
-    /// Whether the plan card's selected step is expanded (⏎ shows its full
-    /// elaboration under it).
-    pub plan_expanded: bool,
     /// The budget editor's input buffer — digits and at most one `.`.
     pub budget_input: String,
 }
@@ -60,14 +64,27 @@ impl CardState {
     }
 
     /// Raise `card`, lowering whichever was up. Re-raising resets the card's
-    /// own transient state (selection, expansion, the budget draft) so
-    /// `/plan` always opens at the first step and `/budget` opens with a
-    /// clean input.
+    /// own transient state (selection, the budget draft) so `/plan` always
+    /// opens at the first step and `/budget` opens with a clean input.
     pub fn raise(&mut self, card: Card) {
         self.open = Some(card);
         self.plan_sel = 0;
-        self.plan_expanded = false;
         self.budget_input.clear();
+    }
+
+    /// Zoom the plan card's selected step (SPEC 7.5), and come back out of it.
+    ///
+    /// Neither touches [`Self::plan_sel`], which is what makes `⏎` then `esc`
+    /// land the reader back on the step they zoomed rather than at the top of
+    /// the plan — [`Self::raise`] resets, and that is the wrong verb for a
+    /// move between two views of one selection.
+    pub fn zoom_selected_step(&mut self) {
+        self.open = Some(Card::TaskZoom);
+    }
+
+    /// Leave the zoom for the plan card it was opened from.
+    pub fn unzoom(&mut self) {
+        self.open = Some(Card::Plan);
     }
 
     /// Lower whatever is up.
@@ -84,30 +101,69 @@ pub fn handle_card_key(
     ui: &mut DeckUi,
 ) -> Option<DeckAction> {
     let card = ui.cards.open?;
-    // Esc closes any card. ctrl+s closes the plan specifically, because that
-    // chord *raised* it — a toggle that only opens is a trap, and the card
-    // handler runs before the deck-level chord, so swallowing it here would
-    // make the second press do nothing.
+    // Esc closes any card, except the zoom — which is one level *inside* the
+    // plan card, so Esc there is a step back rather than a way out (SPEC 7.5
+    // spells the affordance `esc back`). ctrl+s closes both, because that
+    // chord *raised* the plan in the first place — a toggle that only opens is
+    // a trap, and this handler runs before the deck-level chord, so swallowing
+    // it here would make the second press do nothing.
     let ctrl_s = key
         .modifiers
         .contains(crossterm::event::KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char('s'));
-    if matches!(key.code, KeyCode::Esc) || (ctrl_s && card == Card::Plan) {
+    if matches!(key.code, KeyCode::Esc) && card == Card::TaskZoom {
+        ui.cards.unzoom();
+        return Some(DeckAction::Handled);
+    }
+    if matches!(key.code, KeyCode::Esc) || (ctrl_s && matches!(card, Card::Plan | Card::TaskZoom)) {
         ui.cards.close();
         return Some(DeckAction::Handled);
     }
     Some(match card {
         Card::Plan => handle_plan_key(key, model, ui),
         Card::Budget => handle_budget_key(key, ui),
+        Card::TaskZoom => handle_zoom_key(key),
         // Read-only surface: every key is swallowed so a stray letter never
         // reaches the composer behind a card the user is looking at.
         Card::Models => DeckAction::Handled,
     })
 }
 
-/// Plan card: ↑/↓ select a step, ⏎ expand/collapse it, `x` asks the driver to
+/// The task zoom's action row (SPEC 7.5): `r re-run checks · s split task ·
+/// b hand to worker · i promote to issue · ⌥ diff plan`.
+///
+/// **Every one of the five is drawn and inert**, and each names the issue that
+/// wires it. This repository's rule is that an unwired affordance is either
+/// tracked or absent, so the row ships with its tracking rather than with four
+/// of the five deleted — the reader of the zoom needs to know what the surface
+/// will do, and a verb that silently does nothing is the failure this comment
+/// exists to prevent.
+///
+/// - `r` re-run checks — #5149. Needs a runner that can re-execute one task's
+///   `Check` list and fold the outcomes back; nothing today re-runs a check.
+/// - `s` split task — #5150. Needs plan-revision authoring (#5037): splitting
+///   a task is `r{n+1}` with the prior plan retained.
+/// - `b` hand to worker — #5151. Needs a dispatch path that hands one task,
+///   not a whole turn, to a lane.
+/// - `i` promote to issue — #5152. Needs the tracker MCP write path the ISSUES
+///   tab's `n` uses, addressed at a task rather than a prompt.
+/// - `⌥` diff plan — #5153. Needs the `[:NEXT]`/`[:THEN]` edges (#5037) to
+///   have two revisions to diff.
+///
+/// Every key is swallowed regardless, so a stray letter never reaches the
+/// composer behind a surface the reader is looking at.
+fn handle_zoom_key(_key: KeyEvent) -> DeckAction {
+    DeckAction::Handled
+}
+
+/// Plan card: ↑/↓ select a step, ⏎ zooms it (SPEC 7.5), `x` asks the driver to
 /// skip the selected still-open step, and `e` proposes a change to the plan's
 /// envelope once it is approved.
+///
+/// ⏎ used to toggle a `plan_expanded` flag that no renderer ever read, so the
+/// key did nothing at all; it now raises [`Card::TaskZoom`] on the selected
+/// step, which is what SPEC 11 has always said `↵` means — *open or zoom the
+/// selected object*.
 ///
 /// Both writes leave as a [`WorkspaceInput`] — the card never edits locally,
 /// so what it shows is always the plan actually in force, and a step's state
@@ -139,7 +195,7 @@ fn handle_plan_key(key: KeyEvent, model: &WorkspaceModel, ui: &mut DeckUi) -> De
             DeckAction::Handled
         }
         KeyCode::Enter => {
-            ui.cards.plan_expanded = !ui.cards.plan_expanded;
+            ui.cards.zoom_selected_step();
             DeckAction::Handled
         }
         KeyCode::Char('x') => match steps.get(ui.cards.plan_sel) {

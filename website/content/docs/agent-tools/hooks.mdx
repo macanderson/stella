@@ -1,6 +1,6 @@
 ---
 title: Hooks
-description: Run shell commands on stella's agent lifecycle events — SessionStart, PreToolUse, PostToolUse, Stop, PreCompact, PreIssueWork, and PostIssueWork — configured under the hooks key in settings.json.
+description: Run shell commands on stella's agent lifecycle events — inside a turn, and around the self-driving loop's runs, cycles, issues, pull requests and checks — configured under the hooks key in settings.json.
 ---
 
 Hooks are shell commands that fire on agent lifecycle events. They are configured under the `hooks` key in your `settings.json` and follow Claude Code parity, so existing hook knowledge carries over.
@@ -16,9 +16,13 @@ Each hook receives the event payload as **JSON on stdin**, so your command can r
 
 ## Events
 
-stella fires hooks on seven lifecycle events. Each behaves differently, and each has its own rules for matching and blocking.
+Hook events come in two families, and the difference decides who fires them and whether one can say no.
 
-Five of them name points **inside a turn**. The last two name points **around a work unit of the [self-driving loop](/docs/self-improvement)** — the loop deciding to work an issue, and the outcome once it has. They live in the same `hooks` block and speak the same decision vocabulary.
+**Inside a turn** — five events, fired by the engine as it runs. Two of them block.
+
+**Outside every turn** — the rest, fired by the [self-driving loop](/docs/self-improvement) as it works through a backlog: a run, a cycle, an issue, a pull request, a set of checks. Exactly one of these blocks (`PreIssueWork`), and the naming rule is why: a `Pre` brackets something that has not happened yet, and everything else is a Start, an End, or a past participle — something that already did, where a `deny` would arrive too late to act on.
+
+Both families live in the same `hooks` block and speak the same vocabulary. Only a turn event can be granted to a plugin; the loop's own events are dispatched from the operator's settings and nowhere else.
 
 <HookLifecycleDiagram />
 
@@ -52,6 +56,83 @@ Five of them name points **inside a turn**. The last two name points **around a 
     The matcher is ignored.
   </OptionCard>
 </CardGrid>
+
+### The loop's own events
+
+Every one of these **reports and never blocks**, and every one ignores the matcher. They fire from `stella self-driving`'s verbs, so a workspace that never runs the loop never sees them.
+
+<CardGrid size="md">
+  <OptionCard name="DriveRunStart">
+    A run has begun, before its first cycle. Payload carries `run.runId`.
+  </OptionCard>
+  <OptionCard name="DriveRunEnd">
+    A run has ended, with `reason` naming why it stopped.
+  </OptionCard>
+  <OptionCard name="DriveCycleStart">
+    A cycle has begun. Payload carries `run.runId` and `run.cycle`.
+  </OptionCard>
+  <OptionCard name="DriveCycleEnd">
+    A cycle has ended and its ledger record is written.
+  </OptionCard>
+  <OptionCard name="DriveIdle">
+    A cycle produced nothing. The signal that separates *alive but starved* from *dead* —
+    a loop with an empty backlog and a loop whose process died emit the same silence.
+  </OptionCard>
+  <OptionCard name="IssueCreated">
+    The loop filed a finding as an issue. Fires only for one that reached the tracker,
+    never for a deduplicated finding.
+  </OptionCard>
+  <OptionCard name="IssueClosed">
+    The loop closed an issue, `--partial` included. `reason` carries how.
+  </OptionCard>
+  <OptionCard name="IssueEscalated">
+    The loop gave up and handed an issue to a human. `reason` says what ran out, so a
+    subscriber knows whether to fix, wait, or raise a ceiling.
+  </OptionCard>
+  <OptionCard name="PullRequestOpened">
+    Payload carries `pullRequest.number` and the `pullRequest.issue` it settles.
+  </OptionCard>
+  <OptionCard name="PullRequestReadyForReview">
+    The loop took a pull request out of draft.
+  </OptionCard>
+  <OptionCard name="PullRequestConflicted">
+    The base moved under a pull request.
+  </OptionCard>
+  <OptionCard name="PullRequestMerged">
+    A pull request the loop merged landed. Not fired for one a human merged first.
+  </OptionCard>
+  <OptionCard name="ChecksFailed">
+    A pull request's checks failed **and the base is green**, so the failure is this
+    change's.
+  </OptionCard>
+  <OptionCard name="BaseBroken">
+    The checks failed **and so does the base**. Not this change's fault — the event a
+    `main`-health monitor wants.
+  </OptionCard>
+  <OptionCard name="ChecksGreen">
+    A pull request's checks passed.
+  </OptionCard>
+  <OptionCard name="DriveBudgetExhausted">
+    The loop reached its spend ceiling.
+  </OptionCard>
+  <OptionCard name="DriveRefused">
+    The loop declined to run — an operator stop, a hold it is waiting on. Distinct from an
+    error: nothing broke, and a subscriber that read it as a failure would page somebody
+    about a working system.
+  </OptionCard>
+</CardGrid>
+
+<Callout type="info">
+  **`ChecksFailed` and `BaseBroken` are two events on purpose.** The loop's whole delivery
+  machine turns on that distinction, and collapsing them is how an agent spends its budget
+  fixing somebody else's breakage. The same split is why the reason a hook reads is prose
+  for a person: what a subscriber *branches* on is the event name.
+</Callout>
+
+While the loop polls, a repeated answer is reported **once**. A pull request waiting on
+review re-derives the same green every few seconds, and a subscriber woken each time would
+stop reading — so a check event fires on a change of answer, and a standing refusal is
+reported once until the loop runs again.
 
 ### `SessionStart`
 
@@ -115,7 +196,8 @@ Every hook receives one JSON document on stdin. Its shape:
 <CardGrid size="md">
   <OptionCard name="event">
     String, always present. `"SessionStart"`, `"PreToolUse"`, `"PostToolUse"`, `"Stop"`,
-    `"PreCompact"`, `"PreIssueWork"`, or `"PostIssueWork"` — the same PascalCase names as
+    `"PreCompact"`, `"PreIssueWork"`, `"PostIssueWork"`, or any of the loop's own event
+    names above — the same PascalCase names as
     the config keys.
   </OptionCard>
   <OptionCard name="cwd">
@@ -138,7 +220,8 @@ Every hook receives one JSON document on stdin. Its shape:
     unclipped posture as `toolResult`.
   </OptionCard>
   <OptionCard name="issue">
-    Object, on `PreIssueWork` and `PostIssueWork`. `{ "number": …, "title": …, "branch": … }`.
+    Object, on `PreIssueWork`, `PostIssueWork` and the three tracker events.
+    `{ "number": …, "title": …, "branch": … }`.
     Only `number` is guaranteed — the rest is whatever the loop had already read. A hook
     that needs more should fetch it itself (`gh issue view` is one line), rather than have
     every loop pay a tracker round trip for the hooks that do not.

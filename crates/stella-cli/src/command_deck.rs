@@ -867,7 +867,7 @@ pub async fn run_deck_session(
     let mut pending_settings_reload = false;
     // Sub-session bookkeeping: live-worker slots, and `task_assign` requests
     // waiting for one (drained oldest-first as workers end).
-    let mut subs = SubSessions::new();
+    let mut subs = SubSessions::resuming(&cfg.durability, &session_record.id);
     let mut pending_spawns: VecDeque<subsession::QueuedSpawn> = VecDeque::new();
     // Lanes whose Restart arrived while the worker was still live: stop
     // first, respawn on its Ended.
