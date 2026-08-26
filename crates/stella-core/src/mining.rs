@@ -22,12 +22,12 @@ const STOPWORDS: &[&str] = &[
 /// puts in every skill description it has (`user`, `agent`).
 ///
 /// Deliberately **not** added to [`STOPWORDS`], because that constant is also
-/// consulted by [`terms`], which is the **id space**: every mined lesson's
-/// `<slug>-<hash8>` is derived from it, so widening it there would silently
-/// invalidate every stored id (see [`terms`]'s own doc comment, which names
-/// that migration as deliberate rather than drive-by). Scoring is ephemeral
-/// and carries no such contract, so the two vocabularies are allowed to differ
-/// and this is the one that may grow.
+/// consulted by [`terms`], the **clustering space**: dropping these words there
+/// would re-group observations and so re-pick the representative wording a
+/// `<slug>-<hash8>` is minted from, for no gain — a lesson about `code` still
+/// clusters with another lesson about `code`. Scoring is ephemeral and mints
+/// nothing, so the two vocabularies are allowed to differ and this is the one
+/// that may grow.
 ///
 /// Born from a real misfire (#3688): in session `ses-1787071651715-48158` the
 /// prompt "find a problem with stellas turn loop code" selected the skill
@@ -64,42 +64,45 @@ const SCORING_STOPWORDS: &[&str] = &[
     "having", "very", "quite", "rather", "still", "even", "user", "agent",
 ];
 
-/// Split text into lowercased, de-stopped terms (>2 chars) for lexical
-/// scoring/clustering (TS: `terms`). Stopword checks scan the 43-item
-/// static slice directly — this runs inside the clustering loops, and a
-/// per-call `HashSet` rebuild cost more than the linear scans it saved.
+/// Split text into lowercased, de-stopped terms for the miners' **clustering
+/// and dedup** space — [`cluster_observations`] and [`already_captured`], and
+/// through them every promotion threshold (TS: `terms`). Stopword checks scan
+/// the 43-item static slice directly — this runs inside the clustering loops,
+/// and a per-call `HashSet` rebuild cost more than the linear scans it saved.
 ///
-/// Word characters are **ASCII** alphanumerics plus `_`; everything else is a
-/// boundary. That is deliberate for the English-shaped lesson text the miners
-/// see, but it does mean an accented or non-Latin observation tokenizes to
-/// nothing and therefore never clusters. Widening this would change every
-/// mined `<slug>-<hash8>` id, so it is a deliberate migration, not a
-/// drive-by tweak. This is the **id space**; ephemeral relevance scoring runs
-/// in [`score_terms`]'s Unicode-aware space instead (#3298).
+/// # Widening this did not need the id migration #3298 feared
+///
+/// An artifact's id is `slugify(text)`-`hash8(text)` over the cluster's
+/// *representative wording* (`crate::skills::mine_skill_candidates`,
+/// `crate::rules`), never over a term set. This function decides which
+/// observations share a cluster; it does not name the cluster. And on
+/// ASCII-only text it is byte-for-byte the ASCII tokenizer it replaces — the
+/// alphabet widened where ASCII has nothing to say, and
+/// `chars().count()` equals `len()` there — so no ASCII-mined id can move.
+/// `terms_is_byte_identical_to_the_ascii_tokenizer_on_ascii` proves that
+/// property over generated input and
+/// `crate::skills::migration_contract::candidate_identity_is_pinned_to_a_literal`
+/// pins the shipped id itself.
+///
+/// Text carrying non-ASCII word characters does re-tokenize, and that is the
+/// defect being fixed: fully non-Latin text used to yield no terms at all, so
+/// `jaccard` scored it 0 against everything, every recurrence looked novel,
+/// and the "observed enough" bar was unreachable. Mixed text degraded to its
+/// ASCII fragments (`café` → `caf`) and now keeps the whole word. Neither
+/// renames anything on disk: a file is named once, at mint time, and
+/// [`already_captured`] re-tokenizes both sides live, so the dedup guard
+/// cannot go stale against an artifact minted under the old alphabet.
+///
+/// [`score_terms`] is the other space. The two now differ on **one** axis —
+/// vocabulary — and share this body.
 pub(crate) fn terms(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut current = String::new();
-    for ch in text.to_lowercase().chars() {
-        if ch.is_ascii_alphanumeric() || ch == '_' {
-            current.push(ch);
-        } else if !current.is_empty() {
-            if current.len() > 2 && !STOPWORDS.contains(&current.as_str()) {
-                out.push(std::mem::take(&mut current));
-            } else {
-                current.clear();
-            }
-        }
-    }
-    if current.len() > 2 && !STOPWORDS.contains(&current.as_str()) {
-        out.push(current);
-    }
-    out
+    tokenize(text, Vocabulary::Clustering)
 }
 
 /// `true` for a character of an unsegmented CJK script (Han ideographs,
 /// hiragana, katakana) — scripts that put no spaces between words, so a
 /// word-accumulating tokenizer would collapse a whole sentence into one
-/// exact-match-only term. [`score_terms`] emits character bigrams for runs of
+/// exact-match-only term. [`tokenize`] emits character bigrams for runs of
 /// these instead. Hangul is deliberately absent: Korean is space-separated,
 /// so the ordinary word path handles it.
 fn is_unsegmented_cjk(ch: char) -> bool {
@@ -115,41 +118,65 @@ fn is_unsegmented_cjk(ch: char) -> bool {
 
 /// Split text into lowercased, de-stopped terms for **ephemeral relevance
 /// scoring only** — skill selection (`crate::skills::select_skills`). Scores
-/// are recomputed from scratch every turn and mint no ids, so this tokenizer
-/// can be Unicode-aware without the migration [`terms`]'s doc warns about.
+/// are recomputed from scratch every turn and mint no ids.
 ///
-/// **Two token spaces, on purpose (#3298).** [`terms`] is the *id space*: it
-/// feeds clustering, dedup, and the minted `<slug>-<hash8>` ids, so widening
-/// it re-tokenizes every stored artifact's provenance. This function is the
-/// *scoring space*: nothing durable derives from it. The module history (two
-/// byte-identical private copies that risked drifting) is why this split is
-/// named so loudly — these two are **not** copies of each other, and
-/// reconciling them means the id migration, never editing one to match the
-/// other.
+/// **Two token spaces, one axis apart (#3298).** [`terms`] is the *clustering
+/// space*: it decides which observations group, and the group's representative
+/// wording is what gets slugged and hashed into a `<slug>-<hash8>`. This is
+/// the *scoring space*: nothing durable derives from it at all. They are not
+/// copies — the module history (two byte-identical private copies that drifted
+/// apart) is why the difference is named rather than left to be noticed — and
+/// they share [`tokenize`]'s body so the part that *is* the same cannot drift
+/// again.
 ///
-/// The split has **two** axes now, not one. #3298 gave the scoring space a
-/// wider *alphabet* (Unicode, where the id space stays ASCII); #3688 gives it
-/// a narrower *vocabulary* — [`SCORING_STOPWORDS`] on top of [`STOPWORDS`], so
-/// the generic coding words that discriminate between no two skills stop
-/// counting as matches. Both axes point the same way: the scoring space is
-/// free to change because nothing durable derives from it.
+/// The axis is **vocabulary**: [`SCORING_STOPWORDS`] on top of [`STOPWORDS`]
+/// (#3688), so the generic coding words that discriminate between no two
+/// skills stop counting as matches. Scoring is free to narrow that way because
+/// nothing durable derives from it; the clustering space keeps those words
+/// because dropping them would re-group observations for no gain.
 ///
-/// Shape: space-separated scripts (Latin with diacritics, Cyrillic, Greek,
-/// Hangul, …) accumulate word characters (`char::is_alphanumeric` plus `_`)
-/// into words kept when longer than two **characters** (not bytes) and not
-/// stopwords. Runs of unsegmented CJK have no spaces to split on, so they are
-/// emitted as character bigrams — the standard cheap approximation for CJK
-/// retrieval — with a one-character run kept as-is (each ideograph carries
-/// word-level meaning, so the >2 gate does not apply). Other unsegmented
-/// scripts (Thai, Khmer, …) fall through the word path and become one long
-/// term: exact-phrase matching only, which is still strictly more than the
-/// zero terms the ASCII tokenizer yields for them.
+/// The alphabet used to be the second axis, and is not any more: #3298 gave it
+/// to scoring first, and widening the clustering space to match cost no id
+/// migration once the ids turned out to hang off the representative *text*
+/// rather than off a term set ([`terms`]'s doc carries that argument).
 pub(crate) fn score_terms(text: &str) -> Vec<String> {
-    fn flush_word(word: &mut String, out: &mut Vec<String>) {
-        if word.chars().count() > 2
+    tokenize(text, Vocabulary::Scoring)
+}
+
+/// Which stopword list [`tokenize`] applies — the one axis between the
+/// clustering space ([`terms`]) and the scoring space ([`score_terms`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Vocabulary {
+    /// [`STOPWORDS`] only.
+    Clustering,
+    /// [`STOPWORDS`] plus [`SCORING_STOPWORDS`].
+    Scoring,
+}
+
+/// The tokenizer both spaces share.
+///
+/// Space-separated scripts (ASCII, Latin with diacritics, Cyrillic, Greek,
+/// Hangul, …) accumulate word characters (`char::is_alphanumeric` plus `_`)
+/// into words, kept when longer than two **characters** — not bytes, or a
+/// two-character Cyrillic token would weigh four and survive a gate meant to
+/// drop it — and not a stopword of `vocabulary`.
+///
+/// Runs of unsegmented CJK have no spaces to split on, so a word-accumulating
+/// pass would collapse a whole sentence into one exact-match-only term. They
+/// are emitted as character bigrams instead — the standard cheap approximation
+/// for CJK retrieval — with a one-character run kept as-is, since each
+/// ideograph carries word-level meaning and the >2 gate does not apply to it.
+///
+/// Other unsegmented scripts (Thai, Khmer, …) fall through the word path and
+/// become one long term: exact-phrase matching only, which is still strictly
+/// more than the zero terms the ASCII-only tokenizer yielded for them.
+fn tokenize(text: &str, vocabulary: Vocabulary) -> Vec<String> {
+    fn flush_word(word: &mut String, out: &mut Vec<String>, vocabulary: Vocabulary) {
+        let kept = word.chars().count() > 2
             && !STOPWORDS.contains(&word.as_str())
-            && !SCORING_STOPWORDS.contains(&word.as_str())
-        {
+            && (vocabulary == Vocabulary::Clustering
+                || !SCORING_STOPWORDS.contains(&word.as_str()));
+        if kept {
             out.push(std::mem::take(word));
         } else {
             word.clear();
@@ -169,17 +196,17 @@ pub(crate) fn score_terms(text: &str) -> Vec<String> {
     let mut run: Vec<char> = Vec::new();
     for ch in text.to_lowercase().chars() {
         if is_unsegmented_cjk(ch) {
-            flush_word(&mut word, &mut out);
+            flush_word(&mut word, &mut out, vocabulary);
             run.push(ch);
         } else if ch.is_alphanumeric() || ch == '_' {
             flush_cjk(&mut run, &mut out);
             word.push(ch);
         } else {
-            flush_word(&mut word, &mut out);
+            flush_word(&mut word, &mut out, vocabulary);
             flush_cjk(&mut run, &mut out);
         }
     }
-    flush_word(&mut word, &mut out);
+    flush_word(&mut word, &mut out, vocabulary);
     flush_cjk(&mut run, &mut out);
     out
 }
@@ -339,57 +366,137 @@ pub(crate) fn cluster_observations<T>(
 mod tests {
     use super::*;
 
-    /// The id space stays ASCII-only until the #3298 migration: this behavior
-    /// is bad but stable, and every minted `<slug>-<hash8>` id depends on it.
-    /// If this test breaks, an id migration is in flight — reconcile
-    /// `migration_contract` too.
+    /// The ASCII tokenizer [`terms`] replaced, verbatim, so the property below
+    /// compares against the shipped behavior rather than against a description
+    /// of it.
+    fn ascii_terms(text: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut current = String::new();
+        for ch in text.to_lowercase().chars() {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                current.push(ch);
+            } else if !current.is_empty() {
+                if current.len() > 2 && !STOPWORDS.contains(&current.as_str()) {
+                    out.push(std::mem::take(&mut current));
+                } else {
+                    current.clear();
+                }
+            }
+        }
+        if current.len() > 2 && !STOPWORDS.contains(&current.as_str()) {
+            out.push(current);
+        }
+        out
+    }
+
+    proptest::proptest! {
+        /// **The guarantee that let #3298's widening skip an id migration.**
+        /// Every artifact on disk was mined from text the ASCII tokenizer
+        /// could read, so if the two agree on ASCII, no stored
+        /// `<slug>-<hash8>` can have been re-clustered underneath it.
+        /// `migration_contract::candidate_identity_is_pinned_to_a_literal`
+        /// pins one such id; this pins the whole class.
+        #[test]
+        fn terms_is_byte_identical_to_the_ascii_tokenizer_on_ascii(
+            text in "[ -~]{0,200}"
+        ) {
+            proptest::prop_assert_eq!(terms(&text), ascii_terms(&text));
+        }
+    }
+
+    /// The half of that property a reader should not have to run proptest to
+    /// see, plus the behavior change itself: text the ASCII tokenizer could
+    /// not read at all now yields terms.
     #[test]
-    fn id_space_terms_is_still_ascii_only() {
-        // A non-ASCII char is only a boundary, so an accented word degrades
-        // to its ASCII fragments…
-        assert_eq!(terms("café serveur"), vec!["caf", "serveur"]);
-        // …and fully non-Latin text tokenizes to nothing at all.
-        assert!(terms("форматировать запросы").is_empty());
-        assert!(terms("数据库查询格式化").is_empty());
+    fn terms_reads_non_latin_text_and_still_reads_ascii_the_same_way() {
         assert_eq!(
             terms("format sql queries"),
             vec!["format", "sql", "queries"]
         );
+        // An accented word used to degrade to its ASCII fragments (`caf`).
+        assert_eq!(terms("café serveur"), vec!["café", "serveur"]);
+        // Fully non-Latin text used to tokenize to nothing at all.
+        assert_eq!(
+            terms("форматировать запросы"),
+            vec!["форматировать", "запросы"]
+        );
+        assert_eq!(terms("数据库查询"), vec!["数据", "据库", "库查", "查询"]);
+    }
+
+    /// **Witness (#3298), the clustering half.** Two Russian restatements of
+    /// one convention. On base both tokenize to the empty set, `jaccard`
+    /// short-circuits empty operands to 0, so neither joins the other's
+    /// cluster: every recurrence looks novel and `min_occurrences` is
+    /// unreachable for as long as the lesson is written in Russian.
+    #[test]
+    fn non_latin_observations_cluster_instead_of_each_starting_its_own() {
+        let observations = vec![
+            "всегда форматировать запросы перед отправкой",
+            "форматировать запросы перед отправкой, всегда",
+            "запросы перед отправкой форматировать",
+        ];
+        let clusters = cluster_observations(observations, 0.4, |o| *o);
+        assert_eq!(
+            clusters.len(),
+            1,
+            "three restatements of one lesson, one cluster: {clusters:?}"
+        );
+    }
+
+    /// **Witness (#3298), the dedup half.** The miners' duplicate guard was
+    /// inert for non-Latin text — empty term sets score 0 against every
+    /// haystack — so a lesson already on disk could be mined again and written
+    /// beside itself.
+    #[test]
+    fn a_cjk_restatement_is_recognized_as_already_captured() {
+        assert!(already_captured(
+            "数据库查询格式化",
+            ["格式化数据库查询"],
+            0.4
+        ));
+        // Unrelated CJK text still is not: the guard got sight, not a blanket.
+        assert!(!already_captured(
+            "数据库查询格式化",
+            ["終了時にプロセスを停止"],
+            0.4
+        ));
     }
 
     /// The two spaces still agree on *tokenization* for ASCII text — the
     /// property this has always pinned. The sample deliberately carries no
     /// [`SCORING_STOPWORDS`] entry, so what it compares is the split, not the
     /// vocabulary; the vocabulary divergence is pinned by
-    /// `score_terms_drops_generic_coding_words_that_the_id_space_keeps` below.
+    /// `score_terms_drops_generic_coding_words_the_clustering_space_keeps`
+    /// below.
     #[test]
     fn score_terms_matches_terms_on_ascii() {
         let text = "format the sql_query in main.rs";
         assert_eq!(score_terms(text), terms(text));
     }
 
-    /// #3688: generic coding vocabulary is dropped from the *scoring* space
-    /// and kept in the *id* space — dropping it from `terms` would re-tokenize
-    /// every minted `<slug>-<hash8>`.
+    /// #3688, and the one axis left between the two spaces: generic coding
+    /// vocabulary is dropped from the *scoring* space and kept in the
+    /// *clustering* space, where dropping it would re-group observations for
+    /// no gain.
     #[test]
-    fn score_terms_drops_generic_coding_words_that_the_id_space_keeps() {
+    fn score_terms_drops_generic_coding_words_the_clustering_space_keeps() {
         let text = "find a problem with stellas turn loop code";
         assert_eq!(score_terms(text), vec!["stellas", "turn", "loop"]);
-        // The id space is untouched: it still keeps every one of them.
-        let id_space = terms(text);
+        let clustering = terms(text);
         for generic in ["find", "problem", "code"] {
             assert!(
-                id_space.contains(&generic.to_string()),
-                "terms() is the id space and must not change: {id_space:?}"
+                clustering.contains(&generic.to_string()),
+                "the clustering space keeps the generic words: {clustering:?}"
             );
         }
     }
 
-    /// The id space is a stored-artifact contract, so pin it directly rather
-    /// than only as the negative half of the test above: if this breaks, every
-    /// mined `<slug>-<hash8>` id has been silently re-tokenized.
+    /// The vocabularies are disjoint, and the scoring list reaches only the
+    /// scoring space. Pinned directly rather than only as the negative half of
+    /// the test above, because a word landing in both lists would make the two
+    /// spaces silently identical.
     #[test]
-    fn scoring_stopwords_do_not_reach_the_id_space() {
+    fn scoring_stopwords_do_not_reach_the_clustering_space() {
         for word in SCORING_STOPWORDS {
             assert!(
                 !STOPWORDS.contains(word),

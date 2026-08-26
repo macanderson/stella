@@ -402,9 +402,10 @@ fn english_function_words_alone_do_not_select_a_skill() {
 /// space: a Cyrillic prompt tokenized to the empty set, scored 0 against
 /// every skill, and — after #3296 correctly narrowed the domain path to
 /// prompts naming an existing file — had no selection path left at all.
-/// Selection now scores in `mining::score_terms`'s Unicode-aware space;
-/// the miners' id space is deliberately unchanged (see
-/// `id_space_terms_is_still_ascii_only` in `crate::mining`'s tests).
+/// Selection now scores in `mining::score_terms`'s Unicode-aware space. The
+/// miners' clustering space caught up separately — see
+/// `terms_is_byte_identical_to_the_ascii_tokenizer_on_ascii` in
+/// `crate::mining`'s tests for why that took no id migration.
 #[test]
 fn a_cyrillic_prompt_selects_the_skill_whose_wording_it_shares() {
     let skills = vec![skill(
