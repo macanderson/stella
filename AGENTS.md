@@ -209,7 +209,30 @@ hand; `make main-red-hold-test` covers it, blocking branch included. Reporting
 becomes holding only when a maintainer adds it to main's required checks —
 a repository setting, not a file in this tree.
 
-A seventh, `windows-check.yml`, is the only compiler in this project that
+The chain has a third link, and it is not a workflow: **before you repair a
+red `main`, check whether somebody already is.** On 2026-08-24 three sessions
+each wrote the same two-line fix for the same break and merged them 95 seconds
+apart (#4672, #4673, #4674). None was wrong — the hold means every session
+with an open PR notices the red at once, and they all reach the same correct
+conclusion. The canary's signal says `main` is broken; nothing said it was
+being fixed. `scripts/main-red-claim.sh` is that second signal, the
+`dispatch_claims` mechanic (#4300) with the tracker as the table:
+
+```bash
+./scripts/main-red-claim.sh check   # exit 0 proceed, 1 stand down
+./scripts/main-red-claim.sh claim   # check, then post the claim
+```
+
+A claim is a comment, so it carries an author and a timestamp, and it lapses
+after twenty minutes — an assignee would never lapse, and a crashed session
+would then hold the repair of a red `main` shut. Every unknown proceeds
+loudly: no `gh`, an unreachable tracker, an unreadable identity, two open
+`main-red` issues at once. That direction is the whole safety argument, since
+a claim check that can block a repair is worse than the duplication it
+prevents. `make main-red-claim` asks by hand; `make main-red-claim-test`
+covers it, standing-down branch included.
+
+An eighth, `windows-check.yml`, is the only compiler in this project that
 looks at a `#[cfg(windows)]` arm: `ci.yml` runs on `ubuntu-latest` and
 `release.yml`'s matrix is two Apple targets and two Linux ones, so every
 non-unix body in the tree — `rootfd.rs`'s and `durable_write.rs`'s string
