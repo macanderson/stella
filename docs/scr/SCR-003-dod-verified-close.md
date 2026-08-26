@@ -5,7 +5,7 @@ status: active
 origin: delegation-to-DoD steering pattern, 2025–2026
 trigger: declaring any issue or task complete
 autonomy: L2
-enforcement: AGENTS.md standing-decisions block (imported by CLAUDE.md); .github/ISSUE_TEMPLATE/task.yml with mandatory DoD checklist
+enforcement: AGENTS.md standing-decisions block (imported by CLAUDE.md); .github/ISSUE_TEMPLATE/task.yml with mandatory DoD checklist; dod-check merge gate — a PR must link the issue it closes and every linked DoD item must be ticked before it can merge; dod-close-guard reopens an issue closed as completed while DoD items remain unchecked. Both are reusable workflows implemented once in oxagen and called by the other four repos (ADR-039).
 ---
 
 ## Directive
@@ -37,4 +37,20 @@ Before closing (or declaring done), run the end-of-task checklist:
 ## Exceptions
 
 Issues closed as wont-fix / superseded — state the reason in a closing
-comment instead of verifying a DoD.
+comment instead of verifying a DoD. Mechanically, close these as **not
+planned** rather than completed: only a "completed" close claims the DoD was
+met, and it is the one `dod-close-guard` verifies.
+
+A pull request that closes no issue is waived from the merge gate by the
+`no-issue` label. It exists for changes with no meaningful DoD — a typo, a
+pinned-digest bump, a revert. It is a label rather than a phrase in the
+description so that every use is enumerable (`is:pr label:no-issue`): an
+escape hatch nobody can audit becomes the default path. Reach for it when
+filing an issue would be pure ceremony, never to skip a DoD that should have
+been written.
+
+Issues predating the task template have no DoD section at all. The close
+guard notes them and leaves them closed rather than reopening the historical
+backlog; the merge gate still refuses a PR that *claims* to close one, since
+a close with nothing to verify is exactly the guess this SCR exists to
+prevent.

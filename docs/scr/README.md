@@ -11,6 +11,30 @@ The corpus is replicated identically across the macanderson org repos
 (oxagen, context-graph-protocol, cgp-website, arenabench, stella). Propose
 changes once and roll them out everywhere; drift between copies is a bug.
 
+## Keeping the copies identical
+
+That last sentence used to be an honour system. It is now checked: the
+`scr-corpus-check` workflow in oxagen compares all five `docs/scr/` trees
+daily, on every push to oxagen's own corpus, and on demand. Comparison is by
+git blob SHA, so "identical" means byte-identical — a reworded sentence in one
+copy is drift exactly like a missing record is.
+
+Divergence files (or updates) a `triage`-labelled issue in oxagen naming every
+differing, missing, and extra file, and fails the run. The reference copy is
+oxagen's, because ADR-038 and the rollout originated there — but a report
+means *the copies disagree*, not *the others are wrong*. Resolve it by
+deciding what the corpus should say and re-syncing all five deliberately;
+blindly overwriting from oxagen can silently discard the very edit that was
+correct.
+
+The check itself lives only in oxagen and reads the other four over the API.
+Installing five copies of the drift detector would replicate the thing whose
+replication it polices — see ADR-039 for why enforcement is centralized while
+the corpus is replicated.
+
+**Editing the corpus is therefore a five-repo change.** Land it everywhere in
+the same sitting; the check will notice within a day if you do not.
+
 ## The autonomy ladder
 
 Each SCR carries an `autonomy` field naming its current rung:

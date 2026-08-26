@@ -1,0 +1,20 @@
+# DoD close guard (SCR-003) — caller stub.
+#
+# Reopens an issue closed as *completed* while its definition-of-done still
+# has unchecked items. The merge gate in dod-check.yml carries the load; this
+# covers the hand-closed path, after the fact, because GitHub has no pre-close
+# hook to veto.
+#
+# Implementation lives once in oxagen — see ADR-039.
+name: dod-close-guard
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+
+jobs:
+  guard:
+    uses: macanderson/oxagen/.github/workflows/dod-close-guard.yml@main
