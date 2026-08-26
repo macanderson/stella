@@ -71,15 +71,46 @@ doc_untracked() {
   cat >"$1/$2"
 }
 
-# $1 = root, then `path pattern count` triples.
+# $1 = root, then `path pattern count` triples. Also writes an empty density
+# baseline, so a case that says nothing about header length holds every unit to
+# the new-unit ceiling rather than tripping the missing-file refusal.
 baseline() {
   root="$1"
   shift
   printf '# test baseline\n' >"$root/scripts/prose-baseline.txt"
+  if [ ! -f "$root/scripts/prose-density-baseline.txt" ]; then
+    printf '# test density baseline\n' >"$root/scripts/prose-density-baseline.txt"
+  fi
   while [ $# -gt 2 ]; do
     printf '%s %s %s\n' "$1" "$2" "$3" >>"$root/scripts/prose-baseline.txt"
     shift 3
   done
+}
+
+# $1 = root, then `unit mean` pairs.
+density_baseline() {
+  root="$1"
+  shift
+  printf '# test density baseline\n' >"$root/scripts/prose-density-baseline.txt"
+  while [ $# -gt 1 ]; do
+    printf '%s %s\n' "$1" "$2" >>"$root/scripts/prose-density-baseline.txt"
+    shift 2
+  done
+}
+
+# A Rust file whose module header is $3 lines long, under crate $2.
+# $1 = root, $2 = crate name, $3 = header lines, $4 = file stem.
+rs_with_header() {
+  mkdir -p "$1/crates/$2/src"
+  path="$1/crates/$2/src/$4.rs"
+  : >"$path"
+  i=0
+  while [ "$i" -lt "$3" ]; do
+    printf '//! A header line about what this file does.\n' >>"$path"
+    i=$((i + 1))
+  done
+  printf '\npub fn f() {}\n' >>"$path"
+  (cd "$1" && git add -A) >/dev/null 2>&1
 }
 
 # $1 = case name, $2 = root. The guard must exit 0.
@@ -310,6 +341,107 @@ if python3 "$SCRIPT" "$r" >/dev/null 2>&1; then
   ok "P15 a gitignored file stays out of the scan"
 else
   no "P15 a gitignored file stays out of the scan" "the guard read an ignored file"
+fi
+
+# ── The density ratchet (#4760) ─────────────────────────────────────────────
+# A different question from every case above: not whether a sentence is
+# content-free, but whether there are too many of them. D1 is its witness --
+# a crate whose headers grew past what it recorded fails, and nothing in the
+# count ratchet can see that, because a forty-line header of unobjectionable
+# sentences scores zero there.
+
+r="$(new_root d1)"
+baseline "$r"
+density_baseline "$r" crates/alpha 10.00
+rs_with_header "$r" alpha 20 lib
+expect_fail "D1 a unit whose headers grew fails" "$r"
+
+r="$(new_root d2)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 20 lib
+expect_pass "D2 a unit at its ceiling passes" "$r"
+
+# The mean, not the worst file: one long header is paid for by short siblings,
+# which is what makes the ceiling a density measure rather than a file-size one.
+r="$(new_root d3)"
+baseline "$r"
+density_baseline "$r" crates/alpha 10.00
+rs_with_header "$r" alpha 28 long
+rs_with_header "$r" alpha 4 short_a
+rs_with_header "$r" alpha 4 short_b
+rs_with_header "$r" alpha 4 short_c
+expect_pass "D3 the ceiling is a mean, not a worst case" "$r"
+
+# --update is the half a ratchet usually gets wrong: refusing loudly and
+# writing the looser number anyway turns the gate green with no header cut.
+r="$(new_root d4)"
+baseline "$r"
+density_baseline "$r" crates/alpha 10.00
+rs_with_header "$r" alpha 20 lib
+expect_update_refused "D4 --update refuses to raise a mean" "$r"
+if grep -qx "crates/alpha 10.00" "$r/scripts/prose-density-baseline.txt"; then
+  ok "D4 --update left the ceiling alone"
+else
+  no "D4 --update left the ceiling alone" "the ceiling moved"
+fi
+
+r="$(new_root d5)"
+baseline "$r"
+density_baseline "$r" crates/alpha 20.00
+rs_with_header "$r" alpha 6 lib
+if python3 "$SCRIPT" --update "$r" >/dev/null 2>&1; then
+  if grep -qx "crates/alpha 6.00" "$r/scripts/prose-density-baseline.txt"; then
+    ok "D5 --update retightens a shortened header"
+  else
+    no "D5 --update retightens a shortened header" "the ceiling did not fall"
+  fi
+else
+  no "D5 --update retightens a shortened header" "--update exited non-zero"
+fi
+
+# A crate with no entry is held to the new-unit ceiling, so a new crate cannot
+# arrive carrying essays and grandfather itself the first time --update runs.
+r="$(new_root d6)"
+baseline "$r"
+density_baseline "$r"
+rs_with_header "$r" newcrate 30 lib
+expect_fail "D6 an unrecorded unit is held to the new-unit ceiling" "$r"
+expect_update_refused "D6 --update refuses to record it" "$r"
+
+r="$(new_root d7)"
+baseline "$r"
+density_baseline "$r"
+rs_with_header "$r" newcrate 6 lib
+expect_pass "D7 an unrecorded unit within the ceiling passes" "$r"
+
+# --bootstrap-density is one-time, for the reason --bootstrap is: a regenerated
+# baseline records today's tree as the ceiling.
+r="$(new_root d8)"
+baseline "$r"
+density_baseline "$r" crates/alpha 10.00
+rs_with_header "$r" alpha 20 lib
+if python3 "$SCRIPT" --bootstrap-density "$r" >/dev/null 2>&1; then
+  no "D8 --bootstrap-density refuses to overwrite" "it exited 0"
+else
+  ok "D8 --bootstrap-density refuses to overwrite"
+fi
+if grep -qx "crates/alpha 10.00" "$r/scripts/prose-density-baseline.txt"; then
+  ok "D8 --bootstrap-density wrote nothing"
+else
+  no "D8 --bootstrap-density wrote nothing" "the ceiling moved"
+fi
+
+# A missing density baseline is a refusal, never a silent pass: without it
+# every unit would be judged against the new-unit ceiling and a real tree would
+# fail for a reason that has nothing to do with the change under review.
+r="$(new_root d9)"
+printf '# test baseline\n' >"$r/scripts/prose-baseline.txt"
+rs_with_header "$r" alpha 6 lib
+if python3 "$SCRIPT" "$r" >/dev/null 2>&1; then
+  no "D9 a missing density baseline refuses" "the guard passed"
+else
+  ok "D9 a missing density baseline refuses"
 fi
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

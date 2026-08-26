@@ -2052,7 +2052,6 @@ website/content/docs/agent-tools/mcp.mdx enumerative-announcement 1
 website/content/docs/agent-tools/mcp.mdx filler-adverb 1
 website/content/docs/agent-tools/skills.mdx interface-jargon 1
 website/content/docs/api-providers/index.mdx interface-jargon 2
-website/content/docs/api-providers/index.mdx rust-jargon 1
 website/content/docs/api-providers/models.mdx meta-writing 1
 website/content/docs/commands/auth.mdx filler-adverb 1
 website/content/docs/commands/calibration.mdx filler-adverb 1

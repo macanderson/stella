@@ -147,6 +147,14 @@
     pattern's pre-existing hits, once, and refuses to touch any other
     pattern's numbers. A backticked span or a fenced block is exempt: naming
     a banned construction in order to ban it is a citation.
+  - **The same command holds density**, over
+    `scripts/prose-density-baseline.txt`: the mean length of every crate's
+    leading `//!` blocks, ratcheted down only. A count of banned phrases
+    cannot see a forty-line header of unobjectionable sentences, which is
+    what #4392 actually measured. Mean header length rather than comment
+    share, because a pure-function crate should be comment-heavy and share
+    cannot tell that from an essay. A crate with no entry is held to 12.00
+    mean lines, so a new one cannot arrive carrying essays.
 - **AGENTS.md is the orientation document.** Commands, architectural
   invariants, workspace routing, testing approach, and gotchas all live there
   (imported above). When this file and AGENTS.md disagree, AGENTS.md wins —
