@@ -312,13 +312,22 @@ pub fn disabled_names(scope_root: &Path) -> HashSet<String> {
 
 /// Drop disabled skills from a merged skill list (used by the recall/selection
 /// path so a disabled skill is never injected — its file stays on disk). A
-/// skill is matched to its scope by `source_path` containment.
+/// skill the user wrote is matched to its scope by `source_path` containment.
 ///
 /// A contributed skill lives under its package's directory rather than either
-/// scope root, so containment alone never reaches it and it could not be
-/// turned off at all. It is matched instead to the tier its package is
-/// installed at — the same tier [`enumerate`] gives its row, so unchecking it
-/// in the tab is what turns it off here.
+/// scope root, so containment never reaches it and it could not be turned off
+/// at all. It is matched instead to the tier its package is installed at — the
+/// same tier [`enumerate`] gives its row, so unchecking it in the tab is what
+/// turns it off here.
+///
+/// **Which package** is read off [`Skill::contributed_by`], the field the
+/// loader stamps when it chooses the directory (#3567), and never off the
+/// path. A path prefix is a second authority over an answer the loader already
+/// gave: it agrees only while a contributed skill's `source_path` literally
+/// begins with the directory it was found in, and a skills directory that is
+/// resolved rather than joined — a symlinked tier, a package root behind a
+/// canonicalised path — silently routes the skill to neither list, so a
+/// disabled skill quietly comes back on (#4905).
 pub fn retain_enabled(skills: &mut Vec<Skill>, workspace_root: &Path) {
     let project = scope_root(SkillScope::Project, workspace_root);
     let user = scope_root(SkillScope::User, workspace_root);
@@ -328,17 +337,22 @@ pub fn retain_enabled(skills: &mut Vec<Skill>, workspace_root: &Path) {
     skills.retain(|s| {
         let source = Path::new(&s.source_path);
         let under = |root: &Option<PathBuf>| root.as_ref().is_some_and(|r| source.starts_with(r));
-        if under(&project) {
-            !project_disabled.contains(&s.name)
-        } else if under(&user) {
-            !user_disabled.contains(&s.name)
-        } else if let Some(dir) = contributed.iter().find(|dir| source.starts_with(&dir.dir)) {
-            match scope_of(dir.scope) {
-                SkillScope::Project => !project_disabled.contains(&s.name),
-                SkillScope::User => !user_disabled.contains(&s.name),
-            }
-        } else {
-            true
+        let tier = match s.contributed_by.as_deref() {
+            Some(plugin) => contributed
+                .iter()
+                .find(|dir| dir.plugin == plugin)
+                .map(|dir| scope_of(dir.scope)),
+            None if under(&project) => Some(SkillScope::Project),
+            None if under(&user) => Some(SkillScope::User),
+            None => None,
+        };
+        match tier {
+            Some(SkillScope::Project) => !project_disabled.contains(&s.name),
+            Some(SkillScope::User) => !user_disabled.contains(&s.name),
+            // Neither tier governs it: a skill from somewhere else entirely, or
+            // one naming a package that is no longer installed. Nothing can have
+            // been switched off for it, so it stays.
+            None => true,
         }
     });
 }
