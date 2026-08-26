@@ -114,7 +114,7 @@ bench/harbor_adapter/stella_harbor/locate.py filler-adverb 2
 bench/harbor_adapter/stella_harbor/loop_mode.py filler-adverb 1
 bench/harbor_adapter/stella_harbor/posture.py filler-adverb 10
 bench/harbor_adapter/stella_harbor/posture.py honesty-declaration 6
-bench/harbor_adapter/stella_harbor/secure_launcher.py honesty-declaration 2
+bench/harbor_adapter/stella_harbor/secure_launcher.py honesty-declaration 1
 bench/harbor_adapter/stella_harbor/setup_exec.py filler-adverb 1
 bench/harbor_adapter/stella_harbor/stream_release.py filler-adverb 1
 bench/harbor_adapter/stella_harbor/timeout_reap.py enumerative-announcement 1
@@ -739,10 +739,10 @@ crates/stella-cli/src/term_policy.rs interface-jargon 11
 crates/stella-cli/src/tests.rs interface-jargon 6
 crates/stella-cli/src/tests.rs rust-jargon 2
 crates/stella-cli/src/tests/flag_docs.rs filler-adverb 1
-crates/stella-cli/src/tool_docs.rs filler-adverb 4
+crates/stella-cli/src/tool_docs.rs filler-adverb 3
 crates/stella-cli/src/tool_docs.rs honesty-declaration 6
 crates/stella-cli/src/tool_docs.rs meta-writing 1
-crates/stella-cli/src/tool_docs.rs rust-jargon 7
+crates/stella-cli/src/tool_docs.rs rust-jargon 4
 crates/stella-cli/src/tool_foundry/adopt.rs filler-adverb 1
 crates/stella-cli/src/tool_foundry/adopt.rs meta-writing 1
 crates/stella-cli/src/tool_policy.rs filler-adverb 2
@@ -751,7 +751,7 @@ crates/stella-cli/src/turn_diff.rs interface-jargon 3
 crates/stella-cli/src/turn_facts.rs enumerative-announcement 1
 crates/stella-cli/src/turn_facts.rs honesty-declaration 1
 crates/stella-cli/src/turn_facts.rs rust-jargon 3
-crates/stella-cli/src/turn_files.rs filler-adverb 8
+crates/stella-cli/src/turn_files.rs filler-adverb 6
 crates/stella-cli/src/turn_files.rs honesty-declaration 5
 crates/stella-cli/src/turn_files.rs interface-jargon 7
 crates/stella-cli/src/turn_files.rs rust-jargon 2
@@ -1646,7 +1646,7 @@ crates/stella-tui/src/textline.rs filler-adverb 3
 crates/stella-tui/src/textline.rs honesty-declaration 1
 crates/stella-tui/src/textline.rs interface-jargon 3
 crates/stella-tui/src/textline.rs rust-jargon 8
-crates/stella-tui/src/theme.rs filler-adverb 8
+crates/stella-tui/src/theme.rs filler-adverb 7
 crates/stella-tui/src/theme.rs interface-jargon 5
 crates/stella-tui/src/theme.rs rust-jargon 1
 crates/stella-tui/src/theme/tests.rs filler-adverb 2
@@ -2057,7 +2057,6 @@ website/content/docs/agent-tools/mcp.mdx enumerative-announcement 1
 website/content/docs/agent-tools/mcp.mdx filler-adverb 1
 website/content/docs/agent-tools/skills.mdx interface-jargon 1
 website/content/docs/api-providers/index.mdx interface-jargon 2
-website/content/docs/api-providers/index.mdx rust-jargon 1
 website/content/docs/api-providers/models.mdx meta-writing 1
 website/content/docs/commands/auth.mdx filler-adverb 1
 website/content/docs/commands/calibration.mdx filler-adverb 1

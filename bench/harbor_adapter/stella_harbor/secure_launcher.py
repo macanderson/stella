@@ -40,6 +40,37 @@ from .host_attestation import (
     write_launch_binding_sidecar,
 )
 
+# Imported under their existing private names so every call site here, and
+# every `monkeypatch.setattr(launcher_module, ...)` in the tests, keeps
+# naming the same attribute of this module.
+from .provider_key import (
+    DEDICATED_KEY_HARD_LIMIT_USD as _DEDICATED_KEY_HARD_LIMIT_USD,
+)
+from .provider_key import (
+    DEDICATED_KEY_LABEL as _DEDICATED_KEY_LABEL,
+)
+from .provider_key import (
+    prior_stage_outcome as _prior_stage_outcome,
+)
+from .provider_key import (
+    validate_live_provider_key as _validate_live_provider_key,
+)
+from .value_shapes import (
+    aware_timestamp as _aware_timestamp,
+)
+from .value_shapes import (
+    finite_nonnegative_number as _finite_nonnegative_number,
+)
+from .value_shapes import (
+    parse_github_timestamp as _parse_github_timestamp,
+)
+from .value_shapes import (
+    require_exact_object as _require_exact_object,
+)
+from .value_shapes import (
+    utc_text as _utc_text,
+)
+
 _CANONICAL_AGENT_IMPORT_PATH = "stella_harbor:StellaAgent"
 _CANONICAL_DATASET_ARGUMENT = (
     "terminal-bench/terminal-bench-2-1@"
@@ -60,39 +91,14 @@ _CANONICAL_DATASET_ARGUMENT = (
 # whose only job is to not under-state what a run will cost.
 #
 # The old value was `0.17`, and it was an enforced cap. Reading it as a
-# forecast now would be a 7x under-statement — see `_DEDICATED_KEY_HARD_LIMIT_USD`
-# for why that arithmetic matters.
+# forecast now would be a 7x under-statement — see `provider_key`'s
+# `DEDICATED_KEY_HARD_LIMIT_USD` for why that arithmetic matters.
 _CANONICAL_PER_TRIAL_FORECAST_USD = 1.20
 _CANONICAL_DISABLE_REFLECTION = "1"
 _CANONICAL_ADAPTER_VERSION = "0.6.0"
 _CANONICAL_HARBOR_VERSION = "0.6.1"
 _CANONICAL_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _CANONICAL_PROVIDER_ROUTE_POLICY = "openrouter-auto"
-# The only bound that can actually stop a claim run spending, now that no
-# trial carries one (#2411). It sits at the provider, so exhausting it fails
-# the run visibly rather than truncating a trial into a loss — which is the
-# whole reason a wallet is guarded here and never inside a trial.
-#
-# It is now required arithmetic rather than a backstop, and it moved from
-# $180 to $600 because of that shift. The confirmatory stage requests 445
-# trials: at the frozen $0.17 cap that projected to $75.65, comfortably
-# inside $180 *because the cap made it so*, and at the measured forecast
-# above it projects to $534. The old limit did not bound the run's cost — it
-# bounded how much of each task the agent was allowed to finish, and the
-# projection only fit because trials were being stopped short.
-#
-# So this is not new spending appetite; it is the same run, priced honestly for
-# the first time. It is also a PROVISIONING REQUIREMENT, not an authorisation:
-# on 2026-08-08 the account behind this key had $35.72 left of $1,110, so a
-# confirmatory stage cannot run at any per-trial price until it is funded.
-#
-# Nothing here spends money or grants permission to. The real gate is the
-# live-credit check in `_verify_public_paid_intent`, which reads the key's
-# actual remaining credit rather than this constant — so an unfunded key fails
-# preflight instead of launching and abandoning trials that would then score as
-# losses. This number only says what the key must be provisioned to before the
-# stage is runnable at all.
-_DEDICATED_KEY_HARD_LIMIT_USD = 600.0
 _OPENROUTER_KEY_URL = "https://openrouter.ai/api/v1/key"
 _OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/keys"
 _OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
@@ -127,6 +133,7 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/loop_mode.py",
     "bench/harbor_adapter/stella_harbor/portability.py",
     "bench/harbor_adapter/stella_harbor/posture.py",
+    "bench/harbor_adapter/stella_harbor/provider_key.py",
     "bench/harbor_adapter/stella_harbor/secure_launcher.py",
     "bench/harbor_adapter/stella_harbor/setup_exec.py",
     "bench/harbor_adapter/stella_harbor/stream_envelope.py",
@@ -136,6 +143,7 @@ _FIXED_ADAPTER_SOURCE_PATHS = (
     "bench/harbor_adapter/stella_harbor/tool_set.py",
     "bench/harbor_adapter/stella_harbor/turn_budget.py",
     "bench/harbor_adapter/stella_harbor/upstream_pin.py",
+    "bench/harbor_adapter/stella_harbor/value_shapes.py",
 )
 _FIXED_READINESS_SOURCE_PATHS = (
     "bench/readiness/synthetic-adapter-sentinel/environment/Dockerfile",
@@ -528,7 +536,6 @@ _COMMENT_URL_RE = re.compile(
     r"https://github\.com/macanderson/stella/issues/(?P<issue>[1-9][0-9]*)"
     r"#issuecomment-(?P<comment>[1-9][0-9]*)"
 )
-_DEDICATED_KEY_LABEL = "stella-tb21-dedicated-key-v1"
 _ISOLATED_HARBOR_SHIM = """\
 import sys
 adapter_root, site_root = sys.argv[1:3]
@@ -946,28 +953,6 @@ def _canonical_payload_sha256(value: Any) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def _parse_github_timestamp(value: Any) -> datetime:
-    if not isinstance(value, str) or not value.endswith("Z"):
-        raise RuntimeError("GitHub comment timestamp is not canonical UTC")
-    try:
-        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
-    except ValueError as exc:
-        raise RuntimeError("GitHub comment timestamp is invalid") from exc
-    if parsed.tzinfo is None:
-        raise RuntimeError("GitHub comment timestamp lacks a timezone")
-    return parsed.astimezone(timezone.utc)
-
-
-def _utc_text(value: datetime) -> str:
-    if value.tzinfo is None:
-        raise RuntimeError("public-intent preflight clock lacks a timezone")
-    return (
-        value.astimezone(timezone.utc)
-        .isoformat(timespec="microseconds")
-        .replace("+00:00", "Z")
-    )
-
-
 def _intent_comment_url(command: Sequence[str]) -> tuple[str, int, int]:
     values = _claim_options(command).get("--intent-comment-url", [])
     match = _COMMENT_URL_RE.fullmatch(values[0]) if len(values) == 1 else None
@@ -985,38 +970,6 @@ def _paid_stage(command: Sequence[str]) -> str:
     if job_name == _CALIBRATION_JOB_NAME:
         return "calibration"
     return "confirmatory"
-
-
-def _aware_timestamp(value: Any, *, label: str) -> datetime:
-    if not isinstance(value, str) or not value:
-        raise RuntimeError(f"{label} is not a timezone-aware ISO-8601 timestamp")
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as exc:
-        raise RuntimeError(
-            f"{label} is not a timezone-aware ISO-8601 timestamp"
-        ) from exc
-    if parsed.tzinfo is None:
-        raise RuntimeError(f"{label} is not a timezone-aware ISO-8601 timestamp")
-    return parsed.astimezone(timezone.utc)
-
-
-def _finite_nonnegative_number(value: Any, *, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise RuntimeError(f"{label} must be a finite nonnegative number")
-    result = float(value)
-    if not math.isfinite(result) or result < 0:
-        raise RuntimeError(f"{label} must be a finite nonnegative number")
-    return result
-
-
-def _require_exact_object(
-    value: Any, fields: frozenset[str], *, label: str
-) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != fields:
-        raise RuntimeError(f"{label} differs from the exact v2 schema")
-    return value
 
 
 def _positive_sequence(value: Any, *, label: str) -> int:
@@ -1222,190 +1175,6 @@ def _validate_current_intent(
         raise RuntimeError(
             "readiness/calibration subject commit differs from runtime source commit"
         )
-
-
-def _prior_stage_outcome(
-    ledger: dict[str, Any],
-    *,
-    stage: str,
-    current_digest: str,
-    current_intent: dict[str, Any],
-    publications_by_subject: Mapping[tuple[str, str], Mapping[str, Any]],
-) -> dict[str, Any] | None:
-    current_wrappers = [
-        wrapper
-        for wrapper in ledger["intents"]
-        if wrapper["intent_sha256"] == current_digest
-    ]
-    if len(current_wrappers) != 1:
-        raise RuntimeError("public ledger does not uniquely identify current intent")
-    if any(
-        outcome.get("intent_sha256") == current_digest for outcome in ledger["outcomes"]
-    ):
-        raise RuntimeError("current paid intent already has a post-launch outcome")
-
-    expected_stages = {
-        "readiness": ["readiness"],
-        "calibration": ["readiness", "calibration"],
-        "confirmatory": ["readiness", "calibration", "confirmatory"],
-    }[stage]
-    paid_wrappers = [
-        wrapper
-        for wrapper in ledger["intents"]
-        if wrapper["intent"].get("historical") is False
-        and wrapper["intent"].get("stage")
-        in {"readiness", "calibration", "confirmatory"}
-    ]
-    if [wrapper["intent"].get("stage") for wrapper in paid_wrappers] != expected_stages:
-        raise RuntimeError("public ledger paid-stage chain is not the exact prefix")
-    if paid_wrappers[-1] != current_wrappers[0]:
-        raise RuntimeError("public ledger current intent is not the paid-stage tip")
-
-    current_sequence = current_wrappers[0]["sequence"]
-    current_declared = _aware_timestamp(
-        current_intent.get("declared_at"), label="current intent declared_at"
-    )
-
-    current_provider = current_intent["provider_key"]
-    expected_key_identity = {
-        "fingerprint_sha256": current_provider["fingerprint_sha256"],
-        "label": _DEDICATED_KEY_LABEL,
-        "limit_usd": _DEDICATED_KEY_HARD_LIMIT_USD,
-    }
-    prior_summary: dict[str, Any] | None = None
-    previous_usage_after: float | None = None
-    paid_digests = {wrapper["intent_sha256"] for wrapper in paid_wrappers}
-    paid_outcomes = [
-        outcome
-        for outcome in ledger["outcomes"]
-        if outcome.get("intent_sha256") in paid_digests
-    ]
-    if len(paid_outcomes) != len(paid_wrappers) - 1:
-        raise RuntimeError(
-            "public ledger paid outcomes do not exactly cover prior stages"
-        )
-
-    for index, wrapper in enumerate(paid_wrappers):
-        intent = wrapper["intent"]
-        intent_stage = intent["stage"]
-        provider = intent["provider_key"]
-        observed_key_identity = {
-            "fingerprint_sha256": provider.get("fingerprint_sha256"),
-            "label": provider.get("label"),
-            "limit_usd": provider.get("limit_usd"),
-        }
-        if observed_key_identity != expected_key_identity:
-            raise RuntimeError("all paid stages must bind one exact dedicated key")
-        usage_before = _finite_nonnegative_number(
-            provider.get("usage_before_usd"),
-            label=f"{intent_stage} intent provider usage_before_usd",
-        )
-        if previous_usage_after is not None and not math.isclose(
-            usage_before, previous_usage_after, rel_tol=0, abs_tol=1e-9
-        ):
-            raise RuntimeError("paid-stage provider usage is not continuous")
-        if index == len(paid_wrappers) - 1:
-            break
-
-        matches = [
-            outcome
-            for outcome in paid_outcomes
-            if outcome.get("intent_sha256") == wrapper["intent_sha256"]
-        ]
-        if len(matches) != 1:
-            raise RuntimeError(
-                f"public ledger lacks exactly one prior {intent_stage} outcome"
-            )
-        outcome = matches[0]
-        try:
-            parsed_job_id = uuid.UUID(str(outcome.get("job_id")))
-        except (ValueError, AttributeError) as exc:
-            raise RuntimeError(f"prior {intent_stage} job_id is not one UUID") from exc
-        if parsed_job_id.int == 0 or str(parsed_job_id) != outcome.get("job_id"):
-            raise RuntimeError(f"prior {intent_stage} job_id is not canonical")
-        artifact_digest = outcome.get("artifact_tree_sha256")
-        if (
-            not isinstance(artifact_digest, str)
-            or re.fullmatch(r"[0-9a-f]{64}", artifact_digest) is None
-        ):
-            raise RuntimeError(f"prior {intent_stage} artifact digest is invalid")
-
-        before = _finite_nonnegative_number(
-            outcome.get("provider_usage_before_usd"),
-            label=f"prior {intent_stage} provider usage before",
-        )
-        after = _finite_nonnegative_number(
-            outcome.get("provider_usage_after_usd"),
-            label=f"prior {intent_stage} provider usage after",
-        )
-        delta = _finite_nonnegative_number(
-            outcome.get("provider_usage_delta_usd"),
-            label=f"prior {intent_stage} provider usage delta",
-        )
-        telemetry = _finite_nonnegative_number(
-            outcome.get("telemetry_cost_sum_usd"),
-            label=f"prior {intent_stage} telemetry sum",
-        )
-        tolerance = _finite_nonnegative_number(
-            outcome.get("reconciliation_tolerance_usd"),
-            label=f"prior {intent_stage} reconciliation tolerance",
-        )
-        if (
-            not math.isclose(before, usage_before, rel_tol=0, abs_tol=1e-9)
-            or after < before
-            or not math.isclose(delta, after - before, rel_tol=0, abs_tol=1e-9)
-            or tolerance > 0.01
-            or abs(delta - telemetry) > tolerance + 1e-12
-            or outcome.get("reconciliation_status") != "reconciled"
-        ):
-            raise RuntimeError(f"prior {intent_stage} spend is not reconciled")
-
-        completed_at = _aware_timestamp(
-            outcome.get("completed_at"), label=f"prior {intent_stage} completed_at"
-        )
-        started_at = _aware_timestamp(
-            outcome.get("started_at"), label=f"prior {intent_stage} started_at"
-        )
-        recorded_at = _aware_timestamp(
-            outcome.get("recorded_at"), label=f"prior {intent_stage} recorded_at"
-        )
-        intent_publication = publications_by_subject.get(
-            ("intent", wrapper["intent_sha256"])
-        )
-        publication_sequence = (
-            intent_publication.get("sequence")
-            if isinstance(intent_publication, Mapping)
-            else None
-        )
-        next_sequence = paid_wrappers[index + 1]["sequence"]
-        expected_status = "excluded" if intent_stage == "readiness" else "complete"
-        if (
-            outcome.get("status") != expected_status
-            or not isinstance(publication_sequence, int)
-            or publication_sequence >= outcome["sequence"]
-            or outcome["sequence"] >= next_sequence
-            or started_at > completed_at
-            or completed_at > recorded_at
-            or recorded_at > current_declared
-            or outcome["sequence"] >= current_sequence
-        ):
-            raise RuntimeError(
-                f"prior {intent_stage} outcome was not completed and recorded"
-            )
-        previous_usage_after = after
-        prior_summary = {
-            "stage": intent_stage,
-            "intent_sha256": wrapper["intent_sha256"],
-            "status": outcome["status"],
-            "completed_at": outcome["completed_at"],
-            "recorded_at": outcome["recorded_at"],
-        }
-
-    if stage == "readiness":
-        return None
-    if prior_summary is None:
-        raise RuntimeError("public ledger lacks a reconciled prior-stage outcome")
-    return prior_summary
 
 
 def _ledger_is_exact_prefix(
@@ -2757,140 +2526,6 @@ def _verify_public_runtime_sources(
             != runtime_identity["public_timing_sha256"]
         ):
             raise RuntimeError("public analysis bytes differ from runtime identity")
-
-
-def _validate_live_provider_key(
-    response: Mapping[str, Any],
-    key_record_response: Mapping[str, Any],
-    credits_response: Mapping[str, Any],
-    *,
-    intent: Mapping[str, Any],
-    runtime_identity: Mapping[str, Any],
-    fetched_at: datetime,
-) -> dict[str, Any]:
-    outer = _require_exact_object(
-        response, frozenset({"data"}), label="OpenRouter key-control response"
-    )
-    data = outer.get("data")
-    required_key_fields = frozenset(
-        {
-            "is_management_key",
-            "is_provisioning_key",
-            "limit",
-            "limit_remaining",
-            "limit_reset",
-            "usage",
-        }
-    )
-    if (
-        not isinstance(data, dict)
-        or not required_key_fields.issubset(data)
-        or data.get("is_management_key") is not False
-        or data.get("is_provisioning_key") is not False
-        or data.get("limit_reset") is not None
-    ):
-        raise RuntimeError(
-            "OpenRouter benchmark credential must be a normal dedicated hard-limit key"
-        )
-    provider = intent["provider_key"]
-    live_limit = _finite_nonnegative_number(data.get("limit"), label="live key limit")
-    live_usage = _finite_nonnegative_number(data.get("usage"), label="live key usage")
-    live_remaining = _finite_nonnegative_number(
-        data.get("limit_remaining"), label="live key limit_remaining"
-    )
-    intended_limit = _finite_nonnegative_number(
-        provider.get("limit_usd"), label="intent key limit"
-    )
-    intended_usage = _finite_nonnegative_number(
-        provider.get("usage_before_usd"), label="intent key usage"
-    )
-    record_outer = _require_exact_object(
-        key_record_response,
-        frozenset({"data"}),
-        label="OpenRouter management key-record response",
-    )
-    record = record_outer.get("data")
-    required_record_fields = frozenset(
-        {
-            "disabled",
-            "hash",
-            "include_byok_in_limit",
-            "limit",
-            "limit_remaining",
-            "limit_reset",
-            "name",
-            "usage",
-        }
-    )
-    if not isinstance(record, dict) or not required_record_fields.issubset(record):
-        raise RuntimeError("OpenRouter management key record lacks required fields")
-    record_limit = _finite_nonnegative_number(
-        record.get("limit"), label="management key record limit"
-    )
-    record_usage = _finite_nonnegative_number(
-        record.get("usage"), label="management key record usage"
-    )
-    record_remaining = _finite_nonnegative_number(
-        record.get("limit_remaining"),
-        label="management key record limit_remaining",
-    )
-    label = record.get("name")
-    if (
-        record.get("hash") != runtime_identity["provider_key_fingerprint_sha256"]
-        or label != _DEDICATED_KEY_LABEL
-        or label != provider.get("label")
-        or record.get("disabled") is not False
-        or record.get("include_byok_in_limit") is not True
-        or record.get("limit_reset") is not None
-        or live_limit != intended_limit
-        or live_limit != _DEDICATED_KEY_HARD_LIMIT_USD
-        or record_limit != live_limit
-        or not math.isclose(live_usage, intended_usage, rel_tol=0, abs_tol=1e-9)
-        or not math.isclose(record_usage, live_usage, rel_tol=0, abs_tol=1e-9)
-        or not math.isclose(record_remaining, live_remaining, rel_tol=0, abs_tol=1e-6)
-        or not math.isclose(
-            live_remaining, live_limit - live_usage, rel_tol=0, abs_tol=1e-6
-        )
-    ):
-        raise RuntimeError("live OpenRouter management key record differs from intent")
-    projected = float(intent["requested_trials"]) * float(
-        intent["per_trial_forecast_usd"]
-    )
-    projected_remaining = live_remaining - projected
-    if projected_remaining < -1e-9:
-        raise RuntimeError("live OpenRouter hard limit cannot cover the registered job")
-    credits_outer = _require_exact_object(
-        credits_response,
-        frozenset({"data"}),
-        label="OpenRouter credits response",
-    )
-    credits_data = _require_exact_object(
-        credits_outer.get("data"),
-        frozenset({"total_credits", "total_usage"}),
-        label="OpenRouter credits data",
-    )
-    total_credits = _finite_nonnegative_number(
-        credits_data.get("total_credits"), label="OpenRouter total credits"
-    )
-    total_usage = _finite_nonnegative_number(
-        credits_data.get("total_usage"), label="OpenRouter total usage"
-    )
-    available = total_credits - total_usage
-    if available < -1e-6 or available + 1e-9 < projected:
-        raise RuntimeError("OpenRouter account credit cannot cover the registered job")
-    return {
-        "fingerprint_sha256": runtime_identity["provider_key_fingerprint_sha256"],
-        "label": label,
-        "limit_usd": live_limit,
-        "usage_usd": live_usage,
-        "limit_remaining_usd": live_remaining,
-        "nominal_planned_spend_usd": projected,
-        "nominal_remaining_after_usd": projected_remaining,
-        "total_credits_usd": total_credits,
-        "total_usage_usd": total_usage,
-        "available_credits_usd": available,
-        "fetched_at_utc": _utc_text(fetched_at),
-    }
 
 
 def _verify_public_intent(
