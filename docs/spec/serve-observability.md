@@ -400,7 +400,7 @@ pub struct TurnTally {
 }
 ```
 
-**[amended — not built, and so.]** This section originally also
+**[amended — not built.]** This section originally also
 planned individual `AgentEvent` records behind `STELLA_SERVE_LOG=debug`.
 Building it showed that to be a mistake: `AgentEvent::Text`, `TextDelta` and
 `Reasoning` carry model output verbatim, so those records would put
