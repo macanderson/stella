@@ -88,9 +88,15 @@ BASELINE_HEADER = """\
 """
 
 
-def load_generator():
-    """`gen-tokens.py`, imported so its predicates are not written twice."""
-    path = REPO / "scripts" / "gen-tokens.py"
+def load_generator(root: Path):
+    """`gen-tokens.py`, imported so its predicates are not written twice.
+
+    Read from `root` rather than from this script's own repository, so a tree
+    passed on the command line is judged entirely by itself -- its clamps, its
+    surfaces and its predicates. `scripts/test-light-clamp.sh` builds such a
+    tree, and this is what makes the generator it copies in the one that runs.
+    """
+    path = root / "scripts" / "gen-tokens.py"
     spec = importlib.util.spec_from_file_location("stella_gen_tokens", path)
     if spec is None or spec.loader is None:
         raise SystemExit(f"cannot import {path}")
@@ -266,7 +272,7 @@ def audit(root: Path) -> tuple[list[tuple[str, str, str, str]], list[str], int]:
     Returns `(violations, unclassifiable, exempt_count)`, where a violation is
     `(file, role, hex, why)`.
     """
-    generator = load_generator()
+    generator = load_generator(root)
     doc = json.loads((root / TOKENS_REL).read_text())
     clamps = doc["clamps"]
     anchors = {t["name"]: t["hex"] for t in doc["tokens"]}
