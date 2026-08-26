@@ -594,7 +594,12 @@ fn render_dashboard(
      Two gates, the same pattern as docs/brand/css/tokens.css: the OS
      preference unless the page was told "dark" explicitly, and an explicit
      `data-theme` the reader can stamp. No colour is defined only inside the
-     media query, so the attribute wins in both directions. */
+     media query, so the attribute wins in both directions —
+     `crates/stella-cli/tests/design_token_parity.rs`'s
+     `each_surface_declares_one_scheme_per_gate` is what makes that true. It
+     was a sentence here and nothing else until #4942, and the Observatory is
+     what a sentence buys: its two gates drifted seventeen roles apart, and an
+     OS-light reader read #BFC1CC on paper at 1.68:1 (#4296). */
   @media (prefers-color-scheme: light) {{
     :root:not([data-theme="dark"]) {{
       color-scheme: light;
