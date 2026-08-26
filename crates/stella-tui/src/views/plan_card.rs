@@ -210,17 +210,19 @@ pub fn grid_rows(
         accessible,
     ));
 
-    // Budget: spent (success — money spent is a fact) `of $cap` dim, plus a
-    // mini fraction bar. The cap is the agent's own metered limit.
+    // Budget: spent in gold — money renders gold and its meter is gold on
+    // the border gray (SPEC 5); spend is a fact, not a pass, so it takes no
+    // verdict ink — `of $cap` dim, plus a mini fraction bar. The cap is the
+    // agent's own metered limit.
     let mut budget: Vec<Span<'static>> = vec![Span::styled(
         format!("${:.2}", agent.cost_usd),
-        Style::new().fg(token::GREEN),
+        Style::new().fg(token::GOLD),
     )];
     if let Some(cap) = agent.model.hud.limit_usd.filter(|cap| *cap > 0.0) {
         budget.push(Span::styled(format!(" of ${cap:.2} "), dim));
         if !accessible {
             let pct = ((agent.cost_usd / cap).clamp(0.0, 1.0) * 100.0).round() as usize;
-            budget.extend(cards::mini_fraction_bar(pct, 100, 7, token::GREEN));
+            budget.extend(cards::mini_fraction_bar(pct, 100, 7, token::GOLD));
         }
     } else if let Some(estimate) = proposal.estimated_cost_usd {
         budget.push(Span::styled(format!(" · est ${estimate:.2}"), dim));
