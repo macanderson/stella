@@ -239,6 +239,35 @@ pub static CAPABILITIES: &[Capability] = &[
         },
     },
     Capability {
+        id: "turn.whistle",
+        engine_home: "stella-core TurnSteering port — the same step-boundary drain `turn.steer` \
+                      uses. What this row is about is reaching that port from a SECOND process, \
+                      which the engine neither knows about nor needs to",
+        engine_entries: &[],
+        cli: SurfacePosture::Shipped {
+            mechanism: "`stella whistle <message>` — one Unix domain socket per session inside \
+                        its SessionRegistry sidecar, discovered exactly as `stella resume --list` \
+                        discovers sessions; interactive mode reaches it through a session-scoped \
+                        relay, since its own steering tap exists only during a turn",
+            witness: "a_message_sent_over_a_deck_sessions_socket_reaches_its_next_turn",
+        },
+        // Not "serve has POST /v1/turns/{id}/steer, so it is covered". It has
+        // a steer route; what it has no answer to is *discovery*. A served
+        // session is registered only in `stella-serve`'s own in-memory
+        // registry — the crate does not depend on `stella-store` and writes
+        // nothing under `~/.stella/sessions/` — so `stella whistle` cannot
+        // enumerate one, there is no route that lists live sessions, and the
+        // bind address and bearer token a client would need reach no file on
+        // disk. Closing it is a decision about whether the server may hold
+        // ambient authority (ADR 0013), not a transport to add.
+        api: SurfacePosture::Deferred {
+            waiting_on: "cross-process discovery of served sessions: serve announces into no \
+                         registry `stella whistle` can read, exposes no live-session listing, and \
+                         publishes neither its bind address nor its token — #4770 is where that \
+                         is being decided",
+        },
+    },
+    Capability {
         id: "turn.steering_requery",
         engine_home: "stella-core SteeringRequery port — the steering plane re-queried at step \
                       boundaries when TurnSignal drift says the opening prompt no longer \
@@ -678,8 +707,11 @@ mod tests {
     /// the same trade `provider_parity` documents: a witness that moves to a
     /// file outside this list fails loudly (a false alarm to fix by extending
     /// the list), never silently (the rotted proof this exists to catch).
-    fn cli_sources() -> [&'static str; 13] {
+    fn cli_sources() -> [&'static str; 14] {
         [
+            // The deck's session-scoped whistle relay (#4768) — home of the
+            // `turn.whistle` witness.
+            include_str!("../../stella-cli/src/command_deck/whistle.rs"),
             include_str!("../../stella-cli/src/agent/tests.rs"),
             // Home of `a_piped_stdin_text_run_denies_every_consumer_of_the_human_present_fact`
             // — the `turn.run` CLI witness since the staged pipeline's own
