@@ -455,8 +455,10 @@ agent_event_tags! {
     // kept as the wire contract an out-of-tree media MCP surface would speak,
     // and removing them is a protocol break for anyone replaying a recording
     // that carries the tag. The TUI's textline still renders both by
-    // exhaustive match. #4454 tracks the retire-or-keep decision at the next
-    // `PROTOCOL_VERSION` bump.
+    // exhaustive match. #4454 settled keep over retire, and
+    // `AgentEvent::MediaProgress`'s doc comment carries the argument: this
+    // stream has no version number to retire them at, so a dropped tag reads
+    // to a replaying consumer as version skew that never happened.
     MediaProgress => "media_progress",
         ConsumerPosture::RecordedOnly { issue: "#4454" },
         &[];
