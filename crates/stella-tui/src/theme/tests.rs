@@ -214,6 +214,172 @@ fn every_named_token_has_a_fallback() {
     );
 }
 
+/// The ANSI index ratatui's `Color` names.
+///
+/// Spelled out because ratatui's names are not the ANSI ones, and
+/// reading one for the other is how #4976 turned a correct mapping into a bug
+/// report: `Color::Gray` is ANSI 7, the standard white, and `Color::White` is
+/// ANSI 15, bright white. `FALLBACKS` stores the index directly, so this is
+/// what puts the two tables in one vocabulary.
+/// `crates/stella-tui/tests/spec_palette.rs`'s `ansi_name` is the same
+/// translation for the spec's words.
+fn ansi_index(color: Color) -> Option<u8> {
+    Some(match color {
+        Color::Black => 0,
+        Color::Red => 1,
+        Color::Green => 2,
+        Color::Yellow => 3,
+        Color::Blue => 4,
+        Color::Magenta => 5,
+        Color::Cyan => 6,
+        Color::Gray => 7,
+        Color::DarkGray => 8,
+        Color::LightRed => 9,
+        Color::LightGreen => 10,
+        Color::LightYellow => 11,
+        Color::LightBlue => 12,
+        Color::LightMagenta => 13,
+        Color::LightCyan => 14,
+        Color::White => 15,
+        // `ansi16`'s catch-all passes a non-token through, so a truecolor
+        // value here means the token was not one it maps.
+        _ => return None,
+    })
+}
+
+/// Where `FALLBACKS` and `stella_tui_theme::fallback::ansi16` give one value
+/// two answers, as `(token, FALLBACKS index, ansi16 index, why it stands)`.
+///
+/// The two tables answer the same question — *what does this colour become on
+/// a 16-colour terminal?* — about the same hex, reached by different paths:
+/// `degrade_buffer` for the v1 deck, `fallback::ansi16` for the v2 surfaces.
+/// Each had a coverage test and neither had ever been compared to the other,
+/// so five rows disagree and nothing said so (#5000).
+///
+/// It is one decision made twice, not five: `FALLBACKS` takes the **bright**
+/// half of the sixteen for every chromatic token and `ansi16` takes the
+/// **standard** half. `design/tui-v2/SPEC.md` §3.5 states `ansi16`'s answers
+/// and `crates/stella-tui/tests/spec_palette.rs` holds it there, so the spec
+/// governs one table and nothing governs the other.
+///
+/// Which half ships is a design call and #5000 is where it is being made — the
+/// values a reader sees on a 16-colour terminal are a product decision, not a
+/// tidy-up. Declaring the rows is the half that is not: a sixth divergence
+/// cannot now arrive unnoticed, and repainting one table without the other
+/// fails here rather than in someone's `xterm`. That is
+/// `crates/stella-model/src/provider_parity.rs`'s posture — a matrix checked
+/// from both sides, with every gap named and issue-cited (AGENTS.md #10).
+const DEGRADATION_DIVERGENCE: &[(&str, u8, u8, &str)] = &[
+    (
+        "gold",
+        11,
+        3,
+        "the deck lifts the identity to bright yellow so the mark still reads \
+         as the mark; §3.5 says yellow. #5000",
+    ),
+    (
+        "gold-bright",
+        11,
+        3,
+        "the live stop collapses onto whichever yellow `gold` takes, so this \
+         row is decided by the one above it. #5000",
+    ),
+    (
+        "silver-type",
+        15,
+        7,
+        "the deck shares bright white with `text` — the two are one value step \
+         apart and there is no third white; §3.5 drops it to white beside \
+         `silver` instead. Same two values, opposite collapse. #5000",
+    ),
+    (
+        "green",
+        10,
+        2,
+        "bright green against §3.5's green: the palette's `#74C991` is a pale \
+         mint, and which ANSI green is nearer depends on the reader's own \
+         sixteen. #5000",
+    ),
+    (
+        "red",
+        9,
+        1,
+        "bright red against §3.5's red, the same question as `green` and the \
+         one row where the deck's answer is the nearer of the two against \
+         xterm's defaults. #5000",
+    ),
+];
+
+/// **The two 16-colour tables agree, or the row says why not.**
+///
+/// Both are total over their own domain and each has a test that proves it —
+/// [`every_dark_palette_value_has_a_fallback`] here and
+/// `every_token_has_a_fallback` in `stella-tui-theme`. Both are *coverage*
+/// checks, so two complete tables that contradict each other are two green
+/// tests, which is the state this ends.
+///
+/// A token with no `FALLBACKS` row is one the v1 deck never paints — the
+/// v2-only `rule`, the diff tints, the paper stops — and is not compared.
+/// What the deck *does* paint is covered by
+/// [`every_dark_palette_value_has_a_fallback`], so the two tests compose
+/// rather than overlap.
+#[test]
+fn the_two_16_colour_tables_agree_or_declare_why_not() {
+    use stella_tui_theme::{fallback, token};
+
+    let declared = |name: &str| DEGRADATION_DIVERGENCE.iter().find(|(n, ..)| *n == name);
+    let mut drift = Vec::new();
+
+    for (name, color, _) in token::ALL {
+        let Some((_, _, deck)) = FALLBACKS.iter().find(|(rgb, ..)| rgb == color) else {
+            continue;
+        };
+        let Some(v2) = ansi_index(fallback::ansi16(*color)) else {
+            drift.push(format!(
+                "`ansi16` passed `{name}` through instead of standing it down \
+                 to one of the sixteen"
+            ));
+            continue;
+        };
+        match (deck == &v2, declared(name)) {
+            (true, None) => {}
+            (true, Some(_)) => drift.push(format!(
+                "`{name}` is declared as a divergence and both tables now say \
+                 {v2} — settle the row by deleting it"
+            )),
+            (false, None) => drift.push(format!(
+                "`{name}`: FALLBACKS stands it down to {deck} and `ansi16` to \
+                 {v2}, and no row of DEGRADATION_DIVERGENCE says why"
+            )),
+            (false, Some((_, want_deck, want_v2, _))) if deck != want_deck || v2 != *want_v2 => {
+                drift.push(format!(
+                    "`{name}` is declared as {want_deck} against {want_v2} and \
+                     is now {deck} against {v2} — one table moved, so the \
+                     declaration is stale"
+                ));
+            }
+            (false, Some(_)) => {}
+        }
+    }
+
+    for (name, ..) in DEGRADATION_DIVERGENCE {
+        assert!(
+            token::ALL.iter().any(|(n, ..)| n == name),
+            "DEGRADATION_DIVERGENCE names `{name}`, which is not a token"
+        );
+    }
+
+    assert!(
+        drift.is_empty(),
+        "the deck's `FALLBACKS` and `stella_tui_theme::fallback::ansi16` \
+         answer the same question about the same value in {} place(s) the \
+         table does not account for:\n  {}\n\nOne value may not degrade two \
+         ways unnoticed — settle the row or declare it (#5000).",
+        drift.len(),
+        drift.join("\n  ")
+    );
+}
+
 #[test]
 fn role_aliases_track_their_palette_token() {
     // Brand roles resolve to the generated palette, not to a local literal.
