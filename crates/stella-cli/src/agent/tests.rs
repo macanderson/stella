@@ -3,6 +3,88 @@ use crate::config::{ConfiguredProvider, PROVIDERS, ProviderConfig};
 use stella_model::credential::ApiKey;
 use stella_protocol::event::BudgetMode; // no longer re-exported via `super::*` (#971)
 
+/// The opt-out reaches the two doors that have no [`OutputFormat`] to ask
+/// about — the goal arc and interactive mode.
+///
+/// Neither read it until #4915: each carried its own gate at its own call
+/// site, so `STELLA_DISABLE_REFLECTION` suppressed the call on the one-shot
+/// and fleet doors and not on those two, while `reflection_explicitly_disabled`'s
+/// own doc comment said every door that spends the call owes it. `stella goal`
+/// was the expensive half — scriptable, several rounds, so one opted-out
+/// invocation spent a call per round.
+#[test]
+fn the_opt_out_stops_a_turn_that_would_otherwise_reflect() {
+    assert!(
+        should_reflect_on_turn(true, true, false),
+        "a turn worth reflecting on, with memory open and no opt-out, reflects"
+    );
+    assert!(
+        !should_reflect_on_turn(true, true, true),
+        "the opt-out wins over a turn that would otherwise have reflected"
+    );
+}
+
+/// The other two facts still gate, so the opt-out is not the only thing
+/// standing between a trivial turn and a paid round trip.
+#[test]
+fn a_turn_with_no_lesson_or_nowhere_to_put_it_still_reflects_on_nothing() {
+    assert!(
+        !should_reflect_on_turn(false, true, false),
+        "a turn that did nothing has no lesson in it"
+    );
+    assert!(
+        !should_reflect_on_turn(true, false, false),
+        "with no memory open there is nowhere for the lesson to go"
+    );
+}
+
+/// Every door that spends a reflection call routes through the shared gate.
+///
+/// The truth table above proves the rule; it cannot prove a door *asks*. That
+/// gap is this file's own history: `one_shot_reflection_defaults_on_for_every_output_format`
+/// asserted `Json` was enabled and passed for the whole period no JSON turn
+/// ever reflected, because the call site carried a condition the test could
+/// not see (#4130). A door that stops calling the gate fails here instead of
+/// silently keeping its own copy of the rule.
+///
+/// Source-level on purpose. The alternative is a live turn per door, which
+/// needs a provider — and the thing under test is which function the call site
+/// names, which the source answers directly.
+#[test]
+fn every_reflecting_door_consults_the_shared_gate() {
+    let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (door, file, gate) in [
+        (
+            "the goal arc",
+            "src/agent/goal.rs",
+            "should_reflect_on_turn",
+        ),
+        (
+            "interactive mode",
+            "src/agent/reflect.rs",
+            "should_reflect_on_turn",
+        ),
+        (
+            "the fleet wave",
+            "src/fleet_cmd.rs",
+            "reflection_explicitly_disabled",
+        ),
+        (
+            "the one-shot run",
+            "src/agent/output.rs",
+            "should_reflect_after_one_shot",
+        ),
+    ] {
+        let text = std::fs::read_to_string(crate_root.join(file))
+            .unwrap_or_else(|why| panic!("{door}'s source must be readable: {why}"));
+        assert!(
+            text.contains(gate),
+            "{door} ({file}) no longer names `{gate}`, so its reflection rule \
+             is back at the call site where no test can see it (#4915, #4130)"
+        );
+    }
+}
+
 #[test]
 fn one_shot_reflection_defaults_on_for_every_output_format() {
     let _env = crate::test_env::lock();

@@ -730,7 +730,11 @@ pub async fn run_goal_cmd(
     // `succeeded=false`). Only a user-chosen soft stop is excluded
     // (issue #373, item 7).
     if crate::memory::should_reflect_on(&outcome)
-        && turn_warrants_reflection(&messages)
+        && crate::agent::output::should_reflect_on_turn(
+            turn_warrants_reflection(&messages),
+            memory.is_some(),
+            crate::agent::reflection_explicitly_disabled(),
+        )
         && let Some(m) = &mut memory
     {
         // One ledger per round (#3962): this reflection covers an arc of

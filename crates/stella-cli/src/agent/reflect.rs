@@ -97,7 +97,11 @@ pub(super) async fn reflect_on_interactive_turn<T, E: std::fmt::Display>(
     budget: &mut BudgetGuard,
 ) {
     if should_reflect_on(result)
-        && turn_warrants_reflection(turn.turn_slice())
+        && crate::agent::output::should_reflect_on_turn(
+            turn_warrants_reflection(turn.turn_slice()),
+            memory.is_some(),
+            crate::agent::reflection_explicitly_disabled(),
+        )
         && let Some(m) = memory
     {
         let mut report = reflect_routed(

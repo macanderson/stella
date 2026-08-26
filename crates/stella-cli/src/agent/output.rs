@@ -383,6 +383,29 @@ pub(crate) fn should_reflect_after_one_shot(
     one_shot_reflection_enabled(format) && warrants_reflection && has_memory
 }
 
+/// Whether a door that has no [`OutputFormat`] reflects on this turn — the
+/// whole rule, in one place a test can reach.
+///
+/// The sibling of [`should_reflect_after_one_shot`], which cannot serve the
+/// goal arc or interactive mode because it asks a format question neither of
+/// them has an answer to. Everything else is the same, including the reason it is a
+/// function at all: a condition at a call site is a condition no test can see,
+/// which is how #4130's `format == OutputFormat::Text` clause survived a test
+/// asserting the opposite.
+///
+/// `opted_out` is passed rather than read here, so a test pins it without
+/// touching `std::env`. That is process-global and this suite runs in
+/// parallel, so a test that set the variable would decide other tests' answers
+/// — `self_driving_cmd::work`'s `the_turn_does_not_inherit_the_reflection_opt_out`
+/// took the arguments-not-environment route for the same reason (#4914).
+pub(crate) fn should_reflect_on_turn(
+    warrants_reflection: bool,
+    has_memory: bool,
+    opted_out: bool,
+) -> bool {
+    warrants_reflection && has_memory && !opted_out
+}
+
 /// The reflection opt-out itself, separated from the one-shot format question
 /// above because it is neither about one-shots nor about formats: it is the
 /// workspace-wide "do not spend the extra provider call" switch, and every door
@@ -390,6 +413,14 @@ pub(crate) fn should_reflect_after_one_shot(
 /// of attempts is the largest batch of reflection calls Stella can make, so an
 /// automation that opted out would otherwise have opted out of the cheapest
 /// door and kept the dearest.
+///
+/// All four doors read it now. Two did not until #4915: the goal arc and
+/// interactive mode each carried their own gate at the call site, so
+/// `STELLA_DISABLE_REFLECTION` suppressed the call on the one-shot and fleet
+/// doors and not on those two — while this comment said every door owed it.
+/// `stella goal` was the one that mattered: it is scriptable and runs several
+/// rounds, so a goal invoked from a shell that had opted out spent a call per
+/// round the operator had asked it not to spend.
 pub(crate) fn reflection_explicitly_disabled() -> bool {
     std::env::var(DISABLE_REFLECTION_ENV).is_ok_and(|value| is_truthy_env_value(&value))
 }
