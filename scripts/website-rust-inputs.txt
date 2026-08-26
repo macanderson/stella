@@ -39,6 +39,12 @@ read website/content/docs/configuration/stella-toml.mdx
 # had run.
 read website/src/components/provider-catalog.ts
 
+# The landing page's terminal transcripts. `crates/stella-cli/tests/
+# hero_transcript_matches_the_command.rs` holds them to the command printed
+# above them: staged vocabulary and a verdict need a `--pipeline` run, because
+# a plain `stella run` is the raw step loop and prints neither (#4761).
+read website/src/components/command-deck.tsx
+
 # ── mention ──────────────────────────────────────────────────────────────────
 
 # crates/stella-tools/src/registry.rs points a reader at the hooks reference.
