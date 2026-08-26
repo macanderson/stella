@@ -38,7 +38,8 @@ use crate::model::{FileState, ReadSize, TranscriptEntry};
 /// filled by its own resolver, or its `None`/default while nothing has
 /// answered.
 ///
-/// Bundled the way [`crate::render::EntryView`] bundles the draw-side pair:
+/// Bundled the way `render::EntryView` bundles the draw-side pair (named
+/// rather than linked: that type is crate-private, and this item is public):
 /// the facts travel together into every head, and a positional list this long
 /// is a call site that can pair one call's scope with another call's timing
 /// by ordering its arguments wrongly.
