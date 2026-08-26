@@ -149,6 +149,10 @@ fn self_attested(record: &Record, trust: Trust) -> bool {
 ///
 /// [ev]: super::super::rules::evaluate_guards
 fn concrete(guard: &RuleGuard) -> bool {
+    // `allow_command_glob` is deliberately absent: an exception alone denies
+    // nothing, so a record carrying only one would advertise Tier 2 while
+    // being structurally unable to fire — the defect this function exists to
+    // prevent, arriving through a newer field.
     guard.tool.is_some() || guard.deny_path_glob.is_some() || guard.deny_command_glob.is_some()
 }
 
@@ -170,6 +174,7 @@ fn declared_guard(record: &Record) -> Option<RuleGuard> {
         tool: field(&enforcement.guard_tool),
         deny_path_glob: field(&enforcement.guard_deny_path),
         deny_command_glob: field(&enforcement.guard_deny_command),
+        allow_command_glob: field(&enforcement.guard_allow_command),
     };
     concrete(&guard).then_some(guard)
 }
@@ -310,6 +315,7 @@ mod tests {
                 tool: Some("Bash".to_string()),
                 deny_path_glob: None,
                 deny_command_glob: Some("git push --force*".to_string()),
+                allow_command_glob: None,
             })
         );
         assert_eq!(decision.refusal, None);
@@ -352,6 +358,7 @@ mod tests {
             mode: EnforcementMode::Hard,
             guard_tool: Some("  ".to_string()),
             guard_deny_command: None,
+            guard_allow_command: None,
             guard_deny_path: Some(String::new()),
             severity: Some("error".to_string()),
             on_violation: Some("Never force-push to a shared branch.".to_string()),

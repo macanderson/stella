@@ -497,6 +497,22 @@ pub struct Enforcement {
     /// A command glob the guard denies (`npm *`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard_deny_command: Option<String>,
+    /// A command glob exempted from [`guard_deny_command`] — for the common
+    /// "this family is forbidden except in its scoped form" rule that a
+    /// single positive glob cannot express.
+    ///
+    /// Carried here and not only on the markdown surface so that promoting a
+    /// guarded rule into a record cannot silently *widen* it: dropping an
+    /// exception on the way through would turn a narrow deny into a broad
+    /// one, and the resulting over-blocking would look like the rule working.
+    ///
+    /// Skipped when absent, so records predating the field serialise
+    /// byte-identically and mint no revision (ADR 0011: `record_hash` is
+    /// canonical JSON over the serialised struct).
+    ///
+    /// [`guard_deny_command`]: Enforcement::guard_deny_command
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guard_allow_command: Option<String>,
     /// A path glob the guard denies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard_deny_path: Option<String>,

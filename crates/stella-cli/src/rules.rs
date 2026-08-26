@@ -28,8 +28,20 @@
 //!   exact registry tool name, or `*` for any
 //! - `guard-deny-path:` — glob blocking a file tool by path
 //! - `guard-deny-command:` — glob blocking a `bash` command
+//! - `guard-allow-command:` — glob exempting a command that
+//!   `guard-deny-command` would otherwise block. Every other key is a
+//!   positive match, which cannot express the shape most command rules
+//!   actually have: *this family is forbidden **except** in its scoped
+//!   form*. Approximating that with a list of deny globs only enumerates
+//!   the spellings someone thought of, and the first unlisted variant walks
+//!   through while the rule still looks enforced. Write the broad deny and
+//!   name the narrow exception — a missing exception shows up at once as a
+//!   false block, where a missing deny pattern is silent. Command-scoped by
+//!   construction: it never softens `guard-deny-path`, and never softens a
+//!   bare whole-tool guard. An exception on its own is not a guard.
 //!
-//! Any `guard-*` key makes the rule Tier 2 (hard-enforced); none keeps it
+//! Any `guard-*` key except a lone `guard-allow-command:` makes the rule
+//! Tier 2 (hard-enforced); none keeps it
 //! Tier 1 (prompt-only). Rule files live in `.stella/rules/*.md` (also
 //! `.claude/rules/` and `~/.stella/rules/`) — the format promoted
 //! rules are written in. The SAME markdown, as one string, is what
@@ -706,6 +718,7 @@ mod tests {
                 tool: Some("Edit".to_string()),
                 deny_path_glob: Some("migrations/*-applied/**".to_string()),
                 deny_command_glob: None,
+                allow_command_glob: None,
             })
         );
     }

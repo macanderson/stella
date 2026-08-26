@@ -103,6 +103,7 @@ fn rule_from_file_parses_a_bash_command_guard() {
             tool: Some("Bash".to_string()),
             deny_path_glob: None,
             deny_command_glob: Some("git push --force*".to_string()),
+            allow_command_glob: None,
         })
     );
 }
@@ -285,6 +286,7 @@ fn render_rules_section_lists_rules_and_marks_enforced_ones() {
                 tool: Some("Edit".to_string()),
                 deny_path_glob: Some("m/**".to_string()),
                 deny_command_glob: None,
+                allow_command_glob: None,
             }),
         ),
     ];
@@ -305,6 +307,7 @@ fn guard_deny_entry_builds_tool_glob_for_a_path_guard() {
             tool: Some("Edit".to_string()),
             deny_path_glob: Some("m/**".to_string()),
             deny_command_glob: None,
+            allow_command_glob: None,
         }),
     );
     assert_eq!(guard_deny_entry(&r).unwrap(), "Edit(m/**)");
@@ -319,6 +322,7 @@ fn guard_deny_entry_builds_tool_glob_for_a_command_guard() {
             tool: Some("Bash".to_string()),
             deny_path_glob: None,
             deny_command_glob: Some("rm -rf*".to_string()),
+            allow_command_glob: None,
         }),
     );
     assert_eq!(guard_deny_entry(&r).unwrap(), "Bash(rm -rf*)");
@@ -333,6 +337,7 @@ fn guard_deny_entry_builds_a_bare_tool_when_no_pattern() {
             tool: Some("Bash".to_string()),
             deny_path_glob: None,
             deny_command_glob: None,
+            allow_command_glob: None,
         }),
     );
     assert_eq!(guard_deny_entry(&r).unwrap(), "Bash");
@@ -353,6 +358,7 @@ fn guards_to_deny_produces_entries_and_a_reason_map() {
                 tool: Some("Edit".to_string()),
                 deny_path_glob: Some("mig/*-applied/**".to_string()),
                 deny_command_glob: None,
+                allow_command_glob: None,
             }),
         ),
         rule("style", "prompt only", None),
@@ -376,6 +382,7 @@ fn guards_to_deny_emits_both_globs_when_a_guard_sets_both() {
             tool: Some("Bash".to_string()),
             deny_path_glob: Some("secrets/**".to_string()),
             deny_command_glob: Some("rm -rf*".to_string()),
+            allow_command_glob: None,
         }),
     )];
     let denies = guards_to_deny(&rules);
@@ -405,6 +412,7 @@ fn evaluate_guards_blocks_a_matching_path() {
             tool: Some("Edit".to_string()),
             deny_path_glob: Some("packages/database/migrations/*-applied/**".to_string()),
             deny_command_glob: None,
+            allow_command_glob: None,
         }),
     )];
     let blocked = evaluate_guards(
@@ -438,6 +446,7 @@ fn evaluate_guards_ignores_a_mismatched_tool() {
             tool: Some("Edit".to_string()),
             deny_path_glob: Some("mig/**".to_string()),
             deny_command_glob: None,
+            allow_command_glob: None,
         }),
     )];
     let check = evaluate_guards(
@@ -460,6 +469,7 @@ fn evaluate_guards_wildcard_tool_applies_to_any_tool() {
             tool: None,
             deny_path_glob: None,
             deny_command_glob: Some("git push --force*".to_string()),
+            allow_command_glob: None,
         }),
     )];
     let check = evaluate_guards(
@@ -482,6 +492,7 @@ fn evaluate_guards_bare_tool_guard_blocks_the_whole_tool() {
             tool: Some("Bash".to_string()),
             deny_path_glob: None,
             deny_command_glob: None,
+            allow_command_glob: None,
         }),
     )];
     let check = evaluate_guards(
@@ -505,6 +516,7 @@ fn evaluate_guards_collects_every_violation_not_just_the_first() {
                 tool: Some("Bash".to_string()),
                 deny_path_glob: None,
                 deny_command_glob: Some("rm*".to_string()),
+                allow_command_glob: None,
             }),
         ),
         rule(
@@ -514,6 +526,7 @@ fn evaluate_guards_collects_every_violation_not_just_the_first() {
                 tool: None,
                 deny_path_glob: None,
                 deny_command_glob: Some("rm*".to_string()),
+                allow_command_glob: None,
             }),
         ),
     ];
@@ -667,6 +680,7 @@ fn infers_a_deny_path_guard_from_consistent_file_evidence() {
             tool: None,
             deny_path_glob: Some("packages/database/migrations/**".to_string()),
             deny_command_glob: None,
+            allow_command_glob: None,
         })
     );
 }
@@ -755,4 +769,161 @@ fn decide_promotion_refuses_to_clobber_an_existing_file() {
 #[test]
 fn decide_promotion_writes_when_approved_and_absent() {
     assert_eq!(decide_promotion(true, false), PromoteStatus::Written);
+}
+
+// ---- enforce: guard-allow-command (the deny exception, stella #5128) ----
+//
+// The exception exists because every other guard field is a positive match,
+// which cannot express "this family is forbidden except in its scoped form" —
+// the shape SCR-001 has, and the shape most operational command rules have.
+
+/// A guard denying a command family with one scoped form excepted.
+fn scoped_only(deny: &str, allow: &str) -> Option<RuleGuard> {
+    Some(RuleGuard {
+        tool: Some("Bash".to_string()),
+        deny_path_glob: None,
+        deny_command_glob: Some(deny.to_string()),
+        allow_command_glob: Some(allow.to_string()),
+    })
+}
+
+fn bash(command: &str) -> ProposedAction<'_> {
+    ProposedAction {
+        tool: "Bash",
+        path: None,
+        command: Some(command),
+    }
+}
+
+#[test]
+fn guard_allow_command_exempts_the_scoped_form_and_blocks_the_rest() {
+    // The SCR-001 case exactly: workspace-wide test compiles are denied, the
+    // per-crate form is not. Neither half is expressible as a single positive
+    // glob, which is why the field exists.
+    let rules = vec![rule(
+        "scr-001",
+        "Scope test builds to the touched crate.",
+        scoped_only("*cargo test*", "*cargo test*-p *"),
+    )];
+
+    assert!(evaluate_guards(&rules, &bash("cargo test")).is_blocked());
+    assert!(evaluate_guards(&rules, &bash("cargo test --workspace")).is_blocked());
+    // The variant a list of deny globs would have missed: scoped to nothing,
+    // but not spelled with any of the flags someone thought to enumerate.
+    assert!(evaluate_guards(&rules, &bash("cargo test some_filter")).is_blocked());
+
+    assert!(!evaluate_guards(&rules, &bash("cargo test -p stella-core")).is_blocked());
+    assert!(!evaluate_guards(&rules, &bash("cargo test -p stella-core rules::")).is_blocked());
+}
+
+#[test]
+fn a_guard_without_an_exception_is_unchanged() {
+    // The field is additive: every guard written before it behaves exactly as
+    // it did, which is the property that makes adding it safe.
+    let rules = vec![rule(
+        "no-force-push",
+        "Never force-push.",
+        Some(RuleGuard {
+            tool: Some("Bash".to_string()),
+            deny_path_glob: None,
+            deny_command_glob: Some("git push --force*".to_string()),
+            allow_command_glob: None,
+        }),
+    )];
+    assert!(evaluate_guards(&rules, &bash("git push --force")).is_blocked());
+    assert!(!evaluate_guards(&rules, &bash("git push")).is_blocked());
+}
+
+#[test]
+fn an_exception_cannot_unlock_a_path_guard_beside_it() {
+    // The exception is command-scoped on purpose. If it suppressed the whole
+    // guard, one permissive command glob would quietly disarm a `deny-path`
+    // condition it was never written to reason about — and a guard that stops
+    // firing looks exactly like a guard that was never violated.
+    let rules = vec![rule(
+        "locked",
+        "Do not touch secrets.",
+        Some(RuleGuard {
+            tool: Some("*".to_string()),
+            deny_path_glob: Some("secrets/**".to_string()),
+            deny_command_glob: Some("rm -rf*".to_string()),
+            allow_command_glob: Some("rm -rf /tmp/*".to_string()),
+        }),
+    )];
+
+    // The command exception applies to the command branch...
+    assert!(!evaluate_guards(&rules, &bash("rm -rf /tmp/build")).is_blocked());
+    assert!(evaluate_guards(&rules, &bash("rm -rf /etc")).is_blocked());
+
+    // ...and leaves the path branch untouched.
+    let write = ProposedAction {
+        tool: "Write",
+        path: Some("secrets/token.txt"),
+        command: None,
+    };
+    assert!(evaluate_guards(&rules, &write).is_blocked());
+}
+
+#[test]
+fn an_exception_cannot_soften_a_whole_tool_block() {
+    // `guard-tool: Bash` with no deny glob blocks the tool outright. Letting
+    // an exception through there would turn this into a whole-tool allowlist,
+    // which is a different feature wearing this one's name.
+    let rules = vec![rule(
+        "no-bash",
+        "No shell in this workspace.",
+        Some(RuleGuard {
+            tool: Some("Bash".to_string()),
+            deny_path_glob: None,
+            deny_command_glob: None,
+            allow_command_glob: Some("echo *".to_string()),
+        }),
+    )];
+    assert!(evaluate_guards(&rules, &bash("echo hi")).is_blocked());
+}
+
+#[test]
+fn guard_allow_command_parses_from_frontmatter_in_both_spellings() {
+    for key in ["guard-allow-command", "guard_allow_command"] {
+        let parsed = rule_from_file(
+            ".stella/rules/scr-001.md",
+            &format!(
+                "---\nguard-tool: Bash\nguard-deny-command: '*cargo test*'\n\
+                 {key}: '*cargo test*-p *'\n---\nScope test builds."
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.guard.as_ref().unwrap().allow_command_glob.as_deref(),
+            Some("*cargo test*-p *"),
+            "{key} should parse",
+        );
+    }
+}
+
+#[test]
+fn a_blank_exception_is_absent_rather_than_an_empty_glob() {
+    // Same reason the other guard fields treat blank as absent: an empty glob
+    // is not a condition, and one that matched everything would silently
+    // disarm the deny it sits beside.
+    let parsed = rule_from_file(
+        ".stella/rules/x.md",
+        "---\nguard-tool: Bash\nguard-deny-command: 'rm *'\nguard-allow-command:\n---\nCareful.",
+    )
+    .unwrap();
+    assert_eq!(parsed.guard.as_ref().unwrap().allow_command_glob, None);
+    assert!(evaluate_guards(&[parsed], &bash("rm x")).is_blocked());
+}
+
+#[test]
+fn an_exception_alone_does_not_manufacture_a_guard() {
+    // Nothing to except from means nothing is denied. Treating this as Tier 2
+    // would advertise enforcement that structurally cannot fire.
+    let parsed = rule_from_file(
+        ".stella/rules/x.md",
+        "---\nguard-allow-command: 'cargo test*'\n---\nPrefer scoped tests.",
+    )
+    .unwrap();
+    assert!(parsed.guard.is_none());
+    assert_eq!(parsed.tier(), RuleTier::Prompt);
 }

@@ -37,6 +37,7 @@ fn constraint_record() -> Record {
             mode: EnforcementMode::Hard,
             guard_tool: Some("Bash".to_string()),
             guard_deny_command: Some("npm *".to_string()),
+            guard_allow_command: None,
             guard_deny_path: None,
             severity: Some("error".to_string()),
             on_violation: None,
