@@ -58,7 +58,7 @@ BRAND = "#EFC53F"  # gold — the comet, on either ground
 # own rule: gold, `text` white and `ink` are the only three mark colours that
 # exist, so a fourth stop is out of the palette by construction. The second is
 # that the floor was never the right test — WCAG 1.4.3 and 1.4.11 both exempt
-# logotypes by name, which is exactly what lets AGENTS.md #6 permit a gold mark on
+# logotypes by name, which is exactly what lets rule 6 permit a gold mark on
 # paper while forbidding gold body text there. `scripts/check-contrast.py`
 # records this pairing at 1.61:1 as an exemption rather than hiding it: the
 # number is stated, and the reason it does not fail is stated beside it.
@@ -69,7 +69,7 @@ BRAND = "#EFC53F"  # gold — the comet, on either ground
 # kit renders on the pure white below, which every generated asset already
 # sits on. Gold is 1.61:1 on `paper` and 1.65:1 on white.
 BRAND_ON_LIGHT = BRAND
-# Small brand *text* on light surfaces is not gold at all — AGENTS.md #6 forbids it,
+# Small brand *text* on light surfaces is not gold at all — rule 6 forbids it,
 # and at 1.65:1 on this kit's white the measurement agrees. Brand text on paper
 # is `ink`.
 BRAND_DEEP = "#141413"  # ink
