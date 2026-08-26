@@ -41,9 +41,6 @@ Cargo.toml filler-adverb 3
 Cargo.toml interface-jargon 1
 Cargo.toml rust-jargon 1
 LICENSING.md filler-adverb 1
-README.md filler-adverb 4
-README.md interface-jargon 18
-README.md rust-jargon 3
 RELEASING.md filler-adverb 4
 ROADMAP.md filler-adverb 2
 ROADMAP.md honesty-declaration 6
