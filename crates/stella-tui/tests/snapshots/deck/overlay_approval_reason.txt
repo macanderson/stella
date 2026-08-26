@@ -19,10 +19,10 @@
 
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                           ╭ ◇ approval · the turn is stopped ────────────────────────────────────────╮
- │ ⊙ apps/app/automations/page.tsx        │ bash  mutating                                                           │
+ │ ⊙ apps/app/automations/page.tsx        │ bash  mutating                                                           │                                    ⚡ 42ms
  │ ⎿ 312 lines                            │   rm -rf build/                                                          │                       42ms
                                           │                                                                          │
- │ ● edit apps/app/automations/page.tsx +4│ gate command.started                                                     │
+ │ ● edit apps/app/automations/page.tsx +4│ gate command.started                                                     │                                    ⚡ 18ms
  │ ⎿                                      │ reason matched rule no-destructive-shell                                 │               +4 −1 · 18ms
  │     10 -  const items = []             │                                                                          │
  │     10 +  const items = useAutomations(│ denying — say why (the model is told, verbatim):                         │

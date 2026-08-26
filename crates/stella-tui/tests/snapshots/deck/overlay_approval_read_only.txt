@@ -19,10 +19,10 @@
 
 ── EXECUTE ───────────────────────────────╭ ◇ approval · the turn is stopped ────────────────────────────────────────╮──────────────────────────────────────────
                                           │ read_file  read-only                                                     │
- │ ⊙ apps/app/automations/page.tsx        │   .stella/private/credentials.toml                                       │
+ │ ⊙ apps/app/automations/page.tsx        │   .stella/private/credentials.toml                                       │                                    ⚡ 42ms
  │ ⎿ 312 lines                            │                                                                          │                       42ms
                                           │ gate tool.call.requested                                                 │
- │ ● edit apps/app/automations/page.tsx +4│ reason matched rule secrets-are-off-limits                               │
+ │ ● edit apps/app/automations/page.tsx +4│ reason matched rule secrets-are-off-limits                               │                                    ⚡ 18ms
  │ ⎿                                      │                                                                          │               +4 −1 · 18ms
  │     10 -  const items = []             │   Allow this call, once                                                  │
  │     10 +  const items = useAutomations(│ ▸ Deny                                                                   │

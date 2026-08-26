@@ -216,15 +216,17 @@ fn projected_rows(
             path,
             sub_agent_id,
         } => {
-            let scope = source::measured_scope(call_id, view.following, view.files);
-            let read = source::read_size(call_id, view.following);
             out.extend(source::head_rows(
                 name,
                 path.as_deref(),
                 input,
-                scope,
-                read,
-                sub_agent_id.as_deref(),
+                source::CallFacts {
+                    scope: source::measured_scope(call_id, view.following, view.files),
+                    read: source::read_size(call_id, view.following),
+                    duration_ms: source::call_duration(call_id, view.following),
+                    sub_agent_id: sub_agent_id.clone(),
+                    expanded,
+                },
                 width,
             ));
             if expanded {

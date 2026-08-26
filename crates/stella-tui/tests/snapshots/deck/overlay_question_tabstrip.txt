@@ -19,10 +19,10 @@
 
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
- │ ⊙ apps/app/automations/page.tsx
+ │ ⊙ apps/app/automations/page.tsx                                                                                                                        ⚡ 42ms
  │ ⎿ 312 lines                                                                                                                               42ms
 
- │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ● edit apps/app/automations/page.tsx +4 -1                                                                                                             ⚡ 18ms
  │ ⎿                                                                                                                                 +4 −1 · 18ms
  │     10 -  const items = []
  │     10 +  const items = useAutomations(╭ question ────────────────────────────────────────────────────────────────╮

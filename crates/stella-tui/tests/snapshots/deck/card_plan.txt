@@ -19,10 +19,10 @@
 
 ── EXECUTE ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
- │ ⊙ apps/app/automations/page.tsx
+ │ ⊙ apps/app/automations/page.tsx                                                                                                                        ⚡ 42ms
  │ ⎿ 312 lines                                                                                                                               42ms
 
- │ ● edit apps/app/automations/page.tsx +4 -1
+ │ ● edit apps/app/automations/page.tsx +4 -1                                                                                                             ⚡ 18ms
  │ ⎿                                                ╭ plan  pending approval · 3 steps ────────────────────╮                         +4 −1 · 18ms
  │     10 -  const items = []                       │Refactor the automations store into a shared worksp…  │
  │     10 +  const items = useAutomations()         │                                                      │

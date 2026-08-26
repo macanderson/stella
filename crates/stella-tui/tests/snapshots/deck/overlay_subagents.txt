@@ -19,10 +19,10 @@
                          │                                                                                                            │
 ── EXECUTE ──────────────│                                                                                                            │─────────────────────────
                          │                                                                                                            │
- │ ⊙ apps/app/automations│                                                                                                            │
+ │ ⊙ apps/app/automations│                                                                                                            │                   ⚡ 42ms
  │ ⎿ 312 lines           │                                                                                                            │      42ms
                          │                                                                                                            │
- │ ● edit apps/app/automa│                                                                                                            │
+ │ ● edit apps/app/automa│                                                                                                            │                   ⚡ 18ms
  │ ⎿                     │                                                                                                            │ −1 · 18ms
  │     10 -  const items │                                                                                                            │
  │     10 +  const items │                                                                                                            │
