@@ -41,6 +41,7 @@ pub mod skills;
 pub mod status_bar;
 pub mod status_source;
 pub mod subagents;
+pub mod task_zoom;
 pub mod tools;
 pub mod traces;
 pub mod transcript;
