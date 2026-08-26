@@ -4,7 +4,9 @@
 //! becomes a skill, which is the part users cannot do today. `list` shows what
 //! the loop wants to make durable and the evidence behind it; `keep`, `edit`,
 //! and `ignore` decide, and each decision is an immutable promotion event in the
-//! lifecycle ledger.
+//! lifecycle ledger. `retract` is the reverse of `keep` for the one artifact
+//! this surface publishes to disk — see [`retract`] for why a rule needed its
+//! own rollback verb when the other evolution surfaces already had one.
 //!
 //! ## Governance lives here, and it is not configurable
 //!
@@ -75,6 +77,19 @@ pub enum ProposalsCmd {
         #[arg(long, default_value = "declined from the review surface")]
         reason: String,
     },
+    /// Take back a rule that was already published, so it stops steering.
+    ///
+    /// `ignore` prevents a write; this reverses one. The record file stays on
+    /// disk marked retracted and the retraction is appended to the governance
+    /// ledger, so what Stella believed and when it stopped stays readable.
+    Retract {
+        /// The published rule's candidate id, as shown by `stella context
+        /// list` — or its full `ctx.<set>.<id>` lineage when the short form
+        /// names more than one.
+        id: String,
+        #[arg(long, default_value = "retracted from the review surface")]
+        reason: String,
+    },
     /// Extract observations from the reflection log and induce proposals over
     /// them, without waiting for a turn to reflect.
     ///
@@ -125,6 +140,7 @@ pub fn run_proposals(cmd: &ProposalsCmd) -> Result<(), String> {
             None,
             reason,
         ),
+        ProposalsCmd::Retract { id, reason } => retract::retract_rule(&workspace_root, id, reason),
         ProposalsCmd::Refresh => refresh(&store, &workspace_root),
     }
 }
@@ -494,6 +510,8 @@ pub(crate) fn decide_for_test(
         (action == PromotionAction::Confirmed).then_some(DirectiveEnforcement::Advisory);
     decide(store, candidate_id, action, enforcement, None, reason)
 }
+
+mod retract;
 
 #[cfg(test)]
 mod tests;

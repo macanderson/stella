@@ -292,10 +292,10 @@ evolution_surfaces! {
         },
         EvolutionTiming::OfflineBatch,
         ImpactClass::SteeringDirective,
-        "no command retracts a published rule — `stella proposals` offers only \
-         list/keep/edit/ignore/refresh, and `stella memory retire` does not suppress a \
-         file-backed rule because the loader filters by authority rather than by retirement \
-         standing. Reversal today is deleting or reverting `.stella/rules/<id>.toml`";
+        "`stella proposals retract <id> --reason <why>`. Nothing is deleted: the record file \
+         is rewritten with `status = \"retracted\"` and the retraction is appended to the \
+         hash-chained `.stella/rules/promotions.jsonl`, so the registry stops selecting it on \
+         the next load while what Stella believed — and when it stopped — stays readable";
 
     /// What Stella remembers between turns.
     Memory => "memory",

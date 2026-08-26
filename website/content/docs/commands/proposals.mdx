@@ -1,6 +1,6 @@
 ---
 title: stella proposals
-description: Review what the adaptive-context loop wants to make durable — the induced proposals, the evidence behind each, and Keep/Edit/Ignore as events.
+description: Review what the adaptive-context loop wants to make durable — the induced proposals, the evidence behind each, and Keep/Edit/Ignore/Retract as events.
 ---
 
 `stella proposals` is the review surface for the adaptive-context loop. As you work, the loop reflects on turns and induces proposals: things it believes are worth making durable. This command shows you what is pending, the evidence behind each one, and lets you accept it, reword it, or decline it — **before** it steers anything.
@@ -14,6 +14,7 @@ stella proposals list [--all] [--limit <n>]
 stella proposals keep <id> [--reason <text>]
 stella proposals edit <id> <body> [--reason <text>]
 stella proposals ignore <id> [--reason <text>]
+stella proposals retract <id> [--reason <text>]
 stella proposals refresh
 ```
 
@@ -93,6 +94,27 @@ Decline a proposal. It will not be re-proposed while the decision stands — and
 
 ```bash
 stella proposals ignore cand-7ab0 --reason "true last quarter, not now"
+```
+
+### `stella proposals retract`
+
+Take back a rule that was already published, so it stops steering.
+
+`ignore` prevents a write; `retract` reverses one. A kept directive lands as a TOML record under `.stella/rules/`, which the loader reads into the system prefix — and until this verb the only way back was `rm` or a git revert, neither of which leaves any record that the rule was ever believed.
+
+Retraction appends rather than deletes. The record file stays on disk with `status = "retracted"`, and the retraction goes into the hash-chained `.stella/rules/promotions.jsonl` with who made it and why. The registry stops selecting a non-active record, so the rule is out of the prefix on the next load; `stella context validate` reports it under *Retired* and does not fail.
+
+<CardGrid size="md">
+  <OptionCard name="<id>" required>
+    The published rule's candidate id, as shown by [`stella context list`](/docs/commands/context) — or its full `ctx.<set>.<id>` lineage when the short form names more than one.
+  </OptionCard>
+  <OptionCard name="--reason <text>" defaultValue="retracted from the review surface">
+    Why. Recorded on the ledger event; an empty reason is refused.
+  </OptionCard>
+</CardGrid>
+
+```bash
+stella proposals retract migration-order-3f21 --reason "the migration order changed in 0.9"
 ```
 
 ### `stella proposals refresh`
