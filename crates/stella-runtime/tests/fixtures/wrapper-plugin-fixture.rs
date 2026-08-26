@@ -111,28 +111,38 @@ fn main() {
         }
         "dispatch-reference" => dispatch_reference(&read_request()),
         "dispatch-contributed" => dispatch_contributed(&read_request()),
-        // Claims a flip only when a candidate grant naming `sh` arrived, and
-        // says `unobservable` otherwise — so a host that withholds the grant
-        // gets an honest refusal rather than an assertion the plugin could
-        // not have made. The two-substring match is the `case` the shell
-        // script spelled out.
+        // Asks the host to run the test plan for a candidate, then builds its
+        // evidence from the answer it reads back — the two-exchange shape a
+        // host call has. `flip=achieved` only when the host reported the
+        // assertions passed, so a plugin cannot fabricate a flip it did not
+        // observe, which is what `wrapper_run_test.rs` is about.
         //
-        // Both arms are load-bearing, from different files.
-        // `wrapper_claimed_evidence.rs` takes only the granted side (its
-        // `report()` always passes `candidate: Some(..)`), while
-        // `wrapper_decided_flip.rs` calls `run(None, ..)` — so neutering
-        // this branch fails `without_the_grant_or_the_snapshot_the_verdict_is_undecided`
-        // there. Checked by ablation, not assumed.
-        // Echoes back the stage it was asked at, labelled — what
-        // `wrapper_composition.rs` used `sed` for. Composition tests read
-        // those labels to prove each member saw its own declared stages and
-        // no others, so echoing a fixed string here would let a composition
-        // that dispatched the wrong stage pass.
-        // Reports which of two named variables reached the child, as `10`
-        // for present and `0` for absent — the `${VAR:+1}0` idiom the shell
-        // probe used. `wrapper_late_credential.rs` reads both back: one
-        // granted late, one never granted, so a mode that answered a
-        // constant could not tell a delivered credential from a leaked one.
+        // The id check is the shell script's and is kept: an answer carrying
+        // someone else's id means the transport crossed two calls, and
+        // failing loudly there beats reporting a flip against the wrong one.
+        "run-test-probe" => {
+            let _request = read_line();
+            let handle = arg(&args, 1);
+            emit(&format!(
+                "{{\"call\":\"run_test\",\"id\":7,\"args\":{{\"candidate\":\"{handle}\"}}}}"
+            ));
+            let answer = read_line();
+            if !answer.contains("\"result\":7") {
+                eprintln!("the answer did not carry the id this plugin chose");
+                std::process::exit(1);
+            }
+            let flip = if answer.contains("\"assertions\":\"passed\"") {
+                "achieved"
+            } else if answer.contains("\"err\"") {
+                "unobservable"
+            } else {
+                "not-achieved"
+            };
+            emit(&format!(
+                "{{\"point\":\"after_turn\",\"body\":{{\"protocol_version\":1,\
+                 \"evidence\":{{\"flip\":\"{flip}\"}}}}}}"
+            ));
+        }
         // Declares a witness list that narrows at `research` — the `case`
         // the shell plugin spelled out. The narrowing is load-bearing:
         // pinning the list fails
@@ -151,6 +161,11 @@ fn main() {
                  \"witness\":[{list}]}}}}"
             ));
         }
+        // Reports which of two named variables reached the child, as `10`
+        // for present and `0` for absent — the `${VAR:+1}0` idiom the shell
+        // probe used. `wrapper_late_credential.rs` reads both back: one
+        // granted late, one never granted, so a mode that answered a
+        // constant could not tell a delivered credential from a leaked one.
         "two-env-probe" => {
             let _ = read_request();
             let present = |name: &str| {
@@ -165,6 +180,11 @@ fn main() {
                 ("mode", present(arg(&args, 2))),
             ]));
         }
+        // Echoes back the stage it was asked at, labelled — what
+        // `wrapper_composition.rs` used `sed` for. Composition tests read
+        // those labels to prove each member saw its own declared stages and
+        // no others, so echoing a fixed string here would let a composition
+        // that dispatched the wrong stage pass.
         "echo-stage" => {
             let request = read_request();
             let label = arg(&args, 1);
@@ -179,6 +199,18 @@ fn main() {
                 emit(&measurements(&[]));
             }
         }
+        // Claims a flip only when a candidate grant naming `sh` arrived, and
+        // says `unobservable` otherwise — so a host that withholds the grant
+        // gets an honest refusal rather than an assertion the plugin could
+        // not have made. The two-substring match is the `case` the shell
+        // script spelled out.
+        //
+        // Both arms are load-bearing, from different files.
+        // `wrapper_claimed_evidence.rs` takes only the granted side (its
+        // `report()` always passes `candidate: Some(..)`), while
+        // `wrapper_decided_flip.rs` calls `run(None, ..)` — so neutering
+        // this branch fails `without_the_grant_or_the_snapshot_the_verdict_is_undecided`
+        // there. Checked by ablation, not assumed.
         "flip-if-granted" => {
             let request = read_request();
             let flip = if request.contains("\"root\"") && request.contains("\"program\":\"sh\"") {
@@ -217,6 +249,20 @@ fn read_request() -> String {
     let mut buf = Vec::new();
     let _ = std::io::stdin().read_to_end(&mut buf);
     String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// One line, for the modes that hold a conversation rather than answering
+/// once — the shell's `read -r`.
+///
+/// A host call is two exchanges: the plugin reads its request, writes a call,
+/// and reads the answer. `read_request` cannot serve that, because reading to
+/// EOF consumes the answer that has not been written yet and then blocks
+/// until the host gives up. Returns an empty string at EOF, which the callers
+/// treat as a host that said nothing.
+fn read_line() -> String {
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    line
 }
 
 /// Write one message and flush it. Nothing here buffers past the process, so a
