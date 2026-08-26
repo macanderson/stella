@@ -366,6 +366,10 @@ tokens: ## Validate the colour system: hue clamp, generated-file sync, no retire
 	@python3 ./scripts/gen-tokens.py --check
 	@python3 ./scripts/check-tokens.py
 
+.PHONY: tokens-test
+tokens-test: ## Test the retired-hex ban across every notation it watches (hermetic; not part of `gate`)
+	./scripts/test-tokens.sh
+
 .PHONY: tokens-update
 tokens-update: ## Regenerate every colour artifact from design/tokens/stella-tokens.json
 	@python3 ./scripts/gen-tokens.py
