@@ -275,6 +275,43 @@ fn each_verification_flag_alone_is_refused_against_the_raw_loop() {
     assert!(err.contains("--require-verified"), "{err}");
 }
 
+/// A refusal names the flags it refused, and **only** those: passing
+/// `--test-command` alongside `--keep-witness` under an installed plugin
+/// must produce a message about `--keep-witness` with no mention of the flag
+/// that was accepted.
+///
+/// `plugin_variant_accepts_test_command_but_still_refuses_witness_flags`
+/// above covers each flag on its own and is where the acceptance is pinned;
+/// this covers them together, which is the combination a message could get
+/// wrong without failing that one, because it passes `None` for
+/// `test_command` in its refusing half.
+///
+/// Worth its own case because the confusion is the expensive part. AGENTS.md
+/// described all three flags as refused unconditionally and was wrong about
+/// this one (#4907); a refusal message that lists an accepted flag teaches a
+/// reader the same wrong thing, from the terminal, where it is likelier to be
+/// believed.
+#[test]
+fn a_refusal_never_names_the_flag_it_accepted() {
+    for (keep_witness, require_verified, flag) in [
+        (true, false, "--keep-witness"),
+        (false, true, "--require-verified"),
+    ] {
+        let err = reject_verification_flags_without_pipeline(
+            PipelineChoice::Plugin("budget-v1"),
+            Some("pytest"),
+            keep_witness,
+            require_verified,
+        )
+        .expect_err("the host-run flags are refused on every resolution");
+        assert!(err.contains(flag), "{err}");
+        assert!(
+            !err.contains("--test-command"),
+            "--test-command rode along on another flag's refusal: {err}"
+        );
+    }
+}
+
 /// **Witness (#3867).** The gate no longer has a bypass arm: `--keep-witness`
 /// is refused against **every** [`PipelineChoice`] that exists, with no
 /// variant left that accepts it.
