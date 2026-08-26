@@ -88,10 +88,14 @@
 //! embedding round trip 111-202 ms. Against those, a persisted gather cache
 //! is a rounding error.
 //!
-//! The cache's own guard is in the same range as the thing it guards:
+//! The cache's own guard is a fraction of the thing it guards:
 //! [`stella_graph::CodeGraph::index_generation`] re-hashes every indexed
-//! file's `(path, content sha)` once per render, 21.8 ms over 1 808 rows by
-//! the same Python bound.
+//! file's `(path, content sha)` once per render, **0.7-3.1 ms over 1 808
+//! rows** — measured in release against this repository's own index on
+//! 2026-08-25, four samples, the first of them disk-cold. The Python bound
+//! this paragraph used to quote said 21.8 ms and had #4785 concluding the
+//! guard cost six gathers; the Rust path costs about one, and the difference
+//! is what a bound taken outside the language is worth.
 //!
 //! A faster machine does not change the answer, because the second half of it
 //! is structural. [`GatherCache::observe_generation`] empties the whole cache
