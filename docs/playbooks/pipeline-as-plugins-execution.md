@@ -105,7 +105,7 @@ first extraction, not a claim about the state after this branch.
 
 **Bias to shipping.** There are no customers on this yet and every mistake here
 is recoverable by another commit. Velocity is worth more than ceremony, so the
-rules below are deliberately few. When a rule and progress conflict, and the
+rules below are few. When a rule and progress conflict, and the
 mistake would be cheap to undo, ship and fix forward.
 
 1. **Say what you did.** The one rule that never relaxes. If you widened a
@@ -134,7 +134,7 @@ file moves, and anything the compiler and tests already prove.
 
 **One auditor** for ordinary code changes. Give it the diff, prompt it to
 **refute** rather than approve, and ask for concrete failures only — inputs plus
-wrong output, or an invariant plus the line that breaks it. "This could be
+wrong output, or a rule plus the line that breaks it. "This could be
 cleaner" is not a finding. Fix what it finds if the fix is quick; file it and
 merge if not.
 
@@ -148,7 +148,7 @@ recoverable by a follow-up PR:
 | **A5/A3b** the wire contract | the same, for every non-Rust plugin |
 | **D3** self-driving's grant | the widest authority any plugin will hold |
 
-Use three lenses there: correctness, architecture (cite the invariant by
+Use three lenses there: correctness, architecture (cite the rule by
 number), and authority (what can a plugin do now that it could not before?).
 Anything one of them blocks gets fixed before merge.
 
@@ -331,9 +331,9 @@ whose documentation still describes the previous architecture is not shipped.
 **Internal:**
 
 - `AGENTS.md` — the workspace layout table, the crate routing rules, the
-  invariants list if the socket added one, and the god-file table if any file
+  rules list if the socket added one, and the god-file table if any file
   moved. `CLAUDE.md` if the hard rules changed.
-- Every affected crate `README.md` — boundary, layout, invariants, gotchas,
+- Every affected crate `README.md` — boundary, layout, rules, gotchas,
   extension recipe. `stella-core`'s must say it has no built-in wrappers;
   `stella-plugin`'s must stop saying it has no consumers.
 - `doc:turn-loop-wrappers` and `doc:pipeline-as-plugins` — mark what shipped and

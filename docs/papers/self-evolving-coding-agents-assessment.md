@@ -89,7 +89,7 @@ This covers the paper's skill-bank family, with unusually strong governance.
 The foundry detects repeated shell capability gaps, proposes and authors a typed
 tool, requires a fail→pass witness, records adoption, and still leaves the tool
 disabled until separate authority enables it. Receipts measure subsequent use
-and failures. Stella deliberately does not let an in-flight worker synthesize
+and failures. Stella does not let an in-flight worker synthesize
 and immediately execute a privileged tool; the paper does not resolve the
 authority and rollback problems required to relax that gate.
 
@@ -225,4 +225,4 @@ objects. The useful additions are organizational and evaluative: total enforced
 coverage, preserved evidence grade, transfer/decay evaluation, and a stop rule
 for training cycles with no learnable information. These turn the survey's
 cautions into deterministic contracts without weakening Stella's witness,
-authority, privacy, or safe-boundary invariants.
+authority, privacy, or safe-boundary rules.

@@ -182,7 +182,7 @@ still complete, just with less scaffolding, never fail outright.
 its own ceiling and degraded to "no frames" on expiry. Recalled frames rode as a
 **volatile user message after the byte-stable system prefix** — never mutated
 into the system block — so prompt-cache hits survived across turns. That
-discipline is invariant 7 and is unaffected by the deletion: it still governs
+discipline is AGENTS.md #7 and is unaffected by the deletion: it still governs
 `stella_cli::agent::build_system_prompt` today.
 
 ## B. The conversational fast path

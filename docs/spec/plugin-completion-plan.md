@@ -401,7 +401,7 @@ prerequisite M-3.
 
 ## 6. The implementation plan
 
-Ordered by dependency, and deliberately not by size. Each slice names its
+Ordered by dependency, and not by size. Each slice names its
 witness, because `CLAUDE.md`'s rule is that correctness is demonstrated or it
 is not claimed.
 

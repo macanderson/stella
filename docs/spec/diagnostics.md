@@ -109,20 +109,20 @@ Contributors need a rule they can apply without reading this document:
 
 Each has already rejected an obvious approach.
 
-1. **Invariant 2 — no I/O in the engine.** Rules out any logger `stella-core`
+1. **AGENTS.md #2 — no I/O in the engine.** Rules out any logger `stella-core`
    calls directly. Emission must be an injected port, and the *pure* decision
    functions must not log at all (§7.3).
-2. **Invariant 3 — zero telemetry egress by default.** No sink opens a socket.
+2. **AGENTS.md #3 — zero telemetry egress by default.** No sink opens a socket.
    But the sharper constraint is the one `serve-observability.md` §8 names:
    *operators ship logs*, so a log file is the easiest accidental egress there
    is. §5 is the answer, and it is stronger than the current one.
-3. **Invariant 4 — serde-first.** The record crosses crate boundaries and lands
+3. **AGENTS.md #4 — serde-first.** The record crosses crate boundaries and lands
    on disk; it round-trips with a test.
-4. **Invariant 5 — typed errors, no panics.** A sink that cannot write must
-   degrade. Losing a log line must never lose a turn. Invariant 5 also *pays
+4. **AGENTS.md #5 — typed errors, no panics.** A sink that cannot write must
+   degrade. Losing a log line must never lose a turn. AGENTS.md #5 also *pays
    for* this design: every workspace error is already an enum, so structured
    error fields are nearly free here (§5.3).
-5. **Invariant 7 — byte-stable prompts.** Nothing here may perturb prompt
+5. **AGENTS.md #7 — byte-stable prompts.** Nothing here may perturb prompt
    construction, including by timing.
 6. **The file-size ratchet** (`scripts/check-file-size.sh`). New code goes in
    new modules.
@@ -209,7 +209,7 @@ diag!(warn, "tools.write.denied", path = user_path);   // ← does not compile
 ```
 
 `tracing` will happily log that with `%user_path`. Here it is a type error.
-Invariant 3's most dangerous failure mode stops being a thing review has to
+AGENTS.md #3's most dangerous failure mode stops being a thing review has to
 catch and starts being a thing the compiler catches.
 
 **Stated honestly, because overclaiming is worse than the gap:** `Box::leak`
@@ -222,7 +222,7 @@ accident, and loud on purpose"*. That distinction is the one
 ### 5.3 Errors, which are the real leak
 
 Error *messages* are where paths and content actually escape into logs —
-`format!("{e}")` on an `io::Error` carries the filename. Invariant 5 has already
+`format!("{e}")` on an `io::Error` carries the filename. AGENTS.md #5 has already
 solved this without anyone noticing: **every library error in this workspace is
 a typed enum**. So a facet derives from it:
 
@@ -238,7 +238,7 @@ log_error! {
 
 The record gets `{"code":"HttpStatus","status":429}` — a stable code plus fields
 explicitly marked loggable. The `Display` string is never emitted. In a codebase
-where errors were `String`s this would be a large piece of work; here invariant 5
+where errors were `String`s this would be a large piece of work; here AGENTS.md #5
 paid for it years ago.
 
 ### 5.4 Paths, which are the thing you most want and most cannot have
@@ -331,7 +331,7 @@ through a sink.
 The usual reason hand-rolled loggers lose is that they force every call site to
 re-thread ids by hand.
 
-Stella does not have that problem, because **invariant 2 already forces it**.
+Stella does not have that problem, because **AGENTS.md #2 already forces it**.
 "Plain synchronous functions over owned data" means there is no ambient state to
 begin with and every decision function already receives its inputs explicitly.
 So `Cx { session, execution, turn, step }` rides as an explicit parameter — not a
@@ -438,10 +438,10 @@ they do talk, over reverse-RPC. The propagation value is real.
 
 1. The four arguments in §9 of that document mostly still hold, but the
    decisive one is now different: §7.1. Correlation is free here because
-   invariant 2 already banned ambient state. `tracing`'s spans exist to
+   AGENTS.md #2 already banned ambient state. `tracing`'s spans exist to
    reconstruct context that ordinary code loses; this codebase does not lose it.
 2. §5.2 is not available through `tracing`. `%value` / `?value` log anything
-   `Display`/`Debug` can render, which is the precise hole invariant 3 cannot
+   `Display`/`Debug` can render, which is the precise hole AGENTS.md #3 cannot
    afford. Adopting the facade would trade a compile-time privacy guarantee for
    a review-time one. That is the wrong direction, and it is the strongest single
    reason in this document.
@@ -491,7 +491,7 @@ Per AGENTS.md, each slice needs a test that fails on the old code.
 | 5 | The ring survives a panic | integration: panic mid-turn, assert the crash file exists, is 0600, parses as JSONL, and contains the last pre-panic record |
 | 6 | No per-token record | property over a synthetic 10k-`TextDelta` turn: diagnostic record count is `O(steps)`, not `O(tokens)` |
 | 7 | Codes are documented | gate script, §11 |
-| 8 | Envelope round-trips | invariant 4 |
+| 8 | Envelope round-trips | AGENTS.md #4 |
 
 ---
 
@@ -512,10 +512,10 @@ are the ones that change a user's life.
 
 ---
 
-## 14. What this deliberately does not do
+## 14. What this does not do
 
 - **No logging in `stella-core`'s pure functions.** §7.3. They return rationale;
-  callers record it. This is the invariant most likely to erode, and the one
+  callers record it. This is the rule most likely to erode, and the one
   most responsible for `stella-core` being the crate the audit scores at 100.
 - **No egress, at any level, in any build.** No sink opens a socket. The `otel`
   feature of §10 is opt-in at compile time *and* requires an endpoint at

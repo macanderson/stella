@@ -76,11 +76,11 @@ separate, and §7.1 says why for each. "One config file" means one file for
 
 ---
 
-## 2. What exists today, and the three invariants that must survive
+## 2. What exists today, and the three rules that must survive
 
 The full key inventory is in `stella.today.toml`, verified key-by-key against
 the serde structs. What matters here is that **the file format is not where
-Stella's config safety lives** — three invariants do, and none of them are
+Stella's config safety lives** — three rules do, and none of them are
 visible in a JSON or TOML document. Any port that breaks one is a security
 regression wearing a refactor's clothes.
 
@@ -391,7 +391,7 @@ dialect, so a two-line read-only agent stays two lines.
 rewrites the switch map — the same read-modify-write contract as today, one
 level deeper.
 
-### 5.3 What is deliberately not built
+### 5.3 What is not built
 
 **The registry stays a deny-list, not an enumeration.** The original sketch
 enumerated 30 tools with `category` and `enabled`. Stella's tool set is only

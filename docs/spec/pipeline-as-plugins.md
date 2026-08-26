@@ -189,7 +189,7 @@ steering/observer wrapper.** The other half of #3695 is closed: `stella goal
 --pipeline <variant>` (`crates/stella-cli/src/agent/goal/goal_wrapped.rs`)
 binds the same wrapper once and calls `WrapperDispatch::run` once per judged
 round, wrapping the round's WORKER turn only — the goal verifier
-(`Engine::assess`) is deliberately untouched, so this does *not* answer
+(`Engine::assess`) is untouched, so this does *not* answer
 §9.2's "where does the verifier's model call live" question below; it
 sidesteps it by keeping the verifier off the wrapper socket entirely for this
 slice.
@@ -309,7 +309,7 @@ mode already shipped. One constructor, or every wrapper re-authors the defect.
 
 **LANDED, both halves (#3479).** The four points are defined in
 **`stella-runtime`** — not `stella-core`, because `before_turn` performs recall
-and `after_turn` spawns processes, and invariant 2 bans I/O in the engine
+and `after_turn` spawns processes, and AGENTS.md #2 bans I/O in the engine
 (`doc:turn-loop-wrappers` §9.1).
 
 They shipped together:
@@ -368,7 +368,7 @@ what it resolved to `stella_runtime::WrapperDispatch`, so a manifest is no
 longer resolved, shown for consent, and stopped there — an installed
 plugin's declared points are dispatched into a live turn. What remains true
 of the loader itself is narrower: `stella plugin install|list|remove` resolve
-and show consent, and installation is deliberately decoupled from execution
+and show consent, and installation is decoupled from execution
 — nothing about the install command itself drives a turn, and it should not,
 since a plugin can be installed for `stella run --pipeline <variant>` without
 that command ever running one.
@@ -579,7 +579,7 @@ Three commitments prevent that:
 
 What is already settled and should not be relitigated: **do not embed CPython**
 (#3246 §O5 — the GIL on an async runtime, a per-platform packaging story, and a
-concretion inside crates invariant 1 keeps free of them). The SDK is a thin
+concretion inside crates AGENTS.md #1 keeps free of them). The SDK is a thin
 client over whatever the spike selects.
 
 ---
@@ -852,7 +852,7 @@ the oracle.
 
 **Vera contributes model roles** to the `/models` table — the worker whose output
 is judged, and the independent verifier that authors the witness. Verifier
-independence becomes Vera's invariant to enforce; the roster already refuses a
+independence becomes Vera's rule to enforce; the roster already refuses a
 responsibility whose agent is the worker's (`roster.rs:656-660`). Blocked on
 #3472 (the role table must be plugin-populated; `EngineRole` is a closed
 six-variant enum at `crates/stella-tui/src/envelope.rs:993`).
@@ -1020,7 +1020,7 @@ the plugin depends only on A1 (identity), not on #3380.
   It landed in a shared leaf crate, not inside a plugin binary, as required:
   `crates/stella-autonomy/Cargo.toml` declares zero workspace-crate
   dependencies, and its header comment carries the reason —
-  `stella-observatory` links it deliberately because the observatory
+  `stella-observatory` links it because the observatory
   previously carried its own `fold_runs` and the two implementations drifted,
   so the dashboard and `stella self-driving metrics` disagreed about whether
   the loop was `NOISY` for every odd cycle count (#1613). A leaf crate on the
@@ -1274,7 +1274,7 @@ Three details of that reconciliation carry weight:
 
 - **Names, never paths**, so nothing here needs `${plugin_dir}` interpolation
   (contrast `[runtime]` and `[oracle] command`, where the host expands it).
-- **A `[[tools]]` entry deliberately does not restate the tool's argv.** Author
+- **A `[[tools]]` entry does not restate the tool's argv.** Author
   prose is labelled as the author's throughout the consent surface, but an argv
   reads as a *fact about what will run*, and this crate cannot check it against
   the file that decides. Printing an unverified command line is the "claimed

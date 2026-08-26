@@ -17,7 +17,7 @@ digests**, let anyone add their own index ("tap") so distribution needs
 nobody's permission, generate a **static discovery site** from the index at
 merge, and make the one genuinely novel thing a **grant diff on upgrade** — a
 plugin may never quietly widen what it asked for. This costs one repository and
-a static site build, breaks none of Stella's invariants, requires no accounts,
+a static site build, breaks none of Stella's rules, requires no accounts,
 works offline after the first fetch, and can grow a hosted API later without
 changing how anything resolves.
 
@@ -64,10 +64,10 @@ versioning, discovery and distribution do not exist at all.**
 These are not preferences. Each one eliminates at least one otherwise-reasonable
 option.
 
-**C1 — Zero telemetry egress by default (invariant 3).** *"Update checks and
+**C1 — Zero telemetry egress by default (AGENTS.md #3).** *"Update checks and
 anonymous analytics remain prohibited."* A registry that is consulted in the
 background, that counts installs, or that must be reachable for Stella to
-function, breaks the invariant the project enforces with a reviewed allowlist
+function, breaks the rule the project enforces with a reviewed allowlist
 and a gate. Any network call must be user-initiated, to a host the user can
 name.
 
@@ -208,7 +208,7 @@ that matches in two taps is an error naming both, never a silent pick.
 ### 4.3 Resolution and the lockfile
 
 `stella plugin install <source>` takes one of three sources, which **scope** the
-verb rather than select a different one (invariant 9):
+verb rather than select a different one (AGENTS.md #9):
 
 | Source | Example | Meaning |
 |---|---|---|
@@ -264,7 +264,7 @@ because it has a gate `install` does not:
    no terminal attached it prints the same text and refuses instead of assuming
    an answer."*
 
-This converts consent from a one-time event into a maintained invariant, and it
+This converts consent from a one-time event into a maintained rule, and it
 is nearly free: `consent_text` is already a pure function over manifest bytes,
 so the diff is a diff of two strings the crate already knows how to produce.
 `crates/stella-diff` is a leaf with no dependencies and renders exactly this
@@ -408,10 +408,10 @@ overstating it by one word would forfeit the advantage.
 
 ---
 
-## 8. What this design deliberately does not do
+## 8. What this design does not do
 
 - **No download counts, no popularity ranking.** Counting installs is
-  telemetry, and invariant 3 does not have an exception for flattering numbers.
+  telemetry, and AGENTS.md #3 does not have an exception for flattering numbers.
 - **No ratings or reviews.** They need accounts (C4) and they are the part of
   every marketplace that gets gamed first.
 - **No `stella plugin publish`.** Publishing is `git tag` plus a pull request.

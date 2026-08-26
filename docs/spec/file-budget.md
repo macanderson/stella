@@ -654,7 +654,7 @@ simply scroll past.
 |---|---|---|
 | **Unit** — needs private access to one module | `src/foo/tests.rs`, declared `#[cfg(test)] mod tests;` in `foo.rs` | **Never inline.** Always a sibling file. |
 | **Behavior** — one behavior area of the crate's public API | `tests/<area>.rs`, named for the behavior | One file per behavior. Never `tests/integration.rs`. |
-| **Property** — invariants (`proptest`) | `src/foo/props.rs` or `tests/props_<area>.rs` | Kept separate from unit tests so the invariant set is enumerable by listing files. |
+| **Property** — rules (`proptest`) | `src/foo/props.rs` or `tests/props_<area>.rs` | Kept separate from unit tests so the rule set is enumerable by listing files. |
 | **Fixtures & helpers** | `tests/support/` or `src/testkit.rs` behind `#[cfg(test)]` | Shared setup is defined once, never copied into test files. |
 
 ### 7.3 Test files carry the same budget, and split by *behavior*
@@ -801,7 +801,7 @@ read-cost:
 | 5 | `crates/stella-core/src/driver.rs` | 213k | Only 1,423 substantive of 2,725 — **the cheapest win on the list**. |
 | 6 | `crates/stella-tools/src/registry.rs` | 170k | `execute` (509) extracts; registry vs. dispatch separate. |
 | 7 | `crates/stella-store/src/lib.rs` | 160k | §6.3 — a crate root doing a module's job. Mostly mechanical. |
-| 8 | `crates/stella-protocol/src/event.rs` | 152k | 21 types. Split by event family. Watch the serde round-trip tests (invariant #4). |
+| 8 | `crates/stella-protocol/src/event.rs` | 152k | 21 types. Split by event family. Watch the serde round-trip tests (AGENTS.md #4). |
 | 9 | `crates/stella-pipeline/src/pipeline/tests.rs` | 111k | §7.3, split by behavior alongside #3. |
 | 10 | `crates/stella-tui/src/deck_render.rs` | 102k | `render_status_bar` (305); split by rendered region. |
 

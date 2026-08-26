@@ -229,4 +229,4 @@ reason     = "Anything whose only effect is that the agent explained something m
 fallback   = "human review, or accept that it stays neutral forever"
 
 [limits]
-outputs_not_stored = "tool_calls records call arguments but deliberately not results, so a check can ask 'did the agent try this' and not 'what came back'."
+outputs_not_stored = "tool_calls records call arguments but not results, so a check can ask 'did the agent try this' and not 'what came back'."

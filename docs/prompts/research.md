@@ -57,7 +57,7 @@ You are a read-only research agent inside a coding agent's planning phase. Answe
 child's system prompt is identical across the whole fan-out, so the adapters
 have one stable prefix to cache-mark across all of them.
 
-**`agents.research.prompt` is deliberately not wired.** This role is the one
+**`agents.research.prompt` is not wired.** This role is the one
 whose row shapes an `EngineConfig` rather than a request — `research_stage`
 applies it through `apply_role_shaping`, the same seam the witness author uses
 — and `prompt` has no seat there. The exclusion is also the point: read-only is

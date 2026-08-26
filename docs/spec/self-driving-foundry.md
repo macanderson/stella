@@ -97,7 +97,7 @@ emitter; no trainer port; no weights registry; two daemon surfaces.
 `TRAIN` runs every N generations when the weights axis is enabled;
 otherwise the loop skips from `HARVEST` to `MEASURE`.
 
-Placement follows the house rule (AGENTS.md invariant #2 — no I/O in the
+Placement follows the house rule (AGENTS.md #2 — no I/O in the
 engine):
 
 - **`stella-core/src/self_driving/campaign.rs`** — the pure half. Ledger
@@ -687,7 +687,7 @@ plateau, spend vs budget.
 
 ---
 
-## 11. Invariants
+## 11. Rules
 
 Same contract as AGENTS.md's list: the numbering is an address —
 append, never renumber.
@@ -726,7 +726,7 @@ append, never renumber.
     (doc:self-driving-missions §4)
 13. **A dimension's metric is declared by its evaluator, and validated.** A
     mission naming a metric no evaluator declares refuses to validate —
-    parity is declared, not assumed, exactly as AGENTS.md invariant 8
+    parity is declared, not assumed, exactly as AGENTS.md #8
     treats providers. (doc:self-driving-missions §5)
 
 ---

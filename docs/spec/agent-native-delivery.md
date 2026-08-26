@@ -187,7 +187,7 @@ pub enum IssueClass {
 That is the whole model. Four states, four classes, a title, a description,
 comments, and a parent edge.
 
-**What is deliberately absent, and why:** priority (a human steering signal
+**What is absent, and why:** priority (a human steering signal
 Stella reads but never acts on unilaterally — it enters ordering via the
 readiness queue, not the type system); assignee (Stella's claim discipline is
 in the fleet ledger, §10.4, because a tracker assignee field is not a lock);
@@ -469,7 +469,7 @@ comments do not belong in a gate.
 | `postmortem` | A postmortem artifact exists for this issue and every sink accepted it. |
 | `receipt` | The run receipt reached the tracker, or is journaled `pending_sync` (§10.3). |
 
-New artifact kinds are a code change with a checker, deliberately. The
+New artifact kinds are a code change with a checker. The
 alternative — free-text requirements — reproduces exactly the "process
 described in a prompt" failure this design exists to replace (§9).
 

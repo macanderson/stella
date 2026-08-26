@@ -86,7 +86,7 @@ Concretely:
    `lineage_id` referencing `context_records`. Populated means the record layer
    owns it and the legacy row is a projection. Null means the legacy row is
    still authoritative. Any reader can tell which regime a row is in, and the
-   invariant "`lineage_id` non-null implies the projection matches its record"
+   rule "`lineage_id` non-null implies the projection matches its record"
    is checkable at any time against real data — not only immediately after a
    migration.
 

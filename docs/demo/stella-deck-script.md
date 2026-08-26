@@ -22,7 +22,7 @@ time; its line is written to fit that window at a measured read of about
   tag; every cue ends on one so the join between cues never lands mid-breath.
   Do not add a trailing silence in the export — the tags already carry it.
 - **Read the cues as one script, in order**, then align each cue's audio to
-  its `start` time in the table. The windows are deliberately loose (each line
+  its `start` time in the table. The windows are loose (each line
   runs short of its shot by half a second or more) so a slightly slower read
   still lands before the next cut.
 - **Spell-outs.** The text below already writes the words the way they should

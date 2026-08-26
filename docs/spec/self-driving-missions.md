@@ -91,7 +91,7 @@ are used here with exactly the meanings defined there.
 | **dimension** | One axis of improvement: a named metric with a direction, an optional target, a smallest creditable step, and a guard tolerance for when some *other* dimension is under test. |
 | **evaluator** | The port that maps (twin, panel) → measurements. arenabench is the first adapter; `command:` is the general one (§5). |
 | **probe** | A declarative predicate over trial artifacts and traces, with a declared consequence (`warn`, `fail-arm`, `fail-mission`). The enforcement half of "process instructions" (§6). |
-| **playbook** | Ordered prose steps injected into PLAN-stage prompts — steering for the model, byte-stable for the life of the mission (invariant 7 discipline). The advisory half of "process instructions". |
+| **playbook** | Ordered prose steps injected into PLAN-stage prompts — steering for the model, byte-stable for the life of the mission (AGENTS.md #7 discipline). The advisory half of "process instructions". |
 | **experiment** | One generation's race: champion + the arms of one or more funded hypotheses, same panel, same protocol, one match. |
 | **verified step** | A promotion's evidence: a paired, significant, guard-clean, pre-registered lift on one dimension (§4.4). The unit the scorecard counts. |
 | **scorecard** | The `MissionReport` / `GenerationReport` pair — the deterministic answer to "how did that go" (§9). |
@@ -280,7 +280,7 @@ things in the first example were the adapter block and the metric names.
 | Field | Required | Meaning |
 |---|---|---|
 | `name` | yes | Stable handle; ledger records and reports key on it. |
-| `metric` | yes | A metric id the evaluator declares (§5.2). Validation refuses an undeclared metric — parity is declared, not assumed (foundry invariant 13). |
+| `metric` | yes | A metric id the evaluator declares (§5.2). Validation refuses an undeclared metric — parity is declared, not assumed (foundry rule 13). |
 | `direction` | yes | `maximize` or `minimize`. There is no `hold` — a dimension you only want held is a guard: give it `guard_tolerance` and no target. |
 | `target` / `target_ratio` | one, iff the dimension is a goal | Absolute value, or ratio of the measured baseline. A dimension with neither is a pure guardrail. |
 | `confidence` | with a target | The significance the paired gate must reach for target attainment (foundry §5.4 supplies the machinery). |
@@ -337,12 +337,12 @@ dimension D requires all of:
 1. **Fails on old / passes on new, as measurement.** Champion measured m₀ and
    twin measured m₁ under the *same* protocol — same panel, same attempts,
    same evaluator digest, comparability keys equal in everything but the
-   declared delta (foundry invariant 3).
+   declared delta (foundry rule 3).
 2. **Paired and significant.** The lift clears `select_winner`'s gate at the
    dimension's `confidence`, on paired tasks only (foundry §5.4).
 3. **Guard-clean.** No guarding dimension regresses past its tolerance.
 4. **Pre-registered.** D is the dimension the hypothesis predicted, and the
-   lift ≥ D's `min_step` (foundry invariant 11).
+   lift ≥ D's `min_step` (foundry rule 11).
 5. **Trace-joined and probe-clean.** The verdict survives the trace join, and
    no `fail-arm` probe fired (foundry §5.4, §6 here).
 
@@ -357,7 +357,7 @@ applies to "I made myself better."
 
 ### 5.1 The port
 
-Measurement is a port, not a concretion (invariant 1). The pure plane sees
+Measurement is a port, not a concretion (AGENTS.md #1). The pure plane sees
 only its output:
 
 ```rust
@@ -386,7 +386,7 @@ Two adapters ship first, and the set is open:
 
 A dimension naming a metric nothing measures must be a validation failure,
 not a runtime surprise. The `arenabench` adapter declares its metric set in
-code, like a provider declares its cache posture (AGENTS.md invariant 8). A
+code, like a provider declares its cache posture (AGENTS.md #8). A
 `command` evaluator cannot declare in code, so it declares in the manifest
 (`metrics = [...]`) and is **witnessed at adoption**: generation 0's first
 invocation must produce exactly the declared ids, or adoption fails closed
@@ -395,7 +395,7 @@ parity matrix uses.
 
 ### 5.3 The command contract
 
-Deliberately a contract over an executable, not a plugin API — evaluation
+A contract over an executable, not a plugin API — evaluation
 stacks churn faster than this repository, which is the same reasoning as the
 trainer port (foundry §8.1):
 
@@ -453,7 +453,7 @@ on_hit = "fail-arm"     # warn | fail-arm | fail-mission
   mandates, exposed as nameable rules: `role_model_census` (every
   `step_usage` row matches the seat's pinned models), `loop_detector_fired`,
   `verdict_trace_disagreement`, `operational_abort:<class>`. The v1 catalog
-  is deliberately this small — each builtin is a check that already exists,
+  is this small — each builtin is a check that already exists,
   not new machinery.
 - `command:` predicates are the escape hatch, under the §5.3 contract shape:
   the script gets `STELLA_MISSION_TRIAL_DIR` (artifacts + trace), exits 0 for
@@ -472,7 +472,7 @@ on_hit = "fail-arm"     # warn | fail-arm | fail-mission
 
 Ordered prose steps, rendered verbatim into the PLAN stage's prompt preamble
 alongside `intent` — fixed for the life of the mission, so the prompt prefix
-stays byte-stable (invariant 7). The playbook steers hypothesis generation
+stays byte-stable (AGENTS.md #7). The playbook steers hypothesis generation
 ("baseline forensics first", "prefer config-axis experiments until the first
 promotion"); it is never consulted by a verdict. A playbook step the model
 ignores costs experiments, which the funnel makes visible (§9) — that is the
@@ -494,7 +494,7 @@ operator's ask was explicitly "no time limit, but resources are finite."
   fires on any finite axis.
 - **Safe boundaries only.** Budget is consulted between stages and between
   experiments, never mid-trial — the engine-level rule (AGENTS.md
-  invariant 6) applied at campaign scale. A trial in flight when an axis
+  AGENTS.md #6) applied at campaign scale. A trial in flight when an axis
   exhausts completes and is scored; nothing new is funded after.
 - **Weights shape allocation.** The FUND decision (§8.2) spends each
   generation's `per_experiment_usd` slots across funded hypotheses in
@@ -533,7 +533,7 @@ and the arms made plural:
 - A hypothesis **must** predict a dimension before it can be funded, and the
   JUDGE stage credits **only** that dimension, at no less than its
   `min_step`. An off-dimension effect observed mid-experiment is evidence for
-  a *new* hypothesis card, never a win for this one (foundry invariant 11).
+  a *new* hypothesis card, never a win for this one (foundry rule 11).
   This is the anti-p-hacking rule: an optimizer that may claim whatever
   moved will always find something that moved.
 - **Best-of-N is arms on one card.** Several implementations of one idea run
@@ -699,7 +699,7 @@ intent-and-measurement blocks:
 
 Because nothing has shipped against `schema = 1`, this is a design-time
 re-base, not a migration — the same PR that lands this document adds a
-pointer note to the foundry spec's §4.2 and appends invariants 11–13 to its
+pointer note to the foundry spec's §4.2 and appends rules 11–13 to its
 list (pre-registration bounds credit; baselines are measured, never
 asserted; a dimension's metric is declared by the evaluator and validated).
 Append-only, per that list's own rule.
@@ -708,14 +708,14 @@ Append-only, per that list's own rule.
 
 ## 12. Routing and sequencing
 
-Placement follows the house split (AGENTS.md invariants 1–2), matching how
+Placement follows the house split (AGENTS.md #1 and #2), matching how
 foundry placed the campaign machinery:
 
 - **`stella-core/src/self_driving/mission.rs`** — pure: manifest types and
   validation (dimensions, budget axes, probe/playbook shapes, declared-metric
   parity), `Measurement`/verdict types, the improvement-witness check, the
   allocator, the report folds. Serde round-trip tests for every type that
-  crosses the core/CLI boundary (invariant 4); property tests beside the
+  crosses the core/CLI boundary (AGENTS.md #4); property tests beside the
   existing `self_driving` ones.
 - **`stella-cli/src/self_driving_cmd/mission.rs`** — I/O: manifest load,
   evaluator adapters (`arenabench` shell-out, `command`), probe execution,
@@ -750,7 +750,7 @@ is the junction and depends on foundry Phase 1.
    dimension vector) is well-defined but needs more samples than a panel
    affordably gives; defer until a mission genuinely cannot be expressed as
    goal-plus-guards.
-3. **Probe language.** `builtin:` + `command:` is deliberately not a query
+3. **Probe language.** `builtin:` + `command:` is not a query
    DSL. If probe scripts proliferate into copies of each other, that is the
    evidence a jq-shaped trace query language would need — collect it first.
 4. **Governance surface.** Should mission manifests join `stella context

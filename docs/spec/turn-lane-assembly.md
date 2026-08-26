@@ -172,8 +172,8 @@ if you miss one. Every miss is silent and stays silent until a run pays for it.
 **Make forgetting a lane a build error.**
 
 Everything below is machinery for that sentence. The repository has already
-proved this exact instrument twice — invariant #8's provider parity matrix and
-invariant #10's event-consumer ledger — and both use the same three parts: a
+proved this exact instrument twice — AGENTS.md #8's provider parity matrix and
+AGENTS.md #10's event-consumer ledger — and both use the same three parts: a
 declared row per subject, a posture that makes an absence legal only when
 written down, and enforcement from both sides so the declaration cannot rot.
 This proposal points that discipline at lane assembly. It invents no new
@@ -187,7 +187,7 @@ Each is independently shippable and independently useful. None is a big-bang.
 
 ### Move 1 — Name the lane
 
-`TurnLane` in `stella-protocol` (types only, per invariant #1). **It is open
+`TurnLane` in `stella-protocol` (types only, per AGENTS.md #1). **It is open
 from the first commit** — see §9 for why, and why this is the one decision here
 that is expensive to defer:
 
@@ -213,7 +213,7 @@ so `agent.turn.started` can say which lane a turn came from — which no surface
 can answer today, including the Observatory.
 
 *Witness:* a lane-tagged `TurnStarted` round-trips through `serde_json`
-(invariant #4) and the Observatory renders the lane column.
+(AGENTS.md #4) and the Observatory renders the lane column.
 
 *Cost:* small. One enum, one event field, one snapshot re-bless.
 
@@ -301,7 +301,7 @@ registry, store, budget)" and reads no ambient environment by contract.
 `TurnCapabilities` is the top half, and the lane→capabilities resolution
 belongs there: `RuntimeSpec { lane, .. } → SessionRuntime::capabilities()`.
 
-This keeps `stella-core` I/O-free (invariant #2) and gives every lane one door.
+This keeps `stella-core` I/O-free (AGENTS.md #2) and gives every lane one door.
 `stella-cli`'s three `engine_config_for*` variants collapse into
 `runtime.capabilities(lane)`, and the fleet's silent-`None` — a `bind_session`
 that is never called, three files from the site that reads it — becomes a
@@ -353,7 +353,7 @@ by default — an undeclared authority is a load-time rejection, not a silent
 
 ---
 
-## 7. What this deliberately does not do
+## 7. What this does not do
 
 **It does not merge the pipeline into the loop.** The pipeline is a
 *supervisor* that runs several turns through the one loop, in a stage graph. It

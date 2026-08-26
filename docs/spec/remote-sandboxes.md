@@ -23,11 +23,11 @@ costs and what fills the gap in the meantime.
 
 ---
 
-## 1. What was asked for, as invariants
+## 1. What was asked for, as rules
 
 A user should be able to point a Stella session at a Modal container, an
 E2B sandbox, a Daytona workspace, or a box over SSH, instead of their own
-laptop. Four requirements were stated, and each of them is an invariant
+laptop. Four requirements were stated, and each of them is a rule
 that this design has to be checkable against — not a goal it aspires to:
 
 - **I1 — No vendor dependency.** No shipped crate may name Modal, E2B,
@@ -47,7 +47,7 @@ that this design has to be checkable against — not a goal it aspires to:
   mutable state between them.
 
 Everything below is in service of those four. Section 11 is a checklist
-that maps each design decision back to the invariant it protects.
+that maps each design decision back to the rule it protects.
 
 ---
 
@@ -409,7 +409,7 @@ second round trip per write, and worse, a race.
 So `WriteReceipt` carries it: `existed_before`, `bytes_written`,
 `line_delta`, and the post-write digest. The registry reads the receipt
 instead of the disk. One round trip, no race, and — critically for the
-single-emitter invariant — **the `FileChange` event is still emitted
+single-emitter rule — **the `FileChange` event is still emitted
 host-side by the registry**, from the receipt. The
 sandbox reports facts; the host is the only thing that ever writes an
 event. Nothing else in the codebase may start counting file changes from
@@ -588,7 +588,7 @@ This buys three things:
 **Guard:** a CI check that fails if any shipped manifest matches a vendor
 denylist. This repo already likes regression witnesses of exactly this
 shape (the centralized `contextgraph-*` declaration test), and **I1** is
-the kind of invariant that erodes through one well-meaning convenience
+the kind of rule that erodes through one well-meaning convenience
 dependency.
 
 ### 7.1 Three in-tree providers, none of them vendors
@@ -732,9 +732,9 @@ What has to be true for N sessions in N sandboxes:
 
 ---
 
-## 11. Invariant checklist
+## 11. Rule checklist
 
-| # | Invariant | Protected by |
+| # | Rule | Protected by |
 |---|---|---|
 | I1 | No vendor dependency | §7 out-of-process providers; CI manifest denylist; vendor adapters live outside the repo |
 | I2 | No interest in the sandbox | §5 host-bound tool class; §8 three-verb lifecycle; §8.3 durability table; §8.2 diff-not-sandbox harvest |

@@ -146,7 +146,7 @@ base persona            SYSTEM_PROMPT | PIPELINE_SYSTEM_PROMPT | agents.<kind>.p
 
 Everything in that list is loaded **once per session** and concatenated
 deterministically. That is the byte-stable prefix discipline (architecture
-invariant 7, and L-E8): a memory saved mid-session deliberately does *not*
+AGENTS.md #7, and L-E8): a memory saved mid-session does *not*
 appear until the next session, because hot-injecting it would invalidate the
 cached prefix on every save. Turn-relevant recall rides as a volatile message
 *after* the prefix, never interleaved into it.
@@ -216,7 +216,7 @@ above), `agent_author`, `skill_author`, `domain_inference`, `reflection`,
 
 ## Output caps
 
-Two chokepoints declare these, and they are deliberately the same shape.
+Two chokepoints declare these, and they are the same shape.
 `management_bounds` (`crates/stella-pipeline/src/pipeline/raw_usage.rs`) covers
 the staged pipeline's management roles; `standalone_bounds`
 (`crates/stella-cli/src/accounted_call.rs`) covers the four paid one-shot calls
@@ -252,7 +252,7 @@ decision: triage writes a three-line classification whose value is the routing
 choice, while an authoring role's *product* is the written artifact — buying it
 less deliberation is a quality change, not a bounds one.
 
-A cap stated by the caller always wins and is deliberately given *no* headroom:
+A cap stated by the caller always wins and is given *no* headroom:
 an operator who pinned 512 asked for 512, and quietly serving 4,608 would make
 the setting a suggestion. On the standalone side that channel is narrower —
 there is no separate override field, so one `max_output_tokens` carries both
@@ -267,7 +267,7 @@ retried once at `STARVED_RETRY_CAP` (32,768), loudly, at **all three** dispatch
 sites. Summarization was the last to gain both halves (#2503): it dispatches
 exactly one role from the engine itself, so instead of a third bounds table its
 site pins the contract locally and pads it with the same shared
-`with_reasoning_headroom`. Its starved retry deliberately does **not** count
+`with_reasoning_headroom`. Its starved retry does **not** count
 toward the summarizer's give-up latch — the latch exists for a broken
 summarizer, and a starved one is merely short of room; only a retry that also
 comes back empty records the failure.

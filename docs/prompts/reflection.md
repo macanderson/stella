@@ -165,7 +165,7 @@ replaced in place by `… N messages elided …`, and a digest that elided anyth
 says so in a header, so the model can report that the evidence it needed was
 outside the selection rather than reason across a gap it cannot see. `System`
 messages are excluded entirely: the prompt prefix is byte-stable by design
-(AGENTS.md invariant 7) and identical on every turn.
+(AGENTS.md #7) and identical on every turn.
 
 When the calling surface folded a friction ledger from the turn's `AgentEvent`
 stream, the digest opens with a short section naming where the turn spent

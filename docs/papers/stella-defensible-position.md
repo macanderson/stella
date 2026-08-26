@@ -32,7 +32,7 @@ a tool-calling loop, a context window, and a CLI. On this surface, most agents
 are functionally substitutable — a user can move from one to another with
 marginal friction. This paper argues that Stella occupies a defensible position
 not because of any single feature, but because of a set of **architectural
-invariants** that are expensive to replicate, mutually reinforcing, and
+rules** that are expensive to replicate, mutually reinforcing, and
 grounded in primary research on software-engineering agents, context window
 economics, and multi-agent system failure modes. We identify seven defensible
 properties, analyze why each is hard to copy, and show why the *combination* —
@@ -93,12 +93,12 @@ We identify seven such properties in Stella's design.
 
 ## 2. The seven defensible properties
 
-| # | Property | Core invariant | Enforced by |
+| # | Property | Core rule | Enforced by |
 |---|---|---|---|
 | I | Ports, not direct dependencies | The engine (`stella-core`) never imports a provider SDK, filesystem API, or terminal library | Crate-level dependency boundary; `Provider` trait (`stella-protocol`) and `ToolExecutor` trait (`stella-core::ports`) |
 | II | No I/O in the engine | All decision logic is synchronous functions over owned data | Architectural discipline; property-tested in `stella-core` |
 | III | Witness-test contract | A task is done only when a test fails on old code and passes on new | An installed verification plugin's witness stage and flip oracle (Oxagen's Vera is the reference one); the built-in staged pipeline that used to ship this in-tree (`stella-pipeline`) was deleted in #3865 |
-| IV | BYOK + zero telemetry egress by default | Community/default telemetry is local; only an explicitly enrolled Oxagen Enterprise managed deployment may send a signed-policy-authorized, content-free operational rollup | Architectural invariant; local SQLite (`stella-store`) plus the [managed enrollment boundary](../../website/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export) |
+| IV | BYOK + zero telemetry egress by default | Community/default telemetry is local; only an explicitly enrolled Oxagen Enterprise managed deployment may send a signed-policy-authorized, content-free operational rollup | Architectural rule; local SQLite (`stella-store`) plus the [managed enrollment boundary](../../website/content/docs/telemetry/index.mdx#oxagen-enterprise-managed-export) |
 | V | Prompt-cache-native memory | Lessons load into a byte-stable system prompt prefix at ~0.1x input price | `build_system_prompt` (`stella-cli::agent`); L-E8 cache discipline |
 | VI | Budget at safe boundaries | The budget guard consults only between model calls, never interrupts a tool | `run_turn` budget check (`stella-core::driver`); property-tested |
 | VII | Context Graph Protocol | Retrieval is a typed, budgeted, provenance-carrying, consent-gated, conformance-verified protocol | `contextgraph-types`, `contextgraph-host`, `contextgraph-conformance` |
@@ -109,7 +109,7 @@ Each property is examined below.
 
 ## 3. Property I: Ports, not direct dependencies — the adapter boundary
 
-### The invariant
+### The rule
 
 `stella-core` — the engine that drives the agent loop (planning, tool
 execution, compaction, loop detection, budget, retry, goal-mode judging) —
@@ -163,7 +163,7 @@ a coupled engine is not.
 
 ## 4. Property II: No I/O in the engine — decision logic is pure
 
-### The invariant
+### The rule
 
 All decision logic in `stella-core` — compaction, eviction, loop detection,
 budget guard, retry strategy, skill selection, hook matching — is implemented
@@ -204,7 +204,7 @@ loops on your API budget).
 
 ## 5. Property III: The witness-test contract — verified done
 
-### The invariant
+### The rule
 
 Stella refuses to call a task done until a **witness test** proves it: a test
 that **fails on the old code** (the feature is genuinely absent) and **passes
@@ -289,7 +289,7 @@ standard.
 
 ## 6. Property IV: BYOK + zero telemetry egress by default — the trust perimeter
 
-### The invariant
+### The rule
 
 Two architectural constraints, enforced together:
 
@@ -337,7 +337,7 @@ telemetry client or analytics endpoint, and there is no update checker.
 
 For enterprise adoption, the trust perimeter is not a feature — it is a
 **gate**. Community/default Stella satisfies a zero-telemetry-egress policy by
-design. Organizations that deliberately permit operational egress can instead
+design. Organizations that permit operational egress can instead
 audit and enroll the signed Oxagen Enterprise boundary rather than accepting
 ambient analytics.
 
@@ -352,7 +352,7 @@ local identifiers.
 
 ## 7. Property V: Prompt-cache-native memory — the cost discipline
 
-### The invariant
+### The rule
 
 Lessons written as markdown in
 `.stella/memories/` load once at session start into a **byte-stable system
@@ -412,7 +412,7 @@ prompt-cache locality is not just a performance optimization — it is a
 
 ## 8. Property VI: Budget enforcement at safe boundaries
 
-### The invariant
+### The rule
 
 Stella enforces a hard `--spend-limit` (in USD) that aborts the agent cleanly. The
 critical constraint: **the budget guard consults only between model calls,
@@ -468,7 +468,7 @@ reported metric, but an abort condition.
 
 ## 9. Property VII: The Context Graph Protocol — an open standard
 
-### The invariant
+### The rule
 
 Retrieval in Stella is designed as an open, versioned wire protocol (CGP,
 `contextgraph/1.0-draft`): the `contextgraph-types` crate (zero dependencies beyond `serde`),
@@ -651,7 +651,7 @@ A rigorous analysis must consider what could erode Stella's position:
 ## 13. Conclusion
 
 Stella's defensible technology position is not a feature list. It is a set of
-**architectural invariants** — ports not direct dependencies, no I/O in the engine,
+**architectural rules** — ports not direct dependencies, no I/O in the engine,
 witness-test definition of done, BYOK with zero Community/default telemetry
 egress and one explicit signed Oxagen Enterprise operational exception,
 prompt-cache-native memory, budget enforcement at safe boundaries, and the Open

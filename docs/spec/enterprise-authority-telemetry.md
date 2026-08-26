@@ -22,7 +22,7 @@ This design implements the first two delivery phases:
 - Phase 1 makes budget, context, privacy, and enterprise operational telemetry
   reliable enough for an enrolled deployment.
 
-## Non-negotiable invariants
+## Non-negotiable rules
 
 1. Repository content is evidence, never authority. An untrusted repository
    cannot enable tools, replace privileged prompts, register executable custom

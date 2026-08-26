@@ -160,7 +160,7 @@ fingerprint already matches the witness's *authored* baseline observation —
 the run against the pristine, untouched tree the witness was proven to fail on
 when it was created — the brief leads with a fixed-vocabulary caution that the
 check may not be observing the change at all, whatever grain the ladder has
-settled on. This is deliberately not gated on the `revisions > 0` guard that
+settled on. This is not gated on the `revisions > 0` guard that
 `LadderInputs::witness_unmoved_by_revision` (§4.1's terminal rung) uses: that
 guard protects `WitnessUnsatisfiable` from a false positive on a worker that
 simply hasn't finished, but the caveat feeds only the worker's own brief, so
@@ -307,7 +307,7 @@ tally of the calls it dispatched itself, not a probe into the world — and
 waives the witness only when nothing changed *and nothing tried*. The ladder
 carries the same rule one rung further: dispatched mutating calls plus a
 readable, empty diff and no other observation resolves to `Unverifiable`, an
-abstention, never a pass. It is deliberately not a failure — the work may be
+abstention, never a pass. It is not a failure — the work may be
 entirely correct and merely uncollected, and no revision can make an
 un-snapshot-able workspace observable.
 

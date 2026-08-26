@@ -114,7 +114,7 @@ a superseding ADR.
 
 - `origin` — **frozen**: `user`, `system`, `observed`, `inferred`, `imported`
 - `status` — **frozen**: `active`, `retracted`, `archived`
-  (there is deliberately no `superseded` — a replaced record is `archived`,
+  (there is no `superseded` — a replaced record is `archived`,
   and its successor points back at it with a `derived_from` link; the forward
   `supersedes` pointer lives in the lifecycle ledger's append, never in the
   immutable file. `retracted` means the claim was _wrong_, `archived` means
@@ -170,7 +170,7 @@ into "passed." A refuter that reports OK for claims it never checked launders
 unvalidated content with a validated stamp — the same failure shape as a guard
 script that prints OK while silently skipping most of its inputs.
 
-## What is deliberately absent
+## What is absent
 
 **No `parent_id` / hierarchy.** Records co-derived from one sentence are
 siblings, not parent and child. Hierarchy would be a second relationship

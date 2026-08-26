@@ -42,7 +42,7 @@ co-equal evidence.
 | 1 | `RuleEnforcement::Informational` migration target | **Ratified** 2026-07-24 | `informational → advisory` |
 | 2 | Directive origin arity (4 vs uniform-5) | **Resolved** (ADR 0001) | Uniform **5-value** `Origin` for all families; §8.6's four are illustrative |
 | 3 | Define "guarded" | **Ratified** 2026-07-24 | A directive carrying an `enforcer_ref` (executable guard), independent of enforcement level |
-| 4 | `constraint_effect` closed set | **Resolved** (lifecycle:501–506) | `{require, forbid}`; `allow` deliberately excluded. Flag's premise was false |
+| 4 | `constraint_effect` closed set | **Resolved** (lifecycle:501–506) | `{require, forbid}`; `allow` excluded. Flag's premise was false |
 | 5a | ContractValidation result `method` token | **Ratified** 2026-07-24 | `method ∈ {deterministic, semantic_verifier}` |
 | 5b | `requirement_status` vs `validation_status` | **Resolved** (build-prompt:753–755) | Two distinct fields sharing `{passed, failed, error, skipped}` |
 | 6 | Procedure step `order` semantics | **Resolved** (plan:502) | Unique + sortable; contiguous `1..N` not required |
@@ -143,7 +143,7 @@ normatively under `#### Constraint`:
 > `Allow is deliberately excluded. Learned context cannot grant authorization.`
 > — lifecycle:501-506
 
-Reinforced by invariant 8 (lifecycle:1262, "Authorization cannot be granted by a
+Reinforced by rule 8 (lifecycle:1262, "Authorization cannot be granted by a
 directive") and matched verbatim by plan:501, delta:129-130, and both
 build-prompts. **Authoritative closed set: `{require, forbid}`**, `allow`
 excluded.

@@ -88,12 +88,12 @@ preserved as an effect of retirement rather than a parallel mechanism.
 
 Memory records render into the byte-stable cached prefix exactly as today:
 loaded once per session, sorted by filename, budget-capped. The spec's §5.1
-byte-stability invariant is an explicit acceptance criterion for every
+byte-stability rule is an explicit acceptance criterion for every
 implementing PR — prompt-cache goldens must stay green. What changes is only
 that the channel becomes a declared property of the record instead of an
 accident of `agent::prompt`.
 
-## What this deliberately does not decide
+## What this does not decide
 
 - **Episodic memory.** `context.db`'s mined episodes/facts recall path is
   volatile-channel context, already governed by ADR 0010's incremental

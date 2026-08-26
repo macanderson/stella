@@ -43,7 +43,7 @@ base persona            SYSTEM_PROMPT | PIPELINE_SYSTEM_PROMPT | agents.<kind>.p
 
 Every element is loaded **once per session** and concatenated
 deterministically, which is what makes the whole prefix byte-stable and
-therefore cacheable (architecture invariant 7, L-E8). Consequences worth
+therefore cacheable (AGENTS.md #7, L-E8). Consequences worth
 knowing:
 
 - **A memory saved mid-session does not appear until the next session.** Hot
@@ -308,7 +308,7 @@ other one?" still resolves.
 
 Output cap 2,048 visible + headroom, effort pinned `Low`.
 
-`agents.worker.prompt` deliberately does **not** reach this call, unlike the
+`agents.worker.prompt` does **not** reach this call, unlike the
 plan stage (#2416). It is the operator's engineering persona — the thing this
 path exists to replace — so prepending it would re-arm exactly the behaviour
 `CONVERSATIONAL_SYSTEM_PROMPT` suppresses, on a turn that has no task. The
@@ -326,7 +326,7 @@ You are a research sub-agent. You have been given one specific question by a par
 ```
 
 Children record as role `Worker`. Child ids are minted from a **counter**, not
-a random or time-based suffix: replay determinism (invariant 7) means the same
+a random or time-based suffix: replay determinism (AGENTS.md #7) means the same
 call order must produce the same ids, and an id that changed between replays
 would make the journal's `SubAgent` brackets unmatchable (#1852).
 

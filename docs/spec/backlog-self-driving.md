@@ -209,7 +209,7 @@ decides, `stella-cli` probes):
 | | Owns | Why there |
 |---|---|---|
 | **`stella-autonomy`** (leaf, pure) | Cycle plan, ladder, dedup, AIMD, and — new — the loop step machine (§3.7), the PR state machine (§3.3), and the supply model (§4). | Property-testable over owned data. A governor that reads the machine itself cannot be handed a fake in a test. |
-| **`stella-cli`** (the binary) | Every new verb in §3. The issue port, the run execution, the git/forge effects, the curation writes. | Invariant 2 keeps all of it out of the engine; invariant 1 keeps the forge behind a port. |
+| **`stella-cli`** (the binary) | Every new verb in §3. The issue port, the run execution, the git/forge effects, the curation writes. | AGENTS.md #2 keeps all of it out of the engine; AGENTS.md #1 keeps the forge behind a port. |
 | **`plugins/stella-selfdriving`** (the driver) | *Policy only*: when to run, how many at once, in what order, when to stop, what to escalate. A loop that asks for declared capabilities and nothing else. | It is the piece an operator should be able to fork, replace, or write in another language without forking Stella. |
 
 The consequence that everything else depends on: **the judgement half becomes
@@ -241,7 +241,7 @@ host  → { "result": 2, "ok": { "verdict": "…", "diff": … } }
 plugin→ { "point": "drive", "body": { "next": { "sleep": { "secs": 900 } } } }  ← ends it
 ```
 
-Three properties carried over deliberately, because each already earned its
+Three properties carried over, because each already earned its
 place:
 
 - **A refusal is a value.** A driver denied `deliver_merge` degrades to opening
@@ -401,7 +401,7 @@ mechanism rather than new invention:
   the forge. That is a weaker guarantee than the deleted pipeline offered and it
   is the true one; a design doc that kept promising the stronger one would be
   the expedient this repository treats as a defect.
-- **Abort is at safe boundaries** (invariant 6). A budget ceiling reached
+- **Abort is at safe boundaries** (AGENTS.md #6). A budget ceiling reached
   mid-tool waits for the tool.
 
 ### 3.3 `deliver` — branch, PR, CI, review, merge
@@ -461,7 +461,7 @@ and escalates to no model.
 | `curate list` | `query-envelope` | Pending proposals and their evidence counts. |
 | `curate accept <id>` | `json` | Apply a proposal **if the workspace's declared authority permits it** (§7). |
 
-### 3.6 What deliberately stays off the channel
+### 3.6 What stays off the channel
 
 - **No `release` call at B0–B6.** §6.4.
 - **No call that edits the driver's own grant.** The loop may propose an
@@ -470,7 +470,7 @@ and escalates to no model.
 - **No call that breaks or steals another worker's claim.** The lease expires on
   its own; `fleet_claims.rs` already declines to offer this and gives the
   reason.
-- **No mode flags.** Invariant 9: a parameter scopes, never selects. `curate
+- **No mode flags.** AGENTS.md #9: a parameter scopes, never selects. `curate
   accept` and `curate reject` are two calls, not one with a boolean.
 
 ### 3.7 The loop step machine
@@ -609,7 +609,7 @@ problem:
   fires when the loop files far more than it discovers. Under `NOISY` the
   policy must *narrow* — stop re-arming the ladder, drain the queue only —
   rather than open another lens. Today `metrics` reports it and nothing acts on
-  it, which is invariant 10's shape of defect (an emitted signal with no
+  it, which is AGENTS.md #10's shape of defect (an emitted signal with no
   consumer) sitting in the loop's own machinery.
 - **Yield is the metric, not throughput.** Merged-PRs-per-dollar and
   regression-catches-per-sweep. A loop optimizing cycles completed is measuring
@@ -659,7 +659,7 @@ unattended before the grant it consented to is enforced.
 
 Today: one environment variable, `SELF_DRIVING_BUDGET_USD`, per cycle. That is
 not enough envelope for a loop that never stops. Required: per-unit, per-cycle,
-and per-day ceilings; all three consulted only at safe boundaries (invariant 6);
+and per-day ceilings; all three consulted only at safe boundaries (AGENTS.md #6);
 all three recorded in the ledger so `metrics` can fold spend against yield.
 
 ### 6.3 Concurrency
@@ -722,12 +722,12 @@ things" field. So:
 | Closed enums and numbers a **pure machine** branches on — `foreign_breakage`, `contention`, `abandon_escalated` | Prose instruction for the **judgement half** — "prefer the architecturally sound option", "match the neighbourhood", "no new dependencies casually" |
 | No model ever reads it. An operator's declared preference becomes *testable*: you can assert `FileAndWait` does not adopt, and the assertion cannot be talked out of. | Already has a home (`.stella/rules/*.toml`, `doc:context-pr`), already governed, already versioned. |
 
-The test is invariant 5's: **does a caller branch on it?** A pure machine
+The test is AGENTS.md #5's: **does a caller branch on it?** A pure machine
 branching on a closed enum belongs; a sentence a model reads does not. A
 `[self_driving.doctrine]` field that wants to say something prose-shaped **is** a
 context record, and the answer to that request is a pointer, not a field.
 
-Two axes this table used to name are deliberately absent, and both absences say
+Two axes this table used to name are absent, and both absences say
 something about where a knob belongs. **Queue order** is not an operator's to
 declare: the ranking is `backlog::ranked_keys` over
 `stella_autonomy::priority::TriagePolicy`, whose `ladder`, `defect_kinds` and
@@ -890,7 +890,7 @@ its witness — a test that fails on `main` and passes with the change.
 | **B4** | **Supply.** Ladder re-arm on baseline delta; `sweep regress` over closed-issue receipts; `sweep meta`. Per-supply switch, default queue-only. | A lens dry at `HEAD` re-opens after the declared baseline delta and yields **only** digests absent from `seen.txt`. | never runs out |
 | **B5** | **The residue gate** ([`doc:agent-native-delivery`](agent-native-delivery.md) §7) in `warn`, plus fingerprint dedup and decay. | A run stating a follow-up in prose and claiming `done` fails the gate; the same run with the item `filed` passes. | filing is a guarantee |
 | **B6** | **`curate`.** Proposals from ledger evidence; acceptance gated on declared authority; `regulated` keeps the human on context records. | A skill proposal reaching the recurrence threshold is *proposed* and, under `regulated`, **not** applied. | self-curation |
-| **B7** | **`release`,** opt-in, gated on green `main` + quiet canary + derivable changelog. | Deliberately deferred — see §6.4. | shipping |
+| **B7** | **`release`,** opt-in, gated on green `main` + quiet canary + derivable changelog. | Deferred — see §6.4. | shipping |
 
 **B1's first slice has landed**: the [`Issue`] kernel and the
 [`IssueProvider`] port (`crates/stella-protocol/src/issue.rs`), the GitHub

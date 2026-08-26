@@ -56,7 +56,7 @@ that learns but cannot show its work cannot be debugged, trusted, or corrected.
 
 ## 3. What already ships
 
-This section is deliberately first. The largest error in the previous bundle was
+This section is first. The largest error in the previous bundle was
 planning against an imagined baseline.
 
 **Retrieval is real and hybrid.** A bi-temporal property graph with a
@@ -135,11 +135,11 @@ retirement. The loop in §7 runs end to end.
 One qualification, because §5.5 asks for gaps to be declared where a caller can
 see them rather than only in prose: the final step, *retired*, is reached today
 by a human decision or by any pruning-eligible evidence source. Citations are
-`agent_self_report` and are deliberately excluded from driving suppression, so
+`agent_self_report` and are excluded from driving suppression, so
 the sweep does not yet retire anything on its own. That is a missing *evidence
 source*, not a missing mechanism.
 
-## 5. Invariants
+## 5. Rules
 
 These are non-negotiable and apply to every phase.
 

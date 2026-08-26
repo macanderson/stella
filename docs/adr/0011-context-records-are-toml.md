@@ -108,7 +108,7 @@ paper.
 - ADR 0008's open question — owner-routing policy, deferred to Phase 8 — is
   untouched by this decision.
 
-## What this deliberately does not decide
+## What this does not decide
 
 - **The field schema.** Which fields a context record carries, and what their
   vocabularies are, is a separate decision constrained by ADR 0009's enum

@@ -24,7 +24,7 @@
 # still load from `.stella/mcp.toml`. Stella says so loudly at startup rather
 # than dropping them silently. Everything else here is live.
 #
-# What this file deliberately does NOT contain:
+# What this file does NOT contain:
 #   - `[[integrations]]`, `[models]`, `[pipeline]`, per-agent `tools`,
 #     `provider_preference` — none of those exist. They are in
 #     `stella.next.toml`, with the build plan in `DESIGN.md`.
@@ -150,7 +150,7 @@ id            = "my-vllm"
 #
 # ...except `research` and `plan`, whose chain ends at the WORKER instead of
 # `default_model`: unset, they run whatever the worker runs, field by field.
-# `--model` re-points the worker for one invocation and deliberately does not
+# `--model` re-points the worker for one invocation and does not
 # touch settings, so inheriting `default_model` would split them onto the model
 # the flag just overrode — a run reporting one model and buying two.
 # -----------------------------------------------------------------------------
@@ -387,7 +387,7 @@ headers   = { Authorization = "Bearer ${GITHUB_MCP_TOKEN}" }
 #
 # Seven sub-blocks. Whole-block last-wins across scopes (not per-field).
 #
-# Two dimensions are deliberately SEPARATE and must not be collapsed:
+# Two dimensions are SEPARATE and must not be collapsed:
 #   learning.mode    — how much of the learning loop runs
 #   governance.mode  — who governs promotions
 #
@@ -599,7 +599,7 @@ per_revision         = 0.1    # subtracted per verification round after the firs
 # ENTERPRISE TELEMETRY  ── settings.json `enterprise_telemetry`
 #
 # Captured from MANAGED scope only, parsed as raw JSON and validated fail-open
-# by its own adapter. Shape is deliberately not pinned by the settings schema.
+# by its own adapter. Shape is not pinned by the settings schema.
 # Shown here only for completeness of the key inventory.
 # -----------------------------------------------------------------------------
 

@@ -157,7 +157,7 @@ though the final decision (§5) goes the other way.
 
 | Failure | Subprocess hook (today, built) | MCP over stdio (partially built; the "lifecycle extension" gap) |
 |---|---|---|
-| Crash before responding | `HookExecError::SpawnFailed` — structurally distinct from a completed non-zero exit (`hooks.rs:301-309`). `PreToolUse` blocks (fail-closed); `PostToolUse`/`SessionStart`/`PreCompact` never block, failure lands in `diagnostics` (fail-open, `hooks.rs:461-483`). `Stop` never blocks — deliberately, because failing closed there means never completing (`user_hooks.rs:55-59`). | A dead child leaves `StdioTransport` permanently closed; every outstanding waiter gets `McpError::Closed` with the child's stderr tail attached (`stdio.rs:528-541`, `src/README.md` "Connection failures are data"). `McpClient` classifies it as `RequestOutcome::Dropped`, reconnects, and — only for a tool advertised read-only/idempotent — transparently retries once (`client.rs:273-294`). **No fail-open/fail-closed *direction* exists yet**, because no hook-event semantics exist on top of `tools/call` — this is exactly the "lifecycle extension" gap named by the spike. |
+| Crash before responding | `HookExecError::SpawnFailed` — structurally distinct from a completed non-zero exit (`hooks.rs:301-309`). `PreToolUse` blocks (fail-closed); `PostToolUse`/`SessionStart`/`PreCompact` never block, failure lands in `diagnostics` (fail-open, `hooks.rs:461-483`). `Stop` never blocks —, because failing closed there means never completing (`user_hooks.rs:55-59`). | A dead child leaves `StdioTransport` permanently closed; every outstanding waiter gets `McpError::Closed` with the child's stderr tail attached (`stdio.rs:528-541`, `src/README.md` "Connection failures are data"). `McpClient` classifies it as `RequestOutcome::Dropped`, reconnects, and — only for a tool advertised read-only/idempotent — transparently retries once (`client.rs:273-294`). **No fail-open/fail-closed *direction* exists yet**, because no hook-event semantics exist on top of `tools/call` — this is exactly the "lifecycle extension" gap named by the spike. |
 | Hang (never answers) | Bounded by `HookAction::effective_timeout_ms()` (default 60s, ceiling 600s, `hooks.rs:75,78,108-115`); on timeout the whole `setsid` process group is `SIGKILL`ed (`hook_runner.rs:99-109`). `PreToolUse` blocks with a `TimedOut` reason (fail-closed); `Stop`/others never block (fail-open), matching the crash row. | Bounded by `McpClient`'s per-call `call_timeout` (default 60s, `toolset.rs:78`, same order of magnitude as the hook default). `RequestOutcome::Timeout` tears the connection down (`client.rs:266-271`, `note_call_failure` sets `conn.transport = None` — `client/health.rs:205`), which drops the last `Arc<StdioTransport>` and fires `kill_on_drop` on the child (`stdio.rs:250`), so a hung MCP child is eventually `SIGKILL`ed too, functionally the same shape as the hook path. Still missing: which hook-equivalent event this maps to, and which direction it should fail. |
 | Malformed output | A decision-aware `PreToolUse` hook whose stdout is not valid `HookDecision` JSON is treated as an evaluation failure and **denies unconditionally** through `resolve_precedence`, regardless of any softening flag (`user_hooks.rs:24-29`, OXA-2056). | `decode_call_result` maps an undecodable `result` to a typed `McpError` (`RequestOutcome::Protocol`), passed straight through without reconnecting — "the server answered, just badly" (`client.rs:310-312`). Again, there is no wrapper-point *decision* semantics layered on top yet to say what a malformed `after_turn`/`again?` payload should do to the turn. |
 | Plugin that never exits | Bounded by the same timeout + process-group `SIGKILL` as the hang case — cannot outlive the timeout window (`hook_runner.rs`, `GroupKillGuard`). | Not a distinct failure mode for a *correctly* long-lived MCP server (that is the intended shape); a runaway child that should have exited is caught by the same timeout+`kill_on_drop` path as the hang row, plus `close()`'s `SHUTDOWN_GRACE` (500 ms) before a hard kill at session end (`stdio.rs:78,370-415`). |
@@ -169,7 +169,7 @@ What does **not** exist, on either side of this table, is the
 **event-semantics layer**: which of the four wrapper points is fail-open and
 which is fail-closed, expressed as MCP methods/capabilities rather than as
 `HookEvent` variants. The subprocess side already has this worked out and
-shipped, with the direction chosen deliberately per event
+shipped, with the direction chosen per event
 (`user_hooks.rs`'s module doc comment, lines 7-29 for why `PreToolUse` is
 fail-closed and lines 31-59 for why `Stop` is fail-open — a lesson paid for
 once, not something the spike gets to
@@ -255,7 +255,7 @@ today's `bash -c` wrapper, not slower.
   that has to be designed, documented, and gotten right on the fail-open/
   fail-closed direction that `user_hooks.rs` already got right once). The
   subprocess path costs zero incremental engineering — it is shipped,
-  tested, and its failure directions are already deliberately chosen per
+  tested, and its failure directions are already chosen per
   point. Given `doc:pipeline-as-plugins-execution` §0's bias-to-shipping
   standing rule, and that this is a live, reversible flag choice (`doc:pipeline-as-plugins`
   §7's `--pipeline <variant>` shape applies to wrapper transport exactly as it
@@ -299,7 +299,7 @@ python3 /tmp/claude-0/-home-user-stella/6b8efc55-944b-55a4-a6fd-b89df01fe544/scr
 The harness path is a session scratchpad and is not committed (per
 `AGENTS.md`'s `no-scratch` guard and this run's scope, which restricted
 changes to this document and `docs/manifest.json`). A future session that
-wants to keep this harness for repeat runs should promote it deliberately —
+wants to keep this harness for repeat runs should promote it —
 as a `#[ignore]`d integration test in `crates/stella-mcp/tests/` linking the
 *real* `McpClient`, not this hand-rolled one — rather than reviving it from
 scratch.

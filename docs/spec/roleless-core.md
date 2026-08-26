@@ -50,7 +50,7 @@ The fourth row is the one that makes this a product rather than a refactor: the
 user's only decision is *which model*, and they make it per role name, in one
 place, for any plugin they ever install.
 
-## 3. The invariants
+## 3. The rules
 
 Numbered because later work will cite them. Append; do not renumber.
 
@@ -125,7 +125,7 @@ run — rather than by deleting the guard and hoping.
   its own table, because `[agents]`'s flattening is only safe for a closed set
   and plugin-chosen names are an open one.
 - A miss — no seat named, no model assigned, or an assignment that would not
-  build — resolves to the session's model (invariants 4 and 6).
+  build — resolves to the session's model (AGENTS.md #4 and #6).
 
 Two witnesses hold it: a named seat routes to its model while an unassigned seat
 and an unnamed child ride the session's; and a name core has never heard of
@@ -183,7 +183,7 @@ carried as data alongside the enum.
 
 This is a wire change: a new variant needs a `consumers.rs` row (an `E0004`
 build error otherwise), the schema regenerates, and retired variants need an
-alias path so an old recorded stream still reads. The prize is invariant 8 — the
+alias path so an old recorded stream still reads. The prize is AGENTS.md #8 — the
 role name travels **with the run** as data, so a benchmark reading it from the
 trace can never desynchronize from a spelling in another language, which is the
 exact failure `check-role-names.sh` exists to prevent.
@@ -216,7 +216,7 @@ way, so `[[wrapper.stages]] name = "triage-lite"` loads, resolves and
 dispatches — `stella_runtime`'s dispatcher asks `before_turn` for it by name,
 and dropping the entry from the manifest drops the stage from the turn.
 
-What that pair deliberately does **not** settle is the rest of this slice, and
+What that pair does **not** settle is the rest of this slice, and
 the reason is §8.2/§8.3: it opens the vocabulary *within one wrapper's declared
 order*. Composing the stages of **several** enabled plugins — the coarse band,
 the resolved order written into settings, the tie-break on plugin id — is still
@@ -283,7 +283,7 @@ with it, exactly as planned.
   exists, and the bench harness configures a seat rather than a pipeline pin.
 
 **What shipped, against that bar.** The keys are gone from the settings schema,
-and `EngineAgentKind` with them. The **bench harness was deliberately not
+and `EngineAgentKind` with them. The **bench harness was not
 migrated**, and the retired keys are therefore *recognized* by the
 trusted-launcher seam rather than refused — `RETIRED_ENGINE_ROOT` in
 `settings::unknown` carries the argument. Migrating the harness re-hashes every
@@ -327,7 +327,7 @@ but the assembled session stack", which is exactly true of plugin seats.
   installed shows only the default model.
 - **Done when:** no role name is compiled into `stella-tui`.
 
-### Slice 6 — retire the four-language contract (gap D, invariant 8)
+### Slice 6 — retire the four-language contract (gap D, AGENTS.md #8)
 
 Delete `check-role-names.sh` and its `GATE_STEPS` entry **only once slice 2 has
 landed**, because slice 2 is what makes the deletion safe: with role names
@@ -353,7 +353,7 @@ slot in `EvidenceSet`'s flip/tamper/measurement vocabulary.
   `reject_arbiter_wrapper_on_goal` is deleted because there is no longer a
   built-in arbiter to collide with.
 
-## 7. What this deliberately does not change
+## 7. What this does not change
 
 - **`allowed_models` stays**, and becomes the ceiling on seat assignments too. A
   plugin may declare any role; the models a user can point at one remain the
@@ -361,7 +361,7 @@ slot in `EvidenceSet`'s flip/tamper/measurement vocabulary.
 - **Consent gets stronger, not weaker.** A plugin declaring more participants is
   declaring more of the world it wants, and install consent must render the
   stages and roles it adds. Opaque to core is not opaque to the human.
-- **Receipts stay closed for core's own calls.** Invariant 7 narrows
+- **Receipts stay closed for core's own calls.** AGENTS.md #7 narrows
   `ModelCallRole`; it does not open it to arbitrary strings. Cost reporting over
   a free-form enum is how a spend report stops being auditable.
 - **The default stays one model.** Nothing here adds a second core model. The
@@ -423,7 +423,7 @@ on plugin id, lexicographically.
 - **Install order is disqualified outright.** It is invisible, machine-local and
   not reproducible across clones, so the composed prompt would depend on the
   order someone happened to type commands — fatal for byte-stable prompts
-  (`AGENTS.md` invariant 7) and for reproducing a benchmark run elsewhere.
+  (AGENTS.md #7) and for reproducing a benchmark run elsewhere.
 - Manifest priority *alone* moves the fight rather than settling it: two authors
   both claim priority 0. A coarse band gives no ladder to climb.
 - Writing the resolved order down, rather than recomputing it per run, makes it
@@ -474,7 +474,7 @@ The bare form was recommended here first, for one-line convenience when several
 plugins declare the same role name and want the same model. Three things killed
 it:
 
-1. **It breaches invariant 4 through a side door.** Assign `planner` for one
+1. **It breaches AGENTS.md #4 through a side door.** Assign `planner` for one
    plugin, install a second that also declares `planner` six weeks later, and the
    new plugin silently inherits a spending decision made about a different one.
    That is "installing a plugin multiplies the bill", arriving by the route a

@@ -707,7 +707,7 @@ and returns `unsupported_capability` when that filter is requested.
 receiving provider preserves it. Append receipts carry receiver-local
 `accepted_at`, which is ledger metadata outside the canonical record and hash
 and supplies that provider's knowledge time for the imported record. If a
-receiver deliberately derives a new claim, it creates a new record ID, hash,
+receiver derives a new claim, it creates a new record ID, hash,
 `observed_at`, and provenance link instead of rewriting an imported record.
 
 Knowledge, directives, and artifact contracts require `valid_from`. Event-only
@@ -864,7 +864,7 @@ instruction authority through consent, governance, attestation, and local
 policy. A legacy or unknown frame without this metadata compiles as
 non-instructional evidence, never as a directive.
 
-Normative invariants:
+Normative rules:
 
 - `full`: canonical inline `content` is required.
 - `compact`: inline `content`, inline hash, canonical hash, transformation
@@ -1254,7 +1254,7 @@ commands. Add tests for:
 - scope and sharing rejection;
 - legacy full-frame compatibility;
 - representation preference negotiation;
-- full/compact/reference invariants;
+- full/compact/reference rules;
 - reference resolution and hash mismatch;
 - append idempotency and conflict;
 - best-effort partial batch failure;

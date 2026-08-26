@@ -60,7 +60,7 @@ that this call still happens.
 
 The one remaining channel from verification back to the worker is the **evidence
 demand** (`evidence_demand_prompt`, `crates/stella-pipeline/src/verify.rs`),
-which is deliberately not a review: a fixed template over the tracked command,
+which is not a review: a fixed template over the tracked command,
 making no claim about the change and offering no reading of the diff. It is
 issued to the worker under `ModelCallRole::Worker`, so it has no page of its own
 here — see [worker.md](worker.md).
