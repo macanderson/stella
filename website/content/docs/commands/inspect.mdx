@@ -94,7 +94,7 @@ person means by "the previous turn" is a comparison across executions.
 
 `--diff prev` therefore searches the whole session, not just the execution you
 named. That matters because a system prompt is **byte-stable across the steps of
-one execution by design** — that is the prompt-cache invariant — so the only
+one execution by design** — that is the prompt-cache rule — so the only
 place it can drift is across turns. A diff that stopped at the execution
 boundary would print "no change" for exactly the comparison worth making. When
 the baseline comes from an earlier execution the `---` header says so, so the
@@ -148,7 +148,7 @@ call, not just the first.
 <Callout type="info">
 "no change" is a result, not a failure. `--only system` reporting the prompt
 byte-identical to the previous turn is a direct check that the prompt-cache
-stability invariant is holding.
+stability rule is holding.
 </Callout>
 
 ## `--system-prompt` — which setting put each span there

@@ -31,7 +31,7 @@ import { REPO_URL } from "@/lib/site";
 /**
  * Per-kind accent. Hue is never the only cue — each chip and rail also carries
  * the kind's word — because the brand kit's one-color law makes functional hue
- * a supporting signal, not the message. `security` deliberately borrows the
+ * a supporting signal, not the message. `security` borrows the
  * danger token: it is the one kind a reader must not skim past.
  */
 const KIND_TOKEN: Record<ChangeKind, string> = {

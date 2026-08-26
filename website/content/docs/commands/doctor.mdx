@@ -22,7 +22,7 @@ Four checks ship today:
 - **`session sidecars`** — sidecar directories whose session record is gone. `--repair` reaps them; a *damaged* record is never treated as an orphan.
 - **`model config`** — the model your next run would actually send, and the endpoint it would send it to. See below.
 
-A verdict is deliberately binary. There is no "warn": a check that cannot say *this is fine* has failed, and a third maybe-state would only be an invitation to ignore it.
+A verdict is binary. There is no "warn": a check that cannot say *this is fine* has failed, and a third maybe-state would only be an invitation to ignore it.
 
 ## The `model config` check
 

@@ -161,7 +161,7 @@ stella tools --validate            # scans .stella/tools/ and ~/.stella/tools/
 stella tools --validate ./mytools  # or an explicit directory
 ```
 
-Discovery is deliberately lenient — a broken manifest becomes a diagnostic and the session runs on — so this is the pre-flight that tells you before a run has already spent budget. It parses each `<name>.toml` and reports three severities:
+Discovery is lenient — a broken manifest becomes a diagnostic and the session runs on — so this is the pre-flight that tells you before a run has already spent budget. It parses each `<name>.toml` and reports three severities:
 
 <CardGrid size="md">
   <OptionCard name="Error">

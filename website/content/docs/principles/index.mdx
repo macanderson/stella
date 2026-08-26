@@ -1,10 +1,10 @@
 ---
 title: Engineering Principles
-description: The design invariants behind stella — determinism over intelligence, evidence over opinion, a zero-I/O engine, and budgets enforced at safe boundaries.
+description: The design rules behind stella — determinism over intelligence, evidence over opinion, a zero-I/O engine, and budgets enforced at safe boundaries.
 ---
 
 stella's repository ships two research papers alongside the code — a
-[capstone analysis of seven architectural invariants](https://github.com/macanderson/stella/blob/main/docs/papers/stella-defensible-position.md)
+[capstone analysis of seven architectural rules](https://github.com/macanderson/stella/blob/main/docs/papers/stella-defensible-position.md)
 and a focused study of
 [the deterministic engine](https://github.com/macanderson/stella/blob/main/docs/papers/deterministic-engine.md).
 This page is the distilled version: the principles, and why they were chosen.
@@ -12,7 +12,7 @@ Every claim is grounded in the shipping implementation.
 
 <Callout type="info">
 **"Witnessed, not asserted" is a property of the path, not of the binary.**
-The witness-test / flip-oracle machinery below (invariant 3, and the "Is the
+The witness-test / flip-oracle machinery below (rule 3 below, and the "Is the
 work done?" and "What proves the change?" mechanisms) is what an installed
 **verification plugin** implements on its own side of the
 [wrapper socket](/docs/plugins) — Oxagen's Vera is the reference one. A plugin
@@ -96,9 +96,9 @@ stella run --pipeline my-verifier --test-command "cargo test -p stella-core" \
 stella stats
 ```
 
-## The seven invariants, briefly
+## The seven rules, briefly
 
-1. **Ports, not concretions.** Every provider and tool sits behind a trait;
+1. **Ports, not direct dependencies.** Every provider and tool sits behind a trait;
    adding a vendor is an adapter, never a rewrite. Nine providers plus any
    local server, one engine.
 2. **No I/O in the engine.** `stella-core` performs zero I/O — routing,

@@ -1,6 +1,6 @@
 ---
 title: No agent silently overwrites another's work
-description: stella refuses a write that would land on top of a change it never saw — without a lock, a daemon, or any knowledge that the other party exists. How the guarantee works, what it deliberately does not claim, and which way it fails after a crash.
+description: stella refuses a write that would land on top of a change it never saw — without a lock, a daemon, or any knowledge that the other party exists. How the guarantee works, what it does not claim, and which way it fails after a crash.
 ---
 
 Point two agents at one repository and the failure is not a corrupted file.
@@ -64,7 +64,7 @@ so it is recorded exactly as a write is. A delete drops the entry — after a
 delete there is nothing left to clobber, and the next agent to create the file
 is starting fresh rather than overwriting.
 
-## What it deliberately does not claim
+## What it does not claim
 
 The guard's claim is precise: *you are about to overwrite a change you never
 saw*. It can only make that claim about a file it watched this session look

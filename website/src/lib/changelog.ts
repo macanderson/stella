@@ -5,7 +5,7 @@
  * the client component too (for `CHANGE_KINDS` and the types), and a single
  * `node:fs` import anywhere in that graph fails the build with "the chunking
  * context does not support external modules". Which is the bundler enforcing
- * the same split the Rust side of this repository states as invariant #2:
+ * the same split the Rust side of this repository states as AGENTS.md #2:
  * decision logic is pure functions over owned data, and anything that touches
  * the filesystem is a separate layer. Keeping the parser pure is also what
  * lets it be tested against a fixture string with no tmpdir.

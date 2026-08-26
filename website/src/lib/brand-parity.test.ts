@@ -40,7 +40,7 @@ import { inflateSync } from "node:zlib";
  *
  * The kit is a shared cell that several surfaces copy, and a comment cannot
  * hold one. The Rust side already learned this: `provider_parity.rs` enforces
- * invariant #8 and `crates/stella-cli/tests/design_token_parity.rs` enforces
+ * AGENTS.md #8 and `crates/stella-cli/tests/design_token_parity.rs` enforces
  * the instrument palette, both as a matrix checked from both sides in a plain
  * test. This is the same shape for the marketing surface — which is the copy
  * of the product most readers ever see, and the one nobody can eyeball beside
@@ -51,7 +51,7 @@ import { inflateSync } from "node:zlib";
  * It checks **values**, not design: the brand-core hexes, the eleven-stop gold
  * ramp, the cool-neutral ramp, and byte-identity of the logo SVGs and PWA
  * icons. The site's own tokens — the functional status hues, the type scale,
- * the `lp-*` landing layer — are deliberately outside the matrix; the kit does
+ * the `lp-*` landing layer — are outside the matrix; the kit does
  * not define them and this test must not freeze them.
  *
  * That exclusion is about the kit not *owning* those values, not a licence for
@@ -95,7 +95,7 @@ function icoImage(ico: Buffer, i: number): Buffer {
  * A PNG's pixels, normalised to RGBA, so two encodings of the same art compare
  * equal.
  *
- * Deliberately minimal — 8-bit, non-interlaced, colour type 2 or 6, which is
+ * Minimal — 8-bit, non-interlaced, colour type 2 or 6, which is
  * every PNG `docs/brand/` produces (see cometkit.py: "PNG needs only zlib and
  * four chunk headers, no imaging library"). Anything else throws rather than
  * being silently accepted, because a guard that quietly skips is the failure
@@ -243,7 +243,7 @@ const MIRRORED_CORE = [
  * below, so a site that mirrored the role correctly but tuned the underlying
  * stop still fails — on the stop.
  *
- * Deliberately not a general CSS resolver: a chain longer than the eight steps
+ * Not a general CSS resolver: a chain longer than the eight steps
  * below, or a `var()` with a fallback, throws rather than silently comparing
  * an unresolved string, because a guard that quietly gives up is the failure
  * this whole file exists to prevent.
@@ -323,7 +323,7 @@ test("no retired brand value survives anywhere in the site", () => {
     "255,176,0",
     "255, 176, 0",
     // v2.0 — the WARM page the bronze gold used to sit on. The gold itself is
-    // live again under v4.0 and is deliberately absent from this block; what
+    // live again under v4.0 and is absent from this block; what
     // v3.0 actually retired, and v4.0 did not restore, was the warm ink, the
     // warm papers and the warm neutral ramp.
     "#10100f",
@@ -457,7 +457,7 @@ test("favicon.ico carries the kit's art in an RGBA encoding", () => {
   //     Processing image failed
   //     Caused by: Format error decoding Ico: The PNG is not in RGBA format!
   //
-  // So this one file is deliberately NOT a byte-copy of the kit's: it is the
+  // So this one file is NOT a byte-copy of the kit's: it is the
   // kit's pixels re-encoded with an opaque alpha channel. That is why it is
   // absent from the PWA-icon byte-identity test above, and why the exception
   // is asserted here rather than left as a silent difference someone would

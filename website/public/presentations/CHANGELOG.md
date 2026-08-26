@@ -168,7 +168,7 @@ Every slide was then re-measured over CDP. Slides 2, 6, 15 and 20 still exceed
 900px and scroll a little (17px, 195px, 51px, 57px); all four keep their
 heading, lead and argument above the fold, and only footnote tails fall below
 it. Slides 6, 15 and 20 are pre-existing density from revision 1 and their
-content was deliberately left intact — slide 6's overflow is the benchmark
+content was left intact — slide 6's overflow is the benchmark
 methodology disclosure.
 
 ## Flag added for founder verification
@@ -232,7 +232,7 @@ toolchain-free plus cargo — so run it by hand when you touch a deck.
 | Appendix A3 (21) | "Base models are pinned to permissive-license weights (MIT / Apache-2.0 class); community-licensed weights are used only where their terms permit the customer's use" and its `[verification pending]` chip | Flag 3. The glm-5.2 base-weight licence matrix was never confirmed, so the sentence asserted a licensing posture nobody had checked. Replaced with the claim that is true today and is a process, not a matrix: every base model offered is licence-reviewed per engagement for three named rights — commercial fine-tuning, redistribution of derivatives to the customer, government deployment — and a base that does not grant all three is not offered for that engagement. |
 
 **No `.chip` element remains in the deck, and the class is deleted from the
-stylesheet** so the next one has to be added deliberately.
+stylesheet** so the next one has to be added.
 
 ## Claims re-verified and kept
 
@@ -309,7 +309,7 @@ scripting failure shows the true number rather than a zero.
 | 4 · Fonteva figures | founder-attested, now attributed on-slide |
 | 5 · tbench.ai rows | **re-verified 2026-08-09**; re-check before each showing |
 | 6 · ask-slide targets | **open — needs founder ratification**, and labelled as plan on-slide |
-| 7 · oracle-coverage percentage | still deliberately unnumbered; A2 says so on-slide |
+| 7 · oracle-coverage percentage | still unnumbered; A2 says so on-slide |
 | 8 · ~90% cost reduction | **claim removed** |
 
 ---

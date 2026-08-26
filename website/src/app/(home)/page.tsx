@@ -19,7 +19,7 @@ import { REPO_URL, SITE_URL } from "@/lib/site";
 // and Twitter titles right below it, which are NOT template-expanded — the tab
 // said one thing and every shared card said another.
 const HOME_TITLE = "stella — the terminal agent that proves its work finished";
-// "ends a run on evidence" is required and deliberately not "a second
+// "ends a run on evidence" is required and not "a second
 // model confirms it". That was the old wording, and it described a rung that
 // does not exist: there is no model verdict, and no arm that
 // asks a model anything — a turn the oracle cannot settle reports UNVERIFIED

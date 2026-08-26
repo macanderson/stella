@@ -11,7 +11,7 @@ an environment-variable equivalent for CI.
 
 `--output-format` (env `STELLA_OUTPUT_FORMAT`) is a flag of the two commands that honor
 it — [`stella run`](/docs/commands/run) and [`stella fleet`](/docs/commands/fleet) — so it
-goes **after** the subcommand token. It is deliberately not a global flag: on any other
+goes **after** the subcommand token. It is not a global flag: on any other
 command it is a parse error rather than a promise the output silently breaks
 ([#1493](https://github.com/macanderson/stella/issues/1493)). It takes one of three
 values:
@@ -239,7 +239,7 @@ editing the command line:
 </CardGrid>
 
 <Callout type="warn">
-  `--api-key` deliberately has **no** `STELLA_*` equivalent. Supply the key
+  `--api-key` has **no** `STELLA_*` equivalent. Supply the key
   through the provider's own variable (`ANTHROPIC_API_KEY`, `ZAI_API_KEY`, …),
   which is step 2 of the [credential chain](/docs/configuration/credentials)
   and never lands in a process argument list.

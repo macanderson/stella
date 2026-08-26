@@ -135,7 +135,7 @@ fallback and nothing here may depend on it.
 job publishes on every push to `main` that touches the site, and on manual
 dispatch. It builds with `STANDALONE=1` — which is what switches
 `next.config.mjs` to `output: standalone` — packages the server together with
-the static assets and `public/` that the standalone output deliberately omits,
+the static assets and `public/` that the standalone output omits,
 uploads one tarball to the deploy bucket, and sends one SSM command that
 restarts the service on the node. `pnpm-workspace.yaml` (in this directory)
 approves the `esbuild` / `sharp` build scripts so `pnpm install` exits cleanly.

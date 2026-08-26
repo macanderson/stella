@@ -1,6 +1,6 @@
 ---
 title: A session is an artifact, not a service
-description: stella will hand you a session you can carry to another machine — and will not carry it for you. Why the line sits there, what stella still owes you when the artifact lands somewhere new, and what it deliberately refuses to own.
+description: stella will hand you a session you can carry to another machine — and will not carry it for you. Why the line sits there, what stella still owes you when the artifact lands somewhere new, and what it refuses to own.
 ---
 
 stella already survives a crash. Kill the process mid-turn and the next run
@@ -30,7 +30,7 @@ stella's durable store is keyed on a machine-local workspace id. That id lives
 in `.stella/private/`, which is gitignored by construction, so a clone never
 carries it. Identity is decided by comparing absolute paths — a comparison with
 no meaning across machines. And when stella sees the same id at a path where
-another copy is still live, it deliberately mints a *fresh* id, so two copies of
+another copy is still live, it mints a *fresh* id, so two copies of
 a project can never silently write into each other's history.
 
 Every one of those choices is right for the question that module answers: *is
@@ -75,7 +75,7 @@ which is worse than a miss.
 
 **It contradicts what this project promises.** Local-first state, BYOK
 credentials, and [zero telemetry egress by
-default](/docs/principles#the-seven-invariants-briefly) are claims the project's
+default](/docs/principles#the-seven-rules-briefly) are claims the project's
 whole premise depends on,
 with exactly two explicit opt-in exceptions. A first-party upload path makes
 them conditional — and the condition is precisely the thing people choose stella
@@ -186,7 +186,7 @@ guarantee are local mechanisms and stay local mechanisms. If a change ever made
 one of them conditional on a control plane existing, the change would be the
 thing that is wrong.
 
-## What this deliberately does not claim
+## What this does not claim
 
 - **It is not sync.** There is no `stella login`, no stella-hosted store, and no
   first-party upload path. Not deferred — declined.

@@ -64,7 +64,7 @@ Only ones with a controlling terminal to lose. A terminal is exactly what can cl
 
 ## `--detach`: start it and get the prompt back
 
-Supervision keeps the run alive when the terminal goes; it does not hand the terminal back while the run continues. The launching process stays for the whole run streaming the console, and `Ctrl-C` there **stops** the run — deliberately, because that is what the key means everywhere else.
+Supervision keeps the run alive when the terminal goes; it does not hand the terminal back while the run continues. The launching process stays for the whole run streaming the console, and `Ctrl-C` there **stops** the run —, because that is what the key means everywhere else.
 
 `--detach` is the other half. The work is supervised exactly as it would be otherwise — same session id, same console, the whole `stella daemon` surface addresses it — but the launcher returns as soon as the run is registered:
 
@@ -143,7 +143,7 @@ Each console is **bounded** (8 MiB per stream by default; `STELLA_CONSOLE_CAP_BY
 
 Asks the run to stop the way `Ctrl-C` would: the signal reaches the whole process group — the run and every tool process it spawned — and the engine finishes the tool it is running and aborts at the next safe boundary, never mid-tool.
 
-A run that has not stopped after 8 seconds is killed. Either way the stop is recorded as **cancelled**, deliberately: a run stopped by hand that recorded nothing would age into the registry indistinguishable from one that crashed.
+A run that has not stopped after 8 seconds is killed. Either way the stop is recorded as **cancelled**: a run stopped by hand that recorded nothing would age into the registry indistinguishable from one that crashed.
 
 ## `resume`
 
@@ -212,7 +212,7 @@ Waiting is not failing, so it does not spend one of the three attempts below: a 
 ⚠ ses-1785956826121 — did not finish within the 30-minute ceiling and was stopped at a safe boundary; the sweep continues with the runs behind it — `stella daemon list` shows where this one ended up
 ```
 
-The two ways that ends need no new rules. A run that honoured the stop ended deliberately — same as a Ctrl-C — so the next sweep skips it and returns its attempts; it was merely slower than the ceiling, and `stella daemon resume <id>` by hand has no ceiling. A run so wedged it had to be killed keeps its resume point and is swept again next boot — and the attempt it was already charged (a timed-out resume **does** spend one) is exactly what retires it after three, because a run that hits the ceiling every boot is the recurring failure the attempt bound exists to stop.
+The two ways that ends need no new rules. A run that honoured the stop ended — same as a Ctrl-C — so the next sweep skips it and returns its attempts; it was merely slower than the ceiling, and `stella daemon resume <id>` by hand has no ceiling. A run so wedged it had to be killed keeps its resume point and is swept again next boot — and the attempt it was already charged (a timed-out resume **does** spend one) is exactly what retires it after three, because a run that hits the ceiling every boot is the recurring failure the attempt bound exists to stop.
 
 Everything `resume` says about a resumed turn applies here, including the limits above: a turn interrupted mid-wrapper resumes as a plain engine turn and says which steps it is not restoring — into the service console rather than a terminal.
 
@@ -228,7 +228,7 @@ stella daemon uninstall night-fleet
 
 On **macOS** it writes a launchd agent (`~/Library/LaunchAgents/sh.oxagen.stella.<label>.plist`) and loads it with `launchctl bootstrap`; the command starts at every login, including the login after a reboot. On **Linux** it writes a `systemd --user` unit (`~/.config/systemd/user/stella-<label>.service`), enables it, and turns on lingering (`loginctl enable-linger`) so the command starts at boot and keeps running through logout. When a `launchctl`/`systemctl` call fails, the definition is still written and the exact command to load it by hand is printed.
 
-**A registered command re-*starts*:** it begins a fresh turn, and a fresh spend, each time the manager launches it. So register standing verbs — a monitor, a fleet watch, a deliberately perpetual run — and let one-shot runs stay merely supervised. Nothing is ever registered implicitly.
+**A registered command re-*starts*:** it begins a fresh turn, and a fresh spend, each time the manager launches it. So register standing verbs — a monitor, a fleet watch, a perpetual run — and let one-shot runs stay merely supervised. Nothing is ever registered implicitly.
 
 **To come back *continuing* the work a reboot interrupted, register the sweep instead:**
 

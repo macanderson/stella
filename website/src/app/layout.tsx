@@ -11,7 +11,7 @@ import { SITE_NAME, SITE_URL } from "@/lib/site";
  * One face: JetBrains Mono, self-hosted from the brand kit's own woff2 files
  * (docs/brand/fonts — mirrored into src/fonts with its OFL licence). The
  * product lives in a terminal, so the brand speaks in monospace; 800 carries
- * display, 700 headings, 500 UI, 400 body and code. There is deliberately no
+ * display, 700 headings, 500 UI, 400 body and code. There is no
  * second family — a sans here would be a font the brand never speaks in.
  */
 const mono = localFont({
