@@ -1,7 +1,7 @@
 ---
-id: SCR-005
+id: scr/005-triage-separation-of-duties
 title: Creators label triage only; the triage agent owns priority
-status: active
+status: living
 origin: separation-of-duties rule on the backlog, 2025–2026
 trigger: creating or labeling any GitHub issue
 autonomy: L2
@@ -16,15 +16,15 @@ agent, sizes the work, assigns exactly one priority label, optionally a
 size, removes `triage`, and comments a one-line rationale.
 
 Priority scheme: `P0` drop everything · `P1` this cycle · `P2` next cycle ·
-`P3` backlog. Invariant: every open issue carries either a priority label or
+`P3` backlog. Rule: every open issue carries either a priority label or
 `triage` — never neither, never both.
 
 ## Rationale
 
 Whoever creates an issue is the worst-placed party to rank it — creators
 systematically over-weight their own findings. Separating creation from
-prioritization keeps the backlog ordering honest and gives the maintainer
-one place (the triage agent's rationale comments) to audit it.
+prioritization keeps backlog order independent of who filed, and gives
+the maintainer one place (the triage agent's rationale comments) to audit it.
 
 ## How an agent complies
 

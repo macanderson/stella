@@ -1,7 +1,7 @@
 ---
-id: SCR-004
+id: scr/004-residue-becomes-issues
 title: File all residue as issues before declaring done
-status: active
+status: living
 origin: "north-star requirement: nothing evaporates in a chat transcript"
 trigger: the end of every completed task
 autonomy: L1
