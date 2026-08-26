@@ -129,7 +129,7 @@ async fn no_deadline_puts_no_clock_in_the_prompt() {
     );
 }
 
-/// Invariant 7: a deadline far out is not a reason to stamp a clock into
+/// AGENTS.md #7: a deadline far out is not a reason to stamp a clock into
 /// every prompt. The prefix stays cacheable until a band is actually crossed.
 #[tokio::test]
 async fn a_distant_deadline_puts_no_clock_in_the_prompt() {

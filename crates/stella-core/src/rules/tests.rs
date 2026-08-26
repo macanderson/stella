@@ -699,7 +699,7 @@ fn leaves_candidate_prompt_only_when_files_share_no_common_directory() {
 
 #[test]
 fn mine_candidates_respects_the_limit() {
-    // Five lessons with deliberately disjoint vocabulary (a shared
+    // Five lessons with disjoint vocabulary (a shared
     // boilerplate template — e.g. "lesson about {word} handling" —
     // would keep 3 of 4 terms identical across "different" lessons,
     // pushing Jaccard similarity above the default clustering threshold

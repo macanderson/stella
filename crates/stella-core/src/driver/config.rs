@@ -141,12 +141,12 @@ pub struct EngineConfig {
     ///
     /// When the ceiling trips, the call resolves to a `ToolOutput::Error`
     /// the model can react to, turning "hung forever" into one failed call
-    /// the loop routes around. Deliberately generous (15 minutes) so it
+    /// the loop routes around. Generous (15 minutes) so it
     /// never pre-empts a legitimately slow tool. `None` disables the
     /// backstop entirely, restoring the unbounded await.
     ///
     /// Note this is the one place the engine may interrupt a tool in
-    /// flight; the budget-abort invariant (clean aborts at step boundaries,
+    /// flight; the budget-abort rule (clean aborts at step boundaries,
     /// never mid-tool) is unaffected, because a trip is surfaced as a tool
     /// *result*, not as a turn abort.
     pub tool_timeout: Option<Duration>,
@@ -299,7 +299,7 @@ pub struct EngineConfig {
     /// "consult this gate zero times" is how you disable a gate you
     /// configured, silently. Withhold the hook instead.
     ///
-    /// `stella-core` never learns plugins exist (invariant #1), so this is a
+    /// `stella-core` never learns plugins exist (AGENTS.md #1), so this is a
     /// plain number: the *host* reads `LoopGrant::max_holds` off a manifest,
     /// clamps it with [`clamp_stop_holds`] so it can report the clamp, and
     /// sets this field.
@@ -313,7 +313,7 @@ pub struct EngineConfig {
 /// and the third admits one more revision round — the empirically common case
 /// of a model landing the fix within three attempts.
 ///
-/// Deliberately carries no `MEASURED:` marker (#4572). Two of the three are
+/// Carries no `MEASURED:` marker (#4572). Two of the three are
 /// structural — a flip cannot be observed in fewer consultations — and the
 /// third is headroom over an observation nobody wrote a sample size for.
 pub const DEFAULT_STOP_HOLDS: u32 = 3;

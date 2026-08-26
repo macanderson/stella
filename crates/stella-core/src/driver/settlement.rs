@@ -72,7 +72,7 @@ pub(super) fn emit_budget_warning(
 
 /// `now` is the caller's own boundary clock read — the tick reports the
 /// wall-clock axis too (#2240) and this module holds no clock of its own
-/// (invariant 2, and `crate::budget`'s module docs).
+/// (AGENTS.md #2, and `crate::budget`'s module docs).
 pub(super) fn record_settled_cost(
     budget: &mut BudgetGuard,
     cost_usd: f64,
@@ -109,7 +109,7 @@ impl super::Engine<'_> {
     /// `total_cost_usd` is `&mut` because the drained spend is the turn's
     /// money too: `TurnOutcome`/`AgentEvent::TurnComplete` report the turn total,
     /// and `Complete`'s contract is "a summary of the `StepUsage` events that
-    /// preceded it" — a child's `StepUsage` is deliberately forwarded onto
+    /// preceded it" — a child's `StepUsage` is forwarded onto
     /// the parent stream, so a total that excluded child spend contradicted
     /// both the event contract and the guard beside it. Added BEFORE the
     /// abort decision below, which reports this same number: when the child's

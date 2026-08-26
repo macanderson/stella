@@ -272,7 +272,7 @@ pub fn is_blocking(name: &str) -> bool {
 // accidentally (or adversarially) step outside of. Every name here lands in
 // the journal as [`stella_protocol::AgentEvent::Unknown`] — see
 // `stella-cli/src/trace.rs`'s fold arm — never as a new `AgentEvent`
-// variant, so it carries no row in the signal-consumer ledger
+// case, so it carries no row in the signal-consumer ledger
 // (`stella-protocol/src/event/consumers.rs`) and needs none: `Unknown` is
 // the vocabulary's designed extension point, not a gap in it.
 

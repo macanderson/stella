@@ -472,9 +472,9 @@ impl<'a> Engine<'a> {
     /// loop — the staged pipeline when this shape was chosen
     /// (`crates/stella-pipeline`, deleted in #3865), a wrapper plugin's host
     /// now — which is handed an `&Engine` it does not own and needs a
-    /// per-candidate variant of it.
+    /// per-candidate copy of it.
     ///
-    /// Deliberately NOT expressed through [`crate::ports::TurnSteering`]'s
+    /// NOT expressed through [`crate::ports::TurnSteering`]'s
     /// soft stop, the other step-boundary exit: that one is a *user* asking
     /// to stop and returns `Aborted`, which reaches the CLI as a non-zero
     /// exit and is scored by benchmark harnesses as the agent crashing.
@@ -972,7 +972,7 @@ impl<'a> Engine<'a> {
     /// [`TurnState::from_checkpoint`] for exactly what resuming rebuilds
     /// rather than restores.
     ///
-    /// # Who calls this, and who deliberately does not
+    /// # Who calls this, and who does not
     ///
     /// This is for a host that continues an interrupted turn: it hands back a
     /// state to keep stepping, via [`Self::drive`] (the ordinary case, and
@@ -1223,7 +1223,7 @@ impl<'a> Engine<'a> {
         let speculation_read_only = read_only_tools.clone();
         let speculation_safe = speculation_safe_tools;
         let speculation_hook_gated = hook_gated;
-        // The gate forwards answer fragments as `TextDelta` previews. Deliberately NOT rolled back
+        // The gate forwards answer fragments as `TextDelta` previews. NOT rolled back
         // on a failed attempt: a retry's deltas re-stream from the start
         // with no reset marker — the eventual `Text` event is authoritative
         // and consumers replace the preview with it (protocol docs).
@@ -1279,7 +1279,7 @@ impl<'a> Engine<'a> {
                     // stream ends once in-flight executions drain.
                 });
                 let result = tokio::select! {
-                    // `biased` makes the invariant below structural rather
+                    // `biased` makes the rule below structural rather
                     // than incidental: `complete` owns the gate (and the
                     // channel's send half), so the pump can only finish
                     // after `complete` has, and polling `complete` first
@@ -1287,7 +1287,7 @@ impl<'a> Engine<'a> {
                     // pump arm (#560). That arm is believed unreachable, but
                     // it reports a typed terminal error rather than
                     // panicking: this is library code on a provider-driven
-                    // path, where invariant 5 (no panics on runtime data)
+                    // path, where AGENTS.md #5 (no panics on runtime data)
                     // outranks asserting a structural claim (#618 item 17).
                     biased;
                     result = deadline_bounded_generation(self.config.model_timeout, task_deadline, &progress, &mut complete) => result,

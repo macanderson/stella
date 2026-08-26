@@ -80,7 +80,7 @@
 //!
 //! A child's events must be attributable without being mistaken for the
 //! parent's stage boundaries. Rather than adding an agent field to every
-//! [`AgentEvent`] variant, one
+//! [`AgentEvent`] case, one
 //! [`SubAgentPhase::Started`]/[`Finished`](SubAgentPhase::Finished) bracket
 //! carries the attribution and the child's own `Stage`/`Complete` (plus its
 //! narration and its carve-scoped `BudgetTick`) are dropped at the boundary.
@@ -113,7 +113,7 @@
 //! # Nesting
 //!
 //! [`SubAgentSpec::depth`] is checked against [`MAX_SUB_AGENT_DEPTH`] before
-//! the first model call. There is deliberately no engine-level depth counter:
+//! the first model call. There is no engine-level depth counter:
 //! the one model-callable spawn surface (`stella-tools`' `delegate` tool) pins
 //! `depth: 1`, and a child runs behind [`ReadOnlyTools`], which never
 //! advertises that tool — so recursion is not reachable from a prompt. Any
@@ -287,7 +287,7 @@ pub struct SubAgentSpec {
     pub write_access: bool,
     /// Attribution role for the child's model calls.
     ///
-    /// A **receipt** label, and deliberately not a routing decision: it answers
+    /// A **receipt** label, and not a routing decision: it answers
     /// "what was this call for?" so a cost report can group by job. Which model
     /// serves the child is [`Self::seat`]'s question, and the two are kept
     /// apart because this enum is closed and core-owned while the set of jobs a
@@ -563,7 +563,7 @@ impl Drop for AgentAttribution<'_> {
 /// The drop set is small and each entry is justified in
 /// `stella_protocol::subagent_event`'s module docs. Note the direction of
 /// the default: this is a `matches!` deny-list, so a *new* [`AgentEvent`]
-/// variant forwards. That is deliberate — the failure mode of forwarding
+/// case forwards. That is deliberate — the failure mode of forwarding
 /// something cosmetic is a redundant line in a HUD, while the failure mode
 /// of dropping something is child spend silently vanishing from the
 /// accounting. Fail toward visible.
@@ -813,7 +813,7 @@ impl Engine<'_> {
                 // provider — the breaker they feed is session state, like the
                 // calibration map above (#2673).
                 outcomes: self.outcomes,
-                // Deliberately NOT inherited: the child's provider is the spec's
+                // NOT inherited: the child's provider is the spec's
                 // explicit choice (possibly a pinned cross-family adapter), so a
                 // mid-turn re-route is not the engine's call to make here — a
                 // child that exhausts its ladder surfaces the failure into the
@@ -822,7 +822,7 @@ impl Engine<'_> {
             },
         );
         // The provider-override cell is FRESH, and `assemble` is what makes it
-        // so: it mints a new `OnceLock` per engine. Deliberately not shared
+        // so: it mints a new `OnceLock` per engine. Not shared
         // with the parent — the child's provider is the spec's explicit choice
         // (see `fallback` above), so the parent's latched replacement is not
         // the child's to inherit any more than the parent's resolver is.

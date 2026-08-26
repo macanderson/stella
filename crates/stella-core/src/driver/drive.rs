@@ -3,7 +3,7 @@
 
 //! The turn loop — [`Engine::drive`], the only one.
 //!
-//! [`Engine::run_step`] is deliberately the only implementation of a *step*
+//! [`Engine::run_step`] is the only implementation of a *step*
 //! ("`run_turn` IS this method in a loop, so there is one code path and no
 //! second implementation to drift"). This module is the same commitment for
 //! the *loop around* the step, which used to exist three times: the fresh
@@ -52,7 +52,7 @@
 //! that a host wanting an ordinary turn no longer has to write the loop to get
 //! one.
 //!
-//! The **outer** loops are deliberately not here: the goal round loop
+//! The **outer** loops are not here: the goal round loop
 //! ([`crate::goal`]), the pipeline's verify/revise loop, and the fleet's wave
 //! loop each have their own termination vocabulary and cancellation contract,
 //! and folding them together would produce a config struct that is mostly
@@ -130,7 +130,7 @@ impl Engine<'_> {
             // `StepOutcome::into_turn_outcome` is the one conversion from "how
             // the step ended" to "how the turn ended", and `None` is its
             // contract for "the turn continues" — so falling through here is
-            // that contract being read, not a variant being assumed away.
+            // that contract being read, not a case being assumed away.
             if let Some(outcome) = self.run_step(state, events).await.into_turn_outcome() {
                 return outcome;
             }

@@ -42,7 +42,7 @@
 //! a compaction pass, the overflow summarizer, a host mutating through
 //! `TurnState::messages_mut` — invalidates it, and
 //! `TurnState::mark_transcript_rewritten` (which every rewrite path already
-//! calls, because the receipt memos have the same invariant) drops it. The
+//! calls, because the receipt memos have the same rule) drops it. The
 //! next committed step re-anchors. A provider that omits usage
 //! ([`stella_protocol::CompletionUsage::reported`] is false, or the counters
 //! are all zero) never anchors, so scripted tests and usage-less providers
@@ -54,7 +54,7 @@ use stella_protocol::{CompletionMessage, CompletionUsage};
 /// estimator's view of the same prefix so the two accountings can be
 /// exchanged inside one budget comparison (module docs).
 ///
-/// Pure data — no I/O, no clock (invariant 2). Turn-scoped: it lives on
+/// Pure data — no I/O, no clock (AGENTS.md #2). Turn-scoped: it lives on
 /// `TurnState` and dies with the turn; a cold turn's first compaction
 /// decision runs on the estimator alone, exactly as before.
 #[derive(Debug, Clone, Copy)]

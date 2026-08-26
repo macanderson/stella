@@ -142,7 +142,7 @@ pub enum Severity {
 
 /// Something the engine noticed about a record.
 ///
-/// Every variant names a *specific* defect rather than a generic "invalid",
+/// Every case names a *specific* defect rather than a generic "invalid",
 /// because the output of a check is only actionable if it says what to do
 /// (`docs/spec/adaptive-context/context-pr.md` §12: "check output must be concrete and actionable").
 #[derive(Debug, Clone, PartialEq)]

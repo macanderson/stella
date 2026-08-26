@@ -87,7 +87,7 @@ mod sweep;
 /// read → failing edit → failing test grind); 4 adds headroom without
 /// scanning for long "cycles" that are really just varied work.
 ///
-/// Deliberately carries no `MEASURED:` marker (#4572). What was observed is 2
+/// Carries no `MEASURED:` marker (#4572). What was observed is 2
 /// and 3; 4 is the headroom chosen over that, so a marker would credit the
 /// observation with a number it did not produce.
 const MAX_CYCLE_PERIOD: usize = 4;
@@ -152,7 +152,7 @@ pub struct LoopDetectionConfig {
     /// output — whatever their arguments — required to flag stagnation.
     /// `0` or `1` disable the check.
     ///
-    /// Deliberately looser than [`Self::exact_repeat_threshold`]: an
+    /// Looser than [`Self::exact_repeat_threshold`]: an
     /// identical input repeated is unambiguous evidence, while a *varying*
     /// input is weaker on its own, so it takes more of it before the
     /// detector will speak. Six consecutive searches that each came back
@@ -194,7 +194,7 @@ pub struct LoopDetectionConfig {
     /// cleanly — 47s, 73s and 114s for trials that sleep incidentally, then
     /// 307s and 1,089s for the two that sleep instead of working. A threshold
     /// above the first group and below the second buys the pathological shape
-    /// and pays nothing for the ordinary one. It sits deliberately far above
+    /// and pays nothing for the ordinary one. It sits far above
     /// `bash`'s own 30s per-call advisory (`stella_tools::bash`): this is the
     /// escalation, not a second copy of that notice.
     ///
@@ -305,7 +305,7 @@ pub enum LoopVerdict {
 }
 
 impl LoopVerdict {
-    /// `true` for any detected loop variant; `false` for `NoLoop`.
+    /// `true` for any detected loop case; `false` for `NoLoop`.
     pub fn is_loop(&self) -> bool {
         !matches!(self, LoopVerdict::NoLoop)
     }
@@ -396,7 +396,7 @@ impl LoopVerdict {
                 tools: vec![tool.clone()],
                 inputs: Some(Vec::new()),
             }),
-            // Same identity shape as an exact repeat, and deliberately so: it
+            // Same identity shape as an exact repeat, and so: it
             // is the same loop, seen through a scan that tolerates gaps. A
             // turn that steers on the interleaved rung and then trips the
             // contiguous one must be recognised as the SAME loop, or the
@@ -785,7 +785,7 @@ fn detect_short_cycle(records: &[CallRecord<'_>], repeats_threshold: usize) -> O
 /// exact-repeat detection disabled (`threshold < 2`) this check would
 /// otherwise start reporting exact repeats under a vaguer name.
 ///
-/// Note what is deliberately NOT required: that the inputs differ from each
+/// Note what is NOT required: that the inputs differ from each
 /// other pairwise, or differ in any particular way. A run of `a, a, b, b, c`
 /// stagnates just as a run of `a, b, c, d, e` does — what makes it stagnation
 /// is that none of them moved the answer.

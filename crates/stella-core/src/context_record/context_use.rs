@@ -2,7 +2,7 @@
 //! frame's records were used, whether they helped, and what context was missing.
 //!
 //! **Purity boundary (important):** these are pure value types. Two spec
-//! invariants are inherently *referential* — "a `ContextUseFeedback` resolves to
+//! rules are inherently *referential* — "a `ContextUseFeedback` resolves to
 //! exactly one identity-consistent `ContextUse`" and the `not_rendered`
 //! selected-use back-reference resolution — and cannot be checked without the
 //! record set. This module validates only the **intra-record** parts (required
@@ -35,7 +35,7 @@ use super::{Confidence, RecordValidationError};
 ///   so a host-side key here is correct; A1 binds frame attribution, which this
 ///   crate does not emit.
 ///
-/// **Do not** rename a variant here to "improve" it. The strings reach a database
+/// **Do not** rename a case here to "improve" it. The strings reach a database
 /// column, a lifecycle event payload, and a protocol vocabulary at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -208,7 +208,7 @@ impl ContextEvaluationMethod {
     ///   has to trust a method before it can suppress anything; an identifier
     ///   this build has never heard of has not earned that.
     ///
-    /// This is deliberately a property of the *method*, not of the verdict:
+    /// This is a property of the *method*, not of the verdict:
     /// "which evidence is strong enough to remove context" is a policy question
     /// with one answer, and putting it here means a caller cannot forget it.
     pub fn is_pruning_eligible(&self) -> bool {
@@ -314,7 +314,7 @@ pub struct ContextUseFeedback {
 }
 
 impl ContextUseFeedback {
-    /// Validate every intra-record invariant. (Referential resolution of
+    /// Validate every intra-record rule. (Referential resolution of
     /// `context_use_id` is deferred to the repository.)
     pub fn validate(&self) -> Result<(), RecordValidationError> {
         // not_helpful requires opportunity + observable effect + a method.
@@ -412,7 +412,7 @@ pub struct MissingContextDetected {
 }
 
 impl MissingContextDetected {
-    /// Validate every intra-record invariant.
+    /// Validate every intra-record rule.
     pub fn validate(&self) -> Result<(), RecordValidationError> {
         // Every missing-context observation needs non-empty evidence.
         if self.evidence_links.is_empty() {

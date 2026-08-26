@@ -6,13 +6,13 @@
 //!
 //! Skills have been *context* since they existed: selected, rendered, and
 //! followed, never executed. This module gives them an execution vocabulary
-//! while keeping every decision pure and I/O-free (invariant #2): a session
+//! while keeping every decision pure and I/O-free (AGENTS.md #2): a session
 //! layer that mounts invocation owns the file reads and the sub-agent
 //! dispatch; everything here is string-in/value-out and unit-tested below.
 //!
 //! # Behavior is the skill's, never a parameter's
 //!
-//! Invariant #9: a tool parameter may scope an operation, never select one.
+//! AGENTS.md #9: a tool parameter may scope an operation, never select one.
 //! How an invocation runs — inline expansion vs. a forked sub-agent, which
 //! tools it may use, which effort serves it — is declared by the **skill's
 //! own frontmatter** ([`parse_invoke_directives`]) and the tool input carries
@@ -36,7 +36,7 @@
 //! body?". The pure compaction passes never touch user-role text, so the only
 //! consumer that can destroy an invoked body is the overflow summarizer's
 //! span splice — wiring this predicate into its span selection (and restoring
-//! bodies after a splice) is ticket #2685; this module deliberately ships the
+//! bodies after a splice) is ticket #2685; this module ships the
 //! tracking and the predicate only.
 
 use std::sync::atomic::{AtomicU64, Ordering};

@@ -19,7 +19,7 @@
 //! then resumed advancing. The model is re-walking ground it already covered,
 //! and it is doing so without any of the byte-identical evidence the other
 //! rungs need. It fires late — a wrap costs a whole pass first — and that is
-//! the trade taken deliberately, because the alternative is fitting a constant
+//! the trade taken, because the alternative is fitting a constant
 //! to "how many pages is too many", which #4034's own definition of done
 //! stopped short of.
 //!
@@ -29,7 +29,7 @@
 //!
 //! # Target and cursor, from the input alone
 //!
-//! No plumbing and no port (invariant 2 — and see #4034, which suggested
+//! No plumbing and no port (AGENTS.md #2 — and see #4034, which suggested
 //! threading `ReadLedger`'s tally in, for data the detector can already
 //! derive). Each [`super::CallRecord`] carries the call's `name` and `input`,
 //! and that is enough: **canonicalize the input by replacing every integer

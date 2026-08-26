@@ -89,7 +89,7 @@ pub trait ToolExecutor: Send + Sync {
     /// The same "written by one object, drained by another" seam as
     /// [`Self::drain_sub_agent_spend_usd`], for the same structural reason:
     /// a tool returns only a `ToolOutput`, and by the time the engine is at
-    /// a boundary where parking is safe (invariant 6 — between model calls,
+    /// a boundary where parking is safe (AGENTS.md #6 — between model calls,
     /// never mid-tool) the tool call is long finished.
     ///
     /// # Decorators MUST forward this
@@ -117,7 +117,7 @@ pub trait ToolExecutor: Send + Sync {
     /// `read_only` (that flag also fences children out of it, and gates
     /// permission surfaces on spend).
     ///
-    /// Deliberately an executor method rather than a third `ToolSchema`
+    /// An executor method rather than a third `ToolSchema`
     /// claim: dispatch grouping is a scheduling fact about *this* executor's
     /// composition, not a wire-level property an external (MCP) tool may
     /// self-declare — an external tool that wants concurrency claims
@@ -165,7 +165,7 @@ pub trait ToolExecutor: Send + Sync {
     ///
     /// The engine holds no process table and must not: a started child is a
     /// concretion of `stella-tools`, and reaching for it here would be
-    /// invariant 1 in reverse. What the engine needs is not the table, it is
+    /// AGENTS.md #1 in reverse. What the engine needs is not the table, it is
     /// the *answer* — "did this turn declare a service and leave it up?" —
     /// which the executor that spawned the child is exactly the thing that
     /// knows.
@@ -230,7 +230,7 @@ pub trait ToolExecutor: Send + Sync {
 /// implementation lives with the registry (`stella-tools`), which owns the
 /// bus and the approval broker; `stella-core` holds only the seam, so a
 /// crate that never depends on `stella-tools` — the MCP client — can still
-/// route its own dispatches through the same gate (invariant #1).
+/// route its own dispatches through the same gate (AGENTS.md #1).
 ///
 /// Distinct from [`AuthzGate`], which answers "may this *principal* call
 /// this tool at all" from a contract and runs as its own decorator. This one
@@ -286,7 +286,7 @@ pub async fn admit_dispatch(
 
 /// One long-running process a tool started and nothing has stopped.
 ///
-/// Deliberately not a handle onto the process: this type crosses the port
+/// Not a handle onto the process: this type crosses the port
 /// boundary so the engine can *name* what is still up, and naming is all it
 /// is ever allowed to do with it. There is no stop, no signal, and no pid —
 /// #2666's whole finding is that a still-running declared service can be the
@@ -401,7 +401,7 @@ impl ToolExecutor for ReadOnlyTools<'_> {
         self.inner.active_skill_slugs()
     }
 
-    /// Forwarded, and the read-only filter is deliberately not applied to
+    /// Forwarded, and the read-only filter is not applied to
     /// it. A service is up or it is not, whatever view happens to be asking
     /// — this reports state the workspace is in, not a capability this view
     /// grants. Filtering here would let a sub-agent turn end silently on a
@@ -411,7 +411,7 @@ impl ToolExecutor for ReadOnlyTools<'_> {
         self.inner.live_services()
     }
 
-    // `parallel_safe_names` deliberately keeps the empty default rather than
+    // `parallel_safe_names` keeps the empty default rather than
     // forwarding (contrast with the spend drain above): the one shipped
     // parallel-safe tool is the sub-agent spawn, and this view exists to
     // strip exactly that from a child — advertising a name whose execution
@@ -598,7 +598,7 @@ pub trait TurnGate: Send + Sync {
 /// fed by the deck's input loop.
 pub trait TurnSteering: Send + Sync {
     /// Drain the user messages queued since the last boundary, oldest
-    /// first. Non-destructive peeks are deliberately not offered: whatever
+    /// first. Non-destructive peeks are not offered: whatever
     /// this returns WILL be injected, so the implementation owns dedup.
     fn drain_steering(&self) -> Vec<String>;
     /// True when the user asked to end the turn at the next boundary. The
@@ -681,7 +681,7 @@ impl TurnControls {
 
     /// Publish `steering` as the turn's steering tap.
     ///
-    /// What a *child* gets from this is deliberately narrower than what the
+    /// What a *child* gets from this is narrower than what the
     /// parent has: see [`crate::subagent::ChildSteering`], which forwards the
     /// soft stop and never the queued messages.
     #[must_use]

@@ -26,7 +26,7 @@ impl Provider for SliceAddressProvider {
         "slice-address"
     }
 
-    // Deliberately implements only the borrowed method: the engine reaches the
+    // Implements only the borrowed method: the engine reaches the
     // adapter through `complete_observed_ref`, whose default forwards the view
     // untouched. If that default ever materialized an owned request, these
     // addresses would stop matching.

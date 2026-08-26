@@ -541,7 +541,7 @@ async fn a_compaction_pass_journals_the_replacement_bytes_it_wrote() {
     );
 }
 
-/// The invariant the identity memo's soundness actually rests on.
+/// The rule the identity memo's soundness actually rests on.
 ///
 /// `snapshot_result_identities` memoizes a result's identity by position, and
 /// clears that memo on a transcript rewrite — but disabling the clearing breaks no
@@ -552,9 +552,9 @@ async fn a_compaction_pass_journals_the_replacement_bytes_it_wrote() {
 /// the only positions that can be served from the memo are ones compaction did not
 /// touch, which is what makes a stale entry unobservable.
 ///
-/// That is a cross-module invariant, not a local one. A new pass that rewrote a
+/// That is a cross-module rule, not a local one. A new pass that rewrote a
 /// result into something `is_compacted_output` did not recognize would silently
-/// make the memo serve a pre-rewrite identity, so the invariant is pinned here
+/// make the memo serve a pre-rewrite identity, so the rule is pinned here
 /// where the memo's justification lives.
 #[test]
 fn every_rewrite_compaction_performs_is_recognized_as_compacted() {

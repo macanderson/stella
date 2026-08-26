@@ -319,7 +319,7 @@ mod tests {
     /// rest pattern. Adding a slot to the struct without adding it here fails
     /// to compile, which is the property the type exists to provide.
     ///
-    /// It is deliberately not written as "a fork carries gate/steering/hooks":
+    /// It is not written as "a fork carries gate/steering/hooks":
     /// that passes on `main` unchanged, because the fork already carries them
     /// and the builders that attach them are public. See the module doc.
     #[test]

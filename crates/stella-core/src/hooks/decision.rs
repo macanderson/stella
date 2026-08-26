@@ -42,7 +42,7 @@
 //! a `require_approval` to a human answer is the [`ApprovalRoute`]
 //! port's — implemented by `stella-tools::hook_bridge` over the #2676
 //! `ApprovalBroker` (emit-before-park, TTL, `approval.*` audit events).
-//! This module is pure fold and vocabulary; no I/O (invariant #2).
+//! This module is pure fold and vocabulary; no I/O (AGENTS.md #2).
 //!
 //! # Seams
 //!
@@ -113,7 +113,7 @@ pub fn parse_decision(stdout: &str) -> DecisionParse {
 }
 
 /// Why a hook chain's evaluation failed — the `Err` arm of
-/// [`DecisionRun::evaluation`], each variant naming the hook so the deny
+/// [`DecisionRun::evaluation`], each case naming the hook so the deny
 /// reason a model (or a human) reads points at the command to fix.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HookEvaluationFailure {
@@ -296,7 +296,7 @@ pub async fn run_decision_hooks(
 /// The engine and the registry both pass [`OperatorPosture::NoOpinion`]
 /// today: operator tool switches (`tools.<name>: "off"`) act upstream by
 /// withholding the tool from the surface entirely (`stella-tools::policy`),
-/// so a denied tool never reaches these gates. The variant exists because
+/// so a denied tool never reaches these gates. The case exists because
 /// the precedence contract must hold for producers that DO carry an
 /// operator posture — #2684's hook bridge and #2716's `AuthzGate`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,7 +325,7 @@ pub enum GateVerdict {
 /// an operator deny, and an approval requirement always beats an allow.
 ///
 /// An errored evaluation (`Err`) is an unconditional deny — fail closed.
-/// `_enforcement_softened` is deliberately accepted and ignored: the
+/// `_enforcement_softened` is accepted and ignored: the
 /// parameter exists so a caller carrying a softening switch must hand it
 /// over, and the signature is the proof that no value of it can soften an
 /// evaluation failure (the OXA-2056 shape, spec item 5 of #2676).
@@ -367,7 +367,7 @@ pub fn resolve_precedence(
 /// One parked approval question, as the route sees it: the parked tool
 /// call plus the metadata the asking surface renders. Crosses the crate
 /// boundary (`stella-tools::hook_bridge` implements the route), so it is
-/// serde round-trippable by contract (invariant #4).
+/// serde round-trippable by contract (AGENTS.md #4).
 ///
 /// Two producers build one of these today: a shell hook's
 /// `require_approval` decision (`driver::user_hooks`) and an
@@ -395,7 +395,7 @@ pub struct ApprovalRouteRequest {
 /// verification plugin asking *"verification budget exhausted, continue?"* had
 /// no way to get an answer.
 ///
-/// Closed and deliberately two. A third arm is a new *kind* of question, which
+/// Closed and two. A third arm is a new *kind* of question, which
 /// means a new rendering on every asking surface — the parity the CLI prompt,
 /// the Command Deck's card and `stella-serve` are each held to — so it is a
 /// design change rather than a new value.
@@ -415,7 +415,7 @@ pub enum ApprovalSubject {
         /// the text.
         ///
         /// A digest rather than the answer because this rides the
-        /// `approval.*` audit events, and invariant #3 governs what those
+        /// `approval.*` audit events, and AGENTS.md #3 governs what those
         /// carry: a model's reply is content. It is still worth carrying, and
         /// is not decoration: a surface can tell two questions about two
         /// different completions apart, and a resolution can be matched to
@@ -797,7 +797,7 @@ mod tests {
         );
     }
 
-    // ---- serde round-trips (invariant #4) ------------------------------
+    // ---- serde round-trips (AGENTS.md #4) ------------------------------
 
     #[test]
     fn approval_request_and_resolution_round_trip_through_serde_json() {

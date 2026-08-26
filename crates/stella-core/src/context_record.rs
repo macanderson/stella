@@ -28,7 +28,7 @@
 //! the types below is their output, and changing one here without amending the
 //! record there leaves two answers to the same question:
 //!
-//! - `doc:adr/0009-enum-freeze-resolutions` — which variants the frozen enums
+//! - `doc:adr/0009-enum-freeze-resolutions` — which cases the frozen enums
 //!   carry, including `DirectiveEnforcement` dropping `Informational` and the
 //!   closed `constraint_effect` set.
 //! - `doc:adr/0011-context-records-are-toml` — a context record is TOML at
@@ -104,7 +104,7 @@ pub use scope::{Scope, SharingScope};
 pub use selection_health::{SelectionHealth, SelectionHealthPolicy, fold_selection_health};
 pub use temporal::{TemporalInterval, TemporalQuery};
 
-/// A `0..=100` confidence score. The newtype makes the range invariant
+/// A `0..=100` confidence score. The newtype makes the range rule
 /// un-bypassable: there is no way to hold an out-of-range confidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize)]
 pub struct Confidence(u8);
@@ -131,7 +131,7 @@ impl<'de> serde::Deserialize<'de> for Confidence {
     }
 }
 
-/// A cross-field domain invariant was violated. These are the "explicit
+/// A cross-field domain rule was violated. These are the "explicit
 /// constructor / validation function" errors the plan requires so an invalid
 /// record cannot be silently constructed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -148,7 +148,7 @@ pub enum RecordValidationError {
     #[error("an inferred record must have a non-empty scope")]
     InferredRecordEmptyScope,
     /// A `constraint` directive's effect must be `require` or `forbid`. (The
-    /// type system already excludes `allow`; this variant exists for callers
+    /// type system already excludes `allow`; this case exists for callers
     /// that parse effects from untyped input.)
     #[error("a constraint effect must be require or forbid, never allow")]
     ConstraintEffectAllow,
@@ -170,9 +170,9 @@ pub enum RecordValidationError {
         /// The `Scope` id it requires.
         required_id: &'static str,
     },
-    /// A named cross-field invariant was violated. `rule` is a stable dotted
+    /// A named cross-field rule was violated. `rule` is a stable dotted
     /// identifier (e.g. `not_helpful.requires_observable_effect`) so the many
-    /// intra-record rules stay self-documenting and testable without a variant
+    /// intra-record rules stay self-documenting and testable without a case
     /// each.
     #[error("invariant violated: {rule}")]
     Invariant {

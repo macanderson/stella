@@ -60,7 +60,7 @@ pub trait Sleeper: Send + Sync {
 pub const PARK_CHUNK_MS: u64 = 30_000;
 
 /// First parked-wait backoff when the server sent no `Retry-After` hint.
-/// Deliberately past the inline ladder's 8s cap: by the time a park is
+/// Past the inline ladder's 8s cap: by the time a park is
 /// reached the inline ladder has already failed, so the brownout is minutes
 /// long, not seconds.
 const PARK_BACKOFF_FLOOR_MS: u64 = 30_000;
@@ -79,7 +79,7 @@ pub enum ParkDirective {
     Continue,
     /// End the park now and surface the parked error.
     ///
-    /// Deliberately reasonless: *why* a park ended early is the supervisor's
+    /// Reasonless: *why* a park ended early is the supervisor's
     /// own knowledge, and the supervisor is caller-side, so it records the
     /// answer where it can act on it rather than routing it back through this
     /// module (`driver::rate_limit`'s `soft_stopped` is the engine's — it is
@@ -134,7 +134,7 @@ impl ParkSupervisor for NoParking {
         0
     }
     // Unreachable while the allowance is 0, but no-ops rather than panics:
-    // this is library code on a provider-driven path (invariant 5).
+    // this is library code on a provider-driven path (AGENTS.md #5).
     fn park_opened(&mut self, _planned_ms: u64, _chunk_ms: u64, _reason: &str) {}
     fn park_tick(&mut self, _waited_ms: u64, _planned_ms: u64) -> ParkDirective {
         ParkDirective::Continue

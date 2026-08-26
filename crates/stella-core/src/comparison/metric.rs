@@ -11,7 +11,7 @@ use crate::self_tuning::{RewardWeights, reward};
 /// criterion ([`super::ComparisonConfig::primary`]) and every
 /// [`super::Guard`].
 ///
-/// Each variant carries an **orientation** ([`Metric::higher_is_better`]),
+/// Each case carries an **orientation** ([`Metric::higher_is_better`]),
 /// which is what lets one guard type cover both "the pass rate must not drop"
 /// and "the cost must not rise" without the caller restating the direction and
 /// getting it backwards. A metric with no agreed direction does not belong
@@ -119,7 +119,7 @@ pub(super) fn mean(values: &[f64]) -> f64 {
 ///
 /// Sorts a copy with `total_cmp`, so a `NaN` sorts to one end deterministically
 /// rather than corrupting the partition the way `partial_cmp` + `unwrap` would
-/// — and rather than panicking, which library code may not do (invariant #5).
+/// — and rather than panicking, which library code may not do (AGENTS.md #5).
 pub(super) fn median(values: &[f64]) -> f64 {
     if values.is_empty() {
         return 0.0;

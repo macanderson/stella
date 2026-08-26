@@ -4,7 +4,7 @@
 //! Payload shaping for the `HookBus` lifecycle events the driver emits
 //! (#1133).
 //!
-//! Separated from the emit sites deliberately: *where* an event fires is a
+//! Separated from the emit sites: *where* an event fires is a
 //! property of the engine's control flow and belongs next to the boundary,
 //! but *what* it carries is a contract with observers — and that contract has
 //! one rule worth isolating so it is hard to break by accident.
@@ -128,7 +128,7 @@ pub fn turn_outcome_payload(outcome: &TurnOutcome, steps: usize) -> serde_json::
 
 /// What `agent.turn.parked` carries: the park's timing envelope (#1857).
 ///
-/// Deliberately NOT the wait's `description` — that is tool-authored free
+/// NOT the wait's `description` — that is tool-authored free
 /// text describing what the agent is doing, and this stream carries counts
 /// and identifiers only (see the module docs). The description rides
 /// `AgentEvent::TurnParked` on the transcript stream, which already has a
@@ -153,7 +153,7 @@ pub(super) fn turn_woken_payload(reason: &'static str, polls_used: u64) -> serde
 }
 
 /// What `agent.working_set.restored` carries: counts and the estimated token
-/// cost of the restoration message (#2685). Deliberately not the paths or
+/// cost of the restoration message (#2685). Not the paths or
 /// slugs — those are workspace content by another name, and this stream
 /// carries counts and identifiers only (see the module docs). The full
 /// restoration rides the transcript, which already has a considered

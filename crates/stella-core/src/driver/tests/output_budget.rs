@@ -276,7 +276,7 @@ async fn a_learned_ceiling_survives_the_turn_and_the_next_turn_pays_no_402() {
 
 /// The carry is opt-in, and its absence is exactly the old behaviour: an
 /// unattached host re-asks the configured ceiling every turn and pays the 402
-/// again. Guards the byte-stability half of the contract (invariant 7) — a
+/// again. Guards the byte-stability half of the contract (AGENTS.md #7) — a
 /// session that never attaches a handle sends what it always sent.
 #[tokio::test]
 async fn without_a_carry_every_turn_re_asks_the_configured_ceiling() {

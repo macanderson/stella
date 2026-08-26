@@ -3,10 +3,10 @@
 //! type layer that Phase 4 (compaction) wires into the compiler.
 //!
 //! Per the flagged-decisions issue (#483): the "blocking or **guarded** directive
-//! requires exact minimum fidelity" invariant is implemented only for `blocking`
+//! requires exact minimum fidelity" rule is implemented only for `blocking`
 //! — both spec extractions agree `guarded` is a fidelity-policy category (a
 //! "guarded rule" defaults to exact), not an enforcement value. No `guarded`
-//! enforcement variant is introduced; the guarded-rule default policy is Phase 4.
+//! enforcement case is introduced; the guarded-rule default policy is Phase 4.
 
 use serde::{Deserialize, Serialize};
 
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn minimum_fidelity_cannot_be_omitted() {
-        // `omitted` is not a variant of MinimumContentFidelity — unrepresentable.
+        // `omitted` is not a case of MinimumContentFidelity — unrepresentable.
         assert!(serde_json::from_value::<MinimumContentFidelity>(json!("omitted")).is_err());
         assert!(serde_json::from_value::<ContentFidelity>(json!("omitted")).is_ok());
     }

@@ -25,7 +25,7 @@
 //!
 //! # Unrated is not good
 //!
-//! [`Verdict`] is deliberately optional and [`Trend`] reports how many tasks
+//! [`Verdict`] is optional and [`Trend`] reports how many tasks
 //! were never rated. A scoreboard that silently treats unrated work as
 //! successful is a scoreboard that improves fastest when nobody is looking.
 //!
@@ -40,7 +40,7 @@ mod tests;
 
 /// One thing that happened during a unit of work.
 ///
-/// Deliberately coarse. Anything requiring interpretation to emit — "was that
+/// Coarse. Anything requiring interpretation to emit — "was that
 /// message a correction or a clarification?" — is a classification problem, and
 /// a classifier here would put a model back in the measurement path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

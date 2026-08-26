@@ -189,7 +189,7 @@ async fn a_failed_attempts_recovered_usage_reaches_the_event_stream() {
 
     // The event stays content-free while carrying the numbers: token counts
     // cross the wire, the adapter's prose does not. (The turn's separate
-    // `Error` event is where the message belongs and is deliberately not
+    // `Error` event is where the message belongs and is not
     // covered by this assertion.)
     let wire = serde_json::to_string(incomplete).unwrap();
     assert!(

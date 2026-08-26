@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Oxagen, Inc. Commercial licensing: licensing@oxagen.sh
 
 //! The depth ladder and the context budget behind the `search` tool — the
-//! decision half, with no I/O in it (invariant 2).
+//! decision half, with no I/O in it (AGENTS.md #2).
 //!
 //! # What this module decides
 //!
@@ -24,7 +24,7 @@
 //! # Why the budget decides, and not an inferred intent
 //!
 //! The tempting design is to read the query ("what calls X?") and enrich
-//! accordingly. It is the wrong one here: `search` deliberately has no mode
+//! accordingly. It is the wrong one here: `search` has no mode
 //! parameter, so a wrong intent inference is **unrecoverable** — the model has
 //! no flag with which to correct it and must fall back to the tools `search`
 //! exists to replace. A budget cannot be wrong in that way. It degrades: the
@@ -179,7 +179,7 @@ impl Facet {
 
     /// What this facet is estimated to cost in rendered characters.
     ///
-    /// Estimates, deliberately: the budget's job is to stop an answer running
+    /// Estimates: the budget's job is to stop an answer running
     /// away, and an estimate that is uniformly a little wrong still orders
     /// the ladder correctly. Measuring the true cost would require rendering
     /// first, which is the I/O this module is not allowed to do — and would
@@ -455,7 +455,7 @@ mod tests {
             }
         }
 
-        /// Invariant 7 reaches here: the same configuration must produce the
+        /// AGENTS.md #7 reaches here: the same configuration must produce the
         /// same plan, or two runs of the same query are not comparable.
         #[test]
         fn allocation_is_deterministic(

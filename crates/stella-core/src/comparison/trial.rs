@@ -41,7 +41,7 @@ pub struct TrialRecord {
 /// One arm of the comparison: a named configuration and every trial run under
 /// it.
 ///
-/// Deliberately shaped like [`crate::self_tuning::ArmSamples`] — an id, a
+/// Shaped like [`crate::self_tuning::ArmSamples`] — an id, a
 /// human-readable value, and a bag of per-trial observations — because it is
 /// the same idea one level up: the arm stays **opaque**. Nothing here knows
 /// whether `value` names a model, a prompt template, a reasoning effort, or a

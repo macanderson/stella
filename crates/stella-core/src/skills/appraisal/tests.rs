@@ -335,7 +335,7 @@ fn a_harmful_skill_is_demoted_even_under_a_guard_set() {
     assert!(matches!(appraisal.verdict, SkillVerdict::Harms { .. }));
 }
 
-/// Invariant #4: the appraisal round-trips, so it can be persisted as the
+/// AGENTS.md #4: the appraisal round-trips, so it can be persisted as the
 /// promoted skill's provenance.
 #[test]
 fn an_appraisal_round_trips() {

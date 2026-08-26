@@ -16,7 +16,7 @@
 //! are different rankers with different thresholds and different tokenizers.
 //!
 //! This module is the shape they collapse into. It is deliberately **pure
-//! decision logic over owned data** (invariant 2): the plane is a port, the
+//! decision logic over owned data** (AGENTS.md #2): the plane is a port, the
 //! adapters do the I/O, and that is what lets the ranking and the budgeting
 //! be property-tested without a filesystem, a provider, or a store.
 //!
@@ -80,9 +80,9 @@ pub struct TurnSignal<'a> {
 
 /// Which plane a candidate came from.
 ///
-/// `Plugin` is declared now and produced by nothing yet, deliberately: #3246
+/// `Plugin` is declared now and produced by nothing yet: #3246
 /// sequences plugins last, and the whole cost of a fifth source arriving
-/// later is whether this enum and [`SteeringSet`] anticipated it. A variant
+/// later is whether this enum and [`SteeringSet`] anticipated it. A case
 /// costs nothing today and a second seam costs a migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SteeringSource {
@@ -135,7 +135,7 @@ pub struct SteeringCandidate {
 
 /// How the budgeter orders sources when it cannot afford all of them.
 ///
-/// Deliberately a fixed precedence rather than a tuned weight per source.
+/// A fixed precedence rather than a tuned weight per source.
 /// The four engines' scores are not commensurable, so any single blended
 /// number would be a fabricated comparison — and a fabricated comparison
 /// between a `must` rule and a skill is a governance failure, not a ranking
@@ -211,7 +211,7 @@ pub trait SteeringPlane {
 /// descending, then `handle`
 /// — the last is not a nicety. Selection feeds a prompt, prompt bytes feed
 /// the cache, and a tie broken by hash order would reorder the block between
-/// two otherwise identical turns and re-bill the tail (invariant 7).
+/// two otherwise identical turns and re-bill the tail (AGENTS.md #7).
 ///
 /// A candidate that does not fit is **skipped, not terminal**: a cheap
 /// low-ranked candidate still lands after an expensive one is refused. The

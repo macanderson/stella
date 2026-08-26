@@ -922,7 +922,7 @@ fn overflow_config() -> EngineConfig {
 }
 
 /// Every tool result's call_id must be answered by a PRECEDING
-/// assistant tool_call — the provider-side pairing invariant that a
+/// assistant tool_call — the provider-side pairing rule that a
 /// careless span cut would break.
 fn assert_tool_pairing(messages: &[CompletionMessage]) {
     let mut seen_calls: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -2493,7 +2493,7 @@ impl ToolExecutor for WedgedTools {
 /// so the turn still reaches a clean `Completed`.
 ///
 /// The clock is paused, so both timers below are virtual and the test
-/// costs no wall-clock. The outer guard is deliberately far longer than
+/// costs no wall-clock. The outer guard is far longer than
 /// the engine's ceiling: with the backstop present the *inner* timer fires
 /// first and the turn recovers; without it (the pre-fix engine) the outer
 /// one is the only timer, and the test fails cleanly instead of hanging

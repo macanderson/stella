@@ -12,7 +12,7 @@
 //! through the same executor, and without a name they arrive
 //! indistinguishable. Any RBAC system worth the name needs that distinction,
 //! and it must be able to supply its own rules rather than convince us to
-//! hardcode them — invariant #1, ports not direct dependencies.
+//! hardcode them — AGENTS.md #1, ports not direct dependencies.
 //!
 //! So: the engine defines [`Principal`] (who), consumes
 //! [`stella_protocol::ToolContract`] (what, and how dangerous), and delegates
@@ -69,8 +69,8 @@ pub enum Principal {
     SubAgent(String),
     /// An identity supplied by an embedding host over the serve wire.
     ///
-    /// Deliberately an opaque string: `stella-core` must not grow an opinion
-    /// about a host's identity model (invariant #1). The gate that the host
+    /// An opaque string: `stella-core` must not grow an opinion
+    /// about a host's identity model (AGENTS.md #1). The gate that the host
     /// also supplies is the thing that understands it.
     Host(String),
     /// An installed plugin, named by its manifest `name`.
@@ -98,7 +98,7 @@ impl Principal {
     /// A short stable label for audit lines and deny reasons — never parsed,
     /// only displayed.
     ///
-    /// Every variant carries its own prefix, so two principals that happen to
+    /// Every case carries its own prefix, so two principals that happen to
     /// share an id stay distinguishable in the audit line: a host called
     /// `vera` and a plugin called `vera` are different callers and must not
     /// render the same.
@@ -166,7 +166,7 @@ pub enum AuthzContribution {
 pub struct AuthzRuleTrace {
     /// The rule's identifier, as its gate spells it. An identifier, never
     /// content: no tool inputs, no paths, no model output (the trace may
-    /// ride audit surfaces, and invariant #3 governs what those carry).
+    /// ride audit surfaces, and AGENTS.md #3 governs what those carry).
     pub rule: String,
     /// Whether the rule matched this call.
     pub matched: bool,
@@ -182,7 +182,7 @@ pub struct AuthzRuleTrace {
 ///
 /// "Why was this denied" as a **value** — serde-first, so it survives into
 /// the journal and a test can assert on it, instead of a log line somebody
-/// greps. Built by pure resolvers over prefetched data (invariant #2).
+/// greps. Built by pure resolvers over prefetched data (AGENTS.md #2).
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AuthzTrace {
     /// The evaluated rules, in evaluation order.
@@ -224,7 +224,7 @@ pub struct AuthzEvaluation {
 
 /// A gate that could not reach a decision.
 ///
-/// Named and typed rather than a bare `String` (invariant #5) because the
+/// Named and typed rather than a bare `String` (AGENTS.md #5) because the
 /// distinction from `Ok(Deny)` is the entire safety property: callers must
 /// not be able to conflate "refused" with "could not tell", and a
 /// `Result<_, String>` invites exactly that by making both arms prose.
@@ -263,7 +263,7 @@ impl std::error::Error for AuthzEvalError {}
 /// before the tool runs.
 ///
 /// Implementations must be **pure over their inputs plus data they prefetched**
-/// (invariant #2): no I/O here. A gate that needs to consult a policy store
+/// (AGENTS.md #2): no I/O here. A gate that needs to consult a policy store
 /// loads it when it is constructed, so "why was this denied" stays a value a
 /// test can assert on rather than a log line and a network round trip.
 pub trait AuthzGate: Send + Sync {
@@ -397,9 +397,9 @@ impl AuthzGate for RiskCeiling {
 /// arm the fail-closed rule exists for, and an audit trail must show *could
 /// not tell* distinctly from *refused*.
 ///
-/// Content-free by construction (invariant #3): tool name, principal label,
+/// Content-free by construction (AGENTS.md #3): tool name, principal label,
 /// gate name, verdict, gate-authored reasons, and rule identifiers. The
-/// call's `input` is deliberately not a parameter — this payload can ride an
+/// call's `input` is not a parameter — this payload can ride an
 /// audit surface, and tool arguments must never follow it there.
 #[must_use]
 pub fn evaluation_journal_payload(
@@ -456,7 +456,7 @@ pub fn authz_verdict(
             resolve_precedence(operator, Ok(&decision), enforcement_softened)
         }
         Err(error) => {
-            // Deliberately routed through the same `Err` arm the hook surface
+            // Routed through the same `Err` arm the hook surface
             // uses: one fail-closed rule, one implementation.
             let detail = error.to_string();
             resolve_precedence(operator, Err(&detail), enforcement_softened)
@@ -524,9 +524,9 @@ mod tests {
         );
     }
 
-    /// Every variant's label is distinct and prefixed, so no id can make two
+    /// Every case's label is distinct and prefixed, so no id can make two
     /// principals render alike. The array is exhaustive by construction: add
-    /// a variant and this test still compiles, so `label`'s own `match` is
+    /// a case and this test still compiles, so `label`'s own `match` is
     /// the compiler-enforced half and this is the collision half.
     #[test]
     fn every_principal_label_is_distinct_and_prefixed() {
@@ -563,7 +563,7 @@ mod tests {
                 principal: &Principal,
                 _input: &Value,
             ) -> Result<AuthzDecision, AuthzEvalError> {
-                // A real decision per variant, not a catch-all: the point of
+                // A real decision per case, not a catch-all: the point of
                 // the enum is that a gate is forced to answer for a plugin.
                 match principal {
                     Principal::Plugin(name) => Ok(AuthzDecision::Deny {
@@ -714,7 +714,7 @@ mod tests {
                 _principal: &Principal,
                 _input: &Value,
             ) -> Result<AuthzEvaluation, AuthzEvalError> {
-                // A pure resolver over prefetched data (invariant #2): every
+                // A pure resolver over prefetched data (AGENTS.md #2): every
                 // rule is evaluated, the first matching non-allow decides.
                 let trace = AuthzTrace {
                     rules: vec![

@@ -10,7 +10,7 @@
 //! "the caller sees the partial history" stopped being a property of the code
 //! and became a property of one `Drop` impl.
 //!
-//! That is exactly the kind of invariant that breaks silently — nothing fails
+//! That is exactly the kind of rule that breaks silently — nothing fails
 //! to compile, the tests that inspect history after a *returned* turn keep
 //! passing, and only a REPL that hard-cancels notices its transcript vanished.
 //! So it is pinned here, from outside the crate, through the public API.

@@ -18,7 +18,7 @@
 //! the turn instead — forced compaction for a context overflow (#2680), a
 //! provider fallback for an exhausted ladder or a spent compaction ladder
 //! (#2679, #2770) — or settle it as no failure at all, when the park ended
-//! because a person pressed Esc (#2743). The park honors invariant 6's spirit the
+//! because a person pressed Esc (#2743). The park honors AGENTS.md #6's spirit the
 //! same way `driver/waiting.rs` does: the wait sits between model attempts,
 //! never mid-tool, and the budget's deadline bounds it from the outside.
 
@@ -52,7 +52,7 @@ const PARK_DEADLINE_RESERVE_MS: u64 = 30_000;
 /// soft-stop latch as the early exit — a park must not make Esc wait out a
 /// provider brownout.
 ///
-/// The narration is deliberately class-neutral and defers to the parked
+/// The narration is class-neutral and defers to the parked
 /// error's own rendered `reason`: since #2742 a park opens for a 429 *or* a
 /// 529, and a fixed "rate limited" prefix would have mislabelled half of
 /// them.

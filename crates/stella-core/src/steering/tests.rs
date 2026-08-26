@@ -130,7 +130,7 @@ fn a_token_estimate_near_u64_max_cannot_wrap_into_the_budget() {
 /// The block a selection renders into is prompt bytes, and prompt bytes feed
 /// the cache — so the same candidates must pack to the same order every time,
 /// including when scores tie. A tie broken by hash order would reorder the
-/// volatile tail between two identical turns and re-bill it (invariant 7).
+/// volatile tail between two identical turns and re-bill it (AGENTS.md #7).
 #[test]
 fn ties_break_deterministically_by_handle() {
     let tied = || {

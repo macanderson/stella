@@ -18,7 +18,7 @@
 //! read it, so there is no second copy to disagree.
 //!
 //! This is the same shape `fold_citation_stats` already uses for the citation
-//! loop, deliberately. Two derived aggregates over immutable evidence, one per
+//! loop. Two derived aggregates over immutable evidence, one per
 //! evidence source.
 //!
 //! # The counting rule that matters
@@ -118,7 +118,7 @@ pub fn fold_selection_health(
 ) -> Vec<SelectionHealth> {
     // Which record each use id is about, so a verdict can be attributed
     // without trusting the feedback's own copy of the record id (it has none —
-    // deliberately, so the two records cannot disagree).
+    //, so the two records cannot disagree).
     let use_index: BTreeMap<&str, &ContextUse> = uses
         .iter()
         .map(|(id, use_record)| (id.as_str(), use_record))

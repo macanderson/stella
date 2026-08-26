@@ -1,7 +1,7 @@
 //! Usage-anchor witnesses (#2681): context-size accounting re-bases on the
 //! provider's reported usage, so the byte estimator prices only the tail
 //! appended since the last report instead of the whole transcript — the
-//! 1.8×-drift class #2671 measured. Deliberately run WITHOUT a calibration
+//! 1.8×-drift class #2671 measured. Run WITHOUT a calibration
 //! map: the anchor is a per-step measurement, not a learned correction, and
 //! these witnesses must not be satisfiable by calibration alone (its factor
 //! clamps at 2×, so the fixtures put the truth beyond its reach).

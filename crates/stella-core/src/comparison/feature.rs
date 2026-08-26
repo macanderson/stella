@@ -75,7 +75,7 @@ impl FeatureStat {
 
 /// One arm's counter for one key, next to the baseline's.
 ///
-/// Deliberately carries both arms' figures rather than the difference alone: a
+/// Carries both arms' figures rather than the difference alone: a
 /// `+2.0` delta is a different finding at `0 → 2` than at `40 → 42`, and a
 /// reader who has to go back to the arm summaries to tell them apart will not.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

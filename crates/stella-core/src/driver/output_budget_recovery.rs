@@ -44,7 +44,7 @@
 //!
 //! # Bounds and the death-spiral guard
 //!
-//! Identical in shape to the overflow ladder, deliberately: a **per-turn
+//! Identical in shape to the overflow ladder: a **per-turn
 //! down-only latch**, at most `MAX_RECOVERY_RUNGS` rungs, the counter never
 //! resetting within the turn, and each clamp monotonically tighter than the
 //! last. The clamp never loosens once set, even after a later call commits,
@@ -114,7 +114,7 @@ pub(crate) const SAFETY_MARGIN_PERCENT: u32 = 10;
 /// matters — which is the terminal failure, correctly surfaced.
 pub(crate) const FLOOR_TOKENS: u32 = 1024;
 
-/// Per-turn latch and output-ceiling clamp. Pure data, no I/O (invariant 2);
+/// Per-turn latch and output-ceiling clamp. Pure data, no I/O (AGENTS.md #2);
 /// lives on [`crate::step::TurnState`] and dies with the turn.
 #[derive(Debug, Default)]
 pub(crate) struct OutputBudgetRecovery {
@@ -195,7 +195,7 @@ impl OutputBudgetRecovery {
 /// its config by shared reference, and this is read on the request path and
 /// written on the failure path of the same turn.
 ///
-/// Pure data, no I/O (invariant 2). A session touches a handful of providers,
+/// Pure data, no I/O (AGENTS.md #2). A session touches a handful of providers,
 /// so a `Vec` scanned linearly beats a map it would never fill.
 ///
 /// # Byte-stability
@@ -203,7 +203,7 @@ impl OutputBudgetRecovery {
 /// Until a rung arms, every method is the identity: [`Self::narrow`] hands
 /// back the configured ceiling unchanged, so a session that never meets a 402
 /// sends byte-identical requests to one that has never heard of this type
-/// (invariant 7). `EngineConfig` leaves the handle unattached by default, so
+/// (AGENTS.md #7). `EngineConfig` leaves the handle unattached by default, so
 /// an unwired host is unchanged twice over.
 #[derive(Debug, Default)]
 pub struct SessionOutputCeilings {
@@ -230,7 +230,7 @@ impl SessionOutputCeilings {
     /// durable host owning its own state — so no driver can opt out of the
     /// decay and leave a session capped for good.
     ///
-    /// Deliberately ages *every* entry rather than only the provider about to
+    /// Ages *every* entry rather than only the provider about to
     /// run: lanes sharing one handle then age it faster than one lane would,
     /// which spends re-probes sooner. That is the safe direction — a re-probe
     /// costs at most the one round-trip, while a stale ceiling silently
@@ -407,7 +407,7 @@ mod tests {
     }
 
     /// Until something is learned the carry is the identity, on every
-    /// provider — the byte-stability contract (invariant 7).
+    /// provider — the byte-stability contract (AGENTS.md #7).
     #[test]
     fn an_empty_carry_narrows_nothing() {
         let ceilings = SessionOutputCeilings::default();

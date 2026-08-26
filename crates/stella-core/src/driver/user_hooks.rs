@@ -126,7 +126,7 @@ pub(crate) const STOP_FINAL_ROUND_NOTE: &str =
 ///
 /// Rendering happens here rather than in `stella-protocol` because how a
 /// denial reads to a model is the engine's presentation choice, and the types
-/// crate holds no view (invariant #1: zero logic there). The lines are
+/// crate holds no view (AGENTS.md #1: zero logic there). The lines are
 /// deliberately terse and field-per-line so the model can act on each one;
 /// the same evidence rides the `hook.stop.blocked` payload structurally for
 /// anything that needs to branch instead of read.

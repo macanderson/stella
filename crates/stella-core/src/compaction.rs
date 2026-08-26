@@ -16,7 +16,7 @@
 //!    is at least `RETENTION_TRIGGER_BUDGET_DIVISOR`-th of the way into its
 //!    budget, so the prompt-cache prefix is mutated only when the rewrite
 //!    buys real bytes in a conversation big enough to need them (the same
-//!    discipline as the budget hysteresis below — invariant 7, #372, #4381).
+//!    discipline as the budget hysteresis below — AGENTS.md #7, #372, #4381).
 //!
 //! The budget passes:
 //!
@@ -54,7 +54,7 @@ pub mod read_digest;
 ///
 /// This exists because the two halves need different powers over the
 /// transcript. Compaction rewrites results **in place** and so takes a slice,
-/// which deliberately cannot grow the conversation; the digest is a new tail
+/// which cannot grow the conversation; the digest is a new tail
 /// message and so needs the `Vec`. Rather than hand the driver both calls —
 /// `driver.rs` is closed to growth (`scripts/file-size-baseline.txt`), and a
 /// second call there is exactly the sort of step a later edit drops — the pair
@@ -156,7 +156,7 @@ const AGE_ELISION_MARKER: &str =
 /// detection compares. Keeping the predicate here keeps the stub strings
 /// in the one module that writes them.
 ///
-/// Deliberately conservative in the one direction that can be wrong: real
+/// Conservative in the one direction that can be wrong: real
 /// tool output that happens to contain [`AGE_ELISION_MARKER`] (reading
 /// this file, say) is treated as compacted, which only means the driver
 /// declines to snapshot an identity for it and falls back to comparing
@@ -213,7 +213,7 @@ const PARTIAL_ELISION_MARKER: &str = "[… middle of this cut-off message elided
      told not to repeat; resume from where it stops below …]";
 
 /// Bytes of a truncated assistant partial kept from the start — enough to
-/// orient ("what was I doing"), no more. Deliberately small: unlike tool
+/// orient ("what was I doing"), no more. Small: unlike tool
 /// output, the head of a cut-off message carries no framing a reader needs.
 const PARTIAL_KEEP_HEAD: usize = 200;
 
@@ -270,7 +270,7 @@ pub(crate) fn elide_truncated_partial(content: &str) -> Option<String> {
 /// while a trickle of barely-over-threshold results reclaiming a few
 /// hundred bytes each no longer buys a rewrite at all. Between firings the
 /// whole prefix is byte-stable (the same discipline as the budget
-/// hysteresis — invariant 7).
+/// hysteresis — AGENTS.md #7).
 const RETENTION_MIN_RECLAIM_CHARS: usize = 12_000;
 
 /// How far into its budget a conversation must be before the retention pass
@@ -363,7 +363,7 @@ const AGE_RETAINED_CHARS: usize = 2 * AGE_KEEP_CHARS + AGE_ELISION_MARKER.len();
 pub struct RetentionPolicy {
     /// Tool messages within this distance of the newest one are never touched
     /// (the newest itself is always protected, whatever this says — the
-    /// most-recent-result invariant belongs to every pass).
+    /// most-recent-result rule belongs to every pass).
     pub keep_recent_steps: usize,
 }
 
@@ -539,7 +539,7 @@ pub fn compact_measured(
     // long turn re-crossed it on every step's few thousand new tokens, and
     // each re-triggered pass rewrote the next-oldest tool result — a fresh
     // prefix mutation deep in the transcript on EVERY step, invalidating the
-    // provider prompt cache for everything after it (invariant 7: cache hits
+    // provider prompt cache for everything after it (AGENTS.md #7: cache hits
     // are a feature; #372's whole point). An eighth of headroom absorbs
     // several steps of growth per mutation instead of one. A tiny budget
     // (under 8 tokens) has no headroom eighth and degrades gracefully to the
@@ -566,7 +566,7 @@ pub fn compact_measured(
     // the manifest cited, not the id of its intermediate aged content, which is
     // what capturing up front preserves.
     //
-    // Deliberately NOT keyed by `call_id`. A call_id is unique only within ONE
+    // NOT keyed by `call_id`. A call_id is unique only within ONE
     // step — `driver/loop_evidence.rs::snapshot_result_identities` says so and poisons any id
     // it sees carrying two different outputs — and Gemini/Vertex mint theirs as
     // `call_{ordinal}` counted per response, so `call_0` recurs on every

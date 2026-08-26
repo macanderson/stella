@@ -25,12 +25,12 @@
 //! output, over and over — so the driver can abort early. The foundry looks
 //! for the opposite of stuck: a command shape reused *with variation* often
 //! enough that a parameterized tool would replace the hand-reconstruction.
-//! The two are deliberately complementary — an exact repeat is loop
+//! The two are complementary — an exact repeat is loop
 //! detection's territory, so a foundry proposal requires **at least two
 //! distinct argument sets** (see [`GapDetectionConfig::min_distinct_arguments`]).
 //!
 //! **Normalization is the whole game.** "Near-identical" is decided by
-//! reducing each command to a *signature*: a skeleton of the invariant parts
+//! reducing each command to a *signature*: a skeleton of the rule parts
 //! (program name, subcommands, flag names, shell operators) with the varying
 //! *values* (quoted strings, paths, numbers) replaced by typed holes. Two
 //! commands with the same signature are the same shape. The holes become the
@@ -67,7 +67,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-/// The kind of value a parameter hole stands for. Kept deliberately small:
+/// The kind of value a parameter hole stands for. Kept small:
 /// these are the only three token shapes the detector recognizes as
 /// structurally "a value that varies," and each renders to one placeholder
 /// in a signature.
@@ -197,7 +197,7 @@ impl ProposedTool {
 /// actually want to move is #2471.
 ///
 /// It is a parameter rather than a constant because this crate does no I/O
-/// (invariant #2): thresholds are data the caller owns, which is what lets the
+/// (AGENTS.md #2): thresholds are data the caller owns, which is what lets the
 /// property tests sweep them across ranges no shipped configuration would take.
 /// That is the seam a settings surface would attach to — it is not evidence
 /// that one exists.
@@ -336,7 +336,7 @@ fn meets_reuse_ratio(occurrences: usize, distinct_arguments: usize, floor: f64) 
     occurrences as f64 >= floor * distinct_arguments as f64
 }
 
-/// A signature and the raw material to build a proposal from it: the invariant
+/// A signature and the raw material to build a proposal from it: the rule
 /// skeleton words (for naming) and the per-position holes.
 struct Analyzed {
     signature: String,
@@ -812,7 +812,7 @@ mod tests {
     use super::*;
 
     /// A hand-rolled matcher for the tool-name contract, so tests do not need
-    /// the `regex` crate this module deliberately avoids.
+    /// the `regex` crate this module avoids.
     fn is_valid_tool_name(name: &str) -> bool {
         let len = name.chars().count();
         if !(2..=64).contains(&len) {

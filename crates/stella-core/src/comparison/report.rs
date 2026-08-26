@@ -103,7 +103,7 @@ pub enum ComparisonVerdict {
 
 impl ComparisonVerdict {
     /// The promotable arm's id — `Some` only for [`ComparisonVerdict::Winner`].
-    /// A guard-blocked lift deliberately answers `None`: it named an arm, but
+    /// A guard-blocked lift answers `None`: it named an arm, but
     /// not one anything may promote.
     pub fn winner(&self) -> Option<&str> {
         match self {
@@ -207,7 +207,7 @@ const ZERO_STAT: FeatureStat = FeatureStat {
 ///
 /// Total: an empty arm list, a missing baseline, arms that share no task, and
 /// non-finite metrics all resolve to a report with a stated
-/// [`ComparisonVerdict::NoWinner`] rather than a panic (invariant #5).
+/// [`ComparisonVerdict::NoWinner`] rather than a panic (AGENTS.md #5).
 ///
 /// Deterministic: tasks are keyed and sorted, arms keep input order, and
 /// nothing reads a clock — the same trials yield a byte-identical report.

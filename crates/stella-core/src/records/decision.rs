@@ -9,7 +9,7 @@
 //!
 //! The DB proposal loop (`crates/stella-cli/src/proposals_cmd.rs`) already records every
 //! decision as an immutable event so that replay reproduces state exactly, and the
-//! file-based surface mirrors it deliberately. Mutating a proposal in place would
+//! file-based surface mirrors it. Mutating a proposal in place would
 //! destroy the one thing review is *for*: a decline is evidence. Overwriting a
 //! proposal's status with `ignored` loses who declined it, when, and why — which is
 //! exactly the information the next ingest needs in order not to ask again.

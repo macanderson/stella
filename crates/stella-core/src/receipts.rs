@@ -123,7 +123,7 @@ fn sha256_hex(s: &str) -> String {
 /// The one caller outside this module is
 /// [`crate::hooks::decision::ApprovalSubject::TurnCompletion`], which carries a
 /// digest of the turn's answer precisely so it does not carry the answer
-/// (invariant #3 governs what an `approval.*` audit event may hold).
+/// (AGENTS.md #3 governs what an `approval.*` audit event may hold).
 pub(crate) fn sha256_hex_prefixed(s: &str) -> String {
     format!("sha256:{}", sha256_hex(s))
 }
@@ -321,7 +321,7 @@ impl BlockDigestCache {
 
 /// Why a block is in the prompt, as recorded on the frame preimage.
 ///
-/// A deliberately small, closed vocabulary of `&'static str` rather than an
+/// A small, closed vocabulary of `&'static str` rather than an
 /// enum: it participates in the frame hash, so its wire spelling is the
 /// contract and a Rust-level rename that did not change the string would be
 /// invisible where it matters. The retrieval plane has its own, finer
@@ -366,7 +366,7 @@ pub const RECALL_MARKER: &str = "[auto-recalled context]";
 /// The working-set restoration (#2685) files as [`BlockKind::Summary`]: it is
 /// the summary splice's companion — what the splice destroyed, re-attached —
 /// and a receipt reader reconciling a summarization round wants the pair under
-/// one kind rather than a new wire variant. The already-read digest (#3806)
+/// one kind rather than a new wire case. The already-read digest (#3806)
 /// joins it on the same argument one step further out: it is what the
 /// *compaction* passes destroyed, re-stated, and a reader reconciling a
 /// compaction round wants it beside the summary rather than mistaken for the
@@ -394,7 +394,7 @@ pub const RECALL_MARKER: &str = "[auto-recalled context]";
 /// costs more than it returns either way it could be closed: a
 /// `#[serde(default)]` origin on `CompletionMessage` touches the type every
 /// provider adapter serializes and has to be proven never to reach a provider
-/// request (invariant 7, byte-stable prompts) for a field no provider wants;
+/// request (AGENTS.md #7, byte-stable prompts) for a field no provider wants;
 /// handing the builder a `&[(usize, SteerCause)]` beside the messages is a
 /// second array indexed into the first, which drifts the moment anything
 /// inserts or rewrites a message — and compaction does both, on every step.
@@ -646,7 +646,7 @@ impl<'a> BlockDraft<'a> {
 /// (#713), and closing them moved block ids — a block's id is
 /// `sha256(kind_tag \0 content)`, so a message that used to hash as
 /// `user_goal` and now hashes as `summary` is a different id. That is a
-/// one-way fidelity change, accepted deliberately: the ids that moved were
+/// one-way fidelity change, accepted: the ids that moved were
 /// wrong, and a receipt that attributes the engine's own compaction notice to
 /// the person is not a receipt anyone should be asked to keep for stability's
 /// sake. Stored ids from before the change remain valid for the receipts that
@@ -846,7 +846,7 @@ pub const FRAME_SCHEMA_VERSION: &str = "1.1";
 
 /// One block as it enters the frame preimage.
 ///
-/// Deliberately NOT [`ManifestEntry`]: `resident_since_step` is on the manifest
+/// NOT [`ManifestEntry`]: `resident_since_step` is on the manifest
 /// and must not be on the frame. It records how long a block has been carried,
 /// which is a fact about the *history* of the session rather than about what
 /// this prompt contained — a turn replayed from step 0 and the same turn reached

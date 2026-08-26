@@ -11,7 +11,7 @@
 //! `context_record::kind` already carries the taxonomy enums, and this module
 //! uses them rather than minting parallel ones. What it adds is the *record
 //! bodies* — the actual serialized shapes with the fields this loop needs, which
-//! the enum layer deliberately never defined.
+//! the enum layer never defined.
 //!
 //! ## Identity is derived, never allocated
 //!
@@ -21,7 +21,7 @@
 //! no-op. An allocated id (a counter, a uuid) would make every replay a
 //! duplicate.
 //!
-//! ## The two invariants that are enforced by the constructor
+//! ## The two rules that are enforced by the constructor
 //!
 //! Spec §5.4 and §7 both name rules that are worthless as documentation:
 //!
@@ -48,7 +48,7 @@ use super::{Confidence, RecordValidationError};
 /// from the fields present.
 pub const LIFECYCLE_SCHEMA_VERSION: &str = "1.0-draft";
 
-/// Where an observation came from. Deliberately small: spec §1's "extend before
+/// Where an observation came from. Small: spec §1's "extend before
 /// inventing" applies to vocabularies too, and each of these names evidence the
 /// system *already captures*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -100,7 +100,7 @@ pub struct ObservationRecord {
     pub text: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub domains: Vec<String>,
-    /// Whether redaction actually removed anything, so the honesty invariant
+    /// Whether redaction actually removed anything, so the honesty rule
     /// (§5.5, no silent transformation) is visible on the record itself.
     pub redacted: bool,
     pub observed_at: String,
@@ -352,7 +352,7 @@ pub struct PromotionEventRecord {
     pub record_hash: String,
 }
 
-/// Constructing a promotion event violated a governance invariant.
+/// Constructing a promotion event violated a governance rule.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PromotionEventError {
     /// Spec §5.4: inferred directives start advisory and may never *start*
@@ -439,7 +439,7 @@ impl PromotionEventRecord {
     /// answer and it is not configurable: advisory.
     ///
     /// Exposed as a function rather than left implicit so a caller reaching for
-    /// "what enforcement should this get" finds the invariant instead of a
+    /// "what enforcement should this get" finds the rule instead of a
     /// settings lookup. `context.promotion.inferred_directive.initial_enforcement`
     /// exists in settings and defaults to advisory, but a settings file is a
     /// surface a person edits, and §5.4 is not negotiable by configuration.
@@ -451,7 +451,7 @@ impl PromotionEventRecord {
 /// A confidence derived from the evidence, on the `0..=100` scale the promotion
 /// settings speak.
 ///
-/// Deliberately simple and deliberately capped below `auto_activate_at_confidence`'s
+/// Simple and capped below `auto_activate_at_confidence`'s
 /// default of 85 unless a proposal is genuinely well-evidenced: the loop should
 /// need real recurrence across real tasks before it acts without being asked.
 pub fn confidence_from_score(score: &ProposalScore) -> Result<Confidence, RecordValidationError> {

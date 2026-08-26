@@ -18,10 +18,10 @@
 //!
 //! Records additionally load through [`load_context_file`] without findings —
 //! the reference files carry their real content-derived `record_id`/
-//! `record_hash` (or none, for the deliberately hand-authored 03), so a hash
+//! `record_hash` (or none, for the hand-authored 03), so a hash
 //! mismatch here means someone edited a record's semantics without re-stamping.
 //!
-//! Two examples are deliberately NOT this schema: `08-witness.toml`
+//! Two examples are NOT this schema: `08-witness.toml`
 //! (`context-witness/v0.1`) and `09-effect-witness.toml`
 //! (`context-effect/v0.1`) are sketch-stage designs with no shipped Rust type.
 //! For those the pinned property is the refusal: the record loader must reject

@@ -17,7 +17,7 @@
 //! was extracted to end in the first place: four near-copies had accumulated
 //! inside `bash.rs` and had already diverged (#2301).
 //!
-//! Pure functions over borrowed text (invariant 2): no process, no clock, no
+//! Pure functions over borrowed text (AGENTS.md #2): no process, no clock, no
 //! filesystem. In particular the stall classifier is a *static text-shape*
 //! check and never a measured elapsed time, so the same transcript always
 //! classifies the same way — a timing here would make loop detection
@@ -134,7 +134,7 @@ pub fn shell_words(command: &str) -> Vec<String> {
             // Quoted, it is text: a backtick inside `'…'` or `"…"` stays in
             // its word, which keeps this on the module's "better a missed
             // note than a wrong one" side — a double-quoted substitution does
-            // run, and is deliberately not seen.
+            // run, and is not seen.
             '`' if !in_single && !in_double => {
                 if has_word {
                     words.push(std::mem::take(&mut cur));

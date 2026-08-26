@@ -6,7 +6,7 @@ use super::*;
 /// does real, bulky work — four tool calls returning 4 KB each — and the
 /// parent's transcript does not grow by ANY of it.
 ///
-/// The assertion is deliberately on the parent's `Vec<CompletionMessage>`
+/// The assertion is on the parent's `Vec<CompletionMessage>`
 /// rather than on a token estimate: message identity is what the next
 /// provider call actually serializes, so an unchanged vector is proof the
 /// child's intermediate work is not being re-sent on every subsequent step

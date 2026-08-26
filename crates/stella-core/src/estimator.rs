@@ -165,7 +165,7 @@ const CALIBRATION_ALPHA: f64 = 0.3;
 const CALIBRATION_MIN_SAMPLES: u32 = 3;
 
 /// Bounds on the applied correction factor. The lower bound matters most:
-/// the raw estimator is deliberately biased HIGH (see
+/// the raw estimator is biased HIGH (see
 /// [`stella_protocol::tokens::BYTES_PER_TOKEN`]),
 /// and a factor below 1.0 spends that safety margin — capping it at 0.5
 /// means calibration can at most halve the conservative estimate, so the
@@ -204,7 +204,7 @@ pub struct Calibration {
     ///
     /// Kept alongside the EWMA rather than derived from it because they answer
     /// different questions. The EWMA is what *corrects* the next estimate, and
-    /// it is deliberately smoothed and clamped so one bad sample cannot steer
+    /// it is smoothed and clamped so one bad sample cannot steer
     /// budgeting; these totals are what *reports* the gap, and a report that
     /// inherited the clamp would understate exactly the drift it exists to
     /// surface. See [`CalibrationMap::report`].

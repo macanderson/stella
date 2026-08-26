@@ -1,5 +1,5 @@
 //! A/B comparison — the one report shape every stella measurement of "is this
-//! variant better?" emits, folded from paired per-task trials.
+//! arm better?" emits, folded from paired per-task trials.
 //!
 //! Two halves of the project need to answer that question and must not answer
 //! it differently. The **offline** half is `loop-bench --compare`: run a fixed
