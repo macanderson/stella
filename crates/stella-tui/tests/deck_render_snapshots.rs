@@ -314,8 +314,15 @@ fn base_ui(tab: DeckTab) -> DeckUi {
     ui.tab = tab;
     ui.graph = Some(demo_graph());
     // The driver seeds this at session start, so every frame the real deck
-    // draws has it — including the one `/models` renders from.
-    ui.engine.pristine = Some(stella_tui::scenario::demo_engine_config());
+    // draws has it — including the one `/models` renders from. Seeded through
+    // the fold rather than by assignment: `ingest_config` writes `state` and
+    // `pristine` from one snapshot, so a fixture that sets either by hand can
+    // claim edits the panel does not hold (#4704).
+    stella_tui::views::engine_panel::ingest_config(
+        &mut ui,
+        &stella_tui::scenario::demo_engine_config(),
+        &None,
+    );
     ui
 }
 
@@ -1436,5 +1443,26 @@ fn deck_render_snapshots_pin_the_subagents_overlay() {
         W,
         H,
         &frame,
+    );
+}
+
+/// The fixture's engine panel holds a working copy, not just a baseline.
+///
+/// `EngineOverlay::dirty()` is `state != pristine`, so seeding `pristine`
+/// alone leaves the panel permanently modified with nothing to have modified
+/// — which is how `tab_settings.txt` came to show `modified` over `waiting
+/// for the engine config snapshot`, a pair the live deck cannot produce
+/// (#4704). `ingest_config` writes both fields from one snapshot; seeding
+/// through it is what keeps the fixture and the fold in step.
+#[test]
+fn the_fixture_engine_panel_is_seeded_the_way_the_fold_seeds_it() {
+    let ui = base_ui(DeckTab::Settings);
+    assert!(
+        ui.engine.state.is_some(),
+        "base_ui must seed the working copy, not only the baseline"
+    );
+    assert!(
+        !ui.engine.dirty(),
+        "a freshly seeded panel has no unsaved edits to claim"
     );
 }
