@@ -193,7 +193,7 @@ impl TamperWatch {
     /// direction the watch exists for.
     ///
     /// Every path crosses the fence before the filesystem is touched, because
-    /// [`observe`] is the only way in and it fences first — a declaration that
+    /// [`Self::observe`] is the only way in and it fences first — a declaration that
     /// escapes the granted root is dropped from the watch rather than followed.
     pub(crate) fn pin_declared(&self, paths: &[String]) {
         let mut pinned = self

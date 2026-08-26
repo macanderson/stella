@@ -62,7 +62,7 @@ pub(crate) fn custom_tool_report_for_scopes(
 /// root itself cannot be swapped — a descriptor keeps naming the directory it
 /// was opened on however the directory is renamed afterwards.
 ///
-/// [`ConfinedEntry::resolved`] is that same walk's record of where it landed,
+/// [`stella_tools::rootfd::ConfinedEntry::resolved`] is that same walk's record of where it landed,
 /// so a witness that was renamed and is still reachable at its pinned path
 /// through an aliased lookup (a symlinked parent directory) reports its real
 /// location, which the tamper watch's pinned-path equality rejects. An artifact
@@ -84,7 +84,8 @@ pub(crate) fn fs_artifact_identity(
 /// The content half of an artifact's identity, read from an already-open
 /// confined entry.
 ///
-/// Bracketed by [`ConfinedEntry::still_named`] on both sides of the read: the
+/// Bracketed by [`stella_tools::rootfd::ConfinedEntry::still_named`] on both
+/// sides of the read: the
 /// name this descriptor was opened by must still mean this file before the
 /// bytes are hashed and after, or the fingerprint describes something that name
 /// no longer refers to. Both questions go through the directory descriptor the
