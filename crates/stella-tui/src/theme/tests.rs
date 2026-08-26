@@ -531,7 +531,6 @@ fn palette_law_gold_is_the_brand() {
         CITRON,
         ORCHID,
     ]);
-    all.extend(BRAND_STOPS);
     all.extend(LIGHT_REMAP.iter().map(|(_, to)| *to));
     for token in &all {
         for (retired, name) in [
@@ -942,9 +941,15 @@ fn apply_theme_is_identity_for_dark_and_remaps_for_light() {
             "{token:?} has no LIGHT_REMAP entry"
         );
     }
-    // An unmapped colour (an interpolated gradient cell) passes through.
-    let mid = lerp_rgb(palette::BRAND, palette::BRAND_LIVE, 0.5);
-    assert_eq!(remap_theme(mid, LIGHT_REMAP), mid);
+    // A colour that is not a token passes through untouched. Nothing paints
+    // one any more (#4058 retired the gradient that used to), so this pins
+    // the remap's total behavior rather than a live path.
+    let unmapped = Color::Rgb(0x7B, 0x9A, 0x35);
+    assert!(
+        !ALL_RGB_TOKENS.contains(&unmapped),
+        "pick a value no token holds, or this asserts nothing"
+    );
+    assert_eq!(remap_theme(unmapped, LIGHT_REMAP), unmapped);
     // Every LIGHT_REMAP key is a distinct value (aliases share one entry).
     for (i, (from, _)) in LIGHT_REMAP.iter().enumerate() {
         assert!(
@@ -986,62 +991,41 @@ fn degrade_buffer_strips_color_under_no_color() {
     assert_eq!(buf.content[0].bg, Color::Reset);
 }
 
-/// Which two golds a theme sweeps between is the whole contract of the brand
-/// gradient, and it used to be readable a second way — through the
-/// `primary`/`primary_deep` wrappers, which projected one end each. Those had
-/// no caller and are gone (#3741), so this is where the pairing is pinned:
-/// per theme, in full, on the accessor that survived.
+/// **Witness (#4058, rule 5).** No gradient may come back to this crate.
 ///
-/// It asserts against `stops_for` rather than `primary_stops` because the
-/// latter reads process-global state every other test in this binary shares —
-/// a test that flipped the active theme to see the light row would race
-/// `theme_remap_and_apply`'s "stella-dark is the identity" assertion.
+/// The brand gradient (`BRAND_STOPS`, `primary_stops`, `brand_gradient`,
+/// `gradient_at`, `lerp_rgb`, `lighten`) was `pub`, so nothing in the gate
+/// could see that its last consumer had gone: `crate::progress`, the module
+/// its own doc comments named as the fill it painted, does not exist. Rule 5
+/// of the v5 colour alignment retires gradients on every surface and SPEC 2
+/// (`cell-grid honest`) allows only per-cell colour steps, so a re-added
+/// interpolator is a spec violation rather than an unused item — and a `pub`
+/// one leaves no other trace.
+///
+/// This asserts against the crate's own source rather than against a symbol,
+/// because a deleted symbol cannot be named in a test that must compile.
 #[test]
-fn primary_stops_are_the_two_golds_per_theme() {
-    assert_eq!(
-        stops_for(ThemeName::StellaDark),
-        [palette::BRAND, palette::BRAND_LIVE],
-        "stella-dark sweeps resting gold → live gold"
-    );
-    assert_eq!(
-        stops_for(ThemeName::StellaLight),
-        [palette::BRAND_INK_DEEP, palette::BRAND_INK],
-        "stella-light sweeps the deep paper gold → the paper gold"
-    );
-    // No theme may collapse the sweep to one colour: a gradient between a
-    // value and itself is a flat fill wearing a gradient's cost.
-    for theme in ThemeName::ALL {
-        let [resting, live] = stops_for(theme);
-        assert_ne!(resting, live, "{} has a one-colour sweep", theme.slug());
+fn no_colour_interpolator_lives_in_this_crate() {
+    for (file, source) in [
+        ("theme.rs", include_str!("../theme.rs")),
+        ("palette.rs", include_str!("../palette.rs")),
+    ] {
+        for banned in [
+            "fn lerp_rgb",
+            "fn brand_gradient",
+            "fn gradient_at",
+            "fn lighten",
+            "fn primary_stops",
+            "BRAND_STOPS",
+        ] {
+            assert!(
+                !source.contains(banned),
+                "{file} declares `{banned}` — rule 5 retires gradients on \
+                 every surface, and `apply_theme`'s value remap cannot see an \
+                 interpolated cell"
+            );
+        }
     }
-    // And the live accessor is that table read at the active theme, not a
-    // second copy of it.
-    assert_eq!(primary_stops(), stops_for(active_theme()));
-}
-
-#[test]
-fn brand_gradient_spans_resting_to_live_accent() {
-    // The default theme is `stella-dark`, so the stops are the two golds;
-    // `primary_stops` swaps them for the deep paper pair under
-    // `stella-light`.
-    assert_eq!(brand_gradient(0.0), ACCENT);
-    assert_eq!(brand_gradient(1.0), ACCENT_LIVE);
-    // Monotonic, clamped, never panics across the range.
-    for i in 0..=20 {
-        let _ = brand_gradient(f64::from(i) / 20.0);
-    }
-    assert_eq!(brand_gradient(-1.0), ACCENT);
-    assert_eq!(brand_gradient(2.0), ACCENT_LIVE);
-    // The *resting* end is exactly what `crate::progress` falls back to when
-    // the terminal cannot render the gradient, so a degraded fill is the
-    // gradient's own tail rather than a value that appears nowhere in it.
-    assert_eq!(brand_gradient(0.0), ACCENT);
-}
-
-#[test]
-fn lighten_moves_toward_white() {
-    assert_eq!(lighten(ACCENT, 0.0), ACCENT);
-    assert_eq!(lighten(ACCENT, 1.0), Color::Rgb(255, 255, 255));
 }
 
 /// The transcript's tool-class hues are a *set*, and a set only works if

@@ -232,9 +232,10 @@ pub const SUBAGENT: Color = TEAL;
 // keeps ~700 `theme::TOKEN` call sites untouched: a theme is a substitution
 // table, not a parameter threaded through the render tree.
 //
-// The one thing a value remap can't recolour is the progress bar's *gradient*,
-// whose interpolated cells are never equal to a token; so its source
-// ([`brand_gradient`] via [`primary_stops`]) is theme-aware directly.
+// It works because every colour the deck paints IS a token. Rule 5 of the v5
+// colour alignment retires gradients on every surface, and SPEC 2 (`cell-grid
+// honest`) allows only per-cell colour steps, so there are no interpolated
+// cells for the remap to miss (#4058).
 
 /// The shipped themes. `stella-dark` (gold on the cool near-black ramp) is
 /// the default; `stella-light` (the deep gold ramp on cool paper) is its
@@ -299,39 +300,6 @@ pub fn set_active_theme(theme: ThemeName) {
         ThemeName::StellaLight => 1,
     };
     ACTIVE_THEME.store(v, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// The active theme's brand gradient stops, resting → live: `brand` →
-/// `brand-live` on `stella-dark`, `brand-ink-deep` → `brand-ink` on
-/// `stella-light`. Feeds [`brand_gradient`] so the progress fill and wordmark
-/// sweep recolour with the theme.
-///
-/// The palette allows exactly two golds, so the sweep IS those two: the fill
-/// rests on [`ACCENT`] and lights up to [`ACCENT_LIVE`] at its head, which is
-/// precisely the job the live stop is reserved for. This also removes the
-/// downgrade-path hazard the previous three-gold ramp had to reason around —
-/// `crate::progress` paints a solid [`ACCENT`] when [`ColorMode::is_truecolor`]
-/// is false, and that is now the gradient's own resting stop rather than a
-/// third value.
-///
-/// There is deliberately no second, wider "identity" sweep any more. It
-/// existed to let chrome run quieter than the progress fill across four gold
-/// stops; with two, a second gradient over the same pair would be a
-/// distinction that renders identically — and `gold_stops`/`gold_gradient`,
-/// which had no caller outside this module, are gone with it.
-pub fn primary_stops() -> [Color; 2] {
-    stops_for(active_theme())
-}
-
-/// The pure half of [`primary_stops`]: which pair a *named* theme sweeps
-/// between, reading none of the process-global active theme. Split out so the
-/// table can be asserted for every theme at once without a test flipping
-/// global state the rest of the binary shares.
-fn stops_for(theme: ThemeName) -> [Color; 2] {
-    match theme {
-        ThemeName::StellaDark => [palette::BRAND, palette::BRAND_LIVE],
-        ThemeName::StellaLight => [palette::BRAND_INK_DEEP, palette::BRAND_INK],
-    }
 }
 
 // ── Diff panel ──────────────────────────────────────────────────────────────
@@ -406,58 +374,6 @@ pub const SYNTAX_FUNCTION: Color = MAGENTA;
 /// and an alarm hue on every backticked word was the single loudest thing on
 /// the deck. Not a palette value — it is TUI-only.
 pub const CODE: Color = Color::Rgb(0x6F, 0xBF, 0x92);
-
-// ── Brand gradient (the wordmark sweep and the progress-bar fill) ───────────
-//
-// Two stops, and there are only two golds to make them from: the sweep runs
-// resting → live, left to right. An earlier generation ran two separate
-// gradients — one for brand chrome and a second for the progress bar — which
-// is precisely the split this palette collapses. Progress *is* activity,
-// activity is the brand hue, so one gradient serves both. The stops track the
-// ACTIVE theme via [`primary_stops`]: the progress fill interpolates non-token
-// cells the per-frame [`apply_theme`] remap can't see, so its source has to be
-// theme-aware directly.
-
-/// The brand gradient's stops for the *default* (dark) theme, resting → live.
-/// [`primary_stops`] returns these for `stella-dark` and the paper pair for
-/// `stella-light`; prefer that accessor. The determinate progress fill
-/// interpolates across the active stops per cell (truecolor only; lesser
-/// terminals collapse to a solid [`ACCENT`] fill).
-pub const BRAND_STOPS: [Color; 2] = [ACCENT, ACCENT_LIVE];
-
-/// Linear-interpolate two RGB colors at `t ∈ [0, 1]`. Non-RGB inputs return
-/// `a` unchanged (the gradient only ever feeds it `Color::Rgb` stops).
-pub fn lerp_rgb(a: Color, b: Color, t: f64) -> Color {
-    let (Color::Rgb(ar, ag, ab), Color::Rgb(br, bg, bb)) = (a, b) else {
-        return a;
-    };
-    let t = t.clamp(0.0, 1.0);
-    let mix = |x: u8, y: u8| (f64::from(x) + (f64::from(y) - f64::from(x)) * t).round() as u8;
-    Color::Rgb(mix(ar, br), mix(ag, bg), mix(ab, bb))
-}
-
-/// The brand gradient sampled at `t ∈ [0, 1]`: deep at 0, bright at 1, linearly
-/// interpolated across the ACTIVE theme's [`primary_stops`]. This is the run
-/// progress bar's fill and the wordmark sweep — recolours with the theme.
-pub fn brand_gradient(t: f64) -> Color {
-    gradient_at(&primary_stops(), t)
-}
-
-/// Sample an n-stop gradient at `t ∈ [0, 1]`. Panics on fewer than two stops,
-/// which is a programming error rather than a runtime condition.
-fn gradient_at(stops: &[Color], t: f64) -> Color {
-    let t = t.clamp(0.0, 1.0);
-    let span = (stops.len() - 1) as f64;
-    let scaled = t * span;
-    let i = (scaled.floor() as usize).min(stops.len() - 2);
-    lerp_rgb(stops[i], stops[i + 1], scaled - i as f64)
-}
-
-/// Lighten `color` toward white by `amount ∈ [0, 1]` — the shimmer band and the
-/// pulsing head ride a lifted copy of the underlying gradient cell.
-pub fn lighten(color: Color, amount: f64) -> Color {
-    lerp_rgb(color, Color::Rgb(255, 255, 255), amount)
-}
 
 // ── Color-depth degradation (truecolor → 256 → 16 → none) ───────────────────
 //
