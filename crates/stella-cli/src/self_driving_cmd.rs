@@ -843,6 +843,14 @@ fn cycle_begin(st: &LoopState) -> Result<(), String> {
     st.reconcile_abandoned_run();
     st.run_write("starting", Some(n), None);
 
+    hooks::drive(
+        &st.repo_root,
+        &hooks::settings_for(&st.repo_root),
+        hooks::HookEvent::DriveCycleStart,
+        run_info(st).in_cycle(n),
+        None,
+    );
+
     let aperture = st.aperture();
     let streak = stella_autonomy::dry_streak(&st.cycles(), &aperture);
     println!("SELF_DRIVING_CYCLE={n}");
@@ -923,6 +931,32 @@ fn cycle_end(
 
     // The CYCLE ended, not the run — only `run end`/`run cancel` closes one.
     st.run_write("idle", None, Some(tier));
+
+    let settings = hooks::settings_for(&st.repo_root);
+    let run = run_info(st).in_cycle(cycle);
+    hooks::drive(
+        &st.repo_root,
+        &settings,
+        hooks::HookEvent::DriveCycleEnd,
+        run.clone(),
+        None,
+    );
+    // The dry-streak advance, said out loud. A monitor cannot get "alive but
+    // starved" from silence: a loop with an empty backlog and a loop whose
+    // process died emit the same nothing, and only one of them wants a page.
+    // Fired off the record's own `dry` bit, so the event and the ledger cannot
+    // disagree about which cycles counted.
+    if rec.dry {
+        hooks::drive(
+            &st.repo_root,
+            &settings,
+            hooks::HookEvent::DriveIdle,
+            run,
+            Some(format!(
+                "the {aperture} lens produced no new finding in cycle {cycle}"
+            )),
+        );
+    }
 
     let streak = stella_autonomy::dry_streak(&st.cycles(), &aperture);
     if streak >= state::dry_streak_target() {
@@ -1329,6 +1363,20 @@ fn file_finding(
 
     if let backlog::Filed::New(key) = &outcome {
         st.add_seen(&stella_autonomy::finding_digest(title))?;
+        // Only for a filing that reached the tracker. A deduplicated finding
+        // created no issue, and an event named `IssueCreated` firing for one
+        // would make the count a subscriber keeps disagree with the tracker's.
+        hooks::tracker(
+            &root,
+            &hooks::settings_for(&root),
+            hooks::HookEvent::IssueCreated,
+            hooks::HookIssueInfo {
+                number: key.to_string(),
+                title: Some(title.to_string()),
+                branch: None,
+            },
+            None,
+        );
         if format == QueryFormat::Json {
             println!(r#"{{"filed":"{key}"}}"#);
         } else {
@@ -1373,6 +1421,14 @@ fn run_start(st: &LoopState) -> Result<(), String> {
     // by whatever happens next.
     st.run_write("idle", None, None);
 
+    hooks::drive(
+        &st.repo_root,
+        &hooks::settings_for(&st.repo_root),
+        hooks::HookEvent::DriveRunStart,
+        hooks::HookRunInfo::new(&rid),
+        None,
+    );
+
     say(&format!("run {rid} started"));
     println!("SELF_DRIVING_RUN_ID={rid}");
     Ok(())
@@ -1392,8 +1448,29 @@ fn run_end_as(st: &LoopState, status: &str, reason: &str) -> Result<(), String> 
     fields.insert("reason".to_string(), Value::String(reason.to_string()));
     st.append_run_record(fields)?;
     st.clear_run_doc();
+    // After the record is banked and before the line is printed, so a
+    // subscriber that reads the ledger on being woken finds this run's ending
+    // already in it.
+    hooks::drive(
+        &st.repo_root,
+        &hooks::settings_for(&st.repo_root),
+        hooks::HookEvent::DriveRunEnd,
+        hooks::HookRunInfo::new(&rid),
+        Some(format!("{status}: {reason}")),
+    );
     say(&format!("run {rid} -> {status}"));
     Ok(())
+}
+
+/// The run a lifecycle event belongs to.
+///
+/// A run that was never opened still has events worth reporting — `cycle
+/// begin` outside `run start` is an ordinary way to drive the loop by hand —
+/// so the identifier degrades to `-` rather than the event being withheld.
+/// That is `state::LoopState`'s own convention for the same absence, which is
+/// what a `CycleRecord` written outside a run already carries.
+fn run_info(st: &LoopState) -> hooks::HookRunInfo {
+    hooks::HookRunInfo::new(st.current_run_id().unwrap_or_else(|| "-".to_string()))
 }
 
 fn runs_report(st: &LoopState) -> Result<(), String> {

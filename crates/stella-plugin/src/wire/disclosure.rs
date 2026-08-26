@@ -411,6 +411,371 @@ pub const HOOK_FIELDS: &[HookField] = &[
         path: "issueOutcome.reason",
         disclosure: Some("or, when it could not complete, why"),
     },
+    HookField {
+        event: HookEvent::DriveRunStart,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveRunStart,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveRunStart,
+        path: "run.runId",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveRunEnd,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveRunEnd,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveRunEnd,
+        path: "run.runId",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveRunEnd,
+        path: "reason",
+        disclosure: Some("why the run stopped, in the loop's own words"),
+    },
+    HookField {
+        event: HookEvent::DriveCycleStart,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveCycleStart,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveCycleStart,
+        path: "run.runId",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveCycleStart,
+        path: "run.cycle",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveCycleEnd,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveCycleEnd,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveCycleEnd,
+        path: "run.runId",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveCycleEnd,
+        path: "run.cycle",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveIdle,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveIdle,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveIdle,
+        path: "run.runId",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveIdle,
+        path: "run.cycle",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveIdle,
+        path: "reason",
+        disclosure: Some("why the cycle produced nothing"),
+    },
+    HookField {
+        event: HookEvent::IssueCreated,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::IssueCreated,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::IssueCreated,
+        path: "issue.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::IssueCreated,
+        path: "issue.title",
+        disclosure: Some("the title of every issue the loop files"),
+    },
+    HookField {
+        event: HookEvent::IssueCreated,
+        path: "issue.branch",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::IssueClosed,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::IssueClosed,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::IssueClosed,
+        path: "issue.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::IssueClosed,
+        path: "issue.title",
+        disclosure: Some("the title of every issue the loop closes"),
+    },
+    HookField {
+        event: HookEvent::IssueClosed,
+        path: "issue.branch",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::IssueClosed,
+        path: "reason",
+        disclosure: Some("how it was closed, in the loop's own words"),
+    },
+    HookField {
+        event: HookEvent::IssueEscalated,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::IssueEscalated,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::IssueEscalated,
+        path: "issue.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::IssueEscalated,
+        path: "issue.title",
+        disclosure: Some("the title of every issue the loop hands back"),
+    },
+    HookField {
+        event: HookEvent::IssueEscalated,
+        path: "issue.branch",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::IssueEscalated,
+        path: "reason",
+        disclosure: Some("what ran out, in the loop's own vocabulary"),
+    },
+    HookField {
+        event: HookEvent::PullRequestOpened,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestOpened,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::PullRequestOpened,
+        path: "pullRequest.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestOpened,
+        path: "pullRequest.issue",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestReadyForReview,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestReadyForReview,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::PullRequestReadyForReview,
+        path: "pullRequest.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestReadyForReview,
+        path: "pullRequest.issue",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestConflicted,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestConflicted,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::PullRequestConflicted,
+        path: "pullRequest.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestConflicted,
+        path: "pullRequest.issue",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestMerged,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestMerged,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::PullRequestMerged,
+        path: "pullRequest.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::PullRequestMerged,
+        path: "pullRequest.issue",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::ChecksFailed,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::ChecksFailed,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::ChecksFailed,
+        path: "pullRequest.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::ChecksFailed,
+        path: "pullRequest.issue",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::BaseBroken,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::BaseBroken,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::BaseBroken,
+        path: "pullRequest.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::BaseBroken,
+        path: "pullRequest.issue",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::ChecksGreen,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::ChecksGreen,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::ChecksGreen,
+        path: "pullRequest.number",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::ChecksGreen,
+        path: "pullRequest.issue",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveBudgetExhausted,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveBudgetExhausted,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveBudgetExhausted,
+        path: "run.runId",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveBudgetExhausted,
+        path: "reason",
+        disclosure: Some("what the run had spent when it stopped"),
+    },
+    HookField {
+        event: HookEvent::DriveRefused,
+        path: "event",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveRefused,
+        path: "cwd",
+        disclosure: Some("the absolute path of the workspace you are running in"),
+    },
+    HookField {
+        event: HookEvent::DriveRefused,
+        path: "run.runId",
+        disclosure: None,
+    },
+    HookField {
+        event: HookEvent::DriveRefused,
+        path: "reason",
+        disclosure: Some("why the loop declined to run"),
+    },
 ];
 
 /// The hook-channel disclosure sentences for `events`, in table order, with each event's

@@ -53,6 +53,7 @@
 use std::path::Path;
 
 use serde_json::Value;
+use stella_core::hooks::HookEvent;
 
 /// Top-level `settings.json` keys the merged [`super::Settings`] reads.
 ///
@@ -340,7 +341,17 @@ pub(super) fn notices(path: &str, found: Vec<String>) -> Vec<String> {
 /// `hooks` — the PascalCase lifecycle-event keys `stella_core::hooks::Hooks`
 /// renames its fields to. A misspelled event name is the highest-consequence
 /// typo in the whole file: the hook silently never runs.
-const HOOK_EVENTS: &[&str] = &["SessionStart", "PreToolUse", "PostToolUse"];
+///
+/// Read off the vocabulary rather than typed out, because it *was* typed out
+/// and had been wrong since `Stop` landed: this list held three names while
+/// the enum held seven, so registering `Stop`, `PreCompact`, `PreIssueWork` or
+/// `PostIssueWork` — every one of which works — was reported to the user as an
+/// unknown key on every settings load (#4017). A guard that cries wolf about a
+/// correct file is worse than no guard, because it is the one that teaches
+/// people to ignore the real warning.
+fn hook_events() -> Vec<&'static str> {
+    HookEvent::ALL.into_iter().map(HookEvent::as_str).collect()
+}
 
 /// `agent_engine_config` — [`super::AgentEngineConfig`].
 ///
@@ -587,7 +598,7 @@ fn scan_toml_root(root: &Value, found: &mut Vec<String>) {
             "ui" => closed("ui", value, UI_FIELDS, found),
             "reward" => closed("reward", value, REWARD_FIELDS, found),
             "plan_review" => closed("plan_review", value, PLAN_REVIEW_FIELDS, found),
-            "hooks" => closed("hooks", value, HOOK_EVENTS, found),
+            "hooks" => closed("hooks", value, &hook_events(), found),
             "providers" => {
                 if let Some(entries) = value.as_object() {
                     for (id, entry) in entries {
@@ -669,7 +680,7 @@ fn scan_root(root: &Value, found: &mut Vec<String>) {
             "ui" => closed("ui", value, UI_FIELDS, found),
             "reward" => closed("reward", value, REWARD_FIELDS, found),
             "plan_review" => closed("plan_review", value, PLAN_REVIEW_FIELDS, found),
-            "hooks" => closed("hooks", value, HOOK_EVENTS, found),
+            "hooks" => closed("hooks", value, &hook_events(), found),
             "agent_engine_config" => scan_engine(value, found),
             // `tools`, `context_providers`, `context`, `authority`, and
             // `enterprise_telemetry` are open maps or types owned elsewhere.

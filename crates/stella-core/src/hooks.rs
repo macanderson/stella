@@ -3,8 +3,9 @@
 //!
 //! Hooks are shell commands declared in workspace settings that fire on
 //! agent lifecycle events, receiving the event payload as JSON on stdin
-//! (Claude Code parity). Seven events are wired, each with distinct,
-//! required behavior:
+//! (Claude Code parity). The events are wired in two families — the ones
+//! below name points inside a turn, and `stella_protocol::hook` names the
+//! rest, which the self-driving loop fires from outside every turn:
 //!
 //!   - [`HookEvent::SessionStart`] — runs once before the turn. Anything a
 //!     hook prints to stdout is appended to the system prompt as
@@ -72,6 +73,9 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 pub mod decision;
+/// The JSON a hook command reads on stdin. Re-exported below, so every
+/// existing `stella_core::hooks::HookPayload` path still resolves.
+mod payload;
 
 /// Lifecycle events a hook can fire on (TS: `HookEvent`, `HOOK_EVENTS`,
 /// plus the #2684 additions `Stop` and `PreCompact`).
@@ -243,6 +247,104 @@ pub struct Hooks {
         skip_serializing_if = "Option::is_none"
     )]
     pub post_issue_work: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "DriveRunStart",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub drive_run_start: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "DriveRunEnd",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub drive_run_end: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "DriveCycleStart",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub drive_cycle_start: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "DriveCycleEnd",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub drive_cycle_end: Option<Vec<HookMatcher>>,
+    #[serde(rename = "DriveIdle", default, skip_serializing_if = "Option::is_none")]
+    pub drive_idle: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "IssueCreated",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issue_created: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "IssueClosed",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issue_closed: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "IssueEscalated",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issue_escalated: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "PullRequestOpened",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pull_request_opened: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "PullRequestReadyForReview",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pull_request_ready_for_review: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "PullRequestConflicted",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pull_request_conflicted: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "PullRequestMerged",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pull_request_merged: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "ChecksFailed",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub checks_failed: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "BaseBroken",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub base_broken: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "ChecksGreen",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub checks_green: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "DriveBudgetExhausted",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub drive_budget_exhausted: Option<Vec<HookMatcher>>,
+    #[serde(
+        rename = "DriveRefused",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub drive_refused: Option<Vec<HookMatcher>>,
 }
 
 impl Hooks {
@@ -257,217 +359,31 @@ impl Hooks {
             HookEvent::PreCompact => &self.pre_compact,
             HookEvent::PreIssueWork => &self.pre_issue_work,
             HookEvent::PostIssueWork => &self.post_issue_work,
+            HookEvent::DriveRunStart => &self.drive_run_start,
+            HookEvent::DriveRunEnd => &self.drive_run_end,
+            HookEvent::DriveCycleStart => &self.drive_cycle_start,
+            HookEvent::DriveCycleEnd => &self.drive_cycle_end,
+            HookEvent::DriveIdle => &self.drive_idle,
+            HookEvent::IssueCreated => &self.issue_created,
+            HookEvent::IssueClosed => &self.issue_closed,
+            HookEvent::IssueEscalated => &self.issue_escalated,
+            HookEvent::PullRequestOpened => &self.pull_request_opened,
+            HookEvent::PullRequestReadyForReview => &self.pull_request_ready_for_review,
+            HookEvent::PullRequestConflicted => &self.pull_request_conflicted,
+            HookEvent::PullRequestMerged => &self.pull_request_merged,
+            HookEvent::ChecksFailed => &self.checks_failed,
+            HookEvent::BaseBroken => &self.base_broken,
+            HookEvent::ChecksGreen => &self.checks_green,
+            HookEvent::DriveBudgetExhausted => &self.drive_budget_exhausted,
+            HookEvent::DriveRefused => &self.drive_refused,
         };
         field.as_deref().unwrap_or(&[])
     }
 }
 
-/// The tool a `PreToolUse`/`PostToolUse` hook fires for (TS: `HookPayload["tool"]`),
-/// plus the advertised metadata a permission-deciding hook needs (#2684).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HookToolInfo {
-    pub name: String,
-    pub input: serde_json::Value,
-    /// The tool's advertised `read_only` bit, from its
-    /// [`stella_protocol::ToolSchema`] — `false` for a tool the executor
-    /// does not advertise, the cautious direction. The one metadata field
-    /// that exists today; the #2716 `ToolContract` fields join here when
-    /// they land. `default` so a payload written before this field existed
-    /// still deserializes.
-    #[serde(default)]
-    pub read_only: bool,
-}
-
-/// The JSON payload fed to a hook command on stdin (TS: `HookPayload`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HookPayload {
-    pub event: HookEvent,
-    pub cwd: String,
-    /// Present for `PreToolUse` / `PostToolUse`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool: Option<HookToolInfo>,
-    /// Present for `PostToolUse`: the result string the tool returned —
-    /// `ToolOutput::Ok`'s content or `ToolOutput::Error`'s message, whole.
-    /// Nothing clips it, so a hook matching a tool that returns a large body
-    /// receives that whole body on stdin; a hook author who only wants a
-    /// summary must truncate on their own side.
-    #[serde(rename = "toolResult", skip_serializing_if = "Option::is_none")]
-    pub tool_result: Option<String>,
-    /// Present for `Stop`: the text the turn is about to complete with,
-    /// whole — the same unclipped posture as `tool_result`, and for the
-    /// same reason: what a hook can afford to read is the hook's call.
-    #[serde(rename = "finalText", default, skip_serializing_if = "Option::is_none")]
-    pub final_text: Option<String>,
-    /// Present for `PreIssueWork` / `PostIssueWork`: which issue the
-    /// self-driving loop is about to work, or has just worked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub issue: Option<HookIssueInfo>,
-    /// Present for `PostIssueWork`: how the work unit ended.
-    #[serde(
-        rename = "issueOutcome",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub issue_outcome: Option<HookIssueOutcome>,
-}
-
-impl HookPayload {
-    /// A payload carrying only the event and the workspace — the shape
-    /// every non-tool event shares.
-    fn bare(event: HookEvent, cwd: String) -> Self {
-        Self {
-            event,
-            cwd,
-            tool: None,
-            tool_result: None,
-            final_text: None,
-            issue: None,
-            issue_outcome: None,
-        }
-    }
-
-    /// A `SessionStart` payload — no tool, no result.
-    pub fn session_start(cwd: impl Into<String>) -> Self {
-        Self::bare(HookEvent::SessionStart, cwd.into())
-    }
-
-    /// A `PreToolUse` payload for the given tool call. `read_only` is the
-    /// tool's advertised bit from its schema (#2684).
-    pub fn pre_tool_use(
-        cwd: impl Into<String>,
-        name: impl Into<String>,
-        input: serde_json::Value,
-        read_only: bool,
-    ) -> Self {
-        Self {
-            tool: Some(HookToolInfo {
-                name: name.into(),
-                input,
-                read_only,
-            }),
-            ..Self::bare(HookEvent::PreToolUse, cwd.into())
-        }
-    }
-
-    /// A `PostToolUse` payload for the given tool call and its result.
-    pub fn post_tool_use(
-        cwd: impl Into<String>,
-        name: impl Into<String>,
-        input: serde_json::Value,
-        read_only: bool,
-        tool_result: impl Into<String>,
-    ) -> Self {
-        Self {
-            tool: Some(HookToolInfo {
-                name: name.into(),
-                input,
-                read_only,
-            }),
-            tool_result: Some(tool_result.into()),
-            ..Self::bare(HookEvent::PostToolUse, cwd.into())
-        }
-    }
-
-    /// A `Stop` payload carrying the text the turn is about to complete
-    /// with.
-    pub fn stop(cwd: impl Into<String>, final_text: impl Into<String>) -> Self {
-        Self {
-            final_text: Some(final_text.into()),
-            ..Self::bare(HookEvent::Stop, cwd.into())
-        }
-    }
-
-    /// A `PreCompact` payload — the event and the workspace, nothing else.
-    pub fn pre_compact(cwd: impl Into<String>) -> Self {
-        Self::bare(HookEvent::PreCompact, cwd.into())
-    }
-
-    /// A `PreIssueWork` payload — the issue the loop is about to work.
-    ///
-    /// No outcome, because nothing has happened yet: this is the payload a
-    /// hook reads to decide whether the work should happen at all.
-    pub fn pre_issue_work(cwd: impl Into<String>, issue: HookIssueInfo) -> Self {
-        Self {
-            issue: Some(issue),
-            ..Self::bare(HookEvent::PreIssueWork, cwd.into())
-        }
-    }
-
-    /// A `PostIssueWork` payload — the same issue, plus how it went.
-    pub fn post_issue_work(
-        cwd: impl Into<String>,
-        issue: HookIssueInfo,
-        outcome: HookIssueOutcome,
-    ) -> Self {
-        Self {
-            issue: Some(issue),
-            issue_outcome: Some(outcome),
-            ..Self::bare(HookEvent::PostIssueWork, cwd.into())
-        }
-    }
-}
-
-/// The issue a self-driving work unit is about, as a hook sees it.
-///
-/// # Why the identifier and nothing else is guaranteed
-///
-/// Only [`Self::number`] is always present. The rest is what the loop happened
-/// to have already read, and the loop reads the tracker lazily — so a hook that
-/// needs a field this does not carry should fetch it itself (`gh issue view`
-/// is one line in a shell hook) rather than have Stella fetch it on every
-/// dispatch for the hooks that do not.
-///
-/// That is a deliberate cost split: an extra tracker round trip per issue,
-/// paid by the hooks that want it, beats one paid by every loop whether a hook
-/// is registered or not.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct HookIssueInfo {
-    /// The issue number, as the tracker spells it. Always present — it is the
-    /// identity everything else about the work unit hangs off.
-    pub number: String,
-    /// The issue's title, when the loop already had it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// The branch the work would land on, when it is already decided.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub branch: Option<String>,
-}
-
-impl HookIssueInfo {
-    /// The identifier alone — the shape a caller that has read nothing else
-    /// can always build.
-    pub fn new(number: impl Into<String>) -> Self {
-        Self {
-            number: number.into(),
-            title: None,
-            branch: None,
-        }
-    }
-}
-
-/// How a work unit ended, for [`HookEvent::PostIssueWork`].
-///
-/// Three arms rather than a boolean, because a consumer's next move differs
-/// for each: `Changed` means there is a branch to review, `NoChange` means the
-/// issue is still open and untouched, and `Failed` means something needs a
-/// human. Collapsing the last two into "not successful" is what makes a
-/// dashboard unable to tell a starved loop from a broken one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case", tag = "status")]
-pub enum HookIssueOutcome {
-    /// The turn ran and left committed or uncommitted work behind.
-    Changed {
-        /// What changed, as the loop summarized it.
-        summary: String,
-    },
-    /// The turn ran and changed nothing.
-    NoChange,
-    /// The work unit could not complete.
-    Failed {
-        /// Why, in the loop's own words.
-        reason: String,
-    },
-}
+pub use payload::{
+    HookIssueInfo, HookIssueOutcome, HookPayload, HookPullRequestInfo, HookRunInfo, HookToolInfo,
+};
 
 /// One hook command's raw execution result — returned even on non-zero
 /// exit; only genuine inability to run is a [`HookExecError`] (TS:
